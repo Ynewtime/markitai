@@ -158,7 +158,6 @@ fn the_terminal_language_changes_the_sentences_but_not_the_scripted_lines() {
 #[test]
 fn listening_beyond_this_computer_warns_and_hands_out_the_token_only_where_it_is_needed() {
     let temp = tempfile::tempdir().unwrap();
-    // The token is required from every other machine, so this exposes nothing readable.
     let serve = Serve::start(temp.path(), None, &["--host", "0.0.0.0", "--port", "0"]);
     let lines = serve.until("Ctrl-C");
     let port = port_of(&lines[0]);

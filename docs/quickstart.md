@@ -44,7 +44,9 @@ once to `~/.zshrc` for zsh or `~/.bashrc` for non-login bash terminals
 directory if you changed it. An MCP client can always use the
 absolute executable path, independent of shell profiles.
 
-On Windows, select x64 or ARM64 and use PowerShell. Replace `Archive` with your
+On Windows, select the native system architecture (Settings → System → About
+→ System type): x64 for Intel/AMD PCs, ARM64 for ARM-based PCs. Use PowerShell.
+Replace `Archive` with your
 ZIP path; choose a new `Install` directory if it already exists:
 
 ```powershell
@@ -90,16 +92,21 @@ install it.
 
 ### Build from source
 
-You need Rust 1.92 or later (development uses current stable):
+You need Rust 1.92 or later and a native C/C++ toolchain/linker; development
+and native CI use Rust 1.99.0. On macOS install Xcode Command Line Tools;
+on Windows use Visual Studio Build Tools with the C++ workload, Windows SDK
+and the tools for your MSVC x64 or ARM64 target. Linux needs its C/C++ build
+tools. Build from this repository checkout with locked dependency versions:
 
 ```sh
-cargo build --release -p markitai-cli
+cargo build --release --locked -p markitai-cli
 ```
 
-This produces `target/release/markitai` and the identical `target/release/mkai`;
+This produces `target/release/markitai` and `target/release/mkai`
+(with `.exe` on Windows). Both use the same core, but their bytes need not match;
 the first release build takes several minutes. On Apple silicon, build for an
 Intel Mac with `rustup target add x86_64-apple-darwin` and
-`cargo build --release --target x86_64-apple-darwin -p markitai-cli`; the
+`cargo build --release --locked --target x86_64-apple-darwin -p markitai-cli`; the
 executable lands in `target/x86_64-apple-darwin/release/`. Add the native build
 directory to the current shell with
 `export PATH="$PWD/target/release:$PATH"` (use the target-specific directory
@@ -111,8 +118,9 @@ with the package drivers described in [native CI](ci.md).
 
 The table describes available backends, rather than promising every format
 has equal fidelity on every platform. Windows x64 CI and Windows ARM64/Linux
-VMs have run native Rust tests and installed-package checks; physical Intel
-Macs remain untested. Consult [native CI](ci.md) for each recorded scope and
+VMs have run native Rust tests and installed-package checks. Results apply to
+the commit and package recorded in each run; physical Intel Macs remain
+untested. Consult [current status](STATUS.md), [native CI](ci.md) and
 [formats](formats.md) for reader gaps.
 
 | Capability | macOS | Linux x86-64 | Windows x64 / ARM64 |
@@ -127,9 +135,10 @@ Macs remain untested. Consult [native CI](ci.md) for each recorded scope and
 
 macOS binaries declare a minimum of macOS 11.0; testing used newer macOS.
 The Ubuntu 24.04 Linux archives require glibc 2.39 or later; another Linux
-build can have a different requirement. The Windows archives target MSVC64
-and carry their required executable entries. Neither a CLI archive nor a
-passing version probe proves all Node/Python/Go bindings work; Windows Go/cgo
+build can have a different requirement. Windows CLI archives target MSVC x64
+or ARM64 and statically link the MSVC runtime; they carry all three executable entries. This does not make optional
+LibreOffice, browser or OCR model installations part of the archive. Neither a
+CLI archive nor a passing version probe proves all Node/Python/Go bindings work; Windows Go/cgo
 package acceptance remains separate and unverified.
 
 On Apple silicon, use the arm64 archive. The default x86-64 build under Rosetta
@@ -147,7 +156,8 @@ Markitai keeps its configuration, caches, browser installation and history in
 `~/.markitai`. Point `MARKITAI_HOME` at another directory for separate trial
 configuration, caches, browser installation and history. Current-directory
 `.env` files and process environment variables can still affect configuration;
-changing this directory does not block network access:
+changing this directory does not block network access or ignore an existing
+`./markitai.json`:
 
 ```sh
 export MARKITAI_HOME="$PWD/.local/try-home"
@@ -217,6 +227,10 @@ markitai links.urls -o out/                   # one URL per line
 markitai ./documents -o out/ --resume         # continue an interrupted batch
 ```
 
+Resume keeps compatible completed work; it does not detect every model,
+prompt or output-profile change. Use a new output directory without `--resume`
+when you want to reprocess everything after changing those settings.
+
 A `.urls` file holds one `URL [output-name]` per line; blank lines and `#`
 comments are ignored. Batches print a summary and write a JSON report to
 `out/.markitai/reports/`; the exit status is 10 when any item failed. Quote
@@ -237,7 +251,10 @@ downloaded PDF goes through the PDF reader. If no browser is found,
 `markitai doctor --fix` downloads Google's Chrome for Testing headless shell
 into `MARKITAI_HOME/browsers/native` (or `~/.markitai/browsers/native`).
 `-s jina` and `-s defuddle` send the URL to those third-party services;
-`--no-remote-fetch` or `MARKITAI_NO_REMOTE_FETCH=1` forbids that. See
+`--no-remote-fetch` or `MARKITAI_NO_REMOTE_FETCH=1` forbids those extraction
+services, but source URL requests, browser visits and enabled model requests
+still use the network. For offline conversion use local files with `-b native --no-llm`; prepare any OCR models, browser or LibreOffice installation in advance.
+There is no global offline/network-sandbox switch. See
 [URL fetching](fetch.md) and [browser fetching](browser.md).
 
 ## 6. Images, scans and page images
@@ -287,7 +304,9 @@ markitai serve --port 3700 --no-open
 ```
 
 The page converts uploads and URLs, previews results, keeps history and edits
-model connections. The same jobs are available over REST:
+model connections. Open the startup URL including its `#token=` fragment; API
+requests require the token even from localhost unless you explicitly selected
+`--no-auth`. Treat that URL like a password. The same jobs are available over REST:
 
 ```sh
 # Set MARKITAI_SERVE_TOKEN to the token printed by the running server.
@@ -325,7 +344,7 @@ CLI output use `markitai report.docx -o out/ --json`. See [MCP](mcp.md) and the
 
 - [Configuration](configuration.md): file locations, commands and environment variables.
 - [Troubleshooting](troubleshooting.md): common errors and exit codes.
-- [CLI](cli.md): every option and subcommand.
+- [CLI](cli.md): commands, options and output behavior.
 - [Documentation index](index.md): all topics.
 
 The CLI archive includes this guide, [CLI](cli.md), [MCP](mcp.md), an

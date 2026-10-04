@@ -53,8 +53,7 @@ LLM, OCR and screenshots:
       --desc
           Write image descriptions when LLM processing is enabled (--no-desc disables)
       --ocr
-          Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr
-          disables)
+          Read scanned content with local OCR or a vision model (--no-ocr disables)
       --screenshot
           Capture supported document pages or browser pages; optional backends may be required
           (--no-screenshot disables)
@@ -195,8 +194,7 @@ LLM, OCR and screenshots:
       --desc
           Write image descriptions when LLM processing is enabled (--no-desc disables)
       --ocr
-          Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr
-          disables)
+          Read scanned content with local OCR or a vision model (--no-ocr disables)
       --screenshot
           Capture supported document pages or browser pages; optional backends may be required
           (--no-screenshot disables)
@@ -1350,8 +1348,7 @@ LLM, OCR and screenshots:
       --desc
           Write image descriptions when LLM processing is enabled (--no-desc disables)
       --ocr
-          Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr
-          disables)
+          Read scanned content with local OCR or a vision model (--no-ocr disables)
       --screenshot
           Capture supported document pages or browser pages; optional backends may be required
           (--no-screenshot disables)
@@ -1494,8 +1491,7 @@ LLM, OCR and screenshots:
       --desc
           Write image descriptions when LLM processing is enabled (--no-desc disables)
       --ocr
-          Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr
-          disables)
+          Read scanned content with local OCR or a vision model (--no-ocr disables)
       --screenshot
           Capture supported document pages or browser pages; optional backends may be required
           (--no-screenshot disables)

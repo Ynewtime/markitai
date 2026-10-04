@@ -4,8 +4,6 @@ mod diagnostics;
 mod file_lock_test;
 mod history;
 mod mcp;
-// Durable batch publication, recovery state and resumed reports are Unix-only;
-// elsewhere the batch command reports that before using them.
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod output_claims;
 mod pricing;

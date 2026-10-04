@@ -4,9 +4,9 @@ The `playwright` fetch strategy retains its public name and uses Chromium's
 DevTools Protocol directly from Rust. It does not import Playwright or run
 Python, Node.js, or a browser automation CLI. Chrome/Chromium remains an optional
 installed executable; the standalone Markitai binary does not bundle it.
-The integrated workspace gate and frozen release pass real loopback Chrome
-fetching, capture, timeout, history and cleanup checks. Source and artifact
-identities are recorded in the [validation report](validation/native-backends-round16.md).
+Earlier loopback Chrome fetching, capture, timeout, history and cleanup checks
+are scoped to the source and artifacts in the [validation report](validation/native-backends-round16.md);
+that record is not acceptance of every installed browser or later package.
 
 Each owned browser process uses a temporary user-data directory,
 a separate disk-cache directory, a loopback debugging endpoint on a dynamically
@@ -133,7 +133,9 @@ implementation or tests alone is not release acceptance evidence.
 An explicit `playwright` request renders the page. An `auto` request without credentials or
 screenshots retains the existing static/cache path and can fall back to the local
 browser for recognized JavaScript/challenge or empty-HTML extraction failures.
-It does not introduce remote-provider fallback. An `auto` screenshot request
+Browser fallback itself does not authorize remote providers; any later remote
+fallback follows the explicit opt-in policy in
+[fetching](fetch.md#strategy-order-and-remote-fallback). An `auto` screenshot request
 renders directly, so a cached text-only result cannot masquerade as a capture.
 
 Explicit `static`, `defuddle` and `jina` requests retain their selected text
@@ -263,8 +265,8 @@ idle processes. Already active work keeps its normal deadlines, then discards
 its process. Errors, protocol failure and unwinding never return a process as
 healthy. A cleanup failure after a complete response adds a fixed warning and
 discards the process; failed HTTP/PDF requests remain errors and are never
-silently downloaded a second time. Existing Unix process-group cleanup and
-other-platform limitations still apply.
+silently downloaded a second time. Cleanup uses the owned Unix process group or
+Windows Job Object described below.
 
 The reference already reused browsers for isolated requests and retained up to
 eight contexts for its process-local persistent mode. Native ownership is
@@ -314,9 +316,10 @@ caller-surface coverage and measured performance require their own validation.
   reused only by the explicitly selected persistent mode in the same runtime and
   matching identity. Persistent mode bypasses anonymous auto/static-cache probes.
 - Unix cleanup terminates the browser's dedicated process group and waits for
-  its direct child. Other platforms use direct child termination; descendant
-  cleanup and executable discovery need platform-specific validation. No
-  cross-platform readiness or speedup follows from the implementation alone.
+  its direct child. Windows uses an owned Job Object to terminate its process
+  tree, including when Markitai exits. Other platforms reject external-runtime
+  process management. This does not establish that a particular installed
+  browser launches correctly; use `markitai doctor` to check that installation.
 
 The protocol operations use Chromium's published
 [Page](https://chromedevtools.github.io/devtools-protocol/tot/Page/),
@@ -324,8 +327,8 @@ The protocol operations use Chromium's published
 [Fetch](https://chromedevtools.github.io/devtools-protocol/tot/Fetch/) and
 [IO](https://chromedevtools.github.io/devtools-protocol/tot/IO/) domains.
 Unit coverage targets option validation, cookie field conversion, glob boundaries,
-proxy credential rejection and filename identity. The actual release additionally
-passes delayed JavaScript, headers/cookies, redirects, tiling, canvas-only results,
-failure policies, timeout and cleanup cases. Real proxy routes, every wait state,
+proxy credential rejection and filename identity. The [round-sixteen record](validation/native-backends-round16.md) additionally
+covers delayed JavaScript, headers/cookies, redirects, tiling, canvas-only results,
+failure policies, timeout and cleanup for its frozen artifact. Real proxy routes, every wait state,
 shadow-root content, explicit static/remote text plus capture and non-Unix process
-cleanup remain outside this local acceptance corpus.
+cleanup were outside that historical local acceptance corpus.

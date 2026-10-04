@@ -4,7 +4,7 @@
     "title": "Markitai service API",
     "version": "set from the build when served",
     "summary": "Convert files and URLs to Markdown, manage saved jobs and model settings.",
-    "description": "The REST API of `markitai serve`. Loopback clients are trusted; other clients send the startup token as `Authorization: Bearer` (preferred) or `?token=`. Every error body is `{detail, code, reason}`; present text by `reason`, then `code`. See docs/serve.md, docs/service-settings.md and docs/provider-management.md for the contracts this document summarizes.",
+    "description": "The REST API of `markitai serve`. By default every API client, including loopback clients, sends the startup token as `Authorization: Bearer` (preferred) or `?token=`. Anonymous access in the security alternatives applies only when started with `--no-auth`; settings and URL conversion then remain restricted to direct loopback peers without forwarding headers. Designated downloads can use a single-use ticket. Every error body is `{detail, code, reason}`; present text by `reason`, then `code`. See docs/serve.md, docs/service-settings.md and docs/provider-management.md for the contracts this document summarizes.",
     "license": { "name": "MIT", "identifier": "MIT" }
   },
   "servers": [{ "url": "/", "description": "The service that serves this document" }],
@@ -13,8 +13,8 @@
     { "name": "service", "description": "Capabilities, this document and download tickets" },
     { "name": "jobs", "description": "Conversion jobs, their items, events and files" },
     { "name": "history", "description": "Saved jobs" },
-    { "name": "settings", "description": "Saved model deployments and provider connections; loopback or token only, also with --no-auth" },
-    { "name": "providers", "description": "Provider detection, model discovery and connection tests; loopback or token only" }
+    { "name": "settings", "description": "Saved model deployments and provider connections; token required by default, direct loopback only with --no-auth" },
+    { "name": "providers", "description": "Provider detection, model discovery and connection tests; token required by default, direct loopback only with --no-auth" }
   ],
   "paths": {
     "/api/capabilities": {
@@ -62,7 +62,7 @@
         "tags": ["jobs"],
         "operationId": "createJob",
         "summary": "Start a job from uploaded files and/or URLs",
-        "description": "Files precede URLs in the returned order. URL conversion needs a loopback peer or the token, also with --no-auth. A request that itself asks for model processing while no model is routable is refused with 422 `llm_unavailable` before anything is stored.",
+        "description": "Files precede URLs in the returned order. URL conversion requires the token by default; with --no-auth it requires a direct loopback peer without forwarding headers. A request that itself asks for model processing while no model is routable is refused with 422 `llm_unavailable` before anything is stored.",
         "requestBody": {
           "required": true,
           "content": {
@@ -436,7 +436,7 @@
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "The startup token (printed at start, or MARKITAI_SERVE_TOKEN). Loopback peers need none." },
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "The startup token (printed at start, or MARKITAI_SERVE_TOKEN). Required for API clients, including loopback, unless authentication is explicitly disabled. Designated downloads can instead use a single-use ticket." },
       "tokenQuery": { "type": "apiKey", "in": "query", "name": "token", "description": "The startup token as a query parameter; accepted for compatibility, but it can end up in logs and history, so prefer the header." },
       "ticketQuery": { "type": "apiKey", "in": "query", "name": "ticket", "description": "A single-use download ticket from POST /api/download-tickets, valid for one GET of the path it was issued for within 60 seconds." }
     },

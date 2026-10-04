@@ -48,16 +48,3 @@ Directory packages are inventoried before their content is read. Entries are sor
 Files are opened with bounded reads and checked against their inventoried type, length and modification metadata. Unix also checks device/inode/change-time identity and opens with `O_NOFOLLOW | O_NONBLOCK`. Directory and file metadata are checked again before decoding. Ordinary replacement or mutation during reading causes an error; these checks do not provide an atomic snapshot or a filesystem sandbox against adversarial concurrent ancestor replacement. Packages should remain unchanged while being converted.
 
 Output size is checked after each heading and cell, so rejection may temporarily exceed the body limit by one escaped cell, at most about 6 MiB. The adapter avoids scanning every merge for every cell by using a bounded coverage bitmap.
-
-## Fixtures and evidence
-
-Two unmodified public files come from the independent MIT-licensed [`numbers-parser` repository](https://github.com/masaccio/numbers-parser/tree/726bd6cbbfe1d00ec5449865a51eb7a4a3f472aa), fixed at commit `726bd6cbbfe1d00ec5449865a51eb7a4a3f472aa`:
-
-- `test-1.numbers`: two sheets, three tables, ordered names, dimensions and cell values independently specified in its [`test_tables.py`](https://github.com/masaccio/numbers-parser/blob/726bd6cbbfe1d00ec5449865a51eb7a4a3f472aa/tests/test_tables.py).
-- `test-formats.numbers`: rich-text/bullet content independently specified in [`test_styles.py`](https://github.com/masaccio/numbers-parser/blob/726bd6cbbfe1d00ec5449865a51eb7a4a3f472aa/tests/test_styles.py). Despite its filename, this is not a golden for numeric display formatting.
-
-Original bytes, hashes, source URLs and the upstream license are retained in [fixture provenance](../crates/markitai-core/src/formats/numbers/fixtures/provenance.json) and [LICENSE.rst](../crates/markitai-core/src/formats/numbers/fixtures/LICENSE.rst). No local Apple application was used to inspect or regenerate them.
-
-Directory tests expand both retained MIT ZIP fixtures without changing their entry bytes, deliberately create entries in reverse ZIP order, and compare body, metadata and warnings exactly with the ZIP reader. These are container-equivalence tests, not independent Apple-exported directory goldens. Additional tests cover both sides of the depth and node limits, sparse-file and aggregate byte limits, legacy/encrypted containers, damaged IWA, internal links/special files, invalid names and replacement during reading.
-
-Authored tests cover Unicode and Markdown escaping, fixed decimal/percentage/currency output, cached formulas, merged cells, duplicate table names across sheets, bounded expansion and hostile dimensions/references. The duplicate-name fixture first creates distinct tables, then changes only the second model's name through the library's public archive API because its writer rejects ambiguous names. These authored fixtures supplement the independent files; writer/reader round trips alone are not evidence of complete Numbers compatibility. Public conversion tests check in-memory/disk body agreement without changing the existing frontmatter schema. Coordinated gate and release results are recorded separately.

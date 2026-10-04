@@ -110,7 +110,7 @@ fn help_explains_output_privacy_cache_and_unsupported_workflows() {
             "Usage errors remain on stderr",
             "while still writing",
             "matching paths/options",
-            "Vision locally",
+            "local OCR or a vision model",
             "With --llm",
             "without --llm",
             "implies --screenshot",

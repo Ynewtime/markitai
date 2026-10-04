@@ -11,9 +11,9 @@ checks for scripts. Add `-c FILE` to check a particular configuration.
 |---|---|
 | 0 | Success, including dry runs and skipped items |
 | 1 | A single input failed, or a runtime error such as a missing input file or model |
-| 2 | Usage error: unknown or removed option, missing `-c` file, `--json` without `-o`, interactive mode without a terminal |
+| 2 | Usage error (unknown option, missing `-c`, `--json` without `-o`, nonterminal interactive mode), or a provider Batch job still pending |
 | 10 | A directory or `.urls` batch finished with at least one failed item |
-| 130 / 143 | Interrupted by Ctrl-C / SIGTERM |
+| 130 / 143 | Unix interruption by Ctrl-C / SIGTERM |
 
 Usage errors are printed on stderr only; `--json` prints its JSON document only
 after arguments are accepted. Failed batch items are listed in the JSON output
@@ -30,7 +30,8 @@ and exits 1.
 **An image produces no output.** A standalone image has no text unless you ask
 for recognition; Markitai says on stderr that it skipped the image, by file
 name (`Skipped photo.png: an image has no text to extract …`), and exits 0
-because nothing went wrong. Add `--ocr` (on-device OCR, macOS) or `--llm`
+because nothing went wrong. Add `--ocr` (Vision on macOS; Paddle on Windows/Linux
+with prepared models) or `--llm`
 (vision model). With `--json` the item shows `"skip_reason": "image_only"`; the
 batch summary words it as `images with no text`. A skipped image creates no
 output directory and no ownership files. A file that only has an image's
@@ -57,7 +58,8 @@ the warning. Page screenshots and page OCR need the right extension.
 
 **`Warning: PDF pages 2-3, 5: native text was not recovered …`.** These pages
 have no extractable text (scans, or pages made only of pictures). Run again with
-`--ocr` to read them (macOS). The terminal shows one line per document; the
+`--ocr` to read them. Windows/Linux require the local Paddle models first.
+The terminal shows one line per document; the
 report and `--json` keep one warning per page.
 
 **`Warning: PDF pages 1-3: the text was read from the invisible OCR text layer laid over each page image …`.**
@@ -70,7 +72,7 @@ on the print but say something else would not be noticed. When the warning says
 the layer `could not be checked against the image`, the image is in a format
 Markitai does not decode (JBIG2, CCITT fax, JPEG 2000) or the page has several
 images. To read such pages with Markitai's own OCR instead, run with `--ocr` and
-`ocr.per_page_routing` set to `false` (macOS).
+`ocr.per_page_routing` set to `false`; see [PDF OCR](pdf-ocr.md).
 
 **`Warning: PDF page 2: an invisible OCR text layer lies over the page image, but it does not line up with the text in the image …`.**
 The page carries hidden words that are not where the image's print is (a layer
@@ -83,17 +85,19 @@ character map the reader knows, or one that maps its codes to nothing usable).
 That text is left out and the rest of the page is kept. A variant says that
 characters `show as U+FFFD`: they stay in place as the replacement character;
 another that a font on the page names its glyphs by index only. Run again with
-`--ocr` (macOS) to read such a page from its image instead. When most of a page
+`--ocr` to read such a page from its image instead. When most of a page
 cannot be decoded, it is reported as `native text was not recovered
 (suspected_garbled_text)` instead, as above. Japanese, Chinese and Korean PDFs
 whose fonts are not embedded (Shift-JIS, GBK, Big5, UHC and Unicode CMaps) are
 read directly and need neither.
 
-**The first OCR takes half a minute.** Vision compiles its recognition models
-for this executable the first time it runs and caches them, so the first OCR
-after installing or updating Markitai takes about 25–45 seconds and later ones
-well under a second per page. A sandbox that forbids writing
-`~/Library/Caches/markitai` makes OCR fail with `missingError`.
+**The first local OCR is slow.** On macOS, Vision may compile and cache
+recognition models after installation or an update. Startup and per-page time
+depend on the OS, image and language; earlier measurements are not a timing
+guarantee. A sandbox that blocks the Vision cache can cause `missingError`.
+On Windows/Linux, run `markitai doctor` to check Paddle models and explicitly
+use `markitai doctor --fix` to prepare missing models before offline use.
+See [local OCR](ocr.md) for backend and language limits.
 
 **Images are missing when I print to stdout.** Without `-o`, images are saved
 under `MARKITAI_HOME/assets/blobs/` (`~/.markitai/assets/blobs/` by default) and
@@ -229,7 +233,9 @@ found: NAME` means an `env:NAME` reference names a variable that is not set.
 formats Workers AI does not read, and files converted with `--ocr` or
 `--screenshot`, keep the native reader. See [URL fetching](fetch.md#remote-services).
 
-**`Remote fetching is disabled by policy`.** `-s defuddle`, `-s jina` and
+**`Remote fetching is disabled by policy`.** This policy blocks remote
+extraction services, not all network access: source URLs, the local browser
+and enabled model requests may still use the network. `-s defuddle`, `-s jina` and
 `-s cloudflare` send the URL to a third-party service. They are refused when
 `--no-remote-fetch` or `MARKITAI_NO_REMOTE_FETCH=1` is set or
 `fetch.remote_consent` is `never`; under `ask` a strategy chosen with `-s` runs,
@@ -261,7 +267,8 @@ See [browser installation](browser-installation.md).
 
 **`Warning: … need LibreOffice (soffice on PATH) …`.** Page images and page OCR
 of Word, PowerPoint and spreadsheet files are exported through an installed
-LibreOffice and the macOS PDF renderer. Without it the document's own text is
+LibreOffice and the selected PDF renderer (CoreGraphics on macOS by default,
+built-in hayro on Windows/Linux). Without it the document's own text is
 still converted and this one warning appears; install LibreOffice (macOS:
 `brew install --cask libreoffice`) to get the pages, or pass `--no-screenshot`
 / `--no-ocr` (also for presets such as `rich`) to silence it. Only
@@ -269,11 +276,13 @@ still converted and this one warning appears; install LibreOffice (macOS:
 LibreOffice (soffice on PATH) …`, because nothing else would be written. See
 [Office page rendering](office-rendering.md).
 
-**OCR or PDF page images fail on Linux or Windows.** On-device OCR, PDF page
-rendering and HEIF/AVIF decoding use macOS system frameworks and return an
-explicit unsupported error elsewhere. A standalone PNG, JPEG, WebP, GIF, BMP,
-TIFF or SVG image can still be read by a vision model with `--llm`; PDF page
-images need macOS.
+**OCR or PDF page images fail on Linux or Windows.** PDF rendering uses the
+built-in hayro renderer; it does not need a separately installed PDF program.
+Local OCR uses Paddle and requires prepared model files. Check `markitai doctor`
+and [model preparation](ocr.md#the-portable-engine-windows-and-linux).
+Page-size limits, damaged/encrypted PDFs and unsupported model languages remain
+explicit errors. Office pages additionally need LibreOffice. HEIF/AVIF decoding
+remains macOS-only; convert those images to PNG/JPEG first on other platforms.
 
 **`Error: ocr.lang is not supported by the installed macOS Vision text recognizer`.**
 `ocr.lang` must be a language the macOS Vision recognizer supports, such as
@@ -288,9 +297,13 @@ file (except for `config set` and `config edit`, which create it). Run
 `markitai config path` to see which file is in use; `config validate FILE`
 checks a file. See [configuration](configuration.md).
 
-**A batch was interrupted.** On macOS and Linux, run the same command again with
-`--resume`; completed items are kept and unfinished items are retried. Resume
-is not available on Windows. After Ctrl-C or SIGTERM the closing summary lists
+**A batch was interrupted.** On macOS, Linux and Windows, run the same command
+again with `--resume`; completed items are kept and unfinished items are retried.
+Keep the same command and configuration. Resume compares saved feature switches,
+paths and directory discovery settings; it does not compare every model, prompt
+or output-profile setting. To reprocess after such a change, use a new output
+directory without `--resume`. On Unix, after Ctrl-C or SIGTERM the
+closing summary lists
 what was done and then the items that were never started, for example
 `Not processed 72 items: a.pdf, b.pdf and 70 more. Run the same command with --resume to continue.`
 (exit status 130 or 143; `-v` lists every name). The resumed run starts with
@@ -328,7 +341,7 @@ refuses a `~` it cannot expand (no `HOME`) instead of creating a directory with
 that name. To use a directory that really is called `~`, write `./~`.
 
 **There is no progress line.** A batch shows one status line, `[12/340] name  ETA
-0:41`, only on Unix when stderr is a terminal that understands cursor control,
+0:41`, when stderr is a supported terminal (including Windows consoles),
 and not with `-q`, `--json` or `TERM=dumb`. Piped or redirected output carries only the
 lines described above, unchanged. A single conversion that takes longer than two
 seconds shows a spinner line the same way.
@@ -345,12 +358,13 @@ extension. Rename files that have the wrong extension.
   `--config-json '{"log":{"dir":"./logs"}}'` (or `MARKITAI_LOG_DIR`) and choose
   the level with `--log-level DEBUG` (any case: `debug` works too); logs never
   go to stdout.
-- Everything Markitai stores lives under `MARKITAI_HOME` (default `~/.markitai`):
+- Default application state lives under `MARKITAI_HOME` (default `~/.markitai`):
   `config.json`, `.env`, `cache.db`, `fetch_cache.db`, `learned_spa_domains.db`,
   `browsers/` and `serve/jobs/` history; the three databases follow
   `cache.global_dir` when you change it. Deleting a trial `MARKITAI_HOME`
-  resets everything; batch state and reports stay in each output directory
-  under `.markitai/`.
+  resets that trial state; configured custom paths, output assets, batch state
+  and reports outside it remain. Reports and recovery files normally live in
+  each output directory under `.markitai/`.
 - Proxies come from `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` (and lowercase
   forms) and `NO_PROXY`, otherwise from the system's manual proxy setting. See
   [URL fetching](fetch.md#proxies).

@@ -101,26 +101,3 @@ Advanced package syntax, custom environments, macro-defined document
 structure, complete accent normalization, and TeX's whitespace/typesetting
 rules are not fully implemented. Alignment conversion does not promise the
 full semantics of every AMS environment.
-
-## Compatibility evidence
-
-The original project's three small markup fixtures and unit cases were read
-as behavioral references; no converter source was copied. Focused Rust tests
-cover heading order, overlines, code, field lists, Org metadata/link/code
-boundaries, TeX preambles/formatting/lists/comments, and malformed braces.
-Additional tests cover Unicode, CRLF, safe fences, references, images, math,
-tables, unsupported directives, and non-execution of external includes.
-
-Run the focused suite after wiring these formats into the dispatcher:
-
-```sh
-cargo test -p markitai-core formats::markup
-```
-
-These tests establish the described subset, not full Docutils, Emacs Org, or
-LaTeX compatibility. Re-run the shared differential harness after changes;
-source-preserving warnings are part of the conversion result.
-
-Syntax references: [RST specification](https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html),
-[Org rich-content markup](https://orgmode.org/manual/Markup-for-Rich-Contents.html),
-and [LaTeX documentation](https://www.latex-project.org/help/documentation/).

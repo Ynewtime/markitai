@@ -462,7 +462,7 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
     (
         ROOT,
         "ocr",
-        "识别扫描内容：macOS 上用本地 Vision，或用视觉模型读取页面图片（--no-ocr 关闭）",
+        "识别扫描内容：使用本地 OCR 或视觉模型（--no-ocr 关闭）",
     ),
     (
         ROOT,

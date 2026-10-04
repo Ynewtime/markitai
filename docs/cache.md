@@ -204,16 +204,3 @@ routing. These controls govern cached document/page content, while the learned
 store only records browser-routing experience. Its private native SQLite file
 does not import or rewrite the reference's learned-domain JSON file. See
 [fetching](fetch.md#learned-browser-routing) for identity, expiry and capacity.
-
-## Verification
-
-Storage tests use temporary directories and cover missing/disabled databases,
-key invalidation, bypass patterns, refresh/reopen, verbose statistics, clearing,
-LRU eviction, oversized replacement, transactional rollback, concurrent writers
-and malformed cache handling. Local HTTP mocks cover lookup before credential
-resolution, filename-independent reuse, zero new usage, bypass-refresh-reuse,
-content/prompt/model changes, disabled/pure/URL bypass, damaged and blocked cache
-paths, and both OpenAI and Anthropic truncation signals. CLI integration tests
-exercise independent child processes to verify persistence and report fields.
-No provider account or live network call is required. Executed checks and artifact
-size changes belong in the project's validation and operations records.

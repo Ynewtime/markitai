@@ -291,26 +291,8 @@ poisons the writer; callers must reopen and recover rather than append after an
 uncertain partial write. Temporary staging is cleaned up when publication fails.
 
 Directory synchronization is `fsync` on Unix and replaced on Windows by the
-post-rename file flushes above. Windows durability and lock behavior still need
-validation on Windows hosts; type checks and host tests do not substitute for
-those release gates or for scheduler interruption tests.
-
-## Validation and next stage
-
-The [validation record](validation/state-round8.md) records source gates,
-reference comparison and limits. Ownership is recorded in the
-[control center](CONTROL.md). The authored legacy-state differential harness uses
-an explicit ignored test-binary entrypoint; no production CLI test switch is
-added. It calls the actual reference state codec and journal loader under private-state guards and
-compares the native codec's values, types, ordering and task hashes. It exercises
-state data, not conversion, paid requests or a working `--resume` command.
-
-The [persistence decision](decisions/0004-run-persistence.md) separates storage,
-scheduling and history. The CLI now keeps recovered entries separate from
-observed invocation outcomes, applies the configured flush interval and drains
-active work after a first SIGINT/SIGTERM. A second signal exits immediately.
-Interrupted runs do not publish a report and return 130/143; their stdout JSON
-contains observed results with an interruption error. Real-process acceptance
-uses local HTTP/model gates and request counters. The storage-only round-eight
-evidence above does not establish these new integration claims; current gate
-results are recorded in the [round-nine validation](validation/recovery-round9.md).
+post-rename file flushes above. Native Windows ARM64/NTFS and Linux checks of
+claims and recovery are recorded in [ownership validation](validation/ownership-validation.md).
+Their exact source and filesystem scope matters: cross-target checks alone are
+not native execution, and successful recovery tests do not prove arbitrary
+power-loss durability or behavior on every filesystem.

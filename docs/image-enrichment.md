@@ -144,15 +144,3 @@ replaces the bounded sidecar. Legacy `assets.json` / `assets` / `asset` spelling
 are accepted. Malformed existing metadata is preserved and reported as an error,
 rather than reset as in the reference implementation. Metadata merging does not
 claim a transaction spanning every Markdown and asset file.
-
-## Validation scope
-
-The focused tests use generated PNG/TIFF and EPUB fixtures, isolated process
-state, and bounded loopback servers. They exercise actual public conversion,
-Markdown/asset publication, sidecar upserts, deduplication, prompt paths, shared
-request budgets, fallback usage, URL redirects and query identity, pure-mode
-precedence, and multipage payload order. Internal tests check scope unwinding,
-nonrecursive prompt substitution, typed structured answers and local/private
-resource rejection. The coordinator records the execution results after the
-integration gate; authored tests alone are not evidence of a passing build or
-real-provider accuracy.

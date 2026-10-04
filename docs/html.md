@@ -1,9 +1,7 @@
 # Native HTML extraction
 
 The Rust HTML reader parses a DOM with `scraper`, selects an article candidate,
-writes an allowlisted representation of it as the tree `htmd` renders to Markdown,
-and parses the page only once (see [single parse](#single-parse)); what its
-passes ask of an element is computed once (see [facts read once](#facts-read-once)).
+renders an allowlisted representation through `htmd`, and returns Markdown.
 It does not run JavaScript, fetch images, follow links, start a browser, or call
 the Python implementation. The same reader serves local HTML and fetched HTML;
 fetching itself belongs to the separate HTTP layer. Bytes become text by a BOM,
@@ -207,74 +205,6 @@ attribute still applies independently. This does not compute CSS variables,
 escaped property names, external stylesheets or the browser's complete cascade.
 The correction follows the r1 corpus audit; that historical artifact and its
 two recorded conversion errors remain unchanged.
-
-### Single parse
-
-The cleaned page is the markup of its allowlisted elements, attributes and text
-(`<name a="v">`, `</name>`, escaped text). Instead of writing that markup and
-parsing it again, the cleaner hands each part to `htmd`'s tree writer, which
-builds the tree html5ever would build from it and applies the parser's rules
-where markup written from a tree needs them: the `html`, `head` and `body`
-elements it implies, head elements written before the body (an email's
-`<title>`, `<meta>`, `<style>`), the line feed dropped after `<pre>`,
-`<listing>` or `<textarea>`, whitespace in table rows, ignored end tags of
-elements closed at once (`</param>`), and the content of raw-text elements read
-as text. Where the parser would rearrange the markup (a block closing an open
-paragraph, nested headings, list items or links, text moved out of a table) or
-read it as foreign content (MathML left as markup), the markup is written and
-parsed as before. Inline SVG, which needed the markup parsed in the R44
-measurement below, is now written as its text and is built directly. Either way the tree, and so the Markdown, is the
-one the cleaned markup parses into; tests compare the two trees for every
-conversion they make.
-
-On the HTML corpora of the R44 round (the 209 defuddle fixtures and 32
-captured pages, 681 + 840 + 10 further pages, 264 EML and one MSG file) every
-output is byte-identical to parsing the markup, and 54 of the conversions parse
-it (52 with inline SVG, 2 with a block inside a paragraph). The same change
-reads attributes by comparing names instead of interning them (scraper's
-`Element::attr` takes a global lock and allocates for every name outside
-html5ever's static set) and reads an element's class and id once when
-matching it against a list of names. Converting the 1,740 pages in process
-(release profile, macOS arm64, medians of 30 passes; two copies of one binary
-differed by 0.03%): 1,389 ms CPU before, 890 ms with the attribute lookup,
-802 ms with class and id read once, 739 ms with the single parse; the 265
-email files 167, 134, 134 and 132 ms. Whole-directory CLI runs (`-j 1`, `-o`,
-publication included): CPU −16% and wall −12% for the pages, CPU −4% and wall
-−4% for the email files (A/A spread under 0.5%). The tree writer and its
-fallback add about 37 KB of code (the CLI grows by 49,632 bytes).
-
-### Facts read once
-
-The choice of the content region, the reading of its furniture, footnote
-recovery and the cleaner all read the elements of a full page and asked them
-the same questions again (is it hidden, page chrome, a note, a note's
-context), some of them for every ancestor of an element. Each answer is now
-kept the first time it is computed, in a table with a cell for every node of
-the page's tree (ego_tree numbers a tree's nodes by their place in its
-vector), so an element is classified once however often it is asked about.
-Footnote recovery reads what it asks of every element (inside a literal
-container, in scope, in a note's context) in one walk in document order, each
-element after its ancestors; one walk over the region finds its links around
-blocks, reference candidates and inline notes, and one walk the saved page's
-base and canonical addresses. The page's metadata and the site readers' tests
-(Steam event data, Substack, X, Hacker News) take the elements they look for
-from one walk over the page's nodes, in the order and with the selection
-`Html::select` uses, instead of about a dozen selector walks. Class tests read
-an element's classes once and without interning each name (as scraper's
-`classes` does); a copy header longer than any language name is not read
-further; word counts read ASCII text a byte at a time; the page is searched for
-shadow-root templates with the regex engine's literal search; a table of
-contents' heading targets are read only for a list of in-page links; and a
-link whose text is neither a number nor a note sign is not collected as a
-footnote reference.
-
-On the same 2,049 inputs every output is byte-identical. Converting the 1,740
-pages in process (release profile, macOS arm64, medians of 30 passes; two
-copies of one binary differed by under 0.4%): 717 ms CPU before, 538 ms after
-(−25%); the 265 email files 122 and 103 ms (−16%). Whole-directory CLI runs
-(`-j 1`, `-o`, publication included): CPU −6.4% and wall −4.6% for the pages,
-CPU −3.0% and wall −3.2% for the email files (A/A spread 0.1–0.8%). The CLI
-shrinks by 33,008 bytes (`__text` −12,660 bytes).
 
 ## Content region and site readers
 
@@ -627,53 +557,3 @@ a space.
 Lists use one space after the marker (`* item`, `1. item`), rules are `---` and
 empty quoted lines are `>`, as the reference writes them. Nested list markers stay
 `*`, where the reference cycles `*`, `+`, `-` by depth.
-
-## Corpus diagnostic
-
-The [latest full corpus audit](validation/html-corpus.md) records r5: 43/209
-strict local-file API matches, 166 output differences and no conversion errors.
-Fourteen of 28 footnote fixtures match exactly. All r3 strict passes remain;
-the single lost r4 match preserves source whitespace that the reference local
-API drops. The audit also verifies repaired continuation ownership in the
-Dhammatalks fixture. Successful conversion does not establish full compatibility.
-
-The reference checkout contains 209 HTML files paired with 209 upstream expected
-Markdown files under `packages/markitai/tests/defuddle_fixtures`. Its quality test
-suite checks nonempty text, title presence, site-chrome phrases and word-count
-tolerance. Passing those heuristics does not establish exact output parity.
-
-Run the new diagnostic from the Rust repository after a coordinator release build:
-
-```sh
-python3 scripts/audit_html.py \
-  --reference /Users/example-user/work/markitai \
-  --library target/release/libmarkitai_ffi.dylib \
-  --output .local/audits/html-corpus-20260928-r5 \
-  --jobs 4
-```
-
-Use `.so` or `.dll` on other platforms. The reference virtual environment is used
-by default; `--reference-python` can select another installed environment.
-`--pattern 'elements--*'` and `--limit 5` make an explicitly labelled subset.
-The output directory must be empty and outside the reference checkout.
-
-Each fixture runs through both **local file public APIs** in separate subprocesses.
-The harness reuses `audit_formats.py` for worker isolation: explicit configuration,
-disabled LLM/OCR/screenshot/alt/description features, disabled cache, an isolated
-`MARKITAI_HOME`, and a credential-free child environment. Source files are hashed
-before and after each conversion. A frozen copy of the native library, worker
-responses/logs, exact diffs and a machine-readable report remain in the audit
-directory. The source checkout is never edited.
-
-A strict parity pass requires exact Markdown, metadata except the processing
-timestamp, asset names/content hashes, warnings and skip reason. Matching failures
-are not passes. `--require-parity` returns a failure exit code if any selected
-fixture differs or errors.
-
-Upstream expected-body equality, title equality, word ratios and chrome phrases
-are reported separately for both implementations. These are **diagnostics**:
-upstream expectations describe URL extraction, while this harness exercises local
-file conversion, including the reference's fallback behavior. They do not prove
-URL/site-resolver parity, do not count as migrated source tests, and do not turn a
-strict output mismatch into a pass. The report records selected/available fixture
-counts, source revisions and the exact library hash. It makes no performance claim.

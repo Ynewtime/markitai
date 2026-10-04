@@ -1,9 +1,5 @@
 //! An interrupted batch says how many items it never started and how to
 //! continue, in the terminal language.
-//!
-//! The interrupt itself is portable (`support/interrupt.rs`); the suite runs
-//! where batches keep durable state for `--resume`, which Windows does not
-//! have yet.
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader};

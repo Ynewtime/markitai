@@ -3,11 +3,12 @@
 `scripts/check.py` runs the development gate without a Unix-shell dependency.
 The workflow in `.github/workflows/native.yml` selects native host jobs. It runs
 only when started by hand (`gh workflow run native.yml -f platforms='["windows-2025"]'`
-or the Actions page), because the repository is private and hosted macOS minutes
-are billed at ten times Linux minutes and Windows at twice: the `platforms`
-input lists the runners (`windows-2025`, `windows-11-arm`, `ubuntu-24.04`,
+or the Actions page). The `platforms` input explicitly selects runners to
+control resource use: (`windows-2025`, `windows-11-arm`, `ubuntu-24.04`,
 `macos-15`, `macos-15-intel`; default Windows x86-64 and Linux), and
-`minimum_rust` adds the declared-minimum toolchain check. A matrix entry
+`minimum_rust` adds the declared-minimum toolchain check. Each requested
+platform runs independent `checks` and `packages` lanes in parallel, with
+`fail-fast: false` and a 120-minute timeout per lane. A matrix entry
 describes intended coverage; it is not evidence that the job has run or that its
 artifacts work. Only a completed job and its retained logs establish that host's
 result.
@@ -19,10 +20,14 @@ the [official runner-images repository](https://github.com/actions/runner-images
 describes the images and installed software. A moving runner label does not pin
 the installed SDK or codec version.
 
-The procedures below define package acceptance; they do not report a completed
-R49 release round. Development packages remain `1.3.0-dev` until Windows support
-and final release acceptance are complete. Use each host's retained evidence for
-its actual build, installation and test coverage.
+The workflow pins Rust 1.99.0, Python 3.13, Node.js 24 and Go 1.27.1. Its
+optional Rust 1.92 lane runs `cargo check --locked` for core, CLI and FFI on
+Ubuntu; it does not execute the complete test or binding suites on that compiler.
+
+Use [current status](STATUS.md) for completed runs and remaining acceptance.
+Results apply to their recorded commit and target. This round keeps
+`1.3.0-dev` for local verification from `main`; no Release, tag or publishing
+step is part of these drivers.
 
 ## Running package acceptance
 
@@ -103,6 +108,13 @@ Windows host are refused. The Windows output is
 probes to pass. Both paths require a new output directory, a clean committed
 checkout and unchanged source snapshots, and use isolated home/state/tmp.
 
+Windows CLI builds use a dedicated target directory with `+crt-static`; this
+flag is not applied to Python/Node/FFI dynamic libraries or host proc macros.
+The packagers inspect imports of all three CLI EXEs and reject dynamically
+linked MSVC runtime DLLs, then execute the extracted entries. This verifies the
+CLI runtime linkage, not the absence of all system dependencies or optional
+applications on a clean machine.
+
 The packagers record format and instruction set separately from executed
 probes. Windows PE32+ console EXEs must have the expected COFF Machine
 (`0x8664` for x64 or `0xaa64` for ARM64); DLLs, PE32, unknown machines or the wrong
@@ -111,77 +123,34 @@ not runtime compatibility. The native job's `evidence.json` or the standalone
 `record.json` retains the actual commands, probe results and limitations; no
 other host, full binding suite or release completion is implied.
 
-## Package license files and provenance
+## Package inventory and attribution
 
-CLI archives and C-ABI artifacts carry the repository's LICENSE and NOTICE.
-CLI archives also carry the embedded Markdown renderer/sanitizer licenses and
-provenance under `vendor/web/`.
-Package attribution includes the five original notice/provenance files under
-`licenses/hayro/` and the four under `licenses/paddleocr/`, with source bytes
-verified in the archive and extracted installation. The PaddleOCR/RapidOCR
-license texts are checked against their recorded provenance. These notices do
-not include ONNX model files; model installation and offline use are described
-in [local OCR](ocr.md).
+Unix single-binary tar archives contain one `markitai` executable and relative
+`mkai`/`markitai-mcp` symlinks. Legacy ZIPs contain separate CLI entries and have
+a different total size. Windows ZIPs contain three regular EXEs; the MCP name
+selects stdio mode directly. Packagers reject missing, extra, duplicate or
+redirected entries and run the installed aliases. Report complete archive size
+separately from a single executable.
 
-The legacy ZIP retains both `markitai` and `mkai` executable files; report its
-size separately from one runnable executable. On Unix it also carries a relative
-`markitai-mcp` symlink. A separate `-single-binary.tar.gz` contains exactly one
-regular executable, `markitai`, with relative `mkai` and `markitai-mcp` symlinks.
-It includes the same project, web, pricing, upstream and Codex catalog attribution
-as the ZIP. Its complete member inventory, executable hash, symlink targets and
-license bytes are checked during private extraction; the extracted `mkai --version`
-and `markitai-mcp --help` are executed. The MCP alias must select the subcommand,
-not the main CLI help. Windows ZIPs contain three regular, directly executable
-files: `markitai.exe`, `mkai.exe` and `markitai-mcp.exe`. `mkai.exe` is checked
-against its separately built executable; its bytes need not equal `markitai.exe`.
-`markitai-mcp.exe` is a byte-for-byte copy of the main CLI whose executable name
-selects MCP directly, without a `.cmd` forwarder. Exact inventory, executable
-and notice bytes are checked before extraction, including rejection of missing,
-extra, duplicate or redirected entries; the installed aliases must also run.
-Report the Windows ZIP's complete size, including all three executable entries,
-separately from the Unix single-binary tar. A bare binary or a measurement-only
-tar without these notices is not the complete distribution archive described
-here.
+CLI, FFI and language packages carry project and upstream attribution,
+including `licenses/hayro/`, `licenses/paddleocr/`, pricing and Codex catalog
+notices. CLI archives also include `vendor/web/` attribution and the explicit
+public Markdown whitelist in `scripts/cli_documentation.py`. Models and browser
+runtimes are not included. The drivers verify source, archive and installed
+notice bytes rather than trusting a filename alone.
 
-Node staging explicitly includes the package attribution, including LICENSE,
-NOTICE and the hayro/PaddleOCR notices, in its `files` list, then checks their
-bytes inside the actual `.tgz` and after installation. Installed native
-Node bytes must match the staged library.
+Python packaging preserves maturin's original wheel and creates a separate
+supplement with notices under `.dist-info/licenses`, rebuilding RECORD hashes
+without replacing Python/native bytes or METADATA. Node staging adds attribution
+to its package file list and verifies the actual archive and installed addon.
+A raw local `maturin build` or `npm pack` does not perform these supplements.
 
-The Python project does not yet declare all license files in its native package
-metadata. The script therefore keeps maturin's original wheel, creates a separate
-wheel with the same package attribution in `.dist-info/licenses`, including
-LICENSE, NOTICE and the hayro/PaddleOCR notices, and rebuilds its RECORD
-hashes and sizes. Existing Python/native bytes and METADATA are preserved. The
-evidence labels this supplement and records both wheel hashes; the original is
-never overwritten. The installed wheel's license files and native extension are
-checked against those exact bytes. This is an explicit packaging step, not a
-claim that the current pyproject has complete PEP 639 declarations. A later
-packaging change should move this declaration into the normal build metadata.
+Static Go is a separate native-host procedure in `scripts/package_go_static.py`
+for macOS ARM64 and Linux x86-64 glibc; see [bindings](bindings.md#static-go-package).
+Its source/binary manifest, notice collection, race tests and relocated consumer
+checks are distinct from ordinary package acceptance. There is no Windows
+static-Go delivery in this workflow.
 
-`dependency-licenses.json` records Cargo's license metadata. It is an inventory,
-not a completed redistribution review. The script does not sign or publish
-packages, prove compatibility on another host, test every OS version, or claim
-universal binaries. Helper unit tests use tiny authored archives and temporary
-files; passing them does not substitute for actual installed-package acceptance.
-
-The first actual macOS arm64 execution and the separate Rosetta limitation are
-recorded in [round twenty](validation/media-cli-round20.md); the x86-64 macOS
-release build, its full test run under Rosetta 2 and a universal-binary size
-check are in [macOS x86-64 under Rosetta](validation/macos-x86_64-rosetta.md).
-No remote matrix run is implied by those local results.
-
-The compiled Codex capability catalog is Apache-2.0 data. `licenses/codex/`
-contains the complete original license/copyright, modification description,
-selected catalog and exact provenance. `scripts/codex_attribution.py` requires
-the packaged catalog to equal the compiled catalog, and rejects changed hashes,
-redirected source paths or missing files. The same verified bytes flow into CLI
-ZIP/tar, C-ABI delivery, the wheel supplement, Node package and Go static archive.
-The Go packager records its separate `codex_attribution` inventory alongside the
-existing pricing and dependency notices. These helpers do not download runtime
-executables, establish subscription entitlement or complete a legal review.
-
-Static Go archives also retain the same nine hayro/PaddleOCR notice files and
-record their identities in `licenses.json`. The static delivery script remains
-limited to its native macOS ARM64 and Linux x86-64 glibc targets; this attribution
-step does not add a Windows Go/cgo release or installed-package result.
+`dependency-licenses.json`/`licenses.json` record mechanical attribution and
+any unresolved texts; they are not a legal review. None of these drivers signs,
+publishes, proves another architecture works, or tests every OS version.

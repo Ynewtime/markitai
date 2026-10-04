@@ -11,7 +11,9 @@ key, using the provider's separately installed official command-line runtime:
 
 `markitai auth` alone reports all three. Other runtime versions fail explicitly
 before a model request. Login is never started during a conversion, and these
-routes are available on macOS and Linux only. Ordinary document conversion
+adapters support Unix and Windows process management. A compatible official
+runtime and its own platform prerequisites are still required; fixture coverage
+does not establish authenticated inference. Ordinary document conversion
 needs none of these runtimes. This page separates the native adapter contract
 from verification with a real subscription; see [Evidence](#evidence-boundaries-and-next-provider).
 
@@ -160,9 +162,10 @@ embedding the bindings cannot run this cleanup. The core exposes
 `terminate_child_process_groups` (async-signal-safe on Unix) for Rust hosts.
 
 On Windows, Ctrl-C and Ctrl-Break are the interrupt: they kill the runtime trees
-and exit with 130. A batch with recovery state drains on the first one and does
-the same on a second; the Windows batch keeps no recovery state yet, so it exits
-at the first. Closing the console window, logging off or shutting down kills the
+and exit with 130 outside a controlled batch. A batch with recovery state stops
+admission and drains active work on the first interrupt; a second kills its trees
+and exits immediately. Windows batches use the same native recovery protocol
+as Unix. Closing the console window, logging off or shutting down kills the
 trees and exits with 143 at once, because Windows allows only a few seconds; the
 batch state already written stays valid. `markitai serve` and MCP keep their
 Ctrl-C drain; Ctrl-Break and the closing events clean up. A Ctrl-C that the
@@ -194,31 +197,14 @@ unexpected tool or callback remain fatal.
 
 ## Evidence boundaries and next provider
 
-Optimized-CLI Copilot process fixtures passed in
-[R31](validation/subscription-recovery-round31.md). Round 32 additionally exercised
-both exact official macOS arm64 runtimes under OS-denied network, real HOME files
-and keychain access. Version, Copilot connection/status and Claude initialization
-were checked; the native debug CLI also successfully reports both as signed out.
-That official check exposed and corrected Copilot's connect field names and
-separate cache-home routing. It does not establish a real login or authenticated
-inference. Authored fixtures cover actual native conversion and failure accounting
-without sending provider requests. The adapter and CLI tests run Rust stand-ins
-for all three runtimes (`subscription/fake_runtime.rs`): the test binary plays
-the runtime whose home holds a scenario file, so they need no interpreter and
-run on Windows; the Windows tests also start them through `.cmd` shims. The
-Windows paths were only type-checked on macOS at that Round 32 checkpoint.
-Subsequent native Windows ARM64 workspace tests and Windows x64 hosted CI have
-run; the latter completed for source `846ecdc`, as recorded in the
-[2026-10-04 checkpoint](validation/development-checkpoint-20261004.md). That
-establishes native execution of the fixture-based suite, not login or real
-subscription inference. Current source `83984c9` requires its own hosted results
-and final package acceptance; see [STATUS](STATUS.md) and [CONTROL](CONTROL.md).
-Round 32 optimized CLI and installed dynamic/static bindings passed at `dc0343b`;
-see [delivery evidence](validation/integration-round32.md). Completed-item resume
-preserves terminal diagnostics independently of the old minimal success aggregate.
+Native fixture tests exercise all three runtime protocols, cleanup and failure
+accounting on supported platforms, including Windows command shims. Separate
+official-runtime checks establish only their recorded version, initialization
+or signed-out behavior. They do not establish a real login, model entitlement,
+authenticated inference or billing. Current platform evidence is recorded in
+[STATUS](STATUS.md).
 
-The restricted `chatgpt/gpt-5.5` adapter targets official Codex 0.159.0. Its
-[contract and evidence boundaries](subscription-chatgpt.md) distinguish actual
-official offline request inspection from native fixture validation and real
-subscription inference. It imports no private OAuth protocol or invented dollar
-tariff. Models outside this validated capability allowlist fail explicitly.
+The restricted `chatgpt/gpt-5.5` adapter targets official Codex 0.159.0; its
+[contract](subscription-chatgpt.md) describes its model allowlist and aggregate
+usage limits. No adapter imports a private OAuth protocol or invents dollar
+prices for a subscription.

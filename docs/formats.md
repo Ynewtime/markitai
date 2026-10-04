@@ -18,7 +18,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | EML | mail-parser | Decoded subject, body and MIME attachments; attachment bytes returned separately |
 | MSG | cfb + native properties | Outlook headers, Unicode/ANSI body, HTML fallback and bounded by-value attachments |
 | RST, Org, TeX | native markup readers | Structured sections, lists, code, math, links and tables; unsupported constructs retained with warnings |
-| JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + macOS Vision | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
+| JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + local OCR | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
 | DOC, DOCX, DOCM; templates DOT, DOTX, DOTM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets; a manual line break is a hard break (`\`), two end the paragraph, and text is escaped only where Markdown would read it as syntax ([below](#document-line-breaks-and-escaping)) |
 | PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, behind a numbered slide marker per slide; embedded charts and worksheets read as their data tables |
 | PPTX, PPTM, PPSX, PPSM; templates POTX, POTM | bounded ZIP + PresentationML reader | Ordered slide markers, hidden-slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data, SmartArt text as lists, speaker notes and review comments |
@@ -26,7 +26,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | ODT, ODS, ODP, RTF; templates OTT, OTS, OTP | anydoc document model | Native structured documents through the same Markdown renderer (line breaks and escaping as for Word); ODP slides carry numbered slide markers |
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
 | EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble; ruby as base text then reading (`漢字(kanji)`), definition terms as bold paragraphs, and footnote marks the author wrote as Markdown (`[^5]`, `[^5]: …`) kept unescaped; `<br>` and text escaping as for Word (`[!tip]` stays as written) |
-| PDF | pdf-inspector + lopdf; optional macOS CoreGraphics/Vision | Per-page text/layout, link targets, partial recovery and embedded images; explicit local-file page OCR and screenshots through the shared media pipeline |
+| PDF | pdf-inspector + lopdf; CoreGraphics/hayro page rendering and local OCR | Per-page text/layout, link targets, partial recovery and embedded images; explicit local-file page OCR and screenshots through the shared media pipeline |
 
 ### Text encodings
 
@@ -724,15 +724,18 @@ Numbers table decoding accepts modern single-file ZIP and directory packages wit
 Office presentations and word-processing files can opt into complete page capture
 and local OCR supplements through [isolated LibreOffice export](office-rendering.md);
 this optional installed program is separate from the CLI binary. Native text
-extraction does not launch it. Spreadsheet screenshots are explicitly unsupported.
+extraction does not launch it. XLS, XLSX, XLSM, XLSB and ODS screenshots use
+complete-sheet export, including hidden and empty sheets; this is not printed-page
+pagination. Numbers screenshots and OCR remain unsupported. See the Office guide
+for import fidelity, font handling and resource limits.
 macOS HEIF/AVIF primary images use native
 ImageIO decoding, with the scoped limits in [images](images.md); other platforms
 still return an explicit unsupported error. Local and static/automatic URL PDFs support explicit
 page rendering, screenshots and OCR through the [PDF media pipeline](pdf-ocr.md),
 including its documented accuracy gap. URL media preserves original request
 identity while processing downloaded bytes without a second download.
-Local image OCR is
-available on macOS through [Vision](ocr.md). Standalone SVG
+Local image OCR uses [Vision on macOS or the portable engine on Windows/Linux](ocr.md);
+the portable engine requires separately installed model weights. Standalone SVG
 rasterization is implemented with bounded native rendering; referenced embedded
 images can use [caption/description analysis](image-enrichment.md).
 Multi-page TIFF preserves its original download and every page preview, applying
@@ -831,65 +834,3 @@ layout and PDF image placement require further compatibility work.
 - Format adapters return embedded bytes rather than downloading remote images.
 - Text readers retain original Markdown frontmatter for the output layer to
   merge according to its public contract.
-
-## Reference audit and acceptance corpus
-
-The [frozen r9 format audit](validation/formats-recovery-r9.md) of `0022e09`
-records 17 strict passes out of 24 fixtures, with four output drifts and three
-expected image-only rejections. All 24 records and input hashes are unchanged
-from r8. Metadata matches for all 21 successful conversions and assets for
-19/21; PDF and PPTX assets still differ. Complete format parity remains open.
-
-The reference implementation was inspected read-only at
-`/Users/example-user/work/markitai`. At the audit it contained 209 Python source modules
-and 278 test modules. Converter, web extraction, LLM and provider code accounted
-for approximately 8.8k, 15k, 9.8k and 5.5k lines respectively. These figures
-describe migration scope and are not performance measurements.
-
-The existing project supplies these useful compatibility inputs:
-
-| Reference path (relative to `packages/markitai`) | Purpose |
-| --- | --- |
-| `tests/fixtures/` | Office/PDF/email/markup/structured text and legacy format examples |
-| `benchmarks/docs_snapshots/expected/` | Four normalized end-to-end Markdown snapshots: PDF, DOCX, PPTX, XLSX |
-| `tests/defuddle_fixtures/` | 209 paired HTML and expected Markdown cases |
-| `tests/fixtures/web/*.expected.json` | Semantic thread and required/forbidden text contracts |
-| `benchmarks/local_fixtures/` | Two additional website fixtures |
-| `tests/unit/test_structured_text_parity.py` | Encoding, CSV quoting/ragged rows and notebook failure cases |
-
-The recorded reference web benchmark dated 2026-09-22 had a mean score of 96.2
-for 209 cases. Its guardrail floor of 86.58 is a tolerated regression boundary,
-not the reference quality. The separate two-case corpus scored 99.47. These are
-reference records only; this Rust engine has not passed those full gates.
-
-The reference repository's `scripts/benchmarks/` also contains a 49-case cold/warm
-performance harness and a 40-case quality audit of Markdown, metadata, image
-hashes, dimensions, frontmatter and output assets. Use a frozen source identity
-and isolated output directories. Run timing sequentially without concurrent
-builds. Record failures and unsupported cases in the denominator. Compare speed
-only after a case's content and asset checks pass.
-
-## Dependency choices
-
-The native Office parser dependency is [anydoc](https://github.com/firecrawl/anydoc),
-whose Rust API exposes both Markdown and a structured document with embedded
-assets. It already backed legacy DOC/PPT in the reference implementation. OOXML
-presentations now use their own bounded package reader to retain slide identity
-and the reference text-frame contract; other Office formats keep the shared
-renderer. Its
-native PDF reader cannot do OCR. This project adds its own Office renderer to
-avoid discarding embedded images and to control Markitai's output contract. The
-PDF adapter calls pdf-inspector's per-page API directly so that one OCR-required
-page does not discard readable pages. A separate lopdf pass retrieves embedded
-image streams and reports visibility signals without an external rendering engine.
-
-HTML uses [scraper](https://docs.rs/scraper/) for an HTML5 DOM and selectors and
-[htmd](https://docs.rs/htmd/) for Markdown serialization after explicit cleaning.
-Email uses [mail-parser](https://docs.rs/mail-parser/) to handle MIME and transfer
-encodings. Cargo.lock fixes the resolved versions. Changes to dependency versions
-must run the corresponding output contracts.
-
-The reference project previously evaluated Calamine and a PDF layout alternative
-without adopting them. Their availability alone is insufficient justification
-for replacing the committed behavior; compare cell formatting, layout and assets
-before selecting a different backend.

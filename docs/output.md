@@ -69,9 +69,11 @@ named `news.ycombinator.com/item?id=1` and `?id=2` both `news_ycombinator_com_it
 
 ## Files and assets
 
-Documents, assets, image sidecars and reports are created with the process
-umask (commonly 0644), like ordinary files and the reference writer. Ownership
-records, receipts, recovery state and locks keep their private modes.
+On Unix, documents, assets, image sidecars and reports are created with the
+process umask (commonly 0644), like ordinary files and the reference writer.
+Ownership records, receipts, recovery state and locks keep their private modes.
+Windows uses inherited ACLs rather than Unix mode bits; private coordination
+files additionally undergo the [owner and identity checks](output-ownership.md#platform-primitives).
 
 Output names preserve the source extension: `report.pdf.md` and
 `report.pdf.llm.md`. Both share a conflict namespace; renamed results begin with
@@ -115,10 +117,3 @@ every write observes the path afresh. Malformed input
 frontmatter remains content. [Round-eleven measurements](validation/html-media-round11.md)
 record a limited asset-heavy CLI comparison; binding overhead and peak memory
 remain unmeasured by that experiment.
-
-## Verification
-
-Unit checks cover pure byte preservation, existing YAML, structured-data titles,
-local metadata exclusion, nested fences, repeated footers and OKF timestamps.
-The format audit additionally compares complete API Markdown and metadata, allowing
-only the generated clock field to vary. Historical baselines remain unchanged.

@@ -58,6 +58,12 @@ the settings API's error status. The response detail is bounded to 300
 characters. Azure probes use `AZURE_API_VERSION` or `2024-10-21` with the existing
 native Azure deployment protocol.
 
+This is the core API contract, not permission for an HTTP client to choose a
+server environment variable. The service rejects client-supplied `env:` values
+and binds saved/environment credentials to their configured provider and full
+endpoint. Custom endpoints use the caller's literal key, without borrowing an
+ambient or unrelated saved key; see [settings credential rules](service-settings.md#credentials-and-partial-updates).
+
 The core reads process environment variables and resolves explicit `env:NAME`
 references. It deliberately does not load `.env`, user configuration or auth
 files during these network calls. Environment variables already supplied to the

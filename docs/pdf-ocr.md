@@ -3,8 +3,11 @@
 The PDF media layer combines typed native page results with a native renderer
 and local OCR. It operates in memory; the output layer owns safe file publication.
 The Rust core does not start Python, Node, PyMuPDF or a rendering command. The
-initial renderer and OCR backends use macOS system frameworks; other platforms
-return an explicit error when the required backend is unavailable.
+renderer uses CoreGraphics on macOS and hayro on Windows/Linux. Local OCR uses
+Vision on macOS by default, or the portable engine on Windows/Linux with its
+separately installed model weights. See [renderer selection](pdf-rendering.md)
+and [OCR prerequisites](ocr.md); the portable engine downloads missing models when needed. A failed required
+model download/load or an unavailable selected backend produces an explicit error.
 
 The [round-seventeen validation](validation/pdf-native-round17.md) records
 coordinated tests and real CLI/binding acceptance. Routing checks pass; exact
@@ -113,21 +116,20 @@ instead of silently renaming an already-referenced image.
 
 ## Recognition language
 
-Page, embedded-picture, TIFF-page and Office-page recognition share the image
-recognizer's language policy. Under the default `ocr.lang` (`en`) each page or
-picture is read as English first and, only when that reading failed, as Chinese,
-Korean and Japanese ([details](ocr.md#the-default-language)), so a scanned
-Chinese, Japanese or Korean page comes out as text without configuration, and a
-page that reads as sound English costs nothing more. Each page is judged on its
-own: a document that mixes languages reads every page in its own. A page
-without text costs two more readings, which are cheap when no text is found.
-A page that no reading can read adds a warning, `Local OCR could not read PDF
-page N: ...` (`Office page N`, `TIFF page N` or `this image` for the other
-inputs), and keeps only the lines its English reading is sure of; an embedded
-picture never warns, as a picture without text is ordinary. A written language, `en-US` included, reads
-that language alone, exactly as before.
+Page, embedded-picture, TIFF-page and Office-page recognition share the selected
+[image OCR engine's language policy](ocr.md#language-selection). With Vision,
+the default `ocr.lang=en` tries English first, then supported Chinese, Korean
+and Japanese readings when needed. With the portable engine, the default uses
+the multilingual model and may retry uncertain lines with the Korean model.
+These are different policies; neither guarantees that every script in a mixed
+page will be recognized. Select an explicit supported language when needed.
 
-Measured with the binaries of [local OCR](ocr.md#the-default-language) (macOS
+A successful recognition that leaves unread text can warn while retaining its
+confident lines. A blank page retains its page marker without invented text;
+embedded pictures without text do not need a warning. Recognition errors and
+language availability follow the page and picture failure rules above.
+
+Historical Vision measurement (not a portable-engine benchmark), with the binaries of [local OCR](ocr.md#the-default-language) (macOS
 27.0.1, whole `--ocr --no-llm` conversions, before and after alternating, median
 of three; scanned pages are the R45, held-out Chinese, Japanese and Korean
 images at 150 DPI, one per page): six English pages 483 ms before and 486 ms

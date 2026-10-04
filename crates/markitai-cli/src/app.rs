@@ -191,7 +191,7 @@ struct Cli {
     /// Disable image descriptions.
     no_desc: bool,
     #[arg(long, overrides_with = "no_ocr", help_heading = ENHANCE_HELP)]
-    /// Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr disables).
+    /// Read scanned content with local OCR or a vision model (--no-ocr disables).
     ocr: bool,
     #[arg(long, overrides_with = "ocr", hide = true)]
     /// Disable OCR.

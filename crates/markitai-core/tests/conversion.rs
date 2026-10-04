@@ -1154,8 +1154,6 @@ fn numbers_capture_keeps_its_own_error_without_a_renderer() {
     )
     .unwrap_err()
     .to_string();
-    // Without the native page renderer (Linux, Windows) capture fails earlier,
-    // naming the renderer; either way it fails without the LibreOffice hint.
     assert!(
         (error.contains("Numbers") || error.contains("native PDF page renderer"))
             && !error.contains("brew install"),

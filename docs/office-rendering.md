@@ -44,6 +44,26 @@ are disabled. Word exports all pages with blank-page omission disabled; it has n
 reliable source paragraph-to-page mapping. These export options are described by
 [LibreOffice's PDF parameter documentation](https://help.libreoffice.org/latest/en-US/text/shared/guide/pdf_params.html).
 
+## Use and recovery
+
+```sh
+markitai report.docx --screenshot --no-llm -o out/
+markitai scan.docx --ocr --no-llm -o out/
+markitai workbook.xlsx --screenshot-only --no-llm -o out/
+```
+
+These examples keep conversion local. Install LibreOffice separately and run
+`markitai doctor` if page capture is skipped. `doctor --fix` does not install
+LibreOffice. Missing fonts or different LibreOffice versions can change the
+layout even when capture succeeds; install the document's fonts and inspect
+its page images. For portable OCR model problems, follow [OCR model repair](ocr.md#models).
+
+If export times out or exceeds a page/pixel/output budget, it fails rather than
+returning an incomplete set of screenshots. Retry without `--screenshot-only`
+and with `--no-screenshot --no-ocr` when native text alone is sufficient, or split
+the source document before requesting full capture again. Preserve the original
+file; the exporter's temporary normalization never edits it.
+
 ## Complete workbook sheets
 
 Workbook capture deliberately uses `calc_pdf_Export` with `SinglePageSheets=true`.
@@ -127,7 +147,11 @@ kills and waits for the child. Launcher descendants are included: Unix uses a
 dedicated process group; Windows starts LibreOffice suspended in a Job Object
 that ends its whole tree, also when Markitai itself ends, and is emptied before
 the private directory is removed. The adapter has run in an actual Windows
-ARM64 guest, beyond cross-target compilation. Output growth is polled every 25 ms. Inputs are
+ARM64 guest, beyond cross-target compilation. Output growth is polled every 25 ms.
+A temporary child file that disappears between directory enumeration and its
+metadata read is tolerated only while the export is running; it still counts
+toward the entry budget. Other I/O errors, file types, symlinks and byte limits
+remain strict, as does the final scan after the process exits. Inputs are
 limited to 100 MiB; normalized or repaired Office copies and exported PDFs share
 a 100 MiB output budget.
 Presentations, workbooks and resulting PDFs have a 1,000-slide/sheet/page limit.
@@ -146,86 +170,13 @@ profiles are not an OS memory/network sandbox; LibreOffice layout and native PDF
 parsing can consume CPU/memory internally between checks. External document
 resources and fonts remain subject to installed LibreOffice behavior.
 
-## Fixtures and validation
+## Accuracy and platform scope
 
-Recent installed-CLI checks include macOS ARM64 and Linux x86-64 Office/PDF
-outputs at `d6e0db6`, Windows ARM64 Word/presentation outputs at `e1586fb`, and
-Windows ARM64 workbook repair/control outputs at `d6e0db6`. Source-bound logs,
-original images and independent readbacks are retained; these selected fixtures
-do not imply full cross-platform coverage of legacy Office formats.
-
-The Linux `d6e0db6` visual review found a workbook color issue with LibreOffice
-24.2.7.2: text with no declared font color became white over a blue cell and
-disappeared where it extended onto the white canvas. The isolated `r004`
-compatibility candidate based on that source passed actual-output checks on
-macOS ARM64 (three CLI calls) and Linux x86-64 (nine CLI calls). The Linux checks
-recover the complete black text while retaining the same renderer's explicit
-RGB-white, RGB-red, theme and automatic-color outputs; the Mac explicit-red
-control is also unchanged. These are scoped candidate results, not acceptance
-of a rebuilt Windows package or a final stable release. See [CONTROL](CONTROL.md)
-for current source/artifact identities; historical rounds below retain their
-original scope.
-
-Original fixture generators and hashes are under `office_render/fixtures`:
-three presentation slides (visible, hidden, blank) with independent corner
-colors; and Word pages with first/third-page text and a deliberately blank middle
-page. SDK pixel checks establish full-frame rendering and slide order, separately
-from text checks. Fault tests cover missing, malformed, short, unexpected and
-symlinked PDFs, input preservation, timeout descendant cleanup and byte limits.
-Optional installed-LibreOffice tests are explicitly ignored in the default gate;
-they must be run separately and cannot count as success when the backend is absent.
-
-Workbook fixtures are independently authored ZIP/XML packages:
-`whole-workbook.xlsx` and `whole-workbook.ods`. Their first sheet has a narrow
-print area, manual pagination, a wide canvas and a far bottom-right marker; the
-following sheets are hidden, truly empty and visible, in that order. The XLS
-fixture is derived from the authored XLSX using LibreOffice's `MS Excel 97`
-export filter. The generator and `workbooks-provenance.json` retain source hashes
-and provenance; they contain no user document data.
-
-The initial isolated export probe confirms why ordinary printing is insufficient:
-both XLSX and ODS export only two ordinary print pages, omitting the hidden sheet
-and the far marker. Complete-sheet export produces four correctly ordered pages;
-the XLS→ODS import path retains the same four sheets. These are direct exporter
-observations under `.local/workbook-round24`. The subsequent source-frozen
-R24 gate also passes the real Rust/core and public API workbook cases.
-New optional Rust tests cover full canvas colors and dimensions, empty-page
-retention, unchanged native tables, complete page references, model-budget
-rejection before any request, and pure/visual-only routing. Their final execution
-status is recorded by the coordinator in [CONTROL](CONTROL.md).
-
-Round 22's r4 validation passed the full gate and explicitly ran all six installed
-backend tests: two core tests and four public API tests on macOS. These verify
-hidden/blank slide order and full-frame pixels, the blank middle Word page,
-all-page publication with native text retained, rejection before model requests
-when the page budget is exceeded, pure/screenshot-only routing, and local OCR
-supplements without replacing native text.
-
-Initial direct backend probe used LibreOfficeDev `26.8.0.0.alpha0`, build
-`2c87e51eeaa2b413ff4ae097b2705eea1995d8e5`. Both original fixtures produced PDFs;
-that initial probe alone did not establish renderer/API acceptance. Its raw
-commands, output hashes and logs remain in
-`.local/media-llm-round22/office-probe/record.json`, separate from the later passing
-tests above. Round 22 release CLI and installed-binding validation subsequently
-passed, as recorded below. The six tests do not establish legacy binary input import fidelity,
-cross-platform rendering, performance or Microsoft Office layout parity.
-
-The initial Word fixture put two adjacent page breaks in one paragraph. This
-LibreOffice version imported it as two pages even with blank-page omission
-disabled. Separate paragraphs produce the intended three-page document; an
-independent export checked first/third-page text and an entirely white middle
-page. The authored generator and fixture now use those explicit paragraph
-boundaries. The production PDF filter and three-page assertions were retained;
-the original failed fixture and six comparative exports remain in the round's
-investigation evidence.
-
-The retained round-22 release CLI also passes full-page PPTX, legacy PPT and Word
-acceptance, including hidden/blank pages and full-frame pixel checks. Refreshed
-installed Node/Python/Go packages pass their binding tests against this core. See
-[round-22 evidence](validation/media-llm-round22.md); these authored samples do not
-establish Microsoft Office layout equivalence or other-host support.
-
-`office_diagnostic()` uses the same private process setup and cleanup, acquiring
-an export slot within a ten-second deadline and running only `--version`. It
-reports discoverable-and-startable status separately from PDF platform support
-and document fidelity. Child stderr is discarded and failure messages are fixed.
+Selected Word, presentation and workbook workflows have been exercised on
+macOS ARM64, Windows ARM64 and Linux x86-64. That does not establish every
+legacy import, matching fonts or pixel-identical output across platforms.
+LibreOffice versions and installed fonts affect layout; use a digital source's
+native text for searchable content and inspect page images when layout matters.
+The default-font compatibility policy and active-output scan correction are part
+of the current development source. No stable release is implied; current source
+and artifact evidence belongs in [STATUS](STATUS.md).

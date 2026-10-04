@@ -5,36 +5,59 @@ request and response contract. Neither an installed CLI nor a Python worker is
 used for conversion. Feature availability is therefore the same as the core;
 an installed binding does not add missing format, OCR, or browser capabilities.
 
-Native media backends (local OCR, PDF page rendering, HEIF/AVIF) are
-macOS-only, exactly as in the CLI; see [quick start](quickstart.md#platform-support).
+Local OCR uses Vision on macOS and Paddle on Windows/Linux; Paddle models
+are prepared separately. PDF page rendering uses CoreGraphics on macOS by
+default and built-in hayro on Windows/Linux. HEIF/AVIF decoding remains
+macOS-only. Optional browser and Office backends still need their external
+applications; see [quick start](quickstart.md#platform-support).
 
 ## Installation
 
-No packages are published to PyPI, npm or a Go module proxy yet. Build them
-from a checkout with Rust 1.92 or later; each build compiles the Rust core
-once in the `release` profile and takes several minutes.
+This development version is distributed through platform artifacts or a local
+source build, not a universal PyPI/npm/Go install. Build bindings
+from a checkout with Rust 1.92 or later (development uses 1.99.0); each build
+compiles the Rust core once in the `release` profile and takes several minutes.
 
 | Language | Minimum | Build | Result |
 |---|---|---|---|
-| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release` in `bindings/python` | `markitai-1.3.0.dev0-cp310-abi3-<platform>.whl` (about 9.8 MB on macOS arm64) |
-| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-1.3.0-dev.0.tgz` (about 9.6 MB on macOS arm64) |
-| Go | 1.23 with cgo and a C linker | `cargo build --release -p markitai-ffi` | `target/release/libmarkitai_ffi.{dylib,so}` |
+| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release --locked` in `bindings/python` | `markitai-1.3.0.dev0-cp310-abi3-<platform>.whl` |
+| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-1.3.0-dev.0.tgz` |
+| Go (macOS/Linux) | 1.23 with cgo and a C linker | `cargo build --release --locked -p markitai-ffi` | `target/release/libmarkitai_ffi.{dylib,so}` |
+
+Building needs a native C/C++ toolchain/linker in addition to Rust; see
+[source prerequisites](quickstart.md#build-from-source). The FFI also builds a
+Windows `markitai_ffi.dll`, but that does not establish a usable Windows Go/cgo
+package.
 
 A built wheel or npm archive contains the native library for the build
-machine's operating system and architecture only. Using it needs no Rust
-toolchain. Release automation for other platforms is unfinished.
+machine's operating system and architecture only. Match the Python or Node
+process architecture as well as the OS (for example, an x64 Python process on
+ARM64 Windows needs an x64 extension). Using it needs no Rust
+toolchain. Native package drivers build and exercise platform-specific artifacts;
+see [CI](ci.md) for scope. Packages from different targets may have the same
+internal npm name, so keep their external archive names or directories distinct.
 
 ### Python
 
 ```sh
 python3 -m venv .local/py                  # Python 3.10 or later; Apple's /usr/bin/python3 may be older
 .local/py/bin/python -m pip install 'maturin>=1.9,<2'
-(cd bindings/python && ../../.local/py/bin/maturin build --release --out ../../dist/python)
-.local/py/bin/python -m pip install dist/python/markitai-*.whl
+(cd bindings/python && ../../.local/py/bin/maturin build --release --locked --out ../../dist/python)
+.local/py/bin/python -m pip install /path/to/the-matching-markitai.whl
 .local/py/bin/python -c 'import markitai; print(markitai.__version__)'
 ```
 
-During development `maturin develop --release` (inside an activated
+Select the wheel produced above for your interpreter/target, rather than
+installing every wheel left in a shared output directory. For an already supplied
+Windows wheel, no Rust build is needed:
+
+```powershell
+py -3 -m venv .local\py
+& .local\py\Scripts\python.exe -m pip install C:\path\to\the-matching-markitai.whl
+& .local\py\Scripts\python.exe -c "import markitai; print(markitai.__version__)"
+```
+
+During development `maturin develop --release --locked` (inside an activated
 environment, from `bindings/python`) installs the package in place.
 
 ### Node.js
@@ -51,7 +74,7 @@ node -e "console.log(require('markitai').version)"
 ### Go
 
 ```sh
-cargo build --release -p markitai-ffi
+cargo build --release --locked -p markitai-ffi
 ```
 
 In the consuming module, point the development module name at the checkout:
@@ -107,7 +130,11 @@ concurrency limitations.
 `llm`, `ocr`, `screenshot`, `alt`, `desc`, and `profile`. Omitted booleans inherit
 configuration; `false` explicitly disables the feature. An explicit empty
 `config` uses built-in defaults and bypasses configuration files. An omitted
-configuration follows the core's configuration loading rules.
+configuration follows the core's configuration loading rules. `{}` does not
+block networking: a URL input still downloads the source, and explicit LLM or
+remote-backend settings still apply. For offline work, supply local files, use
+`config={}` and `llm=False` (Python), or the corresponding false value in your
+language, and prepare optional local models/applications first.
 
 A modern `.numbers` directory package is a single local document, just like its
 ZIP form; the extension is case-insensitive. It uses the same bounded IWA table
@@ -131,9 +158,11 @@ unwrap this envelope into a result or host-language error. Result fields are
 `source`, `markdown`, `llm_markdown`, `frontmatter`, `output_path`,
 `llm_output_path`, `assets`, `screenshots`, `images`, `usage`, `skip_reason`,
 `duration`, and `warnings`. Durations are seconds. In-memory conversions have
-null output paths and empty asset/screenshot path lists, keep relative
-`.markitai/...` image references and write no files; the CLI's stdout image
-store (`image.stdout_persist`) is not used by the bindings.
+null output paths and empty asset/screenshot path lists and keep relative
+`.markitai/...` image references. They do not publish document/image outputs;
+configuration, caches and optional backends can still use local state or
+temporary files. The CLI stdout image store (`image.stdout_persist`) is not
+used by the bindings.
 
 Terminal usage uses the same `cost_usd`, `requests`, `input_tokens`,
 `output_tokens` and `by_model` fields as successful conversions. Python errors
@@ -150,8 +179,9 @@ entrypoints to receive `ConversionFailure { error, usage }`, including final
 publication errors. Existing `convert` variants still return the original
 `Error` variants. Scope accounting remains document-local even with a shared
 runtime. Native panics retain their existing generic boundary handling and do
-not promise detailed usage. CLI/report, REST and MCP terminal diagnostics need
-separate propagation and are not covered by this binding contract.
+not promise detailed usage. CLI/report, REST and MCP also expose their own terminal diagnostics; their
+public envelopes differ and are documented in the corresponding interface
+guides. This section defines only the binding error contract.
 
 JSON serialization adds copies at the boundary. Benchmark total host-call time
 separately from native extraction when evaluating this cost. The protocol is
@@ -222,76 +252,24 @@ existing named exception types when supplied by the core.
 
 The wheel contains the extension and small typed Python wrapper; see
 [installation](#python). Run the package tests against an installed wheel with
-private state:
+private state (create those directories first; preserve toolchain/cache paths
+explicitly when changing `HOME`):
 
 ```sh
-MARKITAI_HOME="$PWD/.local/test-home" .local/py/bin/python -m unittest discover -s bindings/python/tests -v
+HOME="$PWD/.local/test-user-home" MARKITAI_HOME="$PWD/.local/test-home" .local/py/bin/python -m unittest discover -s bindings/python/tests -v
 ```
 
 ### Import cost
 
-`import markitai` loads the native extension, the package and `markitai.api`
-(exception classes, `convert`, `aconvert`) and, from the standard library, only
-`__future__`. The rest loads on first use:
+The native extension loads on import, while result records, configuration
+models and asyncio support load on first use. A broken native installation
+therefore fails on import. Measure both startup and the first conversion for
+your workload; deferred imports move work to that first call.
 
-| First use | Loads |
-|---|---|
-| `markitai.convert(...)` | `json`, `pathlib` and `dataclasses` (with `inspect`, `re`, ...) through `markitai._records`, which holds the result dataclasses |
-| `markitai.ConversionOutput`, `ConversionUsage`, `OutputProfileName`, `markitai.api.ConfigModel` | `markitai._records` |
-| `await markitai.aconvert(...)` | `asyncio`; a caller running the coroutine has imported it already |
-| `markitai.MarkitaiConfig`, `markitai.config` | `markitai.config`: the native schema, its model classes, `copy`, `json` and `pathlib` |
-
-`convert` rejects a running event loop by looking at `sys.modules`: a loop can
-only be running once `asyncio` is imported, so a synchronous caller never
-imports it. Names, signatures, `from markitai import ...` and `import *`,
-`dir()`, `markitai.config` as an attribute, `__all__`, the dataclass behavior of
-the results (`dataclasses.is_dataclass`, module `markitai.api`, pickling,
-`typing.get_type_hints(ConversionOutput)`) and the types mypy and pyright infer
-are unchanged. Imports that only annotate sit under `if TYPE_CHECKING:` with
-`TYPE_CHECKING = False` defined locally, so `typing` itself stays out of the
-import. `bindings/python/tests/test_import.py` pins the modules each step loads.
-
-Differences: `typing.get_type_hints(markitai.convert)` (and any tool that
-evaluates the string annotations of `convert`, `aconvert` or
-`ConversionError.__init__`) raises `NameError` until a lazy name has been used,
-because `Path`, `Mapping`, `Any` and the record names are then not yet module
-attributes of `markitai.api`; touching `markitai.ConversionOutput` first
-resolves them, and `inspect.signature` is unaffected. `markitai.api` no longer
-exposes the modules it used to import incidentally (`asyncio`, `json`, ...).
-mypy prints the record types as `markitai._records.ConversionOutput`; pyright
-shows the same names as before. The extension still loads at import, so a
-broken installation fails there rather than at the first call.
-
-Release wheel (`maturin build --release --locked`, `MACOSX_DEPLOYMENT_TARGET=11.0`,
-byte-identical extension in both builds), macOS 27.0.1 on an Apple M5 Max,
-CPython 3.13.15, `.pyc` compiled at install, one fresh interpreter per sample,
-medians of 101 interleaved samples. "In process" is `time.perf_counter()`
-around the statements; "whole process" runs from spawn to exit (`python -c
-pass` takes 9.8 ms of it):
-
-| Statements | In process, before | After | Whole process, before | After |
-|---|---|---|---|---|
-| `import markitai` | 20.83 ms | 1.89 ms | 34.44 ms | 12.37 ms |
-| `import markitai` and `from markitai import MarkitaiConfig` | 21.08 ms | 6.96 ms | 35.22 ms | 18.29 ms |
-| `import markitai` and one Markdown `convert(..., config={}, llm=False)` | 21.53 ms | 11.69 ms | 35.65 ms | 24.24 ms |
-| `import markitai` and `convert(..., config=MarkitaiConfig())` | 21.90 ms | 12.30 ms | 36.22 ms | 24.89 ms |
-
-CPython 3.12.14 (51 samples) gives 20.58 → 1.85 ms for the import and
-21.12 → 12.36 ms for import plus conversion. The deferred imports are paid by
-the first call, so a process that converts once saves about 10 ms rather than
-20; a process that only imports the package saves about 19 ms. Most of the
-remaining 1.89 ms is loading the extension (1.5-2.0 ms in `-X importtime`
-runs); the package's own modules take about 0.3 ms. Check the import with
-`python -X importtime -c 'import markitai'` (the `markitai` row is cumulative)
-and the median with:
-
-```sh
-for i in $(seq 101); do .local/py/bin/python -c 'import time; t = time.perf_counter(); import markitai; print((time.perf_counter() - t) * 1000)'; done | sort -n | sed -n 51p
-```
-
-The 22.82 ms `import markitai` row of the table under
-[macOS system frameworks](#macos-system-frameworks) was taken before this change
-and counts the package's own modules.
+`inspect.signature` works normally. Code evaluating annotations with
+`typing.get_type_hints(markitai.convert)` should first access
+`markitai.ConversionOutput` to resolve lazy record/type names. These classes
+remain dataclasses and keep their public names and pickling behavior.
 
 ## Node.js
 
@@ -304,9 +282,13 @@ calling thread. Concurrency uses the host's libuv worker pool; hosts may set
 // An installed package; inside the checkout use require('./bindings/node').
 const { convert, convertSync, ConversionError } = require('markitai');
 
-const out = await convert('report.md', { config: {}, llm: false });
-console.log(out.markdown);
-const sync = convertSync('report.md', { config: {}, llm: false });
+async function main() {
+  const out = await convert('report.md', { config: {}, llm: false });
+  console.log(out.markdown);
+  const sync = convertSync('report.md', { config: {}, llm: false });
+  console.log(sync.markdown);
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });
 ```
 
 Both functions expose the same snake_case result and option fields as the
@@ -314,10 +296,11 @@ shared protocol. Native conversion failures reject/throw `ConversionError`
 with a stable `code`. TypeScript declarations ship with the package.
 
 Build and pack as described under [installation](#nodejs); run the tests with
-private state:
+private state (create those directories first; preserve toolchain/cache paths
+explicitly when changing `HOME`):
 
 ```sh
-MARKITAI_HOME="$PWD/.local/test-home" npm --prefix bindings/node test
+HOME="$PWD/.local/test-user-home" MARKITAI_HOME="$PWD/.local/test-home" npm --prefix bindings/node test
 ```
 
 `MARKITAI_BUILD_PROFILE=debug` or `dist` selects another Cargo profile. The
@@ -334,9 +317,9 @@ native library before compiling Go, then run the package tests with private
 state:
 
 ```sh
-cargo build --release -p markitai-ffi
+cargo build --release --locked -p markitai-ffi
 cd bindings/go
-MARKITAI_HOME="$PWD/../../.local/test-home" go test -race ./...
+HOME="$PWD/../../.local/test-user-home" MARKITAI_HOME="$PWD/../../.local/test-home" go test -race ./...
 ```
 
 The development module name is `markitai.local/go`; use a local `replace`
@@ -378,36 +361,14 @@ consumer validation. Go does not tell glibc from musl, so on a musl system the
 Linux archive fails to link instead of being rejected. Each package carries only
 its own target's archive.
 
-`scripts/package_go_static.py` stages a self-contained module with the Go source,
-tests, C header, native archive, license texts and a hash manifest. It does not
-build Rust or download a toolchain. The coordinator supplies the frozen static
-archive, full Cargo metadata, compiler `native-static-libs` output and a build
-record containing the exact source and input hashes. The script independently
-checks the current clean source revision and all tracked bytes before and after
-execution. It runs only on the native host of the package's target
-(`--expected-host` names its Rust triple and defaults to the detected host), and
-it rejects an old output directory. The macOS archive comes from the
-[R28 builder](validation/drivers/routing-domains-static-round28/build-static.py),
-the Linux one from the [guest builder](validation/drivers/linux-static-go-round50/build-static.py),
-which also requires rustc's host to be `x86_64-unknown-linux-gnu`.
-[run-guest.py](validation/drivers/linux-static-go-round50/run-guest.py) runs both
-Linux steps from the macOS host in the OrbStack Ubuntu guest: it clones a git
-bundle of the clean HEAD into a new guest directory and brings back the records
-and logs as a hash-checked tar.
-
-The staged archive is unpacked into a separate module for the existing Go race
-tests. A separate consumer then builds with the static tag and is copied to a
-new directory for concurrent Unicode conversions and the JSON error contract.
-The driver requires only system dynamic dependencies and no rpath in the final
-consumer. On macOS, `otool -L` may name only `/System/Library/Frameworks` and
-`/usr/lib`, and no `LC_RPATH` may remain. On Linux the archive must hold only
-relocatable x86-64 ELF objects; the consumer's `readelf -d` may name only
-glibc's libraries, its loader and `libgcc_s.so.1`, with no `RPATH` or `RUNPATH`;
-`ldd` must resolve each from the system library directories; and the newest
-glibc symbol version in `objdump -T` is recorded as the consumer's glibc
-minimum. `HOME` is retained; Markitai state, temporary files and Go caches are
-private. No dynamic-library search override is inherited. Fixture paths are
-provided only to the package tests, not the independent consumer.
+`scripts/package_go_static.py` packages a supplied native archive, compiler
+linkage note, Cargo metadata and source build record. It runs on the matching
+host, rejects dirty source and existing output directories, installs the module
+into a separate consumer, and checks race tests, relocation, concurrent calls
+and system-only dynamic dependencies. It does not build Rust or download a
+toolchain. See `python scripts/package_go_static.py --help` for required inputs.
+Use a verified archive and its original build records together; a renamed
+archive from another target is not interchangeable.
 
 An unpacked module currently uses the development name `markitai.local/go`:
 
@@ -428,40 +389,10 @@ these against the actual Rust compiler dependency note. Since glibc 2.34 most of
 the Linux ones are part of libc; with Ubuntu's default `--as-needed` linking the
 consumer records only libgcc_s, libm, libc and the loader.
 
-A Linux executable requires at least the glibc whose newest symbol versions it
-binds, which depends on the glibc it was linked against. Linked on Ubuntu 24.04
-(glibc 2.39) that is 2.39: Rust's standard library refers to `pidfd_spawnp` and
-`pidfd_getpid` weakly, but the linker records their version as a hard
-requirement (the newest otherwise is 2.35). Executables linked against an older
-glibc have not been tested. In the R50 run (release profile, rustc 1.98.1, Go
-1.27.1, gcc 13.3, Ubuntu 24.04 amd64 under OrbStack/Rosetta) the archive was
-244,496,550 bytes in 619 objects, 139,629,492 of them embedded LLVM bitcode that
-linkers discard (machine code and data: 31,846,070 bytes); the package was
-71,858,526 bytes and the consumer 48,723,760 bytes (34,864,832 stripped). That
-archive kept one object per crate: Cargo applies the release profile's LTO only
-when all of a package's crate types allow it, and `markitai-ffi` also built an
-`rlib`. It now builds only `cdylib` and `staticlib` (nothing depends on it as a
-Rust library and it has no doctests), so both are link-time optimized: on macOS
-arm64 the archive fell from 219,756,184 to 34,462,632 bytes and
-`libmarkitai_ffi.dylib` from 18,058,736 to 16,942,784 bytes; R50's experiment
-copy measured the Linux archive at 53.3 MB and both platforms' consumers at
-about 25–28 MB. The release link of the library takes about 100 s longer.
-
-Go's external link keeps every section of the archive members it pulls in, and
-cgo rejects `-Wl,--gc-sections` (Linux) and `-Wl,-dead_strip` (macOS) in
-`#cgo LDFLAGS`. A consumer can opt in when it builds:
-
-```sh
-CGO_LDFLAGS="$(go env CGO_LDFLAGS) -Wl,--gc-sections" go build -tags markitai_static  # Linux
-CGO_LDFLAGS="$(go env CGO_LDFLAGS) -Wl,-dead_strip" go build -tags markitai_static    # macOS
-```
-
-Before the library was link-time optimized, this shrank the Linux consumer from 48,723,760 to 31,877,240 bytes
-(24,012,912 with `-ldflags=-s -w`, against 34,864,832) and the macOS arm64 one
-from 47,990,834 to 30,338,210 bytes. Both produced the same conversions and JSON
-error, the installed packages' race tests passed with the flag, and the Linux
-executable kept Go's build ID and build information. With the optimized archive the flag
-adds little.
+The Linux package requires the glibc version recorded by its build; the
+Ubuntu 24.04 packages have required glibc 2.39. Do not assume a package built on
+a newer distribution runs on an older one. Use the package's `STATIC.md` and
+consumer linkage record for its actual requirements.
 
 The package's `licenses.json` records original source paths and byte hashes for
 collected texts, including separate Rust toolchain notices. Its Cargo closure
@@ -494,49 +425,12 @@ abort on panic remain outside this recoverable contract.
 
 ## macOS system frameworks
 
-The Node addon, the Python extension and `libmarkitai_ffi.dylib` link
-CoreFoundation, Foundation, CoreGraphics, ImageIO and Vision delay-initialized,
-from the same build script and linker probe as the CLI. From macOS 15, dyld
-maps them when the binding loads but initializes them on first use: OCR,
-HEIF/AVIF decoding and PDF rasterization open their framework before they need
-it. Earlier systems initialize them at load as before, and a linker without
-`-delay_framework` keeps ordinary links. A conversion that uses none of these
-backends (HTML, Office, text PDF, Markdown) never initializes them.
-
-What a host saves depends on what it links itself. Node and Python link
-CoreFoundation, which initializes Foundation, CoreGraphics and ImageIO at
-launch, so the binding postpones Vision and the images that only Vision brings.
-A Go program linking only the dynamic library postpones all five. Release
-builds, macOS 27.0.1 on an Apple M5 Max, medians of 101 interleaved runs with
-byte-identical copies of the old build as a noise check (within 0.1 ms); images
-initialized are those `DYLD_PRINT_LIBRARIES` reports mapped and not postponed:
-
-| Host | Measured | Before | After | Images initialized at load |
-|---|---|---|---|---|
-| Node.js 24.21 | `require()` of the package, in process | 4.88 ms | 3.58 ms | 510 → 390 (Node alone: 389) |
-| CPython 3.13.15 | loading `markitai._native`, in process | 2.30 ms | 1.54 ms | 511 → 393 (Python alone: 392) |
-| CPython 3.13.15 | `import markitai`, in process | 23.46 ms | 22.82 ms | as above; 1.89 ms after deferred imports (see [Import cost](#import-cost)) |
-| Go 1.27.1 | process printing `Version()`, dynamic library | 7.99 ms | 5.68 ms | 510 → 85 |
-
-The first OCR, HEIF/AVIF or PDF page in a process pays the postponed
-initialization instead; conversions produce the same results. The static Go
-package keeps ordinary links: cgo rejects `-Wl,-delay_framework` in `#cgo
-LDFLAGS` without `CGO_LDFLAGS_ALLOW`, and requesting it from inside the archive
-(an object's linker option) marks the frameworks without the call stubs that
-initialize a framework on its first C call. A consumer can opt in when it
-builds; flags from the environment are not checked against cgo's list:
-
-```sh
-CGO_LDFLAGS="$(go env CGO_LDFLAGS) -Wl,-delay_framework,Vision -Wl,-delay_framework,Foundation \
-  -Wl,-delay_framework,ImageIO -Wl,-delay_framework,CoreGraphics -Wl,-delay_framework,CoreFoundation" \
-  go build -tags markitai_static
-```
-
-Keep Go's default flags (`$(go env CGO_LDFLAGS)`, normally `-O2 -g`) in the
-value, which otherwise replaces them. ld then notes that CoreGraphics has weak
-definitions; dyld still postpones it. In the measurement above, such a static
-program started in 4.91 ms instead of 7.19 ms (509 → 84 images) and its
-executable grew by 19,952 bytes.
+The dynamic bindings use the same system media frameworks as the CLI. On
+macOS 15 and later, supported linkers delay their initialization until needed;
+earlier systems and static Go keep ordinary framework linkage. The first OCR,
+HEIF/AVIF decode or PDF rasterization may therefore have a different startup
+cost from plain text conversion. This does not change the platform's media
+capabilities or remove framework dependencies.
 
 ## Verification and maintenance
 
@@ -563,18 +457,9 @@ Implementation references: [PyO3 function and module interface](https://pyo3.rs/
 
 ## Verified evidence
 
-The package driver in [native CI](ci.md) builds all three bindings from a clean
-checkout, installs them into private consumers and runs their test suites. The
-latest recorded run, [delivery R44](validation/delivery-round44.md) (source
-`b961344`), passed on macOS arm64 and on Ubuntu amd64 under OrbStack/Rosetta:
-installed Node 7/7, Python 20 and Go race tests, plus the macOS static Go
-package (844 installed files, 24 relocated concurrent conversions). Toolchains
-were Rust 1.98.1, Python 3.13, Node.js 24 and Go 1.27; the minimum versions in
-the installation table come from the package manifests and are not separately
-tested. The Linux x86-64 static Go package was first run in R50, outside a
-delivery round (see [Static Go package](#static-go-package)). Windows, physical
-Intel hosts and other static Go targets have not been run. Earlier rounds,
-including the first binding checkpoints and their package sizes, are kept in
-the [validation records](validation/README.md)
-(for example [artifacts round 3](validation/artifacts-round3.json) and
-[R28 static Go](validation/routing-domains-static-round28.md)).
+See [current status](STATUS.md) for commit-specific native and installed-package
+results. Windows Python/Node package checks have run; Windows Go/cgo delivery,
+physical Intel hardware and every minimum language runtime are not established
+by those checks. A host test or a valid native-library header does not certify
+another target. Historical evidence remains scoped to its recorded source and
+platform.

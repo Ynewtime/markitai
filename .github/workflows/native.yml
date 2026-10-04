@@ -1,7 +1,5 @@
 name: Native validation
 
-# Run by hand only: hosted macOS minutes cost ten times Linux minutes in a
-# private repository, so each run names the runners it needs.
 on:
   workflow_dispatch:
     inputs:

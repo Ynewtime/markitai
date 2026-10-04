@@ -75,7 +75,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `image.stdout_persist` | `true` | 未给 `-o` 输出到 stdout 时保存引用的图片并以 `file://` 链接；`false` 保留相对引用并警告，见[stdout 中的图片](images.md#images-on-stdout) |
 | `image.stdout_persist_dir` | `~/.markitai/assets` | stdout 图片库目录（文件在其下 `blobs/`）；默认值跟随 `MARKITAI_HOME`，自定义路径保持原义 |
 | `image.stdout_fetch_external` | `false` | 参考版用于终端内联显示远程图片；本构建无终端图片输出，可设置但无作用 |
-| `ocr.enabled` / `ocr.lang` | `false` / `en` | OCR 开关与语言。默认 `en` 先按英文识别，英文读不出时再试中文、韩文和日文；写成 `en-US` 只读英文，其余值只读所写的那一种语言。见[本地 OCR](ocr.md#the-default-language) |
+| `ocr.enabled` / `ocr.lang` | `false` / `en` | OCR 开关与语言。默认 `en` 的多语言策略依后端而定：Vision 先英文再按需重试中日韩，Paddle 先多语言识别再按需重试韩文；`en-US` 在 Vision 中只读英文，在 Paddle 中仍使用多语言模型但不追加默认韩文回退。见[本地 OCR](ocr.md#the-default-language) |
 | `security.pdf_sanitize` | `warn` | PDF 提取正文的隐藏文字策略：`off` 关闭安全提示，`warn` 保留原正文并提示，`remove` 有边界地过滤可疑文字；不修改原文件或资产，限制见[PDF](pdf.md#hidden-text-policy) |
 | `screenshot.enabled` | `false` | 页面截图，同 `--screenshot` |
 | `batch.concurrency` / `batch.url_concurrency` | `10` / `5` | 文件与 URL 并发，同 `-j`/`--url-concurrency` |
@@ -126,7 +126,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 | `MARKITAI_NO_REMOTE_FETCH` | `1`/`true`/`yes`/`on` 时禁止远程抽取服务（包括显式选择的远程策略和 `-b cloudflare`） |
 | `MARKITAI_NO_VLM_OCR` | 非空且不是 `0`/`false`/`no` 时，LLM 开启的 OCR 先本地识别再只发送文字 |
 | `MARKITAI_LOG_DIR` / `MARKITAI_LOG_FORMAT` | 覆盖 `log.dir` 与 `log.format`（`text`/`json`） |
-| `MARKITAI_SERVE_TOKEN` | `serve` 远程访问令牌，见 [REST 服务](serve.md) |
+| `MARKITAI_SERVE_TOKEN` | `serve` 的进程环境访问令牌（不从 `.env` 读取；含回环地址请求；未设置或空白时自动生成），见 [REST 服务](serve.md) |
 | `MARKITAI_LANG` | `doctor`、`cache`、`config path/validate`、`init`、转换与批量运行的 stderr 提示以及 `--help` 的终端语言：以 `zh` 开头为中文，其他值为英文；为空时依次看 `LC_ALL`、`LC_MESSAGES`、`LANG`（跳过 `C`/`POSIX`），见 [CLI](cli.md#终端语言) |
 | `MARKITAI_BROWSER_EXECUTABLE` | 指定 Chrome/Chromium 可执行文件 |
 | `PLAYWRIGHT_BROWSERS_PATH` | 额外搜索的 Playwright 浏览器缓存目录 |
@@ -140,7 +140,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 | `COPILOT_CLI_PATH`、`COPILOT_HOME`、`COPILOT_CACHE_HOME`、`COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`、`CLAUDE_CLI_PATH`、`CLAUDE_CONFIG_DIR`、`CODEX_CLI_PATH`、`CODEX_HOME` | 订阅运行时的可执行文件、状态目录与令牌，见[订阅](subscriptions.md) |
 | `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY` | 代理，见[抓取](fetch.md#proxies) |
 
-CLI 启动时依次从进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`）读取变量，已存在的值优先，不修改宿主进程环境。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 在本构建中不读取。
+配置解析使用环境快照：依次读取进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`），已存在的值优先，不修改宿主进程环境。`MARKITAI_HOME` 与 `MARKITAI_SERVE_TOKEN` 直接读取进程环境，应在启动前导出，不能靠 `.env` 设置。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 在本构建中不读取。
 
 `fetch.remote_consent` 的默认值 `always` 来自参考版本，`config list` 也这样显示；但运行时拿到的是填好默认值的配置，分不出这个 `always` 是默认值还是你写的。因此本构建中 `auto` 的远程回退只认 CLI 从所选配置文件和 `--config-json` 的原始内容中读到的、你亲手写出的 `always`（第一次回退时显示一次说明，每个 `MARKITAI_HOME` 只显示一次），或 `ask`（每次运行在终端询问一次；没有终端或使用 `--quiet` 时视为 `never` 并提示一次）。`serve`、`mcp` 和语言绑定中的 `auto` 从不回退到远程服务。`fetch.fallback_patterns` 同理：只有你在配置文件或 `--config-json` 中写出的列表才让其中的域名先用浏览器；默认列表（X、Instagram 等）虽在 `config list` 中显示但不生效，`serve`、`mcp` 和语言绑定也不应用任何列表。
 
@@ -148,58 +148,46 @@ CLI 启动时依次从进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`�
 
 ## 默认值与配置选择
 
-以下各节说明实现与契约细节，供集成和维护参考。
+`config list` 显示填充后的完整默认值；只有一个配置文件入选，临时 override
+递归合并对象，数组和标量整体替换。配置损坏、无法读取或字段无效会报错。
+CLI 缺失 `-c` 文件是用法错误；核心加载器找不到显式/环境指定文件时警告并
+使用默认值，不继续读取低优先级文件。
 
-`config::defaults()` 返回与参考版本 1.2.0 全量模型一致的 JSON 对象：14 个顶层配置组，27 个模型共 169 个声明字段（含嵌套模型定义）。完整默认快照作为测试夹具跟踪，核心只嵌入约 13 KiB 的类型、枚举、边界和默认值事实。数据首次使用时解析，随后复用不可变元数据；没有引入完整 JSON Schema 引擎或 Python 运行时。
-
-文件选择顺序为显式路径、`MARKITAI_CONFIG`、当前目录 `markitai.json`、用户目录 `config.json`。仅一个文件入选；不会合并项目和用户文件。其上可以递归应用临时 override，再执行规范化。数组和标量替换原值。
-
-配置加载器选中了不存在的显式或环境路径时会在 stderr 警告并使用默认值，不继续选择低优先级文件；CLI 在此之前单独将缺失 `-c` 判为用法错误。已存在但无法读取、不是 UTF-8 JSON 对象、内容损坏或字段无效的文件都返回错误，不降级为默认值。
-
-`MARKITAI_HOME` 替换通常的用户 `.markitai` 目录，用于隔离试用、测试和多实例。序列化默认仍保留旧路径字面值；运行时使用 `config::state_path` 将默认 `~/.markitai/...` 路径解析到隔离目录。显式自定义路径不会被重定向。不要为了测试修改进程的 HOME。
+`MARKITAI_HOME` 隔离默认的 `~/.markitai/...` 状态路径；显式自定义路径保持原义。
+测试还应为子进程隔离 `HOME`，在项目测试目录中运行，不读取真实用户配置或凭据。
 
 ## 规范化与验证
 
-`config::normalize(&Value)` 返回有效配置，递归填入缺失默认值，包括 `model_list`、`providers`、自定义 preset 和域名配置中的条目。返回对象与输入不共享可变状态。`config::validate(&Value)` 只报告是否可规范化，不改变原对象；调用者需要使用规范化结果才能获得类型转换和默认值。
+`config validate` 检查类型、枚举和范围，不验证服务登录或安装后端。
+未声明字段在加载时忽略；`config set` 则拒绝未知键，便于发现拼写错误。
+模型部署须含 `model_name` 与 `litellm_params.model`，供应商连接须含 `id` 与
+`provider`。配置对象省略的嵌套字段按默认值补齐。
 
-结构规则包括：
-
-- bool、整数、浮点数、字符串、nullable、数组和映射的元素类型；字符串字段不会把数字或布尔值转换成文本。
-- 旧模型支持的常见标量转换，如 `"yes"`→true、`"1_000"`→1000、整数值浮点数→整数；字符串 `" true "` 仍不是合法 bool。
-- 所有声明的 Literal 枚举及 minimum/maximum 边界。未声明的范围不会自行收紧，例如结构层不为批量并发添加旧版不存在的 1024 上限。
-- 模型部署必须含 `model_name` 和 `litellm_params.model`；供应商连接必须含 `id` 与 `provider`。
-- fetch strategy priority 必须非空、没有重复且只含实际策略名，不能包含 auto。local-only 模式不能为空，带 `/` 的值必须为有效 IPv4/IPv6 网络。
-- 已知模型中的未知字段在加载时忽略，与原模型默认规则一致；任意键映射仍按其声明的值类型验证。
-
-内部 `output.filename` 和 `output.reserved_stem` 用于 CLI 输出路径和同批名称预留，会在规范化时保留，但不出现在公开默认值中，也不能通过公开 `config set` 创建。
+Python 的配置对象在转换前也会规范化，但赋值本身不一定立即验证；
+详见[语言绑定](bindings.md#python)。
 
 ## 定点编辑
 
-`config::key_pointer` 处理 `llm.model_list[0].litellm_params.weight` 一类键。`config::parse_cli_value` 根据字段声明保留字符串，因此数字形密钥和名为 `true` 的目录不会变成数值/bool。`config::set_value` 验证已声明键及数组索引，检查新配置后才更新原始对象。失败不修改内容；成功只写变化的路径，保留原文件里的未知扩展键，不输出全量默认配置。
+键采用 `llm.model_list[0].litellm_params.weight` 这样的路径。数组下标必须已存在，
+不能靠 `config set` 隐式创建模型。值按字段类型解析；字符串字段里的数字或
+`true` 仍是字符串。更新先完整校验，再原子保存；失败不改变原文件。
 
-未知静态叶子（例如 `image.qualty`）是错误；类型化动态映射可以增加条目，例如 `presets.custom`。数组下标不能越界，也不能隐式创建部署。`--config-json` 为临时读取 override；与 config set/edit 同用会报用法错误，避免把临时值误写入文件。
+`set/edit` 保留文件中的未知扩展键，但拒绝与临时 `--config-json` 合用。
+配置路径是符号链接时更新它的目标并保留链接；输出资产的链接策略与此独立。
+`config edit` 需要终端，复杂数组/映射用 `config set` 或直接编辑 JSON。
 
-CLI 保存采用同目录临时文件和原子替换。配置路径本身是符号链接时先解析目标，更新目标文件，保留链接。输出文件的符号链接策略与配置保存独立。
-
-`config validate <path>` 的显式位置参数必须存在，否则返回用法错误 2。配置显示在模型对象中省略 null 字段，保留任意映射中的显式 null；直接 `config get` 查询 nullable 字段仍显示 `null`。
-
-`config list/get/set` 的默认显示通过同一脱敏函数处理：密钥/token/密码等字段隐藏，`env:VAR` 保留引用名称，API base 只显示 scheme、host 和端口，丢弃用户信息、路径、query 和 fragment。HTTP header 的名称保留、所有值隐藏，形似 `env:VAR` 的 header 也按实际内联内容隐藏。单键读取先定位值再按键路径脱敏，因此敏感容器的子键仍可查询。脱敏不会改写配置文件；`--show-secrets` 明确请求原值。
+`list/get/set` 默认隐藏密钥、token、密码和所有 HTTP header 值，保留 `env:VAR`
+引用名称。API base 只显示 scheme/host/端口。`--show-secrets` 会显示原值，
+不要把这种输出附在问题报告里。脱敏不改写保存的配置。
 
 ## 环境引用
 
-`env:VARIABLE` 在结构加载时保留原样，不要求变量存在。运行到需要凭据的路径时，调用 `resolve_env_value` 或 `resolve_optional`，传入环境快照与 strict 标志：strict 缺失变量报错，非 strict 返回 None。显式引用变量存在但为空字符串时仍算已找到。
+配置文件中的 `env:VARIABLE` 在结构加载时保留原样，不要求变量存在。浏览器设置接口不接受客户端提交的 `env:` 密钥引用；已保存密钥也不能用于任意改写的端点，详见[服务设置](service-settings.md)。运行到需要凭据的路径时，调用 `resolve_env_value` 或 `resolve_optional`，传入环境快照与 strict 标志：strict 缺失变量报错，非 strict 返回 None。显式引用变量存在但为空字符串时仍算已找到。
 
 Jina/Cloudflare 一类可选凭据的 fallback 环境变量（`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`）仅在配置值缺失或为空时使用。显式 `env:MISSING` 在非 strict 模式解析失败后，不再回退到另一个变量；Jina 此时不发送密钥，`auto` 跳过 Cloudflare，而 `-s cloudflare` 与 `-b cloudflare` 以 strict 模式解析，报出缺失的变量名。读取 `.env` 的顺序为进程环境、当前目录文件、隔离用户目录文件；已存在值优先，不修改宿主进程环境。
 
-## 证据与边界
+## 兼容边界
 
-`tests/derive_config_contract.py` 使用明确传入的参考 checkout、其 Python 环境和 Pydantic 模型重新计算事实。它仅提取默认值和 schema 约束，不复制旧文档、注释或实现。当前事实对照参考提交 `ba374322f884b0e720b45466cc1196f4574a3da5`。
-
-```sh
-/path/to/reference/.venv/bin/python \
-  crates/markitai-core/tests/derive_config_contract.py /path/to/reference
-```
-
-测试覆盖全量默认快照、文件选择优先级、缺失/损坏文件、override、嵌套部署默认值、类型和数值边界、策略/CIDR、未知字段、稀疏编辑回滚、字符串输入、环境引用、单独模型验证、脱敏和配置符号链接保存。Python 配置适配器消费相同的嵌入式 schema，并通过 `normalize_model` 构造顶层或嵌套模型。调度中心记录实际 Cargo/差分测试结果；生成事实文件成功不能替代 Rust 编译和运行测试。
-
-目前明确的结构边界：JSON 整数保存为 i64/u64，超出 64 位可表示范围的整数拒绝；非有限浮点数拒绝。Python 的任意精度整数以及个别非标准 Infinity 输入不能逐值等价。错误按第一个字段给出，未复制 Pydantic 的聚合错误格式。dotenv 插值在不修改宿主环境的约束下仍需跨文件差分测试。运行能力清单仍以 [CLI 状态](cli.md) 和统一调度中心为准。
+配置整数限于 64 位可表示范围，非有限浮点数拒绝。错误按第一个字段给出，
+不复刻 Pydantic 的聚合错误格式。Python 配置适配器使用同一套 schema；
+具体 API 差异见[语言绑定](bindings.md)。

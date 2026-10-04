@@ -688,53 +688,6 @@ hashed key does not make its contents secret-free. Direct local fetching keeps
 its existing trusted-session behavior; this cache is not suitable for reuse
 across anonymous service authority boundaries without additional policy.
 
-## Verification boundary
-
-The loopback tests in `fetch.rs` check actual request counts and headers, TTL and
-zero TTL, 304 and replacement behavior, redirects and character encoding,
-bypass refresh, strategy provenance, disabled and broken storage, malformed
-status/empty content, challenge preservation, legitimate CAPTCHA mentions and
-asset-bearing downloaded documents. `fetch/robustness_tests.rs` adds, against
-loopback servers, the failure messages and their redaction, the retry of a TLS
-handshake that ends early (a listener that accepts and closes) and the failures
-that are never retried (statuses, resets and clean closes after the request,
-refusals, timeouts), wrong and missing character
-encodings (GBK under a `utf-8` header, none at all, nearly valid UTF-8, Latin-1),
-script-rendered shells and JavaScript-only pages under `static` and, through the
-decision function with a stand-in browser, under `auto`, and `<meta>` refresh
-following, its limits and credential handling. `fetch/remote_tests.rs` runs the
-remote fallback, Defuddle, Jina, Cloudflare Browser Rendering and Workers AI
-`toMarkdown` against loopback services that read the request bodies: the order,
-priorities and hops, each consent setting with a stand-in terminal (one question
-per process, the once-per-home disclosure, the note without a terminal),
-local-only patterns and `NO_PROXY`, the options each service receives, pacing,
-429 repetition, and that failures carry no token, account id or endpoint. They
-also replay the Jina answer recorded for a Zhihu question in the real-service
-check of 2026-10-02 (its `安全验证 - 知乎` security check) through the chain after
-the recorded 403 and through `-s jina`, defuddle's Markdown of the same page, a
-challenge and an article titled like one, Jina's warnings, text form, header lines
-in its JSON content and page statuses, `X-No-Cache` under `--no-cache` and
-matching patterns, and the Workers AI answers recorded in that check for the
-reference's public `sample.pdf` and `sample.docx`
-(`crates/markitai-core/tests/fixtures/cloudflare-tomarkdown/`).
-`fetch/policy.rs`, `fetch/chain.rs` and `fetch/consent.rs` test the order, the
-chain's decisions and the gate on their own. Credentials in these tests come
-from injected maps; no real service is contacted. They use temporary configured
-state paths;
-the older direct-fetch test explicitly disables caching. Storage and CLI/API
-integration tests exercise their respective boundaries separately. No tests
-need provider credentials or the user's real state directory.
-
-The PDF handoff tests additionally check byte identity, exact GET counts,
-redirects, MIME/header precedence, unchanged default extraction, stale HTML
-invalidation before downstream failure, auto-probe TTL bypass, output capability
-checks and status/size rejection. The public conversion tests separately cover
-native page media and model input after this private handoff.
-
-[Decision 0003](decisions/0003-persistent-fetch-cache.md) records the detailed
-reference comparison, storage contract and deferred browser, remote-cache,
-owned-asset, stale-fallback and request-coalescing work.
-
 ## Browser HTTP credentials
 
 When `fetch.playwright.http_credentials` is non-null, or browser cookies/extra
@@ -785,5 +738,7 @@ as the reference ignores it. Loopback hosts are always direct. Proxy settings
 above 64 KiB are rejected. Static fetch accepts credentials in an environment
 proxy URL; a SOCKS proxy there is an explicit unsupported error, because only
 the browser can use it. Model and Provider Batch clients keep their provider
-environment handling. The Windows registry reader follows the documented API but
-has not been compiled or executed on Windows in this project.
+environment handling. The Windows registry reader is compiled in native Windows
+builds. That and parser tests do not establish every actual registry/proxy
+configuration; platform-specific live evidence remains separate in
+[STATUS](STATUS.md).

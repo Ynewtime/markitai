@@ -105,17 +105,3 @@ structure described in [MS-OXMSG](https://learn.microsoft.com/en-us/openspecs/ex
 It reads fixed values from property tables and variable values from their named
 streams. It does not trust attachment paths or named property identifiers as
 instructions.
-
-## Verification
-
-Authored in-memory CFB tests cover legacy header/body layout, date metadata,
-Windows-1251 decoding, Unicode body precedence, recipient fallback, byte-exact
-attachments, path normalization, CID prefix collisions, missing content IDs,
-malformed Unicode/property tables, non-message compound files, unsupported
-attachment methods, RTF-only notices and pre-copy stream limits. These tests
-require no source-project fixtures or private mail accounts.
-
-New authored disk-publication cases check explicit CID originals, valid inline
-properties, wrong types/values, absent or conflicting classification, preview
-filtering and shared reference definitions with URI suffixes. They bind source and
-published bytes/SHA independently; execution evidence is recorded after integration.

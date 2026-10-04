@@ -1,8 +1,10 @@
 # Native LLM execution
 
-The Rust core sends text and image requests directly over HTTP. It does not
-start Python, load LiteLLM, or require an installed provider CLI. Request
-construction, model selection and retry accounting share one implementation.
+API-key model routes send text and image requests directly over HTTP from Rust;
+they do not start Python, load LiteLLM or require a provider CLI. The separately
+selected [subscription routes](subscriptions.md) use their supported official
+runtimes. Request construction, model selection and retry accounting share the
+native conversion pipeline.
 Configuration validation remains separate from runtime capability: an accepted
 configuration can still request a provider or routing strategy that this build
 explicitly rejects.
@@ -543,10 +545,10 @@ Cache hits require no model request and have zero new usage; bypass controls sti
 refresh successful answers. Pure text and standalone caption/description analysis
 bypass this document cache. Non-pure page/browser vision uses its own image-aware
 batch namespace, described below. The cache stores validated semantic data, never
-a provider tool-call envelope. Round twenty-four changes the prompt-contract
-fingerprint so older protocol rows remain on disk without being admitted as new
-results. The randomly selected model deployment and successful protocol rung do
-not enter this semantic fingerprint.
+a provider tool-call envelope. The prompt-contract fingerprint excludes older
+incompatible protocol rows from cache admission without deleting them. The randomly
+selected model deployment and successful protocol rung do not enter this semantic
+fingerprint.
 
 ## Structured provider protocols
 
@@ -568,8 +570,13 @@ The initial exact capability table is deliberately small:
 | Gemini `gemini-3.8-flash` through its OpenAI-compatible endpoint | JSON schema |
 | Other or unknown IDs, including Azure deployment aliases | JSON text |
 
-The [official capability evidence](planning/after-round23-structured-transport.md)
-records model/protocol sources and limits. Neither a model-name prefix nor
+This fixed table was based on the official [OpenAI model page](https://developers.openai.com/api/docs/models/gpt-4.1),
+[OpenAI structured-output guide](https://developers.openai.com/api/docs/guides/structured-outputs),
+[Anthropic structured-output guide](https://platform.claude.com/docs/en/build-with-claude/structured-outputs),
+[Anthropic tool-choice rules](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools)
+and [Gemini OpenAI compatibility guide](https://ai.google.dev/gemini-api/docs/openai).
+These are the table's protocol sources, not live verification of an account,
+custom endpoint or the current provider catalog. Neither a model-name prefix nor
 `supports_vision` establishes structured support. Tool and schema support are
 independent bits: intersect them across all reachable candidates, then visit
 supported modes in the order tools → schema → text. A pool containing an unknown
@@ -720,74 +727,3 @@ language bindings install no notice host and show none.
 With `MARKITAI_NO_VLM_OCR` set, OCR pages are read locally and only text is
 sent, so no image request and no image note follows from OCR alone. The notes
 inform; they never grant or record consent.
-
-## Verification
-
-Unit tests inside `crates/markitai-core/src/llm.rs` cover weighted boundaries,
-automatic pooling and explicit-model precedence, disabled/missing-environment
-filtering, saved-provider credentials, Azure request parameters, deployment
-rotation, fallbacks and cycles, quota/authentication short-circuiting, request
-budgets, empty-response usage, Anthropic vision/cached-token accounting, prompt
-precedence, literal document braces and token-limit parameter mapping. Cache
-checks additionally cover credential-independent hits, zero new usage, bypass
-refresh, prompt/content/model invalidation, disabled/pure exclusions, corrupt
-or unwritable state, and rejecting token-truncated or blank cache candidates.
-Shared-runtime tests hold partial HTTP response bodies to check that concurrent
-text and image requests stay within the same cap. They also exercise requests
-during another request's backoff, terminal and budget failures, and a cache hit
-while every permit is occupied. `llm_runtime.rs` tests cloning, independent runs,
-waiting callers, invalid zero capacity and permit release during unwinding.
-`llm/tests/auth_fallback.rs` covers the run-wide authentication exclusion with
-loopback HTTP and the Claude CLI fixture: 401/403 sibling moves without backoff
-or retries, groups whose every deployment is refused with and without fallbacks,
-terminal billing refusals, single-identity groups, all four routing strategies,
-unchanged usage totals, concurrent refusals that warn once, visual cancellation,
-typed and visual document warnings and a refused Claude subscription account
-followed by an API deployment. The Copilot and ChatGPT adapter tests check that
-their authentication refusals take the same path while policy failures stay
-fatal.
-
-`tests/conversion/document_processing.rs` adds isolated public-API scenarios for
-typed fields and base separation, Unicode parallel chunk order, literal fidelity,
-URL cache hits without credentials, partial-failure retry, preflight admission,
-shared retry budgets, custom prompts and unchanged pure behavior. Chunk/cache
-unit checks cover typed namespaces, Unicode tails and malformed metadata.
-
-`tests/conversion/vision_processing.rs` contains loopback HTTP
-cases for 21-frame bounded concurrency/order, eleven-frame cache reuse and pixel
-changes, paid authentication failure, later failure with partial-cache retry,
-zero-request budget rejection, and queued-batch cancellation. Module tests cover
-page/slide boundaries, code-literal examples, cache content guards and actual
-vision-model eligibility. Executed round-twenty-three results are recorded in
-[its validation report](validation/vision-auth-cli-round23.md).
-
-Round twenty-four adds `tests/conversion/structured_transport.rs`: actual loopback
-HTTP exercises named tools, native Anthropic shapes, schema/text descent with
-paid errors, conservative pool capabilities, cache reuse without credentials,
-protected literals, bounded repair, fatal errors, a shared request budget,
-image-analysis sidecars and first-visual-versus-later-cleaner behavior. These new
-cases pass the coordinator's source-frozen R24 gate; live-provider compatibility
-and installed-release evidence are separate checks.
-
-`llm/providers.rs` checks the provider table (one entry per prefix, HTTPS for
-hosted APIs, loopback for keyless local servers) and the refusal wording;
-`llm/degeneration/tests.rs` covers line, in-line, multi-line, CJK and
-over-window loops, rotations and partial last copies, source-owned repetition,
-multibyte boundaries, a 2 MiB non-repeating answer, and the cases that must stay
-untouched: differing and identical table rows, blank forms, lists, logs, rules,
-fill-in lines, closing braces and code arrays. `llm/chunks.rs` checks the
-window rule and that window-sized chunks fit the estimate for ASCII, Chinese and
-protected literals. `llm/tests/hardening.rs` uses loopback HTTP for the
-OpenAI-compatible endpoints and key variables, a Groq request carrying its key,
-the image notice's local and remote endpoints, salvaged plain, document and
-visual answers that are asked again rather than cached, and a declared window
-that splits a document into more requests (or refuses a window without room
-before any request). `fetch/consent.rs` and `fetch/remote_tests.rs` check that
-the strategy and image notices share the once-per-home store, appear only when
-shown and only after a URL passes the remote-target checks.
-
-HTTP tests bind loopback listeners, capture request headers and JSON, return
-scripted responses, and use bounded socket timeouts. Low-level retry tests inject sleeps as a recorder; integration fixtures avoid
-retryable transport failures or use bounded local behavior. They never contact a
-live model provider. The project operations record contains the actual executed build and
-test results.

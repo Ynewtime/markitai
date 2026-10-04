@@ -85,7 +85,7 @@ itself does not establish an image suitable for model processing.
 
 Publication tests exercise actual base/enhanced files and all three asset path
 profiles. History tests exercise independent copied assets and collision
-renaming through the CLI. Actual release and installed-package gates pass on the
-current macOS arm64 host. Two authored browser cases also load copied images and
+renaming through the CLI. The [round-twelve report](validation/css-round12.md) records the macOS arm64
+release-profile and installed-package checks for that snapshot. Two authored browser cases also load copied images and
 imported CSS after deleting the live fixtures; this is not general browser or
 cross-platform acceptance.

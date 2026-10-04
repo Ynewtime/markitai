@@ -24,10 +24,12 @@ With both LLM and OCR disabled, CLI image items are skipped with
 returns a conversion error explaining `llm=True` and `ocr=True`, matching the
 reference Python API. Missing files still report a missing-file error.
 
-`ocr=True` without LLM selects [local image OCR](ocr.md) on macOS. With LLM
+`ocr=True` without LLM selects [local image OCR](ocr.md): Vision on macOS by
+default, or the portable engine with installed model weights on Windows/Linux. With LLM
 enabled, it selects image vision unless `MARKITAI_NO_VLM_OCR` disables that
 upload; then local OCR supplies text for enhancement without image blocks.
-[PDF page OCR and screenshots](pdf-rendering.md) use the native macOS renderer.
+[PDF page OCR and screenshots](pdf-rendering.md) use CoreGraphics on macOS and
+the in-process hayro renderer on Windows/Linux.
 [Browser screenshots](browser.md) are available with an installed Chromium executable.
 
 ## HEIF and AVIF
@@ -109,7 +111,8 @@ earlier pages as a complete document.
 Embedded multi-page TIFF assets are preserved unchanged during ordinary asset
 compression, so that pass cannot flatten them to the first frame. Image analysis
 uses the same all-page vision preparation. No external decoder or Python runtime
-is used. Cross-platform local OCR remains separate work.
+is used. Local OCR follows the same platform and model requirements as
+[single-image OCR](ocr.md).
 
 ## SVG inputs
 
@@ -255,9 +258,10 @@ store. `-o`, `--json` (which requires `-o`), directory and URL-list runs, `serve
 MCP and the language bindings never use it: their results keep relative
 references.
 
-The output-directory symlink policy applies: with `output.allow_symlinks` off,
-a symbolic link anywhere in the store path (other than a root-owned system
-link such as macOS `/var`) is refused and nothing is written through it. When
+The stdout asset store uses the core path policy: with `output.allow_symlinks`
+off, a symbolic link anywhere in the store path (other than a root-owned system
+link such as macOS `/var`) is refused and nothing is written through it. This
+internal store does not use the CLI's user-selected directory-alias resolution. When
 images cannot be saved, the conversion still succeeds; those references stay
 relative and stderr says how many failed, where and why.
 

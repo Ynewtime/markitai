@@ -19,6 +19,8 @@ is unavailable for this route, and its raw status message is never printed.
 JSON status retains exit zero when unavailable; human status exits one. Explicit
 Unix login replaces the process with official `codex login`, preserving the
 terminal, signals and exact exit status without a post-login model request.
+Windows runs the official login as a waited-for child on the existing console
+and returns its exit status; the runtime owns its credential store.
 Doctor checks runtime version and status, not inference or model entitlement.
 Discovery returns the tested adapter allowlist and labels it nonauthoritative.
 
@@ -42,12 +44,13 @@ exit; partial output, malformed events or a late nonzero exit cannot become a
 successful document. The complete Apache-2.0 catalog license, modification notice
 and data provenance are distributed under `licenses/codex/`.
 
-On Unix, the adapter bounds concurrent runtime processes, input, lines, total
-stdout, stderr and events, then kills and reaps its process group on failure or
-cancellation. One deadline covers version, status and completion. Workspaces and
-request files are private. These are resource/lifecycle controls, not an OS
-sandbox for a hostile replacement executable. Windows remains unsupported until
-equivalent process cleanup is implemented and tested.
+The adapter bounds concurrent runtime processes, input, lines, total stdout,
+stderr and events. On failure or cancellation it kills and reaps the owned tree:
+a process group on Unix, a Job Object on Windows. One deadline covers version,
+status and completion. Workspaces and request files are private. These are
+resource/lifecycle controls, not an OS sandbox for a hostile replacement
+executable. Windows native fixture tests exercise this path; they do not prove
+real subscription login or inference. See [runtime evidence](subscriptions.md#evidence-boundaries-and-next-provider).
 
 ## Usage and unavoidable limits
 

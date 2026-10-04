@@ -95,6 +95,8 @@
 
 ### Changed
 
+- Simplify user, developer and Agent guides, correct outdated platform and security descriptions, and remove superseded planning documents and stale code comments; retain history in Git.
+
 - Document the limits of exact OCR transcription for code, JSON and configuration: readable text or a successful conversion does not guarantee quotes, braces or ASCII symbols match the image; selecting Chinese explicitly does not remove this limitation. This is guidance, not an OCR recognition fix.
 - Omit obsolete R35 source snapshots from Git source archives while retaining them in checkouts and history, and preserving handoff records and validation drivers; clone size is unchanged.
 - Native CI runs source checks and installed-package acceptance in parallel for each platform, while retaining all checks. Package stages report their start, finish and duration without echoing command arguments or environment values.

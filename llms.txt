@@ -1,6 +1,6 @@
 # Markitai
 
-> Markitai 1.3.0-dev converts documents, web pages and images to Markdown through a Rust CLI and an MCP server. Stable 1.3.0 has not been published.
+> Markitai converts documents, web pages and images to Markdown through a Rust CLI and an MCP server.
 
 This is a curated Markdown entry point for AI assistants. It is also included
 in CLI archives; paths below are relative to the installation directory and
@@ -10,11 +10,11 @@ requests or use credentials. Use the caller's authorized inputs and settings.
 ## Start
 
 - [Install and first commands](README.md): select a development archive and set PATH before running the CLI.
-- [Quick start](docs/quickstart.md): the first ten tasks, 61 recognized extensions and platform requirements.
-- [Standalone Agent guide](llms-full.txt): CLI JSON, exit codes, MCP output handling and offline prerequisites.
+- [Quick start](docs/quickstart.md): first tasks, recognized formats and platform requirements.
+- [Standalone Agent guide](llms-full.txt): CLI JSON, exit codes, MCP output handling, authenticated workbench requests and offline prerequisites.
 
 ## Contracts
 
 - [CLI](docs/cli.md): options, configuration precedence, errors and structured output.
-- [MCP](docs/mcp.md): four stdio tools, schemas, temporary outputs and asynchronous batches.
+- [MCP](docs/mcp.md): stdio tools, schemas, temporary outputs and asynchronous batches.
 - [Documentation index](docs/index.md): full repository topics; only selected guides are copied into archives.

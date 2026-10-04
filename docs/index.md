@@ -16,7 +16,7 @@ the [quick start](quickstart.md#platform-support) describes current backends,
   The development builds are not code-signed yet; see
   [unsigned builds on macOS](quickstart.md#unsigned-builds-on-macos).
 - [Troubleshooting](troubleshooting.md): `doctor`, exit codes and common errors.
-- [CLI](cli.md): every option and subcommand.
+- [CLI](cli.md): commands, options and output behavior.
 - [Configuration](configuration.md): file locations, `config`/`init`, environment
   variables and defaults.
 - [Bindings](bindings.md): Node.js, Python and Go installation and API.
@@ -106,12 +106,11 @@ These pages are for contributors and reviewers rather than users.
 - [Compatibility](compatibility.md): contracts of reference release 1.2.0.
 - [Native CI](ci.md): package builds and installed-package checks.
 - [Validation](validation/README.md): measured evidence for each round.
-- [Performance plan](performance-plan.md).
 - Decisions: [native core](decisions/0001-native-core.md),
   [document LLM cache](decisions/0002-persistent-llm-cache.md),
   [static-page fetch cache](decisions/0003-persistent-fetch-cache.md) and
   [run reports, recovery and history](decisions/0004-run-persistence.md).
-- [Control history through R31](control-history-through-r31.md).
 
-Pages describe verified behavior and name the gaps that remain; a documented
-option that is not implemented returns an explicit error.
+Topic pages describe current behavior and remaining gaps. Historical validation
+records apply to their named commit, binary and platform; they do not certify a
+newer package. Current delivery status is tracked separately in [status](STATUS.md).

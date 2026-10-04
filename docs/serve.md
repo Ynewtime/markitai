@@ -454,27 +454,8 @@ their final path segment (a folder's structure is not kept; same-named files fro
 different folders become `name (2).ext`), so a client that uploads a folder sends
 its files individually.
 
-Uploads are made durable once per job, not once per file. A job is published only
-after every retained upload has been handed to the drive and one full flush has
-covered them all, followed by the metadata and parent-directory syncs as before. On
-macOS, where a full flush per file (`F_FULLFSYNC`) costs milliseconds, each file gets
-an ordinary `fsync` and a single full flush follows; on other platforms each file is
-synced once, in one batch, instead of as it arrives. Measured with the build and
-commands below, creating a job of 1,000 small HTML files fell from about 4.5 s to
-under a second:
-
-| Run (alternating) | Before | After |
-|---|---|---|
-| 1 | 4.40 s | 0.58 s |
-| 2 | 4.49 s | 1.97 s (the previous job's 1,000 conversions were still running) |
-| 3 | 4.58 s | 0.76 s |
-
-Command: `curl -F files=@f0.html … -F files=@f999.html http://127.0.0.1:PORT/api/jobs`
-(`time_total`, HTTP 201) against `target/debug/markitai serve` instances started with
-`env -i` and an isolated `MARKITAI_HOME`. The files are authored fixtures
-(`<h1>Doc N</h1><p>small file N</p>`), the build is the unoptimized `dev` profile,
-and the platform is macOS on APFS. Only macOS was measured; no Linux or Windows
-figure is claimed, and the numbers are one machine's single-digit samples. JSON Markdown results are limited
+Uploads are synchronized before durable job publication. An interrupted or
+failed upload does not establish a completed conversion. JSON Markdown results are limited
 to 64 MiB; larger output remains available through file downloads. Files and ZIPs
 stream in bounded chunks. Every archive request builds its own private temporary
 ZIP, retained until the response completes or disconnects. It never rewrites a
@@ -511,39 +492,3 @@ The workbench reports an unreachable service, checks again
 every five seconds and says when it is connected again. It shows the percentage
 and bytes of an upload while it is sent, can abort it, and offers Stop remaining
 (the cancel route above) while original items wait for a slot.
-
-## Validation scope
-
-The independent Unix CLI process suite in
-[`tests/serve.rs`](../crates/markitai-cli/tests/serve.rs) uses private configuration
-and `MARKITAI_HOME`, authored text/EML fixtures, and loopback HTTP gates. It covers
-submission and name collisions, public response types, SSE, downloads, concurrent
-ZIPs, source-upload removal, restart and late CLI history import, malformed form
-rollback, host/origin/path protection, shutdown queue cancellation, stop requests
-for waiting items, and explicit
-metadata-publication failure. Additional cases in
-[`tests/serve/rerun.rs`](../crates/markitai-cli/tests/serve/rerun.rs) cover per-item option
-inheritance/replacement, enhancement and failure preservation, sibling overlap,
-queued cancellation, shared-asset deletion, and retry metadata failure followed by
-restart. Module tests exercise committed/uncommitted file recovery, the error
-body shape, and router-level `error_code` values for failed, retried, stopped and
-shutdown items and request `reason`s. Separate synthetic-peer router tests exercise
-remote token and trust decisions without relying on a host network interface,
-including download tickets (issued only with the token, one GET of their own path,
-spent when shown elsewhere or with another method, single-use on loopback too, refused for
-settings and other non-download paths); `server::tickets` tests the path rule,
-expiry, single use and the 64-ticket bound, and `server::openapi` the document
-against the route table.
-[`tests/serve_terminal_usage.rs`](../crates/markitai-cli/tests/serve_terminal_usage.rs)
-contains private loopback cases for paid authentication errors, zero-token recorded
-responses, SSE/GET/restart agreement, a post-core publication obstruction retaining
-old bytes, subsequent unknown usage clearing, and invalid history diagnostics.
-[`tests/serve/gates.rs`](../crates/markitai-cli/tests/serve/gates.rs) covers the
-up-front model refusal for creation and retry, the service's wording for malformed
-bodies, options and retry bodies, and a 250-file job that keeps every upload for
-retry; [`tests/serve_startup.rs`](../crates/markitai-cli/tests/serve_startup.rs)
-runs the binary for the startup lines (English and Chinese), the network-listener
-warning and the taken-port message. Module tests check the no-authentication
-warning text and the option parser.
-These scoped checks do not establish complete REST/UI compatibility, production
-load limits, remote-provider behavior, or cross-platform acceptance.

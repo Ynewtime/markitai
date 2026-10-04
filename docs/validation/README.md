@@ -150,7 +150,7 @@ files. This isolates the exercised configuration paths; it is not an OS sandbox.
 - The [first round-five checkpoint](round5-first.md), artifacts and measurements
   remain historical evidence. Its extra parity pass was not evidence of better
   extraction quality; later review found and corrected two structural defects.
-- The [performance plan](../performance-plan.md) covers profile selection,
+- The [performance plan](../STATUS.md#性能与体积) covers profile selection,
   complete binding costs, retained binary code/data and sustained memory checks.
 
 ## Round-six build-profile evidence

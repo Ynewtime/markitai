@@ -3,7 +3,7 @@
 The CLI writes version `"1.0"` reports for single files, single URLs, directories
 and URL lists. Directory reports also include URLs discovered in `.urls` files.
 Reports summarize a finished run; separate [recovery state](state-storage.md)
-supports Unix batch resume. Optional [history archives](history.md) retain independent
+supports batch resume on Unix and Windows. Optional [history archives](history.md) retain independent
 documents and assets. Public core and
 Node/Python/Go conversion calls do not publish CLI reports.
 
@@ -26,7 +26,7 @@ A single-item report requires a completed conversion with an output directory;
 failed or skipped single items produce no new report. Batches report processed
 items even when some or all fail. Stdout-only conversion, dry runs and empty
 directory discovery without recoverable state publishes no report. Empty or invalid URL lists fail without
-publishing one. Report selection is independent of the Unix batch recovery journal.
+publishing one. Report selection is independent of the batch recovery journal.
 
 Publication occurs before the CLI's single stdout JSON envelope. A publication
 error preserves completed output files and their JSON items, sets an envelope
@@ -161,31 +161,3 @@ that attempt has no known usage. They never add old failed work to the new
 attempt. A known request with zero tokens is retained; absent observations remain
 unknown. This is neither lifetime spend nor a crash-safe billing ledger. Existing
 legacy reports and minimal states have no backfilled measurements.
-
-## Validation scope and remaining work
-
-The report implementation passed the source-level `scripts/check.sh` gate:
-296 Rust test executions / 273 distinct tests (196 core, 12 API, 40 CLI integration,
-46 shared CLI unit executions and 2 FFI), plus 23 Python harness tests. The two
-CLI binaries run the same 23 shared unit tests. Report subprocess tests cover
-all four modes, mixed directories, failures, skips, local mock-model usage,
-nonzero assets, finalized paths, conflicts and publication errors.
-
-The development R3 differential audit matched four successful reference reports
-recursively for values, JSON types and key order. It used a debug binary with
-recorded development-source provenance and disabled LLM, OCR, cache and history;
-all four reports had empty model usage. Nonzero usage has native mock/unit
-coverage; neither it nor multiple-model ordering has reference differential
-evidence from this run. The subsequent [release audit](validation/reports-round7.md)
-at clean `0ab59a0` passes the same four reference cases, and rebuilt host packages
-pass their integration checks. These cases do not establish mixed/failing-run
-differential parity, paid-provider behavior or performance.
-
-A resumed report includes saved completed entries and this invocation's observed
-outcomes, without inventing prior timing or provider usage. A prior skip appears
-as completed after reload because minimal state does not preserve its skip reason;
-a skip observed in the current invocation retains its normal report shape. URL-list reports use
-the active list order; directory reports retain stored entries. SIGINT/SIGTERM
-and fatal state-storage errors suppress report publication. See [decision
-0004](decisions/0004-run-persistence.md) for history and remaining runtime work.
-The historical report checks above predate scheduler integration.

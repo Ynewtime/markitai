@@ -1,6 +1,4 @@
-//! Durable batch state, ownership and `--resume`. The interrupt is portable
-//! (`support/interrupt.rs`); the suite runs where batches keep durable state,
-//! which Windows does not have yet.
+//! Durable batch state, ownership and `--resume`.
 #![cfg(unix)]
 
 use serde_json::{Value, json};

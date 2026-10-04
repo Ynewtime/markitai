@@ -149,13 +149,3 @@ under the configured API base, never arbitrary provider-returned URLs. Errors do
 not echo credentials or raw response content. Test suppliers are local loopback
 servers using fake keys and isolated state. Those tests do not establish live
 provider acceptance, quotas, invoice totals or 24-hour service reliability.
-
-## Verified evidence
-
-[R30](validation/metered-provider-batch-round30.md) verified source `16babc6` on
-macOS arm64 with six independent optimized CLI workflows and all installed
-bindings, and records which evidence is loopback-only rather than a real
-account. [R31](validation/subscription-recovery-round31.md) verified the resume
-and reconciliation paths at `88e44ce`: the complete source gate, eleven
-optimized CLI workflows with 234 assertions and installed bindings. No live
-provider Batch job has been run.

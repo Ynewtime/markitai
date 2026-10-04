@@ -180,29 +180,3 @@ publication guarantee, and MCP does not enable CLI resume/state reports.
 Draining protects already admitted work; it cannot deliver a single-call result
 to a disconnected client or persist the in-memory job table. Hard termination
 and unreadable provider responses remain gaps in complete accounting.
-
-## Verification scope
-
-Authored process tests launch the real CLI with private MARKITAI_HOME,
-configuration, working directory and temporary output while preserving HOME.
-The child environment excludes provider credentials; model fixtures use only
-loopback endpoints. They exercise both
-protocol eras, schemas, errors followed by continued requests, single-source
-outputs, Unicode previews, configuration reload, duplicate batch names, failure
-slots and polling while a slower URL is still in flight. Additional terminal
-usage cases cover both protocol eras, paid HTTP failures including known zero
-tokens, early errors without observations, ordered mixed-result batches,
-shared-request owner accounting, failed-owner recovery and EOF draining.
-Module tests cover
-finished-job retention and forgotten-ID bounds. Executed gate results belong in
-the project control record; this document does not claim a completed reference
-wire differential or live-provider validation.
-
-A 2026-07-28 `tools/list` result carries the required `ttlMs: 0` and
-`cacheScope: "private"`, the reference SDK's defaults; 2025-11-25 listings keep
-their original shape. The actual Python SDK 2.2.0 differential and its recorded
-differences are summarized in the project validation records.
-
-Protocol references: [MCP 2025-11-25 lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle),
-[MCP 2026-07-28 versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning),
-[official Rust SDK](https://github.com/modelcontextprotocol/rust-sdk).
