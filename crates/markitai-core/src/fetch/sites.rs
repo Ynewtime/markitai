@@ -54,6 +54,12 @@ const SITES: &[Site] = &[
         cookies: Some("douban.com"),
     },
     Site {
+        name: "Bilibili",
+        domains: &["bilibili.com"],
+        cause: "shows a captcha to clients that do not run its scripts",
+        cookies: None,
+    },
+    Site {
         name: "Weibo",
         domains: &["weibo.com", "weibo.cn"],
         cause: "asks automated clients for a login or a visitor check",
@@ -623,6 +629,10 @@ impl<'a> Shown<'a> {
                     || self.title == "Sina Visitor System"
             }
             "Reddit" => says("Prove your humanity"),
+            // The risk-control captcha, an empty mount point for its script.
+            "Bilibili" => {
+                markup.contains("id=\"risk-captcha-app\"") || self.title == "验证码_哔哩哔哩"
+            }
             // ByteDance's script-challenge page: an empty body and a bytecode VM.
             "Toutiao" => markup.contains("_$jsvmprt"),
             // The interstitial of a client its script cannot run in, and the
@@ -787,6 +797,22 @@ mod tests {
                 .starts_with("Reddit")
         );
         assert!(verification_page(&reddit, "<h1>A thread about humanity</h1>").is_none());
+        let bilibili = Url::parse("https://www.bilibili.com/opus/1").unwrap();
+        assert!(
+            verification_page(
+                &bilibili,
+                r#"<title>验证码_哔哩哔哩</title><body><div id="risk-captcha-app"></div></body>"#
+            )
+            .unwrap()
+            .starts_with("Bilibili served a verification page")
+        );
+        assert!(
+            verification_page(
+                &bilibili,
+                "<div class=\"opus-module-content\"><p>验证码</p></div>"
+            )
+            .is_none()
+        );
         let toutiao = Url::parse("https://www.toutiao.com/article/1/").unwrap();
         assert!(
             verification_page(

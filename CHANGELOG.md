@@ -34,6 +34,10 @@
 
 ### Fixed
 
+- Read local-browser pages whose text contains an unpaired UTF-16 surrogate (a script-truncated emoji, as on Bilibili) instead of failing with `Invalid Chromium protocol response`. Bilibili's captcha page, served to clients that do not run its scripts, is recognized as a verification page, so `auto` renders the page with the local browser and a failure names the site.
+- Read Douban book, movie and music reviews as the review with a one-line header (reviewer, work, rating and time), without the avatar, the work's card, votes, comments and menus; short reviews are no longer converted with the whole page.
+- Choose a named article over site menus, link lists and comment threads beside it; leave out the page banner `header`, Bulma `is-hidden` and Bootstrap `d-none` elements, Wikipedia's notices to editors, multi-part tables of contents with their labels, and blocks named as furniture after the article body (an `article-footer`, `#comments`). A lede or lead picture written twice for different screen sizes is written once.
+
 - Preserve clearly bounded PDF bar charts as images at their text position instead of flattening axes and legends into prose; retain text when rendering or placement cannot be verified.
 - Preserve legacy DOC underlining from direct formatting and inherited character styles (link labels stay plain links) without applying it to unrelated repeated text.
 - Recover supported legacy DOC floating pictures at their body-text anchors, including separately stored image data, without importing unrelated images.

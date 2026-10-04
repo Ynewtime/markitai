@@ -13,6 +13,7 @@
 
 mod bilibili;
 mod blogs;
+mod douban;
 mod wechat;
 mod zhihu;
 
@@ -42,6 +43,7 @@ enum Site {
     Kr36,
     Bilibili,
     Oschina,
+    Douban,
 }
 
 /// The site a host belongs to.
@@ -67,6 +69,8 @@ fn site_of(host: &str) -> Option<Site> {
         Some(Site::Bilibili)
     } else if within("oschina.net") {
         Some(Site::Oschina)
+    } else if within("douban.com") {
+        Some(Site::Douban)
     } else {
         None
     }
@@ -199,6 +203,7 @@ pub(super) fn read(document: &Html, base: Option<&Url>) -> Option<Reading> {
         Site::Kr36 => blogs::kr36(document),
         Site::Bilibili => bilibili::read(document).map(Article::build),
         Site::Oschina => blogs::oschina(document).map(Article::build),
+        Site::Douban => douban::read(document).map(Article::build),
     }
 }
 
@@ -843,6 +848,8 @@ mod tests {
             ("t.bilibili.com", Some(Site::Bilibili)),
             ("bilibili.com.example.test", None),
             ("my.oschina.net", Some(Site::Oschina)),
+            ("book.douban.com", Some(Site::Douban)),
+            ("movie.douban.com", Some(Site::Douban)),
             ("notzhihu.com", None),
             ("zhihu.com.example.test", None),
             ("weixin.qq.com", None),

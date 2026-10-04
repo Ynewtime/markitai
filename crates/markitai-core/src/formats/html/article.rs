@@ -214,8 +214,9 @@ fn related_cards(facts: &Facts, element: ElementRef<'_>) -> bool {
 
 /// Whether a page's framework classes hide an element as defuddle reads them:
 /// `hidden` or `invisible`, also behind a variant (`md:hidden`, a site's own
-/// `not-machine:hidden`), or a CSS-module `isHidden-…` name, unless a
-/// responsive class shows it again (`hidden md:block`). Arbitrary variants
+/// `not-machine:hidden`), Bulma's `is-hidden`, Bootstrap's `d-none` or a
+/// CSS-module `isHidden-…` name, unless a responsive class shows it again
+/// (`hidden md:block`, `d-none d-lg-flex`). Arbitrary variants
 /// (`[&_.x]:hidden`) target other elements. Fragments (books, email) come
 /// without the site's style sheet, so this is full-page chrome only.
 fn hidden_class(element: ElementRef<'_>) -> bool {
@@ -224,6 +225,14 @@ fn hidden_class(element: ElementRef<'_>) -> bool {
     };
     let mut hidden = false;
     for class in classes.split_ascii_whitespace() {
+        // Bootstrap shows a `d-none` element again at a breakpoint (`d-md-block`).
+        if let Some(utility) = class.strip_prefix("d-")
+            && let Some((breakpoint, shown)) = utility.split_once('-')
+            && matches!(breakpoint, "sm" | "md" | "lg" | "xl" | "xxl")
+            && shown != "none"
+        {
+            return false;
+        }
         if let Some((variant, utility)) = class.split_once(':')
             && (matches!(variant, "sm" | "md" | "lg" | "xl" | "2xl")
                 || ((variant.starts_with("min-[") || variant.starts_with("max-["))
@@ -245,8 +254,8 @@ fn hidden_class(element: ElementRef<'_>) -> bool {
                 rest.strip_prefix("Hidden")
                     .or_else(|| rest.strip_prefix("hidden"))
             })
-            .is_some_and(|rest| rest.starts_with(['-', '_']));
-        hidden |= matches!(bare, "hidden" | "invisible") || module;
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['-', '_']));
+        hidden |= matches!(bare, "hidden" | "invisible" | "d-none") || module;
     }
     hidden
 }
@@ -317,6 +326,47 @@ fn github_chrome(element: ElementRef<'_>) -> bool {
     matches!(only.value(), Node::Text(text) if LABELS.contains(&text.trim())) && in_viewer()
 }
 
+/// A `header` that is the page's banner, not the head of an article: its
+/// nearest sectioning ancestor is the body (or it says `role="banner"`), and
+/// no heading in it has text outside a link (a site's name linked to its home
+/// page is a logo; a page title written in the banner stays with it).
+fn banner(header: ElementRef<'_>) -> bool {
+    let page = token(header, "role", "banner")
+        || header
+            .ancestors()
+            .filter_map(ElementRef::wrap)
+            .find(|ancestor| {
+                matches!(
+                    ancestor.value().name(),
+                    "article"
+                        | "section"
+                        | "aside"
+                        | "nav"
+                        | "main"
+                        | "figure"
+                        | "blockquote"
+                        | "body"
+                ) || token(*ancestor, "role", "main")
+            })
+            .is_some_and(|ancestor| ancestor.value().name() == "body");
+    page && !header
+        .descendants()
+        .filter_map(ElementRef::wrap)
+        .filter(|element| heading(*element))
+        .any(|heading| unlinked_text(heading))
+}
+
+/// Whether an element has text of its own outside links.
+fn unlinked_text(element: ElementRef<'_>) -> bool {
+    element.children().any(|child| match child.value() {
+        Node::Text(text) => !text.trim().is_empty(),
+        Node::Element(value) if value.name() != "a" => {
+            ElementRef::wrap(child).is_some_and(unlinked_text)
+        }
+        _ => false,
+    })
+}
+
 fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
     if hidden_class(element) && !contains_math(element) {
         return true;
@@ -331,12 +381,15 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
         return true;
     }
     // MediaWiki's section edit links, "From Wikipedia" tagline, redirect
-    // note, skip links and the menu of the article in other languages (the
+    // note, skip links, the menu of the article in other languages (the
     // Vector 2022 skin writes it above the article, with its "30 languages"
-    // label and the link that edits the list).
+    // label and the link that edits the list) and the notices to editors
+    // about the article's state (`ambox`: "This article relies excessively on
+    // references to primary sources… Find sources: …").
     if named(
         element,
         &[
+            "ambox",
             "mw-editsection",
             "mw-jump-link",
             "siteSub",
@@ -347,6 +400,9 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
         ],
     ) {
         return true;
+    }
+    if element.value().name() == "header" {
+        return banner(element);
     }
     if note(facts, element)
         || !matches!(
@@ -521,13 +577,16 @@ const FURNITURE_WORDS: &[&str] = &[
     "widget",
     "footer",
     "signup",
+    // A comment thread beside an article (`#comments`, `comments-area`).
+    "comment",
+    "comments",
     // Google's and Yahoo's markers for text that is not the page's content.
     "nocontent",
 ];
 
 /// Whether a class or id name, split into words at `-`, `_` and spaces,
 /// names page furniture.
-fn furniture(element: ElementRef<'_>) -> bool {
+pub(super) fn furniture(element: ElementRef<'_>) -> bool {
     ["class", "id"].iter().any(|attribute| {
         element.value().attribute(attribute).is_some_and(|value| {
             value
@@ -604,7 +663,7 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
     // The page's heading targets, read for the first list that could be a
     // table of contents (most pages have none).
     let mut targets = None;
-    let mut found = Vec::new();
+    let mut lists = Vec::new();
     for list in root.descendants().filter_map(ElementRef::wrap) {
         if !matches!(list.value().name(), "ul" | "ol")
             || list
@@ -644,6 +703,10 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
         {
             continue;
         }
+        lists.push(list);
+    }
+    let mut found: Vec<ElementRef<'a>> = Vec::new();
+    for list in lists.iter().copied() {
         let mut wrapper = list;
         while let Some(parent) = wrapper.parent().and_then(ElementRef::wrap) {
             if parent == root
@@ -656,8 +719,12 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
                 .filter(|child| child.id() != wrapper.id())
                 .all(|child| match child.value() {
                     Node::Text(text) => text.trim().is_empty(),
+                    // A title, or another part of the same contents
+                    // ("Contents", its list, "Sidebars", their list).
                     Node::Element(_) => ElementRef::wrap(child).is_some_and(|element| {
-                        super::is_hidden(element) || contents_title(element)
+                        super::is_hidden(element)
+                            || contents_title(element)
+                            || lists.contains(&element)
                     }),
                     _ => true,
                 });
@@ -669,6 +736,9 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
         let rule = |element: Option<ElementRef<'a>>| {
             element.filter(|element| element.value().name() == "hr")
         };
+        if found.contains(&wrapper) {
+            continue;
+        }
         if let (Some(before), Some(after)) = (
             rule(wrapper.prev_siblings().find_map(ElementRef::wrap)),
             rule(wrapper.next_siblings().find_map(ElementRef::wrap)),
@@ -763,7 +833,8 @@ struct Scored<'a> {
     content_parent: Option<usize>,
     end: usize,
     score: usize,
-    /// Score inside furniture-named subtrees, counted once per outermost one.
+    /// Score inside furniture-named subtrees and links, counted once per
+    /// outermost one: what is never an introduction or a conclusion.
     furniture: usize,
     kind: Kind,
 }
@@ -820,7 +891,7 @@ pub(super) fn select<'a>(document: &'a Html, facts: &Facts) -> ElementRef<'a> {
     }
     for index in (0..nodes.len()).rev() {
         // Children come after their parent, so each subtree is complete here.
-        if furniture(nodes[index].element) {
+        if furniture(nodes[index].element) || nodes[index].element.value().name() == "a" {
             nodes[index].furniture = nodes[index].score;
         }
         if let Some(parent) = nodes[index].parent {
@@ -971,6 +1042,84 @@ mod tests {
         // The same rails' text in unnamed blocks is page text to keep.
         let document = Html::parse_document(&format!(
             r#"<body><div class="js-article-content" id="story"><h2>Section</h2><p>The article itself is short.</p></div><div><p>{rail}</p></div></body>"#
+        ));
+        assert_eq!(select(&document).value().name(), "body");
+    }
+
+    #[test]
+    fn the_page_banner_is_chrome_but_a_header_with_a_title_or_inside_an_article_is_not() {
+        let document = Html::parse_document(
+            r#"<body><header id="site"><h1><a href="/">Site Name</a></h1><p>Business</p><ul><li>Login</li></ul></header>
+            <header id="titled"><h1>The Page Title</h1></header>
+            <div><header id="nested"><span>Menu</span></header></div>
+            <main><header id="in-main"><span>Posted today</span></header></main>
+            <article><header id="article-head"><span>By Jane</span></header><p>Text.</p></article>
+            <div role="banner" id="role-div">Banner</div>
+            <header role="banner" id="role"><h2><span>Logo</span> <a href="/">Home</a></h2></header></body>"#,
+        );
+        assert!(excluded(element(&document, "#site")));
+        assert!(excluded(element(&document, "#nested")));
+        assert!(!excluded(element(&document, "#titled")));
+        assert!(!excluded(element(&document, "#in-main")));
+        assert!(!excluded(element(&document, "#article-head")));
+        assert!(!excluded(element(&document, "#role")));
+    }
+
+    #[test]
+    fn framework_classes_that_hide_an_element_are_chrome_unless_shown_again() {
+        let document = Html::parse_document(
+            r#"<body><div id="bulma" class="box is-hidden">a</div><div id="module" class="isHidden-x1">b</div>
+            <div id="bs" class="d-none">c</div><div id="bs-shown" class="d-none d-lg-flex">d</div>
+            <div id="bs-hidden-lg" class="d-block d-lg-none">e</div><div id="hidden-word" class="is-hiddenish">f</div></body>"#,
+        );
+        assert!(excluded(element(&document, "#bulma")));
+        assert!(excluded(element(&document, "#module")));
+        assert!(excluded(element(&document, "#bs")));
+        assert!(!excluded(element(&document, "#bs-shown")));
+        assert!(!excluded(element(&document, "#bs-hidden-lg")));
+        assert!(!excluded(element(&document, "#hidden-word")));
+    }
+
+    #[test]
+    fn a_comment_thread_does_not_keep_the_page_around_an_article() {
+        let thread = "<li><p>A reader's comment that says quite a lot about the article.</p></li>"
+            .repeat(30);
+        let document = Html::parse_document(&format!(
+            r#"<body><div><article id="story"><h1>Post</h1><p>The article is a few sentences long and says what it says.</p></article>
+            <section id="comments"><ul>{thread}</ul></section></div></body>"#
+        ));
+        assert_eq!(select(&document).value().attribute("id"), Some("story"));
+        // A thread page without a named article keeps its comments.
+        let document = Html::parse_document(&format!(
+            r#"<body><div id="post"><h1>Post</h1><p>A question.</p></div><section id="comments"><ul>{thread}</ul></section></body>"#
+        ));
+        assert_eq!(select(&document).value().name(), "body");
+    }
+
+    #[test]
+    fn a_notice_to_wikipedia_editors_is_chrome() {
+        let document = Html::parse_document(
+            r#"<main><div class="mw-parser-output"><table class="box-Primary_sources plainlinks metadata ambox ambox-content"><tr><td>This article relies excessively on references to primary sources.</td></tr></table><table class="infobox"><tr><th>Developed by</th><td>John Gruber</td></tr></table><p>Markdown is a markup language.</p></div></main>"#,
+        );
+        assert!(excluded(element(&document, ".ambox")));
+        assert!(!excluded(element(&document, ".infobox")));
+    }
+
+    #[test]
+    fn site_menus_do_not_keep_the_page_around_a_short_named_article() {
+        let menu: String = (0..40)
+            .map(|index| {
+                format!("<li><a href=\"/section/{index}\">Section number {index}</a></li>")
+            })
+            .collect();
+        let document = Html::parse_document(&format!(
+            r#"<body><div class="global-nav"><ul>{menu}</ul></div><div class="article" id="story"><h1>Review</h1><p>A short review of a book.</p></div></body>"#
+        ));
+        assert_eq!(select(&document).value().attribute("id"), Some("story"));
+        // The same words as prose outside the article are page text to keep.
+        let prose = "Section number one introduces the story. ".repeat(20);
+        let document = Html::parse_document(&format!(
+            r#"<body><div><p>{prose}</p></div><div class="article" id="story"><h1>Review</h1><p>A short review of a book.</p></div></body>"#
         ));
         assert_eq!(select(&document).value().name(), "body");
     }

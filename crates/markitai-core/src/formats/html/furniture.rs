@@ -9,7 +9,9 @@
 //! a featured comment inside the body is known by its class name.
 
 use super::Attribute;
-use super::article::{discarded, featured_comment, heading, note, structured_page, teaser};
+use super::article::{
+    discarded, featured_comment, furniture, heading, note, structured_page, teaser,
+};
 use super::facts::Facts;
 use scraper::{ElementRef, Node};
 
@@ -295,14 +297,26 @@ impl<'a> Region<'a> {
                     })
                     .map(|node| node.element),
             );
-            let after: Vec<usize> = siblings[at + 1..]
+            let (named, after): (Vec<usize>, Vec<usize>) = siblings[at + 1..]
                 .iter()
                 .copied()
                 .filter(|child| {
                     !(self.repeats(pair[1], *child)
-                        || (Some(*child) == next && (introduced || self.conclusion(*child))))
+                        || (Some(*child) == next
+                            && (introduced
+                                || (self.conclusion(*child)
+                                    && !furniture(self.nodes[*child].element)))))
                 })
-                .collect();
+                .partition(|child| furniture(self.nodes[*child].element));
+            // A block named as furniture (`article-footer`, `share-bar`,
+            // `newsletter`) goes however much it says.
+            found.extend(
+                named
+                    .iter()
+                    .map(|child| &self.nodes[*child])
+                    .filter(|node| !node.keep)
+                    .map(|node| node.element),
+            );
             let words: usize = after.iter().map(|child| self.nodes[*child].text).sum();
             if words <= MAX_AFTER && words * AFTER_SHARE <= body {
                 found.extend(
@@ -849,6 +863,23 @@ mod tests {
             body()
         ));
         assert_eq!(ids, ["bio", "cards", "signup"]);
+    }
+
+    #[test]
+    fn blocks_after_the_body_named_as_furniture_go_however_much_they_say() {
+        let ids = left_out(&format!(
+            r##"<body><div><div class="post"><h1>Title</h1>{}</div>
+            <section id="footer" class="article-footer"><h2>Help improve the docs</h2><p>{}</p></section>
+            <div id="comments"><p>{}</p></div>
+            <div id="more"><p>{}</p></div>
+            <div class="footnotes" id="notes"><p>{}</p></div></div></body>"##,
+            body().repeat(3),
+            prose(40),
+            prose(80),
+            prose(60),
+            prose(30)
+        ));
+        assert_eq!(ids, ["comments", "footer"]);
     }
 
     #[test]

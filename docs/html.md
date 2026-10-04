@@ -214,14 +214,25 @@ content names defuddle uses as entry points, among them `article-content`,
 plain `article` and `article-text`) is chosen over its page when it holds at
 least three fifths of the page's text; subtrees whose class or id words name
 page furniture (recommended, related, share, newsletter, subscribe,
-disclaimer, toc, breadcrumb, sidebar, footer, nocontent ...) do not count as
-page text for that comparison. One article beside teaser cards (articles
+disclaimer, toc, breadcrumb, sidebar, footer, comments, nocontent ...) do not
+count as page text for that comparison, and neither does the text of links (a
+site's menus), so an article is chosen over the comment thread or the menus
+beside it. One article beside teaser cards (articles
 titled by a link to another page) is chosen the same way, the cards counting
 as furniture; several full articles keep their page. Names only weigh the
 choice: nothing is removed for its name. GitHub's Primer page sidebar and
 MediaWiki's section edit links, tagline, redirect note, skip links and the menu
 of the article in other languages (`#p-lang-btn`, `mw-portlet-lang`: the "57
-languages" list the Vector 2022 skin writes above the article) are page chrome.
+languages" list the Vector 2022 skin writes above the article) and its notices
+to editors (`ambox`: "This article relies excessively on references to primary
+sources… Find sources: …") are page chrome. So is the page's banner: a `header`
+whose nearest sectioning element is the body (or `role="banner"`) with no
+heading that has text outside a link (a site name linked home is a logo; a
+page title in the banner keeps it), and an element that Bulma's `is-hidden` or
+Bootstrap's `d-none` hides, unless a breakpoint class (`d-lg-flex`) shows it.
+A paragraph of at least 30 characters or a picture that repeats the block right
+before it (a lede or a lead picture written once for small screens and once for
+large ones) is written once.
 MediaWiki's SyntaxHighlight blocks keep their language from the
 `mw-highlight-lang-<lang>` class of their wrapper (a fence labelled `rust`).
 
@@ -316,6 +327,7 @@ carries a marker and is never read a second time.
 | Jianshu (`jianshu.com`) | note | the page's `article`; author and first publication time from `__NEXT_DATA__` | the body with its images (`data-original-src`), without the editor's default `image` caption |
 | OSCHINA (`oschina.net`) | blog post | `.blog-content .editor` with `h1.blog-content-title` and `.blog-content-info` (the page is rendered by scripts, so this is the local browser's result or a saved page) | title, a line `author · date` and the body, without the AI summary box, the advertisement, tags, comments and recommended posts |
 | Bilibili (`bilibili.com`) | opus and column pages | `.opus-module-content` with `.opus-module-title__text` and `.opus-module-author__*` of the rendered page | title, `author · time` and the body; images as uploaded (the size directive after `@` is removed); without the table of contents, the sidebar, tags, comments and the site menu |
+| Douban (`douban.com`) | book, movie and music review | `.review-content` of `.review-wrapper`, with the `h1` title and `header.main-hd` (reviewer, work, the rating's `title`, `.main-meta` time) | title, a line `reviewer · 评论《work》 · 力荐 · time` and the review, with the site's spoiler notice in italics when it shows one; without the avatar, the work's card, votes, comments and menus |
 | 36Kr (`36kr.com`) | article | the `publishTime` the page's own script keeps next to the article | the page's `article:published_time` is the moment the server wrote the page; the frontmatter `published` is the article's own time |
 
 Two changes apply to every page. The redirect page a site wraps its outward

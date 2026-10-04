@@ -5040,6 +5040,88 @@ pub(super) fn extract_html_bytes(bytes: &[u8]) -> Result<Document> {
 }
 
 /// Extract an article candidate, metadata and Markdown without fetching links.
+/// A page without a block that repeats the block right before it. Pages write
+/// a lede, a dek or a lead picture twice, once for small screens and once for
+/// large ones, and a style sheet shows one of them; read without it, both
+/// come out one after the other. Only a picture or a paragraph of at least
+/// [`MIN_REPEATED`] characters is such a copy: a short reply ("Yes"), a list,
+/// a table, a heading or code may repeat on purpose.
+fn without_repeated_blocks(markdown: String) -> String {
+    const MIN_REPEATED: usize = 30;
+    let copy = |block: &str| {
+        let first = block.trim_start();
+        let picture = first.starts_with("![") || first.starts_with("[![");
+        let plain = !(first.starts_with('#')
+            || first.starts_with('|')
+            || first.starts_with('>')
+            || first.starts_with("```")
+            || first.starts_with("~~~")
+            || first.starts_with("* ")
+            || first.starts_with("- ")
+            || first.starts_with("+ ")
+            || first.starts_with("    ")
+            || first.split_once(". ").is_some_and(|(number, _)| {
+                !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+            }));
+        picture || (plain && block.chars().count() >= MIN_REPEATED)
+    };
+    let mut blocks: Vec<&str> = Vec::new();
+    let mut fence: Option<&str> = None;
+    let mut start = 0;
+    let mut offset = 0;
+    for line in markdown.split_inclusive('\n') {
+        let trimmed = line.trim();
+        match fence {
+            Some(marker) if trimmed.starts_with(marker) => fence = None,
+            Some(_) => {}
+            None if trimmed.starts_with("```") || trimmed.starts_with("~~~") => {
+                fence = Some(&trimmed[..3]);
+            }
+            None if trimmed.is_empty() => {
+                if offset > start {
+                    blocks.push(&markdown[start..offset]);
+                }
+                start = offset + line.len();
+            }
+            None => {}
+        }
+        offset += line.len();
+    }
+    if offset > start {
+        blocks.push(&markdown[start..offset]);
+    }
+    let mut kept: Vec<&str> = Vec::with_capacity(blocks.len());
+    let mut repeated = false;
+    for block in blocks {
+        if kept
+            .last()
+            .is_some_and(|last| last.trim_end() == block.trim_end() && copy(block))
+        {
+            repeated = true;
+            continue;
+        }
+        kept.push(block);
+    }
+    if !repeated {
+        return markdown;
+    }
+    let mut out = String::with_capacity(markdown.len());
+    for block in kept {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(block);
+        if !block.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    let trailing = markdown.ends_with('\n');
+    if !trailing {
+        out.truncate(out.trim_end_matches('\n').len());
+    }
+    out
+}
+
 pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     FLATTENED.with(|flattened| flattened.set(false));
     let source = flatten_shadow_roots(source);
@@ -5141,7 +5223,13 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
         metadata.extend(page.metadata);
         page.markdown
     } else {
-        render_with_footnotes(root, document.root_element(), base.as_ref(), true, &facts)?
+        without_repeated_blocks(render_with_footnotes(
+            root,
+            document.root_element(),
+            base.as_ref(),
+            true,
+            &facts,
+        )?)
     };
     if markdown.is_empty() {
         return Err(Error::Conversion(
@@ -5190,6 +5278,55 @@ mod tests {
         };
         same && a.children().count() == b.children().count()
             && a.children().zip(b.children()).all(|(x, y)| same_tree(x, y))
+    }
+
+    #[test]
+    fn a_lede_and_picture_written_for_two_screen_sizes_are_read_once() {
+        let dek = "OpenAI launches a new iteration of its GPT-4 product.";
+        let page = format!(
+            r#"<html><body><article><h1>Title</h1>
+            <div class="small"><p>{dek}</p></div><div class="large"><p>{dek}</p></div>
+            <div class="m"><img src="https://example.test/lead.png" alt="Lead"></div>
+            <div class="d"><img src="https://example.test/lead.png" alt="Lead"></div>
+            <p>The story begins here with a paragraph of running text.</p>
+            <p>Yes</p><p>Yes</p>
+            <pre><code>same line of code that repeats itself
+</code></pre><pre><code>same line of code that repeats itself
+</code></pre>
+            <ul><li>an item of a list that repeats itself</li></ul><ul><li>an item of a list that repeats itself</li></ul>
+            </article></body></html>"#
+        );
+        let markdown = extract_html(&page, Some("https://example.test/a"))
+            .unwrap()
+            .markdown;
+        assert_eq!(markdown.matches(dek).count(), 1, "{markdown}");
+        assert_eq!(markdown.matches("lead.png").count(), 1, "{markdown}");
+        assert!(markdown.contains("Yes\n\nYes"), "{markdown}");
+        assert_eq!(
+            markdown.matches("same line of code").count(),
+            2,
+            "{markdown}"
+        );
+        assert_eq!(
+            markdown.matches("an item of a list").count(),
+            2,
+            "{markdown}"
+        );
+        // Repeats apart from each other, and text with no repeat, are unchanged.
+        let apart = format!(
+            "<html><body><article><p>{dek}</p><p>Between them.</p><p>{dek}</p></article></body></html>"
+        );
+        let markdown = extract_html(&apart, None).unwrap().markdown;
+        assert_eq!(markdown.matches(dek).count(), 2, "{markdown}");
+        assert_eq!(
+            without_repeated_blocks("a\n\n\nb\n".into()),
+            "a\n\n\nb\n",
+            "untouched without a repeat"
+        );
+        assert_eq!(
+            without_repeated_blocks(format!("```\n{dek}\n\n{dek}\n```\n\n{dek}\n\n{dek}")),
+            format!("```\n{dek}\n\n{dek}\n```\n\n{dek}")
+        );
     }
 
     #[test]
@@ -6040,6 +6177,13 @@ map(callbackFn, thisArg)
             "{page}"
         );
         assert_eq!(page.matches("[Two](#two)").count(), 3, "{page}");
+        // Contents in two labelled parts (Martin Fowler's articles).
+        let parts = markdown(
+            r##"<main><h1>Guide</h1><div class="contents"><h2>Contents</h2><ul><li><a href="#one">One</a></li><li><a href="#two">Two</a></li><li><a href="#three">Three</a></li></ul><h3>Sidebars</h3><ul><li><a href="#one">One</a></li><li><a href="#two">Two</a></li><li><a href="#three">Three</a></li></ul></div>
+            <h2 id="one">One</h2><p>First.</p><h2 id="two">Two</h2><p>Second.</p><h2 id="three">Three</h2><p>Third.</p></main>"##,
+        );
+        assert!(parts.starts_with("# Guide\n\n## One\n\nFirst."), "{parts}");
+        assert!(!parts.contains("Sidebars"), "{parts}");
         let wiki = markdown(
             r#"<main><h1>Obsidian</h1><div id="siteSub">From Wikipedia, the free encyclopedia</div><div id="contentSub"><span>(Redirected from Obs)</span></div><h2><span class="mw-headline" id="History">History</span><span class="mw-editsection"><span class="mw-editsection-bracket">[</span><a href="/w/index.php?action=edit&amp;section=1">edit</a><span class="mw-editsection-bracket">]</span></span></h2><p>Text.</p></main>"#,
         );

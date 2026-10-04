@@ -96,7 +96,7 @@ echoed is replaced by `REDACTED`.
 
 A site that is known to turn automated clients away is named in the hint
 instead of the generic text, with what does work: for a 401, 403, 418 or 429
-from Zhihu, WeChat, Douban, Weibo, Toutiao, Reddit, Quora, Stack Overflow,
+from Zhihu, WeChat, Douban, Bilibili, Weibo, Toutiao, Reddit, Quora, Stack Overflow,
 Medium or Hashnode the message reads, for instance, `HTTP 403 for
 https://www.zhihu.com/…: Zhihu refuses automated clients; open the page in
 your browser and save it (File > Save Page As…, 'Webpage, HTML Only'), then
@@ -115,7 +115,8 @@ A page that is a site's verification or security check but is served with
 status 200 is a failure as well, never a short Markdown "page": WeChat's
 `环境异常 / 去验证` page (the answer to a static client), Douban's `sec.douban.com`
 script check, Weibo's `Sina Visitor System`, Reddit's `Prove your humanity`,
-Toutiao's script challenge page and Zhihu's `zse-ck` interstitial, its
+Toutiao's script challenge page, Bilibili's risk captcha (`验证码_哔哩哔哩`, which it
+shows a client that does not run its scripts) and Zhihu's `zse-ck` interstitial, its
 `account/unhuman` check and its `安全验证 - 知乎` security check. The message
 reads `<Site> served a verification page instead of the content: it … ; open the
 page in your browser and save it …`. A site that expects a login (Zhihu, Douban,

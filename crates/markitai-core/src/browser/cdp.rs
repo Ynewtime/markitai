@@ -17,6 +17,62 @@ fn failure(message: &str) -> Error {
     Error::Fetch(message.into())
 }
 
+/// A protocol message. Chromium writes a JavaScript string as UTF-16 escapes,
+/// so a string a page cut in the middle of an emoji (a truncated preview, a
+/// title shortened by a script) arrives with an unpaired surrogate (`"\ud83d"`),
+/// which is not valid JSON text; such an escape is read as U+FFFD, as a
+/// browser shows it.
+fn decode(text: &str) -> Result<Value> {
+    serde_json::from_str(text)
+        .or_else(|_| serde_json::from_str(&paired_surrogates(text)))
+        .map_err(|_| failure("Invalid Chromium protocol response"))
+}
+
+/// The message with every `\uD800`–`\uDFFF` escape that is not half of a
+/// pair replaced by `\uFFFD`.
+fn paired_surrogates(text: &str) -> String {
+    fn escape_at(bytes: &[u8], at: usize) -> Option<u16> {
+        if bytes.get(at) != Some(&b'\\') || bytes.get(at + 1) != Some(&b'u') {
+            return None;
+        }
+        let hex = std::str::from_utf8(bytes.get(at + 2..at + 6)?).ok()?;
+        u16::from_str_radix(hex, 16).ok()
+    }
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] != b'\\' {
+            at += 1;
+            continue;
+        }
+        let Some(unit) = escape_at(bytes, at) else {
+            // Another escape, such as `\\` before a literal `u`.
+            at += 2;
+            continue;
+        };
+        let pair = match unit {
+            0xD800..=0xDBFF => {
+                matches!(escape_at(bytes, at + 6), Some(0xDC00..=0xDFFF)).then_some(12)
+            }
+            0xDC00..=0xDFFF => None,
+            _ => Some(6),
+        };
+        match pair {
+            Some(length) => at += length,
+            None => {
+                out.push_str(&text[copied..at]);
+                out.push_str("\\ufffd");
+                at += 6;
+                copied = at;
+            }
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
 fn private_profile() -> Result<TempDir> {
     let mut builder = tempfile::Builder::new();
     builder.prefix("markitai-browser-");
@@ -599,9 +655,7 @@ impl Browser {
             .read()
             .map_err(|_| failure("Browser operation timed out or connection closed"))?
         {
-            Message::Text(text) => serde_json::from_str(&text)
-                .map(Some)
-                .map_err(|_| failure("Invalid Chromium protocol response")),
+            Message::Text(text) => decode(&text).map(Some),
             Message::Ping(_) | Message::Pong(_) => Ok(None),
             Message::Close(_) => Err(failure("Chromium closed its page")),
             _ => Err(failure("Unexpected Chromium protocol frame")),
@@ -635,8 +689,7 @@ impl Browser {
                 .map_err(|_| failure("Browser operation timed out or connection closed"))?;
             match message {
                 Message::Text(text) => {
-                    let value: Value = serde_json::from_str(&text)
-                        .map_err(|_| failure("Invalid Chromium protocol response"))?;
+                    let value = decode(&text)?;
                     if value["id"].as_u64() == Some(id) {
                         if value.get("error").is_some() {
                             return Err(failure(&format!("Chromium protocol rejected {method}")));
@@ -762,6 +815,50 @@ mod tests {
         socket
             .send(Message::Text(value.to_string().into()))
             .unwrap();
+    }
+
+    #[test]
+    fn unpaired_surrogate_escapes_are_read_as_replacement_characters() {
+        assert!(serde_json::from_str::<Value>(r#""\ud83d""#).is_err());
+        for (message, text) in [
+            (r#"{"v":"a\ud83db"}"#, "a\u{fffd}b"),
+            (r#"{"v":"a\ude00"}"#, "a\u{fffd}"),
+            (r#"{"v":"\ud83d😀"}"#, "\u{fffd}\u{1f600}"),
+            (r#"{"v":"\ud83dA"}"#, "\u{fffd}A"),
+            (r#"{"v":"\\ud83d é"}"#, "\\ud83d \u{e9}"),
+            (r#"{"v":"\"\ud83d"}"#, "\"\u{fffd}"),
+        ] {
+            assert_eq!(decode(message).unwrap()["v"], text, "{message}");
+        }
+        assert!(decode(r#"{"v":"\ud83d"#).is_err());
+    }
+
+    #[test]
+    fn a_reply_with_an_unpaired_surrogate_is_read() {
+        let (mut browser, worker) = mock(4096, |mut socket| {
+            let command = receive(&mut socket);
+            let id = command["id"].as_u64().unwrap();
+            socket
+                .send(Message::Text(
+                    r#"{"method":"Runtime.consoleAPICalled","params":{"args":[{"value":"\udc00"}]}}"#.into(),
+                ))
+                .unwrap();
+            socket
+                .send(Message::Text(
+                    format!(
+                        r#"{{"id":{id},"result":{{"result":{{"value":"<p>preview \ud83d</p>"}}}}}}"#
+                    )
+                    .into(),
+                ))
+                .unwrap();
+        });
+        assert_eq!(
+            browser
+                .evaluate("document.documentElement.outerHTML")
+                .unwrap(),
+            json!("<p>preview \u{fffd}</p>")
+        );
+        worker.join().unwrap();
     }
 
     #[test]

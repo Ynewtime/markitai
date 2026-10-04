@@ -14,7 +14,11 @@ set of established content container names such as `entry-content`,
 `post-content` and `blog-post-content`. One content container is selected when
 it accounts for at least three fifths of the surrounding region's score.
 Substantial introductory or concluding text outside that container keeps the
-wider region selected. Multiple sibling articles retain their common main or
+wider region selected; the text of links (a site menu, a list of links) and of
+furniture-named rails outside it (a comment thread, `#comments`, among them) is
+not such text, so a short review beside a site's menus, or a post above its
+comments, is still chosen. A page without a named content container keeps its
+comments. Multiple sibling articles retain their common main or
 body region, which protects portfolios and indexes.
 
 Two explicit structures have more precise boundaries: a GitHub-style README
@@ -53,8 +57,10 @@ root to the body:
 - before the body, a block that is only links or at most two words (a banner, a
   back link, a breadcrumb trail) goes, unless it holds a heading, a picture, a
   video or a date: the title, its lead image, a lede and a byline stay;
-- after the body, the sibling blocks go when together they hold under fifty
-  words and under a third of the body's: a subscribe box, a call to action,
+- after the body, a sibling block whose class or id words name furniture (an
+  `article-footer`, a share bar, a newsletter box, `#comments`) goes however
+  much it says, and the other sibling blocks go when together they hold under
+  fifty words and under a third of the body's: a subscribe box, a call to action,
   related-post cards, an author bio, share counters, a category list,
   previous and next links. Three kinds of block stay and are not counted:
   replies of a thread (the same element with the same first class as the post
