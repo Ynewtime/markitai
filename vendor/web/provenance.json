@@ -90,8 +90,8 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 11931,
-    "sha256": "e00ad5c83af13b0cbbe964c99f60fb94ce66fd487fc4858c4272dd35b08690b4",
+    "bytes": 11531,
+    "sha256": "1fc42651b5eaa38bb3872fd161e87dee9160fb9904e10a6cd1263df0b1b0ae1a",
     "obtained": "generated: the SVG path strings of 26 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
@@ -130,9 +130,9 @@
         "sha256": "92640df13e177d8b4513fb980a051867bab919d8bd8b8647e74829c5a5801acb"
       },
       {
-        "member": "package/dist/defs/Palette.es.js",
-        "bytes": 4573,
-        "sha256": "bc097d1f0545899de804e3e4001463c5f36bc50358165945151533b7f4f7a02a"
+        "member": "package/dist/defs/CircleHalfTilt.es.js",
+        "bytes": 2777,
+        "sha256": "b61d3d344c988122f70d9f27ec0571b35319ded8c4f24f40655cdae1d1762e92"
       },
       {
         "member": "package/dist/defs/ClockCounterClockwise.es.js",
@@ -143,11 +143,6 @@
         "member": "package/dist/defs/X.es.js",
         "bytes": 2221,
         "sha256": "4cb8b69830ae8d98860064d57ee28def14bab4e291b95a8df0c0745fc0932009"
-      },
-      {
-        "member": "package/dist/defs/TerminalWindow.es.js",
-        "bytes": 2752,
-        "sha256": "3e422e7259e53f72f92b5b49fbf05836ef28f8d2da5cf0339c6e012357c4e583"
       },
       {
         "member": "package/dist/defs/Sliders.es.js",
@@ -178,6 +173,11 @@
         "member": "package/dist/defs/CaretRight.es.js",
         "bytes": 1624,
         "sha256": "e58bcc72e78dbc3437111e09ba874c43fe0d4ed042db9483ea6adc018ddda044"
+      },
+      {
+        "member": "package/dist/defs/CaretDown.es.js",
+        "bytes": 1610,
+        "sha256": "2d78bb5690f7c05b09144cb79763673a97990b7097f345b516601cd74d5d014e"
       },
       {
         "member": "package/dist/defs/Gear.es.js",

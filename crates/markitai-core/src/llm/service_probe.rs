@@ -7,8 +7,9 @@ use std::{collections::HashMap, io::Read, time::Duration};
 const MAX_RESPONSE: u64 = 1024 * 1024;
 
 pub(crate) fn probe(request: &Value, allow_environment: bool) -> Result<()> {
+    // The same snapshot conversion reads: process variables, then `.env` files.
     let env: HashMap<String, String> = if allow_environment {
-        std::env::vars().collect()
+        crate::config::environment()
     } else {
         HashMap::new()
     };

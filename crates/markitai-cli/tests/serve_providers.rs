@@ -308,6 +308,65 @@ fn actual_service_discovers_cached_models_and_probes_stored_or_draft_without_mut
     assert!(!server.logs.lock().unwrap().contains("private-provider-key"));
 }
 
+#[test]
+fn actual_service_probes_and_discovers_with_user_dotenv_credentials() {
+    // Conversion reads `MARKITAI_HOME/.env`; the settings Test and discovery
+    // buttons must resolve the same keys instead of sending none (HTTP 401).
+    let root = tempfile::tempdir().unwrap();
+    let backend = Provider::start();
+    std::fs::create_dir_all(root.path().join("home")).unwrap();
+    std::fs::write(
+        root.path().join("home/.env"),
+        "DEEPSEEK_API_KEY=dotenv-fallback-key\nDOTENV_REFERENCE_KEY=dotenv-reference-key\n",
+    )
+    .unwrap();
+    let config = json!({"llm":{"enabled":false,"model_list":[
+        {"model_name":"default","litellm_params":{"model":"deepseek/specific-test-model","api_base":backend.base}},
+        {"model_name":"default","litellm_params":{"model":"openai/specific-test-model","api_key":"env:DOTENV_REFERENCE_KEY","api_base":backend.base}}
+    ]},"ocr":{"enabled":false},"cache":{"enabled":false},"history":{"record":false},"log":{"dir":null},"prompts":{"dir":root.path().join("prompts")}});
+    std::fs::write(root.path().join("config.json"), config.to_string()).unwrap();
+    let server = Server::start(root.path());
+    let (status, _, settings) = server.request("GET", "/api/settings/llm", None);
+    assert_eq!(status, 200, "{settings}");
+    let ids: Vec<String> = settings["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["deployment_id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids.len(), 2);
+    for (index, (id, key)) in ids
+        .iter()
+        .zip(["dotenv-fallback-key", "dotenv-reference-key"])
+        .enumerate()
+    {
+        let (status, _, result) = server.request(
+            "POST",
+            "/api/settings/llm/test",
+            Some(&json!({"deployment_id":id})),
+        );
+        assert_eq!(status, 200, "{result}");
+        assert_eq!(result["ok"], true, "{result}");
+        let requests = backend.seen.lock().unwrap().clone();
+        assert_eq!(requests.len(), index + 1);
+        assert!(
+            requests[index].contains(&format!("authorization: Bearer {key}")),
+            "probe {index} sent no dotenv key"
+        );
+    }
+    let (status, _, result) = server.request(
+        "POST",
+        "/api/settings/llm/model-discovery",
+        Some(&json!({"provider":"openai","deployment_id":ids[1]})),
+    );
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["models"].as_array().unwrap().len(), 2, "{result}");
+    let requests = backend.seen.lock().unwrap().clone();
+    assert!(requests[2].starts_with("GET "));
+    assert!(requests[2].contains("authorization: Bearer dotenv-reference-key"));
+    assert!(!server.logs.lock().unwrap().contains("dotenv-"));
+}
+
 #[cfg(test)]
 mod bounded_fixture_io {
     include!(concat!(

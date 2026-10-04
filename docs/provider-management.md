@@ -64,10 +64,12 @@ and binds saved/environment credentials to their configured provider and full
 endpoint. Custom endpoints use the caller's literal key, without borrowing an
 ambient or unrelated saved key; see [settings credential rules](service-settings.md#credentials-and-partial-updates).
 
-The core reads process environment variables and resolves explicit `env:NAME`
-references. It deliberately does not load `.env`, user configuration or auth
-files during these network calls. Environment variables already supplied to the
-service are usable; a missing explicit reference is an error. Endpoints must be
+The environment-backed calls read the same environment snapshot as conversion:
+process variables, then `.env` in the current directory, then
+`MARKITAI_HOME/.env` (`~/.markitai/.env`), with existing values taking
+precedence. They resolve explicit `env:NAME` references and provider fallback
+variables from it, and do not load user configuration or auth files. A missing
+explicit reference is an error. The explicit variants read no environment. Endpoints must be
 HTTP(S), without URL user information or fragments. Trusted callers may choose
 loopback/private endpoints, supporting local providers; this is not a general
 untrusted URL-fetch service. Service guard checks and `Cache-Control: no-store`

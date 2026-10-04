@@ -169,7 +169,7 @@ function Appearance({ t, locale, onLocale }: { t: Dict; locale: Locale; onLocale
         aria-controls="appearance-card"
         onClick={() => setOpen((value) => !value)}
       >
-        <Icon name="Palette" size={16} />
+        <Icon name="CircleHalfTilt" size={16} />
       </button>
       <div ref={card} id="appearance-card" class="appearance-card" role="dialog" aria-label={t.appearanceTitle} hidden={!open}>
         <div class="appearance-row">

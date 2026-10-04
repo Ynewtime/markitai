@@ -393,13 +393,14 @@ textarea {
 }
 .appearance-card {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + 8px);
   right: -88px;
   z-index: 40;
   display: grid;
-  gap: 12px;
-  width: min(280px, calc(100vw - 32px));
-  padding: 16px;
+  gap: 2px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -409,7 +410,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 20px;
+  padding-left: 8px;
 }
 .appearance-label {
   font-family: var(--font-mono);
@@ -419,26 +421,26 @@ textarea {
 .toggle-group {
   display: flex;
   gap: 2px;
-  padding: 2px;
 }
 .toggle-group button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  height: 44px;
+  min-width: 32px;
+  height: 32px;
   border-radius: var(--r-xs);
   color: var(--text-3);
   transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
 }
 .toggle-group button.text {
-  padding: 0 10px;
+  padding: 0 8px;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--text-2);
 }
+/* --strip equals --surface in dark, so the card's selection uses a tint */
 .toggle-group button.is-on {
-  background: var(--strip);
+  background: color-mix(in srgb, var(--text-1) 9%, transparent);
   color: var(--text-1);
 }
 .toggle-group button:active {
@@ -561,9 +563,54 @@ textarea {
 .tool.is-on svg {
   color: var(--text-1);
 }
-/* Latin capitals in the monospace read heavier than CJK labels */
-.tool-cli {
-  font-weight: 500;
+.tool-picker {
+  cursor: pointer;
+}
+.upload-split {
+  position: relative;
+  display: inline-flex;
+  gap: 1px;
+}
+.upload-split .upload-main {
+  border-radius: var(--r-xs) 0 0 var(--r-xs);
+}
+.upload-split .upload-more {
+  min-width: 28px;
+  padding: 0 7px;
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+}
+.upload-split.is-open .upload-more {
+  background: var(--strip);
+  color: var(--text-1);
+}
+.upload-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.upload-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
+}
+.upload-item svg {
+  color: var(--text-3);
 }
 .tool-picker.is-disabled,
 .tool:disabled {
@@ -573,12 +620,18 @@ textarea {
 }
 .tool-convert {
   flex: none;
-  padding: 0 14px;
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  height: 40px;
+  padding: 0 16px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
   font-size: var(--text-sm);
   font-weight: 700;
   letter-spacing: 0.01em;
-  color: var(--text-1);
+  color: var(--accent-contrast);
+}
+.tool-convert:disabled {
+  background: color-mix(in srgb, var(--text-1) 6%, transparent);
+  color: var(--text-4);
 }
 .tool-convert svg {
   color: inherit;
@@ -589,16 +642,21 @@ textarea {
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-term);
   background: var(--surface);
   text-align: left;
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.source-card:has(.url-box:focus) {
+  border-color: var(--text-3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-1) 8%, transparent);
 }
 .source-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px;
+  padding: 8px 8px 8px 16px;
 }
 .url-row {
   display: flex;
@@ -614,19 +672,19 @@ textarea {
 .url-box {
   display: block;
   width: 100%;
-  min-height: 36px;
-  padding: 8px 14px;
-  border-radius: var(--r-xs);
+  min-height: 40px;
+  padding: 10px 0;
   font-family: var(--font-mono);
   font-size: var(--text-base);
   line-height: 20px;
   color: var(--text-1);
   resize: none;
 }
+.url-box::placeholder {
+  font-family: var(--font-sans);
+}
 .url-box:focus {
-  border-radius: 0;
   outline: none;
-  box-shadow: inset 0 -1px 0 var(--text-2);
 }
 
 /* the options drawer: a 76px label column and its controls */
@@ -2798,8 +2856,11 @@ textarea {
     background: var(--strip);
     color: var(--text-1);
   }
+  .toggle-group button:not(.is-on):hover {
+    background: color-mix(in srgb, var(--text-1) 5%, transparent);
+    color: var(--text-1);
+  }
   .icon-btn:hover,
-  .toggle-group button:not(.is-on):hover,
   .row-icon:not(:disabled):hover,
   .notice-close:hover,
   .secret-toggle:not(:disabled):hover {
@@ -2814,8 +2875,12 @@ textarea {
     background: var(--strip);
     color: var(--text-1);
   }
+  .upload-item:not(.is-disabled):hover svg {
+    color: var(--text-1);
+  }
   .tool-convert:not(:disabled):hover {
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    background: var(--accent-hover);
+    color: var(--accent-contrast);
   }
   .opt-help:hover,
   .session-link:hover,
@@ -3036,16 +3101,24 @@ textarea {
     height: 44px;
     padding-inline: 8px;
   }
-  .tool-folder .tool-text {
-    display: none;
+  .toggle-group button,
+  .upload-item {
+    min-width: 44px;
+    height: 44px;
+  }
+  .source-row {
+    padding-left: 12px;
   }
   .url-row {
     gap: 6px;
   }
   .url-box {
     min-height: 44px;
-    padding: 12px 4px;
+    padding: 12px 0;
     font-size: var(--text-md);
+  }
+  .tool-convert {
+    height: 44px;
   }
   .opts-grid {
     padding: 12px;
