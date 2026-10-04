@@ -32,7 +32,7 @@ markitai ./documents -o out/                  # whole folder, with a report
 markitai scan.png --ocr -o out/               # local OCR; models may need preparation
 markitai report.docx -o out/ --json           # structured result for automation
 markitai doctor                              # inspect optional components
-markitai --help                              # commands, options and exit codes
+markitai --help                              # commands, options and examples
 markitai serve                               # browser workspace on 127.0.0.1:3600
 ```
 

@@ -356,7 +356,7 @@ pub(super) fn apply(
         let reread = rewritten
             .save_to(&mut buffer)
             .ok()
-            .and_then(|_| super::extract_pages_inner(&buffer.bytes, max_pages).ok());
+            .and_then(|_| super::extract_pages_inner(&buffer.bytes, max_pages, false).ok());
         if let Some(mut reread) = reread {
             let mut by_page: BTreeMap<_, _> = reread
                 .pages

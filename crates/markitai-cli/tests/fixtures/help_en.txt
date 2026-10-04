@@ -27,6 +27,8 @@ Output:
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
       --dry-run
           Preview discovery without conversion or output publication
+      --slide-markers
+          Keep slide-number comments (--no-slide-markers disables)
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived
@@ -136,9 +138,6 @@ Examples:
   markitai report.pdf -p standard -o out/  Enhance with the configured model
   markitai init                            Create a configuration file
   markitai doctor                          Check models and optional backends
-
-Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
-10 some batch items failed; 130/143 interrupted.
 === markitai --help (exit 0, stderr 0 bytes) ===
 Convert documents and URLs to Markdown
 
@@ -168,6 +167,8 @@ Output:
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
       --dry-run
           Preview discovery without conversion or output publication
+      --slide-markers
+          Keep slide-number comments (--no-slide-markers disables)
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived
@@ -277,9 +278,6 @@ Examples:
   markitai report.pdf -p standard -o out/  Enhance with the configured model
   markitai init                            Create a configuration file
   markitai doctor                          Check models and optional backends
-
-Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
-10 some batch items failed; 130/143 interrupted.
 === markitai config -h (exit 0, stderr 0 bytes) ===
 Inspect or edit configuration
 
@@ -1322,6 +1320,8 @@ Output:
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
       --dry-run
           Preview discovery without conversion or output publication
+      --slide-markers
+          Keep slide-number comments (--no-slide-markers disables)
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived
@@ -1431,9 +1431,6 @@ Examples:
   markitai report.pdf -p standard -o out/  Enhance with the configured model
   markitai init                            Create a configuration file
   markitai doctor                          Check models and optional backends
-
-Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
-10 some batch items failed; 130/143 interrupted.
 
 --- stderr ---
 === markitai --quiet --no-llm (exit 0, stderr 0 bytes) ===
@@ -1465,6 +1462,8 @@ Output:
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
       --dry-run
           Preview discovery without conversion or output publication
+      --slide-markers
+          Keep slide-number comments (--no-slide-markers disables)
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived
@@ -1574,9 +1573,6 @@ Examples:
   markitai report.pdf -p standard -o out/  Enhance with the configured model
   markitai init                            Create a configuration file
   markitai doctor                          Check models and optional backends
-
-Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
-10 some batch items failed; 130/143 interrupted.
 
 --- stderr ---
 === markitai --version (exit 0, stderr 0 bytes) ===

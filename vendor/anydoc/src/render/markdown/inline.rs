@@ -44,6 +44,7 @@ pub(crate) fn normalize<'a>(inlines: &'a [Inline], rc: &Ctx) -> Vec<Norm<'a>> {
                 // Bridge: [styled S][ws plain][incoming styled S] merges into one run.
                 if style != Style::PLAIN
                     && !style.code
+                    && !style.underline
                     && out.len() >= 2
                     && matches!(&out[out.len() - 1],
                         Norm::Text { text: ws, style: s } if *s == Style::PLAIN && ws.trim().is_empty())
@@ -320,6 +321,9 @@ fn render_text_run(
     opts: EscapeOpts,
     out: &mut String,
 ) {
+    // markitai: a link label is already underlined by its link semantics;
+    // Word's Hyperlink character style would otherwise wrap every link.
+    let style = if opts.in_label { Style { underline: false, ..style } } else { style };
     if style == Style::PLAIN {
         let at_line_start = out.is_empty() || out.ends_with('\n');
         out.push_str(&escape_text(text, ctx, EscapeOpts { at_line_start, ..opts }));
@@ -332,6 +336,11 @@ fn render_text_run(
         out.push_str(lead);
     }
     if !core.is_empty() {
+        // markitai: CommonMark has no underline delimiter. Keep generated
+        // tags outside the escaped text, including code spans.
+        if style.underline {
+            out.push_str("<u>");
+        }
         if style.code {
             push_code_span(core, ctx, out);
         } else {
@@ -353,6 +362,9 @@ fn render_text_run(
                 EscapeOpts { styled: true, in_label: opts.in_label, ..Default::default() },
             ));
             out.push_str(&close);
+        }
+        if style.underline {
+            out.push_str("</u>");
         }
     }
     if !trail.is_empty() {

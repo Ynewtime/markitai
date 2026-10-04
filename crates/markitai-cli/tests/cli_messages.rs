@@ -77,7 +77,6 @@ fn help_groups_options_and_explains_every_subcommand_argument() {
         "Messages and logging:",
         "Presets (-p):",
         "Examples:",
-        "Exit status:",
     ] {
         assert!(help.contains(heading), "missing {heading}: {help}");
     }
@@ -562,4 +561,53 @@ fn cache_statistics_use_readable_counts_and_sizes() {
     let text = stdout(&stats);
     assert!(text.contains("LLM cache: 0 entries (0 B)"), "{text}");
     assert!(text.contains("URL fetch cache: 0 entries (0 B)"), "{text}");
+}
+
+#[test]
+fn slide_markers_follow_config_and_last_explicit_flag_on_presentations() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("slides.ppt"),
+        include_bytes!("../../markitai-core/tests/fixtures/legacy-ppt/embedded-objects.ppt"),
+    )
+    .unwrap();
+    let isolated = root.path().to_str().unwrap();
+    for (configured, flags, expected) in [
+        (None, vec![], true),
+        (Some(false), vec![], false),
+        (Some(false), vec!["--slide-markers"], true),
+        (Some(true), vec!["--no-slide-markers"], false),
+        (
+            Some(false),
+            vec!["--no-slide-markers", "--slide-markers"],
+            true,
+        ),
+        (
+            Some(true),
+            vec!["--slide-markers", "--no-slide-markers"],
+            false,
+        ),
+    ] {
+        let mut cfg = json!({"cache":{"enabled":false}});
+        if let Some(enabled) = configured {
+            cfg["output"] = json!({"slide_markers":enabled});
+        }
+        std::fs::write(root.path().join("markitai.json"), cfg.to_string()).unwrap();
+        let mut args = vec!["slides.ppt", "--no-llm", "--no-screenshot"];
+        args.extend(flags);
+        let output = invoke_env(
+            root.path(),
+            &args,
+            &[("HOME", isolated), ("USERPROFILE", isolated)],
+        );
+        assert!(output.status.success(), "{}", stderr(&output));
+        let markdown = stdout(&output);
+        assert_eq!(
+            markdown.contains("<!-- Slide number:"),
+            expected,
+            "{args:?}"
+        );
+        assert!(markdown.contains("## Revenue"));
+        assert!(markdown.contains("| Q1 | 4.5 | 3.25 |"));
+    }
 }

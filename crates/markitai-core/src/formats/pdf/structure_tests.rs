@@ -310,3 +310,87 @@ fn link_annotations_over_runs_become_markdown_links() {
     );
     assert!(!markdown.contains("javascript"), "{markdown}");
 }
+
+#[test]
+fn chart_pixels_replace_only_the_validated_band_and_preserve_repeated_prose() {
+    let chart = super::super::geometry::Chart {
+        x0: 80.,
+        y0: 220.,
+        x1: 360.,
+        y1: 400.,
+    };
+    let items = vec![
+        body(
+            "Before the chart Row One remains ordinary prose.",
+            40.,
+            600.,
+        ),
+        run("10", 85., 370., 14., 9., "Body"),
+        run("5", 85., 310., 7., 9., "Body"),
+        run("0", 85., 250., 7., 9., "Body"),
+        run("Row One", 110., 230., 40., 9., "Body"),
+        run("Series A", 280., 320., 45., 9., "Body"),
+        body(
+            "After the chart the paragraph remains searchable.",
+            40.,
+            180.,
+        ),
+    ];
+    let original = items.iter().map(|i| i.text.as_str()).collect::<String>();
+    let figure = super::super::figures::Figure {
+        bounds: chart,
+        name: "chart.png".into(),
+    };
+    let figures = [figure];
+    let mut pitch = None;
+    let mut context = Tables {
+        continued: None,
+        pitch: &mut pitch,
+        tagged: &|| false,
+        figures: &figures,
+    };
+    let frame = Frame {
+        x: 0.,
+        y: 0.,
+        width: 612.,
+        height: 792.,
+    };
+    let result = render(
+        items.clone(),
+        &faces(),
+        frame,
+        Vec::new(),
+        &[],
+        &original,
+        &mut context,
+    )
+    .unwrap();
+    let image = result
+        .markdown
+        .find("![Chart](.markitai/assets/chart.png)")
+        .unwrap();
+    assert!(result.markdown.find("Before the chart Row One").unwrap() < image);
+    assert!(result.markdown.find("After the chart").unwrap() > image);
+    assert!(!result.markdown.contains("Series A"));
+    assert_eq!(result.markdown.matches("Row One").count(), 1);
+    assert!(result.ending.is_none());
+
+    let mut beside = items.clone();
+    beside.push(body("Side paragraph", 380., 300.));
+    assert!(super::super::figures::regions(&beside, &[chart]).is_empty());
+    let mut crossing = items;
+    crossing.push(body("Crossing caption", 50., 401.));
+    assert!(super::super::figures::regions(&crossing, &[chart]).is_empty());
+    assert!(
+        render(
+            crossing,
+            &faces(),
+            frame,
+            Vec::new(),
+            &[],
+            "Unrelated page",
+            &mut context
+        )
+        .is_none()
+    );
+}

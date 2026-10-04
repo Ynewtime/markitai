@@ -8,6 +8,9 @@ mod lists;
 mod objects;
 #[cfg(test)]
 mod objects_tests;
+mod pictures;
+#[cfg(test)]
+mod pictures_tests;
 mod sprm;
 mod stsh;
 
@@ -128,7 +131,9 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     )?;
     let textboxes =
         objects::Textboxes::read(&word_doc, &table, &text, ccp_text, textbox_base, ccp_txbx)?;
+    let pictures = pictures::Pictures::read(&word_doc, &table, &text, ccp_text)?;
     let assembler = Assembler {
+        pictures,
         textboxes,
         fields,
         objects: std::cell::RefCell::new(Some(objects::Objects::new(ole))),
@@ -168,6 +173,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         .map(|objects| std::mem::take(&mut objects.warnings))
         .unwrap_or_default();
     warnings.extend(assembler.textboxes.warnings.iter().cloned());
+    warnings.extend(assembler.pictures.warnings.iter().cloned());
     Ok(Document { blocks, notes, assets, slide_starts: Vec::new(), warnings })
 }
 
@@ -295,6 +301,7 @@ fn prm0_grpprl(prm: u16) -> Option<Vec<u8>> {
         0x55 => 0x0835, // sprmCFBold
         0x56 => 0x0836, // sprmCFItalic
         0x57 => 0x0837, // sprmCFStrike
+        0x5E => 0x2A3E, // sprmCKul
         0x75 => 0x0855, // sprmCFSpec
         0x76 => 0x0856, // sprmCFObj
         0x78 => 0x2640, // sprmPOutLvl
@@ -664,6 +671,7 @@ struct Assembler<'a> {
     assets: std::cell::RefCell<AssetSink>,
     fields: objects::Fields,
     textboxes: objects::Textboxes,
+    pictures: pictures::Pictures<'a>,
     objects: std::cell::RefCell<Option<objects::Objects<'a>>>,
 }
 
@@ -962,6 +970,19 @@ impl Assembler<'_> {
                 }
                 '\u{b}' => para.push_inline(Inline::LineBreak),
                 '\u{8}' => {
+                    if self.pictures.contains(i) {
+                        if !self.fields.exposes(i) || !self.object_props(fc, i).is_special() {
+                            self.object_warning(i, "picture anchor is hidden by its field or lacks CFSpec; data not read");
+                        } else if let Some(image) = self.pictures.image_at(i, &self.assets)? {
+                            para.push_inline(image);
+                        } else {
+                            self.object_warning(
+                                i,
+                                "anchored picture has no supported, consistent image payload",
+                            );
+                        }
+                    }
+
                     if let Some(&(lo, hi)) = self.textboxes.ranges.get(&i) {
                         if !self.fields.exposes(i) {
                             self.object_warning(i, "textbox anchor is inside an instruction, private or inconsistent field; data not read");
@@ -1516,6 +1537,8 @@ mod tests {
         // isprm 0x18 = sprmPFInTable (0x2416).
         let prm = (0x18u16 << 1) | (0x01 << 8);
         assert_eq!(prm0_grpprl(prm), Some(vec![0x16, 0x24, 0x01]));
+        assert_eq!(prm0_grpprl((0x5E << 1) | (1 << 8)), Some(vec![0x3E, 0x2A, 1]));
+        assert_eq!(prm0_grpprl(0x5E << 1), Some(vec![0x3E, 0x2A, 0]));
         // isprm 0x05 (sprmPJc) is outside the converted model.
         assert_eq!(prm0_grpprl(0x05 << 1), None);
     }
@@ -1602,6 +1625,7 @@ mod tests {
             data: Vec::new(),
             fields: objects::Fields::default(),
             textboxes: objects::Textboxes::default(),
+            pictures: pictures::Pictures::default(),
             objects: std::cell::RefCell::new(None),
             assets: std::cell::RefCell::new(AssetSink::new()),
         };

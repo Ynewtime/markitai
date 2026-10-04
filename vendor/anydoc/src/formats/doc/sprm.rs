@@ -159,6 +159,16 @@ pub fn apply_chpx(grpprl: &[u8], current: Style, style_base: Style) -> Style {
                 style.strike = v;
             }
         }
+        // markitai: sprmCKul is an absolute Kul enumeration, not a toggle.
+        // Preserve the presence of every defined underline pattern; unknown
+        // values (including toggle operands 0x80/0x81) leave it unchanged.
+        0x2A3E => match operand.first() {
+            Some(0) => style.underline = false,
+            Some(1..=4 | 6 | 7 | 9..=11 | 0x14 | 0x17 | 0x19..=0x1B | 0x27 | 0x2B | 0x37) => {
+                style.underline = true;
+            }
+            _ => {}
+        },
         _ => {}
     });
     style
@@ -328,4 +338,35 @@ fn parse_tdef_table(operand: &[u8]) -> Option<Tap> {
 /// parent's value is the base for its toggles.
 pub fn apply_style_chpx(grpprl: &[u8], parent: Style) -> Style {
     apply_chpx(grpprl, parent, parent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn underline_is_absolute_and_later_character_properties_win() {
+        let inherited = Style { underline: true, bold: true, ..Style::PLAIN };
+        assert_eq!(apply_chpx(&[], inherited, inherited), inherited);
+        let off = apply_chpx(&[0x3E, 0x2A, 0], inherited, inherited);
+        assert!(!off.underline && off.bold);
+        let on = apply_chpx(&[0x3E, 0x2A, 0, 0x3E, 0x2A, 1], inherited, inherited);
+        assert!(on.underline && on.bold);
+        // A subsequent piece property can cancel direct character formatting.
+        assert!(!apply_chpx(&[0x3E, 0x2A, 0], on, inherited).underline);
+    }
+
+    #[test]
+    fn underline_accepts_defined_kul_values_without_treating_them_as_toggles() {
+        for kul in [1, 2, 3, 4, 6, 7, 9, 10, 11, 0x14, 0x17, 0x19, 0x1A, 0x1B, 0x27, 0x2B, 0x37] {
+            assert!(apply_chpx(&[0x3E, 0x2A, kul], Style::PLAIN, Style::PLAIN).underline);
+        }
+        for kul in [5, 8, 0x80, 0x81, 0xFF] {
+            for underline in [false, true] {
+                let base = Style { underline, ..Style::PLAIN };
+                assert_eq!(apply_chpx(&[0x3E, 0x2A, kul], base, base), base);
+            }
+        }
+        assert_eq!(apply_chpx(&[0x3E, 0x2A], Style::PLAIN, Style::PLAIN), Style::PLAIN);
+    }
 }

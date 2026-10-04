@@ -99,10 +99,7 @@ Examples:
   markitai scan.png --ocr                  Read the text of an image
   markitai report.pdf -p standard -o out/  Enhance with the configured model
   markitai init                            Create a configuration file
-  markitai doctor                          Check models and optional backends
-
-Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
-10 some batch items failed; 130/143 interrupted.";
+  markitai doctor                          Check models and optional backends";
 
 const CONFIG_AFTER_HELP: &str = "\
 Keys use dot notation, e.g. llm.enabled or llm.model_list[0].model_name. The file in
@@ -151,6 +148,12 @@ struct Cli {
     #[arg(long, help_heading = OUTPUT_HELP)]
     /// Preview discovery without conversion or output publication.
     dry_run: bool,
+    #[arg(long, overrides_with = "no_slide_markers", help_heading = OUTPUT_HELP)]
+    /// Keep slide-number comments (--no-slide-markers disables).
+    slide_markers: bool,
+    #[arg(long, overrides_with = "slide_markers", hide = true)]
+    /// Omit slide-number comments from final Markdown.
+    no_slide_markers: bool,
     #[arg(long, overrides_with = "no_record_history", help_heading = OUTPUT_HELP)]
     /// Archive this run for `markitai serve` history (--no-record-history disables); stdout-only conversions are not archived.
     record_history: bool,
@@ -883,6 +886,11 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
             tri(cli.screenshot_only, cli.no_screenshot_only),
         ),
         ("llm", "pure", tri(cli.pure, cli.no_pure)),
+        (
+            "output",
+            "slide_markers",
+            tri(cli.slide_markers, cli.no_slide_markers),
+        ),
     ] {
         if let Some(value) = value {
             cfg[section][field] = json!(value);

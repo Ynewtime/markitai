@@ -20,13 +20,13 @@ network policy and optional model enhancement belong to the orchestration layer.
 | RST, Org, TeX | native markup readers | Structured sections, lists, code, math, links and tables; unsupported constructs retained with warnings |
 | JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + local OCR | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
 | DOC, DOCX, DOCM; templates DOT, DOTX, DOTM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets; a manual line break is a hard break (`\`), two end the paragraph, and text is escaped only where Markdown would read it as syntax ([below](#document-line-breaks-and-escaping)) |
-| PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, behind a numbered slide marker per slide; embedded charts and worksheets read as their data tables |
-| PPTX, PPTM, PPSX, PPSM; templates POTX, POTM | bounded ZIP + PresentationML reader | Ordered slide markers, hidden-slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data, SmartArt text as lists, speaker notes and review comments |
+| PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, with optional numbered slide markers; embedded charts and worksheets read as their data tables |
+| PPTX, PPTM, PPSX, PPSM; templates POTX, POTM | bounded ZIP + PresentationML reader | Optional ordered slide markers, hidden-slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data, SmartArt text as lists, speaker notes and review comments |
 | XLS, XLSX, XLSM, XLSB; templates XLT, XLTX, XLTM | anydoc document model | Native sheet content with number formats, cell links, cell notes and the text of uncalculated formulas (see [spreadsheets](#spreadsheets)); XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
-| ODT, ODS, ODP, RTF; templates OTT, OTS, OTP | anydoc document model | Native structured documents through the same Markdown renderer (line breaks and escaping as for Word); ODP slides carry numbered slide markers |
+| ODT, ODS, ODP, RTF; templates OTT, OTS, OTP | anydoc document model | Native structured documents through the same Markdown renderer (line breaks and escaping as for Word); ODP slides carry optional numbered slide markers |
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
 | EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble; ruby as base text then reading (`漢字(kanji)`), definition terms as bold paragraphs, and footnote marks the author wrote as Markdown (`[^5]`, `[^5]: …`) kept unescaped; `<br>` and text escaping as for Word (`[!tip]` stays as written) |
-| PDF | pdf-inspector + lopdf; CoreGraphics/hayro page rendering and local OCR | Per-page text/layout, link targets, partial recovery and embedded images; explicit local-file page OCR and screenshots through the shared media pipeline |
+| PDF | pdf-inspector + lopdf; CoreGraphics/hayro page rendering and local OCR | Per-page text/layout, link targets, partial recovery, embedded images and conservative bar-chart crops; explicit local-file page OCR and screenshots through the shared media pipeline |
 
 ### Text encodings
 
@@ -352,11 +352,30 @@ a paragraph, as does anything smaller. Headings styled at body size are not
 inferred. A large bold sidebar label can be mistaken for a heading when the
 source exporter has flattened its layout container.
 
+Legacy DOC character formatting preserves underlining from direct runs and
+inherited character styles as `<u>…</u>`. Hyperlink labels stay ordinary
+links, since a link already reads as underlined. Explicit cancellation restores
+plain text; unrelated repetitions of the same words stay
+plain. Markdown has no underline delimiter, so viewers must support inline HTML.
+Different underline stroke patterns are represented as ordinary underlining.
+
+Legacy DOC floating pictures in the main document are emitted at their text
+anchors, including supported image data stored separately in `WordDocument`.
+Repeated references reuse one asset. Header pictures and complex grouped
+picture placement are not reconstructed.
+
 OOXML presentations have a separate reader because the generic document model
 flattens slide boundaries. The package's presentation relationships and
 `sldIdLst` determine slide order, including empty slides; filename sorting and
-heading counts do not determine boundaries. Every slide receives
-`<!-- Slide number: N -->`. Shapes are stably ordered by their effective top/left
+heading counts do not determine boundaries. By default, every slide receives
+`<!-- Slide number: N -->`. Disable these comments with `--no-slide-markers` or
+`"output": {"slide_markers": false}` in the configuration file; `--slide-markers`
+overrides that setting for one run. The setting applies to PPTX, PPT and ODP,
+including base and enhanced output, files and stdout. It leaves literal code
+examples intact; internal boundaries remain available for LLM page alignment.
+For example: `markitai slides.ppt --no-slide-markers -o out/`.
+
+Shapes are stably ordered by their effective top/left
 coordinates, with layout/master placeholder coordinates used when missing.
 Group children are ordered within their group. As in the reference reader, the
 first top-level placeholder with index zero supplies the first-level title;
@@ -405,7 +424,7 @@ not imply complete drawing or chart-type support.
 
 The vendored anydoc records where each slide of an ODP or a legacy PPT begins
 (`slide_starts`, see its `MARKITAI-PATCH.md`), and the renderer writes the same
-`<!-- Slide number: N -->` line before each slide, blank slides included, with a
+optional `<!-- Slide number: N -->` line before each slide, blank slides included, with a
 blank line between slides. This differs from the reference, whose legacy PPT
 output has no slide markers and which does not read ODP. In these formats a
 slide's speaker notes keep their place after it as a quote. An ODP table styled

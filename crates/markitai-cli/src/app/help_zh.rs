@@ -360,9 +360,7 @@ const ROOT_AFTER: &str = "\
   markitai scan.png --ocr                  识别图片中的文字
   markitai report.pdf -p standard -o out/  用已配置的模型增强
   markitai init                            创建配置文件
-  markitai doctor                          检查模型和可选后端
-
-退出状态：0 成功；1 失败；2 用法错误，或供应商批处理尚未完成；10 批量中有条目失败；130/143 被中断。";
+  markitai doctor                          检查模型和可选后端";
 
 const CONFIG_AFTER: &str = "\
 键使用点号表示法，例如 llm.enabled 或 llm.model_list[0].model_name。使用哪个配置文件，依次取 -c、MARKITAI_CONFIG、./markitai.json，最后是用户目录下的 config.json。
@@ -413,6 +411,11 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
         ROOT,
         "dry_run",
         "预览要处理的输入，不转换，也不写出任何输出",
+    ),
+    (
+        ROOT,
+        "slide_markers",
+        "保留幻灯片编号注释（--no-slide-markers 关闭）",
     ),
     (
         ROOT,

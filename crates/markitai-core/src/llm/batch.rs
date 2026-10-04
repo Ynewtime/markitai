@@ -228,6 +228,9 @@ impl Session {
                 .and_then(Value::as_str)
                 .map(str::to_owned),
             wikilinks: config::enabled(cfg, "/output/wikilinks"),
+            slide_markers: cfg
+                .pointer("/output/slide_markers")
+                .and_then(Value::as_bool),
             mode,
             request: wire.payload(&self.entry, &prompts),
             cache_key: key,
@@ -265,6 +268,9 @@ pub struct Plan {
     metadata: serde_json::Map<String, Value>,
     profile: Option<String>,
     wikilinks: bool,
+    // Missing in older saved plans means the historical enabled default.
+    #[serde(default)]
+    slide_markers: Option<bool>,
     mode: structured::Mode,
     request: Value,
     cache_key: String,
@@ -453,6 +459,9 @@ impl Plan {
                 .restore(&answer.markdown)
                 .expect("validated protected markers"),
         );
+        if self.slide_markers == Some(false) {
+            markdown = crate::output_profiles::remove_slide_markers(&markdown);
+        }
         let mut metadata = self.metadata.clone();
         metadata.insert("description".into(), json!(answer.metadata.description));
         metadata.insert("tags".into(), json!(answer.metadata.tags));
@@ -547,6 +556,34 @@ mod tests {
                 .contains("description: A fixture document")
         );
     }
+    #[test]
+    fn frozen_slide_marker_preference_applies_only_after_restoring_literals() {
+        let mut cfg = config();
+        cfg["output"] = json!({"slide_markers":false});
+        let text = "<!-- Slide number: 1 -->\n# Title\n\n```html\n<!-- Slide number: 2 -->\n```\n";
+        let original = plan(&cfg, text);
+        assert_eq!(original.markdown, text);
+        let protected = chunks::Protected::new(text);
+        let mut saved = serde_json::to_value(&original).unwrap();
+        let restored: Plan = serde_json::from_value(saved.clone()).unwrap();
+        // Collection-time settings must not change the frozen output preference.
+        let decoded = restored
+            .decode(&response(&restored, &protected.text), &config())
+            .unwrap();
+        assert!(!decoded.markdown.contains("<!-- Slide number: 1 -->"));
+        assert!(
+            decoded
+                .markdown
+                .contains("```html\n<!-- Slide number: 2 -->\n```")
+        );
+        saved.as_object_mut().unwrap().remove("slide_markers");
+        let legacy: Plan = serde_json::from_value(saved).unwrap();
+        let decoded = legacy
+            .decode(&response(&legacy, &protected.text), &cfg)
+            .unwrap();
+        assert!(decoded.markdown.contains("<!-- Slide number: 1 -->"));
+    }
+
     #[test]
     fn invalid_paid_answers_and_http_failures_retain_batch_usage() {
         let cfg = config();

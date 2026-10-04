@@ -224,7 +224,7 @@ pub(super) fn submit(
             && record.status == ItemStatus::Completed
         {
             match session.prepare(
-                &converted.markdown,
+                converted.enhancement_source(),
                 &task.source,
                 &converted.frontmatter,
                 &cfg,

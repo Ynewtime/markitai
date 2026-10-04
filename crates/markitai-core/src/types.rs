@@ -191,6 +191,9 @@ pub struct ConversionOutput {
     pub(crate) pure_llm_prefix: Option<String>,
     #[serde(skip)]
     pub(crate) base_frontmatter: Option<Map<String, Value>>,
+    /// Base text before output-only filtering, retained for chained enhancement.
+    #[serde(skip)]
+    pub(crate) enhancement_source: Option<String>,
     #[serde(skip)]
     pub(crate) llm_cache_hit: bool,
     #[serde(skip)]
@@ -200,6 +203,12 @@ pub struct ConversionOutput {
 }
 
 impl ConversionOutput {
+    /// Text for subsequent enhancement, before output-only slide-marker removal.
+    /// Serialized results and published files always use the selected output form.
+    pub fn enhancement_source(&self) -> &str {
+        self.enhancement_source.as_deref().unwrap_or(&self.markdown)
+    }
+
     /// Whether this conversion reused an existing document enhancement.
     /// Host JSON remains compatible; the CLI has separate cache-status fields.
     pub fn llm_cache_hit(&self) -> bool {

@@ -5,7 +5,8 @@
     "allow_symlinks": false,
     "report": null,
     "profile": null,
-    "wikilinks": false
+    "wikilinks": false,
+    "slide_markers": true
   },
   "llm": {
     "enabled": false,

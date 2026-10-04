@@ -10,6 +10,27 @@ patch and lockfile.
 The local changes, each marked `markitai` in its comment, are limited to these
 upstream files:
 
+- `src/formats/doc/mod.rs`, `src/formats/doc/objects.rs` and the added
+  `pictures.rs`/`pictures_tests.rs`: main-story floating pictures follow their
+  UTF-16 text anchor through shape IDs and picture-store slots, including
+  delayed JPEG/PNG/EMF/WMF data in `WordDocument`. Hidden fields and unrelated
+  pictures are excluded; repeated references reuse the asset. Record bounds,
+  identities and complete metafile decompression are checked under resource
+  limits. Complete picture-store records survive a stale entry count with a
+  warning. Header pictures and complex group geometry are not inferred.
+  Synthetic tests cover ordering, visibility, malformed records and limits.
+- `src/model/style.rs`, `src/formats/doc/sprm.rs`, `src/formats/doc/stsh.rs`,
+  `src/render/markdown/inline.rs`: legacy Word's `sprmCKul` (0x2A3E) preserves
+  underline through character-style inheritance and direct formatting.
+  Defined nonzero Kul patterns normalize to an underlined run; zero explicitly
+  clears the inherited value, and unknown operands do not act as toggles.
+  Markdown writes generated `<u>` tags around escaped content, including code
+  spans, without bridging a gap of unstyled whitespace. Link labels omit them:
+  Word's Hyperlink style would otherwise wrap every link.
+  Decorative line patterns are normalized, not reproduced. `shared/delta.rs`
+  and `docx/styles.rs` retain an existing underline while applying other
+  properties; this change does not add underline parsing to other formats.
+  Synthetic parser, inheritance and renderer tests cover the behavior.
 - `src/shared/html.rs`: a `pre` element's code block keeps the language its
   markup names, a `language-…` or `lang-…` class on the `pre` or its `code`
   child (upstream always left it empty), so EPUB code fences carry their info

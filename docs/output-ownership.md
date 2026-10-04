@@ -5,6 +5,14 @@ batch recovery additionally records evidence of the exact file object and bytes
 published by an item. A saved output path, the six-character state hash, matching
 frontmatter, or a content digest alone cannot authorize implicit replacement.
 
+The `.markitai/ownership` directory is a Rust CLI addition, not document content
+or a conversion cache. It is created per physical output parent, so a directory
+conversion can leave it in multiple mirrored subdirectories. `--no-cache` and
+disabling reports do not suppress it. Markdown rendering does not need these
+records, but active writers and native recovery do; do not delete them during
+conversion or a run you intend to resume. Assets and screenshots elsewhere in
+`.markitai` may be referenced by the Markdown and are not disposable metadata.
+
 ## Where the protocol applies
 
 Single-file and single-URL CLI conversions acquire output member locks but do not

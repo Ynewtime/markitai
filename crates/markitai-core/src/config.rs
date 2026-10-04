@@ -1073,7 +1073,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_verified_reference_fixture() {
+    fn defaults_match_pinned_contract_fixture() {
         let expected: Value =
             serde_json::from_str(include_str!("../tests/fixtures/config_defaults.json")).unwrap();
         assert_eq!(defaults(), expected);

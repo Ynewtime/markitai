@@ -231,7 +231,6 @@ fn chinese_help_offers_the_same_commands_and_options_inside_80_columns() {
         "\n消息与日志:\n",
         "\n-p 预设:\n",
         "\n示例:\n",
-        "\n退出状态：",
     ] {
         let at = help
             .find(heading)

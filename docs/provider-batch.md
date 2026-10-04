@@ -51,7 +51,9 @@ OpenAI's Batch API or uses its prices.
 Preparation shares the live document prompts, protected source literals, typed
 metadata validation, cache identity and output profiles. Valid cache hits publish
 without a new provider request. Successful base Markdown remains beside enhanced
-Markdown. Long documents, pure mode, OCR, screenshots and image analysis are
+Markdown. The slide-marker preference is saved at preparation time and applied
+after restoring protected markers; changing it during collection does not alter
+that job's output. Long documents, pure mode, OCR, screenshots and image analysis are
 currently rejected rather than silently sent through a paid live fallback.
 Anthropic Batch and legacy Python Batch-state import remain unfinished scope. Ordinary `--resume` refuses an input scope with an
 unresolved native provider job.

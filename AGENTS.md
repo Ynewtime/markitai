@@ -18,6 +18,7 @@ behavioral reference, not a build dependency. Contributor commands are in
 - Record test commands, source/artifact identities, fixture provenance and scope
   in ignored `.local/` evidence. Use Git history for completed work; do not keep
   duplicate status, handoff or completed-task documents in the user guides.
+- Keep project-local memory and pending design tasks in ignored `.local/memory/`.
 - Distinguish source checks, hosted CI, installed packages and real-user tests.
   A passing build or smoke test does not establish feature parity.
 
@@ -62,4 +63,7 @@ sh docs/validation/drivers/windows-check-round38/check-windows.sh clippy -- -D w
   process; unsupported capabilities return explicit errors.
 - Keep user guides concise and current. Put applicable limits in the relevant
   topic guide, and public changes in the changelog; avoid duplicated work logs.
+- After each user-reported fix, check all project documentation for affected
+  claims, including help, examples, configuration, format limits and Agent guides.
+  Refresh affected content in the same change; leave unrelated documents alone.
 - Keep `CHANGELOG.md` and `CHANGELOG.zh.md` synchronized under undated `[1.3.0]`.

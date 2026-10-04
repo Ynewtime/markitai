@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify configuration facts against an explicitly selected reference checkout.
+"""Verify reference configuration facts with explicit Rust output extensions.
 
 Run with the reference environment's Python interpreter. This imports only its
 configuration models, never its CLI, and reads no user configuration or dotenv.
@@ -45,10 +45,15 @@ def main() -> None:
             return [facts(item) for item in value]
         return value
 
+    # Rust-only presentation output preference; the reference remains read-only.
+    schema["$defs"]["OutputConfig"]["properties"]["slide_markers"] = {"default": True, "type": "boolean"}
+    defaults = reference.MarkitaiConfig().model_dump(mode="json")
+    defaults["output"]["slide_markers"] = True
+
     root = Path(__file__).resolve().parents[1]
     expected = {
         root / "src/config_contract.json": json.dumps(facts(schema), ensure_ascii=False, separators=(",", ":")) + "\n",
-        root / "tests/fixtures/config_defaults.json": json.dumps(reference.MarkitaiConfig().model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n",
+        root / "tests/fixtures/config_defaults.json": json.dumps(defaults, ensure_ascii=False, indent=2) + "\n",
     }
     for path, content in expected.items():
         if args.write:

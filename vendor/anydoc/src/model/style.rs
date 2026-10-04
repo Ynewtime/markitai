@@ -9,11 +9,14 @@ pub struct Style {
     pub italic: bool,
     /// Struck through.
     pub strike: bool,
+    /// markitai: underlined. The source's decorative line pattern is normalized.
+    pub underline: bool,
     /// Monospace, from a code or teletype character style.
     pub code: bool,
 }
 
 impl Style {
     /// No toggle set.
-    pub const PLAIN: Style = Style { bold: false, italic: false, strike: false, code: false };
+    pub const PLAIN: Style =
+        Style { bold: false, italic: false, strike: false, underline: false, code: false };
 }

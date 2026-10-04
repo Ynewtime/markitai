@@ -267,10 +267,14 @@ link, a quoted post as a nested `article` in `div[role=link][data-href]`).
 Following the reference's thread policy, the author's own consecutive posts
 right after the main one continue it, each after a `---` rule; the first reply
 from anyone else ends the thread, and replies from other accounts are left out.
-Posts of the thread that come before the requested one are not included. An
-Article page (`/article/<id>`) is read as an ordinary document, because the
-`article` elements around it are cards of other Articles.
-The frontmatter uses the reference's fields: `title: Post by @handle on X`,
+Posts of the thread that come before the requested one are not included.
+An X Article embedded in a status page or opened through `/article/<id>` uses
+its own heading, cover and dedicated body. The requested post ID distinguishes
+it from replies and repeated layouts; lists, quotations, code and body images
+retain their document structure. Author controls and discussion are excluded.
+Older Article pages without a dedicated body use the ordinary document reader.
+Articles retain their actual title and ordinary document enhancement behavior.
+For ordinary posts, the frontmatter uses the reference's fields: `title: Post by @handle on X`,
 `author: @handle`, `site: X (Twitter)`, `published: YYYY-MM-DD` (from the page's
 timestamp, else the post id, which carries its creation time in UTC, so a page
 rendered in another language or time zone keeps the date), `description` (the

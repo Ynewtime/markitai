@@ -29,6 +29,7 @@ impl StyleDelta {
             bold: self.bold.unwrap_or(base.bold),
             italic: self.italic.unwrap_or(base.italic),
             strike: self.strike.unwrap_or(base.strike),
+            underline: base.underline,
             code: self.code.unwrap_or(base.code),
         }
     }

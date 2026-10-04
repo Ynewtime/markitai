@@ -22,17 +22,21 @@
 
 ### Changed
 
+- Make slide-number comments optional through `output.slide_markers` and `--no-slide-markers`, preserving internal page alignment and literal code examples.
 - Remove personal machine paths from repository documentation and provenance; add checks to prevent committing private paths and common secret formats.
 
 - Minimum Rust version is now 1.92. Updated compatible dependencies while retaining the existing Node API level.
 - Reduce repeated PDF/HTML parsing, cache font and layout work, share compiled helpers, and reduce binary/static-library size. macOS defers optional framework loading; Python loads optional modules on demand.
 - Reduce redundant output synchronization while retaining durable publication and recovery ordering. Output files follow the process umask; private state remains private. Trusted directory aliases are accepted while document and metadata links remain guarded.
-- Improve narrow-terminal help, batch summaries, dry-run previews and actionable errors. Configuration validation identifies explicitly set options that have no runtime effect; machine-readable results retain stable fields.
+- Improve narrow-terminal help, batch summaries, dry-run previews and actionable errors. Keep exit-code reference material in the documentation rather than the help footer. Configuration validation identifies explicitly set options that have no runtime effect; machine-readable results retain stable fields.
 - Cache CI dependencies, avoid duplicate Windows CLI builds, and show package-stage progress and timeout diagnostics. Simplify user and Agent guides; retain development history in Git instead of duplicate status documents.
 - Document binding API/version differences, platform capability limits and OCR transcription limits. Readable OCR output does not guarantee exact punctuation in code or configuration; Rosetta Vision OCR requires the native arm64 build.
 
 ### Fixed
 
+- Preserve clearly bounded PDF bar charts as images at their text position instead of flattening axes and legends into prose; retain text when rendering or placement cannot be verified.
+- Preserve legacy DOC underlining from direct formatting and inherited character styles (link labels stay plain links) without applying it to unrelated repeated text.
+- Recover supported legacy DOC floating pictures at their body-text anchors, including separately stored image data, without importing unrelated images.
 - Require serve tokens for local and remote API access, enforce mutation Origin checks, and bind stored LLM credentials to their configured endpoints. Reject client-supplied environment references; use authenticated resource loading and single-use download tickets in the workbench.
 - Bound Office/EPUB metadata memory use, handle binding serialization failures without panics, reject non-UTF-8 physical output directories before publication, and convert Python configuration panics to ordinary exceptions.
 - Restore interrupted serve jobs as visible failures, retain completed outputs, prevent concurrent history writers and clean expired private upload stages. Retries retain prior successful results and their options, while reporting new failures and costs separately.
@@ -42,6 +46,7 @@
 - Preserve Office/OpenDocument/RTF text, headings, lists, tab-aligned tables, monospaced code, symbols, fields and supported embedded content. Keep presentation slide boundaries, blank slides, tables and supported chart data; exclude hidden/deleted content without dropping ordinary text.
 - Correct spreadsheet headers, spans, formulas without cached values, hyperlinks, notes, number/date/duration formats and supported picture placement. Improve XLSX/XLSM screenshot overflow and default font colours without changing original documents; tolerate transient LibreOffice output files.
 - Improve HTML article/site extraction, tables, footnotes, callouts, math, code, lazy images and saved-page links; preserve streamed and declarative Shadow DOM content. Remove navigation and unrelated rails without losing short article content.
+- Extract embedded X Articles with their actual title and document structure, excluding duplicate layouts, author controls and replies from the surrounding timeline.
 - Keep Markdown literal text, fenced code, hard line breaks, footnote boundaries and safely quoted YAML metadata. Preserve EPUB code languages, notebook outputs, email body/attachment associations and original binary downloads.
 - Correct non-UTF-8 HTML, text, CSV and email decoding; sniff CSV/TSV delimiters without losing quoted fields, decimal commas or columns wider than the header.
 - Improve local OCR for small CJK text, rotation, columns, table numbers and code indentation; explain unsupported languages and recognition failures without substituting garbage text.

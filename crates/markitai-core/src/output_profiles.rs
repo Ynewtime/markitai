@@ -25,6 +25,33 @@ pub(crate) fn apply(markdown: &mut String, metadata: &mut Map<String, Value>, cf
     }
 }
 
+/// Remove only standalone slide-number comments, preserving literal examples,
+/// unrelated comments and all document content. Run after LLM page alignment.
+pub(crate) fn remove_slide_markers(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut context = LiteralContext::default();
+    let (_, body) = crate::output::split_frontmatter(source);
+    let mut cursor = source.len() - body.len();
+    output.push_str(&source[..cursor]);
+    while let Some((line, literal)) = next_content(source, &mut cursor, &mut context) {
+        let marker = !literal
+            && line
+                .trim()
+                .strip_prefix("<!-- Slide number:")
+                .and_then(|rest| rest.strip_suffix("-->"))
+                .map(str::trim)
+                .is_some_and(|number| {
+                    !number.is_empty()
+                        && number.bytes().all(|byte| byte.is_ascii_digit())
+                        && number.bytes().any(|byte| byte != b'0')
+                });
+        if !marker {
+            output.push_str(line);
+        }
+    }
+    output
+}
+
 /// Replace a complete asset destination, retaining link titles and wiki aliases.
 /// An empty replacement removes the reference (a filtered image).
 /// Literal code and unrelated paths remain untouched.
@@ -2170,6 +2197,26 @@ fn table_cells(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slide_markers_are_optional_without_erasing_literal_examples_or_other_comments() {
+        let literals = "```html\n<!-- Slide number: 8 -->\n```\n\n    <!-- Slide number: 9 -->\n\n`example\n<!-- Slide number: 10 -->\nend`\n\n<pre>\n<!-- Slide number: 11 -->\n</pre>\n\n<!-- Page number: 1 -->\n<!-- Hidden slide -->\n<!-- Slide number: not-a-number -->\n<!-- Slide number: 0 -->\n<!-- Slide number: 12 --> trailing text\n";
+        let source = format!(
+            "<!-- Slide number: 1 -->\n# Title\n\n<!-- Slide number: 2 -->\n\n{literals}<!-- Slide number: 3 -->"
+        );
+        let expected = format!("# Title\n\n\n{literals}");
+        assert_eq!(remove_slide_markers(&source), expected);
+        assert_eq!(remove_slide_markers(&expected), expected);
+        assert_eq!(
+            remove_slide_markers("<!-- Slide number: 1 -->\r\nBody\r\n"),
+            "Body\r\n"
+        );
+        let yaml = "---\ntitle: |\n  <!-- Slide number: 1 -->\n---\n";
+        assert_eq!(
+            remove_slide_markers(&format!("{yaml}<!-- Slide number: 2 -->\nBody")),
+            format!("{yaml}Body")
+        );
+    }
 
     fn paths(entries: &[(&str, &str)]) -> HashMap<String, String> {
         entries

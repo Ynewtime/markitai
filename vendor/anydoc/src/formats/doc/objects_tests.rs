@@ -71,6 +71,7 @@ fn assembler<'a>(text: &str, bytes: &'a [u8], metadata: objects::Field) -> Assem
         assets: std::cell::RefCell::new(AssetSink::new()),
         fields: objects::Fields::from_separators(fields),
         textboxes: objects::Textboxes::default(),
+        pictures: pictures::Pictures::default(),
         objects: std::cell::RefCell::new(Some(objects::Objects::new(
             cfb::CompoundFile::open(Cursor::new(bytes)).unwrap(),
         ))),

@@ -60,6 +60,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `output.dir` | `null` | 目录/URL 列表未给 `-o` 时的输出目录；单文件仍输出到 stdout |
 | `output.on_conflict` | `rename` | 目标已存在时 `rename`（生成 `.v2`）、`overwrite` 或 `skip` |
 | `output.profile` | `null` | `rag`、`obsidian` 或 `okf` 输出形态，同 `--profile` |
+| `output.slide_markers` | `true` | 在最终 Markdown 中保留幻灯片编号注释；`--no-slide-markers` 关闭，`--slide-markers` 开启；显式参数优先于配置 |
 | `output.report` | `null` | 批量报告；`null` 表示目录/URL 列表开启、单项关闭 |
 | `llm.enabled` | `false` | 模型增强，同 `--llm` |
 | `llm.model_list` | `[]` | 模型部署；为空时按 `MODEL` 和供应商密钥自动选择。前缀见 [LLM：供应商](llm.md#providers-and-request-parameters)，其中包括 `groq/`、`mistral/`、`xai/`、`together_ai/` 等兼容 OpenAI 的前缀 |

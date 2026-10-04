@@ -244,6 +244,34 @@ mod tests {
         assert_eq!(resolve(0, &stds, &mut memo).heading, Some(2));
     }
 
+    #[test]
+    fn character_style_underline_is_inherited_and_explicit_none_cancels_it() {
+        let mut stds = HashMap::new();
+        stds.insert(
+            16,
+            Std {
+                is_paragraph: false,
+                upx_chpx: vec![0x3E, 0x2A, 1],
+                ..style(0x0FFE, ISTD_NIL)
+            },
+        );
+        stds.insert(17, Std { is_paragraph: false, ..style(0x0FFE, 16) });
+        stds.insert(
+            18,
+            Std {
+                is_paragraph: false,
+                upx_chpx: vec![0x3E, 0x2A, 0],
+                ..style(0x0FFE, 17)
+            },
+        );
+        let mut memo = HashMap::new();
+        let inherited = resolve(17, &stds, &mut memo).chp;
+        assert!(inherited.underline);
+        assert!(!resolve(18, &stds, &mut memo).chp.underline);
+        let direct = crate::formats::doc::sprm::apply_chpx(&[0x3E, 0x2A, 0], inherited, inherited);
+        assert!(!direct.underline);
+    }
+
     // markitai: a style's text size (`sprmCHps`) is inherited along its
     // chain and overridden by a nearer one.
     #[test]

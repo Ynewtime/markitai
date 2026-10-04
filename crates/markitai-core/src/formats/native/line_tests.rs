@@ -513,3 +513,69 @@ fn hard_breaks_survive_normal_output() {
     ]));
     assert_eq!(markdown, "one\\\n[two](https://example.test/x)\\\nthree\n");
 }
+
+#[test]
+fn underlines_preserve_ranges_links_and_punctuation_without_inventing_emphasis() {
+    let underlined = |text: &str| styled(text, |style| style.underline = true);
+    assert_eq!(
+        paragraph(vec![underlined("Aenean congue."), Inline::plain(" Plain.")]),
+        "<u>Aenean congue.</u> Plain."
+    );
+    assert_eq!(
+        paragraph(vec![underlined("same"), Inline::plain(" same")]),
+        "<u>same</u> same"
+    );
+    assert_eq!(
+        paragraph(vec![
+            underlined("first"),
+            Inline::plain(" "),
+            underlined("second")
+        ]),
+        "<u>first</u> <u>second</u>"
+    );
+    assert_eq!(
+        paragraph(vec![underlined("split"), underlined(" run")]),
+        "<u>split run</u>"
+    );
+    assert_eq!(
+        paragraph(vec![
+            link(vec![underlined("Mauris id ex erat. ")]),
+            Inline::plain("Nunc vulputate")
+        ]),
+        "[Mauris id ex erat. ](https://example.test/x)Nunc vulputate"
+    );
+    assert_eq!(
+        paragraph(vec![underlined("<script> &copy;")]),
+        r"<u>\<script> \&copy;</u>"
+    );
+    assert_eq!(
+        paragraph(vec![styled("word", |s| {
+            s.underline = true;
+            s.bold = true;
+            s.italic = true;
+        })]),
+        "<u>***word***</u>"
+    );
+    assert_eq!(
+        paragraph(vec![styled("code()", |s| {
+            s.underline = true;
+            s.code = true;
+        })]),
+        "<u>`code()`</u>"
+    );
+    assert_eq!(
+        paragraph(vec![
+            Inline::plain("前"),
+            styled("（注意）", |s| {
+                s.underline = true;
+                s.bold = true;
+            }),
+            Inline::plain("后")
+        ]),
+        "前<u>**（注意）**</u>后"
+    );
+    assert_eq!(
+        table_cell(&renderer("doc").inlines_in(&[underlined("left | right")], Place::Cell)),
+        r"<u>left \| right</u>"
+    );
+}

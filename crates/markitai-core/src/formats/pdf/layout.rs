@@ -19,6 +19,7 @@ pub(super) struct Layout {
     pages: BTreeMap<u32, Vec<TextItem>>,
     faces: Faces,
     carry: Carry,
+    figures: Vec<super::figures::Figure>,
 }
 
 /// The document's type: its heading sizes, and the faces of its text, the
@@ -75,6 +76,7 @@ struct Tables<'a> {
     /// Whether the page's structure tree holds table cells: the page reader
     /// reads those tables from the tags, and geometry defers to them.
     tagged: &'a dyn Fn() -> bool,
+    figures: &'a [super::figures::Figure],
 }
 
 impl Layout {
@@ -168,7 +170,22 @@ impl Layout {
                 heading_fonts,
             },
             carry: Carry::default(),
+            figures: Vec::new(),
         })
+    }
+
+    pub(super) fn chart_regions(
+        &self,
+        number: u32,
+        charts: &[super::geometry::Chart],
+    ) -> Vec<super::geometry::Chart> {
+        self.pages
+            .get(&number)
+            .map_or_else(Vec::new, |items| super::figures::regions(items, charts))
+    }
+
+    pub(super) fn set_figures(&mut self, figures: Vec<super::figures::Figure>) {
+        self.figures = figures;
     }
 
     /// Pages are rendered in ascending order: a table ending one page may
@@ -185,6 +202,7 @@ impl Layout {
         baseline: &str,
         tagged: &dyn Fn() -> bool,
     ) -> Option<(String, bool)> {
+        let figures = std::mem::take(&mut self.figures);
         let items = self.pages.remove(&number)?;
         let continued = self
             .carry
@@ -196,6 +214,7 @@ impl Layout {
             continued: continued.as_ref(),
             pitch: &mut self.carry.pitch,
             tagged,
+            figures: &figures,
         };
         let page = render(
             items,
@@ -1554,6 +1573,15 @@ fn render(
     {
         return None;
     }
+    let annotations = if context.figures.is_empty() {
+        Vec::new()
+    } else {
+        items
+            .iter()
+            .filter(|i| !matches!(i.item_type, ItemType::Text))
+            .cloned()
+            .collect()
+    };
     let links = links::LinkBox::collect(&items);
     items.retain(|i| matches!(i.item_type, ItemType::Text) && !i.text.trim().is_empty());
     if items.is_empty()
@@ -1577,6 +1605,10 @@ fn render(
     }
     if character_counts(&all_text) != character_counts(baseline) {
         return None;
+    }
+    if !context.figures.is_empty() {
+        items.extend(annotations);
+        return render_figures(items, faces, frame, grids, marks, context);
     }
     let bullets = Bullets::new(&items, marks);
     // After the bullets, which are read from text items only.
@@ -1654,6 +1686,97 @@ fn render(
     let markdown = blocks.join("\n\n");
     (!markdown.is_empty()).then_some(Rendered {
         markdown,
+        continues,
+        ending,
+    })
+}
+
+/// Figures divide only unambiguous horizontal bands. The full page's text
+/// agreement was checked before any labels are removed; each remaining band
+/// still goes through the ordinary table, link and paragraph renderer.
+fn render_figures(
+    mut items: Vec<TextItem>,
+    faces: &Faces,
+    frame: Frame,
+    mut grids: Vec<Grid>,
+    marks: &[Mark],
+    context: &mut Tables,
+) -> Option<Rendered> {
+    let charts: Vec<_> = context.figures.iter().map(|f| f.bounds).collect();
+    if super::figures::regions(&items, &charts).len() != charts.len() {
+        return None;
+    }
+    let mut blocks = Vec::new();
+    let mut continues = false;
+    let mut ending = None;
+    for figure in context
+        .figures
+        .iter()
+        .map(Some)
+        .chain(std::iter::once(None))
+    {
+        let top = figure.map_or(f32::NEG_INFINITY, |f| f.bounds.y1);
+        let bottom = figure.map_or(f32::NEG_INFINITY, |f| f.bounds.y0);
+        let mut band = Vec::new();
+        let mut rest = Vec::new();
+        for item in items {
+            if item.y > top {
+                band.push(item);
+            } else if figure.is_none() || item.y < bottom {
+                rest.push(item);
+            }
+            // Labels in this figure's validated box are carried by its pixels.
+        }
+        items = rest;
+        let mut band_grids = Vec::new();
+        let mut remaining_grids = Vec::new();
+        for grid in grids {
+            let low = *grid.ys.first()?;
+            let high = *grid.ys.last()?;
+            if low > top {
+                band_grids.push(grid);
+            } else if high < bottom {
+                remaining_grids.push(grid);
+            } else if figure.is_some_and(|f| {
+                low >= f.bounds.y0
+                    && high <= f.bounds.y1
+                    && grid.xs.first().is_some_and(|x| *x >= f.bounds.x0)
+                    && grid.xs.last().is_some_and(|x| *x <= f.bounds.x1)
+            }) {
+                // Chart grids are part of the figure, never a Markdown table.
+            } else {
+                return None;
+            }
+        }
+        grids = remaining_grids;
+        if band.iter().any(|i| matches!(i.item_type, ItemType::Text)) {
+            let baseline = band
+                .iter()
+                .filter(|i| matches!(i.item_type, ItemType::Text))
+                .map(|i| i.text.as_str())
+                .collect::<String>();
+            let mut child = Tables {
+                continued: if blocks.is_empty() {
+                    context.continued
+                } else {
+                    None
+                },
+                pitch: context.pitch,
+                tagged: context.tagged,
+                figures: &[],
+            };
+            let rendered = render(band, faces, frame, band_grids, marks, &baseline, &mut child)?;
+            continues |= rendered.continues;
+            ending = rendered.ending;
+            blocks.push(rendered.markdown);
+        }
+        if let Some(figure) = figure {
+            blocks.push(format!("![Chart](.markitai/assets/{})", figure.name));
+            ending = None;
+        }
+    }
+    Some(Rendered {
+        markdown: blocks.join("\n\n"),
         continues,
         ending,
     })
@@ -3103,6 +3226,7 @@ mod tests {
             continued: None,
             pitch,
             tagged: &|| false,
+            figures: &[],
         }
     }
 

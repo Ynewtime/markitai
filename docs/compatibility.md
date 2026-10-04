@@ -12,7 +12,8 @@ The entry points remain `markitai`, `mkai` and `markitai-mcp` (`markitai mcp`).
 Existing public option spellings and configuration keys are retained where
 implemented; unavailable requests return an explicit error. See the current
 [CLI guide](cli.md), [configuration](configuration.md), and `markitai --help`
-for actual accepted arguments, defaults and exit codes.
+for actual accepted arguments and defaults. Exit codes are documented in
+[troubleshooting](troubleshooting.md#exit-status).
 
 Only one configuration file is selected; explicit CLI overrides and presets
 apply over that file. `MARKITAI_HOME` isolates Markitai state. It does not redirect

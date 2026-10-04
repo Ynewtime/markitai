@@ -1,9 +1,30 @@
-//! Conservative geometry for complete, axis-aligned ruled tables.
+//! Conservative geometry for ruled tables, list marks and locally clipped bar charts.
 use lopdf::{Object, ObjectId, content::Content};
 use std::collections::HashSet;
 
 const TOLERANCE: f32 = 1.5;
 const MAX_EDGES: usize = 8192;
+
+#[path = "charts.rs"]
+mod charts;
+
+/// A conservatively identified chart's complete local clipping rectangle,
+/// in unrotated page coordinates relative to `Frame` (origin at bottom left).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Chart {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Bar {
+    bounds: [f32; 4],
+    clip: [f32; 4],
+}
+
+type Shapes = (Vec<Edge>, Vec<Mark>, Vec<Bar>);
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Frame {
@@ -248,11 +269,7 @@ const MAX_MARKS: usize = 4096;
 const MARK_MIN: f32 = 1.0;
 const MARK_MAX: f32 = 8.0;
 
-fn shapes(
-    content: &Content,
-    frame: Frame,
-    resources: &RuleResources,
-) -> Option<(Vec<Edge>, Vec<Mark>)> {
+fn shapes(content: &Content, frame: Frame, resources: &RuleResources) -> Option<Shapes> {
     if content.operations.len() > 200_000 {
         return None;
     }
@@ -278,6 +295,9 @@ fn shapes(
     let mut straight = false;
     let mut output = Vec::new();
     let mut marks = Vec::new();
+    let mut bars = Vec::new();
+    let mut bars_overflow = false;
+    let mut subpaths = 0usize;
     for op in &content.operations {
         let numbers = || {
             op.operands
@@ -335,6 +355,7 @@ fn shapes(
                 };
                 let p = state.point(*x, *y)?;
                 if op.operator == "m" {
+                    subpaths += 1;
                     start = Some(p);
                 } else if let Some(previous) = current {
                     segments.push((previous, p));
@@ -355,6 +376,7 @@ fn shapes(
                     state.point(x + w, y + h)?,
                     state.point(*x, y + h)?,
                 ];
+                subpaths += 1;
                 rectangular = points.is_empty();
                 straight = true;
                 for i in 0..4 {
@@ -455,6 +477,28 @@ fn shapes(
                         });
                     }
                 }
+                // Keep only a single closed axis-aligned rectangular fill.
+                // The chart detector additionally requires axes, grid lines,
+                // varied bar heights and a separate local clipping rectangle.
+                if fill
+                    && !curved
+                    && !clipping
+                    && !state.shaped_clip
+                    && subpaths == 1
+                    && points.iter().all(|&p| state.inside(p))
+                    && charts::rectangle(&points, &segments, bounds)
+                    && !bars_overflow
+                {
+                    if bars.len() >= 2048 {
+                        bars.clear();
+                        bars_overflow = true;
+                    } else {
+                        bars.push(Bar {
+                            bounds,
+                            clip: state.clip,
+                        });
+                    }
+                }
                 // A compact filled shape, curved or not, or a stroked ring
                 // may be a bullet; a stroked shape with straight sides is a
                 // checkbox or a frame.
@@ -486,6 +530,7 @@ fn shapes(
                 rectangular = false;
                 curved = false;
                 straight = false;
+                subpaths = 0;
             }
             "gs" if op
                 .operands
@@ -506,12 +551,12 @@ fn shapes(
             return None;
         }
     }
-    Some((output, marks))
+    Some((output, marks, bars))
 }
 
 #[cfg(test)]
 fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<Vec<Edge>> {
-    shapes(content, frame, resources).map(|(edges, _)| edges)
+    shapes(content, frame, resources).map(|(edges, _, _)| edges)
 }
 
 /// A stable sort of edges. Its comparator is a trait object, so the two
@@ -569,17 +614,40 @@ pub(super) fn grids(content: &Content, frame: Frame, resources: &RuleResources) 
     page_shapes(content, frame, resources).0
 }
 
-/// The page's complete ruled tables and its bullet-sized marks, from one
-/// walk of its content. A page whose paint cannot be judged has neither.
+/// One bounded geometry walk supplies tables, bullet marks and chart candidates.
+pub(super) fn page_shapes_with_charts(
+    content: &Content,
+    frame: Frame,
+    resources: &RuleResources,
+) -> (Vec<Grid>, Vec<Mark>, Vec<Chart>) {
+    let Some((edges, marks, bars)) = shapes(content, frame, resources) else {
+        return (Vec::new(), Vec::new(), Vec::new());
+    };
+    let edges = merge(edges);
+    (
+        detect_grids(&edges),
+        marks,
+        charts::detect(&edges, &bars, frame),
+    )
+}
+
+#[cfg(test)]
 pub(super) fn page_shapes(
     content: &Content,
     frame: Frame,
     resources: &RuleResources,
 ) -> (Vec<Grid>, Vec<Mark>) {
-    let Some((edges, marks)) = shapes(content, frame, resources) else {
-        return (Vec::new(), Vec::new());
-    };
-    (detect_grids(&merge(edges)), marks)
+    let (grids, marks, _) = page_shapes_with_charts(content, frame, resources);
+    (grids, marks)
+}
+
+#[cfg(test)]
+pub(super) fn page_charts(
+    content: &Content,
+    frame: Frame,
+    resources: &RuleResources,
+) -> Vec<Chart> {
+    page_shapes_with_charts(content, frame, resources).2
 }
 
 fn detect_grids(edges: &[Edge]) -> Vec<Grid> {

@@ -26,8 +26,8 @@ fn table_from(rows: Vec<Vec<Cell>>, header_rows: usize) -> Block {
     Block::Table(Table::from_rows(rows, header_rows, TableKind::Data))
 }
 
-const BOLD: Style = Style { bold: true, italic: false, strike: false, code: false };
-const ITALIC: Style = Style { bold: false, italic: true, strike: false, code: false };
+const BOLD: Style = Style { bold: true, ..Style::PLAIN };
+const ITALIC: Style = Style { italic: true, ..Style::PLAIN };
 
 #[test]
 fn heading_and_paragraph() {
@@ -245,9 +245,47 @@ fn adjacent_same_style_runs_merged() {
 fn bold_italic_combo() {
     let md = doc(vec![Block::Paragraph(vec![styled(
         "both",
-        Style { bold: true, italic: true, strike: false, code: false },
+        Style { bold: true, italic: true, ..Style::PLAIN },
     )])]);
     assert_eq!(md, "***both***\n");
+}
+
+#[test]
+fn underline_keeps_whitespace_punctuation_links_and_other_styles() {
+    let underline = Style { underline: true, ..Style::PLAIN };
+    let md = doc(vec![Block::Paragraph(vec![
+        Inline::plain("Before"),
+        styled(" underlined. ", underline),
+        styled(
+            "mixed",
+            Style { underline: true, bold: true, italic: true, strike: true, ..Style::PLAIN },
+        ),
+        Inline::plain(" "),
+        styled("a`b", Style { code: true, ..underline }),
+        Inline::plain(" "),
+        Inline::Link {
+            content: vec![styled("label.", underline)],
+            target: LinkTarget::External("https://example.test/".into()),
+        },
+    ])]);
+    assert_eq!(md, concat!(
+        "Before <u>underlined.</u> <u>~~***mixed***~~</u> <u>``a`b``</u> ",
+        "[label.](https://example.test/)\n",
+    ));
+}
+
+#[test]
+fn underline_does_not_cross_an_unstyled_gap_or_trust_source_html() {
+    let underline = Style { underline: true, ..Style::PLAIN };
+    let md = doc(vec![Block::Paragraph(vec![
+        styled("a", underline),
+        styled("b", underline),
+        Inline::plain(" "),
+        styled("c", underline),
+        Inline::plain(" "),
+        styled("<u>x</u>", underline),
+    ])]);
+    assert_eq!(md, "<u>ab</u> <u>c</u> <u>\\<u>x\\</u></u>\n");
 }
 
 #[test]

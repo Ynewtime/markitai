@@ -10,6 +10,7 @@
 /// The terminal shows it with `-v`; reports and `--json` always carry it.
 fn is_explanatory(warning: &str) -> bool {
     warning.starts_with("PDF images are placed after their page's text")
+        || warning.starts_with("Embedded PDF images are placed after their page's text")
         || (warning.starts_with("PDF page ") && warning.contains(": read as plain text because "))
 }
 
@@ -220,6 +221,8 @@ mod tests {
     #[test]
     fn explanatory_notes_wait_for_verbose_and_everything_else_stays() {
         let warnings = lines(&[
+            "Embedded PDF images are placed after their page's text; their exact position is not reconstructed.",
+            "Embedded PDF images are placed after their page's text; the page screenshots keep each page's appearance.",
             "PDF images are placed after their page's text; their exact position and vector graphics are not reconstructed.",
             "PDF page 5: read as plain text because it looked like a scan but draws no image. Reading order, paragraph breaks and text styling may differ.",
             "PDF images are placed after their page's text and vector graphics are not reconstructed; the page screenshots keep each page's appearance.",

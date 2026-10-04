@@ -32,7 +32,9 @@ fn legacy_doc_embedded_chart_keeps_all_source_rows_and_the_existing_body() {
     assert!(doc.markdown.contains("- *Nulla facilisi.*"));
     assert!(
         doc.markdown
-            .contains("[Mauris id ex erat. ](https://products.office.com/en-us/word)")
+            .contains("[Mauris id ex erat. ](https://products.office.com/en-us/word)"),
+        "{}",
+        doc.markdown
     );
     assert!(
         doc.markdown
@@ -214,10 +216,12 @@ Maecenas mauris lectus, lobortis et purus mattis, blandit dictum tellus.
 
 - **Maecenas non lorem quis tellus placerat varius.**
 - *Nulla facilisi.*
-- Aenean congue fringilla justo ut aliquam.
+- <u>Aenean congue fringilla justo ut aliquam.</u>
 - [Mauris id ex erat. ](https://products.office.com/en-us/word)Nunc vulputate neque vitae justo facilisis, non condimentum ante sagittis.
 - Morbi viverra semper lorem nec molestie.
 - Maecenas tincidunt est efficitur ligula euismod, sit amet ornare est vulputate.
+
+![](.markitai/assets/asset-1.emf)
 
 In non mauris justo. Duis vehicula mi vel mi pretium, a viverra erat efficitur. Cras aliquam est ac eros varius, id iaculis dui auctor. Duis pretium neque ligula, et pulvinar mi placerat et. Nulla nec nunc sit amet nunc posuere vestibulum. Ut id neque eget tortor mattis tristique. Donec ante est, blandit sit amet tristique vel, lacinia pulvinar arcu. Pellentesque scelerisque fermentum erat, id posuere justo pulvinar ut. Cras id eros sed enim aliquam lobortis. Sed lobortis nisl ut eros efficitur tincidunt. Cras justo mi, porttitor quis mattis vel, ultricies ut purus. Ut facilisis et lacus eu cursus.
 
@@ -251,4 +255,6 @@ In non mauris justo. Duis vehicula mi vel mi pretium, a viverra erat efficitur. 
 Fusce vitae vestibulum velit. Pellentesque vulputate lectus quis pellentesque commodo. Aliquam erat volutpat. Vestibulum in egestas velit. Pellentesque fermentum nisl vitae fringilla venenatis. Etiam id mauris vitae orci maximus ultricies. Cras fringilla ipsum magna, in fringilla dui commodo a.
 
 Etiam vehicula luctus fermentum. In vel metus congue, pulvinar lectus vel, fermentum dui. Maecenas ante orci, egestas ut aliquet sit amet, sagittis a magna. Aliquam ante quam, pellentesque ut dignissim quis, laoreet eget est. Aliquam erat volutpat. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Ut ullamcorper justo sapien, in cursus libero viverra eget. Vivamus auctor imperdiet urna, at pulvinar leo posuere laoreet. Suspendisse neque nisl, fringilla at iaculis scelerisque, ornare vel dolor. Ut et pulvinar nunc. Pellentesque fringilla mollis efficitur. Nullam venenatis commodo imperdiet. Morbi velit neque, semper quis lorem quis, efficitur dignissim ipsum. Ut ac lorem sed turpis imperdiet eleifend sit amet id sapien.
+
+![](.markitai/assets/asset-2.jpg)
 "###;

@@ -16,7 +16,7 @@ const MAX_SHOTS_BYTES: usize = 100 * 1024 * 1024;
 const MIN_PICTURE_PIXELS: u64 = 40_000;
 /// The extraction warning of a PDF with images: they follow their page's
 /// text rather than sit where the page shows them.
-pub(crate) const IMAGE_PLACEMENT: &str = "PDF images are placed after their page's text; their exact position and vector graphics are not reconstructed.";
+pub(crate) const IMAGE_PLACEMENT: &str = "Embedded PDF images are placed after their page's text; their exact position is not reconstructed.";
 
 fn failure(message: impl std::fmt::Display) -> Error {
     Error::Conversion(format!("PDF page media: {message}"))
@@ -51,7 +51,7 @@ impl PreparedPdf {
         if self.media_requested && !self.screenshots.is_empty() {
             for warning in &mut document.warnings {
                 if warning == IMAGE_PLACEMENT {
-                    *warning = "PDF images are placed after their page's text and vector graphics are not reconstructed; the page screenshots keep each page's appearance.".into();
+                    *warning = "Embedded PDF images are placed after their page's text; the page screenshots keep each page's appearance.".into();
                 }
             }
         }

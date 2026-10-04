@@ -353,6 +353,22 @@ pub(crate) fn apply_profiles(result: &mut ConversionOutput, cfg: &Value) {
             }
         }
     }
+    // Keep boundaries throughout extraction and enhancement (including cached
+    // results and screenshot alignment). This is a final-output preference.
+    if cfg
+        .pointer("/output/slide_markers")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        let filtered = crate::output_profiles::remove_slide_markers(&result.markdown);
+        if filtered != result.markdown {
+            let original = std::mem::replace(&mut result.markdown, filtered);
+            result.enhancement_source.get_or_insert(original);
+        }
+        if let Some(markdown) = &mut result.llm_markdown {
+            *markdown = crate::output_profiles::remove_slide_markers(markdown);
+        }
+    }
 }
 
 pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> ConversionOutput {
@@ -910,6 +926,9 @@ pub(crate) fn write_document_mode(
     }
     if !replacements.is_empty() {
         result.markdown = rewrite_asset_references(&result.markdown, &replacements);
+        if let Some(source) = &mut result.enhancement_source {
+            *source = rewrite_asset_references(source, &replacements);
+        }
         if let Some(md) = &mut result.llm_markdown {
             *md = rewrite_asset_references(md, &replacements);
         }
@@ -1126,6 +1145,74 @@ fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn slide_marker_output_preference_covers_base_enhanced_and_pure_results() {
+        let source = "<!-- Slide number: 1 -->\n# First\n\n<!-- Slide number: 2 -->\n\n<!-- Slide number: 3 -->\nLast\n";
+        for enabled in [true, false] {
+            for enhanced in [true, false] {
+                for pure in [true, false] {
+                    let cfg = config::normalize(&json!({"output":{"slide_markers":enabled},"llm":{"pure":pure,"keep_base":true}})).unwrap();
+                    let mut result = ConversionOutput {
+                        markdown: source.into(),
+                        llm_markdown: enhanced.then(|| source.replace("Last", "Enhanced last")),
+                        ..Default::default()
+                    };
+                    apply_profiles(&mut result, &cfg);
+                    assert_eq!(result.markdown.contains("Slide number:"), enabled);
+                    assert_eq!(result.enhancement_source(), source);
+                    let serialized = serde_json::to_value(&result).unwrap();
+                    assert!(serialized.get("enhancement_source").is_none());
+                    assert!(result.markdown.contains("# First"));
+                    assert!(result.markdown.contains("Last"));
+                    if let Some(markdown) = &result.llm_markdown {
+                        assert_eq!(markdown.contains("Slide number:"), enabled);
+                        assert!(markdown.contains("Enhanced last"));
+                    }
+                }
+            }
+        }
+        let mut result = ConversionOutput {
+            markdown: source.into(),
+            ..Default::default()
+        };
+        apply_profiles(&mut result, &config::defaults());
+        assert_eq!(result.markdown, source);
+    }
+
+    #[test]
+    fn chained_enhancement_keeps_slide_boundaries_and_published_asset_paths() {
+        for profile in [None, Some("obsidian"), Some("rag")] {
+            let root = tempfile::tempdir().unwrap();
+            let cfg =
+                config::normalize(&json!({"output":{"slide_markers":false,"profile":profile}}))
+                    .unwrap();
+            let asset = Asset {
+                name: "original.png".into(),
+                bytes: vec![1, 2, 3],
+            };
+            let digest = crate::hex(Sha256::digest(&asset.bytes));
+            let prefix = if profile.is_some() {
+                "assets"
+            } else {
+                ".markitai/assets"
+            };
+            let target = format!("{prefix}/{}.png", &digest[..24]);
+            let mut result = ConversionOutput {
+                markdown:"<!-- Slide number: 1 -->\n# Slide\n\n![Figure](.markitai/assets/original.png)\n".into(),
+                ..Default::default()
+            };
+            apply_profiles(&mut result, &cfg);
+            write(root.path(), "slides", &mut result, &[asset], &cfg).unwrap();
+            assert!(result.markdown.contains(&target));
+            assert!(result.enhancement_source().contains(&target));
+            assert!(!result.enhancement_source().contains("original.png"));
+            assert!(!result.markdown.contains("Slide number:"));
+            // Enhancement keeps slide boundaries under every profile.
+            assert!(result.enhancement_source().contains("Slide number:"));
+            assert!(root.path().join(target).exists());
+        }
+    }
+
     #[test]
     fn frontmatter_quotes_yaml11_implicit_strings_like_the_reference_writer() {
         // Expected spellings were produced by PyYAML safe_dump, the reference writer.

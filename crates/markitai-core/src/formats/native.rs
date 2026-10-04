@@ -369,7 +369,7 @@ fn leading_char(value: &Inline) -> Option<char> {
             let first = text.chars().next()?;
             if first.is_whitespace() {
                 Some(first)
-            } else if style.code || style.bold || style.italic || style.strike {
+            } else if style.code || style.bold || style.italic || style.strike || style.underline {
                 Some('*')
             } else {
                 Some(first)
@@ -645,6 +645,9 @@ impl Renderer<'_> {
                     let prefix = &text[..text.len() - text.trim_start().len()];
                     let suffix = &text[text.trim_end().len()..];
                     let emphasised = !style.code && (style.bold || style.italic || style.strike);
+                    // A link already shows as underlined; Word's Hyperlink style
+                    // would otherwise wrap every link label in tags.
+                    let underline = style.underline && !label;
                     let (lead, core, trail) = if emphasised {
                         let before = prefix.chars().next_back().or_else(|| line.last_char());
                         let after = suffix.chars().next().or_else(|| {
@@ -653,7 +656,14 @@ impl Renderer<'_> {
                                 .find(|next| !matches!(next, Inline::Anchor(_)))
                                 .and_then(leading_char)
                         });
-                        emphasis_edges(trimmed, before, after)
+                        // The generated underline tags already separate
+                        // emphasis from neighbouring prose. Preserve the
+                        // source's emphasis on punctuation inside those tags.
+                        if underline {
+                            emphasis_edges(trimmed, Some('>'), Some('<'))
+                        } else {
+                            emphasis_edges(trimmed, before, after)
+                        }
                     } else {
                         ("", trimmed, "")
                     };
@@ -665,6 +675,11 @@ impl Renderer<'_> {
                         (style.bold, "**"),
                     ];
                     line.text(prefix, plain);
+                    // Underline has no Markdown delimiter. Its HTML wrapper
+                    // includes punctuation moved outside emphasis markers.
+                    if underline {
+                        line.markup("<u>");
+                    }
                     line.text(lead, plain);
                     for (on, marker) in markers {
                         if on && marked {
@@ -696,6 +711,9 @@ impl Renderer<'_> {
                         }
                     }
                     line.text(trail, plain);
+                    if underline {
+                        line.markup("</u>");
+                    }
                     line.text(suffix, plain);
                 }
                 Inline::Link { content, target } => match link_destination(target) {

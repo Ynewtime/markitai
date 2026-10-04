@@ -315,7 +315,7 @@ impl Textboxes {
     }
 }
 
-fn textbox_plc<'a>(
+pub(super) fn textbox_plc<'a>(
     word: &[u8],
     table: &'a [u8],
     fib: usize,
@@ -335,7 +335,7 @@ fn textbox_plc<'a>(
     Ok(table.get(offset..).and_then(|tail| tail.get(..size)))
 }
 
-fn increasing_cps(data: &[u8], count: usize, bound: Option<usize>) -> bool {
+pub(super) fn increasing_cps(data: &[u8], count: usize, bound: Option<usize>) -> bool {
     let mut previous = None;
     for n in 0..=count {
         let cp = get_u32(data, 4 * n).unwrap() as usize;
@@ -347,18 +347,16 @@ fn increasing_cps(data: &[u8], count: usize, bound: Option<usize>) -> bool {
     true
 }
 
-fn main_shapes(word: &[u8], table: &[u8]) -> Result<Option<HashMap<u32, bool>>, ConvertError> {
+pub(super) fn drawing_parts<'a>(word: &[u8], table: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
     use crate::shared::officeart::record_at;
     let offset = get_u32(word, 0x22A).unwrap_or(0) as usize;
     let length = get_u32(word, 0x22E).unwrap_or(0) as usize;
-    let Some(data) = table.get(offset..).and_then(|tail| tail.get(..length)) else {
-        return Ok(None);
-    };
+    let data = table.get(offset..).and_then(|tail| tail.get(..length))?;
     let Some((version, 0xF000, group)) = record_at(data, 0) else {
-        return Ok(None);
+        return None;
     };
     if version & 0xF != 0xF {
-        return Ok(None);
+        return None;
     }
     let mut cursor = 8 + group.len();
     let mut main = None;
@@ -367,21 +365,25 @@ fn main_shapes(word: &[u8], table: &[u8]) -> Result<Option<HashMap<u32, bool>>, 
         let selector = data[cursor];
         cursor += 1;
         let Some((version, 0xF002, body)) = record_at(data, cursor) else {
-            return Ok(None);
+            return None;
         };
         if version & 0xF != 0xF || selector > 1 {
-            return Ok(None);
+            return None;
         }
         drawing_count += 1;
         if drawing_count > 2 {
-            return Ok(None);
+            return None;
         }
         if selector == 0 && main.replace(body).is_some() {
-            return Ok(None);
+            return None;
         }
         cursor += 8 + body.len();
     }
-    let Some(main) = main else {
+    Some((group, main?))
+}
+
+fn main_shapes(word: &[u8], table: &[u8]) -> Result<Option<HashMap<u32, bool>>, ConvertError> {
+    let Some((_, main)) = drawing_parts(word, table) else {
         return Ok(None);
     };
     let mut shapes = HashMap::new();
@@ -392,7 +394,10 @@ fn main_shapes(word: &[u8], table: &[u8]) -> Result<Option<HashMap<u32, bool>>, 
     Ok(Some(shapes))
 }
 
-fn shape_identity(data: &[u8], visited: &mut usize) -> Result<Option<(u32, u32)>, ConvertError> {
+pub(super) fn shape_identity(
+    data: &[u8],
+    visited: &mut usize,
+) -> Result<Option<(u32, u32)>, ConvertError> {
     use crate::shared::officeart::record_at;
     let mut cursor = 0;
     let mut identity = None;
@@ -412,7 +417,7 @@ fn shape_identity(data: &[u8], visited: &mut usize) -> Result<Option<(u32, u32)>
     Ok(identity)
 }
 
-fn count_drawing_record(visited: &mut usize) -> Result<(), ConvertError> {
+pub(super) fn count_drawing_record(visited: &mut usize) -> Result<(), ConvertError> {
     *visited += 1;
     if *visited > 10_000 {
         return Err(ConvertError::ResourceLimit {

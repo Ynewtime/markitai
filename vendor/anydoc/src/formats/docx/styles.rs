@@ -37,6 +37,7 @@ impl Toggles {
             bold: base.bold ^ self.bold,
             italic: base.italic ^ self.italic,
             strike: base.strike ^ self.strike,
+            underline: base.underline,
             code: base.code,
         }
     }

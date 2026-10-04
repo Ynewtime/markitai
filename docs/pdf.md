@@ -547,10 +547,19 @@ or separators after it: `Untitled`, `Untitled Document`, `Untitled-2`,
 `Document1`, `Presentation1`, `Book1`, `文档1`. `Untitled Love Song`,
 `Document Management Policy` and a bare `Book` are kept.
 
-Vector charts are not reproduced. Their axis labels and legends remain text
-where they stand; rendering a chart's region needs the platform page renderer
-in the text reader and a reliable chart detector, which the media pipeline's
-explicit rendering does not provide yet.
+Clearly bounded vertical bar charts are preserved as PNG crops in their body
+position, including axes and legends, without `--screenshot`, OCR or an LLM.
+Detection requires a local rectangular clip, multiple aligned bars of different
+heights, grid lines, an axis and short labels, with no crossing or side-column
+text. Only a successfully rendered and placed crop replaces the scattered labels;
+otherwise the text remains. The crop does not provide an inferred data table.
+
+This uses the existing CoreGraphics/hayro renderer at 144 DPI, opened only when
+needed, once per document and once per candidate page. Limits are four charts per
+page, 8 million rendered pixels per page and 64 million per document, within the
+shared asset-byte budget. Unsupported drawings, rotated pages and ambiguous
+layouts stay on the ordinary text path. `security.pdf_sanitize=remove` disables
+automatic chart crops so image generation cannot bypass hidden-text removal.
 
 ## Forms, annotations and protected files
 
@@ -739,11 +748,10 @@ Indexed images with a gray or RGB base become palette PNGs at 1, 2, 4 or 8 bits,
 clamping indices above the maximum. CMYK, Lab, nested or malformed palettes,
 decode arrays, masks and other depths remain explicit warnings. JPEG streams are
 passed through unchanged. Exact placement and reference JPEG encoding
-remain different. There is no screenshot or vector-figure renderer in this
-reader. `resvg` renders SVG but does not interpret PDF graphics state: a faithful
-PDF figure also needs font programs, Form matrices, clipping, shadings, blend
-modes and masks. Drawing table borders from a bounded subset of PDF operators
-does not establish those rendering semantics.
+remain different. Detected bar-chart crops use the full platform renderer;
+geometry detection itself does not reproduce PDF painting. Other vector figures
+are not automatically preserved. Use page screenshots when a full visual copy
+is needed.
 
 Table geometry is deliberately disabled when resource-dependent colours,
 transparency, Form invocations, shading or inline images make its verdict
@@ -761,8 +769,8 @@ tables outside the evidence described above, complex columns, mathematical
 layout and structured vector charts remain open. Explicit
 [page media processing](pdf-ocr.md) provides rendering and local OCR
 separately from this text reader, with its own accuracy limits.
-The historical five-page sample's chart must not be presented as recovered
-merely because its textual labels are extractable.
+Extractable chart labels alone do not establish visual recovery; check the
+referenced chart image against the source.
 
 The page reader loads the file once for the page Markdown, the positioned pass and,
 when it read the bytes unchanged, this module's inspection; each page's content is

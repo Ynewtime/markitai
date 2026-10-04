@@ -9,6 +9,8 @@
 //! buttons (`data-engagement-action`), its text is a `div[dir=auto]`, its date
 //! the text of its `/status/<id>` link, and a quoted post is a nested `article`
 //! in a clickable `div[role=link][data-href]`.
+//! Long-form Articles have a separate `x-article-body` beside their heading;
+//! a status page can embed the complete Article instead of ordinary post text.
 
 use super::Attribute;
 use super::{Announcement, Landmarks, render_clean, selector};
@@ -529,6 +531,161 @@ fn quote_block(quote: ElementRef<'_>, base: Option<&Url>) -> Result<Option<Strin
     ))
 }
 
+fn reply_slot(article: &ElementRef<'_>) -> bool {
+    article
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .any(|parent| {
+            parent.value().name() == "section"
+                || parent.value().attribute("data-testid") == Some("card.wrapper")
+                || (parent.value().attribute("role") == Some("link")
+                    && parent
+                        .value()
+                        .attribute("data-href")
+                        .is_some_and(|href| href.contains("/status/")))
+        })
+}
+
+/// An embedded long-form Article, scoped by its own body and the requested
+/// post id. The page can repeat it in responsive layouts or surround it with
+/// replies containing other Articles. Its author chrome is outside the body.
+fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announcement>> {
+    let wanted = base.and_then(|url| {
+        let parts: Vec<_> = url
+            .path_segments()?
+            .filter(|part| !part.is_empty())
+            .collect();
+        let id = match parts.as_slice() {
+            [_, "status" | "article", id, ..] | ["i", "web", "status", id, ..] => *id,
+            _ => return None,
+        };
+        (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())).then(|| id.to_owned())
+    });
+    let candidates: Vec<_> = document
+        .select(&selector(".x-article-body"))
+        .filter_map(|body| {
+            if body
+                .ancestors()
+                .filter_map(ElementRef::wrap)
+                .any(|node| matches!(node.value().name(), "template" | "noscript" | "head"))
+            {
+                return None;
+            }
+            let container = body.parent().and_then(ElementRef::wrap)?;
+            let heading = container
+                .child_elements()
+                .find(|child| child.value().name() == "h1" && !text_of(*child).is_empty())?;
+            let mut owners = body
+                .ancestors()
+                .filter_map(ElementRef::wrap)
+                .filter(|node| node.value().name() == "article");
+            let owner = owners.next();
+            if owners.next().is_some() || owner.is_some_and(|owner| inside(body, quoted(owner))) {
+                return None;
+            }
+            // Links cited by the author do not identify the enclosing post.
+            let id = owner.and_then(|owner| {
+                owner
+                    .value()
+                    .attribute("data-tweet-id")
+                    .map(str::to_owned)
+                    .or_else(|| own_permalink(owner, Some(body)).and_then(status_id))
+            });
+            Some((body, container, heading, owner, id))
+        })
+        .collect();
+    let selected = if let Some(wanted) = &wanted {
+        candidates
+            .iter()
+            .find(|candidate| candidate.4.as_ref() == Some(wanted))
+            .or_else(|| {
+                // A standalone Article has no enclosing post. Only accept an
+                // unambiguous document; an unrelated reply is never a fallback.
+                let mut standalone = candidates.iter().filter(|candidate| candidate.3.is_none());
+                let first = standalone.next()?;
+                standalone.next().is_none().then_some(first)
+            })
+    } else {
+        // Saved pages have no address to identify the post. Match the same
+        // main timeline post as the ordinary reader, never the first Article
+        // found somewhere in a reply or recommendation.
+        let column = document
+            .select(&selector(r#"[data-testid="primaryColumn"], main"#))
+            .next();
+        let scope = column.unwrap_or_else(|| document.root_element());
+        let main = scope.select(&selector("article")).find(|article| {
+            is_post(*article, column.is_some())
+                && !reply_slot(article)
+                && !article
+                    .ancestors()
+                    .filter_map(ElementRef::wrap)
+                    .any(|parent| parent.value().name() == "article")
+        });
+        candidates.iter().find(|candidate| {
+            main.is_some() && candidate.3.map(|owner| owner.id()) == main.map(|post| post.id())
+        })
+    };
+    let Some((body, container, heading, owner, id)) = selected else {
+        return Ok(None);
+    };
+    // Preserve the document's block structure; post text_markdown deliberately
+    // separates every line and would break nested lists and code in an Article.
+    let body_markdown = render_clean(*body, base)?;
+    if body_markdown.is_empty() {
+        return Ok(None);
+    }
+    let mut blocks = vec![render_clean(*heading, base)?];
+    for cover in container
+        .child_elements()
+        .filter(|child| child.value().name() == "img")
+    {
+        let markdown = render_clean(cover, base)?;
+        if !markdown.is_empty() {
+            blocks.push(markdown);
+        }
+    }
+    blocks.push(body_markdown);
+    let mut metadata = Map::new();
+    metadata.insert("title".into(), text_of(*heading).into());
+    metadata.insert("site".into(), "X (Twitter)".into());
+    if let Some(paragraph) = body
+        .select(&selector("p"))
+        .map(text_of)
+        .find(|text| !text.is_empty())
+    {
+        metadata.insert(
+            "description".into(),
+            paragraph
+                .chars()
+                .take(200)
+                .collect::<String>()
+                .trim_end()
+                .into(),
+        );
+    }
+    if let Some(owner) = owner {
+        let (name, handle) = author(*owner, Some(*body));
+        let handle = own_permalink(*owner, Some(*body))
+            .and_then(permalink_handle)
+            .or(handle);
+        if let Some(who) = handle.as_ref().or(name.as_ref()) {
+            metadata.insert("author".into(), who.clone().into());
+        }
+        if let (Some(name), Some(_)) = (name, handle) {
+            metadata.insert("author_name".into(), name.into());
+        }
+        let (iso, shown) = shown_date(*owner, Some(*body));
+        if let Some(date) = published(iso.as_deref(), id.as_deref(), shown.as_deref()) {
+            metadata.insert("published".into(), date.into());
+        }
+    }
+    // This is a document, not social_post: keep ordinary LLM enhancement available.
+    Ok(Some(Announcement {
+        markdown: blocks.join("\n\n"),
+        metadata,
+    }))
+}
+
 /// The post of an X status page as Markdown with its metadata: the post, then
 /// the posts the author continued it with, each after a rule. Replies from
 /// other accounts, and the author's own replies after the first of them, are
@@ -538,9 +695,19 @@ pub(super) fn post(
     page: &Landmarks<'_>,
     base: Option<&Url>,
 ) -> Result<Option<Announcement>> {
-    // An X Article is a long document the ordinary reader takes whole; the
-    // `article` elements around it are cards of other Articles.
-    if !is_x_page(page, base) || base.is_some_and(|url| url.path().contains("/article/")) {
+    if !is_x_page(page, base) {
+        return Ok(None);
+    }
+    if let Some(article) = long_article(document, base)? {
+        return Ok(Some(article));
+    }
+    // Older Article pages without a dedicated body remain ordinary documents;
+    // the surrounding `article` elements are cards of other Articles. Only
+    // `/<handle>/article/<id>` names one; an account called `article` does not.
+    if base.is_some_and(|url| {
+        url.path_segments()
+            .is_some_and(|mut parts| parts.nth(1) == Some("article"))
+    }) {
         return Ok(None);
     }
     let column = document
@@ -561,20 +728,6 @@ pub(super) fn post(
         .collect();
     // The main post is the one the address names, else the first that is not
     // a reply (replies sit in a `section` or in a clickable box of their own).
-    let reply_slot = |article: &ElementRef<'_>| {
-        article
-            .ancestors()
-            .filter_map(ElementRef::wrap)
-            .any(|parent| {
-                parent.value().name() == "section"
-                    || parent.value().attribute("data-testid") == Some("card.wrapper")
-                    || (parent.value().attribute("role") == Some("link")
-                        && parent
-                            .value()
-                            .attribute("data-href")
-                            .is_some_and(|href| href.contains("/status/")))
-            })
-    };
     let Some(position) = status
         .as_deref()
         .and_then(|id| {
@@ -907,6 +1060,149 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
                 Some("@ivan")
             );
         }
+    }
+
+    #[test]
+    fn an_embedded_article_keeps_document_blocks_and_excludes_the_surrounding_thread() {
+        // An authored reduction of the server-rendered layout: the post's short
+        // text is empty, its Article is inside a timeline item, and the page
+        // repeats the main post for another responsive layout.
+        let content = format!(
+            r#"<div dir="auto"></div><div><div>
+            <img alt="Article cover image" src="https://pbs.twimg.com/media/cover.jpg">
+            <h1 dir="auto">A practical guide</h1>
+            <div><button data-engagement-action="reply">999</button></div>
+            <div class="x-article-body break-words">
+              <p>Opening <strong>idea</strong>.</p>
+              <h2>First section</h2>
+              <ol><li>First step<ul><li>Nested detail</li></ul></li><li>Second step</li></ol>
+              <blockquote><p>A useful quotation.</p></blockquote>
+              <pre><code>first line\n  second line</code></pre>
+              <p><a href="/grace/status/77">A cited post</a></p>
+              <a href="/ada/article/{ID}/media/7"><img src="https://pbs.twimg.com/media/diagram.jpg" alt="Diagram"></a>
+              <p>Closing paragraph.</p>
+            </div></div></div>"#
+        )
+        .replace("first line\\n", "first line\n");
+        let main = article("ada", "Ada", ID, "Feb 25, 2025", "", &content);
+        let other = article("grace", "Grace", "77", "Feb 25, 2025", "REPLY_ONLY", "");
+        let followup = article("ada", "Ada", "88", "Feb 25, 2025", "FOLLOWUP_ONLY", "");
+        let html = format!(
+            r#"<html><head><title>Ada on X: https://t.co/example / X</title>
+            <meta name="description" content="https://t.co/example"></head>
+            <body><main>{main}</main><ul><li>{other}</li><li>{main}</li><li>{followup}</li></ul></body></html>"#
+        );
+        let saved = extract_html(&html, None).unwrap();
+        assert_eq!(saved.metadata["title"], "A practical guide");
+        assert_eq!(saved.markdown.matches("Opening **idea**.").count(), 1);
+        assert!(!saved.markdown.contains("REPLY_ONLY"));
+        for base in [STATUS.to_owned(), format!("https://x.com/ada/article/{ID}")] {
+            let doc = extract_html(&html, Some(&base)).unwrap();
+            assert!(
+                doc.markdown.starts_with("# A practical guide\n"),
+                "{}",
+                doc.markdown
+            );
+            assert_eq!(doc.markdown.matches("Opening **idea**.").count(), 1);
+            assert_eq!(doc.markdown.matches("cover.jpg").count(), 1);
+            assert_eq!(doc.markdown.matches("diagram.jpg").count(), 1);
+            assert!(
+                doc.markdown.contains("## First section"),
+                "{}",
+                doc.markdown
+            );
+            assert!(doc.markdown.contains("1. First step"), "{}", doc.markdown);
+            assert!(doc.markdown.contains("Nested detail"), "{}", doc.markdown);
+            assert!(
+                doc.markdown.contains("> A useful quotation."),
+                "{}",
+                doc.markdown
+            );
+            assert!(
+                doc.markdown.contains("first line\n  second line"),
+                "{}",
+                doc.markdown
+            );
+            assert!(
+                doc.markdown
+                    .contains("[A cited post](https://x.com/grace/status/77)")
+            );
+            assert!(
+                doc.markdown.ends_with("Closing paragraph."),
+                "{}",
+                doc.markdown
+            );
+            for noise in [
+                "REPLY_ONLY",
+                "FOLLOWUP_ONLY",
+                "profile_images",
+                "t.co/example",
+                "999",
+            ] {
+                assert!(!doc.markdown.contains(noise), "{noise}: {}", doc.markdown);
+            }
+            assert_eq!(doc.metadata["title"], "A practical guide");
+            assert_eq!(doc.metadata["author"], "@ada");
+            assert_eq!(doc.metadata["author_name"], "Ada");
+            assert_eq!(doc.metadata["description"], "Opening idea.");
+            assert_eq!(doc.metadata["published"], "2025-02-25");
+            assert!(doc.metadata.get("content_profile").is_none());
+        }
+    }
+
+    #[test]
+    fn an_unrelated_or_quoted_article_does_not_replace_the_requested_post() {
+        let content = r#"<div><h1>OTHER_ARTICLE</h1><div class="x-article-body"><p>OTHER_BODY</p></div></div>"#;
+        let other = article("grace", "Grace", "77", "Feb 25, 2025", "Reply", content);
+        let main = article("ada", "Ada", ID, "Feb 25, 2025", "The actual post.", "");
+        let html = page(&main, &other);
+        for base in [
+            Some(STATUS),
+            None,
+            Some("https://x.com/article/status/1894221971766084049"),
+        ] {
+            let doc = extract_html(&html, base).unwrap();
+            assert_eq!(doc.markdown, "The actual post.");
+            assert_eq!(doc.metadata["content_profile"], "social_post");
+        }
+        assert!(
+            super::long_article(
+                &scraper::Html::parse_document(&html),
+                Some(&Url::parse(STATUS).unwrap())
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        let doc = extract_html(&html, Some("https://x.com/article/status/77")).unwrap();
+        assert_eq!(doc.metadata["title"], "OTHER_ARTICLE");
+        assert!(doc.markdown.contains(r"OTHER\_BODY"), "{}", doc.markdown);
+
+        // Even a quote with the requested id cannot become the outer Article.
+        let quoted = article("ada", "Ada", ID, "Feb 25, 2025", "", content);
+        let wrapper = article("grace", "Grace", "77", "Feb 25, 2025", "Comment", &quoted);
+        assert!(
+            super::long_article(
+                &scraper::Html::parse_document(&wrapper),
+                Some(&Url::parse(STATUS).unwrap())
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_standalone_article_uses_its_heading_only_on_x() {
+        let html = r#"<html><head><title>Original page title</title></head><body>
+            <div><h1>Actual article title</h1>
+            <div class="x-article-body"><p>Standalone body.</p></div></div></body></html>"#;
+        let doc = extract_html(html, Some("https://x.com/ada/article/1234")).unwrap();
+        assert_eq!(doc.metadata["title"], "Actual article title");
+        assert_eq!(doc.markdown, "# Actual article title\n\nStandalone body.");
+        assert!(doc.metadata.get("content_profile").is_none());
+        let other = extract_html(html, Some("https://example.org/article/1234")).unwrap();
+        assert_eq!(other.metadata["title"], "Original page title");
+        assert!(other.metadata.get("author").is_none());
     }
 
     #[test]

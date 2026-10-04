@@ -697,6 +697,7 @@ impl<'a> Extractor<'a> {
                 bold: char_run.and_then(|r| r.bold).or(d.bold).unwrap_or(false),
                 italic: char_run.and_then(|r| r.italic).or(d.italic).unwrap_or(false),
                 strike: false,
+                underline: false,
                 code: false,
             };
             if c == '\r' {

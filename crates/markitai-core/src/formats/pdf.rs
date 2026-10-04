@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 mod annotations;
 #[path = "pdf/continued.rs"]
 mod continued;
+#[path = "pdf/figures.rs"]
+mod figures;
 #[path = "pdf/geometry.rs"]
 mod geometry;
 #[path = "pdf/layout.rs"]
@@ -769,6 +771,7 @@ impl PdfPages {
                 .metadata
                 .insert("ocr_layer_pages".into(), layer_pages.into());
         }
+        let appended_images = pages.iter().any(|page| !page.asset_names.is_empty());
         for (page, readable) in pages.into_iter().zip(readable) {
             readable_pages += usize::from(readable);
             let mut warning = Vec::new();
@@ -827,8 +830,8 @@ impl PdfPages {
             )));
         }
         document.markdown = sections.join("\n\n");
-        // Only a document with extracted images has images out of place.
-        if !document.assets.is_empty() {
+        // Chart crops already occupy their original text band.
+        if appended_images {
             document
                 .warnings
                 .push(crate::pdf_media::IMAGE_PLACEMENT.into());
@@ -1099,7 +1102,7 @@ fn extract_pages_policy(
     max_pages: Option<usize>,
     mode: sanitize::Mode,
 ) -> Result<PdfPages> {
-    let mut pages = extract_pages_inner(bytes, max_pages)?;
+    let mut pages = extract_pages_inner(bytes, max_pages, mode != sanitize::Mode::Remove)?;
     sanitize::apply(bytes, max_pages, mode, &mut pages)?;
     Ok(pages)
 }
@@ -1110,7 +1113,11 @@ pub(crate) fn extract_pages_bounded(bytes: &[u8], max_pages: usize) -> Result<Pd
     extract_pages_policy(bytes, Some(max_pages), sanitize::Mode::Warn)
 }
 
-fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPages> {
+fn extract_pages_inner(
+    bytes: &[u8],
+    max_pages: Option<usize>,
+    preserve_charts: bool,
+) -> Result<PdfPages> {
     // One parse of the file serves the page reader, the layout reader and,
     // when the reader's document is what lopdf alone makes of the bytes,
     // this module's own inspection; otherwise that inspection loads the
@@ -1177,6 +1184,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     // layout reader, and its painted list bullets the page reader too.
     let mut inspections = BTreeMap::new();
     let mut shapes = BTreeMap::new();
+    let mut chart_candidates = BTreeMap::new();
     for (&number, &id) in &page_ids {
         let (inspection, content) = inspect_page(pdf, id);
         if let (Some(loaded), Some(content)) = (shared, content.as_ref()) {
@@ -1188,7 +1196,22 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             && let Some(content) = content.as_ref()
         {
             let resources = geometry::rule_resources(pdf, id);
-            let (grids, marks) = geometry::page_shapes(&content.operations, frame, &resources);
+            let (grids, marks, charts) =
+                geometry::page_shapes_with_charts(&content.operations, frame, &resources);
+            let charts = if !preserve_charts
+                || inspection.incomplete
+                || !inspection.visibility_unknown.is_empty()
+            {
+                if !preserve_charts && !charts.is_empty() {
+                    document.warnings.push(format!("PDF page {number}: automatic chart images are disabled during hidden-text removal; chart labels remain text."));
+                }
+                Vec::new()
+            } else {
+                charts
+            };
+            if !charts.is_empty() {
+                chart_candidates.insert(number, charts);
+            }
             shapes.insert(number, (frame, grids, marks));
         }
         // Retain only bounded table coordinates across pages, never their
@@ -1361,7 +1384,8 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         })
         .collect();
     let mut image_names = BTreeMap::<ObjectId, Option<String>>::new();
-    let mut total_asset_bytes = 0;
+    let mut total_asset_bytes: usize = 0;
+    let mut chart_raster = figures::Raster::default();
     let mut extracted_pages = Vec::with_capacity(page_ids.len());
     for &number in page_ids.keys() {
         let mut page = pages
@@ -1382,12 +1406,37 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         };
         let mut continues_table = false;
         if let Some((frame, grids, marks)) = page_geometry.remove(&number)
-            && let Some((refined, continues)) = layout.as_mut().and_then(|layout| {
-                layout.page(number, frame, grids, &marks, &page.markdown, &tagged)
-            })
+            && let Some(layout) = layout.as_mut()
         {
-            page.markdown = refined;
-            continues_table = continues;
+            let mut chart_assets = Vec::new();
+            if let Some(candidates) = chart_candidates.remove(&number) {
+                let regions = layout.chart_regions(number, &candidates);
+                if regions.len() != candidates.len() {
+                    document.warnings.push(format!("PDF page {number}: some vector charts could not be isolated safely; those labels are retained without a chart image."));
+                }
+                if !regions.is_empty() {
+                    match chart_raster.render(bytes, number, frame, &regions) {
+                        Ok(rendered) if rendered.iter().map(|(_, a)| a.bytes.len()).sum::<usize>()
+                            <= MAX_ASSET_BYTES.saturating_sub(total_asset_bytes) => {
+                            let (figures, assets): (Vec<_>, Vec<_>) = rendered.into_iter().unzip();
+                            layout.set_figures(figures);
+                            chart_assets = assets;
+                        }
+                        Ok(_) => document.warnings.push(format!("PDF page {number}: chart images exceed the asset budget; original chart labels are retained.")),
+                        Err(reason) => document.warnings.push(format!("PDF page {number}: {reason}; original chart labels are retained.")),
+                    }
+                }
+            }
+            if let Some((refined, continues)) =
+                layout.page(number, frame, grids, &marks, &page.markdown, &tagged)
+            {
+                page.markdown = refined;
+                continues_table = continues;
+                total_asset_bytes += chart_assets.iter().map(|a| a.bytes.len()).sum::<usize>();
+                document.assets.extend(chart_assets);
+            } else if !chart_assets.is_empty() {
+                document.warnings.push(format!("PDF page {number}: chart placement could not be verified; original text is retained."));
+            }
         }
         let warning_index = document.warnings.len();
         let visibility_suspect = !inspection.signals.is_empty();

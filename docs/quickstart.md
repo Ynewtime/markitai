@@ -201,6 +201,12 @@ default `output.on_conflict` is `rename`, giving `report.docx.v2.md`. Use
 `markitai config set output.on_conflict overwrite`, or for one run with
 `--config-json '{"output":{"on_conflict":"overwrite"}}'`.
 
+The Rust CLI also creates `.markitai/ownership` beside output documents for
+writer coordination and batch recovery. It is internal metadata, not extracted
+content or a cache; `--no-cache` does not disable it. See
+[output ownership](output-ownership.md). Keep referenced assets and screenshots
+when sharing Markdown; they are separate from this recovery metadata.
+
 Recognized extensions (61, including document and spreadsheet templates):
 
 ```text

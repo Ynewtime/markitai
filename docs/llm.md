@@ -635,6 +635,8 @@ bytes. Existing page-count limits apply before requests, and the complete image
 set must be nonempty and at most 100 MiB. Complete ordered `Page number:` or
 `Slide number:` comments align text to pages. Preamble and trailing material are
 retained, and code examples containing those comments do not create pages.
+`output.slide_markers=false` removes slide comments only from final output,
+after this alignment and enhancement; it does not change the page mapping.
 If a complete map is absent, all source text is retained once, split at safe
 line/literal boundaries across batches; a warning explicitly declines precise
 text-to-page alignment. No frame is dropped in that fallback.

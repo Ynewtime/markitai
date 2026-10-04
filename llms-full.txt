@@ -42,6 +42,8 @@ Choose a conflict policy for retries; the default is `rename`. `--pure`
 suppresses generated frontmatter; it does not disable configured model calls.
 Use `--no-llm` to disable model processing. Directory and `.urls` batches support
 `--resume` on macOS, Linux and Windows; single inputs do not.
+For presentations, `--no-slide-markers` removes slide-number comments from final
+Markdown; the equivalent configuration is `output.slide_markers=false`.
 See [CLI](docs/cli.md) for options and the complete envelope.
 
 ## MCP

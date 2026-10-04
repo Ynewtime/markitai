@@ -594,3 +594,72 @@ fn isolated_body_size_lines_are_headings_only_when_they_do_not_read_as_text() {
         assert!(!heading(line), "{line}\n{markdown}");
     }
 }
+
+#[test]
+fn clipped_vector_chart_becomes_an_asset_without_the_screenshot_option() {
+    let mut stream = text("An ordinary opening paragraph before the chart.");
+    stream.push_str("\nq 70 300 340 200 re W n\n0 G 0.5 w\n");
+    for y in [330, 380, 430, 480] {
+        stream.push_str(&format!("100 {y} m 320 {y} l S\n"));
+    }
+    stream.push_str("100 330 m 100 480 l S\n");
+    for (x, height) in [(115, 50), (160, 100), (205, 70), (250, 130)] {
+        stream.push_str(&format!("0.1 0.3 0.7 rg {x} 330 15 {height} re f\n"));
+    }
+    for (x, y, label) in [
+        (80, 474, "15"),
+        (80, 424, "10"),
+        (80, 374, "5"),
+        (80, 324, "0"),
+        (120, 310, "Category"),
+        (335, 400, "Series"),
+    ] {
+        stream.push_str(&format!(
+            "0 g BT /F1 9 Tf 1 0 0 1 {x} {y} Tm ({label}) Tj ET\n"
+        ));
+    }
+    stream.push_str(
+        "Q\nBT /F1 12 Tf 1 0 0 1 40 250 Tm (The paragraph after the chart stays text.) Tj ET",
+    );
+    let (bytes, _) = fixture(&[stream], false);
+    let document = extract_pages(&bytes).unwrap().finish().unwrap();
+    let asset = document
+        .assets
+        .iter()
+        .find(|a| a.name.starts_with("pdf-chart-1-"))
+        .unwrap();
+    let image = image::load_from_memory(&asset.bytes).unwrap().to_rgb8();
+    assert_eq!(image.dimensions(), (680, 400));
+    assert!(!document.warnings.iter().any(|w| w == LIMITATION));
+    let filtered = extract_pages_policy(&bytes, None, sanitize::Mode::Remove)
+        .unwrap()
+        .finish()
+        .unwrap();
+    assert!(
+        !filtered
+            .assets
+            .iter()
+            .any(|a| a.name.starts_with("pdf-chart-"))
+    );
+    assert!(filtered.markdown.contains("Category"));
+    assert!(
+        image
+            .pixels()
+            .any(|p| i16::from(p[2]) > i16::from(p[0]) + 50)
+    );
+    let reference = format!("![Chart](.markitai/assets/{})", asset.name);
+    assert!(
+        document.markdown.contains(&reference),
+        "{}",
+        document.markdown
+    );
+    assert!(!document.markdown.contains("Category"));
+    assert!(
+        document.markdown.find("opening paragraph").unwrap()
+            < document.markdown.find(&reference).unwrap()
+    );
+    assert!(
+        document.markdown.find(&reference).unwrap()
+            < document.markdown.find("paragraph after").unwrap()
+    );
+}
