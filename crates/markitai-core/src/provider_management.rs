@@ -1,8 +1,10 @@
 //! Bounded provider discovery and one-deployment connection checks.
 //!
-//! These calls use process credentials only. They do not load configuration,
-//! prompt files, dotenv or document caches. Copilot delegates its auth store
-//! to the installed official runtime; this module never parses that store.
+//! Environment-backed calls read the conversion environment snapshot (process
+//! variables plus `.env` files, see `config::environment`); explicit calls read
+//! none. They do not load configuration, prompt files or document caches.
+//! Copilot delegates its auth store to the installed official runtime; this
+//! module never parses that store.
 mod cache;
 mod discovery;
 #[cfg(test)]
@@ -273,8 +275,9 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         Some(Value::Bool(value)) => *value,
         _ => return Err(Error::InvalidInput("refresh must be a boolean".into())),
     };
+    // The same snapshot conversion reads: process variables, then `.env` files.
     let env: HashMap<String, String> = if allow_environment {
-        std::env::vars().collect()
+        crate::config::environment()
     } else {
         HashMap::new()
     };

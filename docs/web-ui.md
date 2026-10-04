@@ -10,15 +10,16 @@ makes no request to another origin.
 ## Layout and interaction
 
 The **home view** is one centered column: a one-line headline, one sentence, a
-tool row (Options, CLI, Upload, Folder) and the source card. The source card
-holds the URL line (Enter converts, Shift+Enter starts a new line, a pasted list
-grows the field up to six rows), the options drawer and the CLI command line.
+tool row (Options, and Upload with a menu for files or a folder) and the source
+card. The source card holds the URL line (Enter converts, Shift+Enter starts a
+new line, a pasted list grows the field up to six rows) and the options drawer,
+which ends with the equivalent CLI command line.
 Under it, one stack of monospaced lines reports, in this order: the upload in
 progress (percentage and bytes, with Cancel), a session that could not be
 restored (with Retry restore), a refusal from the service, an unreachable
 service, a rejected input, a job that could not be saved, a folder notice, and
 "LLM not configured · Configure LLM to enable enhancement" while no model is
-routable. Files dropped anywhere on the page, or chosen with Upload or Folder,
+routable. Files dropped anywhere on the page, or chosen with Upload or its folder choice,
 start a job at once, except when the selected Cloudflare service needs the
 confirmation described below; a hairline veil with "Drop to convert" shows while
 files are dragged over the page, and drops are ignored while a dialog is open.
@@ -269,7 +270,7 @@ continue to describe recorded model work only.
 - A request that asks for LLM processing while no model is routable is refused by
   the service (422 `llm_unavailable`) instead of silently converting without the
   model; the page then reloads the capabilities.
-- The Folder tool, Stop remaining, upload progress and cancellation, the Files
+- Folder upload, Stop remaining, upload progress and cancellation, the Files
   tab, the Base | LLM switch, the token dialog, offline detection, the pricing
   coverage in the cost cell's tooltip (`$0.012300 · all recorded requests
   priced`, `Price unknown · …`) and the replayable failed-attempt notice are

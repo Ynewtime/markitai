@@ -1,5 +1,5 @@
-// The composer: a tool row (Options, CLI, Upload, Folder) above the source card,
-// which holds the URL line, the options drawer and the CLI command line.
+// The composer: a tool row (Options, Upload) above the source card, which holds
+// the URL line and the options drawer; the drawer ends with the CLI command line.
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { CloudflareCapability, ConversionBackend, FetchStrategy, OutputProfile, Preset } from "../api/types.ts";
@@ -20,7 +20,7 @@ import {
   type Composer,
   type PresetTable,
 } from "../lib/options.ts";
-import { FilePicker, FolderPicker } from "./file-picker.tsx";
+import { UploadPicker } from "./file-picker.tsx";
 import { HelpTooltip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 
@@ -156,7 +156,6 @@ export function OptionsPanel({
 }) {
   const [id] = useState(() => `opts-${++panels}`);
   const [open, setOpen] = useState(false);
-  const [cliOpen, setCliOpen] = useState(false);
   // The advanced fold starts open only when something inside already differs.
   const [advOpen, setAdvOpen] = useState(() => hasAdvancedChoices(state.advanced));
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
@@ -230,19 +229,7 @@ export function OptionsPanel({
               <Icon name="Sliders" size={14} />
               <span class="tool-text">{t.options}</span>
             </button>
-            <button
-              type="button"
-              class={cliOpen ? "tool tool-cli is-on" : "tool tool-cli"}
-              aria-label={t.cliToggleAria}
-              aria-expanded={cliOpen}
-              aria-controls={cliOpen ? `${id}-cli` : undefined}
-              onClick={() => setCliOpen((value) => !value)}
-            >
-              <Icon name="TerminalWindow" size={14} />
-              <span>{t.cliToggle}</span>
-            </button>
-            <FilePicker t={t} disabled={busy} onFiles={onFiles} />
-            <FolderPicker t={t} disabled={busy} onFolder={onFolder} />
+            <UploadPicker t={t} disabled={busy} onFiles={onFiles} onFolder={onFolder} />
           </div>
           {actions}
         </div>
@@ -397,6 +384,19 @@ export function OptionsPanel({
                 </div>
               )}
             </div>
+            <div class="cli-bar">
+              <div class="cli-body">
+                <code class="cli-text" role="group" tabIndex={0} aria-label={t.cliAria}>
+                  <span class="cli-prompt" aria-hidden="true">
+                    ${" "}
+                  </span>
+                  {command}
+                </code>
+              </div>
+              <button type="button" class="pill-btn" onClick={copy}>
+                {copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : t.copy}
+              </button>
+            </div>
           </div>
         )}
         {(a.strategy === "cloudflare" || a.backend === "cloudflare") && <div class="cloudflare-note">
@@ -404,21 +404,6 @@ export function OptionsPanel({
           <p>{t.cloudflareScope}</p><p>{t.cloudflareCharges}</p>
           {selectionReason && selectionReason !== "incompatible_strategy" && <details><summary>{t.helpLabel}</summary><p>{t.cloudflareSetup}</p></details>}
         </div>}
-        {cliOpen && (
-          <div class="cli-bar" id={`${id}-cli`}>
-            <div class="cli-body">
-              <code class="cli-text" role="group" tabIndex={0} aria-label={t.cliAria}>
-                <span class="cli-prompt" aria-hidden="true">
-                  ${" "}
-                </span>
-                {command}
-              </code>
-            </div>
-            <button type="button" class="pill-btn" onClick={copy}>
-              {copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : t.copy}
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

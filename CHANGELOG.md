@@ -23,6 +23,7 @@
 ### Changed
 
 - Omit PDF page and slide-number comments from final Markdown by default; `output.page_markers` and `--page-markers` keep them. Internal page alignment, RAG page provenance and literal code examples are preserved.
+- Workbench composer: Options now includes the CLI command line, Upload offers file or folder selection from one split button, the URL card has a clearer focus state and a filled Convert button, and the appearance menu is more compact with a new icon.
 - Remove personal machine paths from repository documentation and provenance; add checks to prevent committing private paths and common secret formats.
 
 - Minimum Rust version is now 1.92. Updated compatible dependencies while retaining the existing Node API level.
@@ -44,6 +45,7 @@
 - Require serve tokens for local and remote API access, enforce mutation Origin checks, and bind stored LLM credentials to their configured endpoints. Reject client-supplied environment references; use authenticated resource loading and single-use download tickets in the workbench.
 - Bound Office/EPUB metadata memory use, handle binding serialization failures without panics, reject non-UTF-8 physical output directories before publication, and convert Python configuration panics to ordinary exceptions.
 - Restore interrupted serve jobs as visible failures, retain completed outputs, prevent concurrent history writers and clean expired private upload stages. Retries retain prior successful results and their options, while reporting new failures and costs separately.
+- Model connection tests and model discovery read keys from `.env` and `~/.markitai/.env` like conversion does, instead of failing with HTTP 401 when the key is only in a dotenv file.
 - Workbench errors use reusable notifications instead of expanding rows. Correct stopped-item status, saved retry options, stale live updates, unavailable-model guidance, keyboard focus, mobile layout and project links; printing excludes authenticated link targets.
 - Improve PDF column and right-to-left reading order, document-wide heading levels, lists, code, links, annotations, forms, tagged/ruled/borderless tables and cross-page continuation. Preserve valid page-edge data and warn when only part of a document is readable.
 - Read supported searchable-scan OCR layers, non-embedded CJK fonts, indirect form resources and owner-password-only PDFs correctly. Password-required PDFs still fail explicitly; password form values are omitted.
