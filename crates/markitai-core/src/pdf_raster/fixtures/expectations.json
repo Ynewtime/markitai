@@ -2,20 +2,20 @@
   "schema": 1,
   "status": "authored fixtures and independent expectations; native raster/OCR acceptance has not run",
   "generator": {
-    "path": "/Users/example-user/work/markitai-rust/.local/pdf-native-round17/generate_fixtures.py",
+    "path": ".local/pdf-native-round17/generate_fixtures.py",
     "sha256": "68fd5cb66a22ba853c4bcc7d26bf092e396242ce7df85d5a422b1c2f14ac9ccc"
   },
   "dependencies": "Python standard library only; no Cargo, converter, OCR, renderer, network, or image editing tool invoked",
   "zlib_version": "1.2.12",
   "source_image": {
-    "path": "/Users/example-user/work/markitai-rust/crates/markitai-core/src/ocr/fixtures/english.png",
+    "path": "crates/markitai-core/src/ocr/fixtures/english.png",
     "sha256": "a9f547051baeaaa96c9299363a3c79b1fb3842c2c7192c0bde0663f86081b94d",
     "bytes": 1224,
     "idat_payload_sha256": "6cf2c1589ab2dd0b6839cff0abfdb06acae58e65d0426ea3cef782265def25d4",
     "encoding": "unchanged grayscale PNG IDAT as FlateDecode + PNG Predictor 15"
   },
   "transcript": {
-    "path": "/Users/example-user/work/markitai-rust/crates/markitai-core/src/ocr/fixtures/english.txt",
+    "path": "crates/markitai-core/src/ocr/fixtures/english.txt",
     "sha256": "c94111d92ca53357ee6c7cb7fd65d5f62b2d2679b258c3fe0e98fadf8d84f2e1"
   },
   "fixtures": [

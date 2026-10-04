@@ -35,6 +35,5 @@ raw results under ignored `.local/`. Compare output quality before interpreting
 timing ratios. Source checks, installed-package tests and measured performance
 establish different claims; none implies complete reference parity.
 
-Historical reports, source snapshots and one-off drivers are available in
-[Git history](https://github.com/Ynewtime/markitai-rust/tree/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation).
+Raw experiment records are kept locally and are not distributed with source.
 Their conclusions apply only to their recorded source, artifacts and environment.

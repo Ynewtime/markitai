@@ -20,7 +20,7 @@ fn load_document(path: &str) -> Result<Document, Box<dyn std::error::Error>> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test with the PDF from the Downloads folder
-    let pdf_path = "/Users/example-user/Downloads/pdfs/pdf-demo.pdf";
+    let pdf_path = "input.pdf";
 
     if !Path::new(pdf_path).exists() {
         eprintln!("Test PDF not found at: {}", pdf_path);
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Total objects in PDF: {}", total_objects);
 
     // Save to file for manual inspection
-    let output_path = "/Users/example-user/Downloads/pdfs/pdf-demo_fixed_compression.pdf";
+    let output_path = "output.pdf";
     std::fs::write(output_path, &compressed_output)?;
     println!("\nCompressed PDF saved to: {}", output_path);
 

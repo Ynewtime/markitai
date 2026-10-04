@@ -45,8 +45,7 @@ Rosetta is not an Intel Mac. Under it, Vision text recognition fails without an
 error and CoreGraphics' rejection of a malformed PDF crashes the process
 intermittently; the affected tests check the explicit Rosetta error or skip
 that one call, and say so on stderr. Rosetta exposes no AVX, AVX2, FMA or BMI,
-so the AVX2 paths that dependencies select on most Intel Macs are not run. The
-[Rosetta record](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/macos-x86_64-rosetta.md) has the measurements.
+so the AVX2 paths that dependencies select on most Intel Macs are not run.
 
 Follow [AGENTS.md](../AGENTS.md) for test isolation, credentials, validation and
 Git rules. A source check does not establish installed-package compatibility.

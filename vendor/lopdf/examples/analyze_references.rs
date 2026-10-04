@@ -19,7 +19,7 @@ fn load_document(path: &str) -> Result<Document, Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pdf_path = "/Users/example-user/Downloads/pdfs/RFQ - SDS WebApp.docx.pdf";
+    let pdf_path = "input.pdf";
     println!("Analyzing references in: {}", pdf_path);
 
     let doc = load_document(pdf_path)?;

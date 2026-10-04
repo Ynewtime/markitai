@@ -8,8 +8,8 @@
     },
     {
       "path": "input-manifest.json",
-      "bytes": 26236,
-      "sha256": "a8786e5d36dd22831adb77a4b2964d215f0f1fff6290052d8b65a69e259a4515"
+      "bytes": 25456,
+      "sha256": "2a9efe968c346879772628e98dba864c05ceef0bdee12187ae09b92240822c59"
     },
     {
       "path": "license-gaps-r49-provenance.json",
@@ -304,7 +304,7 @@
     {
       "path": "manifest.json",
       "bytes": 83993,
-      "sha256": "f6c48fc6de813c1d176d20bf4e58ee3700e0c1437cf31df2a7c21c7723c8bf2d"
+      "sha256": "e2ab7dfd49b11d883b9bd361a83432e737623ac12805012ce930806ef9aa6695"
     },
     {
       "path": "napi-license-provenance.json",

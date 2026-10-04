@@ -107,10 +107,7 @@ upstream rule, as is a table value that happens to repeat across pages. Folios o
 non-contiguous excerpts that share their baseline with footer text can now remain
 as text; this errs toward keeping content. Page-selected extraction in the
 dependency reads other pages to decide; Markitai's reader analyses the whole
-document. The
-[historical two/40-page reproduction](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/pdf-page-prefix-round15.json)
-retains the original inputs and old outputs with 72/1,440 missing paragraphs;
-new authored regressions require every paragraph in source order.
+document. Authored regression tests require every paragraph in source order.
 
 Text rendering mode persists across `BT`/`ET` text objects and nested `q`/`Q`
 graphics states. Normal extraction excludes `Tr 3` invisible text and `Tr 7`

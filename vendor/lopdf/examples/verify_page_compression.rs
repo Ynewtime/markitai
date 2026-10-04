@@ -18,7 +18,7 @@ fn load_document(path: &str) -> Result<Document, Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let compressed_path = "/Users/example-user/Downloads/pdfs/pdf-demo_compressed.pdf";
+    let compressed_path = "input.pdf";
 
     println!("Checking if Page objects are in object streams...\n");
 

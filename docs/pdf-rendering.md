@@ -137,5 +137,5 @@ The native raster tests exercise each compiled backend with authored fixtures;
 font-dependent cases require a suitable installed font. Comparison tools remain
 in `docs/validation/drivers/portable-raster-r1/`: `compare.py` records pixels,
 failures and timings; `make-scanned.py` prepares scanned PDFs; `ocr-e2e.py` scores
-full OCR conversions. Historical measurements are retained in
-[the original renderer comparison](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/pdf-rendering.md#comparison-r1-2026-10-02-macos-270-arm64-rust-1990-release-profile).
+full OCR conversions. Store measurements under ignored `.local/`, recording the
+backend, source, fonts and platform used.

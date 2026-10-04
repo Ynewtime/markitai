@@ -22,6 +22,8 @@
 
 ### Changed
 
+- Remove personal machine paths from repository documentation and provenance; add checks to prevent committing private paths and common secret formats.
+
 - Minimum Rust version is now 1.92. Updated compatible dependencies while retaining the existing Node API level.
 - Reduce repeated PDF/HTML parsing, cache font and layout work, share compiled helpers, and reduce binary/static-library size. macOS defers optional framework loading; Python loads optional modules on demand.
 - Reduce redundant output synchronization while retaining durable publication and recovery ordering. Output files follow the process umask; private state remains private. Trusted directory aliases are accepted while document and metadata links remain guarded.

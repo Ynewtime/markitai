@@ -4,8 +4,8 @@
   "scope": "Exact-version declarations and complete same-commit, linked-authority or verified historical terms; historical source kinds retained; mechanical text/provenance/distribution checks, no legal review or license election. Four fixed Node-specific NAPI tuples are additionally covered by exact published archive and same-commit full original terms; matching still follows the caller's actual resolved package closure.",
   "input_manifest": {
     "path": "input-manifest.json",
-    "bytes": 26236,
-    "sha256": "a8786e5d36dd22831adb77a4b2964d215f0f1fff6290052d8b65a69e259a4515"
+    "bytes": 25456,
+    "sha256": "2a9efe968c346879772628e98dba864c05ceef0bdee12187ae09b92240822c59"
   },
   "network": {
     "requests": 50,

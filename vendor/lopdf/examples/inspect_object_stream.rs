@@ -18,7 +18,7 @@ fn load_document(path: &str) -> Result<Document, lopdf::Error> {
 }
 
 fn main() {
-    let pdf_path = "/Users/example-user/Downloads/pdfs/RFQ - SDS WebApp.docx_compressed.pdf";
+    let pdf_path = "input.pdf";
     println!("Inspecting object stream in: {}", pdf_path);
 
     match load_document(pdf_path) {

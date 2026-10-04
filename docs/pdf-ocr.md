@@ -160,5 +160,4 @@ PDF capture-only output retains Markdown and page references. This deliberately
 extends the reference URL converter, which did not pass local media settings
 through. Browser PDFs reuse the authenticated CDP response and preserve their
 `playwright` strategy; remote extraction services retain their own path. See
-[downloaded PDFs](pdf.md#downloaded-pdfs) for the content/identity contract and
-[round-eighteen validation](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/url-pdf-round18.md) for execution evidence.
+[downloaded PDFs](pdf.md#downloaded-pdfs) for the content/identity contract.

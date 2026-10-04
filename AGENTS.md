@@ -1,15 +1,17 @@
 # Markitai Rust engineering protocol
 
-Work in this Rust repository. `/Users/example-user/work/markitai` is a read-only behavioral
-reference, not a build dependency. Contributor commands are in
+Work in this Rust repository. A separately supplied reference checkout is a read-only
+behavioral reference, not a build dependency. Contributor commands are in
 [development](docs/development.md); product guides start at [docs](docs/index.md).
 
 ## Coordination and Git
 
 - The coordinator owns Git, manifests and integration builds. Workers edit only
   assigned paths; freeze tracked files during gates, builds and packaging.
-- Preserve unexpected changes. Never reset, clean, stash, force-push or switch
-  branches to resolve concurrent work. Commit only explicit reviewed paths.
+- Preserve unexpected changes. Never reset, clean, stash or switch branches to resolve concurrent work.
+  History rewriting requires an explicit user request, an isolated copy and
+  expected remote-ref checks; ordinary pushes must not force-update history.
+  Commit only explicit reviewed paths.
 - Keep **1.3.0-dev** until a new release is authorized. Deliver to `main` for user
   verification; do not create releases/tags, publish packages or change visibility
   without explicit authorization.
@@ -21,6 +23,9 @@ reference, not a build dependency. Contributor commands are in
 
 ## Test isolation and privacy
 
+- Never commit personal home paths, machine names, private email addresses,
+  credentials or local environment dumps. Use repository-relative paths,
+  environment variables or clearly synthetic examples; keep raw evidence local.
 - Never print, commit or replace credentials. Every CLI test isolates `HOME`
   and `MARKITAI_HOME`, plus Windows user state when applicable.
 - Use repository fixtures, authored `.local/` samples and reference fixtures.
@@ -37,7 +42,7 @@ and modes unchanged during verification. Check existing `.local/` records before
 choosing the round; the local `run_checked_gate.py` wrapper supplies isolation.
 
 ```sh
-/Users/example-user/.local/bin/python3.13 .local/integration-round36/run-gate2.py rNNN
+python3.13 .local/integration-round36/run-gate2.py rNNN
 sh docs/validation/drivers/windows-check-round38/check-windows.sh clippy -- -D warnings
 ```
 

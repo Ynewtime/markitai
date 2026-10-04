@@ -35,7 +35,6 @@ contracts and are not included in the CLI binary size.
 
 Packages are built with the `release` profile: workspace crates and the
 conversion hot path (PDF, Office, HTML, image and regex crates) are optimized
-for speed and every other dependency for size
-([measurement](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/binary-size-round39.md)). `dist` optimizes everything
+for speed and every other dependency for size. `dist` optimizes everything
 for size. Both use fat LTO and stripped symbols; measurements select a profile
 explicitly. Optimizations must preserve test results before they are accepted.

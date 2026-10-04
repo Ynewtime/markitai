@@ -742,7 +742,7 @@ bounded repair reads a copy that appends the missing FAT entries (extending
 the directory while its entries name siblings not yet read) and detaches the
 unused mini stream; a file whose mini stream holds a stream is never changed,
 the original error stands if the copy fails too, and a warning reports the
-repair ([record](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/office-quality-round42.md)).
+repair.
 
 Word 97 text raised or lowered (`sprmCIss`, set directly, by a character style
 or by a paragraph style) is written in Unicode superscript or subscript forms

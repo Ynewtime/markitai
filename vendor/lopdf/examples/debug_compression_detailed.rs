@@ -21,7 +21,7 @@ fn main() {
     println!("Debugging object stream compression in detail...\n");
 
     // Load the user's PDF
-    let pdf_path = "/Users/example-user/Downloads/pdfs/RFQ - SDS WebApp.docx.pdf";
+    let pdf_path = "input.pdf";
     println!("Loading PDF: {}", pdf_path);
 
     let mut doc = match load_document(pdf_path) {

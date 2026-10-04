@@ -20,25 +20,25 @@
       "path_in_vcs": "alloc-stdlib",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-stdlib-0.2.4/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-stdlib-0.2.4/.cargo_vcs_info.json",
           "path": "local-evidence/alloc-stdlib-0.2.4/.cargo_vcs_info.json",
           "bytes": 106,
           "sha256": "5d07554db80324e6f09a3074928e6ae0e7cea58248f4c1db3f32d9ce0ec85efb"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-stdlib-0.2.4/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-stdlib-0.2.4/Cargo.toml.orig",
           "path": "local-evidence/alloc-stdlib-0.2.4/Cargo.toml.orig",
           "bytes": 697,
           "sha256": "77cff698112ee833c7c2e2b42c2b51677502ee04ca4a0c213155e3494a80fec3"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-stdlib-0.2.4/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-stdlib-0.2.4/Cargo.toml",
           "path": "local-evidence/alloc-stdlib-0.2.4/Cargo.toml",
           "bytes": 1170,
           "sha256": "9b65004149aeacdda9e2aa7cc08c36912d26cd51e8d91914fd63ad5bc1893a01"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-stdlib-0.2.4/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-stdlib-0.2.4/README.md",
           "path": "local-evidence/alloc-stdlib-0.2.4/README.md",
           "bytes": 6776,
           "sha256": "4857caaabcb6eb367687e6671d70fef3b8dcbab1276999612b71f9f4cd6190b0"
@@ -55,25 +55,25 @@
       "path_in_vcs": "parser",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/defmt-parser-1.0.0/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/defmt-parser-1.0.0/.cargo_vcs_info.json",
           "path": "local-evidence/defmt-parser-1.0.0/.cargo_vcs_info.json",
           "bytes": 100,
           "sha256": "7ab8f01085721143c43db5db2528806f393df2058d03c5b8da20634e14886a05"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/defmt-parser-1.0.0/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/defmt-parser-1.0.0/Cargo.toml.orig",
           "path": "local-evidence/defmt-parser-1.0.0/Cargo.toml.orig",
           "bytes": 540,
           "sha256": "5d5c0e139cf4076aad5d1f8b992a7b8c9095f5443dab0f9d1da020101adea245"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/defmt-parser-1.0.0/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/defmt-parser-1.0.0/Cargo.toml",
           "path": "local-evidence/defmt-parser-1.0.0/Cargo.toml",
           "bytes": 1129,
           "sha256": "c4c4df5b09e53450267eacadf1f7f6a0d3d5fc463bc450e199f0d06eba8e6ab3"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/defmt-parser-1.0.0/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/defmt-parser-1.0.0/README.md",
           "path": "local-evidence/defmt-parser-1.0.0/README.md",
           "bytes": 1497,
           "sha256": "a40aae66ea32ccd2b2c30ea976d4ac02fab1025a8dece8bfae6aa83bdcfd9c0e"
@@ -90,25 +90,25 @@
       "path_in_vcs": "crates/dispatch2",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dispatch2-0.3.1/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/dispatch2-0.3.1/.cargo_vcs_info.json",
           "path": "local-evidence/dispatch2-0.3.1/.cargo_vcs_info.json",
           "bytes": 110,
           "sha256": "26f5e6d699ba3ce13b8eea253ad7a7f7feb9345e9da3c01bb9b9bd911a6a7dba"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dispatch2-0.3.1/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/dispatch2-0.3.1/Cargo.toml.orig",
           "path": "local-evidence/dispatch2-0.3.1/Cargo.toml.orig",
           "bytes": 1516,
           "sha256": "f6aeef4bfe348b9e65e33db2bfb079be4149f9ab0f4b0b3bf3f5d04c144545af"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dispatch2-0.3.1/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/dispatch2-0.3.1/Cargo.toml",
           "path": "local-evidence/dispatch2-0.3.1/Cargo.toml",
           "bytes": 2545,
           "sha256": "f246cf8997c346fdcabb8925ad5be967f397fd8b92630ef7bcc9bdce5d33f775"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dispatch2-0.3.1/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/dispatch2-0.3.1/README.md",
           "path": "local-evidence/dispatch2-0.3.1/README.md",
           "bytes": 748,
           "sha256": "eba8f5b9bc021bfaaf84478017baf838a92d56a47e691a8b8989aae1210c05d7"
@@ -125,25 +125,25 @@
       "path_in_vcs": "include_dir",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/.cargo_vcs_info.json",
           "path": "local-evidence/include_dir-0.7.4/.cargo_vcs_info.json",
           "bytes": 105,
           "sha256": "3a6ff075567d97e7fe903e361b81a8bd7e7da77be01cf2495d85fb676b2d891a"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/Cargo.toml.orig",
           "path": "local-evidence/include_dir-0.7.4/Cargo.toml.orig",
           "bytes": 713,
           "sha256": "cc2a64f1763594620ffd45a3df83881e7e1ef72c219d316ebdda825376e1d877"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/Cargo.toml",
           "path": "local-evidence/include_dir-0.7.4/Cargo.toml",
           "bytes": 1442,
           "sha256": "4978ef491381e9781d9a281b43e91dfa3b062da87c570e2f5884b5ab7244d32f"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/README.md",
           "path": "local-evidence/include_dir-0.7.4/README.md",
           "bytes": 1822,
           "sha256": "f95dde5560e0b9fe496271e72959d1ba1c0b4695afc8867fa2cf5dbee225325e"
@@ -160,25 +160,25 @@
       "path_in_vcs": "macros",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir_macros-0.7.4/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir_macros-0.7.4/.cargo_vcs_info.json",
           "path": "local-evidence/include_dir_macros-0.7.4/.cargo_vcs_info.json",
           "bytes": 100,
           "sha256": "2e2e737a16585958124582fea4e43c51198d25d78f23c6fe0674a8f660dff584"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir_macros-0.7.4/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir_macros-0.7.4/Cargo.toml.orig",
           "path": "local-evidence/include_dir_macros-0.7.4/Cargo.toml.orig",
           "bytes": 485,
           "sha256": "97488346bfa63645747326c0f3ba7e96822868b9f72743090819a5b1a5ae519c"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir_macros-0.7.4/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir_macros-0.7.4/Cargo.toml",
           "path": "local-evidence/include_dir_macros-0.7.4/Cargo.toml",
           "bytes": 1052,
           "sha256": "b6a4d20ce6bb9ee70753ff8ece2fe48773fd66dd29159506c5ae0a8e7f627dd7"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir_macros-0.7.4/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir_macros-0.7.4/README.md",
           "path": "local-evidence/include_dir_macros-0.7.4/README.md",
           "bytes": 1822,
           "sha256": "f95dde5560e0b9fe496271e72959d1ba1c0b4695afc8867fa2cf5dbee225325e"
@@ -195,25 +195,25 @@
       "path_in_vcs": "crates/objc2",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-0.6.4/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-0.6.4/.cargo_vcs_info.json",
           "path": "local-evidence/objc2-0.6.4/.cargo_vcs_info.json",
           "bytes": 106,
           "sha256": "45343a7cb8cebbb23c2804f99a14f01f6618ce0956dba62f387fb9ffaf00eff7"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-0.6.4/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-0.6.4/Cargo.toml.orig",
           "path": "local-evidence/objc2-0.6.4/Cargo.toml.orig",
           "bytes": 7515,
           "sha256": "edff06609a6f76ba4aa4ead2f6219826f6c4fd82075fa178029085f37f931536"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-0.6.4/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-0.6.4/Cargo.toml",
           "path": "local-evidence/objc2-0.6.4/Cargo.toml",
           "bytes": 5073,
           "sha256": "74bfa13bee2c7362432f22886f9749743c78d32eed5916e26a06ff56ae84c901"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-0.6.4/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-0.6.4/README.md",
           "path": "local-evidence/objc2-0.6.4/README.md",
           "bytes": 847,
           "sha256": "5da56f1508a87b982a23e6bad2ff09b329f7fcf9181ea15eac17788f8d1c6824"
@@ -230,25 +230,25 @@
       "path_in_vcs": "framework-crates/objc2-core-foundation",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-foundation-0.3.2/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-foundation-0.3.2/.cargo_vcs_info.json",
           "path": "local-evidence/objc2-core-foundation-0.3.2/.cargo_vcs_info.json",
           "bytes": 132,
           "sha256": "1c1a87985a2bd25015f5e2413f4041379bea0172b2fce88dae3e6482b50aab26"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-foundation-0.3.2/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-foundation-0.3.2/Cargo.toml.orig",
           "path": "local-evidence/objc2-core-foundation-0.3.2/Cargo.toml.orig",
           "bytes": 3362,
           "sha256": "44cd6a4440c3ea1ba85df240ab9b9e7a95da3a5873ce623ac426ac5acfbe507f"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-foundation-0.3.2/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-foundation-0.3.2/Cargo.toml",
           "path": "local-evidence/objc2-core-foundation-0.3.2/Cargo.toml",
           "bytes": 4472,
           "sha256": "c0f54260fa1396923f2db4edf1e2d54e8ab09dea214af4b8ce37aaefa7185e60"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-foundation-0.3.2/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-foundation-0.3.2/README.md",
           "path": "local-evidence/objc2-core-foundation-0.3.2/README.md",
           "bytes": 822,
           "sha256": "c02a9b113d8855df956d9d854321c5bfef3c2921131070dc0c64870053b42459"
@@ -265,25 +265,25 @@
       "path_in_vcs": "framework-crates/objc2-core-graphics",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-graphics-0.3.2/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-graphics-0.3.2/.cargo_vcs_info.json",
           "path": "local-evidence/objc2-core-graphics-0.3.2/.cargo_vcs_info.json",
           "bytes": 130,
           "sha256": "264ea4e6453d508410c33c7e5c05ef71f067cac56efc06603862b36d1fe5dfc3"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-graphics-0.3.2/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-graphics-0.3.2/Cargo.toml.orig",
           "path": "local-evidence/objc2-core-graphics-0.3.2/Cargo.toml.orig",
           "bytes": 6661,
           "sha256": "8156455095991b7501f4fa30bdf29c5a541a41e3c479558e757932b07d0b16d1"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-graphics-0.3.2/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-graphics-0.3.2/Cargo.toml",
           "path": "local-evidence/objc2-core-graphics-0.3.2/Cargo.toml",
           "bytes": 7943,
           "sha256": "9756d343dc626faf07cdef1cdef29a2b3efed0f6a2fc44ae35fd828e2f482dc1"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-graphics-0.3.2/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-core-graphics-0.3.2/README.md",
           "path": "local-evidence/objc2-core-graphics-0.3.2/README.md",
           "bytes": 808,
           "sha256": "6361def881598a3b6d19e7e0d45d77aa5f8c87980db0c36d895cc33bb83f10bf"
@@ -300,25 +300,25 @@
       "path_in_vcs": "crates/objc2-encode",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-encode-4.1.0/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-encode-4.1.0/.cargo_vcs_info.json",
           "path": "local-evidence/objc2-encode-4.1.0/.cargo_vcs_info.json",
           "bytes": 113,
           "sha256": "b23c761215887d90ac44e18b18c8b386f93139c65a4a14f110e22405830cb3f1"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-encode-4.1.0/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-encode-4.1.0/Cargo.toml.orig",
           "path": "local-evidence/objc2-encode-4.1.0/Cargo.toml.orig",
           "bytes": 1137,
           "sha256": "12972b1faf213492f9e78226f23642c461284b739f7be5437d9401465a2869a6"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-encode-4.1.0/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-encode-4.1.0/Cargo.toml",
           "path": "local-evidence/objc2-encode-4.1.0/Cargo.toml",
           "bytes": 1850,
           "sha256": "cf9a8cc812710344d7fe618a5e615530baeeceae5c2826b9d5bb557dc419f159"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-encode-4.1.0/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-encode-4.1.0/README.md",
           "path": "local-evidence/objc2-encode-4.1.0/README.md",
           "bytes": 795,
           "sha256": "e980a74b88a62193f7908df3c27e7915f38559870f5e033ddb77fbed65e024a5"
@@ -335,25 +335,25 @@
       "path_in_vcs": "framework-crates/objc2-foundation",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-foundation-0.3.2/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-foundation-0.3.2/.cargo_vcs_info.json",
           "path": "local-evidence/objc2-foundation-0.3.2/.cargo_vcs_info.json",
           "bytes": 127,
           "sha256": "de34f3c84d7cb1cafcedb4e83b7efdd64047872566827477b954f8a853536bb1"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-foundation-0.3.2/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-foundation-0.3.2/Cargo.toml.orig",
           "path": "local-evidence/objc2-foundation-0.3.2/Cargo.toml.orig",
           "bytes": 10499,
           "sha256": "71158540d55a9b5ce073c856347f0ed1e0e71f4210cfb48a82b1f0e505ba6a50"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-foundation-0.3.2/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-foundation-0.3.2/Cargo.toml",
           "path": "local-evidence/objc2-foundation-0.3.2/Cargo.toml",
           "bytes": 11621,
           "sha256": "eabbe24e325c7b474c6f5de2e955f4f942ecd385608e4b6609b89a1f68ef39cc"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-foundation-0.3.2/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-foundation-0.3.2/README.md",
           "path": "local-evidence/objc2-foundation-0.3.2/README.md",
           "bytes": 758,
           "sha256": "50be6f8e1214bd644cdc32c9610278c004205cdddbe2aaed7887d8bad48dd6c5"
@@ -370,25 +370,25 @@
       "path_in_vcs": "framework-crates/objc2-image-io",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-image-io-0.3.2/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-image-io-0.3.2/.cargo_vcs_info.json",
           "path": "local-evidence/objc2-image-io-0.3.2/.cargo_vcs_info.json",
           "bytes": 125,
           "sha256": "583b666cbc15ad0671d5b1d819af352ac817f6e5293d019df09e45ad31dde6a7"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-image-io-0.3.2/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-image-io-0.3.2/Cargo.toml.orig",
           "path": "local-evidence/objc2-image-io-0.3.2/Cargo.toml.orig",
           "bytes": 2294,
           "sha256": "250d26341e336c569ebefd4cc61efdde1fb3f519afec9764485ad4fc6b75bb2e"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-image-io-0.3.2/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-image-io-0.3.2/Cargo.toml",
           "path": "local-evidence/objc2-image-io-0.3.2/Cargo.toml",
           "bytes": 3345,
           "sha256": "3b944c934cc3db5e031db1cb3bb4390c1682845781e727fbdfc46415e24d351d"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-image-io-0.3.2/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-image-io-0.3.2/README.md",
           "path": "local-evidence/objc2-image-io-0.3.2/README.md",
           "bytes": 773,
           "sha256": "16a7defc511f07758599fa1a22176cb7f80dba7d57414b385bec30d4616e5558"
@@ -405,25 +405,25 @@
       "path_in_vcs": "framework-crates/objc2-vision",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-vision-0.3.2/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-vision-0.3.2/.cargo_vcs_info.json",
           "path": "local-evidence/objc2-vision-0.3.2/.cargo_vcs_info.json",
           "bytes": 123,
           "sha256": "61fac1dc7e1ea63f2a153ba80353ec96a26ee5a278cbb5a321b57c5fe0636a22"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-vision-0.3.2/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-vision-0.3.2/Cargo.toml.orig",
           "path": "local-evidence/objc2-vision-0.3.2/Cargo.toml.orig",
           "bytes": 11611,
           "sha256": "52f2acd216b057c7905ce1d71ac08d05baa125df96fefc6492f3e0e5e68a6a5a"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-vision-0.3.2/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-vision-0.3.2/Cargo.toml",
           "path": "local-evidence/objc2-vision-0.3.2/Cargo.toml",
           "bytes": 12890,
           "sha256": "22558b56cd3cafb7e6cf7268a111bbe39369d46e06e55ef81825f5aca4c3bb9f"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-vision-0.3.2/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-vision-0.3.2/README.md",
           "path": "local-evidence/objc2-vision-0.3.2/README.md",
           "bytes": 760,
           "sha256": "9f7365ebd648c5ef1c23fe3cfd962bc7784b0316871cb7c2ebd4c9f6dc266e40"
@@ -440,25 +440,25 @@
       "path_in_vcs": "",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/.cargo_vcs_info.json",
           "path": "local-evidence/r-efi-5.3.0/.cargo_vcs_info.json",
           "bytes": 94,
           "sha256": "50e0c72ee0164f182d7b5db0213cdb1626bad950f2443b05d006c28c7f0641b5"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/Cargo.toml.orig",
           "path": "local-evidence/r-efi-5.3.0/Cargo.toml.orig",
           "bytes": 1226,
           "sha256": "57b6d9b9a1b6524f6b4dcc1dd24970ac03e6959786a6cfedaec9ba52878b4d3e"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/Cargo.toml",
           "path": "local-evidence/r-efi-5.3.0/Cargo.toml",
           "bytes": 1582,
           "sha256": "dba000c0173b09b1e3b69afa42a715b5ab64355e6502ce6d9d1767c7845cf402"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/README.md",
           "path": "local-evidence/r-efi-5.3.0/README.md",
           "bytes": 2919,
           "sha256": "420f65fec3ba2e89d49da51b222d2881d26959037a7b7d3794143db4bd4627b1"
@@ -475,25 +475,25 @@
       "path_in_vcs": "",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/.cargo_vcs_info.json",
           "path": "local-evidence/r-efi-6.0.0/.cargo_vcs_info.json",
           "bytes": 94,
           "sha256": "d8d0d853429b028d5e3c7b969f7c6b77b04e17486c57fac0759eb8083a359f3f"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/Cargo.toml.orig",
           "path": "local-evidence/r-efi-6.0.0/Cargo.toml.orig",
           "bytes": 1107,
           "sha256": "b8e89c393831c2161b6d390bd40422910ac34f02903ad39edd85ec38d4513fef"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/Cargo.toml",
           "path": "local-evidence/r-efi-6.0.0/Cargo.toml",
           "bytes": 1548,
           "sha256": "a021f9fb0645cc5de5770cf7f41594c1deff4b388eca933b289752aa52666829"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/README.md",
           "path": "local-evidence/r-efi-6.0.0/README.md",
           "bytes": 2919,
           "sha256": "420f65fec3ba2e89d49da51b222d2881d26959037a7b7d3794143db4bd4627b1"
@@ -510,25 +510,25 @@
       "path_in_vcs": "selectors",
       "local_evidence": [
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/selectors-0.38.0/.cargo_vcs_info.json",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/selectors-0.38.0/.cargo_vcs_info.json",
           "path": "local-evidence/selectors-0.38.0/.cargo_vcs_info.json",
           "bytes": 103,
           "sha256": "1ddc4845786a1b1ebc7fb2f940878d9b923c4385d7d66841f25c765d1312fe74"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/selectors-0.38.0/Cargo.toml.orig",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/selectors-0.38.0/Cargo.toml.orig",
           "path": "local-evidence/selectors-0.38.0/Cargo.toml.orig",
           "bytes": 868,
           "sha256": "26a19ba53c3dfff3f572e04f72ed224dca7b03a76a8e0593fc48b458ec6ab535"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/selectors-0.38.0/Cargo.toml",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/selectors-0.38.0/Cargo.toml",
           "path": "local-evidence/selectors-0.38.0/Cargo.toml",
           "bytes": 1705,
           "sha256": "83630f5e117638281303f757127dfffc3f621c8d2ff03f99ff7f7589748bacd8"
         },
         {
-          "source": "/Users/example-user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/selectors-0.38.0/README.md",
+          "source": "${CARGO_HOME}/registry/src/index.crates.io-1949cf8c6b5b557f/selectors-0.38.0/README.md",
           "path": "local-evidence/selectors-0.38.0/README.md",
           "bytes": 1170,
           "sha256": "c0a9128170286f7c593f0c316f00d4a9c8671140bbd9d59f7e6c001d696b2810"

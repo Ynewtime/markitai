@@ -132,3 +132,8 @@ one test to `tests/decryption.rs`:
 
 The upstream suite, prepared as above: 309 passed (the added test), the same
 33 failed, 3 ignored.
+
+Local example paths are replaced with `input.pdf` and `output.pdf` placeholders
+to avoid distributing developer home paths. `UPSTREAM.json` retains the original
+archive and upstream-file checksums; they describe the unmodified source, not
+these privacy edits.

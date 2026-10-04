@@ -221,11 +221,12 @@ raster processing entirely. Input files are never modified.
 Without `-o`, a single file or URL is printed to stdout and no output directory
 exists. The CLI then saves the images and page captures the document refers
 to in one store and links them with absolute `file://` URIs, so the printed
-Markdown opens with its pictures after the process exits:
+Markdown opens with its pictures after the process exits. The following example
+uses the fictional account `example-user`:
 
 ```text
-![Chart](file:///Users/me/.markitai/assets/blobs/7416822bd6078af29cc72e66.jpg)
-<!-- ![Page 1](file:///Users/me/.markitai/assets/blobs/336f4a11bd5d2a0c50ade34e.jpg) -->
+![Chart](file:///Users/example-user/.markitai/assets/blobs/7416822bd6078af29cc72e66.jpg)
+<!-- ![Page 1](file:///Users/example-user/.markitai/assets/blobs/336f4a11bd5d2a0c50ade34e.jpg) -->
 ```
 
 | Key | Default | Effect |

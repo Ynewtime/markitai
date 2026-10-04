@@ -724,10 +724,7 @@ and on Linux KDE (`kreadconfig6`/`kreadconfig5`, preferred for mixed markers) or
 GNOME/Unity through individual `gsettings get` keys that exclude stored
 passwords. Automatic/PAC/WPAD modes, SOCKS-only and authenticated desktop
 proxies, network probes and credential stores are never used. One second bounds
-all setting subprocesses, whose output is limited and process group reaped. Reads through
-the real desktop tools are recorded for GNOME and KDE 5
-([R38](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/linux-desktop-proxy-round38.md)) and KDE 6
-([R49](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/linux-kde6-proxy-round49.md)).
+all setting subprocesses, whose output is limited and process group reaped.
 
 `NO_PROXY` (or `no_proxy` when it is unset or empty) always applies; a system
 exception list applies only with its system proxy. `*` matches everything,
