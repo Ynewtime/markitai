@@ -125,6 +125,7 @@
 
 ### Fixed
 
+- While LibreOffice is running, tolerate output files that disappear between directory enumeration and metadata inspection. Disappearing entries still count toward the entry limit; directory/enumeration errors, other I/O errors, file-type and byte limits, and the final output scan remain strict.
 - Give generic conversion failure notifications a safe next step: check whether the original document opens and inspect the retained error details.
 - Point the workbench documentation and GitHub links, shared by desktop and mobile navigation, to this Rust project and its documentation index; offline Markdown and Agent guides remain bundled. Private repository pages require repository access.
 - Office screenshot color compatibility: simple, theme-free XLSX/XLSM workbooks use black for fonts without a declared color in the private export copy. Original files and explicit colors are preserved; uncertain models and unsupported preprocessing encodings retain LibreOffice's original color handling.
