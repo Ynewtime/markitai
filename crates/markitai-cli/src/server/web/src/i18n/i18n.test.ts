@@ -163,7 +163,7 @@ test("item errors are localized by code or shape, keeping the original wording",
     [{ error: "LLM returned HTTP 403: the model is not available in this region" }, MESSAGES.en.errModelRegion.replace("{status}", "403")],
     [{ error: "error sending request: tcp connect error: Connection refused", kind: "url" }, MESSAGES.en.errUnreachable],
     [{ error: "Input exceeds the 500 MiB limit", error_code: "invalid_input" }, "The input is larger than a supported limit (500 MiB)."],
-    [{ error: "Malformed XML", error_code: "conversion_error" }, "The document could not be converted."],
+    [{ error: "Malformed XML", error_code: "conversion_error" }, "The document could not be converted. Check that the original file opens correctly, then review the error details."],
   ];
   for (const [item, text] of cases) {
     const result = itemErrorText("en", item);
@@ -176,7 +176,7 @@ test("item errors are localized by code or shape, keeping the original wording",
   assert.equal(unsupported.text, "This file type is not supported: '.xyz'.");
   assert.equal(unsupported.formats, ".csv .docx");
   assert.equal(itemErrorText("zh", { error: "HTTP 404", kind: "url" }).text, "网页不存在（HTTP 404）。");
-  assert.equal(itemErrorText("zh", { error: "x", error_code: "conversion_error" }).text, "无法转换这个文档。");
+  assert.equal(itemErrorText("zh", { error: "x", error_code: "conversion_error" }).text, "无法转换这个文档。请确认原文件能正常打开，具体原因见错误详情。");
 });
 
 test("current portable OCR errors explain the right recovery and keep the original detail", () => {

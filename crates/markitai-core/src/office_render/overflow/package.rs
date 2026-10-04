@@ -12,13 +12,13 @@ const DRAW: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheet
 const CONTENT: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
 const MAX_UNPACKED: u64 = 256 * 1024 * 1024;
 
-struct Package<'a> {
+pub(super) struct Package<'a> {
     archive: zip::ZipArchive<Cursor<&'a [u8]>>,
-    names: BTreeSet<String>,
+    pub(super) names: BTreeSet<String>,
     changed: BTreeMap<String, Vec<u8>>,
 }
 impl<'a> Package<'a> {
-    fn open(bytes: &'a [u8], deadline: Instant, limit: u64) -> Result<Self> {
+    pub(super) fn open(bytes: &'a [u8], deadline: Instant, limit: u64) -> Result<Self> {
         if bytes.len() as u64 > limit {
             return Err(failure("workbook repair input exceeds byte budget"));
         }
@@ -60,7 +60,7 @@ impl<'a> Package<'a> {
             changed: BTreeMap::new(),
         })
     }
-    fn read(&mut self, name: &str) -> Result<Vec<u8>> {
+    pub(super) fn read(&mut self, name: &str) -> Result<Vec<u8>> {
         if let Some(bytes) = self.changed.get(name) {
             return Ok(bytes.clone());
         }
@@ -79,11 +79,11 @@ impl<'a> Package<'a> {
         }
         Ok(bytes)
     }
-    fn store(&mut self, name: String, bytes: Vec<u8>) {
+    pub(super) fn store(&mut self, name: String, bytes: Vec<u8>) {
         self.names.insert(name.clone());
         self.changed.insert(name, bytes);
     }
-    fn finish(mut self, deadline: Instant, limit: u64) -> Result<Vec<u8>> {
+    pub(super) fn finish(mut self, deadline: Instant, limit: u64) -> Result<Vec<u8>> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         for i in 0..self.archive.len() {
             check_deadline(deadline)?;

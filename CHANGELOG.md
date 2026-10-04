@@ -95,6 +95,8 @@
 
 ### Changed
 
+- Document the limits of exact OCR transcription for code, JSON and configuration: readable text or a successful conversion does not guarantee quotes, braces or ASCII symbols match the image; selecting Chinese explicitly does not remove this limitation. This is guidance, not an OCR recognition fix.
+- Omit obsolete R35 source snapshots from Git source archives while retaining them in checkouts and history, and preserving handoff records and validation drivers; clone size is unchanged.
 - Native CI runs source checks and installed-package acceptance in parallel for each platform, while retaining all checks. Package stages report their start, finish and duration without echoing command arguments or environment values.
 
 - Refresh development-status and remaining-work documentation with the verified cross-platform CI checkpoint, package evidence and outstanding Windows runtime dependency. Historical measurements remain explicitly scoped to their original builds.
@@ -123,7 +125,10 @@
 
 ### Fixed
 
-- Native XLSX/XLSM screenshots recover measured right-edge text overflow through a bounded private export copy while preserving source cells, styles and authored clipping. Newly added white screenshot margins are reduced before downscaling to keep text legible.
+- Give generic conversion failure notifications a safe next step: check whether the original document opens and inspect the retained error details.
+- Point the workbench documentation and GitHub links, shared by desktop and mobile navigation, to this Rust project and its documentation index; offline Markdown and Agent guides remain bundled. Private repository pages require repository access.
+- Office screenshot color compatibility: simple, theme-free XLSX/XLSM workbooks use black for fonts without a declared color in the private export copy. Original files and explicit colors are preserved; uncertain models and unsupported preprocessing encodings retain LibreOffice's original color handling.
+- Native XLSX/XLSM screenshots recover measured right-edge text overflow through a bounded private export copy; the geometry repair preserves its input cells, styles and authored clipping. Newly added white screenshot margins are reduced before downscaling to keep text legible.
 - On the narrowest workbench screens, keep the complete development version below the brand without reducing the three header action targets.
 - Isolated package validation disables npm update notices so `npm pack` keeps machine-readable output without changing user configuration.
 

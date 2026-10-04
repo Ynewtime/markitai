@@ -54,6 +54,20 @@ recognized. A multi-page TIFF is recognized page by page: each page keeps its
 `<!-- Page number: N -->` marker and preview, followed by its text, and a page
 without text adds a warning instead of ending the conversion.
 
+## Code and machine-readable text
+
+OCR can preserve readable prose while changing the punctuation inside a code
+example. In Chinese text, Vision can confuse ASCII quotes and braces with
+quotation marks or full-width characters, and `#` with `＃`. Explicitly choosing
+`ocr.lang=zh` does not guarantee exact code transcription. A successful conversion
+means recognition completed; it does not certify that extracted JSON, commands
+or configuration can be parsed or executed unchanged.
+
+Prefer the original text or digital document when it is available. Otherwise,
+compare code symbols and important values with the retained image before using
+them, including in an AI Agent workflow. Markitai keeps the image reference beside
+the OCR text and does not guess replacement punctuation that could alter meaning.
+
 ## Language selection
 
 `ocr.lang` defaults to `en`, which is a policy of its own: [the default

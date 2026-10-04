@@ -222,7 +222,14 @@ fn export_with(
     }
     let deadline = Instant::now() + timeout;
     let _permit = process::acquire(deadline)?;
-    let bytes = read_bounded(input, byte_limit)?;
+    let mut bytes = read_bounded(input, byte_limit)?;
+    let mut normalized_font_bytes = 0;
+    if matches!(extension.as_str(), "xlsx" | "xlsm")
+        && let Some(normalized) = overflow::normalize_default_font(&bytes, deadline, byte_limit)?
+    {
+        normalized_font_bytes = normalized.len() as u64;
+        bytes = normalized;
+    }
     let workspace = private_workspace("markitai-office-")?;
     let source_dir = workspace.path().join("input");
     let output_dir = workspace.path().join("output");
@@ -255,8 +262,13 @@ fn export_with(
         ));
     }
     let mut render_source = source;
-    let mut remaining_output = byte_limit;
+    let mut remaining_output = byte_limit
+        .checked_sub(normalized_font_bytes)
+        .ok_or_else(|| failure("workbook font normalization exhausted export byte limit"))?;
     let mut warnings = vec!["Office page layout is rendered by the installed LibreOffice; fonts and pagination can differ from Microsoft Office".into()];
+    if normalized_font_bytes != 0 {
+        warnings.push("Workbook fonts with no declared color use black in this private export copy for consistent rendering; explicit font colors are preserved and the original file is unchanged".into());
+    }
     if requested_kind == OfficeKind::Presentation && expected.is_none() {
         let normalized = workspace.path().join("normalized");
         fs::create_dir(&normalized)?;

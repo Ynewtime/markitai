@@ -3,10 +3,20 @@
 use super::{Result, failure};
 use std::time::Instant;
 mod anchor;
+mod default_font;
 mod package;
 #[cfg(test)]
 mod tests;
 mod xml;
+
+/// Independent import compatibility policy; geometry repair remains byte-preserving.
+pub(super) fn normalize_default_font(
+    bytes: &[u8],
+    deadline: Instant,
+    limit: u64,
+) -> Result<Option<Vec<u8>>> {
+    default_font::normalize(bytes, deadline, limit)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Extension {

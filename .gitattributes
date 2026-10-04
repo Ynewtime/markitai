@@ -93,5 +93,12 @@ docs/validation/linux-desktop-proxy-round38/packages.txt -text
 
 # Historical validation evidence and source snapshots are retained for auditing,
 # but should not count as current product code in GitHub language statistics.
-# Keep them in git archives: native packaging still uses validation drivers.
+# Keep validation drivers in git archives; omit only obsolete source snapshots.
 docs/validation/** linguist-generated=true
+
+# R35 unfinished source copies remain in Git history/checkouts for audit.
+# Their manifests and handoff notes remain in source archives too.
+docs/validation/handoff-round35/ancestors/base/** export-ignore
+docs/validation/handoff-round35/ancestors/files/** export-ignore
+docs/validation/handoff-round35/proxy/base/** export-ignore
+docs/validation/handoff-round35/proxy/files/** export-ignore

@@ -6,8 +6,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { Icon, Logo } from "./icons.tsx";
 
-const DOCS = "https://markitai.dev";
-const GITHUB = "https://github.com/Ynewtime/markitai";
+const DOCS = "https://github.com/Ynewtime/markitai-rust/blob/codex/rust-rewrite/docs/index.md";
+const GITHUB = "https://github.com/Ynewtime/markitai-rust";
 
 function External({ href, label, note }: { href: string; label: string; note: string }) {
   return (

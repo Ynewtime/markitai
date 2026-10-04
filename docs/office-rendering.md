@@ -5,9 +5,11 @@ installed LibreOffice to export PDF, followed by the in-process
 [PDF page renderer](pdf-rendering.md) (CoreGraphics on macOS, hayro on Windows
 and Linux). LibreOffice is not bundled; its installation and fonts are
 additional runtime requirements. The CLI itself remains one executable and
-invokes no Python conversion code. Office page capture has been run on macOS;
-on Windows and Linux the export and the renderer are compiled and the renderer
-is tested, but this adapter's LibreOffice export has not been run there.
+invokes no Python conversion code. Installed CLI builds have exercised Office
+export and PDF page rendering on macOS ARM64, Windows ARM64 and Linux x86-64,
+using selected authored Word, presentation and workbook fixtures. These checks
+do not establish every accepted format on every platform or Microsoft Office
+layout parity; current findings and source boundaries are described below.
 
 When page OCR or page screenshots are requested (`--ocr`, `--screenshot`, or a
 preset that implies them such as `rich`) and LibreOffice or the page renderer is
@@ -61,6 +63,16 @@ its saved values and inclusion rules can differ from LibreOffice's displayed
 or recalculated values. A runtime warning explains complete-sheet capture and
 its printing differences.
 
+For simple XLSX/XLSM workbooks without a theme, the private export copy uses
+black for fonts that declare no color. This is a rendering compatibility policy;
+explicit RGB, indexed, theme and automatic color declarations are preserved,
+and the original file is unchanged. The adjustment is skipped when conditional
+formatting, rich text, unknown XML parts or ambiguous inheritance prevent a safe
+decision, or when an inspected part uses an unsupported encoding such as UTF-16.
+Those workbooks retain LibreOffice's original color handling. Native table text
+is unaffected. Any later right-edge geometry repair preserves the styles in its
+input copy; it does not override explicit colors to make text visible.
+
 XLSX/XLSM sheet lists and ODS tables are counted from bounded source XML, including
 hidden and empty sheets. Binary XLS/XLSB is first imported into a private ODS copy,
 whose ordered sheet model supplies the expected count. Matching that import is
@@ -110,13 +122,14 @@ is drawn by the platform's [page renderer](pdf-rendering.md): CoreGraphics on
 macOS, hayro on Windows and Linux.
 
 At most two exports run concurrently per process. A shared 120-second deadline
-covers admission and both legacy normalization/PDF export subprocesses. A timeout
+covers admission, private input preparation and export subprocesses. A timeout
 kills and waits for the child. Launcher descendants are included: Unix uses a
 dedicated process group; Windows starts LibreOffice suspended in a Job Object
 that ends its whole tree, also when Markitai itself ends, and is emptied before
-the private directory is removed. The Windows path is type-checked but has not
-yet run on a Windows host. Output growth is polled every 25 ms. Inputs are
-limited to 100 MiB; normalized PPTX/ODS plus exported PDF share a 100 MiB budget.
+the private directory is removed. The adapter has run in an actual Windows
+ARM64 guest, beyond cross-target compilation. Output growth is polled every 25 ms. Inputs are
+limited to 100 MiB; normalized or repaired Office copies and exported PDFs share
+a 100 MiB output budget.
 Presentations, workbooks and resulting PDFs have a 1,000-slide/sheet/page limit.
 Workbook ZIP packages allow at most 16,384 entries and the sheet-index XML at
 most 32 MiB, with nesting capped at 128. Missing/ambiguous sheet-index parts,
@@ -134,6 +147,24 @@ parsing can consume CPU/memory internally between checks. External document
 resources and fonts remain subject to installed LibreOffice behavior.
 
 ## Fixtures and validation
+
+Recent installed-CLI checks include macOS ARM64 and Linux x86-64 Office/PDF
+outputs at `d6e0db6`, Windows ARM64 Word/presentation outputs at `e1586fb`, and
+Windows ARM64 workbook repair/control outputs at `d6e0db6`. Source-bound logs,
+original images and independent readbacks are retained; these selected fixtures
+do not imply full cross-platform coverage of legacy Office formats.
+
+The Linux `d6e0db6` visual review found a workbook color issue with LibreOffice
+24.2.7.2: text with no declared font color became white over a blue cell and
+disappeared where it extended onto the white canvas. The isolated `r004`
+compatibility candidate based on that source passed actual-output checks on
+macOS ARM64 (three CLI calls) and Linux x86-64 (nine CLI calls). The Linux checks
+recover the complete black text while retaining the same renderer's explicit
+RGB-white, RGB-red, theme and automatic-color outputs; the Mac explicit-red
+control is also unchanged. These are scoped candidate results, not acceptance
+of a rebuilt Windows package or a final stable release. See [CONTROL](CONTROL.md)
+for current source/artifact identities; historical rounds below retain their
+original scope.
 
 Original fixture generators and hashes are under `office_render/fixtures`:
 three presentation slides (visible, hidden, blank) with independent corner
