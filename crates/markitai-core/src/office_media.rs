@@ -52,6 +52,7 @@ pub(crate) fn prepare(
         cfg,
         screenshots,
         local_ocr,
+        &exported.screenshot_min_widths_pt,
     )?;
     if let Some(dir) = output_dir {
         output::publish_page_screenshots(dir, &mut media.screenshots, cfg)?;

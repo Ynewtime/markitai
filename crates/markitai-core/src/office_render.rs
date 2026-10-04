@@ -9,6 +9,7 @@ use std::{
 };
 use tempfile::TempDir;
 
+mod overflow;
 mod process;
 mod slides;
 #[cfg(test)]
@@ -30,6 +31,9 @@ pub(crate) struct OfficePdf {
     pub(crate) bytes: Vec<u8>,
     pub(crate) pages: usize,
     pub(crate) warnings: Vec<String>,
+    // Internal provenance: only successfully repaired workbook pages may trim
+    // newly added, demonstrably white screenshot tails. Never applied to PDFs.
+    pub(crate) screenshot_min_widths_pt: Vec<Option<f64>>,
     _workspace: TempDir,
 }
 
@@ -299,7 +303,7 @@ fn export_with(
             render_source = normalized.join("document.ods");
             warnings.push("Workbook sheet count was verified against LibreOffice's imported ODS model; this does not establish complete source-format import fidelity".into());
         }
-        warnings.push("Workbook screenshots use complete-sheet export: all sheets, including hidden and empty sheets, retain their full content bounds; paper sizes, print areas and manual print pagination are ignored. Oversized sheets fail the native page-pixel limits rather than being truncated.".into());
+        warnings.push("Workbook screenshots use complete-sheet export: all sheets, including hidden and empty sheets, are exported to one page each; paper sizes, print areas and manual print pagination are ignored. Oversized sheets fail the native page-pixel limits rather than being truncated.".into());
     }
     let filter = match requested_kind {
         OfficeKind::Presentation => {
@@ -321,7 +325,58 @@ fn export_with(
         deadline,
         remaining_output,
     )?;
-    let bytes = expected_file(&output_dir, "document.pdf", remaining_output)?;
+    let mut bytes = expected_file(&output_dir, "document.pdf", remaining_output)?;
+    let mut screenshot_min_widths_pt = Vec::new();
+    if requested_kind == OfficeKind::Spreadsheet {
+        let count = expected.expect("workbook import was counted");
+        workbooks::validate_pdf(&bytes, count)?;
+        let plan = overflow::inspect(&bytes, count, deadline)?;
+        warnings.extend(plan.warnings.iter().cloned());
+        if !plan.extensions.is_empty() {
+            if matches!(extension.as_str(), "xlsx" | "xlsm") {
+                // Charge every intermediate to one cumulative output budget;
+                // the single deadline and process permit cover both exports.
+                remaining_output = remaining_output
+                    .checked_sub(bytes.len() as u64)
+                    .ok_or_else(|| failure("first workbook PDF exhausted export byte limit"))?;
+                let original = read_bounded(&render_source, byte_limit)?;
+                let repaired =
+                    overflow::rewrite(&original, &plan.extensions, deadline, remaining_output)?;
+                remaining_output = remaining_output
+                    .checked_sub(repaired.len() as u64)
+                    .ok_or_else(|| failure("repaired workbook exhausted export byte limit"))?;
+                let repaired_dir = workspace.path().join("overflow-input");
+                let repaired_output = workspace.path().join("overflow-output");
+                fs::create_dir(&repaired_dir)?;
+                fs::create_dir(&repaired_output)?;
+                let repaired_source = repaired_dir.join(format!("document.{extension}"));
+                fs::write(&repaired_source, repaired)?;
+                process::convert(
+                    program,
+                    &repaired_source,
+                    &repaired_output,
+                    &profile,
+                    filter,
+                    deadline,
+                    remaining_output,
+                )?;
+                let replacement =
+                    expected_file(&repaired_output, "document.pdf", remaining_output)?;
+                workbooks::validate_pdf(&replacement, count)?;
+                let verification = overflow::inspect(&replacement, count, deadline)?;
+                overflow::verify_repair(&plan, &verification)?;
+                screenshot_min_widths_pt = vec![None; count];
+                for extension in &plan.extensions {
+                    screenshot_min_widths_pt[extension.page - 1] =
+                        Some(extension.width.max(extension.right));
+                }
+                bytes = replacement;
+                warnings.push("Workbook right-edge text overflow was repaired in a private export copy without editing cell data or styles; LibreOffice still determines cell layout and clipping".into());
+            } else {
+                warnings.push("Workbook text extends beyond the exported right page edge; automatic overflow repair currently supports XLSX/XLSM only, so this ODS or imported legacy workbook retains its original LibreOffice layout".into());
+            }
+        }
+    }
     let pages = if requested_kind == OfficeKind::Spreadsheet {
         workbooks::validate_pdf(&bytes, expected.expect("workbook import was counted"))?
     } else {
@@ -331,6 +386,7 @@ fn export_with(
         bytes,
         pages,
         warnings,
+        screenshot_min_widths_pt,
         _workspace: workspace,
     })
 }

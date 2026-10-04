@@ -3335,6 +3335,24 @@ textarea {
   }
 }
 
+/* Keep the complete version readable beside three unchanged 44px phone controls. */
+@media screen and (max-width: 360px) {
+  .brand {
+    display: grid;
+    grid-template-columns: 24px auto;
+    column-gap: 8px;
+    row-gap: 0;
+  }
+  .brand-home {
+    grid-column: 1 / -1;
+  }
+  .brand-ver {
+    grid-column: 2;
+    margin-top: 0;
+    white-space: nowrap;
+  }
+}
+
 /* ------------------------------------------------------- reduced motion */
 
 @media (prefers-reduced-motion: reduce) {

@@ -513,7 +513,7 @@ def main():
     environment = dict(os.environ, MARKITAI_HOME=str(state), PYO3_PYTHON=sys.executable,
                        HOME=str(isolated_home), MARKITAI_LANG="en", TMPDIR=str(work / "tmp"),
                        TMP=str(work / "tmp"), TEMP=str(work / "tmp"),
-                       npm_config_userconfig=str(npm_config))
+                       npm_config_userconfig=str(npm_config), npm_config_update_notifier="false")
     environment.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
     environment.setdefault("RUSTUP_HOME", str(Path.home() / ".rustup"))
     for key in ["PYTHONPATH", "PYTHONHOME", "NODE_PATH", "NODE_OPTIONS"]:

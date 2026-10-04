@@ -123,6 +123,10 @@
 
 ### Fixed
 
+- Native XLSX/XLSM screenshots recover measured right-edge text overflow through a bounded private export copy while preserving source cells, styles and authored clipping. Newly added white screenshot margins are reduced before downscaling to keep text legible.
+- On the narrowest workbench screens, keep the complete development version below the brand without reducing the three header action targets.
+- Isolated package validation disables npm update notices so `npm pack` keeps machine-readable output without changing user configuration.
+
 - User-stopped workbench items now display consistently as skipped in rows, totals, filters and restored history, with individual and batch retry support. Notifications retain the cancellation reason while preserving API records, saved options, previous outputs and reported costs. Notification Escape dismisses the latest notice while respecting dialogs, help and focused controls, and returns focus to the trigger.
 
 - Failed workbench retries that retain an earlier successful result also retain that result's conversion options, without undoing sibling items' later choices.

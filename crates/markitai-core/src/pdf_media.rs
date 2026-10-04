@@ -288,7 +288,81 @@ struct EncodedShot {
     fallback: bool,
 }
 
-fn encode_screenshot(rgb: &RgbImage, cfg: &Value, limit: usize) -> Result<EncodedShot> {
+/// Protect the original point-space page and the repair's existing text margin.
+/// Quartz centres less than one pixel of ceil rounding; hayro leaves it at the
+/// right. One extra column conservatively covers both existing backends.
+fn screenshot_floor(width_pt: Option<f64>) -> Option<u32> {
+    let points = width_pt?;
+    if !points.is_finite() || points <= 0. {
+        return None;
+    }
+    let pixels = (points * DPI / 72.).ceil() + 1.;
+    if !pixels.is_finite() || pixels > f64::from(u32::MAX) {
+        return None;
+    }
+    Some(pixels as u32)
+}
+
+/// White support required by the current Lanczos3 pipeline, in original pixels.
+/// Account for both the configured fit and the possible 1024px encoding fallback.
+/// The integer guard covers each resampler's floor/ceil sample endpoints.
+fn screenshot_white_support(width: u32, height: u32, max_width: u32, max_height: u32) -> u32 {
+    let first = fit(width, height, max_width, max_height);
+    let second = fit(first.0, first.1, 1024, 1024);
+    let ratio = f64::from(width) / f64::from(first.0);
+    let mut support = 0.;
+    if first != (width, height) {
+        support += 3. * ratio.max(1.) + 1.;
+    }
+    if second != first {
+        support += (3. * (f64::from(first.0) / f64::from(second.0)).max(1.) + 1.) * ratio;
+    }
+    support.ceil().min(f64::from(u32::MAX)) as u32
+}
+
+/// Return a smaller width only if every removed RGB sample is exactly white.
+/// A single faint sample, graphic or antialiased edge keeps its entire column.
+/// The floor is Office repair provenance, never inferred from input PDF text.
+fn screenshot_white_tail(
+    rgb: &RgbImage,
+    floor: u32,
+    max_width: u32,
+    max_height: u32,
+) -> Option<u32> {
+    let (width, height) = rgb.dimensions();
+    if floor == 0 || floor >= width || height == 0 || max_width == 0 || max_height == 0 {
+        return None;
+    }
+    let mut content_end = width;
+    while content_end > floor {
+        let x = content_end - 1;
+        if (0..height).any(|y| rgb.get_pixel(x, y).0 != [255, 255, 255]) {
+            break;
+        }
+        content_end -= 1;
+    }
+    if content_end == width {
+        return None;
+    }
+    let support = screenshot_white_support(width, height, max_width, max_height);
+    let retained = content_end.saturating_add(support).min(width);
+    if retained >= width
+        || retained - content_end
+            < screenshot_white_support(retained, height, max_width, max_height)
+    {
+        // Integer fit rounding can change the support after a crop. If the
+        // first bound is insufficient, preserve the full page rather than loop.
+        return None;
+    }
+    Some(retained)
+}
+
+fn encode_screenshot(
+    rgb: &RgbImage,
+    cfg: &Value,
+    limit: usize,
+    repaired_floor: Option<u32>,
+) -> Result<EncodedShot> {
     let max_width = positive_dimension(cfg, "/image/max_width", 1920)?;
     let max_height = positive_dimension(cfg, "/image/max_height", 99_999)?;
     let quality = cfg
@@ -314,12 +388,30 @@ fn encode_screenshot(rgb: &RgbImage, cfg: &Value, limit: usize) -> Result<Encode
             ));
         }
     };
-    let size = fit(rgb.width(), rgb.height(), max_width, max_height);
-    let resized;
-    let image = if size != rgb.dimensions() {
-        resized =
+    let retained_width = repaired_floor
+        .and_then(|floor| screenshot_white_tail(rgb, floor, max_width, max_height))
+        .unwrap_or(rgb.width());
+    let size = fit(retained_width, rgb.height(), max_width, max_height);
+    let prepared;
+    let image = if retained_width != rgb.width() {
+        // A borrowed view avoids an additional full-size RGB allocation before
+        // shrinking. OCR below still owns the original complete page pixels.
+        let view = image::imageops::crop_imm(rgb, 0, 0, retained_width, rgb.height());
+        prepared = if size != (retained_width, rgb.height()) {
+            image::imageops::resize(
+                &*view,
+                size.0,
+                size.1,
+                image::imageops::FilterType::Lanczos3,
+            )
+        } else {
+            view.to_image()
+        };
+        &prepared
+    } else if size != rgb.dimensions() {
+        prepared =
             image::imageops::resize(rgb, size.0, size.1, image::imageops::FilterType::Lanczos3);
-        &resized
+        &prepared
     } else {
         rgb
     };
@@ -494,6 +586,7 @@ pub(crate) fn capture_external_pdf(
     cfg: &Value,
     screenshots: bool,
     local_ocr: bool,
+    repaired_min_widths_pt: &[Option<f64>],
 ) -> Result<CapturedPages> {
     validate_name(prefix)?;
     if count == 0 || count > MAX_PAGES {
@@ -541,7 +634,12 @@ pub(crate) fn capture_external_pdf(
             ));
         }
         if screenshots {
-            let encoded = encode_screenshot(&pixels, cfg, MAX_SHOT_BYTES)?;
+            let encoded = encode_screenshot(
+                &pixels,
+                cfg,
+                MAX_SHOT_BYTES,
+                screenshot_floor(repaired_min_widths_pt.get(index).copied().flatten()),
+            )?;
             budget.screenshot(encoded.bytes.len())?;
             if encoded.fallback {
                 captured.warnings.push(format!(
@@ -631,7 +729,7 @@ pub(crate) fn prepare(
             ));
         }
         if plan.screenshots {
-            let encoded = encode_screenshot(&pixels, cfg, MAX_SHOT_BYTES)?;
+            let encoded = encode_screenshot(&pixels, cfg, MAX_SHOT_BYTES, None)?;
             budget.screenshot(encoded.bytes.len())?;
             if encoded.fallback {
                 pages.document.warnings.push(format!("PDF page {}: screenshot size required JPEG compression fallback.", page.number));
@@ -866,7 +964,7 @@ mod tests {
         ] {
             let cfg =
                 json!({"image":{"format":format,"max_width":20,"max_height":20,"quality":80}});
-            let encoded = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES).unwrap();
+            let encoded = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES, None).unwrap();
             assert_eq!(image::guess_format(&encoded.bytes).unwrap(), expected);
             let decoded = image::load_from_memory(&encoded.bytes).unwrap();
             assert_eq!((decoded.width(), decoded.height()), (20, 10));
@@ -886,7 +984,7 @@ mod tests {
             Rgb(channels)
         });
         let cfg = json!({"image":{"format":"png","quality":75}});
-        let encoded = encode_screenshot(&noisy, &cfg, 12_000).unwrap();
+        let encoded = encode_screenshot(&noisy, &cfg, 12_000, None).unwrap();
         assert!(encoded.fallback);
         assert_eq!(encoded.format.extension(), "jpg");
         assert_eq!(
@@ -894,7 +992,115 @@ mod tests {
             ImageFormat::Jpeg
         );
         assert!(encoded.bytes.len() <= 12_000);
-        assert!(encode_screenshot(&noisy, &cfg, 4).is_err());
+        assert!(encode_screenshot(&noisy, &cfg, 4, None).is_err());
+    }
+
+    #[test]
+    fn repaired_tail_removes_only_added_white_columns_and_keeps_ocr_original() {
+        let mut rgb = RgbImage::from_pixel(160, 12, Rgb([255, 255, 255]));
+        rgb.put_pixel(20, 6, Rgb([0, 0, 0]));
+        // User's existing blank canvas through column 79 must not be trimmed.
+        let original = rgb.clone();
+        let cfg = json!({"image":{"format":"png","max_width":160,"max_height":100}});
+        let encoded = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES, Some(80)).unwrap();
+        let decoded = image::load_from_memory(&encoded.bytes).unwrap().to_rgb8();
+        assert_eq!(decoded.dimensions(), (80, 12));
+        for y in 0..12 {
+            for x in 0..80 {
+                assert_eq!(decoded.get_pixel(x, y), rgb.get_pixel(x, y));
+            }
+        }
+        assert_eq!(rgb, original);
+        let untouched = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES, None).unwrap();
+        assert_eq!(
+            image::load_from_memory(&untouched.bytes).unwrap().width(),
+            160
+        );
+        let no_repair = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES, Some(160)).unwrap();
+        assert_eq!(untouched.bytes, no_repair.bytes);
+    }
+
+    #[test]
+    fn repaired_tail_keeps_faint_graphics_beyond_text_floor_and_never_cuts_white_holes() {
+        let mut rgb = RgbImage::from_pixel(160, 12, Rgb([255, 255, 255]));
+        rgb.put_pixel(20, 0, Rgb([0, 0, 0]));
+        rgb.put_pixel(120, 11, Rgb([255, 254, 255]));
+        let cfg = json!({"image":{"format":"png","max_width":160,"max_height":100}});
+        let encoded = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES, Some(80)).unwrap();
+        let decoded = image::load_from_memory(&encoded.bytes).unwrap().to_rgb8();
+        assert_eq!(decoded.dimensions(), (121, 12));
+        assert_eq!(decoded.get_pixel(120, 11).0, [255, 254, 255]);
+        assert_eq!(decoded.get_pixel(20, 0).0, [0, 0, 0]);
+        rgb.put_pixel(159, 3, Rgb([254, 255, 255]));
+        assert_eq!(screenshot_white_tail(&rgb, 80, 160, 100), None);
+    }
+
+    #[test]
+    fn repaired_tail_filter_support_scales_with_downsampling_and_fallback() {
+        let mut rgb = RgbImage::from_pixel(4000, 80, Rgb([255, 255, 255]));
+        for y in 0..80 {
+            rgb.put_pixel(2500, y, Rgb([0, 180, 0]));
+        }
+        let retained = screenshot_white_tail(&rgb, 2000, 200, 100).unwrap();
+        assert!(
+            retained > 2504 && retained < 4000,
+            "not a fixed three-pixel guard"
+        );
+        let cfg = json!({"image":{"format":"png","max_width":200,"max_height":100}});
+        let encoded = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES, Some(2000)).unwrap();
+        let decoded = image::load_from_memory(&encoded.bytes).unwrap().to_rgb8();
+        assert_eq!(decoded.width(), 200);
+        assert!(
+            decoded.pixels().any(|p| p.0 != [255, 255, 255]),
+            "thin graphic survives"
+        );
+        assert!(
+            (0..decoded.height()).all(|y| decoded.get_pixel(199, y).0 == [255, 255, 255]),
+            "white filter support survives at the edge"
+        );
+        // Even when the first fit is disabled, a later 1024px size fallback
+        // needs source-space support greater than three columns.
+        let fallback = screenshot_white_tail(&rgb, 2000, 4000, 100).unwrap();
+        assert!(fallback > 2504 && fallback < 4000);
+    }
+
+    #[test]
+    fn repaired_floor_covers_fractional_geometry_and_invalid_metadata_is_noop() {
+        assert_eq!(screenshot_floor(Some(10.)), Some(22));
+        assert_eq!(screenshot_floor(Some(36.)), Some(76));
+        for width in [
+            None,
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+            Some(-1.),
+            Some(0.),
+            Some(f64::MAX),
+        ] {
+            assert_eq!(screenshot_floor(width), None);
+        }
+        let white = RgbImage::from_pixel(100, 4, Rgb([255, 255, 255]));
+        assert_eq!(screenshot_white_tail(&white, 80, 100, 100), Some(80));
+        assert_eq!(screenshot_white_tail(&white, 0, 100, 100), None);
+        assert_eq!(screenshot_white_tail(&white, 100, 100, 100), None);
+        assert_eq!(screenshot_white_tail(&white, u32::MAX, 100, 100), None);
+        // Cropping metadata cannot bypass the complete raster's existing budget.
+        assert!(Budget::default().pixels(8_000, 4_001).is_err());
+    }
+
+    #[test]
+    fn repaired_tail_height_limited_fit_keeps_color_and_original_height() {
+        let mut rgb = RgbImage::from_pixel(400, 800, Rgb([255, 255, 255]));
+        for y in 0..800 {
+            rgb.put_pixel(250, y, Rgb([0, 0, 0]));
+        }
+        let retained = screenshot_white_tail(&rgb, 200, 1920, 200).unwrap();
+        assert!(retained > 254 && retained < 400);
+        let cfg = json!({"image":{"format":"png","max_width":1920,"max_height":200}});
+        let encoded = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES, Some(200)).unwrap();
+        let decoded = image::load_from_memory(&encoded.bytes).unwrap().to_rgb8();
+        assert_eq!(decoded.height(), 200);
+        assert!(decoded.pixels().any(|p| p.0 != [255, 255, 255]));
+        assert_eq!(rgb.height(), 800);
     }
 
     #[test]
