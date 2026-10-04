@@ -894,6 +894,16 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                     .find(|provider| provider.get("id").and_then(Value::as_str) == Some(id))
             })
         });
+        // Browser-authored literal connections must not acquire server credentials
+        // later, including after a restart or a provider environment change.
+        let allow_environment = params
+            .get("use_environment_credentials")
+            .filter(|value| !value.is_null())
+            .or_else(|| {
+                saved_provider.and_then(|provider| provider.get("use_environment_credentials"))
+            })
+            .and_then(Value::as_bool)
+            != Some(false);
         // The first key variable that holds a value; with none set, the
         // first name decides (it may be present but empty).
         let key_var = known
@@ -905,7 +915,7 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
         let key = config::resolve_optional(
             nonempty(params.get("api_key"))
                 .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_key")))),
-            Some(key_var),
+            allow_environment.then_some(key_var),
             env,
             true,
         );
@@ -925,10 +935,13 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
         };
         let endpoint_base = endpoint_base
             .or_else(|| {
-                known
-                    .base_vars
-                    .iter()
-                    .find_map(|name| env.get(*name).filter(|value| !value.is_empty()).cloned())
+                known.base_vars.iter().find_map(|name| {
+                    allow_environment
+                        .then(|| env.get(*name))
+                        .flatten()
+                        .filter(|value| !value.is_empty())
+                        .cloned()
+                })
             })
             .or_else(|| known.base.map(str::to_owned));
         let Some(endpoint_base) = endpoint_base else {

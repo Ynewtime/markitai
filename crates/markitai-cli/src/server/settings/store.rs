@@ -132,8 +132,8 @@ impl Store {
         let provider = model::string(body, "provider", true, true)?.unwrap();
         let provider_id = model::string(body, "provider_id", false, false)?;
         let deployment_id = model::string(body, "deployment_id", false, false)?;
-        let key = model::string(body, "api_key", false, false)?;
-        let base = model::string(body, "api_base", false, false)?;
+        let key = model::client_field(body, "api_key")?;
+        let base = model::client_field(body, "api_base")?;
         let refresh = match body.get("refresh") {
             None => false,
             Some(v) => v
@@ -141,6 +141,9 @@ impl Store {
                 .ok_or_else(|| invalid("refresh must be boolean"))?,
         };
         let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if provider_id.is_some() && deployment_id.is_some() {
+            return Err(invalid("send one credential reference"));
+        }
         let fallback = if provider_id.is_some() || deployment_id.is_some() {
             connection(
                 &data,
@@ -150,10 +153,38 @@ impl Store {
         } else {
             json!({})
         };
+        let provider = provider.to_ascii_lowercase();
+        let supplied_key = body.get("api_key").is_some();
+        let resolved_base = if body.get("api_base").is_some() {
+            base.map(Value::String).unwrap_or(Value::Null)
+        } else {
+            fallback["api_base"].clone()
+        };
+        if let Some(old_provider) = fallback["provider"].as_str() {
+            model::check_reuse(
+                old_provider,
+                &provider,
+                fallback["api_base"].as_str(),
+                resolved_base.as_str(),
+                supplied_key,
+            )?;
+        }
+        let allow_environment = !supplied_key
+            && if fallback["provider"].is_string() {
+                fallback["use_environment_credentials"].as_bool() != Some(false)
+            } else {
+                body.get("api_base").is_none()
+            };
+        let resolved_key = if supplied_key {
+            key.map(Value::String).unwrap_or(Value::Null)
+        } else {
+            fallback["api_key"].clone()
+        };
         Ok(
-            json!({"provider":provider,"api_key":key.map(Value::String).unwrap_or_else(||fallback["api_key"].clone()),"api_base":base.map(Value::String).unwrap_or_else(||fallback["api_base"].clone()),"refresh":refresh}),
+            json!({"provider":provider,"api_key":resolved_key,"api_base":resolved_base,"refresh":refresh,"use_environment_credentials":allow_environment || model::local(&provider)}),
         )
     }
+
     pub fn resolve_probe(&self, body: &Value) -> ApiResult<Value> {
         model::object(
             body,
@@ -168,8 +199,8 @@ impl Store {
         let id = model::string(body, "deployment_id", false, true)?;
         let group = model::string(body, "model_name", false, true)?;
         let name = model::string(body, "model", false, true)?;
-        let key = model::string(body, "api_key", false, false)?;
-        let base = model::string(body, "api_base", false, false)?;
+        let key = model::client_field(body, "api_key")?;
+        let base = model::client_field(body, "api_base")?;
         if [&id, &group, &name]
             .iter()
             .any(|v| v.as_deref() == Some(""))
@@ -206,28 +237,38 @@ impl Store {
             return Ok(probe_params(entry, &data.providers));
         }
         let name = name.ok_or_else(|| invalid("deployment_id, model_name or model is required"))?;
-        let mut result = json!({"model":name,"api_key":key,"api_base":base});
-        if key.is_none() && !model::local(name.split('/').next().unwrap_or("")) {
-            let candidates = data.cfg["llm"]["model_list"]
-                .as_array()
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let same = |entry: &&Value| entry["litellm_params"]["model"] == name;
-            let selected = base
-                .as_ref()
-                .and_then(|base| {
-                    candidates
-                        .iter()
-                        .filter(same)
-                        .find(|entry| entry["litellm_params"]["api_base"] == *base)
-                })
-                .or_else(|| candidates.iter().find(same));
-            if let Some(entry) = selected {
-                let params = probe_params(entry, &data.providers);
-                result["api_key"] = params["api_key"].clone();
-                if base.is_none() {
-                    result["api_base"] = params["api_base"].clone();
+        let provider = name
+            .split_once('/')
+            .map_or("openai", |(provider, _)| provider);
+        let supplied_key = body.get("api_key").is_some();
+        let mut result = json!({"model":name,"api_key":key,"api_base":base,"use_environment_credentials":!supplied_key && body.get("api_base").is_none() || model::local(provider)});
+        if !supplied_key && !model::local(provider) {
+            let candidates: Vec<Value> = data
+                .models
+                .iter()
+                .chain(&data.detected)
+                .filter(|entry| entry["litellm_params"]["model"] == name)
+                .map(|entry| probe_params(entry, &data.providers))
+                .collect();
+            let selected = if body.get("api_base").is_some() {
+                let selected = candidates.iter().find(|params| {
+                    model::same_base(provider, params["api_base"].as_str(), base.as_deref())
+                });
+                if selected.is_none() && !candidates.is_empty() {
+                    return Err(invalid(
+                        "saved model credentials cannot be used with another endpoint",
+                    ));
                 }
+                selected
+            } else {
+                candidates.first()
+            };
+            if let Some(params) = selected {
+                result["api_key"] = params["api_key"].clone();
+                result["use_environment_credentials"] =
+                    params["use_environment_credentials"].clone();
+                // Send the original configured endpoint, never a request-controlled alias.
+                result["api_base"] = params["api_base"].clone();
             }
         }
         Ok(result)
@@ -380,6 +421,9 @@ fn runtime(
         .map_err(|_| invalid("invalid model/provider configuration"))
 }
 fn connection(data: &Data, id: &str, deployment: Option<&str>) -> ApiResult<Value> {
+    if id.starts_with("env:") {
+        return model::environment_connection(id);
+    }
     if let Some(deployment) = deployment {
         model::find(&data.models, deployment, &HashMap::new())?;
     }
@@ -396,22 +440,14 @@ fn connection(data: &Data, id: &str, deployment: Option<&str>) -> ApiResult<Valu
     let entry = &data.models[model::find(&data.models, id, &HashMap::new())?];
     let params = probe_params(entry, &data.providers);
     Ok(
-        json!({"provider":model::provider(entry),"api_key":params["api_key"],"api_base":params["api_base"]}),
+        json!({"provider":model::provider(entry),"api_key":params["api_key"],"api_base":params["api_base"],"use_environment_credentials":params["use_environment_credentials"]}),
     )
 }
 fn probe_params(entry: &Value, providers: &[Value]) -> Value {
-    let mut result = json!({"model":entry["litellm_params"]["model"],"api_key":entry["litellm_params"]["api_key"],"api_base":entry["litellm_params"]["api_base"]});
-    if let Some(id) = model::linked(entry)
-        && let Some(provider) = providers.iter().find(|p| p["id"] == id)
-    {
-        for field in ["api_key", "api_base"] {
-            if result[field].is_null() {
-                result[field] = provider[field].clone();
-            }
-        }
-    }
-    result
+    let params = model::params(entry, providers);
+    json!({"model":params["model"],"api_key":params["api_key"],"api_base":params["api_base"],"use_environment_credentials":params["use_environment_credentials"].as_bool() != Some(false)})
 }
+
 fn parse(bytes: Option<&[u8]>) -> ApiResult<Value> {
     let value: Value = if let Some(bytes) = bytes {
         serde_json::from_slice(bytes).map_err(|_| failure())?

@@ -114,7 +114,10 @@ fn a_local_server_prints_the_address_the_data_location_and_how_to_stop() {
     );
     assert_eq!(
         lines[2],
-        format!("Open in your browser: http://127.0.0.1:{port}/")
+        format!(
+            "Open in your browser: http://127.0.0.1:{port}/#token={}",
+            lines[1].strip_prefix("Remote access token: ").unwrap()
+        )
     );
     assert_eq!(
         lines[3],
@@ -171,11 +174,13 @@ fn listening_beyond_this_computer_warns_and_hands_out_the_token_only_where_it_is
     );
     assert!(lines[2].contains("like a password"), "{lines:?}");
     assert!(lines[3].starts_with("Remote access token: "));
-    // A browser on this computer is a loopback peer and needs no token in its address.
+    // Local and remote browsers both receive the token in a fragment.
     assert!(
-        lines
-            .iter()
-            .any(|line| line == &format!("Open in your browser: http://127.0.0.1:{port}/")),
+        lines.iter().any(|line| line
+            == &format!(
+                "Open in your browser: http://127.0.0.1:{port}/#token={}",
+                lines[3].strip_prefix("Remote access token: ").unwrap()
+            )),
         "{lines:?}"
     );
     // Any address offered to other devices carries the token, and says so.

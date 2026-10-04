@@ -494,3 +494,42 @@ fn a_declared_input_window_splits_a_document_into_more_requests() {
     assert!(message.contains("max_input_tokens is 300"), "{message}");
     assert_eq!(echo.count(), 0);
 }
+
+#[test]
+fn browser_literal_connections_ignore_canary_environment_after_normalize() {
+    let vars = [
+        ("OLLAMA_API_KEY", "authored-server-canary"),
+        ("OLLAMA_API_BASE", "http://127.0.0.1:9/stolen"),
+    ];
+    let explicit = resolved(
+        json!({"model":"ollama/test","use_environment_credentials":false}),
+        &vars,
+    )
+    .unwrap();
+    assert!(explicit.key.is_none());
+    assert!(!explicit.endpoint.contains(":9/"));
+    let explicit = resolved(json!({"model":"ollama/test","api_base":"http://127.0.0.1:9911/v1","api_key":"own-literal-key","use_environment_credentials":false}), &vars).unwrap();
+    assert_eq!(explicit.key.as_deref(), Some("own-literal-key"));
+    assert!(explicit.endpoint.starts_with("http://127.0.0.1:9911/"));
+    let legacy = resolved(json!({"model":"ollama/test"}), &vars).unwrap();
+    assert_eq!(legacy.key.as_deref(), Some("authored-server-canary"));
+}
+
+#[test]
+fn browser_literal_provider_mode_survives_configuration_reload() {
+    let raw = json!({"llm":{"providers":[{"id":"local","provider":"ollama","api_base":"http://127.0.0.1:9911","use_environment_credentials":false}],"model_list":[{"model_name":"default","litellm_params":{"model":"ollama/test"},"model_info":{"provider_id":"local"}}]}});
+    let saved = serde_json::to_string(&config::normalize(&raw).unwrap()).unwrap();
+    let cfg: Value = serde_json::from_str(&saved).unwrap();
+    let entries =
+        deployments(&cfg, &vars(&[("OLLAMA_API_KEY", "authored-server-canary")])).unwrap();
+    assert!(entries[0].key.is_none());
+    assert!(entries[0].endpoint.starts_with("http://127.0.0.1:9911/"));
+    let mut invalid = raw;
+    invalid["llm"]["providers"][0]["use_environment_credentials"] = json!("false");
+    assert_eq!(
+        config::normalize(&invalid).unwrap()["llm"]["providers"][0]["use_environment_credentials"],
+        false,
+    );
+    invalid["llm"]["providers"][0]["use_environment_credentials"] = json!("not-a-boolean");
+    assert!(config::normalize(&invalid).is_err());
+}

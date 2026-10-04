@@ -380,21 +380,12 @@ export const en = {
   setModel: "Model",
   setApiKey: "API key",
   setApiBase: "API base",
-  setKeyPh: "sk-… or env:OPENAI_API_KEY",
-  providerKeyPh: (variable: string | null, provider = "") =>
-    `sk-… or env:${
-      variable ??
-      (
-        {
-          anthropic: "ANTHROPIC_API_KEY",
-          azure: "AZURE_API_KEY",
-          deepseek: "DEEPSEEK_API_KEY",
-          gemini: "GEMINI_API_KEY",
-          openrouter: "OPENROUTER_API_KEY",
-        } as Record<string, string>
-      )[provider] ??
-      "OPENAI_API_KEY"
-    }`,
+  setKeyPh: "Enter an API key",
+  serverKeyKept: "Keep the saved server credential",
+  serverBaseKept: "Keep the saved server address",
+  clearSavedKey: "Remove the saved API key",
+  endpointKeyRequired: "To change the API address, enter a new API key or explicitly remove the saved key.",
+  literalCredentialsOnly: "Enter a literal API key and address. Environment references can only be set in the server configuration.",
   setBasePh: "Optional",
   revealField: (label: string) => `Show ${label}`,
   concealField: (label: string) => `Hide ${label}`,

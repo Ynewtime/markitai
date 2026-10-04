@@ -290,7 +290,9 @@ The page converts uploads and URLs, previews results, keeps history and edits
 model connections. The same jobs are available over REST:
 
 ```sh
-curl -F files=@note.txt -F 'options={}' http://127.0.0.1:3600/api/jobs
+# Set MARKITAI_SERVE_TOKEN to the token printed by the running server.
+curl -H "Authorization: Bearer $MARKITAI_SERVE_TOKEN" \
+  -F files=@note.txt -F 'options={}' http://127.0.0.1:3600/api/jobs
 ```
 
 See [REST service](serve.md) and [workspace](web-ui.md).

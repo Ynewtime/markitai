@@ -6,8 +6,12 @@ use serde_json::{Value, json};
 use std::{collections::HashMap, io::Read, time::Duration};
 const MAX_RESPONSE: u64 = 1024 * 1024;
 
-pub(crate) fn probe(request: &Value) -> Result<()> {
-    let env: HashMap<String, String> = std::env::vars().collect();
+pub(crate) fn probe(request: &Value, allow_environment: bool) -> Result<()> {
+    let env: HashMap<String, String> = if allow_environment {
+        std::env::vars().collect()
+    } else {
+        HashMap::new()
+    };
     let model = request["model"]
         .as_str()
         .ok_or_else(|| Error::InvalidInput("Model is required".into()))?;

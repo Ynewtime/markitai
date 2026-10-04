@@ -217,9 +217,32 @@ pub(super) fn checked_url(base: &str) -> Result<url::Url> {
     Ok(value)
 }
 
+fn discovery_base_variable(provider: &str, env: &HashMap<String, String>) -> Option<&'static str> {
+    catalog()
+        .into_iter()
+        .find(|entry| entry.provider == provider)
+        .and_then(|entry| {
+            entry
+                .base_variables
+                .iter()
+                .copied()
+                .find(|name| env.get(*name).is_some_and(|value| !value.trim().is_empty()))
+        })
+}
+
 /// Discover model identifiers using a credential-isolated in-memory cache.
 /// The input contains provider, optional api_key/api_base and optional refresh.
 pub fn discover(request: &Value) -> Result<Value> {
+    discover_with_environment(request, true)
+}
+
+/// Discover with literal request credentials only; no process key or endpoint fallback.
+/// Configuration-backed callers should use `discover` instead.
+pub fn discover_explicit(request: &Value) -> Result<Value> {
+    discover_with_environment(request, false)
+}
+
+fn discover_with_environment(request: &Value, allow_environment: bool) -> Result<Value> {
     validate(request, &["provider", "api_key", "api_base", "refresh"])?;
     let provider = field(request, "provider")?
         .filter(|s| !s.trim().is_empty())
@@ -250,7 +273,11 @@ pub fn discover(request: &Value) -> Result<Value> {
         Some(Value::Bool(value)) => *value,
         _ => return Err(Error::InvalidInput("refresh must be a boolean".into())),
     };
-    let env: HashMap<String, String> = std::env::vars().collect();
+    let env: HashMap<String, String> = if allow_environment {
+        std::env::vars().collect()
+    } else {
+        HashMap::new()
+    };
     if provider == "copilot" {
         if field(request, "api_key")?.is_some_and(|value| !value.is_empty())
             || field(request, "api_base")?.is_some_and(|value| !value.is_empty())
@@ -345,17 +372,8 @@ pub fn discover(request: &Value) -> Result<Value> {
         }),
     };
     let key = resolve(field(request, "api_key")?, variable, &env)?;
-    // The added prefixes also honour their base variables, as inference does.
-    let base_variable = compatible.as_ref().and_then(|entry| {
-        entry
-            .base_variables
-            .iter()
-            .find(|name| {
-                env.get(**name)
-                    .is_some_and(|value| !value.trim().is_empty())
-            })
-            .copied()
-    });
+    // Built-in and additional providers share inference's endpoint variables.
+    let base_variable = discovery_base_variable(&provider, &env);
     let base = resolve(field(request, "api_base")?, base_variable, &env)?
         .or_else(|| provider_default_base(&provider).map(str::to_owned));
     if let Some(base) = &base {
@@ -381,6 +399,15 @@ pub fn discover(request: &Value) -> Result<Value> {
 /// Make one short request to exactly the requested deployment, without retry,
 /// fallback, prompt loading, document conversion or persistent cache access.
 pub fn probe(request: &Value) -> Result<Value> {
+    probe_with_environment(request, true)
+}
+
+/// Probe literal request credentials without inheriting process keys or endpoints.
+pub fn probe_explicit(request: &Value) -> Result<Value> {
+    probe_with_environment(request, false)
+}
+
+fn probe_with_environment(request: &Value, allow_environment: bool) -> Result<Value> {
     validate(request, &["model", "api_key", "api_base"])?;
     let model = field(request, "model")?
         .filter(|value| !value.trim().is_empty())
@@ -392,7 +419,7 @@ pub fn probe(request: &Value) -> Result<Value> {
             "Model contains invalid characters or exceeds 1024 bytes".into(),
         ));
     }
-    match crate::llm::service_probe(request) {
+    match crate::llm::service_probe(request, allow_environment) {
         Ok(()) => Ok(
             json!({"ok":true,"detail":format!("{} responded", model.chars().take(280).collect::<String>())}),
         ),

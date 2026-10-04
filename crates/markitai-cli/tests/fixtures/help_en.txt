@@ -557,16 +557,15 @@ Run the native REST conversion service and web interface
 Usage: markitai serve [OPTIONS]
 
 Options:
-      --host <HOST>              Interface to bind. Clients other than this machine need the access
-                                 token printed at startup (or MARKITAI_SERVE_TOKEN) [default:
-                                 127.0.0.1]
+      --host <HOST>              Interface to bind. All API clients need the access token printed at
+                                 startup (or MARKITAI_SERVE_TOKEN) [default: 127.0.0.1]
       --port <PORT>              Port to listen on [default: 3600]
       --no-open                  Do not open a browser after startup
-      --no-auth                  Do not require the access token from other machines. They can then
-                                 upload files and read or delete history; URL conversion and model
-                                 settings stay blocked for them
-      --allowed-host <HOSTNAME>  Also accept this name in Host/Origin headers (repeatable);
-                                 localhost and IP addresses are always accepted
+      --no-auth                  Disable API token authentication. Remote clients can upload files
+                                 and read or delete history; URL conversion and model settings
+                                 require a direct local connection
+      --allowed-host <HOSTNAME>  Also allow this hostname in Host/Origin headers (repeatable). Local
+                                 Origins must still match the request port
   -h, --help                     Print help
 
 Configuration:
@@ -585,16 +584,15 @@ Run the native REST conversion service and web interface
 Usage: markitai serve [OPTIONS]
 
 Options:
-      --host <HOST>              Interface to bind. Clients other than this machine need the access
-                                 token printed at startup (or MARKITAI_SERVE_TOKEN) [default:
-                                 127.0.0.1]
+      --host <HOST>              Interface to bind. All API clients need the access token printed at
+                                 startup (or MARKITAI_SERVE_TOKEN) [default: 127.0.0.1]
       --port <PORT>              Port to listen on [default: 3600]
       --no-open                  Do not open a browser after startup
-      --no-auth                  Do not require the access token from other machines. They can then
-                                 upload files and read or delete history; URL conversion and model
-                                 settings stay blocked for them
-      --allowed-host <HOSTNAME>  Also accept this name in Host/Origin headers (repeatable);
-                                 localhost and IP addresses are always accepted
+      --no-auth                  Disable API token authentication. Remote clients can upload files
+                                 and read or delete history; URL conversion and model settings
+                                 require a direct local connection
+      --allowed-host <HOSTNAME>  Also allow this hostname in Host/Origin headers (repeatable). Local
+                                 Origins must still match the request port
   -h, --help                     Print help
 
 Configuration:

@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
 const MAX_METADATA_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_METADATA_ELEMENTS: usize = 100_000;
+// Descendant text is retained by its ancestors for EPUB mixed-content fields.
+// Bound the total copies, including completed elements, rather than each field.
+const MAX_METADATA_TEXT_BYTES: usize = MAX_METADATA_BYTES as usize;
 
 #[derive(Default)]
 pub(super) struct Metadata {
@@ -66,16 +70,42 @@ struct Element {
     text: String,
 }
 
+fn append_text(stack: &mut [Element], text: &str, remaining: &mut usize) -> Result<(), String> {
+    let bytes = text
+        .len()
+        .checked_mul(stack.len())
+        .filter(|bytes| *bytes <= *remaining)
+        .ok_or("metadata text exceeds the aggregate size limit")?;
+    *remaining -= bytes;
+    for item in stack {
+        item.text.push_str(text);
+    }
+    Ok(())
+}
+
 fn elements(xml: &str) -> Result<Vec<Element>, String> {
+    elements_with_limits(xml, MAX_METADATA_TEXT_BYTES, MAX_METADATA_ELEMENTS)
+}
+
+fn elements_with_limits(
+    xml: &str,
+    mut remaining_text: usize,
+    max_elements: usize,
+) -> Result<Vec<Element>, String> {
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(xml);
     let mut stack: Vec<Element> = Vec::new();
     let mut output = Vec::new();
+    let mut element_count = 0usize;
     loop {
         let event = reader.read_event().map_err(|e| e.to_string())?;
         let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(event) | Event::Empty(event) => {
+                if element_count >= max_elements {
+                    return Err("metadata element count exceeds the limit".into());
+                }
+                element_count += 1;
                 let mut element = Element {
                     name: String::from_utf8_lossy(event.local_name().as_ref()).into_owned(),
                     ..Element::default()
@@ -104,27 +134,24 @@ fn elements(xml: &str) -> Result<Vec<Element>, String> {
             Event::Text(text) => {
                 let decoded = text.decode().map_err(|e| e.to_string())?;
                 let decoded = quick_xml::escape::unescape(&decoded).map_err(|e| e.to_string())?;
-                for item in &mut stack {
-                    item.text.push_str(&decoded);
-                }
+                append_text(&mut stack, &decoded, &mut remaining_text)?;
             }
             Event::CData(text) => {
                 let decoded = text.decode().map_err(|e| e.to_string())?;
-                for item in &mut stack {
-                    item.text.push_str(&decoded);
-                }
+                append_text(&mut stack, &decoded, &mut remaining_text)?;
             }
             Event::GeneralRef(reference) => {
                 let name = reference.decode().map_err(|e| e.to_string())?;
                 let entity = format!("&{name};");
                 let decoded = quick_xml::escape::unescape(&entity).map_err(|e| e.to_string())?;
-                for item in &mut stack {
-                    item.text.push_str(&decoded);
-                }
+                append_text(&mut stack, &decoded, &mut remaining_text)?;
             }
             Event::End(_) => {
                 if let Some(mut item) = stack.pop() {
-                    item.text = item.text.trim().to_owned();
+                    // Trim without allocating another copy of a large field.
+                    item.text.truncate(item.text.trim_end().len());
+                    let leading = item.text.len() - item.text.trim_start().len();
+                    item.text.drain(..leading);
                     output.push(item);
                 }
             }
@@ -214,22 +241,30 @@ fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
 
 /// What a Word package holds that the Markdown leaves out and a reader would
 /// want to know about: its review comments, which carry text of their own.
-/// A package this cannot read says nothing; the document reader reports its
-/// own failures.
+/// Missing optional comments are normal. A present but unreadable comments
+/// part must not silently look like a document with no review comments.
 fn read_docx(bytes: &[u8]) -> Metadata {
-    let count = (|| {
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
-        let xml = zip_text(&mut archive, "word/comments.xml").ok()?;
-        Some(
-            elements(&xml)
-                .ok()?
+    let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+        // The document reader reports an invalid package itself.
+        return Metadata::default();
+    };
+    if !archive.file_names().any(|name| name == "word/comments.xml") {
+        return Metadata::default();
+    }
+    match zip_text(&mut archive, "word/comments.xml").and_then(|xml| elements(&xml)) {
+        Ok(elements) => comment_warning(
+            elements
                 .iter()
                 .filter(|element| element.name == "comment")
                 .count(),
-        )
-    })()
-    .unwrap_or(0);
-    comment_warning(count)
+        ),
+        Err(message) => Metadata {
+            warnings: vec![format!(
+                "Word review comments could not be recovered: {message}"
+            )],
+            ..Metadata::default()
+        },
+    }
 }
 
 /// An OpenDocument text's comments (`office:annotation`), which the
@@ -431,6 +466,88 @@ mod tests {
         assert_eq!(values[2].attributes["id"], "a");
         assert!(elements("<!DOCTYPE x><x/>").is_err());
     }
+
+    #[test]
+    fn mixed_content_preserves_ancestor_text_without_truncation() {
+        let values = elements("<metadata><description> 前 <b>bold &amp; &#x4E2D;</b><![CDATA[<tail>]]> 后 </description></metadata>").unwrap();
+        let description = values
+            .iter()
+            .find(|item| item.name == "description")
+            .unwrap();
+        assert_eq!(description.text, "前 bold & 中<tail> 后");
+        assert_eq!(values.last().unwrap().text, description.text);
+    }
+
+    #[test]
+    fn aggregate_text_budget_counts_ancestors_and_completed_siblings() {
+        // Four copies of "abc" across two siblings and their parent: 12 bytes.
+        let xml = "<a><b>abc</b><c>abc</c></a>";
+        assert!(elements_with_limits(xml, 12, 3).is_ok());
+        let error = elements_with_limits(xml, 11, 3).err().unwrap();
+        assert!(error.contains("aggregate size limit"));
+        // Three event kinds must consume the same shared byte budget.
+        for xml in [
+            "<a><b>abc</b></a>",
+            "<a><b><![CDATA[abc]]></b></a>",
+            "<a><b>&#x4E2D;</b></a>",
+        ] {
+            assert!(elements_with_limits(xml, 6, 2).is_ok());
+            assert!(elements_with_limits(xml, 5, 2).is_err());
+        }
+    }
+
+    #[test]
+    fn metadata_limits_reject_amplification_before_large_allocations() {
+        let xml = format!(
+            "{}{}{}",
+            "<a>".repeat(255),
+            "x".repeat(1024),
+            "</a>".repeat(255)
+        );
+        assert!(
+            elements_with_limits(&xml, 4096, 256)
+                .err()
+                .unwrap()
+                .contains("aggregate size limit")
+        );
+        assert!(elements_with_limits("<a><b/><c/></a>", 0, 3).is_ok());
+        assert!(
+            elements_with_limits("<a><b/><c/></a>", 0, 2)
+                .err()
+                .unwrap()
+                .contains("element count")
+        );
+        assert!(elements_with_limits("<a><b></b><c/></a>", 0, 2).is_err());
+    }
+
+    #[test]
+    fn docx_comment_parts_warn_on_limits_or_invalid_xml_but_not_when_absent() {
+        let missing = archive(&[("word/document.xml", "<document/>")]);
+        assert!(read(&missing, "docx").warnings.is_empty());
+        let valid = archive(&[(
+            "word/comments.xml",
+            "<comments><comment><text>review</text></comment></comments>",
+        )]);
+        assert_eq!(read(&valid, "docx").warnings.len(), 1);
+        assert!(read(&valid, "docx").warnings[0].contains("1 review comment"));
+        let expanded = format!(
+            "<comments><comment>{}{}{}</comment></comments>",
+            "<a>".repeat(250),
+            "x".repeat(70_000),
+            "</a>".repeat(250)
+        );
+        for (xml, reason) in [
+            ("<comments><comment>", "incomplete package metadata"),
+            (expanded.as_str(), "aggregate size limit"),
+        ] {
+            let bytes = archive(&[("word/comments.xml", xml)]);
+            let metadata = read(&bytes, "docx");
+            assert_eq!(metadata.warnings.len(), 1);
+            assert!(metadata.warnings[0].contains("Word review comments could not be recovered"));
+            assert!(metadata.warnings[0].contains(reason));
+        }
+    }
+
     #[test]
     fn biff_unicode_sheet_name_and_hidden_status() {
         let mut bytes = vec![0x09, 0x08, 2, 0, 0, 6];

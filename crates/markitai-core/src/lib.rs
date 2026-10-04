@@ -952,7 +952,13 @@ pub fn is_url(source: &str) -> bool {
 pub fn convert_json(request: &str) -> String {
     let result = serde_json::from_str::<Request>(request)
         .map_err(|error| ConversionFailure::from(Error::from(error)))
-        .and_then(|r| convert_detailed(&r.source, r.options));
+        .and_then(|r| {
+            if let Some(dir) = r.options.output_dir.as_deref() {
+                validate_json_output_directory(dir)?;
+            }
+            convert_detailed(&r.source, r.options)
+        })
+        .and_then(json_output_value);
     match result {
         Ok(result) => json!({"ok":true,"result":result}).to_string(),
         Err(failure) => {
@@ -966,6 +972,117 @@ pub fn convert_json(request: &str) -> String {
             }
             json!({"ok":false,"error":error}).to_string()
         }
+    }
+}
+
+// JSON paths must be representable before conversion can publish files or incur
+// usage. Native Rust callers may still use arbitrary platform paths.
+fn validate_json_output_directory(path: &Path) -> Result<()> {
+    let path = std::path::absolute(config::expand_home(path))?;
+    let check_unicode = |path: &Path| {
+        path.to_str().map(|_| ()).ok_or_else(|| {
+            Error::InvalidInput("JSON output directories must resolve to UTF-8 paths".into())
+        })
+    };
+    check_unicode(&path)?;
+    // A trusted UTF-8 directory alias can resolve to a non-UTF-8 physical
+    // parent. New descendants do not yet exist; inspect only their ancestors.
+    for ancestor in path.ancestors() {
+        match crate::platform::canonicalize(ancestor) {
+            Ok(physical) => return check_unicode(&physical),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn json_output_value(result: ConversionOutput) -> DetailedResult<Value> {
+    serde_json::to_value(&result).map_err(|_| ConversionFailure {
+        error: Error::Conversion(
+            "Conversion completed but its result could not be encoded as JSON; output files already written are retained".into(),
+        ),
+        usage: result.usage,
+    })
+}
+
+#[cfg(test)]
+mod json_output_tests {
+    use super::*;
+
+    #[test]
+    fn output_preflight_accepts_new_utf8_directories_without_creating_them() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("新目录/nested");
+        validate_json_output_directory(&output).unwrap();
+        assert!(!output.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_preflight_accepts_utf8_directory_aliases() {
+        let root = tempfile::tempdir().unwrap();
+        let physical = root.path().join("physical");
+        std::fs::create_dir(&physical).unwrap();
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&physical, &alias).unwrap();
+        validate_json_output_directory(&alias.join("new/nested")).unwrap();
+        assert!(!physical.join("new").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_paths_fail_preflight_and_serialization_preserves_usage() {
+        use std::os::unix::ffi::OsStringExt;
+        let invalid =
+            std::path::PathBuf::from(std::ffi::OsString::from_vec(b"invalid-\xff".to_vec()));
+        assert!(matches!(
+            validate_json_output_directory(&invalid),
+            Err(Error::InvalidInput(_))
+        ));
+        let result = ConversionOutput {
+            output_path: Some(invalid),
+            usage: types::ConversionUsage {
+                requests: 2,
+                input_tokens: 17,
+                cost_usd: 0.25,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let failure = json_output_value(result).unwrap_err();
+        assert_eq!(failure.code(), "conversion_error");
+        assert!(failure.to_string().contains("already written are retained"));
+        assert_eq!(failure.usage.requests, 2);
+        assert_eq!(failure.usage.input_tokens, 17);
+        assert_eq!(failure.usage.cost_usd, 0.25);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn json_output_alias_to_non_utf8_directory_fails_before_writing() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = tempfile::tempdir().unwrap();
+        let physical = root
+            .path()
+            .join(std::ffi::OsString::from_vec(b"physical-\xff".to_vec()));
+        std::fs::create_dir(&physical).unwrap();
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&physical, &alias).unwrap();
+        let source = root.path().join("note.txt");
+        std::fs::write(&source, "preserve this text").unwrap();
+        let response: Value = serde_json::from_str(&convert_json(
+            &json!({
+                "source": source,
+                "options": { "output_dir": alias.join("new"), "llm": false, "ocr": false }
+            })
+            .to_string(),
+        ))
+        .unwrap();
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_input");
+        assert!(!physical.join("new").exists());
+        assert_eq!(std::fs::read_dir(&physical).unwrap().count(), 0);
     }
 }
 

@@ -16,8 +16,8 @@ once in the `release` profile and takes several minutes.
 
 | Language | Minimum | Build | Result |
 |---|---|---|---|
-| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release` in `bindings/python` | `markitai-1.3.0-cp310-abi3-<platform>.whl` (about 9.8 MB on macOS arm64) |
-| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-1.3.0.tgz` (about 9.6 MB on macOS arm64) |
+| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release` in `bindings/python` | `markitai-1.3.0.dev0-cp310-abi3-<platform>.whl` (about 9.8 MB on macOS arm64) |
+| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-1.3.0-dev.0.tgz` (about 9.6 MB on macOS arm64) |
 | Go | 1.23 with cgo and a C linker | `cargo build --release -p markitai-ffi` | `target/release/libmarkitai_ffi.{dylib,so}` |
 
 A built wheel or npm archive contains the native library for the build
@@ -42,9 +42,9 @@ environment, from `bindings/python`) installs the package in place.
 ```sh
 npm --prefix bindings/node run build       # builds the addon as bindings/node/markitai.node
 mkdir -p dist/node
-(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-1.3.0.tgz
+(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-1.3.0-dev.0.tgz
 cd /path/to/your/project
-npm install /path/to/markitai-rust/dist/node/markitai-1.3.0.tgz
+npm install /path/to/markitai-rust/dist/node/markitai-1.3.0-dev.0.tgz
 node -e "console.log(require('markitai').version)"
 ```
 
@@ -69,6 +69,33 @@ The default build links `target/release/libmarkitai_ffi` dynamically and embeds
 that directory as the runtime search path, so the checkout's `target/release`
 must remain in place; see [Go and C ABI](#go-and-c-abi) for deployment and the
 self-contained static package.
+
+## Version identifiers and adapter differences
+
+The development engine identifies itself as `1.3.0-dev`. Python's
+`markitai.__version__`, Node's exported `version`, Go's `Version()` and the C
+version function report that engine identifier. Distribution metadata uses the
+package manager's spelling: Python `1.3.0.dev0` and npm `1.3.0-dev.0`. These
+strings intentionally differ; compare installed distributions using
+`importlib.metadata.version("markitai")` or npm's package metadata, and use the
+engine identifier for diagnostics. Do not compare these strings for literal
+equality or assume their prerelease ordering is interchangeable.
+
+The conversion wire format is shared; the convenience adapters have these
+language-specific contracts:
+
+| Concern | Python | Node.js | Go |
+|---|---|---|---|
+| Configuration helpers | `markitai.config` exposes typed configuration models; the private native extension supplies JSON normalization/schema operations | Pass the shared `config` object; no configuration/schema helper export | Pass `Options.Config`; no configuration/schema helper export |
+| Failure types | Native codes map to `ValueError`, `FileNotFoundError`, `IsADirectoryError`, `OSError`, `FetchError`, `NoModelConfiguredError` or `ConversionError` | Native failures use `ConversionError`; invalid JavaScript argument shapes use `TypeError` | Native failures use `*ConversionError`; JSON encoding and ABI failures use ordinary Go errors |
+| Omitted options | Keyword options default to `None`; `config=None` loads configured defaults, `{}` selects built-in defaults | Omitted/`undefined` options become `{}`; explicit `null` is rejected | A nil `*Options` is accepted and uses defaults |
+| Blocking and async use | `convert()` refuses an active asyncio loop; use `await aconvert()` | `convertSync()` blocks without an event-loop guard; use `await convert()` to leave the loop available | `Convert()` blocks its goroutine; concurrent calls are supported |
+| Installation source | Build/install a platform wheel | Build/install a platform npm archive | `markitai.local/go` requires a local `replace`; `go get` alone cannot supply the untracked native library |
+
+These are adapter differences, not different document-format implementations.
+The Python `config_json` operation is an implementation interface of `_native`,
+not an equally exposed Node/Go API. See each language section for deployment and
+concurrency limitations.
 
 ## Shared contract
 

@@ -57,7 +57,7 @@ fn identity_backfill_preserves_unknown_and_omission_null_are_distinct() {
     let first = ok(store.mutate(Mutation::Update {
         key: id,
         legacy: false,
-        body: json!({"expected_revision":revision,"model":"openai/new","api_base":null}),
+        body: json!({"expected_revision":revision,"model":"openai/new","api_key":"fixture-secret","api_base":null}),
     }));
     let raw = saved(&store);
     assert_eq!(raw["unknown"], fixture()["unknown"]);
@@ -152,7 +152,7 @@ fn connection_migration_updates_all_matching_rows_then_delete_keeps_other_connec
         key: id,
         revision: current(&store),
         body: Some(
-            json!({"expected_revision":current(&store),"api_key":"env:NEXT","api_base":null}),
+            json!({"expected_revision":current(&store),"api_key":"fixture-next-key","api_base":null}),
         ),
     }));
     let raw = saved(&store);
@@ -163,14 +163,17 @@ fn connection_migration_updates_all_matching_rows_then_delete_keeps_other_connec
     for i in 0..2 {
         assert_eq!(
             raw["llm"]["model_list"][i]["litellm_params"]["api_key"],
-            "env:NEXT"
+            "fixture-next-key"
         );
         assert_eq!(
             raw["llm"]["model_list"][i]["model_info"]["provider_id"],
             provider
         );
     }
-    assert_eq!(ok(store.credentials(&provider))["api_key"], "env:NEXT");
+    assert_eq!(
+        ok(store.credentials(&provider))["api_key"],
+        "fixture-next-key"
+    );
     assert!(ok(store.credentials(&provider))["api_base"].is_null());
     ok(store.mutate(Mutation::Provider {
         key: provider,
@@ -228,9 +231,15 @@ fn probe_and_discovery_resolve_detached_private_values_without_writes() {
         ok(store.resolve_probe(&json!({"model":"openai/old","api_key":"override"})))["api_key"],
         "override"
     );
-    let discovery=ok(store.resolve_discovery(&json!({"provider":"openai","provider_id":format!("legacy:{id}"),"api_base":"http://127.0.0.1/v1","refresh":true})));
+    assert!(store.resolve_discovery(&json!({"provider":"openai","provider_id":format!("legacy:{id}"),"api_base":"http://127.0.0.1/v1","refresh":true})).is_err());
+    let discovery = ok(store.resolve_discovery(
+        &json!({"provider":"openai","provider_id":format!("legacy:{id}"),"refresh":true}),
+    ));
     assert_eq!(discovery["api_key"], "fixture-secret");
-    assert_eq!(discovery["api_base"], "http://127.0.0.1/v1");
+    assert_eq!(
+        discovery["api_base"],
+        fixture()["llm"]["model_list"][0]["litellm_params"]["api_base"]
+    );
     assert_eq!(fs::read(&store.source.path).unwrap(), before);
 }
 #[test]
@@ -505,4 +514,296 @@ fn revision_uses_python_float_notation_at_decimal_and_exponent_boundaries() {
         identity::revision(&models, &[]),
         "a1dcbb94d85b3ece5a60547341a09feebe93d1f79aa1fdcf49461a2bf4bab2b8"
     );
+}
+
+#[test]
+fn http_credentials_reject_environment_references_before_resolution() {
+    let (_dir, store) = setup(fixture());
+    for value in [
+        "env:AUTHORED_CANARY",
+        "env:AUTHORED_MISSING",
+        " env:AUTHORED_CANARY",
+    ] {
+        for field in ["api_key", "api_base"] {
+            let mut discovery = json!({"provider":"openai"});
+            discovery[field] = json!(value);
+            assert_eq!(
+                store
+                    .resolve_discovery(&discovery)
+                    .err()
+                    .unwrap()
+                    .status
+                    .as_u16(),
+                422
+            );
+            let mut probe = json!({"model":"openai/old"});
+            probe[field] = json!(value);
+            assert_eq!(
+                store.resolve_probe(&probe).err().unwrap().status.as_u16(),
+                422
+            );
+            let mut add = json!({"model":"openai/new","model_name":"new"});
+            add[field] = json!(value);
+            assert_eq!(
+                store
+                    .mutate(Mutation::Add(add))
+                    .err()
+                    .unwrap()
+                    .status
+                    .as_u16(),
+                422
+            );
+        }
+    }
+}
+
+#[test]
+fn stored_credentials_bind_provider_and_complete_endpoint() {
+    let (_dir, store) = setup(fixture());
+    let id = store.view()["deployments"][0]["deployment_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for body in [
+        json!({"provider":"anthropic","deployment_id":id}),
+        json!({"provider":"openai","deployment_id":id,"api_base":"http://127.0.0.1:9/v1"}),
+        json!({"provider":"openai","deployment_id":id,"api_base":null}),
+    ] {
+        assert_eq!(
+            store
+                .resolve_discovery(&body)
+                .err()
+                .unwrap()
+                .status
+                .as_u16(),
+            422
+        );
+    }
+    assert!(
+        store
+            .resolve_probe(&json!({"model":"openai/old","api_base":"http://127.0.0.1:9/v1"}))
+            .is_err()
+    );
+    assert!(model::same_base(
+        "openai",
+        Some("https://EXAMPLE.test:443/v1/"),
+        Some("https://example.test/v1")
+    ));
+    assert!(!model::same_base(
+        "openai",
+        Some("https://example.test/v1"),
+        Some("https://example.test/steal")
+    ));
+    assert!(!model::same_base(
+        "openai",
+        Some("https://example.test/v1?tenant=a"),
+        Some("https://example.test/v1?tenant=b")
+    ));
+}
+
+#[test]
+fn explicit_empty_connections_never_select_server_environment() {
+    let (_dir, store) = setup(fixture());
+    for key in [Value::Null, json!(""), json!("own-key")] {
+        let result = ok(store.resolve_discovery(
+            &json!({"provider":"ollama","api_base":"http://127.0.0.1:9","api_key":key}),
+        ));
+        assert_eq!(result["use_environment_credentials"], false);
+        assert_eq!(result["api_key"], key);
+        let result = ok(store.resolve_probe(
+            &json!({"model":"openai/old","api_base":"http://127.0.0.1:9","api_key":key}),
+        ));
+        assert_eq!(result["use_environment_credentials"], false);
+        assert_ne!(result["api_key"], "fixture-secret");
+    }
+    assert_eq!(
+        ok(store.resolve_discovery(&json!({"provider":"ollama","api_base":"http://127.0.0.1:9"})))
+            ["use_environment_credentials"],
+        false
+    );
+}
+
+#[test]
+fn settings_mutations_cannot_retarget_retained_server_keys() {
+    let (_dir, store) = setup(fixture());
+    let id = store.view()["deployments"][0]["deployment_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let before = fs::read(&store.source.path).unwrap();
+    for body in [
+        json!({"api_base":"http://127.0.0.1:9"}),
+        json!({"model":"anthropic/x"}),
+        json!({"api_key":"env:AUTHORED_CANARY"}),
+    ] {
+        let mut body = body;
+        body["expected_revision"] = json!(current(&store));
+        assert!(
+            store
+                .mutate(Mutation::Update {
+                    key: id.clone(),
+                    body,
+                    legacy: false
+                })
+                .is_err()
+        );
+    }
+    for body in [
+        json!({"api_base":"http://127.0.0.1:9"}),
+        json!({"api_key":"env:AUTHORED_CANARY"}),
+    ] {
+        assert!(
+            store
+                .mutate(Mutation::Provider {
+                    key: format!("legacy:{id}"),
+                    body: Some(body),
+                    revision: current(&store)
+                })
+                .is_err()
+        );
+    }
+    assert!(store.mutate(Mutation::Add(json!({"model_name":"leak","model":"openai/old","credential_deployment_id":id,"api_base":"http://127.0.0.1:9"}))).is_err());
+    assert_eq!(fs::read(&store.source.path).unwrap(), before);
+}
+
+#[test]
+fn literal_mode_survives_save_clear_delete_restore_and_reload() {
+    let (_dir, store) = setup(json!({"llm":{"model_list":[]}}));
+    ok(store.mutate(Mutation::Add(json!({"model_name":"local","model":"ollama/test","api_base":"http://127.0.0.1:9911","api_key":null}))));
+    assert_eq!(
+        saved(&store)["llm"]["model_list"][0]["litellm_params"]["use_environment_credentials"],
+        false
+    );
+    ok(store.mutate(Mutation::Delete {
+        key: "local".into(),
+        legacy: true,
+        revision: None,
+    }));
+    let raw = saved(&store);
+    let provider = raw["llm"]["providers"][0]["id"].as_str().unwrap();
+    assert_eq!(
+        raw["llm"]["providers"][0]["use_environment_credentials"],
+        false
+    );
+    ok(store.mutate(Mutation::Add(
+        json!({"model_name":"restored","model":"ollama/test","credential_provider_id":provider}),
+    )));
+    let (_reload_dir, reload) = setup(saved(&store));
+    assert_eq!(
+        ok(reload.resolve_probe(&json!({"model_name":"restored"})))["use_environment_credentials"],
+        false
+    );
+}
+
+#[test]
+fn environment_provider_references_are_named_not_arbitrary_variables() {
+    let (_dir, store) = setup(fixture());
+    let result =
+        ok(store.resolve_discovery(&json!({"provider":"openai","provider_id":"env:openai"})));
+    assert_eq!(result["use_environment_credentials"], true);
+    assert!(result["api_key"].is_null());
+    for id in ["env:AWS_SECRET_ACCESS_KEY", "env:AUTHORED_MISSING", "env:"] {
+        assert_eq!(
+            store
+                .resolve_discovery(&json!({"provider":"openai","provider_id":id}))
+                .err()
+                .unwrap()
+                .status
+                .as_u16(),
+            422
+        );
+    }
+    assert!(
+        store
+            .resolve_discovery(&json!({"provider":"anthropic","provider_id":"env:openai"}))
+            .is_err()
+    );
+    assert!(store.resolve_discovery(&json!({"provider":"openai","provider_id":"env:openai","api_base":"http://127.0.0.1:9"})).is_err());
+    ok(store.mutate(Mutation::Add(json!({"model_name":"known-env","model":"openai/test","credential_provider_id":"env:openai"}))));
+    assert_eq!(
+        saved(&store)["llm"]["model_list"][1]["litellm_params"]["use_environment_credentials"],
+        true
+    );
+}
+
+#[test]
+fn unprefixed_model_keeps_openai_identity_through_save_discovery_and_probe() {
+    let (_dir, store) = setup(json!({"llm":{"model_list":[]}}));
+    let view = ok(store.mutate(Mutation::Add(json!({
+        "model_name":"unprefixed",
+        "model":"fixture-unprefixed",
+        "api_key":"authored-literal-key",
+        "api_base":"http://127.0.0.1:9911/v1"
+    }))));
+    let id = view["deployments"][0]["deployment_id"].as_str().unwrap();
+    let raw = saved(&store);
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["model"],
+        "fixture-unprefixed"
+    );
+    assert_eq!(raw["llm"]["providers"][0]["provider"], "openai");
+    let discovery = ok(store.resolve_discovery(&json!({"provider":"openai","deployment_id":id})));
+    assert_eq!(discovery["api_key"], "authored-literal-key");
+    assert_eq!(discovery["api_base"], "http://127.0.0.1:9911/v1");
+    assert_eq!(discovery["use_environment_credentials"], false);
+    let probe = ok(store.resolve_probe(&json!({"model":"fixture-unprefixed"})));
+    assert_eq!(probe["api_key"], "authored-literal-key");
+    assert_eq!(probe["api_base"], "http://127.0.0.1:9911/v1");
+    assert_eq!(probe["use_environment_credentials"], false);
+    assert!(
+        store
+            .resolve_discovery(&json!({"provider":"anthropic","deployment_id":id}))
+            .is_err()
+    );
+    assert!(
+        store
+            .resolve_probe(
+                &json!({"model":"fixture-unprefixed","api_base":"http://127.0.0.1:9912/v1"})
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn provider_base_updates_cannot_retarget_linked_deployment_overrides() {
+    let original = json!({"llm":{
+        "providers":[{"id":"provider-a","provider":"openai","api_key":"authored-provider-key-a","api_base":"https://endpoint-a.example.test/v1"}],
+        "model_list":[
+            {"model_name":"inherited","litellm_params":{"model":"openai/a"},"model_info":{"id":"inherited-deployment","provider_id":"provider-a"}},
+            {"model_name":"overridden","litellm_params":{"model":"openai/b","api_key":"authored-deployment-key-b","api_base":"https://endpoint-b.example.test/v1"},"model_info":{"id":"overridden-deployment","provider_id":"provider-a"}}
+        ]
+    }});
+    let (_dir, store) = setup(original);
+    let before = fs::read(&store.source.path).unwrap();
+    let revision = current(&store);
+    for endpoint in [
+        "https://endpoint-a.example.test/v1",
+        "https://ENDPOINT-A.example.test:443/v1/",
+    ] {
+        let error = store
+            .mutate(Mutation::Provider {
+                key: "provider-a".into(),
+                revision: revision.clone(),
+                body: Some(json!({"api_base":endpoint})),
+            })
+            .err()
+            .unwrap();
+        assert_eq!(error.status.as_u16(), 422);
+        assert_eq!(current(&store), revision);
+        assert_eq!(fs::read(&store.source.path).unwrap(), before);
+        let probe = ok(store.resolve_probe(&json!({"deployment_id":"overridden-deployment"})));
+        assert_eq!(probe["api_key"], "authored-deployment-key-b");
+        assert_eq!(probe["api_base"], "https://endpoint-b.example.test/v1");
+    }
+    ok(store.mutate(Mutation::Provider {
+        key:"provider-a".into(),
+        revision,
+        body:Some(json!({"api_base":"https://endpoint-a.example.test/v1","api_key":"authored-explicit-replacement"})),
+    }));
+    for id in ["inherited-deployment", "overridden-deployment"] {
+        let probe = ok(store.resolve_probe(&json!({"deployment_id":id})));
+        assert_eq!(probe["api_key"], "authored-explicit-replacement");
+        assert_eq!(probe["api_base"], "https://endpoint-a.example.test/v1");
+        assert_eq!(probe["use_environment_credentials"], false);
+    }
 }

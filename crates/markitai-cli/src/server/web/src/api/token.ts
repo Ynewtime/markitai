@@ -1,6 +1,7 @@
 // The service access token. It arrives in the URL fragment of the launch link
 // (`#token=`; `?token=` is still accepted), is removed from the address bar at
-// once and kept only for this tab's session. Loopback visitors need none.
+// once and kept only for this tab's session. Local and remote API calls both
+// authenticate unless the operator explicitly starts the service with --no-auth.
 
 export const TOKEN_KEY = "markitai.service-token";
 

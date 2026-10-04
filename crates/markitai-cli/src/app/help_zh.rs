@@ -615,19 +615,19 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
     (
         "serve",
         "host",
-        "监听的网卡地址。本机以外的客户端需要启动时打印的访问令牌（或 MARKITAI_SERVE_TOKEN）",
+        "监听的网卡地址。所有 API 客户端都需要启动时打印的访问令牌（或 MARKITAI_SERVE_TOKEN）",
     ),
     ("serve", "port", "监听端口"),
     ("serve", "no_open", "启动后不打开浏览器"),
     (
         "serve",
         "no_auth",
-        "不要求其他机器提供访问令牌。它们将可以上传文件、读取或删除历史；URL 转换和模型设置仍对它们关闭",
+        "关闭 API 令牌验证。远程客户端可以上传文件、读取或删除历史；URL 转换和模型设置需要直接本机连接",
     ),
     (
         "serve",
         "allowed_host",
-        "同时接受 Host/Origin 头里的这个名称（可重复）；localhost 和 IP 地址始终接受",
+        "同时允许此主机名的 Host/Origin（可重复）；本地主机的 Origin 仍须匹配请求端口",
     ),
 ];
 

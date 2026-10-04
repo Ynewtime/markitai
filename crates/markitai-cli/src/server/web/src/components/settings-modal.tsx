@@ -22,6 +22,7 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import { useModal } from "../hooks/use-modal.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
+import { CredentialInputError, deploymentCredentials, detectedDeployment, discoveryRequest, providerDraft, providerUpdate, type ProviderDraft } from "../lib/provider-credentials.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker } from "./model-picker.tsx";
@@ -147,6 +148,10 @@ export function SettingsModal({
   /** A failed write. A revision conflict reloads the lists but keeps the draft and its revision. */
   const fail = async (error: unknown) => {
     setListNote(null);
+    if (error instanceof CredentialInputError) {
+      setListError({ text: error.reason === "environment_reference" ? t.literalCredentialsOnly : t.endpointKeyRequired, detail: "" });
+      return;
+    }
     if (isRevisionConflict(error)) {
       try {
         setSettings(await fetchSettings());
@@ -258,7 +263,7 @@ export function SettingsModal({
   const saveDetected = async (deployment: Deployment) => {
     if (revision === null) return;
     try {
-      accept(await addDeployments(revision, [{ model_name: deployment.routing_group, model: deployment.model, weight: deployment.weight }]));
+      accept(await addDeployments(revision, [detectedDeployment(deployment)]));
       announce(t.saved);
     } catch (error) {
       await fail(error);
@@ -266,18 +271,25 @@ export function SettingsModal({
   };
 
   // ---- a saved provider's credentials. Unchanged fields are not sent (kept);
-  // a field emptied on purpose is sent as null (cleared).
+  // clearing a key is an explicit choice; blank input preserves the server key.
   const [provEdit, setProvEdit] = useState<ProviderCard | null>(null);
   const [provKey, setProvKey] = useState("");
   const [provBase, setProvBase] = useState("");
-  const [provLoaded, setProvLoaded] = useState<{ key: string; base: string; placeholder: string } | null>(null);
+  const [provLoaded, setProvLoaded] = useState<ProviderDraft | null>(null);
+  const [provClear, setProvClear] = useState(false);
   const [provBusy, setProvBusy] = useState(false);
   const provRequest = useRef(0);
+  useEffect(() => {
+    if (!provEdit || !provLoaded) return;
+    const frame = requestAnimationFrame(() => card.current?.querySelector<HTMLElement>("#provider-editor-title")?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [provEdit, provLoaded]);
   const openProvider = async (connection: ProviderCard) => {
     if (connection.provider_id === undefined) return;
     const request = ++provRequest.current;
     setProvEdit(connection);
     setProvKey("");
+    setProvClear(false);
     setProvBase("");
     setProvLoaded(null);
     setEditing(null);
@@ -285,9 +297,9 @@ export function SettingsModal({
     try {
       const credentials = await fetchCredentials(connection.provider_id);
       if (request !== provRequest.current) return;
-      setProvKey(credentials.api_key ?? "");
-      setProvBase(credentials.api_base ?? "");
-      setProvLoaded({ key: credentials.api_key ?? "", base: credentials.api_base ?? "", placeholder: credentials.api_base_placeholder ?? "" });
+      const draft = providerDraft(credentials);
+      setProvBase(draft.base);
+      setProvLoaded(draft);
     } catch (error) {
       if (request !== provRequest.current) return;
       setProvEdit(null);
@@ -301,9 +313,13 @@ export function SettingsModal({
   };
   const saveProvider = async () => {
     if (!provEdit?.provider_id || !provLoaded || revision === null || provBusy) return;
-    const body: Record<string, unknown> = { expected_revision: revision };
-    if (provKey.trim() !== provLoaded.key) body.api_key = provKey.trim() === "" ? null : provKey.trim();
-    if (provBase.trim() !== provLoaded.base) body.api_base = provBase.trim() === "" ? null : provBase.trim();
+    let body: Record<string, unknown>;
+    try {
+      body = providerUpdate(provLoaded, provKey, provBase, provClear, revision);
+    } catch (error) {
+      await fail(error);
+      return;
+    }
     if (Object.keys(body).length === 1) {
       closeProvider();
       return;
@@ -364,11 +380,6 @@ export function SettingsModal({
     (autoLoads ||
       (needsBase ? draftBase.trim() !== "" && (!keyRequired || draftKey.trim() !== "") : !keyRequired || draftKey.trim() !== ""));
 
-  const linked = (connection: ProviderCard) => ({
-    ...(connection.provider_id === undefined || connection.provider_id.startsWith("legacy:") ? {} : { provider_id: connection.provider_id }),
-    ...(connection.deployment_id === undefined ? {} : { deployment_id: connection.deployment_id }),
-  });
-
   const resetAdd = () => {
     setAdding(false);
     setProvider(null);
@@ -400,7 +411,7 @@ export function SettingsModal({
   const choose = (next: ProviderCard) => {
     setProvider(next);
     closeProvider();
-    setDraftKey(next.credential ?? "");
+    setDraftKey("");
     setDraftBase("");
     setDiscovery(null);
     setSelected(new Set());
@@ -413,13 +424,7 @@ export function SettingsModal({
     setDiscovering(true);
     setListError(null);
     try {
-      const result = await discoverModels({
-        provider: provider.provider,
-        ...linked(provider),
-        ...(draftKey.trim() ? { api_key: draftKey.trim() } : {}),
-        ...(draftBase.trim() ? { api_base: draftBase.trim() } : {}),
-        refresh,
-      });
+      const result = await discoverModels(discoveryRequest(provider, draftKey, draftBase, refresh));
       setDiscovery(result);
       const available = new Set(result.models.map((candidate) => candidate.model));
       setSelected((previous) => new Set([...previous].filter((model) => available.has(model))));
@@ -439,17 +444,19 @@ export function SettingsModal({
 
   const addSelected = async () => {
     if (!provider || !selected.size || revision === null || addBusy) return;
+    let credentials: Partial<NewDeployment>;
+    try {
+      credentials = deploymentCredentials(provider, draftKey, draftBase);
+    } catch (error) {
+      await fail(error);
+      return;
+    }
     setAddBusy(true);
     const deployments: NewDeployment[] = [...selected].map((model) => ({
       model_name: group.trim() || "default",
       model,
       weight,
-      provider: provider.provider,
-      ...(provider.provider_id === undefined || provider.provider_id.startsWith("legacy:") ? {} : { credential_provider_id: provider.provider_id }),
-      ...(provider.deployment_id === undefined ? {} : { credential_deployment_id: provider.deployment_id }),
-      ...(!existing && draftKey.trim() ? { api_key: draftKey.trim() } : {}),
-      ...(!existing && draftBase.trim() ? { api_base: draftBase.trim() } : {}),
-      ...(existing && provider.kind === "environment" && draftKey.trim() ? { api_key: draftKey.trim() } : {}),
+      ...credentials,
     }));
     try {
       accept(await addDeployments(revision, deployments));
@@ -551,15 +558,15 @@ export function SettingsModal({
         void saveProvider();
       }}
     >
-      <h3 class="group-title">{t.editProvider(providerLabel(t, provEdit))}</h3>
+      <h3 id="provider-editor-title" tabIndex={-1} class="group-title">{t.editProvider(providerLabel(t, provEdit))}</h3>
       <div class="field-grid">
         <Secret
           t={t}
           id="provider-key"
           label={t.setApiKey}
           value={provKey}
-          placeholder={provLoaded ? t.setKeyPh : t.loading}
-          disabled={!provLoaded}
+          placeholder={provLoaded ? (provLoaded.configured ? t.serverKeyKept : t.setKeyPh) : t.loading}
+          disabled={!provLoaded || provClear}
           onInput={setProvKey}
         />
         <div class="field">
@@ -571,7 +578,7 @@ export function SettingsModal({
             type="url"
             inputMode="url"
             value={provBase}
-            placeholder={provLoaded ? provLoaded.placeholder || t.setBasePh : t.loading}
+            placeholder={provLoaded ? (provLoaded.baseRetained ? t.serverBaseKept : provLoaded.placeholder || t.setBasePh) : t.loading}
             disabled={!provLoaded}
             autoComplete="off"
             spellcheck={false}
@@ -579,6 +586,11 @@ export function SettingsModal({
           />
         </div>
       </div>
+      <p class="dialog-dim">{t.endpointKeyRequired}</p>
+      <label class="field-label">
+        <input type="checkbox" checked={provClear} disabled={!provLoaded || provBusy} onChange={(event) => { setProvClear(event.currentTarget.checked); setProvKey(""); }} />
+        {" "}{t.clearSavedKey}
+      </label>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary" disabled={provBusy || !provLoaded}>
           {provBusy ? t.saving : t.save}
@@ -706,7 +718,7 @@ export function SettingsModal({
                           {t.setApiKey}
                           {keyRequired && <span class="field-required">{t.requiredField}</span>}
                         </span>
-                        <input type="password" value={draftKey} placeholder={t.providerKeyPh(provider.key_variable ?? null, provider.provider)} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
+                        <input type="password" value={draftKey} placeholder={t.setKeyPh} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
                       </label>
                       {needsBase && (
                         <label class="field">

@@ -90,3 +90,8 @@ docs/validation/linux-desktop-proxy-round38/packages.txt -text
 *.so binary
 *.sqlite binary
 *.wasm binary
+
+# Historical validation evidence and source snapshots are retained for auditing,
+# but should not count as current product code in GitHub language statistics.
+# Keep them in git archives: native packaging still uses validation drivers.
+docs/validation/** linguist-generated=true

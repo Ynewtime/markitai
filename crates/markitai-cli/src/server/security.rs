@@ -38,8 +38,25 @@ fn hostname(value: &str) -> Option<String> {
             .to_ascii_lowercase(),
     )
 }
-fn local(host: &str) -> bool {
-    host == "localhost" || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+fn origin_url(value: &str) -> Option<url::Url> {
+    let url = url::Url::parse(value).ok()?;
+    (["http", "https"].contains(&url.scheme())
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none())
+    .then_some(url)
+}
+
+fn same_authority(origin: &url::Url, host: &str) -> bool {
+    // Host carries no scheme. For a TLS-terminating proxy, use the browser's
+    // scheme to interpret an omitted default port; never trust forwarding headers.
+    origin_url(&format!("{}://{host}/", origin.scheme())).is_some_and(|target| {
+        origin.host_str() == target.host_str()
+            && origin.port_or_known_default() == target.port_or_known_default()
+    })
 }
 pub(super) fn allowed_host(value: &str) -> ApiResult<String> {
     let host = hostname(value)
@@ -79,7 +96,10 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip());
-    let loopback = peer.is_some_and(|ip| ip.is_loopback());
+    let forwarded = ["forwarded", "x-forwarded-for", "x-real-ip"]
+        .iter()
+        .any(|name| request.headers().contains_key(*name));
+    let loopback = !forwarded && peer.is_some_and(|ip| ip.to_canonical().is_loopback());
     let header = request
         .headers()
         .get("authorization")
@@ -109,7 +129,6 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
     // it was issued for (see `tickets`); any other use spends it for nothing.
     if api
         && state.token.is_some()
-        && !loopback
         && !authenticated
         && let Some(ticket) = parameter("ticket")
     {
@@ -128,7 +147,7 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
             .into_response();
         }
     }
-    if api && state.token.is_some() && !loopback && !authenticated {
+    if api && state.token.is_some() && !authenticated {
         return ApiError::new(
             401,
             "token_required",
@@ -136,11 +155,8 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
         )
         .into_response();
     }
-    let host = request
-        .headers()
-        .get("host")
-        .and_then(|v| v.to_str().ok())
-        .and_then(hostname);
+    let authority = request.headers().get("host").and_then(|v| v.to_str().ok());
+    let host = authority.and_then(hostname);
     if host.as_deref().is_none_or(|host| {
         !(host == "localhost"
             || host.parse::<IpAddr>().is_ok()
@@ -156,19 +172,14 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
     if !matches!(request.method().as_str(), "GET" | "HEAD" | "OPTIONS")
         && let Some(origin) = request.headers().get("origin")
     {
-        let origin_host = origin
-            .to_str()
-            .ok()
-            .and_then(|value| url::Url::parse(value).ok())
-            .filter(|url| ["http", "https"].contains(&url.scheme()))
-            .and_then(|url| {
-                url.host_str()
-                    .map(|s| s.trim_matches(['[', ']']).to_ascii_lowercase())
-            });
-        if origin_host.as_deref().is_none_or(|origin| {
-            !(local(origin)
-                || state.allowed_hosts.contains(origin)
-                || host.as_deref() == Some(origin))
+        let origin = origin.to_str().ok().and_then(origin_url);
+        if origin.as_ref().is_none_or(|origin| {
+            let name = origin
+                .host_str()
+                .unwrap_or_default()
+                .trim_matches(['[', ']']);
+            !(state.allowed_hosts.contains(name)
+                || authority.is_some_and(|host| same_authority(origin, host)))
         }) {
             return ApiError::new(
                 403,
@@ -178,7 +189,8 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
             .into_response();
         }
     }
-    if settings_path(request.uri().path()) && !(loopback || authenticated) {
+    let trusted = authenticated || (state.token.is_none() && loopback);
+    if settings_path(request.uri().path()) && !trusted {
         return ApiError::new(
             403,
             "settings_forbidden",
@@ -196,9 +208,7 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
         return ApiError::new(413, "request_too_large", "request exceeds upload limit")
             .into_response();
     }
-    request
-        .extensions_mut()
-        .insert(Trusted(loopback || authenticated));
+    request.extensions_mut().insert(Trusted(trusted));
     next.run(request).await
 }
 
@@ -455,10 +465,10 @@ mod router_tests {
             checked(
                 router.clone(),
                 request("GET", "/api/probe", "127.0.0.1:4321", &[], ""),
-                200
+                401
             )
-            .await["trusted"],
-            true
+            .await["reason"],
+            "token_required"
         );
         assert_eq!(
             checked(
@@ -493,6 +503,124 @@ mod router_tests {
             200,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn local_and_proxied_clients_authenticate_even_on_a_loopback_listener() {
+        let temp = tempfile::tempdir().unwrap();
+        let router = app(temp.path(), Some("private-test-token"));
+        for peer in ["127.0.0.1:4321", "[::1]:4321", "[::ffff:127.0.0.1]:4321"] {
+            for forwarding in [
+                None,
+                Some("forwarded"),
+                Some("x-forwarded-for"),
+                Some("x-real-ip"),
+            ] {
+                let mut headers = Vec::new();
+                if let Some(name) = forwarding {
+                    headers.push((name, "127.0.0.1"));
+                }
+                for path in ["/api/probe", "/api/settings/llm"] {
+                    let error = checked(
+                        router.clone(),
+                        request("GET", path, peer, &headers, ""),
+                        401,
+                    )
+                    .await;
+                    assert_eq!(error["reason"], "token_required");
+                }
+                headers.push(("authorization", "Bearer private-test-token"));
+                let value = checked(
+                    router.clone(),
+                    request("GET", "/api/probe", peer, &headers, ""),
+                    200,
+                )
+                .await;
+                assert_eq!(value["trusted"], true);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn no_auth_trust_is_canonical_loopback_without_forwarding_headers() {
+        let temp = tempfile::tempdir().unwrap();
+        let router = app(temp.path(), None);
+        let peer = "[::ffff:127.0.0.1]:4321";
+        assert_eq!(
+            checked(
+                router.clone(),
+                request("GET", "/api/probe", peer, &[], ""),
+                200
+            )
+            .await["trusted"],
+            true
+        );
+        for name in ["forwarded", "x-forwarded-for", "x-real-ip"] {
+            let headers = [(name, "127.0.0.1")];
+            assert_eq!(
+                checked(
+                    router.clone(),
+                    request("GET", "/api/probe", peer, &headers, ""),
+                    200
+                )
+                .await["trusted"],
+                false
+            );
+            checked(
+                router.clone(),
+                request("GET", "/api/settings/llm", peer, &headers, ""),
+                403,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn mutation_origins_are_complete_authorities_not_arbitrary_localhost_ports() {
+        let temp = tempfile::tempdir().unwrap();
+        let router = app(temp.path(), None);
+        for origin in [
+            "http://127.0.0.1:3000",
+            "http://localhost:3600",
+            "http://[::1]:3600",
+            "null",
+            "file://localhost/",
+            "http://user@127.0.0.1:3600",
+            "http://127.0.0.1:3600/other",
+            "http://127.0.0.1:3600/?x=1",
+            "http://127.0.0.1:3600/#fragment",
+            "https://user@trusted.example",
+        ] {
+            let error = checked(
+                router.clone(),
+                request(
+                    "POST",
+                    "/api/probe",
+                    "127.0.0.1:4321",
+                    &[("origin", origin)],
+                    "",
+                ),
+                403,
+            )
+            .await;
+            assert_eq!(error["reason"], "origin_not_allowed", "{origin}");
+        }
+        for (origin, host) in [
+            ("http://127.0.0.1:3600", "127.0.0.1:3600"),
+            ("http://localhost", "localhost:80"),
+            ("http://[::1]:3600", "[::1]:3600"),
+            ("https://trusted.example", "trusted.example"),
+        ] {
+            let mut req = request(
+                "POST",
+                "/api/probe",
+                "127.0.0.1:4321",
+                &[("origin", origin)],
+                "",
+            );
+            req.headers_mut().insert("host", host.parse().unwrap());
+            checked(router.clone(), req, 200).await;
+        }
     }
 
     #[tokio::test]
@@ -562,7 +690,7 @@ mod router_tests {
         checked(router.clone(), request("POST", &url, peer, &[], ""), 401).await;
         checked(router.clone(), request("GET", &url, peer, &[], ""), 401).await;
 
-        // A trusted loopback request does not spend it.
+        // Loopback also redeems a ticket exactly once.
         let url = issue(router.clone()).await["url"]
             .as_str()
             .unwrap()
@@ -573,7 +701,7 @@ mod router_tests {
             200,
         )
         .await;
-        checked(router.clone(), request("GET", &url, peer, &[], ""), 200).await;
+        checked(router.clone(), request("GET", &url, peer, &[], ""), 401).await;
 
         // Only download routes can be named.
         for path in [

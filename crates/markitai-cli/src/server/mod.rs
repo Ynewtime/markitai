@@ -107,7 +107,8 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
 
 async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Result<(), String> {
     let root = markitai_core::config::home().join("serve/jobs");
-    store::private_dir(&root).map_err(|e| e.to_string())?;
+    let service_lock = store::service_lock(&root).map_err(|e| e.to_string())?;
+    store::clean_uploads(&root, &service_lock).map_err(|e| e.to_string())?;
     let (shutdown, _) = watch::channel(false);
     let token = if options.no_auth {
         None

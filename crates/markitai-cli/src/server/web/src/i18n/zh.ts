@@ -352,21 +352,12 @@ export const zh: Dict = {
   setModel: "模型",
   setApiKey: "API key",
   setApiBase: "API 地址",
-  setKeyPh: "sk-… 或 env:OPENAI_API_KEY",
-  providerKeyPh: (variable, provider = "") =>
-    `sk-… 或 env:${
-      variable ??
-      (
-        {
-          anthropic: "ANTHROPIC_API_KEY",
-          azure: "AZURE_API_KEY",
-          deepseek: "DEEPSEEK_API_KEY",
-          gemini: "GEMINI_API_KEY",
-          openrouter: "OPENROUTER_API_KEY",
-        } as Record<string, string>
-      )[provider] ??
-      "OPENAI_API_KEY"
-    }`,
+  setKeyPh: "输入 API key",
+  serverKeyKept: "保留服务器已存凭据",
+  serverBaseKept: "保留服务器已存地址",
+  clearSavedKey: "移除已存 API key",
+  endpointKeyRequired: "更改 API 地址时，请输入新的 API key，或明确选择移除已存密钥。",
+  literalCredentialsOnly: "请输入实际的 API key 和地址；环境变量引用只能在服务器配置文件中设置。",
   setBasePh: "可选",
   revealField: (label) => `显示${label}`,
   concealField: (label) => `隐藏${label}`,

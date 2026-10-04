@@ -100,7 +100,7 @@ async fn probe(ExtractState(state): ExtractState<Arc<State>>, request: Request) 
     };
     response(network(request, true).await)
 }
-async fn network(request: Value, is_probe: bool) -> ApiResult<Value> {
+async fn network(mut request: Value, is_probe: bool) -> ApiResult<Value> {
     static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
     let permit = SLOTS
         .get_or_init(|| Arc::new(Semaphore::new(8)))
@@ -113,12 +113,24 @@ async fn network(request: Value, is_probe: bool) -> ApiResult<Value> {
                 "Too many provider requests are active",
             )
         })?;
+    // This marker is produced by the settings resolver, never accepted from JSON clients.
+    let use_environment = request
+        .as_object_mut()
+        .and_then(|request| request.remove("use_environment_credentials"))
+        .and_then(|value| value.as_bool())
+        == Some(true);
     let task = crate::task::blocking(move || {
         let _permit = permit;
         if is_probe {
-            markitai_core::provider_management::probe(&request)
-        } else {
+            if use_environment {
+                markitai_core::provider_management::probe(&request)
+            } else {
+                markitai_core::provider_management::probe_explicit(&request)
+            }
+        } else if use_environment {
             markitai_core::provider_management::discover(&request)
+        } else {
+            markitai_core::provider_management::discover_explicit(&request)
         }
     });
     match tokio::time::timeout(Duration::from_secs(if is_probe { 30 } else { 20 }), task).await {

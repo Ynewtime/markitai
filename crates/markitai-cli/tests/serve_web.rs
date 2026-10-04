@@ -30,7 +30,9 @@ impl Server {
         }
         let mut child = command
             .current_dir(root)
+            .env("HOME", root.join("home"))
             .env("MARKITAI_HOME", root.join("home"))
+            .env("MARKITAI_SERVE_TOKEN", "authored-serve-web-test-token")
             .args([
                 "-c",
                 "config.json",
@@ -110,6 +112,13 @@ impl Server {
         let mut head = format!(
             "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: 0\r\n"
         );
+        if path.starts_with("/api/")
+            && !extra
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+        {
+            head.push_str("Authorization: Bearer authored-serve-web-test-token\r\n");
+        }
         for (name, value) in extra {
             head.push_str(&format!("{name}: {value}\r\n"));
         }
@@ -182,6 +191,13 @@ fn the_workbench_shell_is_served_at_home_and_workspace_addresses() {
 fn the_openapi_document_and_the_download_ticket_route_are_served() {
     let directory = tempfile::tempdir().unwrap();
     let server = Server::start(directory.path());
+    assert_eq!(
+        server
+            .send("GET", "/api/openapi.json", None, &[("Authorization", "")])
+            .0,
+        401,
+        "loopback API access still requires the token"
+    );
     let (status, headers, body) = server.request("GET", "/api/openapi.json", None);
     assert_eq!(status, 200);
     assert_eq!(headers["content-type"], "application/json");

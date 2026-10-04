@@ -43,7 +43,7 @@ For example, a batch request contains `expected_revision` and `deployments`:
     {
       "model_name": "default",
       "model": "openai/my-model",
-      "api_key": "env:OPENAI_API_KEY"
+      "credential_provider_id": "env:openai"
     }
   ]
 }
@@ -57,6 +57,29 @@ and provider arrays, including order, defaults explicitly present and unknown
 fields; secret values contribute to the hash but are never returned in the view.
 
 ## Credentials and partial updates
+
+HTTP `api_key` and `api_base` fields accept literal values only: client `env:`
+references are rejected before any environment lookup. Server configuration files
+may still use them. Discovery can select a saved `provider_id`/`deployment_id`, or
+a known environment card such as `provider_id: "env:openai"`; adding a deployment
+uses `credential_provider_id`/`credential_deployment_id`. Environment card IDs are
+catalog provider names, never arbitrary environment variable names.
+
+A server credential is bound to its provider and full configured endpoint.
+Changing the provider or endpoint requires an explicit replacement key or
+`api_key: null`; changing the endpoint without either returns 422. Default ports
+and trailing slashes may normalize, but paths and query strings still matter.
+An implicit server endpoint cannot be replaced with a client-supplied URL.
+Custom endpoints without credential references use only the caller's literal key;
+they do not borrow the server's default key or a different saved model's key.
+Literal/cleared connections persist `use_environment_credentials: false` so
+later conversions and restarts preserve that boundary. This internal setting is
+not accepted in HTTP requests; old server configuration retains its environment
+fallback unless the flag is explicitly false.
+
+The workbench leaves the key input blank when editing a saved connection. Blank
+means keep; the clear-key checkbox explicitly removes it. Stored values and
+references are never copied into editable key inputs or echoed in updates.
 
 Omitting a patch field keeps it. Explicit `null` clears `api_key` or `api_base`;
 an empty provider credential field is invalid. Model names cannot be null. Weight
@@ -81,10 +104,10 @@ returns the raw stored fields, including an `env:NAME` reference rather than its
 resolved value. `api_base_placeholder` is separate, so editing a key does not
 accidentally persist a default endpoint as an override.
 
-All settings responses, including errors, use `Cache-Control: no-store`. Actual
-loopback peers and clients with the valid server token may access settings. An
-unauthenticated remote peer receives 401; even `--no-auth` does not grant remote
-settings access. Host and Origin checks still apply. Config open affects the
+All settings responses, including errors, use `Cache-Control: no-store`. Every
+client, including loopback and same-host reverse proxies, needs the server token.
+With explicit `--no-auth`, only a direct loopback peer without forwarding headers
+may access settings; remote settings access remains blocked. Host and Origin checks still apply. Config open affects the
 server host, not a remote client's machine; a missing file returns 404.
 
 ## Publication and limits

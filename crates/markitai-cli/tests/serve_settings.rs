@@ -203,7 +203,20 @@ fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
             .unwrap()
             .starts_with("legacy-")
     );
-    let(status,view)=server.request("POST","/api/settings/llm/deployments/batch",Some(json!({"expected_revision":rev(&view),"deployments":[{"model_name":"pool","model":"openai/one","api_key":"env:AUTHOR_NEW","api_base":"https://user:password@example.test/private?token=secret"},{"model_name":"pool","model":"openai/two","api_key":"env:AUTHOR_NEW","api_base":"https://user:password@example.test/private?token=secret"}]})));
+    // Configuration files may retain env references; HTTP clients may not add them.
+    let before_rejected_request = fs::read(dir.path().join("config.json")).unwrap();
+    let (status, error) = server.request(
+        "POST",
+        "/api/settings/llm/models",
+        Some(json!({"expected_revision":rev(&view),"model_name":"rejected-env","model":"openai/rejected","api_key":"env:AUTHOR_NEW"})),
+    );
+    assert_eq!(status, 422, "{error}");
+    assert_eq!(rev(&server.view()), rev(&view));
+    assert_eq!(
+        fs::read(dir.path().join("config.json")).unwrap(),
+        before_rejected_request
+    );
+    let(status,view)=server.request("POST","/api/settings/llm/deployments/batch",Some(json!({"expected_revision":rev(&view),"deployments":[{"model_name":"pool","model":"openai/one","api_key":"authored-new-key","api_base":"https://user:password@example.test/private?token=secret"},{"model_name":"pool","model":"openai/two","api_key":"authored-new-key","api_base":"https://user:password@example.test/private?token=secret"}]})));
     assert_eq!(status, 200, "{view}");
     assert_eq!(view["deployments"].as_array().unwrap().len(), 3);
     for entry in view["deployments"].as_array().unwrap() {
@@ -231,7 +244,7 @@ fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
         .unwrap();
     let provider = card["provider_id"].as_str().unwrap();
     assert_eq!(card["api_base"], "https://example.test");
-    assert!(!cards.to_string().contains("AUTHOR_NEW"));
+    assert!(!cards.to_string().contains("authored-new-key"));
     assert!(!cards.to_string().contains("private"));
     let (status, credentials) = server.request(
         "GET",
@@ -239,7 +252,7 @@ fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
         None,
     );
     assert_eq!(status, 200);
-    assert_eq!(credentials["api_key"], "env:AUTHOR_NEW");
+    assert_eq!(credentials["api_key"], "authored-new-key");
     assert_eq!(
         credentials["api_base"],
         "https://user:password@example.test/private?token=secret"
@@ -247,7 +260,7 @@ fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
     let (status, view) = server.request(
         "PATCH",
         &format!("/api/settings/llm/providers/{provider}"),
-        Some(json!({"expected_revision":rev(&view),"api_base":null,"api_key":"env:REPLACED"})),
+        Some(json!({"expected_revision":rev(&view),"api_base":null,"api_key":"authored-replacement-key"})),
     );
     assert_eq!(status, 200, "{view}");
     let model_id = view["deployments"][1]["deployment_id"].as_str().unwrap();

@@ -24,7 +24,7 @@ parameters, request bodies, response schemas, the error body and its `reason`
 codes, and the three ways to authenticate (`bearerAuth`, `tokenQuery`,
 `ticketQuery`). It is the same document a code generator or API explorer can
 read; its `info.version` is the running build's version. It needs the same
-authentication as the rest of `/api/` (none for a loopback peer). The document is
+authentication as the rest of `/api/`, including loopback clients. The document is
 written by hand (`crates/markitai-cli/src/server/openapi.json`); module tests fail
 when a route is served but not described, or described but not served, when a
 path parameter is undeclared, a reference dangles, or the service writes a
@@ -271,6 +271,25 @@ do not grant ownership.
 
 ## History and persistence
 
+Only one `serve` process may use a given `MARKITAI_HOME` at a time. A private
+OS lock is held through shutdown and worker draining; a second process fails
+before recovery or upload cleanup. Use distinct state directories for independent
+servers. Stop all old-version servers before upgrading: older releases do not
+participate in this lifetime-lock protocol.
+
+At startup, a persisted running job becomes visible terminal history. Its queued
+or running items receive `error_code: "interrupted"` and can be retried or deleted;
+recorded successful and failed items retain their results. Uploaded originals and
+all existing output bytes are kept. Unrecorded files do not establish a successful
+conversion or recover missing usage/cost observations. Jobs are never rerun
+automatically.
+
+Startup also removes service-owned upload stages older than 24 hours, while
+holding the lifetime lock. Only stages with the current ownership marker and
+safe, owned regular contents qualify. Recent stages, unknown or unsafe entries,
+and old unmarked `.upload-*` directories are retained; their names alone are not
+proof of ownership. Normal publication removes the staging marker.
+
 Jobs live below `MARKITAI_HOME/serve/jobs/<12-hex-id>/`, containing private
 `uploads/`, `out/`, and an atomically replaced `meta.json`. Job, upload and output root directories use mode
 0700 and generated metadata/uploads use mode 0600 on Unix. Current server
@@ -316,11 +335,12 @@ leave an incomplete job.
 
 ## Network and file boundaries
 
-Loopback peers are trusted according to their actual socket address. Other API
-clients require the startup token through `Authorization: Bearer …` or `?token=`;
-`MARKITAI_SERVE_TOKEN` can supply that token. Forwarding headers do not grant
-trust. `--no-auth` disables the token requirement, but unauthenticated nonloopback
-URL conversion is explicitly rejected: a full DNS/redirect-aware public-network
+Every API client requires the startup token through `Authorization: Bearer …`
+or `?token=`, including clients on this computer and same-host reverse proxies.
+`MARKITAI_SERVE_TOKEN` can supply that token. `--no-auth` explicitly disables
+this requirement. In that mode only a direct canonical loopback peer without
+`Forwarded`, `X-Forwarded-For` or `X-Real-IP` headers receives URL/settings trust;
+other clients cannot submit URL conversions: a full DNS/redirect-aware public-network
 fetch policy has not been implemented. Such clients may still upload files and
 access/delete history, so expose this mode only as intended by its operator.
 
@@ -336,13 +356,13 @@ one GET of that path within 60 seconds. Only the ticket's SHA-256 is held, at mo
 64 tickets are outstanding (429 `too_many_tickets`), and a path outside those three
 download routes is 422 `invalid_ticket_path`. A ticket presented a second time,
 after it expired, for another path or with another method is spent and refused
-with 401 `ticket_invalid`; a loopback request ignores it. A ticket never grants
+with 401 `ticket_invalid`; loopback clients also redeem tickets exactly once. A ticket never grants
 settings access and never lets the startup token into a URL. The event stream
 `GET /api/jobs/{job_id}/events` takes the header like any other request (a
 fetch-based reader can send it; the browser's EventSource cannot).
 
-All model settings endpoints additionally require a loopback peer or valid token,
-including with `--no-auth`. Every settings response, including rejected requests,
+All model settings endpoints require the token by default. With `--no-auth`,
+only direct loopback peers without forwarding headers can access settings. Every settings response, including rejected requests,
 carries `Cache-Control: no-store`. Static UI bootstrap remains accessible under
 the Host policy so a remote user can enter a service token. Browser launch places
 the token in the URL fragment; the UI removes it immediately and sends every
@@ -352,7 +372,12 @@ token. Credentials are retrieved only through the explicit connection-edit route
 and are never stored by the browser workbench.
 
 Host validation accepts localhost, IP literals, and explicit `--allowed-host`
-entries. State-changing requests with an Origin must satisfy the origin policy.
+entries. A state-changing request with an Origin must match the request Host
+and effective port, or an explicitly allowed hostname. Another localhost port
+is a separate origin; userinfo, non-root paths, query strings, fragments and
+non-HTTP(S) origins are rejected. Forwarding headers never grant authentication.
+A proxy that strips all forwarding information cannot be detected in `--no-auth`
+mode; keep token authentication enabled when proxying the service.
 File paths reject traversal, absolute paths, and symlink components. Downloads
 use attachment responses with `nosniff`. HTML and SVG artifacts remain untrusted
 content; downloading them does not execute them on the server.
@@ -405,9 +430,8 @@ with `--no-open` it does not open anything.
 At startup the service prints, on stderr: `Markitai server listening on http://ADDRESS`
 and, unless `--no-auth`, `Remote access token: …` (these two lines are scripted
 against and stay English in every language); the address to open in a browser
-(without the token for a loopback listener, since loopback peers are trusted; with
-the token in the fragment for a specific network address, and for the address of
-this computer on the network when listening on a wildcard address); the directory
+(with the token in its fragment for local and remote browsers alike, unless
+`--no-auth` was explicitly selected); the directory
 that holds jobs and history (`MARKITAI_HOME/serve/jobs`, shown absolute); and a
 Ctrl-C hint. The other sentences follow the terminal language (`MARKITAI_LANG`,
 then `LANG`, then `LC_ALL`, Chinese for a `zh` prefix). When the listener is not
@@ -440,7 +464,7 @@ body shape, and router-level `error_code` values for failed, retried, stopped an
 shutdown items and request `reason`s. Separate synthetic-peer router tests exercise
 remote token and trust decisions without relying on a host network interface,
 including download tickets (issued only with the token, one GET of their own path,
-spent when shown elsewhere or with another method, ignored by loopback, refused for
+spent when shown elsewhere or with another method, single-use on loopback too, refused for
 settings and other non-download paths); `server::tickets` tests the path rule,
 expiry, single use and the 64-ticket bound, and `server::openapi` the document
 against the route table.

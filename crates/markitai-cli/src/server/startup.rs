@@ -66,14 +66,9 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<String> {
     if let Some(token) = token {
         lines.push(format!("Remote access token: {token}"));
     }
-    // Loopback peers are trusted by their socket address, so a browser on this
-    // computer needs no token, unless the service listens on a specific network
-    // address: then even this computer connects as a non-loopback peer.
-    let local = if address.ip().is_unspecified() || !exposed(address) {
-        launch::browser_url(address, None)
-    } else {
-        launch::address_url(address, token)
-    };
+    // Every API client authenticates, including this computer's browser. A
+    // fragment keeps the token out of the initial HTTP request and access log.
+    let local = launch::browser_url(address, token);
     lines.push(text!(lang =>
         "Open in your browser: {local}",
         "在浏览器中打开：{local}"));
@@ -154,14 +149,14 @@ mod tests {
             [
                 "Markitai server listening on http://127.0.0.1:3600",
                 "Remote access token: secret",
-                "Open in your browser: http://127.0.0.1:3600/",
+                "Open in your browser: http://127.0.0.1:3600/#token=secret",
                 "Jobs and history are stored in /tmp/home/serve/jobs",
                 "Press Ctrl-C to stop; running conversions finish and history is saved first.",
             ]
         );
-        // No warning, and the token stays out of the address a local browser uses.
+        // No network warning; the local browser receives a fragment token too.
         assert!(lines.iter().all(|line| !line.contains("Warning")));
-        assert!(lines.iter().all(|line| !line.contains("#token")));
+        assert!(lines[2].contains("#token=secret"));
     }
 
     #[test]
@@ -195,7 +190,10 @@ mod tests {
         );
         assert!(lines[2].contains("like a password"));
         assert_eq!(lines[3], "Remote access token: a b");
-        assert_eq!(lines[4], "Open in your browser: http://127.0.0.1:3600/");
+        assert_eq!(
+            lines[4],
+            "Open in your browser: http://127.0.0.1:3600/#token=a+b"
+        );
         assert!(
             lines[5].contains("http://192.168.1.20:3600/#token=a+b"),
             "{}",
@@ -230,7 +228,7 @@ mod tests {
                     .any(|line| line.contains("http://10.0.0.5:3600/") && !line.contains("#token"))
             );
         }
-        // A loopback listener is not exposed, so --no-auth changes nothing there.
+        // A loopback listener needs no network-exposure warning; no-auth omits the token.
         let quiet = lines(
             Lang::En,
             &startup("[::1]:3600", None, None, Path::new("/d")),

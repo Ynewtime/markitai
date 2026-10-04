@@ -376,7 +376,7 @@ enum Command {
     )]
     Serve {
         #[arg(long, default_value = "127.0.0.1")]
-        /// Interface to bind. Clients other than this machine need the access token printed at startup (or MARKITAI_SERVE_TOKEN).
+        /// Interface to bind. All API clients need the access token printed at startup (or MARKITAI_SERVE_TOKEN).
         host: String,
         #[arg(long, default_value_t = 3600)]
         /// Port to listen on.
@@ -385,10 +385,10 @@ enum Command {
         /// Do not open a browser after startup.
         no_open: bool,
         #[arg(long)]
-        /// Do not require the access token from other machines. They can then upload files and read or delete history; URL conversion and model settings stay blocked for them.
+        /// Disable API token authentication. Remote clients can upload files and read or delete history; URL conversion and model settings require a direct local connection.
         no_auth: bool,
         #[arg(long, action = ArgAction::Append, value_name = "HOSTNAME")]
-        /// Also accept this name in Host/Origin headers (repeatable); localhost and IP addresses are always accepted.
+        /// Also allow this hostname in Host/Origin headers (repeatable). Local Origins must still match the request port.
         allowed_host: Vec<String>,
     },
     /// Run the native MCP service over standard input/output.

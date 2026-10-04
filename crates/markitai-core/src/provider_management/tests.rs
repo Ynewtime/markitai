@@ -547,3 +547,45 @@ mod bounded_fixture_io {
         "/../../tests/support/bounded_read.rs"
     ));
 }
+
+#[test]
+fn discovery_environment_endpoints_follow_all_provider_catalog_entries() {
+    for provider in catalog() {
+        for variable in provider.base_variables {
+            let env = HashMap::from([(
+                (*variable).to_owned(),
+                "http://127.0.0.1:9911/v1".to_owned(),
+            )]);
+            assert_eq!(
+                discovery_base_variable(provider.provider, &env),
+                Some(*variable),
+                "{}",
+                provider.provider
+            );
+        }
+    }
+    let mut env = HashMap::from([
+        (
+            "OPENAI_API_BASE".to_owned(),
+            "http://127.0.0.1:9911/v1".to_owned(),
+        ),
+        (
+            "OPENAI_BASE_URL".to_owned(),
+            "http://127.0.0.1:9912/v1".to_owned(),
+        ),
+    ]);
+    assert_eq!(
+        discovery_base_variable("openai", &env),
+        Some("OPENAI_API_BASE")
+    );
+    env.insert("OPENAI_API_BASE".to_owned(), "".to_owned());
+    assert_eq!(
+        discovery_base_variable("openai", &env),
+        Some("OPENAI_BASE_URL")
+    );
+    env.insert("OPENAI_BASE_URL".to_owned(), " ".to_owned());
+    assert_eq!(discovery_base_variable("openai", &env), None);
+    // Explicit request mode passes an empty map and cannot inherit either base.
+    assert_eq!(discovery_base_variable("openai", &HashMap::new()), None);
+    assert_eq!(discovery_base_variable("unknown", &env), None);
+}

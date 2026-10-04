@@ -212,6 +212,7 @@ export interface ProviderCard {
   kind: string;
   status: string;
   source: string;
+  /** Display metadata only; never echo this server reference as an API key. */
   credential?: string;
   api_key_configured?: boolean;
   api_base_configured?: boolean;
@@ -227,6 +228,7 @@ export interface ProviderCard {
 }
 
 export interface ProviderCredentials {
+  /** Server-held value/reference: keep out of editable inputs and outgoing writes. */
   api_key: string | null;
   api_base: string | null;
   api_base_placeholder: string | null;
@@ -261,6 +263,7 @@ export interface NewDeployment {
   provider?: string;
   api_key?: string;
   api_base?: string;
+  /** Saved connection ID, or an environment card reference such as env:openai. */
   credential_provider_id?: string;
   credential_deployment_id?: string;
 }

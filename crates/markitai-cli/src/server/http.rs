@@ -63,6 +63,7 @@ pub(super) async fn create(
         .tempdir_in(&state.root)
         .map_err(ApiError::internal)?;
     store::private_dir(stage.path()).map_err(ApiError::internal)?;
+    store::mark_upload(stage.path()).map_err(ApiError::internal)?;
     store::private_dir(&stage.path().join("uploads")).map_err(ApiError::internal)?;
     store::private_dir(&stage.path().join("out")).map_err(ApiError::internal)?;
     let mut items = Vec::new();
@@ -302,7 +303,8 @@ pub(super) async fn create(
         markitai_core::platform::rename(stage.path(), &folder).map_err(ApiError::internal)?;
         // Windows cannot flush the jobs directory; flushing the renamed job's
         // metadata commits the rename instead.
-        if let Err(error) = markitai_core::platform::sync_renamed_path(&folder.join("meta.json"))
+        if let Err(error) = store::unmark_upload(&folder)
+            .and_then(|()| markitai_core::platform::sync_renamed_path(&folder.join("meta.json")))
             .and_then(|()| markitai_core::platform::sync_directory(&publication_state.root))
         {
             // Only this transaction's newly created UUID directory is removed.

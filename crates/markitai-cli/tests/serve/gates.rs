@@ -18,8 +18,8 @@ fn stage_entries(temp: &Path) -> Vec<String> {
     std::fs::read_dir(temp.join("home/serve/jobs"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        // The publication lock is permanent; everything else is a job or a leftover stage.
-        .filter(|name| name != ".publish.lock")
+        // The lifetime and publication locks are permanent; all other entries are jobs or stages.
+        .filter(|name| name != ".publish.lock" && name != ".serve.lock")
         .collect()
 }
 

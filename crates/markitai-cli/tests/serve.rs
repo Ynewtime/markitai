@@ -457,6 +457,7 @@ fn rejected_requests_roll_back_uploads_and_keep_error_envelopes() {
     let entries = std::fs::read_dir(temp.path().join("home/serve/jobs"))
         .unwrap()
         .map(|e| e.unwrap().file_name())
+        .filter(|name| name != ".serve.lock")
         .collect::<Vec<_>>();
     assert!(
         entries.is_empty(),
