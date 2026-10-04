@@ -106,13 +106,17 @@ export function seedItem(jobId: string, seed: Seed): SessionItem {
 
 /** Apply an item payload; unchanged rows keep their identity so memoized rows skip work. */
 export function mergeItem(previous: SessionItem, payload: ItemPayload, now: number): SessionItem {
+  // Presentation only: the service still persists error/cancelled. A stopped
+  // item has no successful output and is counted apart from completed work.
+  const stopped = payload.status === "error" && payload.output === null && !payload.rerun_failure &&
+    (payload.error_code === "cancelled" || (!payload.error_code && payload.error === "cancelled (stopped by request)"));
   const startedAt =
     payload.status === "running" ? (previous.status === "running" ? (previous.startedAt ?? now) : now) : null;
   return {
     ...previous,
     name: payload.name,
     kind: payload.kind,
-    status: payload.status,
+    status: stopped ? "done" : payload.status,
     error: payload.error,
     errorCode: payload.error_code ?? null,
     output: payload.output,
@@ -126,8 +130,8 @@ export function mergeItem(previous: SessionItem, payload: ItemPayload, now: numb
     rerunFailure: payload.rerun_failure ?? null,
     llmEnhanced: payload.llm_enhanced,
     operation: payload.operation,
-    skipped: payload.skipped,
-    skipReason: payload.skip_reason,
+    skipped: stopped || payload.skipped,
+    skipReason: stopped ? "user_stopped" : payload.skip_reason,
     retryable: payload.retryable,
     warnings: payload.warnings ?? [],
     startedAt,
@@ -204,6 +208,11 @@ export function sessionStats(items: SessionItem[]): SessionStats {
   return stats;
 }
 
+/** Summary notifications use the same presentation as rows, not raw API error totals. */
+export function snapshotStats(snapshot: JobSnapshot): SessionStats {
+  return sessionStats(snapshot.items.map((item) => itemFromPayload(snapshot.job_id, item, 0)));
+}
+
 export const isSettled = (item: SessionItem): boolean => item.status === "done" || item.status === "error";
 /** A reconnect can deliver a failed rerun directly as done → done. */
 export const settledIdentity = (item: SessionItem): string | null =>
@@ -223,7 +232,7 @@ export function canRetry(item: SessionItem): boolean {
   );
 }
 
-export const failedToRetry = (items: SessionItem[]): SessionItem[] => items.filter((item) => item.status === "error" && canRetry(item));
+export const failedToRetry = (items: SessionItem[]): SessionItem[] => items.filter((item) => (item.status === "error" || item.status === "done" && item.skipped && item.skipReason === "user_stopped") && canRetry(item));
 
 /** Original items still waiting for a conversion slot: what Stop remaining can stop. */
 export function waitingJobs(items: SessionItem[], jobs: Record<string, SessionJob>): string[] {

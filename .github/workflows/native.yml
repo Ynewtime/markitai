@@ -36,11 +36,12 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(inputs.platforms) }}
+        lane: [checks, packages]
     runs-on: ${{ matrix.os }}
     env:
       TARGET: ${{ matrix.os == 'windows-2025' && 'x86_64-pc-windows-msvc' || matrix.os == 'windows-11-arm' && 'aarch64-pc-windows-msvc' || matrix.os == 'ubuntu-24.04' && 'x86_64-unknown-linux-gnu' || matrix.os == 'macos-15' && 'aarch64-apple-darwin' || matrix.os == 'macos-15-intel' && 'x86_64-apple-darwin' || 'unknown' }}
-    # Cold Windows release/LTO and all three bindings exceeded the former
-    # one-hour budget after native checks passed; retain the full acceptance run.
+    # Independent checks and installed-package acceptance run against the same
+    # commit in parallel. Each lane keeps its complete checks and time budget.
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -60,13 +61,16 @@ jobs:
       - name: Install Rust components
         run: rustup toolchain install ${{ env.RUSTUP_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
       - name: Formatting, native tests, lint and harness tests
+        if: matrix.lane == 'checks'
         run: python scripts/check.py
       - name: Install wheel build tool
+        if: matrix.lane == 'packages'
         run: python -m pip install "maturin>=1.9,<2"
       - name: Build and exercise installable artifacts
+        if: matrix.lane == 'packages'
         run: python scripts/ci_packages.py --expected-host ${{ env.TARGET }} --output .local/ci-artifacts
       - name: Retain per-platform artifacts and evidence
-        if: always()
+        if: always() && matrix.lane == 'packages'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: native-${{ env.TARGET }}

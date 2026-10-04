@@ -1,6 +1,7 @@
 // A flat notification card at the top right (docked to the bottom on phones):
 // a coloured rule, readable full details, and optional actions.
 import { createPortal } from "preact/compat";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { dicts } from "../i18n/index.ts";
 
@@ -29,12 +30,67 @@ function stack(): HTMLElement {
   return node;
 }
 
+type NoticeEntry = { node: HTMLElement; close: () => void };
+const notices = new Set<NoticeEntry>();
+const escapeTargets = new WeakMap<KeyboardEvent, NoticeEntry>();
+const HIGHER_LAYER = '[role="dialog"], [role="alertdialog"], .confirm-card, .pdf-card, .help-bubble';
+
+function higherLayerOpen(): boolean {
+  return [...document.querySelectorAll<HTMLElement>(HIGHER_LAYER)].some(
+    (node) => !node.closest("[hidden]") && node.getClientRects().length > 0,
+  );
+}
+
+// Observe before an inner layer closes. In particular, help bubbles consume
+// Escape on window without preventDefault; checking only afterwards is too late.
+function rememberEscape(event: KeyboardEvent): void {
+  if (event.key !== "Escape" || event.isComposing || event.keyCode === 229 || event.repeat || higherLayerOpen()) return;
+  // A native select owns Escape even when its OS popup does not cancel keydown.
+  if (event.target instanceof Element && event.target.closest("select")) return;
+  const latest = [...notices].reverse().find((entry) => entry.node.isConnected);
+  if (latest) escapeTargets.set(event, latest);
+}
+
+function dismissNotice(event: KeyboardEvent): void {
+  const entry = escapeTargets.get(event);
+  escapeTargets.delete(event);
+  // Target handlers (such as the ledger filter) and modal layers get first use.
+  if (!entry || event.defaultPrevented || event.isComposing || !notices.has(entry) || !entry.node.isConnected || higherLayerOpen()) return;
+  event.preventDefault();
+  entry.close();
+}
+
+function registerNotice(entry: NoticeEntry): () => void {
+  if (notices.size === 0) {
+    window.addEventListener("keydown", rememberEscape, true);
+    window.addEventListener("keydown", dismissNotice);
+  }
+  notices.add(entry);
+  return () => {
+    notices.delete(entry);
+    if (notices.size === 0) {
+      window.removeEventListener("keydown", rememberEscape, true);
+      window.removeEventListener("keydown", dismissNotice);
+    }
+  };
+}
+
 export function Notification({ note, replay = 0, closeLabel, detailsLabel, warningsLabel, onClose }: { note: NotificationModel; replay?: number; closeLabel: string; detailsLabel?: string; warningsLabel?: string; onClose: () => void }) {
+  const card = useRef<HTMLElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useLayoutEffect(() => {
+    const node = card.current;
+    if (!node) return;
+    // A newly shown or replayed notice is the topmost non-modal notice.
+    return registerNotice({ node, close: () => close.current() });
+  }, [note, replay]);
   // The existing settings dialog supplies only closeLabel; use the active document language.
   const words = dicts[document.documentElement.lang.startsWith("zh") ? "zh" : "en"];
   const warningsTitle = note.warningsTitle ?? warningsLabel ?? words.itemWarningsTitle;
   return createPortal(
     <aside
+      ref={card}
       class={`notice-card is-${note.tone}`}
       aria-label={note.title}
     >

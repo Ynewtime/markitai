@@ -25,6 +25,7 @@ import {
   requeued,
   seedItem,
   sessionStats,
+  snapshotStats,
   writeSeeds,
   type Seed,
   type SessionItem,
@@ -82,7 +83,7 @@ export interface JobsApi {
 /** Connectivity checks are owned by the app; a broken stream asks for one. */
 const requestCheck = () => window.dispatchEvent(new CustomEvent("markitai:check"));
 
-export function useJobs(notifyText: (done: number, failed: number, retained: number) => string, connLost: () => string): JobsApi {
+export function useJobs(notifyText: (done: number, failed: number, retained: number, skipped: number) => string, connLost: () => string): JobsApi {
   const [items, setItems] = useState<SessionItem[]>([]);
   const [jobs, setJobs] = useState<Record<string, SessionJob>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
@@ -109,10 +110,11 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
     sources.current.delete(jobId);
   }, []);
 
-  const finished = useCallback((jobId: string, done: number, failed: number, retained: number) => {
+  const finished = useCallback((jobId: string, snapshot: JobSnapshot) => {
     if (notified.current.has(jobId)) return;
     notified.current.add(jobId);
-    notifyDone(textRef.current.notifyText(done, failed, retained));
+    const stats = snapshotStats(snapshot);
+    notifyDone(textRef.current.notifyText(stats.done, stats.failed, snapshot.items.filter((item) => item.rerun_failure).length, stats.skipped));
   }, []);
 
   const applySnapshot = useCallback(
@@ -147,7 +149,7 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
         if (snapshot === null) return;
         applySnapshot(snapshot);
         if (terminal(snapshot.status)) {
-          finished(jobId, snapshot.done, snapshot.failed, snapshot.items.filter((item) => item.rerun_failure).length);
+          finished(jobId, snapshot);
           close(jobId);
         }
       });
@@ -173,7 +175,7 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
               applySnapshot(snapshot);
               if (snapshot.status === "running") listen(jobId);
             },
-            (snapshot) => finished(jobId, snapshot.done, snapshot.failed, snapshot.items.filter((item) => item.rerun_failure).length),
+            (snapshot) => finished(jobId, snapshot),
           ).catch(() => undefined);
         }
       });

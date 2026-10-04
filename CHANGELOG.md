@@ -95,6 +95,8 @@
 
 ### Changed
 
+- Native CI runs source checks and installed-package acceptance in parallel for each platform, while retaining all checks. Package stages report their start, finish and duration without echoing command arguments or environment values.
+
 - Refresh development-status and remaining-work documentation with the verified cross-platform CI checkpoint, package evidence and outstanding Windows runtime dependency. Historical measurements remain explicitly scoped to their original builds.
 
 - Refresh ten compatible Rust dependency versions, including NAPI, TLS/QUIC support, libc and uuid, while keeping the declared Rust 1.92 minimum and existing Node API level. New NAPI versions retain both original MIT notices with checksum-pinned source and version provenance.
@@ -120,6 +122,8 @@
 - Warn about PDF image placement only when images were extracted, without the obsolete claim that page screenshots and local OCR are not implemented.
 
 ### Fixed
+
+- User-stopped workbench items now display consistently as skipped in rows, totals, filters and restored history, with individual and batch retry support. Notifications retain the cancellation reason while preserving API records, saved options, previous outputs and reported costs. Notification Escape dismisses the latest notice while respecting dialogs, help and focused controls, and returns focus to the trigger.
 
 - Failed workbench retries that retain an earlier successful result also retain that result's conversion options, without undoing sibling items' later choices.
 

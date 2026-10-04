@@ -152,9 +152,9 @@ export const LedgerRow = memo(function LedgerRow({
   const actionError = requestFailure && requestFailure.identity === settledIdentity(item) ? { operation: requestFailure.operation, ...describe(requestFailure.error) } : undefined;
   const notice = itemNotification(item, t, locale, actionError);
   const warnings = item.status === "done" || item.status === "error" ? item.warnings : [];
-  // An image skipped for lack of text says so in a notification instead.
+  // These skip reasons are explained by their replayable notification instead.
   const skipText =
-    item.skipReason === "image_only"
+    item.skipReason === "image_only" || item.skipReason === "user_stopped"
       ? null
       : item.skipReason === "exists"
         ? t.skipExists

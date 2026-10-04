@@ -21,6 +21,7 @@ import threading
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 
 from pricing_attribution import pricing_files
@@ -554,12 +555,38 @@ def main():
     def run(name, command, cwd=root, env=None):
         command = [str(value) for value in command]
         log = output / "logs" / f"{len(record['steps']):02}-{name}.log"
-        with log.open("wb") as stream:
-            result = subprocess.run(command, cwd=cwd, env=env or environment,
-                                    stdout=stream, stderr=subprocess.STDOUT)
+        started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        started = time.monotonic()
+
+        def progress(event, **fields):
+            # Stage names are fixed by this script. Never echo commands,
+            # environment values, child output or exception messages here.
+            entry = {"stage": name, "event": event, **fields}
+            line = json.dumps(entry, ensure_ascii=True)
+            with (output / "stage-progress.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(line + "\n")
+                stream.flush()
+            print(line, flush=True)
+
+        progress("started", started_at=started_at)
+        try:
+            with log.open("wb") as stream:
+                result = subprocess.run(command, cwd=cwd, env=env or environment,
+                                        stdout=stream, stderr=subprocess.STDOUT)
+        except BaseException as error:
+            progress("completed", started_at=started_at,
+                     completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                     duration_seconds=time.monotonic() - started, exit_code=None,
+                     error_type=type(error).__name__)
+            raise
+        completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        duration = time.monotonic() - started
+        progress("completed", started_at=started_at, completed_at=completed_at,
+                 duration_seconds=duration, exit_code=result.returncode)
         step = {"name": name, "command": command, "cwd": str(cwd),
                 "exit_code": result.returncode, "log": str(log.relative_to(output)),
-                "log_identity": identity(log)}
+                "log_identity": identity(log), "started_at": started_at,
+                "completed_at": completed_at, "duration_seconds": duration}
         record["steps"].append(step)
         if result.returncode:
             raise RuntimeError(f"{name} failed; inspect {log}")

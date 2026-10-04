@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { deleteHistoryJob, fetchHistory, fetchSnapshot } from "../api/client.ts";
 import type { HistoryEntry, JobSnapshot, JobStatus } from "../api/types.ts";
 
+import { resolveHistoryPresentation, mergeHistoryErrors } from "../lib/history-presentation.ts";
+
 const FOCUS_REFRESH_MS = 20_000;
 
 export type ArchiveAction = "open" | "delete";
@@ -25,6 +27,7 @@ export function useArchive(jobs: Record<string, { status: JobStatus }>): Archive
   const [actions, setActions] = useState<Record<string, ArchiveAction>>({});
   const actionsRef = useRef<Record<string, ArchiveAction>>({});
   const [rowErrors, setRowErrors] = useState<Record<string, unknown>>({});
+  const [summaryErrors, setSummaryErrors] = useState<Record<string, unknown>>({});
   const gone = useRef(new Set<string>());
   const lastFetch = useRef(0);
   const request = useRef(0);
@@ -34,7 +37,10 @@ export function useArchive(jobs: Record<string, { status: JobStatus }>): Archive
     try {
       const next = await fetchHistory();
       if (id !== request.current) return;
-      setAll(next.filter((entry) => !gone.current.has(entry.job_id)));
+      const resolved = await resolveHistoryPresentation(next, fetchSnapshot, () => id === request.current);
+      if (id !== request.current) return;
+      setAll(resolved.entries.filter((entry) => !gone.current.has(entry.job_id)));
+      setSummaryErrors(resolved.errors);
       setError(null);
       lastFetch.current = Date.now();
     } catch (reason) {
@@ -44,6 +50,7 @@ export function useArchive(jobs: Record<string, { status: JobStatus }>): Archive
 
   useEffect(() => {
     void refresh();
+    return () => { request.current++; };
   }, [refresh]);
 
   // A live job reaching its end appears in history: refresh then.
@@ -120,5 +127,5 @@ export function useArchive(jobs: Record<string, { status: JobStatus }>): Archive
 
   const entries = useMemo(() => all?.filter((entry) => !(entry.job_id in jobs)) ?? null, [all, jobs]);
 
-  return { entries, error, actions, rowErrors, refresh, open, remove };
+  return { entries, error, actions, rowErrors: mergeHistoryErrors(summaryErrors, rowErrors), refresh, open, remove };
 }

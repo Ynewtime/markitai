@@ -1,3 +1,4 @@
+import type { Dict } from "../i18n/index.ts";
 import type { JobOptions } from "../api/types.ts";
 import { publicOptions, withOcrFor } from "./options.ts";
 import { failedToRetry, type SessionItem, type SessionJob } from "./session.ts";
@@ -23,4 +24,11 @@ export async function submitRetryBatch(batch: readonly RetryBatchEntry[], author
     if ((await send(batch[index].item, authorized[index])) !== null) failed++;
   }
   return { attempted: batch.length, failed };
+}
+
+/** Announce the captured selection, even after rows have already been requeued. */
+export function retryBatchAnnouncement(batch: readonly RetryBatchEntry[], result: { attempted: number; failed: number }, t: Dict): string {
+  const stopped = batch.some(({ item }) => item.skipReason === "user_stopped");
+  if (stopped) return result.failed ? t.announceRetryStoppedFailed(result.attempted, result.failed) : t.announceRetryStopped(result.attempted);
+  return result.failed ? t.announceRetryAllFailed(result.attempted, result.failed) : t.announceRetryAll(result.attempted);
 }

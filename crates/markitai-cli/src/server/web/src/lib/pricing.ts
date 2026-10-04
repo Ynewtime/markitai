@@ -146,7 +146,7 @@ export function actionNotification(name: string, t: Dict, action: ActionProblem)
 export function itemNotification(item: SessionItem, t: Dict, locale: Locale, action?: ActionProblem): NotificationModel | null {
   const terminal = item.status === "done" || item.status === "error";
   const retained = item.rerunFailure;
-  const failure = retained ?? (item.status === "error" ? { error: item.error, error_code: item.errorCode } : null);
+  const failure = retained ?? (item.status === "error" || item.skipReason === "user_stopped" ? { error: item.error, error_code: item.errorCode } : null);
   const problem = failure ? itemErrorText(locale, { ...failure, kind: item.kind }) : null;
   const last = item.diagnostics?.last_attempt;
   const attempt = attemptNotice({ cost_usd: item.costUsd, error: item.error, diagnostics: item.diagnostics ?? undefined }, PRICE_WORDS[locale]);
@@ -158,7 +158,7 @@ export function itemNotification(item: SessionItem, t: Dict, locale: Locale, act
   const name = displayName(item.name);
   const failedAttempt = last?.status === "error";
   const actionTitle = action?.operation === "retry" ? t.retryFailed : action?.operation === "enhance" ? t.llmEnhanceFailed : action?.operation === "delete" ? t.deleteFailed : t.jobLoadFailed;
-  const heading = action ? actionTitle : retained ? t.rerunRetained(retained.operation) : noModel ? t.noModelTitle : imageSkip ? t.imageSkippedTitle : problem ? (problem.hint ? t.statusSkipped : t.statusFailed) : failedAttempt ? PRICE_WORDS[locale].lastFailed : `${t.statusDone} · ${t.itemWarningsTitle}`;
+  const heading = action ? actionTitle : retained ? t.rerunRetained(retained.operation) : noModel ? t.noModelTitle : imageSkip ? t.imageSkippedTitle : item.skipReason === "user_stopped" ? t.statusStopped : problem ? t.statusFailed : failedAttempt ? PRICE_WORDS[locale].lastFailed : `${t.statusDone} · ${t.itemWarningsTitle}`;
   const message = action?.text || (noModel ? t.noModelMessage(name) : imageSkip ? t.imageSkipped(name) : problem?.text || (failedAttempt ? itemErrorText(locale, { error: last.error, kind: item.kind }).text : "")) || (warnings.length ? t.itemWarnings(warnings.length) : attempt?.label ? t.attemptUsageNotice : "") || t.statusFailed;
   // Raw wording lives in the disclosure, once. Unknown errors already appear in full.
   const raw = [action?.detail, failure?.error, item.error, failedAttempt ? last.error : null]
@@ -168,7 +168,7 @@ export function itemNotification(item: SessionItem, t: Dict, locale: Locale, act
   const previousWarnings = !!retained || item.status === "done" && (failedAttempt || !!action);
   const warningsContext = previousWarnings && item.pricing?.cost_status !== "complete" ? priceText(item.costUsd, item.pricing, PRICE_WORDS[locale]) : "";
   return {
-    tone: action || retained || (problem && !problem.hint && !noModel) || failedAttempt ? "error" : "warning",
+    tone: action || retained || (problem && item.status === "error" && !noModel) || failedAttempt ? "error" : "warning",
     title: `${name} · ${heading}`,
     message,
     ...(detail ? { detail } : {}),

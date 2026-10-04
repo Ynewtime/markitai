@@ -151,6 +151,8 @@ export const zh: Dict = {
   statusDone: "完成",
   statusFailed: "失败",
   statusSkipped: "跳过",
+  statusStopped: "已主动停止",
+  retryFailedAndStopped: (n) => `重试失败或已停止项（${n}）`,
   retryAllFailed: (n) => `重试全部失败项（${n}）`,
   stopRemaining: "停止剩余",
   stopTitle: "正在转换的项会完成，等待中的项不再转换。",
@@ -224,9 +226,12 @@ export const zh: Dict = {
   ariaDuration: (minutes, seconds) =>
     minutes === 0 ? `${seconds.toFixed(1)} 秒` : seconds === 0 ? `${minutes} 分` : `${minutes} 分 ${seconds} 秒`,
   announceItem: (name, status, settled, total) => `${name} ${status} · 已完成 ${settled}/${total}`,
+  historySummaryUnavailable: "无法核对已保存的任务汇总 · 请刷新重试",
+  announceRetryStopped: (n) => `正在重试 ${n} 个失败或已停止项`,
+  announceRetryStoppedFailed: (n, again) => `已重试 ${n} 个失败或已停止项，其中 ${again} 个无法排队`,
   announceRetryAll: (n) => `正在重试 ${n} 个失败项`,
   announceRetryAllFailed: (n, again) => `已重试 ${n} 个失败项，其中 ${again} 个无法排队`,
-  notifyBody: (done, failed) => (failed > 0 ? `完成 ${done} · 失败 ${failed}` : `完成 ${done}`),
+  notifyBody: (done, failed, skipped = 0) => [`完成 ${done}`, ...(failed > 0 ? [`失败 ${failed}`] : []), ...(skipped > 0 ? [`跳过 ${skipped}`] : [])].join(" · "),
 
   close: "关闭",
   imageSkippedTitle: "图片已跳过",

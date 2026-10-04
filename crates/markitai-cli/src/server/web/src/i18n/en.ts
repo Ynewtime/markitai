@@ -163,6 +163,8 @@ export const en = {
   statusDone: "Done",
   statusFailed: "Failed",
   statusSkipped: "Skipped",
+  statusStopped: "Stopped by you",
+  retryFailedAndStopped: (n: number) => `Retry failed / stopped (${n})`,
   retryAllFailed: (n: number) => `Retry all failed (${n})`,
   stopRemaining: "Stop remaining",
   stopTitle: "Items already converting finish; waiting items are not converted.",
@@ -241,9 +243,12 @@ export const en = {
   },
   announceItem: (name: string, status: string, settled: number, total: number) =>
     `${name} ${status} · ${settled} of ${total} complete`,
+  historySummaryUnavailable: "Could not verify this saved summary · refresh to retry",
+  announceRetryStopped: (n: number) => `Retrying ${n} failed or stopped items`,
+  announceRetryStoppedFailed: (n: number, again: number) => `Retried ${n} failed or stopped items; ${again} could not be queued`,
   announceRetryAll: (n: number) => `Retrying ${n} failed items`,
   announceRetryAllFailed: (n: number, again: number) => `Retried ${n} failed items; ${again} could not be queued`,
-  notifyBody: (done: number, failed: number) => (failed > 0 ? `${done} done · ${failed} failed` : `${done} done`),
+  notifyBody: (done: number, failed: number, skipped = 0) => [`${done} done`, ...(failed > 0 ? [`${failed} failed`] : []), ...(skipped > 0 ? [`${skipped} skipped`] : [])].join(" · "),
 
   // notifications
   close: "Close",

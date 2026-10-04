@@ -8,7 +8,8 @@ import type { Capabilities, HistoryEntry, JobOptions } from "./api/types.ts";
 import { AppFooter, AppHeader } from "./components/app-header.tsx";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
 import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
-import { prepareRetryBatch, submitRetryBatch } from "./lib/retry-batch.ts";
+import { historySummaryProblem } from "./lib/history-presentation.ts";
+import { prepareRetryBatch, submitRetryBatch, retryBatchAnnouncement } from "./lib/retry-batch.ts";
 import { hasCloudflareRequest } from "./lib/cloudflare.ts";
 import { DropOverlay } from "./components/drop-overlay.tsx";
 import { CapabilityHint, ErrorLine, InlineAction, NoticeLine } from "./components/feedback.tsx";
@@ -99,6 +100,8 @@ export function App() {
   const describe = useCallback((error: unknown): { text: string; detail: string } => {
     const lang = localeRef.current;
     const words = dicts[lang];
+    const historyProblem = historySummaryProblem(error, words);
+    if (historyProblem) return historyProblem;
     if (error instanceof NetworkError) return { text: words.submitNetworkFailed, detail: "" };
     if (error instanceof ApiError) {
       const known = apiErrorText(lang, error.body);
@@ -113,7 +116,7 @@ export function App() {
   }, []);
 
   const jobs = useJobs(
-    (done, failed, retained) => retained > 0 ? dicts[localeRef.current].notifyRetained(retained) : dicts[localeRef.current].notifyBody(done, failed),
+    (done, failed, retained, skipped) => retained > 0 ? dicts[localeRef.current].notifyRetained(retained) : dicts[localeRef.current].notifyBody(done, failed, skipped),
     () => dicts[localeRef.current].connLost,
   );
   const archive = useArchive(jobs.jobs);
@@ -402,7 +405,7 @@ export function App() {
     try {
       const authorized = await cloudflare.authorizeBatch(batch.map(({ item, options }) => ({ options, sources: [{ name: item.name, kind: item.kind }] })), true);
       const result = await submitRetryBatch(batch, authorized, (item, options) => requestItem(item, "retry", () => jobsRef.current.retry(item, options)));
-      if (result) announce(result.failed ? t.announceRetryAllFailed(result.attempted, result.failed) : t.announceRetryAll(result.attempted));
+      if (result) announce(retryBatchAnnouncement(batch, result, t));
     } finally {
       retryingAllRef.current = false;
       setRetryingAll(false);
@@ -744,7 +747,7 @@ export function App() {
                     )}
                     {failed.length > 0 && (
                       <button type="button" class="btn btn-ghost" disabled={retryingAll} aria-busy={retryingAll || undefined} onClick={() => void retryAll()}>
-                        {t.retryAllFailed(failed.length)}
+                        {failed.some((item) => item.skipReason === "user_stopped") ? t.retryFailedAndStopped(failed.length) : t.retryAllFailed(failed.length)}
                       </button>
                     )}
                     <ClearButton t={t} activeCount={jobs.activeCount} finishedJobs={jobs.terminalJobCount} onClear={clearAll} />
