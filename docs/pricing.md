@@ -158,10 +158,3 @@ package checks compare the exact nested paths and bytes. Direct ad hoc Cargo,
 Maturin or npm builds are not the verified distribution workflow. The pricing
 notice does not resolve unrelated dependency-license gaps or constitute legal
 review.
-
-Unit fixtures cover exact tariffs, cache TTLs, zero versus missing counters,
-unknown categories, overflow, budget boundaries, shared concurrent observations,
-Batch/Standard mixtures and metadata propagation. Local mock tests establish
-zero-send rejection without contacting a provider. Executed gate/package evidence
-is recorded by the coordinator; authored fixtures alone do not establish live
-provider invoices, cross-platform package delivery or future price accuracy.

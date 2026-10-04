@@ -16,7 +16,7 @@ environment; control those when isolation matters.
 For local document text without OCR, model enhancement or third-party services:
 
 ```sh
-markitai /absolute/path/report.docx -o /absolute/path/output --no-llm --no-ocr --no-remote-fetch --json
+markitai /absolute/path/report.docx -o /absolute/path/output -b native --no-llm --no-ocr --no-remote-fetch --json
 ```
 
 Windows uses `markitai.exe` and Windows absolute paths. Archives also provide

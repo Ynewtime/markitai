@@ -64,7 +64,7 @@ the newly inserted path is not looked up again. Documents in a history archive
 use the mapping for their own source asset tree. RAG and Obsidian profiles expose
 the asset directory without repeatedly decoding URI data.
 
-## Filtering and evidence
+## Filtering
 
 An empty CSS URL is an invalid resource under
 [CSS Values §4.5.2](https://www.w3.org/TR/css-values-4/#urls); it does not request
@@ -72,8 +72,7 @@ the containing document. Filtering can therefore retain the URL position using
 `url("")`, preserving font/cursor alternatives and the conditions/layer ordering
 of imports. Replacing arbitrary URLs with `none` would invalidate some of those
 grammars. Namespace URLs are identifiers rather than fetched resources and must
-not be relocated. [Round-twelve validation](validation/css-round12.md) records the
-exact accepted cases, frozen release and remaining grammar limits.
+not be relocated.
 
 Filtering image-set removes the affected candidate while retaining other
 candidates. If none remain, the image-set becomes an invalid empty URL resource.
@@ -82,10 +81,3 @@ Ordinary URL filters discard their query/fragment together with the old path.
 CSS references do not independently trigger image-only detection. A URL can
 identify a font, stylesheet, cursor or other non-image resource; a CSS token by
 itself does not establish an image suitable for model processing.
-
-Publication tests exercise actual base/enhanced files and all three asset path
-profiles. History tests exercise independent copied assets and collision
-renaming through the CLI. The [round-twelve report](validation/css-round12.md) records the macOS arm64
-release-profile and installed-package checks for that snapshot. Two authored browser cases also load copied images and
-imported CSS after deleting the live fixtures; this is not general browser or
-cross-platform acceptance.

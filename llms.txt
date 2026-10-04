@@ -9,8 +9,8 @@ requests or use credentials. Use the caller's authorized inputs and settings.
 
 ## Start
 
-- [Install and first commands](README.md): select a development archive and set PATH before running the CLI.
-- [Quick start](docs/quickstart.md): first tasks, recognized formats and platform requirements.
+- [Overview](README.md): capabilities and first commands.
+- [Quick start](docs/quickstart.md): development archive installation, PATH, first tasks, formats and platform requirements.
 - [Standalone Agent guide](llms-full.txt): CLI JSON, exit codes, MCP output handling, authenticated workbench requests and offline prerequisites.
 
 ## Contracts

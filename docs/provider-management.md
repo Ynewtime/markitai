@@ -72,10 +72,3 @@ HTTP(S), without URL user information or fragments. Trusted callers may choose
 loopback/private endpoints, supporting local providers; this is not a general
 untrusted URL-fetch service. Service guard checks and `Cache-Control: no-store`
 apply to success and error responses.
-
-The authored tests use only loopback servers: provider paths/headers, model
-prefixes, short probe payloads, no fallback/retry, redirect rejection, malformed
-and oversized replies, cache isolation/single-flight/stale expiry, and actual
-service reference resolution without configuration mutation. Gate execution and
-platform claims belong to the coordinator's recorded validation, not this
-implementation description.

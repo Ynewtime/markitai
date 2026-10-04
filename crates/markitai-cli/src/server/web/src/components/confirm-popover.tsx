@@ -7,9 +7,6 @@ import { Icon } from "./icons.tsx";
 
 let cards = 0;
 
-/** Dialogs ask whether a confirmation is on top before handling Escape or Tab. */
-export const openConfirmCard = (): HTMLElement | null => document.querySelector<HTMLElement>(".confirm-card");
-
 export function ConfirmPopover({
   triggerLabel,
   title,

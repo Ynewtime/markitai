@@ -151,28 +151,6 @@ link-density heuristics, including trailing link lists under a heading and
 gallery-like related tiles without a semantic label inside the article body
 (see the furniture rules above for what stands beside it).
 
-The design addresses concrete extra content observed in the retained round-five
-HTML corpus: `related--inline-related-stories-block`,
-`scoring--related-posts-byline`, `general--trailing-cta-newsletter`, and
-`general--github.com-issue-56`. The marks, the featured comment and the mail
-rules follow `content-patterns--iso-date-and-read-time`, `issues--114-leading-hr`,
-`content-patterns--social-counter-link`, `content-patterns--social-engagement-counter`,
-`content-patterns--leading-breadcrumb`, `issues--136-time-element`,
-`metadata--rel-author-in-bio-container`, `general--inline-comments-and-link-lists`
-and `gmail--mail.google.com-mail-u-0-thread`; the three kinds of block that stay
-after the body come from the limits this section used to list, reduced to
-authored unit cases. The repository fixture
-`github-repo--panniantong-agent-reach` provides the README structure. New authored
-unit cases reduce these structures to their relevant evidence and include
-retention negatives. This document describes policy and fixture provenance;
-executed corpus results and any remaining differences belong in validation
-records, not an inferred claim of complete extraction parity.
-
 Before selection, [streamed-content recovery](html-stream.md) handles explicit
-React completions and eligible script-stripped article chains. The LessWrong
-snapshot now retains its substantive body and notes; the
-[round-fifteen review](validation/native-performance-round15.md) identifies the
-remaining formatting differences. Selection itself does not unhide arbitrary
-content based on size. The [historical gap record](validation/html-streaming-gap-round14.md)
-preserves the earlier four-word output and the distinction between timeout and
-content loss.
+React completions and eligible script-stripped article chains. Selection does
+not unhide arbitrary content based on size.

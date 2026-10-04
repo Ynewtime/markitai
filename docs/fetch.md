@@ -612,7 +612,7 @@ or rejected refreshes retain the old row instead, except that an accepted deferr
 PDF has already changed the representation even if its later reader fails.
 
 The key hashes the extraction namespace `native-fetch-<package version>-r<revision>`
-(now `native-fetch-1.3.0-dev-r3`; r3 since the site readers), a NUL separator and the exact original URL. Rows
+with a NUL separator and the exact original URL. Rows
 hold extracted Markdown, so a new release, or a revision bumped when extraction
 changes between releases, does not replay an older extraction; older rows stay
 readable in statistics and expire by TTL or capacity.
@@ -726,8 +726,8 @@ passwords. Automatic/PAC/WPAD modes, SOCKS-only and authenticated desktop
 proxies, network probes and credential stores are never used. One second bounds
 all setting subprocesses, whose output is limited and process group reaped. Reads through
 the real desktop tools are recorded for GNOME and KDE 5
-([R38](validation/linux-desktop-proxy-round38.md)) and KDE 6
-([R49](validation/linux-kde6-proxy-round49.md)).
+([R38](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/linux-desktop-proxy-round38.md)) and KDE 6
+([R49](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/linux-kde6-proxy-round49.md)).
 
 `NO_PROXY` (or `no_proxy` when it is unset or empty) always applies; a system
 exception list applies only with its system proxy. `*` matches everything,

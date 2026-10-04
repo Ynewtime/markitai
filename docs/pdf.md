@@ -86,9 +86,7 @@ Chrome (Skia) prints web fonts it cannot embed as Type3 fonts whose mirrored
 `FontMatrix` is paired with glyphs drawn y-down. Their glyph side is now read
 from the `FontBBox` as well as the matrix, so such runs stand on their baseline
 instead of one font size below it, where they interleaved with the embedded
-fonts of the same line. On 108 Chrome-printed reference fixtures, readable words
-missing against the reference fell from 309 to 95 of 25,684 with this and the
-code, list and heading changes below ([record](validation/pdf-quality-round41.md)).
+fonts of the same line.
 
 Page-number cleanup recognizes complete folio expressions such as `Page 3 of 10`
 and retains substantive paragraphs beginning `Page N`, including prose following
@@ -110,7 +108,7 @@ non-contiguous excerpts that share their baseline with footer text can now remai
 as text; this errs toward keeping content. Page-selected extraction in the
 dependency reads other pages to decide; Markitai's reader analyses the whole
 document. The
-[historical two/40-page reproduction](validation/pdf-page-prefix-round15.json)
+[historical two/40-page reproduction](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/pdf-page-prefix-round15.json)
 retains the original inputs and old outputs with 72/1,440 missing paragraphs;
 new authored regressions require every paragraph in source order.
 
@@ -292,7 +290,7 @@ alignment-based detection, and a page with any other side-by-side text that
 region segmentation (below) does not divide keeps the page reader's output.
 Single-line rows were not given a geometric detector
 of their own: column alignment is all the evidence they offer, and on the
-adversarial pages of R48 the page reader's alignment-based detection, which
+adversarial layouts the page reader's alignment-based detection, which
 already reads such tables, also makes tables of a footer link grid, a row of
 statistic cards and newspaper columns. The page reader no longer makes a
 table of the words of justified columns: a hypothesis of five columns or
@@ -786,19 +784,4 @@ decoded bytes, not by the bytes it measures now. This module's inspection and th
 OCR signals still expand Form XObjects themselves. A file under 256 KiB is parsed
 on one thread: lopdf parses on a pool of one thread per core, whose start and idle
 spinning cost more processor time than a small file's parse, and larger files keep
-the pool, which shortens their load. Focused tests author
-their own PDF streams for heading consistency, paragraphs, continuous emphasis,
-complete tables, hidden text, rotated/invalid geometry, compressed multi-stream
-pages, inspection budget boundaries and unreadable or deeply nested Forms; for
-borderless tables, top-aligned and centred wrapped rows, a pitch a pixel off,
-and one layout each that every evidence condition above declines; for tables
-cut by page breaks, repeated, missing and empty header rows, running headers and
-footers, text or OCR between the parts and a new table at the top of a page;
-for painted bullets, rings, swatches, checkboxes, inline squares and a
-bulleted sidebar; and for documents (the fixtures and pages of several content
-streams, a comment and a ruled table) read with and without the page reader's
-document shared. A Chrome-printed fixture (`fixtures/wrapped-table`)
-reproduces a table tagged as layout that continues on the next page, and
-`fixtures/rtl-text` Arabic in the default direction beside a right-to-left
-section with brackets, quotation marks and a table. Validation
-results are recorded by the coordinator after the source is frozen.
+the pool, which shortens their load.

@@ -100,7 +100,7 @@ item that asked for LLM processing without a model offers Retry without LLM; the
 service becoming unreachable or reachable again, a failed model test and a
 failed archive download are reported the same way.
 
-## Behaviour kept from the earlier Rust page
+## Job controls
 
 - **Uploads** use XMLHttpRequest so the page can show the percentage and bytes
   sent, redrawn at most ten times a second, and abort them. Files over 100 MiB are

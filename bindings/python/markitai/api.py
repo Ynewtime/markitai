@@ -87,7 +87,7 @@ class NoModelConfiguredError(ValueError):
 
 
 def enable_worker_processes() -> None:
-    """Compatibility hook; Rust handles its own execution without subprocesses."""
+    """Compatibility no-op; Rust manages conversion concurrency internally."""
 
 
 def _result(response: str) -> ConversionOutput:

@@ -152,21 +152,4 @@ The reference Python reader also prefers HTML bodies and uses the email library'
 related-root selection. It renders image attachments as data-URI images, which its
 image pipeline then saves as `<document>.<NNNN>` assets; native assets use
 content-addressed names (an accepted difference, see
-[compatibility](compatibility.md)). The historically frozen round31 corpus uses
-an explicitly inline CID image; its measured differences were the bound Content-ID
-image and asset names. That record does not establish byte preservation for
-explicitly attached CID images.
-
-Focused tests cover the reference listing (labels, sizes, nesting limit), body
-versus attachment selection,
-related roots and scope isolation, exact/case-folded IDs, percent and entity
-boundaries, duplicate/missing/non-image IDs, malformed encodings, safe filenames,
-charsets, literal HTML boundaries and depth rejection. New authored regressions
-distinguish explicit attachment+CID from genuine inline resources, check original
-downloads independently of preview filtering, and exercise shared image/download
-definitions with URI suffixes. These new cases require execution after integration.
-Public conversion tests use real multipart EML, generated PNG, isolated state and
-an authored loopback model to verify
-captions, unchanged base text, published bytes, absolute metadata paths and normal/
-RAG profiles. Execution results are recorded by the coordinator after integration;
-no live-provider or cross-platform claim follows from fixture authoring.
+[compatibility](compatibility.md)).

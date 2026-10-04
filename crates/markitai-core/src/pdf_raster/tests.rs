@@ -283,7 +283,7 @@ fn malformed_locked_and_oversized_documents_fail_explicitly() {
         if skip {
             eprintln!(
                 "skipping CoreGraphics' rejection of a malformed PDF: it crashes intermittently \
-                 under Rosetta translation (docs/validation/macos-x86_64-rosetta.md)"
+                 under Rosetta translation (docs/development.md)"
             );
         } else {
             assert!(

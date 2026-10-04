@@ -74,7 +74,7 @@ pub(crate) fn open(framework: Framework) -> Result<(), String> {
 ///
 /// Some framework paths behave differently there: Vision text recognition
 /// fails without an error, and CoreGraphics' rejection of a malformed PDF can
-/// crash the process (see `docs/validation/macos-x86_64-rosetta.md`).
+/// crash the process (see `docs/development.md`).
 pub(crate) fn translated() -> bool {
     static TRANSLATED: OnceLock<bool> = OnceLock::new();
     *TRANSLATED.get_or_init(|| {

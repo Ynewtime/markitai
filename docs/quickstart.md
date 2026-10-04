@@ -8,9 +8,8 @@ reference release 1.2.0. Stable 1.3.0 has not been published.
 
 ## 1. Install
 
-Choose the archive supplied for your machine. `1.3.0-dev` is a development
-version; stable 1.3.0 has not been published. The names below describe packages
-produced by the project, not links to an available stable release.
+Choose the development archive supplied for your machine. The names below
+describe project builds, not links to a published stable release.
 
 | Platform | Development archive |
 |---|---|

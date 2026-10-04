@@ -125,11 +125,6 @@ using these forms can retain a stale reference when an asset collision changes
 a name. External stylesheet contents and dynamically computed CSS URLs are also
 outside destination rewriting; these remain tracked fidelity gaps.
 
-The newer media syntax is covered by source tests and
-[round-eleven native release acceptance](validation/html-media-round11.md);
-the frozen round-ten paired reference evidence predates this extension.
-CSS resources have [round-twelve release and browser acceptance](validation/css-round12.md)
-on authored cases; the reference history writer uses global text replacement.
 The candidate boundaries follow the [HTML srcset algorithm](https://html.spec.whatwg.org/multipage/images.html#parse-a-srcset-attribute).
 New filename data is encoded before HTML escaping so the
 [URL parser](https://url.spec.whatwg.org/#concept-basic-url-parser) cannot discard
@@ -165,15 +160,6 @@ errors remove the stage. A hard process kill may leave an unpublished `.tmp-*`
 directory, which readers must ignore. Published jobs and the stable lock are not
 automatically pruned. This is cooperative local-process protection, not a defense
 against a privileged actor replacing ancestors during system calls.
-
-Current source tests exercise the native recorder and isolated real CLI processes.
-The [round-ten release audit](validation/history-round10.md) passes five authored
-archive contract pairs, four strictly after declared identity/time normalization.
-The failed-notebook pair retains its existing parser diagnostic difference.
-Native service history consumption is implemented and covered by actual HTTP
-tests. Broader paired coverage and cross-platform execution still need their own
-acceptance evidence. The older filename adaptation below has its own focused
-source tests; executed results belong in the current validation record.
 
 ## Older enhanced histories
 

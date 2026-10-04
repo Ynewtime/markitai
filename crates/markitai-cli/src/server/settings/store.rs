@@ -251,9 +251,9 @@ impl Store {
                 .map(|entry| probe_params(entry, &data.providers))
                 .collect();
             let selected = if body.get("api_base").is_some() {
-                let selected = candidates.iter().find(|params| {
-                    model::same_base(provider, params["api_base"].as_str(), base.as_deref())
-                });
+                let selected = candidates
+                    .iter()
+                    .find(|params| model::same_base(params["api_base"].as_str(), base.as_deref()));
                 if selected.is_none() && !candidates.is_empty() {
                     return Err(invalid(
                         "saved model credentials cannot be used with another endpoint",

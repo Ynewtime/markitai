@@ -114,6 +114,4 @@ elsewhere), so a name that survives a crash refers to complete bytes. Existing
 content-addressed asset bytes are verified before reuse. The policy checks of a
 document's base and enhanced members share one walk of their common parent, and
 every write observes the path afresh. Malformed input
-frontmatter remains content. [Round-eleven measurements](validation/html-media-round11.md)
-record a limited asset-heavy CLI comparison; binding overhead and peak memory
-remain unmeasured by that experiment.
+frontmatter remains content.

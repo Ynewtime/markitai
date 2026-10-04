@@ -5,7 +5,8 @@ Development builds remain `1.3.0-dev`; publishing requires explicit authorizatio
 Package manifests set the floors: Rust 1.92 (workspace `rust-version`, the
 floor of the portable PDF renderer hayro), Python 3.10 (`bindings/python/pyproject.toml`),
 Node.js 18 (`bindings/node/package.json`) and Go 1.23 (`bindings/go/go.mod`).
-Native checkpoints use Rust 1.99.0, Python 3.13, Node.js 24 and Go 1.27.1.
+The CI workflow pins build toolchains; consult `.github/workflows/native.yml`
+for the versions used by a particular run.
 The separate minimum-Rust CI lane checks core, CLI and FFI with Rust 1.92; it
 does not run all tests or validate minimum Python/Node/Go runtimes. User-facing build and
 installation steps are in the [quick start](quickstart.md) and
@@ -45,19 +46,10 @@ error and CoreGraphics' rejection of a malformed PDF crashes the process
 intermittently; the affected tests check the explicit Rosetta error or skip
 that one call, and say so on stderr. Rosetta exposes no AVX, AVX2, FMA or BMI,
 so the AVX2 paths that dependencies select on most Intel Macs are not run. The
-[Rosetta record](validation/macos-x86_64-rosetta.md) has the measurements.
+[Rosetta record](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/macos-x86_64-rosetta.md) has the measurements.
 
-Tests must set both `HOME` and `MARKITAI_HOME` to private directories under
-`.local/` or a test-owned temporary directory. Use repository fixtures, authored
-samples and loopback mock servers. Do not read real `~/.markitai`, personal
-folders or credentials; do not send user identity information to external
-services. Optional live-provider checks require separately supplied test
-credentials and an explicit scope. Never print or commit credentials.
-
-Before a checkpoint, inspect the diff, run relevant checks, then stage explicit
-paths. A commit marks a recoverable state, not a claim of feature completeness.
-Use `git log` and `git show` to recover an individual file into a new file for
-comparison. Never discard working tree changes to recover an earlier version.
+Follow [AGENTS.md](../AGENTS.md) for test isolation, credentials, validation and
+Git rules. A source check does not establish installed-package compatibility.
 
 The original repository is not a build dependency. Any referenced differential
 test runner must accept its location explicitly and record the reference SHA.

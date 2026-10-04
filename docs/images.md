@@ -303,5 +303,4 @@ The implementation uses the bounded decoder interfaces in
 [resource limits](https://docs.rs/image/0.25.10/image/struct.Limits.html).
 No codec downloads or external executable installation occur during conversion.
 SVG uses [resvg 0.48.1](https://docs.rs/resvg/0.48.1/resvg/) with explicit text,
-system-font and raster-image features. Its binary size contribution has not yet
-been measured in this implementation round.
+system-font and raster-image features.

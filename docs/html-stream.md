@@ -76,7 +76,7 @@ broader largest-hidden-subtree selection. A deliberately hidden article that
 imitates this complete transport structure remains an inherent ambiguity of
 script-stripped input.
 
-## Bounds and evidence
+## Bounds
 
 Pages without transport IDs do not copy or parse script text. Recovery considers
 at most 200,000 DOM nodes, 512 distinct transport IDs, 2 MiB of
@@ -85,12 +85,3 @@ to 128 element levels. Over-limit discovery or an ineligible snapshot preserves
 the original DOM. Existing node identities are retained, and no article body is
 copied or reparsed for placement. Recovery does not add network or runtime
 dependencies.
-
-Module tests exercise completed and nested boundaries, chained segment placement,
-ordinary hidden descendants, inert call examples, duplicate and incomplete
-markers, stripped snapshot chains, CJK thresholds, ambiguous candidates and
-cycles. These fixtures specify the implementation contract; release corpus
-results and performance must be reported separately after execution. The
-[round-fourteen gap record](validation/html-streaming-gap-round14.md) remains
-historical evidence of the previous four-word LessWrong output and is not a
-validation claim for this implementation.

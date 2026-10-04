@@ -4,10 +4,6 @@ The `playwright` fetch strategy retains its public name and uses Chromium's
 DevTools Protocol directly from Rust. It does not import Playwright or run
 Python, Node.js, or a browser automation CLI. Chrome/Chromium remains an optional
 installed executable; the standalone Markitai binary does not bundle it.
-Earlier loopback Chrome fetching, capture, timeout, history and cleanup checks
-are scoped to the source and artifacts in the [validation report](validation/native-backends-round16.md);
-that record is not acceptance of every installed browser or later package.
-
 Each owned browser process uses a temporary user-data directory,
 a separate disk-cache directory, a loopback debugging endpoint on a dynamically
 selected port, and no user browser profile. Caller-owned reuse is described below. Extensions, synchronization,
@@ -75,21 +71,6 @@ credentials. Startup has a 15-second bound and protocol setup/evaluation a share
 five-second deadline, followed by process cleanup. Discovery alone remains a
 separate non-launching availability check.
 
-Optional tests explicitly launch installed Chromium against authored loopback
-servers for successful Basic and Digest authentication and actual screenshot pixels, bounded
-wrong-password failure, cross-origin redirect isolation with an explicit-origin
-positive case, third-party resource isolation, and diagnostic/profile cleanup.
-These are ignored in the ordinary workspace invocation and must be selected
-explicitly by the coordinator; implementation does not itself establish a passing
-release acceptance result. The Digest server independently verifies the username,
-realm, nonce, opaque value, method, URI, algorithm, qop, nonce count, client nonce
-and response hash. Its selected browser cases cover stale-nonce renewal, denied
-credentials without navigation replay, redirected origin scope, third-party
-challenges, extensionless PDF bytes and caller-owned runtime account isolation.
-A valid header prefix alone does not satisfy the fixture. Known-answer tests use
-an RFC MD5 vector and independently calculated Python `hashlib` values; MD5 code
-is only a test dependency.
-
 ## Authenticated PDF responses
 
 The browser intercepts response headers for the initial main-frame navigation,
@@ -122,11 +103,7 @@ existing disabled-download policy.
 
 This stage handles the initial HTTP navigation and redirects, not later
 JavaScript-triggered downloads, viewer interactions, arbitrary attachment types
-or persisted browser sessions. Optional authored loopback tests cover authenticated
-inline PDFs, extensionless binary attachments, redirects, origin isolation,
-explicit text priority, advertised size rejection, truncated bodies and timeouts.
-These tests require the coordinator's explicit installed-browser run; adding the
-implementation or tests alone is not release acceptance evidence.
+or persisted browser sessions.
 
 ## Fetch and screenshot behavior
 
@@ -326,9 +303,3 @@ The protocol operations use Chromium's published
 [Network](https://chromedevtools.github.io/devtools-protocol/tot/Network/) and
 [Fetch](https://chromedevtools.github.io/devtools-protocol/tot/Fetch/) and
 [IO](https://chromedevtools.github.io/devtools-protocol/tot/IO/) domains.
-Unit coverage targets option validation, cookie field conversion, glob boundaries,
-proxy credential rejection and filename identity. The [round-sixteen record](validation/native-backends-round16.md) additionally
-covers delayed JavaScript, headers/cookies, redirects, tiling, canvas-only results,
-failure policies, timeout and cleanup for its frozen artifact. Real proxy routes, every wait state,
-shadow-root content, explicit static/remote text plus capture and non-Unix process
-cleanup were outside that historical local acceptance corpus.

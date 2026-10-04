@@ -1,17 +1,9 @@
-//! One compiled sort for the command's slice sorts and ordered collections.
+//! Share the core's compiled stable index sort instead of specializing the full
+//! sorting algorithm for every element and comparator type. Ordered collections
+//! likewise insert entries individually to avoid specializing bulk collection.
 //!
-//! A `sort_by` or `sort_by_key` call compiles the standard library's stable
-//! sort again for its element type and comparator closure, 3 to 22 KB each
-//! here, and collecting into a `BTreeMap` or `BTreeSet` sorts the collected
-//! pairs the same way, once per source iterator type. [`by`] and [`by_key`]
-//! sort the positions `0..len` through one compiled sort with the caller's
-//! comparator (the library's [`stable_order`], which its own sorts use too)
-//! and then move the elements into that order; [`map`] and [`set`]
-//! insert one entry at a time. Every comparator given to them is a total order
-//! (integers, strings, booleans, `Option`s and tuples of these), which has
-//! exactly one stable order, so the order produced is the one `sort_by` gave.
-//! Keys that compare equal are equal strings or integers here, so it does not
-//! matter which of two equal keys a collection keeps.
+//! Comparators must be total orders. For collections, equal keys must also be
+//! interchangeable: maps retain the last value for a repeated key.
 
 use markitai_core::sort::stable_order;
 use std::cmp::Ordering;

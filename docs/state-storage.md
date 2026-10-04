@@ -291,7 +291,7 @@ uncertain partial write. Temporary staging is cleaned up when publication fails.
 
 Directory synchronization is `fsync` on Unix and replaced on Windows by the
 post-rename file flushes above. Native Windows ARM64/NTFS and Linux checks of
-claims and recovery are recorded in [ownership validation](validation/ownership-validation.md).
+claims and recovery are recorded in [ownership validation](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/ownership-validation.md).
 Their exact source and filesystem scope matters: cross-target checks alone are
 not native execution, and successful recovery tests do not prove arbitrary
 power-loss durability or behavior on every filesystem.

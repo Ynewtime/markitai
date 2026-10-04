@@ -6,9 +6,9 @@ published by an item. A saved output path, the six-character state hash, matchin
 frontmatter, or a content digest alone cannot authorize implicit replacement.
 
 This document describes the implementation contract. The current protocol and
-platform checks are scoped in [ownership validation](validation/ownership-validation.md);
+platform checks are scoped in [ownership validation](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/ownership-validation.md);
 earlier receipt and release checks remain in
-[round-nine validation](validation/recovery-round9.md).
+[round-nine validation](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/recovery-round9.md).
 
 ## Where the protocol applies
 

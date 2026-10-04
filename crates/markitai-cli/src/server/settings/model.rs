@@ -56,7 +56,7 @@ pub(super) fn environment_connection(id: &str) -> ApiResult<Value> {
     }
     Ok(json!({"provider":name,"use_environment_credentials":true}))
 }
-pub(super) fn same_base(_provider: &str, left: Option<&str>, right: Option<&str>) -> bool {
+pub(super) fn same_base(left: Option<&str>, right: Option<&str>) -> bool {
     let normalize = |value: Option<&str>| {
         // An absent configured base may resolve a server environment variable;
         // it is not interchangeable with a client-supplied provider default.
@@ -82,7 +82,7 @@ pub(super) fn check_reuse(
     base: Option<&str>,
     supplies_key: bool,
 ) -> ApiResult<()> {
-    if !supplies_key && (old_provider != provider || !same_base(provider, old_base, base)) {
+    if !supplies_key && (old_provider != provider || !same_base(old_base, base)) {
         return Err(invalid(
             "changing a saved credential endpoint or provider requires an explicit API key (or explicit clear)",
         ));

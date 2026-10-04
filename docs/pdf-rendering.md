@@ -125,91 +125,17 @@ top-level licence files; a binary distribution must carry those notices.
   cross-reference table and, failing that, finds pages by scanning objects, so
   its page order can then differ from the text extractor's.
 
-## Validation
+## Renderer differences and validation
 
-`pdf_raster/tests.rs` runs every assertion against each backend the build
-contains: authored native, scanned and blank pages; all four rotations with
-independent corner colors; nonzero and intersected crop origins; nested Forms,
-vector fills and zero alpha; a real image soft mask; owned input lifetime;
-locked, owner-password-only, malformed and oversized documents; fractional page
-boxes; a non-embedded standard font. Portable-only tests cover a non-embedded
-Adobe-GB1 font drawn with a host face (skipped where none is installed), the
-16-bit side limit and an `/Encrypt` marker inside plain content. The fixture
-manifest records input hashes and independent expectations. On 2026-10-02 the
-`pdf_raster` and `office_render` tests (30) passed natively on Ubuntu 24.04
-amd64 (OrbStack, Rust 1.98.1), where hayro is the only backend; the CJK host
-face test skipped there for lack of a Chinese font. The workspace also passes
-`clippy -D warnings` for `x86_64-pc-windows-msvc` (type check, not linked).
+CoreGraphics and hayro can differ in font substitution, glyph smoothing and
+annotation appearances. Missing non-Latin fonts can omit text in hayro; install
+a suitable host face or use an embedded-font source PDF. These pixel differences
+can also change OCR, especially code listings and line numbers. Renderer parity
+does not imply a handwriting, table or multi-column recognition guarantee.
 
-`docs/validation/drivers/portable-raster-r1/` holds the comparison drivers:
-`compare.py` renders a corpus with both backends on macOS and records per-page
-similarity, sizes, failures by cause and render times; `make-scanned.py` binds
-the R45 OCR images into scanned PDFs with ground truth; `ocr-e2e.py` converts
-scanned PDFs with `--ocr` through both backends and Vision and scores the
-character error rate.
-
-### Comparison r1 (2026-10-02, macOS 27.0 arm64, Rust 1.99.0, release profile)
-
-Inputs: the 108 Quartz-laid-out and 108 Chrome-printed reference fixtures
-(`.local/pdf-corpus-r2`, `-r1`), the six `pdf_raster` fixtures, 14 scanned PDFs
-bound from the R45 OCR images (100 pages with ground truth), four existing
-scanned PDFs and every other distinct local PDF (275): 516 documents, 64.5 MB,
-SHA-256 list in the run's `inputs.json`. 150 DPI, at most 40 pages each, 1,663
-pages compared. Evidence: `.local/w2a/compare-r2` (all inputs), `-r3`/`-r4`/`-r5`
-(timing on the first five groups, 471 pages).
-
-| Group | Pages | SSIM (median) | Ink IoU median / p10 | hayro ink / CoreGraphics ink |
-|---|---|---|---|---|
-| Chrome-printed | 184 | 0.9995 | 0.986 / 0.961 | 0.995 |
-| Quartz-laid-out | 162 | 0.989 | 0.881 / 0.862 | 0.850 |
-| scanned, with ground truth | 100 | 0.9986 | 0.992 / 0.890 | 1.008 |
-| other local PDFs | 1,192 | 0.990 | 0.882 / 0.818 | 0.890 |
-
-Page counts and pixel sizes agree on every page; both backends fail the same 13
-documents (3 without a PDF header, 7 unreadable, 2 needing a password, 1 over
-500 MiB; on one truncated file hayro reports no pages where CoreGraphics
-reports an unreadable document). No page failed to render and hayro reported no
-skipped font or image. Of the 681 pages under 0.85 ink SSIM or ink IoU, 648
-differ in glyph rasterization, not content: CoreGraphics smooths (emboldens)
-glyphs, hayro draws their exact coverage, so Quartz-made text has about 15% less
-ink (476 pages use a non-embedded standard font, where the Foxit faces also
-differ from macOS Helvetica/Times; 58 a non-embedded CID font drawn with another
-host face; 48 Quartz text; 23 other embedded-font text; 43 scans or vector
-pages at threshold edges). Content differs on 33 pages: 30 in three synthetic
-glyph-name test files (non-Latin glyph names in non-embedded standard fonts,
-blank in hayro) and 3 form/annotation probes whose appearance streams only
-hayro draws.
-
-Scanned-PDF OCR end to end (`--ocr`, Vision, the same `portable-media` binary
-with each renderer; 18 PDFs, 112 pages): 15 outputs are identical, the largest
-difference is 0.69% CER (Chinese, 300 DPI), 0.024% pooled. Against the ground
-truth: CoreGraphics 1.289%, hayro 1.296%. The existing scans are
-`quality-r1/cli/batch-ocr/scan1.pdf`, `lazy-fw-r1/inputs/scanned.pdf`,
-`release-qa-r1/work/img/scan.pdf` and
-`quality-r1/p-impl/pdf-inputs/scanpdf--scan6.pdf`. All local scans are JPEG;
-JBIG2, CCITT and JPEG 2000 pages were not available to compare.
-
-Rendered text read by OCR (`--all-pages`: `ocr.per_page_routing: false`, the
-path Office page capture takes; the first 15 Quartz and 15 Chrome fixtures plus
-a five-page LibreOffice 4.2 Writer export, `release-qa-r1/work/docs/scanned.pdf`,
-which despite its name holds text; 40 pages): five outputs identical,
-median 0.77% CER and 1.01% pooled over the 29 documents where OCR kept every
-page. In the other two, the OCR layer's unread-script judgement dropped whole
-pages of Lorem ipsum (pages 3–4 after CoreGraphics, 4–5 after hayro), so their
-CER (60%, 45%) measures that all-or-nothing page decision, not the pixels.
-Code listings with line numbers vary most (up to 20%) under both renderers.
-
-Render time per page (471 pages, one thread; parallel workers were building on
-the same host, so CoreGraphics, measured alternately, is the control):
-
-| hayro build | median | p99 | total | CLI size (`portable-media`) |
-|---|---|---|---|---|
-| all `"z"` | 8.2 ms | 64.3 ms | 6.17 s | 24,552,608 B |
-| `vello_cpu`, `vello_common`, `fearless_simd` at 3 (chosen) | 4.6 ms | 54.8 ms | 4.06 s | 24,684,160 B |
-| every hayro crate at 3 | 3.5 ms | 29.9 ms | 2.65 s | 25,784,496 B |
-| CoreGraphics | 2.9 ms | 35.9 ms | 2.62–2.75 s | — |
-
-Pixels are identical across the three builds. The default macOS CLI is
-22,095,792 B both before and after this change (HEAD `4b2e2ef`); hayro adds
-2,588,368 B to a macOS `portable-media` CLI, a first estimate for the
-Windows/Linux increase.
+The native raster tests exercise each compiled backend with authored fixtures;
+font-dependent cases require a suitable installed font. Comparison tools remain
+in `docs/validation/drivers/portable-raster-r1/`: `compare.py` records pixels,
+failures and timings; `make-scanned.py` prepares scanned PDFs; `ocr-e2e.py` scores
+full OCR conversions. Historical measurements are retained in
+[the original renderer comparison](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/pdf-rendering.md#comparison-r1-2026-10-02-macos-270-arm64-rust-1990-release-profile).

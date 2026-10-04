@@ -585,17 +585,14 @@ fn stored_credentials_bind_provider_and_complete_endpoint() {
             .is_err()
     );
     assert!(model::same_base(
-        "openai",
         Some("https://EXAMPLE.test:443/v1/"),
         Some("https://example.test/v1")
     ));
     assert!(!model::same_base(
-        "openai",
         Some("https://example.test/v1"),
         Some("https://example.test/steal")
     ));
     assert!(!model::same_base(
-        "openai",
         Some("https://example.test/v1?tenant=a"),
         Some("https://example.test/v1?tenant=b")
     ));

@@ -19,8 +19,6 @@ tempfile = "3"
 
 # Workspace crates and the conversion hot path are optimized for speed; every
 # other dependency (server, network/TLS, CLI parsing, fonts/SVG, ...) for size.
-# Measured on corpus-r4 against uniform opt-level 3: 16% smaller CLI, conversion
-# medians within noise (docs/validation/binary-size-round39.md).
 [profile.release]
 lto = "fat"
 codegen-units = 1

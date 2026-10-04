@@ -399,9 +399,8 @@ collected texts, including separate Rust toolchain notices. Its Cargo closure
 conservatively includes build/dev/other-target dependencies; it is not a precise
 list of code reachable in the final binary. Missing texts are reported explicitly
 as `unresolved`, and a successful technical consumer test does not complete the
-redistribution review. This workflow's host results must be recorded separately;
-the earlier dynamic-binding checkpoints do not establish static-link success or
-minimum-macOS or minimum-glibc compatibility.
+redistribution review. Check the actual consumer linkage and platform requirements
+for the package you distribute.
 
 The C ABI is version 1:
 

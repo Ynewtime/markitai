@@ -1,14 +1,6 @@
-//! One compiled task type for the command's own runtime tasks.
-//!
-//! `tokio::task::spawn_blocking` and `tokio::spawn` compile the runtime's task
-//! code (polling, joining, cancelling and freeing a task: about 6 KB per
-//! closure here, and again per scheduler for `tokio::spawn`) for every
-//! closure or future type they are given. [`blocking`] and [`spawn`] give them
-//! one boxed type instead, so that code is compiled once. A task starts when
-//! it is spawned, as before. [`Blocking`] stands for the `JoinHandle`: it
-//! resolves to the closure's value or to the same `JoinError` (panic or
-//! cancellation), and dropping it detaches the task. [`spawn`] still returns
-//! the task's `JoinHandle`.
+//! Box runtime work so Tokio's task machinery is compiled for one task type
+//! instead of every closure and future type. Tasks start immediately; awaiting
+//! preserves the result and `JoinError`, while dropping a handle detaches it.
 
 use std::any::Any;
 use std::future::Future;

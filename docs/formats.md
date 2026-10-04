@@ -58,10 +58,7 @@ UTF-8 and not plain ASCII are read as UTF-8 whatever they declare, because a
 page re-saved as UTF-8 keeps its old declaration; the `replacement` labels
 (ISO-2022-KR, HZ-GB-2312) are ignored. Byte sequences invalid in the declared
 encoding become U+FFFD with a warning. HTML without a declaration is decoded
-like TXT. The detection is measured in
-`.local/text-encodings-r1/` (not committed): 1,725 encoded samples from Rust
-by Example (zh, ja, ko, es), the reference project's Chinese documentation and
-authored Western sentences.
+like TXT. Ambiguous short inputs may need conversion to UTF-8 before processing.
 
 The native Office renderer reads the document once and preserves referenced
 embedded bytes. Shared image preparation then applies configured filtering and
@@ -156,13 +153,7 @@ list. In lists typed by hand an item with a hanging indent is continued the
 same way by a paragraph set in to its text. Not covered: OpenDocument
 paragraphs outside a list matched against its indents (label positions there
 depend on the list style's positioning mode), code or quotation paragraphs
-inside an item, and list items in RTF table cells. On six documents written as
-Word (List Paragraph, a nested level, an empty paragraph), pandoc, Google
-Docs, TextEdit, Word's RTF and LibreOffice write them, every continuation is
-inside its item (none was before, and pandoc's no longer reads as a stray
-bullet), and a seventh, a memo set in throughout, keeps its body text outside
-the list. The 432 `textutil` documents of the Office corpus and the 440 held
-out from the heading work have no such paragraph and are unchanged.
+inside an item, and list items in RTF table cells.
 
 Columns set with tab stops become a table. A run of at least three rows at the
 same tab stops, each split by its tabs into the same number of cells and no
@@ -346,24 +337,6 @@ section hidden by a condition (conditions are not evaluated) and paragraphs
 hidden by a `text:hidden-paragraph` field (shown, as LibreOffice can be set to
 show them); form controls show nothing.
 
-Words the reference keeps and these readers do not are not lost text. On the
-108 `textutil` pages the strict comparison counts DOCX 116, ODT 362 and RTF
-337 such words; classified one by one against each document's own text (its
-`textutil` plain-text reading and, for DOCX and ODT, its XML text), none is a
-word the document shows. They are listing line numbers removed on purpose (49
-DOCX, 55 ODT, 55 RTF), digits the readers write as Unicode superscripts or
-subscripts (66, 57, 66), the reference repeating nested-table text (237 ODT,
-two Hacker News pages) and RTF list labels (`1. 1`, 34), the reference's own
-GBK decoding of Windows-1252 RTF (163, `it抯`), words the reference runs
-together (10 ODT, 4 RTF) or that inline markup splits for the counter (5), and
-a link target the reference writes as text (14 RTF). In the other direction,
-against the documents' own text, the readers add no word but such splits. A
-probe set of 53 documents written as Word, LibreOffice and TextEdit write them
-(fields, notes, text boxes and shapes, hidden and deleted text, form fields,
-alt text, smart tags, symbol fonts, index entries, headers, nested tables)
-found the losses and additions fixed above: 33 passed before, 53 after (the
-reference: 25).
-
 A DOCX, ODT, RTF or Word 97 document with no heading style or outline level
 anywhere often still shows its headings as short bold paragraphs set above the
 body size (TextEdit and `textutil` save a web page's headings that way). In
@@ -375,17 +348,9 @@ no image, and no closing `.`, `,`, `;`, `:` or their full-width forms. The body
 size is the size of most of the body's visible characters (notes excluded).
 The largest such size is level 1, the next level 2, and so on to 6; the heading
 drops its bold and the line breaks around it. Bold text at the body size stays
-a paragraph, as does anything smaller: in the measurement such lines were
-table headers, labels and lead-ins at least as often as headings. On the 108
-R42 pages saved by `textutil`, against their HTML `h1`–`h6`, 281–282 of 361
-headings are found per format (none before) with no paragraph wrongly
-promoted and no other output change; the reference's RTF guess (bold, 4 points
-above the body, under 12 words) finds 188. On 110 other pages held out from
-choosing these rules, 275–282 of 305 are found (the reference's RTF guess
-finds 198); one promoted paragraph is not an HTML heading, a bold 13-point
-sidebar label over 12-point text in the DOCX, where `textutil` flattens the
-layout table. Headings set bold at the body size (an `h4`) or that a page's CSS
-sets at body size are not found.
+a paragraph, as does anything smaller. Headings styled at body size are not
+inferred. A large bold sidebar label can be mistaken for a heading when the
+source exporter has flattened its layout container.
 
 OOXML presentations have a separate reader because the generic document model
 flattens slide boundaries. The package's presentation relationships and
@@ -777,7 +742,7 @@ bounded repair reads a copy that appends the missing FAT entries (extending
 the directory while its entries name siblings not yet read) and detaches the
 unused mini stream; a file whose mini stream holds a stream is never changed,
 the original error stands if the copy fails too, and a warning reports the
-repair ([record](validation/office-quality-round42.md)).
+repair ([record](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/office-quality-round42.md)).
 
 Word 97 text raised or lowered (`sprmCIss`, set directly, by a character style
 or by a paragraph style) is written in Unicode superscript or subscript forms

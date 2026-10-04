@@ -56,9 +56,7 @@ container resolves its shared language attribute and copy-header fallback at
 most once, on demand; target-local and ancestor attributes retain their existing
 precedence. Missing headers are cached too. Ordinary-node checks inspect the
 necessary child positions directly and avoid constructing child vectors or
-collecting header text when no copy button exists. These changes address the
-identified sibling-count costs; elapsed-time and memory benefits require the
-separate coordinator benchmarks.
+collecting header text when no copy button exists.
 
 This is structural normalization rather than a browser layout engine. CSS-only
 line wrapping, virtualized editor lines absent from the DOM, unrecognized
@@ -68,9 +66,3 @@ are not merged merely because they are adjacent. Existing source and curated
 corpus output are inspected as independent evidence: an earlier strict match can
 still share a lost-code defect, and preservation of valid blank lines takes
 precedence over matching a defective reference rendering.
-
-Authored module tests exercise code text, row boundaries, gutters, language
-attributes, hidden/script exclusions, malformed nesting, negative prose cases,
-and the shared nesting budget. Full article output and the code bodies/languages
-of the 16 curated technical fixtures require coordinator integration checks;
-module tests alone do not establish corpus compatibility.

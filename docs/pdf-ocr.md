@@ -9,12 +9,6 @@ separately installed model weights. See [renderer selection](pdf-rendering.md)
 and [OCR prerequisites](ocr.md); the portable engine downloads missing models when needed. A failed required
 model download/load or an unavailable selected backend produces an explicit error.
 
-The [round-seventeen validation](validation/pdf-native-round17.md) records
-coordinated tests and real CLI/binding acceptance. Routing checks pass; exact
-transcription has the unresolved error below. Existing
-[image OCR evidence](validation/native-backends-round16.md) does not establish
-this PDF integration's general fidelity.
-
 ## Page and model routing
 
 Local OCR is selected when OCR is enabled and LLM is disabled, or when
@@ -129,18 +123,6 @@ confident lines. A blank page retains its page marker without invented text;
 embedded pictures without text do not need a warning. Recognition errors and
 language availability follow the page and picture failure rules above.
 
-Historical Vision measurement (not a portable-engine benchmark), with the binaries of [local OCR](ocr.md#the-default-language) (macOS
-27.0.1, whole `--ocr --no-llm` conversions, before and after alternating, median
-of three; scanned pages are the R45, held-out Chinese, Japanese and Korean
-images at 150 DPI, one per page): six English pages 483 ms before and 486 ms
-after, with identical Markdown; six Chinese pages 388 and 914 ms, from symbols
-to the text of every page; twelve pages, three each of English,
-Chinese, Japanese and Korean, 619 and 1,852 ms, with the nine pages of the other
-languages read (four had no text before); six blank 1600×1200 pages 457 and
-1,173 ms, about 120 ms for each page without text; and the six-page scan of the
-formats comparison 430 and 612 ms, its sixth page, Chinese, read instead of
-"completed with no recognized text".
-
 ## Bounds and remaining gaps
 
 - At most 1,000 pages, checked before native text extraction, and 32 million
@@ -170,13 +152,6 @@ editable vector reconstruction are not implemented. Screenshots preserve visual
 composition but do not turn vector drawings into structured Markdown. Recognition
 shares the language, reading-order and cancellation limitations in [local OCR](ocr.md).
 No handwriting, complex-table or multi-column accuracy guarantee is claimed.
-The authored scan's six-word transcript ends in `2026`, which the 150-DPI page
-recognition returns as `2ø26`: the fixture's bitmap font draws its zero with a
-stroke across the whole glyph, like `ø`. A run of letters drawn like a zero
-between two digits of a number is now read as zeros ([local OCR](ocr.md#turned-pages-code-numbers-and-table-cells)),
-so the page reads exactly and its exact-match test runs in the ordinary gate.
-Menlo's slashed zeros in the rendered number set were read correctly before
-([R45](validation/ocr-quality-round45.md)).
 Static/automatic URL fetches and initial browser PDF responses hand requested
 PDF media directly to this pipeline,
 including redirects and extensionless downloads. The original URL remains the
@@ -186,4 +161,4 @@ extends the reference URL converter, which did not pass local media settings
 through. Browser PDFs reuse the authenticated CDP response and preserve their
 `playwright` strategy; remote extraction services retain their own path. See
 [downloaded PDFs](pdf.md#downloaded-pdfs) for the content/identity contract and
-[round-eighteen validation](validation/url-pdf-round18.md) for execution evidence.
+[round-eighteen validation](https://github.com/Ynewtime/markitai-rust/blob/1749201edbaaa7198d3b9a5056ce4e87a1d08978/docs/validation/url-pdf-round18.md) for execution evidence.

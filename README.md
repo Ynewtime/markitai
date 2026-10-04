@@ -13,67 +13,16 @@ for local verification. Stable 1.3.0 is not published. See the
 
 ## Install
 
-Choose the archive supplied for your machine. `1.3.0-dev` is a development
-version; stable 1.3.0 has not been published. The names below describe packages
-produced by the project, not links to an available stable release.
+Download the development archive for your operating system and architecture,
+then follow the [installation steps](docs/quickstart.md#1-install) for macOS,
+Linux or Windows. Keep the executable, aliases and bundled documentation together;
+no administrator installation is required.
 
-| Platform | Development archive |
-|---|---|
-| macOS on Apple silicon | `markitai-1.3.0-dev-aarch64-apple-darwin-single-binary.tar.gz` |
-| macOS on Intel | `markitai-1.3.0-dev-x86_64-apple-darwin-single-binary.tar.gz` |
-| Linux x86-64 | `markitai-1.3.0-dev-x86_64-unknown-linux-gnu-single-binary.tar.gz` |
-| Windows x64 | `markitai-1.3.0-dev-x86_64-pc-windows-msvc.zip` |
-| Windows ARM64 | `markitai-1.3.0-dev-aarch64-pc-windows-msvc.zip` |
-
-On macOS or Linux, replace `Archive` with the path to your downloaded archive.
-Use a new installation directory; if `mkdir` reports that it exists, choose a
-new directory before continuing. Keeping the files together preserves both
-aliases and the offline documentation:
-
-```sh
-Archive="/path/to/markitai-1.3.0-dev-aarch64-apple-darwin-single-binary.tar.gz"
-Install="$HOME/.local/share/markitai/1.3.0-dev"
-mkdir -p "$HOME/.local/share/markitai"
-mkdir "$Install" && tar -xzf "$Archive" -C "$Install"
-export PATH="$Install:$PATH"
-markitai --version                  # markitai 1.3.0-dev
-mkai --help
-markitai-mcp --help
-```
-
-The `export` makes the commands available in this terminal immediately; it
-does not rely on `~/.local/bin` already being on `PATH`. To keep them available
-in new terminals, add `export PATH="$HOME/.local/share/markitai/1.3.0-dev:$PATH"`
-once to `~/.zshrc` for zsh or `~/.bashrc` for non-login bash terminals
-(`~/.bash_profile` for login bash terminals). Use the actual installation
-directory if you changed it. An MCP client can always use the
-absolute executable path, independent of shell profiles.
-
-On Windows, choose x64 for Intel/AMD or ARM64 for an ARM-based PC (check
-Settings → System → About → System type), then use PowerShell. Replace `Archive` with your
-ZIP path; choose a new `Install` directory if it already exists:
-
-```powershell
-$Archive = "C:\Downloads\markitai-1.3.0-dev-aarch64-pc-windows-msvc.zip"
-$Install = Join-Path $env:LOCALAPPDATA "Programs\Markitai-1.3.0-dev"
-if (Test-Path -LiteralPath $Install) { throw "Choose a new installation directory" }
-Expand-Archive -LiteralPath $Archive -DestinationPath $Install
-& "$Install\markitai.exe" --version
-$env:Path = "$Install;$env:Path"
-mkai.exe --help
-markitai-mcp.exe --help
-```
-
-These are three direct EXE entries, with no `.cmd` wrapper or administrator
-installation. The PATH assignment applies to this terminal. For future
-terminals, add the installation directory to your **user** Path in Windows
-Environment Variables, then open a new terminal.
-
-The archives include license notices, `llms.txt`, `llms-full.txt` and selected
-Markdown guides in `docs/` for offline reading. They do not include OCR models.
-For builds from source, platform requirements, optional components and unsigned
-macOS downloads, see the [quick start](docs/quickstart.md#1-install). Language
-packages have separate installation steps in [bindings](docs/bindings.md#installation).
+The archives include license notices and selected Markdown guides for offline
+use. OCR models, Chromium and LibreOffice are optional separate components.
+See [platform support](docs/quickstart.md#platform-support) for requirements,
+[unsigned macOS builds](docs/quickstart.md#unsigned-builds-on-macos) for Gatekeeper,
+and [bindings](docs/bindings.md#installation) for language packages.
 
 ## Quick start
 

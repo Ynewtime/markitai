@@ -284,24 +284,6 @@ each story's source, points, submitter and comment link. A Gmail thread saved
 from the browser is read as a page, without the quoted history and trimmed
 content that Gmail folds away in each message
 ([mail threads](html-article.md#furniture-beside-the-article-body)).
-Against defuddle's 209 expected outputs, words extra to the expected body fell
-from 3,555 to 2,658 with none lost ([R43](validation/html-quality-round43.md)),
-then to 2,192 with lost words 228 → 210 and table-row differences 71 → 24
-([R44](validation/html-quality-round44.md)); all seven semantic contracts of
-the reference's captured pages hold. Reading the blocks beside the article body
-([furniture rules](html-article.md#furniture-beside-the-article-body)) lowers the
-extra words further, from 2,143 to 1,655 across 25 pages, with lost words
-unchanged at 210 in every file and the seven contracts still holding (release
-build, macOS arm64, the `html-quality-r44` driver on the 209 + 32 inputs; the
-remainder is mostly the GitHub discussion, the Wikipedia infobox, and titles,
-subtitles and dates kept on purpose). Marks of the page (reading times,
-counters, a breadcrumb trail, a repeated date, an author's card), featured
-comments set into the body and a Gmail thread's quoted history take it from
-1,655 to 1,484 across 9 pages, with lost words unchanged at 210 in every file,
-table-row differences at 17 and the seven contracts holding; replies of a
-thread, a list the body introduces and a short conclusion now stay after the
-body (same driver and build profile).
-
 ## Reading sites
 
 Some reading sites keep the article among site chrome, hide it until a script

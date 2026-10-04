@@ -103,7 +103,7 @@ These pages are for contributors and reviewers rather than users.
 - [Architecture](architecture.md) and [development](development.md).
 - [Compatibility](compatibility.md): contracts of reference release 1.2.0.
 - [Native CI](ci.md): package builds and installed-package checks.
-- [Validation](validation/README.md): measured evidence for each round.
+- [Validation](validation/README.md): active checks and access to archived evidence.
 - Decisions: [native core](decisions/0001-native-core.md),
   [document LLM cache](decisions/0002-persistent-llm-cache.md),
   [static-page fetch cache](decisions/0003-persistent-fetch-cache.md) and
