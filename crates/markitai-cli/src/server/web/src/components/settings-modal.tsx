@@ -1,6 +1,6 @@
 // Model settings, as a 760px dialog with a breadcrumb: the configured models,
-// then Add models → provider → model catalogue, or a model's own page with its
-// provider's connection above the routing fields. Escape steps back one level.
+// then Add models → provider → model catalogue. A model row's Edit opens the
+// provider's page the same way. Escape steps back one level.
 // Every write carries the revision this draft started from; a conflict keeps
 // the draft and reloads the lists, and the person decides to use the new revision.
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
@@ -15,7 +15,6 @@ import {
   isRevisionConflict,
   openConfig,
   probeModel,
-  updateDeployment,
   updateProvider,
 } from "../api/client.ts";
 import type { Deployment, DiscoveryResult, NewDeployment, ProviderCard, SettingsView } from "../api/types.ts";
@@ -245,60 +244,18 @@ export function SettingsModal({
     }
   };
 
-  const [editing, setEditing] = useState<Deployment | null>(null);
-  const [editGroup, setEditGroup] = useState("");
-  const [editModel, setEditModel] = useState("");
-  const [editWeight, setEditWeight] = useState(1);
-  const [editWeightDraft, setEditWeightDraft] = useState<string | null>(null);
-  const [editBusy, setEditBusy] = useState(false);
-  // Editing opens a sub-level page for the deployment: the provider's
-  // connection (when the page can manage it) above the routing fields.
+  // Editing opens the provider's own page in the add flow: its connection and
+  // catalogue, where more of its models can be added.
   const openEdit = (deployment: Deployment) => {
-    setEditing(deployment);
-    setEditGroup(deployment.routing_group);
-    setEditModel(deployment.model);
-    setEditWeight(deployment.weight);
-    setEditWeightDraft(null);
-    setListError(null);
     const name = deployment.model.includes("/") ? deployment.model.split("/", 1)[0]!.toLowerCase() : "openai";
-    const cards = providers.filter((card) => manageable(card) && card.provider === name);
-    const card = cards.find((card) => card.api_base != null && card.api_base === deployment.api_base) ?? cards[0] ?? null;
-    setProvider(card);
-    resetConnection();
-    if (card) void loadConnection(card);
-    focusHeading();
-  };
-  const closeEdit = () => {
-    const id = editing?.deployment_id;
-    setEditing(null);
-    setProvider(null);
-    resetConnection();
-    if (id !== undefined)
-      requestAnimationFrame(() => card.current?.querySelector<HTMLElement>(`[data-deployment="${CSS.escape(id)}"] .edit-btn`)?.focus());
-  };
-  const saveEdit = async () => {
-    if (!editing || revision === null || editBusy) return;
-    setEditBusy(true);
-    try {
-      accept(
-        await updateDeployment(editing.deployment_id, {
-          model_name: editGroup.trim(),
-          model: editModel.trim(),
-          weight: editWeight,
-          expected_revision: revision,
-        }),
-      );
-      const id = editing.deployment_id;
-      setEditing(null);
-      setProvider(null);
-      resetConnection();
-      announce(t.saved);
-      requestAnimationFrame(() => card.current?.querySelector<HTMLElement>(`[data-deployment="${CSS.escape(id)}"] .edit-btn`)?.focus());
-    } catch (error) {
-      await fail(error);
-    } finally {
-      setEditBusy(false);
-    }
+    const cards = providers.filter((card) => card.provider === name);
+    const card =
+      cards.find((card) => manageable(card) && card.api_base != null && card.api_base === deployment.api_base) ??
+      cards.find(manageable) ??
+      cards[0];
+    if (!card) return;
+    setAdding(true);
+    choose(card);
   };
 
   const saveDetected = async (deployment: Deployment) => {
@@ -473,8 +430,6 @@ export function SettingsModal({
     } else if (adding) {
       resetAdd();
       focusHeading();
-    } else if (editing) {
-      closeEdit();
     } else requestClose();
   });
 
@@ -664,37 +619,25 @@ export function SettingsModal({
 
   const picking = adding && provider !== null && (discovery !== null || manualOnly);
   const footer =
-    settings === null ? null : adding ? (
-      provider === null ? (
-        <div class="form-actions">
-          <button type="button" class="btn btn-ghost" onClick={resetAdd}>
-            {t.cancel}
-          </button>
-        </div>
-      ) : (
-        <div class="form-actions">
-          {picking && <p class="picker-count">{t.modelsSelected(selected.size)}</p>}
-          {picking && (
-            <button type="button" class="btn btn-primary" disabled={addBusy || !selected.size} onClick={() => void addSelected()}>
-              {addBusy ? t.saving : t.addModelsCount(selected.size)}
-            </button>
-          )}
-          <button type="button" class="btn btn-ghost" onClick={backToProviders}>
-            {t.cancel}
-          </button>
-        </div>
-      )
-    ) : editing ? (
+    settings === null || !adding ? null : provider === null ? (
       <div class="form-actions">
-        {source}
-        <button type="submit" form="edit-deployment" class="btn btn-primary" disabled={editBusy || !editGroup.trim() || !editModel.trim()}>
-          {editBusy ? t.saving : t.save}
-        </button>
-        <button type="button" class="btn btn-ghost" onClick={closeEdit}>
+        <button type="button" class="btn btn-ghost" onClick={resetAdd}>
           {t.cancel}
         </button>
       </div>
-    ) : null;
+    ) : (
+      <div class="form-actions">
+        {picking && <p class="picker-count">{t.modelsSelected(selected.size)}</p>}
+        <button type="button" class="btn btn-ghost" onClick={backToProviders}>
+          {t.cancel}
+        </button>
+        {picking && (
+          <button type="button" class="btn btn-primary" disabled={addBusy || !selected.size} onClick={() => void addSelected()}>
+            {addBusy ? t.saving : t.addModelsCount(selected.size)}
+          </button>
+        )}
+      </div>
+    );
 
   const keyText = (draft: ProviderDraft) =>
     draft.key.state === "saved"
@@ -893,16 +836,6 @@ export function SettingsModal({
                   </>
                 )}
               </>
-            ) : editing ? (
-              <>
-                <button type="button" onClick={closeEdit}>
-                  {t.settingsTitle}
-                </button>
-                <span aria-hidden="true">/</span>
-                <h2 id="settings-title" tabIndex={-1}>
-                  {provider ? label : editing.model}
-                </h2>
-              </>
             ) : (
               <h2 id="settings-title" tabIndex={-1}>
                 {t.settingsTitle}
@@ -958,16 +891,24 @@ export function SettingsModal({
                         </p>
                       )}
                     </div>
-                    {!manualOnly && (
-                      <button
-                        type="button"
-                        class={discovery === null && !autoLoads ? "btn btn-primary" : "btn btn-ghost"}
-                        disabled={discovering || !canLoad}
-                        onClick={() => void load(discovery !== null)}
-                      >
-                        {discovering ? t.loading : discovery === null ? t.loadModels : t.refreshModels}
-                      </button>
-                    )}
+                    {!manualOnly &&
+                      (discovery === null && !autoLoads ? (
+                        <button type="button" class="btn btn-primary" disabled={discovering || !canLoad} onClick={() => void load(false)}>
+                          {discovering ? t.loading : t.loadModels}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          class="icon-btn"
+                          aria-label={t.refreshModels}
+                          title={t.refreshModels}
+                          disabled={discovering || !canLoad}
+                          aria-busy={discovering || undefined}
+                          onClick={() => void load(discovery !== null)}
+                        >
+                          {discovering ? <span class="spinner" aria-hidden="true" /> : <Icon name="ArrowCounterClockwise" size={15} />}
+                        </button>
+                      ))}
                   </div>
                   {showsKey && (
                     <div class={needsBase ? "field-grid" : "field-grid is-single"}>
@@ -1045,43 +986,6 @@ export function SettingsModal({
                 )}
               </>
             )
-          ) : editing ? (
-            <>
-              {saved && connection}
-              <form
-                id="edit-deployment"
-                class="dialog-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void saveEdit();
-                }}
-              >
-                <h3 class="group-title">{t.routingSection}</h3>
-                <div class="field-grid">
-                  <label class="field">
-                    <span class="field-label">{t.routingGroup}</span>
-                    <input value={editGroup} onInput={(event) => setEditGroup(event.currentTarget.value)} />
-                  </label>
-                  <label class="field">
-                    <span class="field-label">{t.setModel}</span>
-                    <input value={editModel} onInput={(event) => setEditModel(event.currentTarget.value)} />
-                  </label>
-                  <label class="field">
-                    <span class="field-label">{t.weight}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={editWeightDraft ?? editWeight}
-                      onInput={(event) => {
-                        setEditWeightDraft(event.currentTarget.value);
-                        setEditWeight(Math.max(0, Math.floor(Number(event.currentTarget.value)) || 0));
-                      }}
-                      onBlur={() => setEditWeightDraft(null)}
-                    />
-                  </label>
-                </div>
-              </form>
-            </>
           ) : (
             <>
               <div class="settings-summary">

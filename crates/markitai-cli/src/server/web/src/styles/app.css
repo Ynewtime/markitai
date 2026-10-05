@@ -1917,6 +1917,12 @@ textarea {
   font-size: var(--text-sm);
   color: var(--text-2);
 }
+/* the Add-models action is lighter than the dialog's pinned form buttons */
+.settings-summary .btn {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: var(--text-sm);
+}
 .model-rows {
   display: flex;
   flex-direction: column;
@@ -2375,6 +2381,7 @@ textarea {
 }
 /* the manual-entry fold is ruled off from the catalogue above it */
 .picker > .disclosure {
+  width: 100%;
   padding-top: 12px;
   border-top: 1px solid var(--hairline);
 }

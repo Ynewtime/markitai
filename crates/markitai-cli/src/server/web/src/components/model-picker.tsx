@@ -61,7 +61,9 @@ export function ModelPicker({
         deployment.model === model && deployment.routing_group === group.trim() && normalizeBase(deployment.api_base) === normalizeBase(apiBase),
     );
   const needle = query.trim().toLowerCase();
-  const visible = all.filter((candidate) => !needle || candidate.model.toLowerCase().includes(needle) || candidate.label.toLowerCase().includes(needle));
+  const matching = all.filter((candidate) => !needle || candidate.model.toLowerCase().includes(needle) || candidate.label.toLowerCase().includes(needle));
+  // Models already enabled for this group and endpoint head the list.
+  const visible = [...matching.filter((candidate) => configured(candidate.model)), ...matching.filter((candidate) => !configured(candidate.model))];
   const selectable = visible.filter((candidate) => !configured(candidate.model));
   const chosenVisible = selectable.filter((candidate) => selected.has(candidate.model));
   const allChosen = selectable.length > 0 && chosenVisible.length === selectable.length;

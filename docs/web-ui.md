@@ -70,9 +70,9 @@ OpenAI`); Escape steps back one level before it closes. The first level lists
 configured models (`routing group · model · Routing weight 1` with icon buttons
 for Test, Edit and Delete), models detected for this session (Save to config)
 and the configuration source (clicking the path asks the service to open it).
-Edit opens the model's own page (`Settings / OpenAI`): the provider's Connection
-section above the routing fields (routing group, model, routing weight). Add
-models shows provider cards grouped as configured environment credentials, saved
+Edit on a model row opens the provider's page, the same as Add models →
+provider. Add models shows provider cards grouped as configured environment
+credentials, saved
 providers (with their model count, Edit and Delete; Edit opens the provider's
 page), common providers (the
 reference's eight) and "More OpenAI-compatible providers": the sixteen further
@@ -84,9 +84,10 @@ vLLM, absent for Ollama), a base URL for Azure, OpenAI-compatible endpoints and 
 an optional custom base (prefilled hint: the documented endpoint). It loads the
 catalogue through the provider's `/models` (automatically for Ollama and LM
 Studio) and opens the model picker: search, Select visible, Vision and Configured
-badges, a manual model ID (also when the catalogue cannot be loaded), routing
+badges (already-enabled models head the list), a manual model ID (also when the
+catalogue cannot be loaded), routing
 group and weight, `N selected`; the list scrolls after about four models, and the
-selection count with Add and Cancel stays pinned at the bottom of the dialog.
+selection count with Cancel and Add stays pinned at the bottom of the dialog.
 A saved provider's page starts with a Connection section that manages the key
 and the address separately: the key shows as saved (with its last four
 characters), from an environment variable or not set, with Replace and Remove; a

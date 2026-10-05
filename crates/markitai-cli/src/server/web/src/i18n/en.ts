@@ -411,7 +411,6 @@ export const en = {
   concealField: (label: string) => `Hide ${label}`,
   edit: "Edit",
   editModel: (model: string) => `Edit ${model}`,
-  routingSection: "Routing",
   test: "Test",
   testModel: (model: string) => `Test ${model}`,
   testing: "Testing…",

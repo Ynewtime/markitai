@@ -383,7 +383,6 @@ export const zh: Dict = {
   concealField: (label) => `隐藏${label}`,
   edit: "编辑",
   editModel: (model) => `编辑 ${model}`,
-  routingSection: "路由",
   test: "测试",
   testModel: (model) => `测试 ${model}`,
   testing: "测试中…",
