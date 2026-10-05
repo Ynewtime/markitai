@@ -1362,7 +1362,12 @@ fn run_mode(
                 }
                 attempts = attempts.saturating_add(1);
                 if prompts.image.is_some() {
-                    disclose_images(crate::fetch::consent::Gate::installed(), &entries[selected]);
+                    disclose_images(
+                        crate::fetch::consent::Gate::installed(),
+                        &entries,
+                        &candidates,
+                        selected,
+                    );
                 }
                 let mut observation = routing::Observation::default();
                 let response = if entries[selected].provider == "copilot" {
@@ -1531,10 +1536,24 @@ fn leaves_machine(entry: &Deployment) -> bool {
 }
 
 /// The one-time notice before images first go to a model off this machine.
-fn disclose_images(gate: &crate::fetch::consent::Gate, entry: &Deployment) {
-    if leaves_machine(entry) {
-        gate.images(&entry.id);
+/// It names every model of the group that may receive them off this machine,
+/// not just the one this request happened to select.
+fn disclose_images(
+    gate: &crate::fetch::consent::Gate,
+    entries: &[Deployment],
+    candidates: &[usize],
+    selected: usize,
+) {
+    if !leaves_machine(&entries[selected]) {
+        return;
     }
+    let mut models: Vec<&str> = Vec::new();
+    for entry in candidates.iter().map(|&index| &entries[index]) {
+        if leaves_machine(entry) && !models.contains(&entry.id.as_str()) {
+            models.push(&entry.id);
+        }
+    }
+    gate.images(&models);
 }
 
 fn payload(entry: &Deployment, prompts: &Prompts) -> Value {

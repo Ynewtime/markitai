@@ -228,9 +228,21 @@ pub(crate) fn indent_text_except_first_line(
     let estimated_capacity = text.len() + (line_count.saturating_sub(1)) * indent;
     let mut result = String::with_capacity(estimated_capacity);
     let indent_text = " ".repeat(indent);
-    for (idx, line) in text.lines().enumerate() {
+    let mut lines = text.lines().enumerate().peekable();
+    while let Some((idx, line)) = lines.next() {
         let line = if trim_line_end {
-            line.trim_end_matches(is_document_whitespace)
+            let trimmed = line.trim_end_matches(is_document_whitespace);
+            // markitai: a hard break written as two trailing spaces stays
+            // where a line with content follows it; other blanks go.
+            let continued = lines
+                .peek()
+                .is_some_and(|(_, next)| !next.trim_start_matches(is_document_whitespace).is_empty());
+            let before = line.trim_end_matches(' ');
+            if continued && !trimmed.is_empty() && line.len() - before.len() >= 2 {
+                &line[..before.len() + 2]
+            } else {
+                trimmed
+            }
         } else {
             line
         };

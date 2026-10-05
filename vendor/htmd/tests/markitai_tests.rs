@@ -159,6 +159,20 @@ fn element_attr_matches_local_names() {
     );
 }
 
+// Unlike the published htmd 0.5.5, which trimmed every line of a list item
+// and so joined the lines a `<br>` (two trailing spaces) had broken.
+#[test]
+fn a_hard_break_in_a_list_item_is_kept() {
+    assert_eq!(
+        "*   a  \n    b\n*   c",
+        htmd::convert("<ul><li>a<br>b<br></li><li>c</li></ul>").unwrap()
+    );
+    assert_eq!(
+        "1.  a  \n    b",
+        htmd::convert("<ol><li>a  \n<br>b</li></ol>").unwrap()
+    );
+}
+
 /// One part of markup, as a `TreeWriter` takes it.
 #[derive(Clone, Debug)]
 enum Part {

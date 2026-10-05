@@ -503,10 +503,6 @@ textarea {
   width: 100%;
   text-align: left;
 }
-.tool-bar {
-  display: flex;
-  justify-content: flex-end;
-}
 .work-head {
   display: flex;
   flex-wrap: wrap;
@@ -550,7 +546,8 @@ textarea {
   background: color-mix(in srgb, var(--strip) 55%, transparent);
 }
 .tool-group .tool.is-on {
-  background: var(--strip);
+  background: var(--hairline);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
   color: var(--text-1);
 }
 .tool:not(:disabled):active {
@@ -586,7 +583,7 @@ textarea {
 .upload-menu {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   z-index: 40;
   display: grid;
   gap: 2px;
@@ -637,11 +634,12 @@ textarea {
   color: inherit;
 }
 
+/* Not clipped, so the Upload menu can open past the card; the drawer's last
+   band takes the card's lower corners instead. */
 .source-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-  overflow: hidden;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--r-term);
   background: var(--surface);
@@ -652,28 +650,34 @@ textarea {
   border-color: var(--text-3);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-1) 8%, transparent);
 }
+.source-card > .opts:last-child .cli-bar {
+  border-radius: 0 0 var(--r-term) var(--r-term);
+}
 .source-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 8px 8px 16px;
+  padding: 8px;
 }
 .url-row {
   display: flex;
-  flex: 1 1 auto;
-  align-items: flex-start;
-  gap: 12px;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
 }
 .url-field {
-  flex: 1;
+  min-width: 0;
+}
+/* the composer's bottom bar: tools at the start, Convert at the end */
+.url-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
 }
 .url-box {
   display: block;
   width: 100%;
   min-height: 40px;
-  padding: 10px 0;
+  padding: 10px 8px;
   font-family: var(--font-mono);
   font-size: var(--text-base);
   line-height: 20px;
@@ -789,14 +793,12 @@ textarea {
   border-radius: var(--r-xs);
   background: var(--surface);
 }
-.seg > .help-anchor + .help-anchor,
 .seg > button + button {
   border-left: 1px solid var(--hairline);
 }
 .seg button {
   position: relative;
   padding: 0 10px;
-  border-radius: inherit;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-weight: 500;
@@ -864,6 +866,34 @@ textarea {
   text-align: center;
   overflow-wrap: anywhere;
   visibility: hidden;
+}
+/* a row's help: one line on the row, then each choice and what it does */
+.help-bubble.is-list {
+  width: min(360px, calc(100vw - 24px));
+  text-align: left;
+}
+.help-lede {
+  color: var(--text-1);
+}
+.help-items {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+.help-item dt {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.help-item dd {
+  color: var(--text-2);
+}
+.help-note {
+  display: block;
+  color: var(--text-3);
 }
 
 .cli-bar {
@@ -1817,9 +1847,6 @@ textarea {
 .dialog-body > .line-error {
   margin-top: 0;
 }
-.dialog-end {
-  align-self: flex-end;
-}
 .dialog-form {
   display: flex;
   flex-direction: column;
@@ -1841,9 +1868,21 @@ textarea {
 .form-actions .dialog-source {
   margin-right: auto;
 }
-.form-actions-ruled {
-  padding-top: 14px;
+/* the settings dialog's actions stay in view while its body scrolls */
+.dialog-foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 20px 14px;
   border-top: 1px solid var(--hairline);
+}
+.dialog-foot .line-error,
+.dialog-foot .line-note {
+  margin-top: 0;
+}
+.dialog-foot .picker-count {
+  margin-right: auto;
 }
 
 .crumbs {
@@ -1940,7 +1979,6 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
 }
 .test-btn.is-ok {
   color: var(--success);
@@ -2088,6 +2126,54 @@ textarea {
 .provider-fact + .provider-fact::before {
   content: "·";
   margin-right: 8px;
+}
+/* a saved provider's key and address, each with its own actions */
+.connection {
+  display: flex;
+  flex-direction: column;
+}
+.connection > .line-error {
+  margin-top: 10px;
+}
+.conn-rows {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+.conn-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.conn-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+.conn-value {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.conn-note {
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--text-3);
 }
 .field-grid {
   display: grid;
@@ -2241,8 +2327,9 @@ textarea {
   color: var(--text-2);
   white-space: nowrap;
 }
+/* about four and a half rows, so the list visibly continues */
 .picker-list {
-  max-height: min(420px, 42vh);
+  max-height: 240px;
   overflow-y: auto;
   border-top: 1px solid var(--hairline);
   scrollbar-width: thin;
@@ -2286,6 +2373,11 @@ textarea {
 .picker-note {
   padding: 12px 10px;
 }
+/* the manual-entry fold is ruled off from the catalogue above it */
+.picker > .disclosure {
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
 .picker-foot {
   display: flex;
   align-items: flex-start;
@@ -2295,7 +2387,6 @@ textarea {
 }
 .picker-count {
   flex: none;
-  padding-top: 2px;
 }
 .picker-foot .field-grid {
   margin-top: 10px;
@@ -3107,14 +3198,14 @@ textarea {
     height: 44px;
   }
   .source-row {
-    padding-left: 12px;
+    padding: 6px;
   }
   .url-row {
-    gap: 6px;
+    gap: 2px;
   }
   .url-box {
     min-height: 44px;
-    padding: 12px 0;
+    padding: 12px 6px;
     font-size: var(--text-md);
   }
   .tool-convert {
@@ -3145,10 +3236,7 @@ textarea {
     height: auto;
     background: var(--hairline);
   }
-  .opt-controls .seg > .help-anchor {
-    flex: 1 1 auto;
-  }
-  .opt-controls .seg > .help-anchor + .help-anchor {
+  .opt-controls .seg > button + button {
     border-left: 0;
   }
   .opt-controls .seg button {
@@ -3308,6 +3396,9 @@ textarea {
   .dialog-body {
     padding: 16px;
   }
+  .dialog-foot {
+    padding: 10px 16px 12px;
+  }
   .viewer-bar {
     padding: 0 16px;
   }
@@ -3357,6 +3448,16 @@ textarea {
   }
   .manual-row {
     flex-direction: column;
+  }
+  .conn-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+  }
+  .conn-value {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .model-line {
     display: grid;

@@ -113,8 +113,23 @@ impl Store {
     pub fn credentials(&self, id: &str) -> ApiResult<Value> {
         let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let connection = connection(&data, id, None)?;
+        let mut key = connection["api_key"].clone();
+        // A connection without a stored key may still be served by the
+        // environment (a process variable or a dotenv file); say so instead of
+        // reporting the key as missing.
+        let mut detected = Value::Null;
+        if key.is_null() && connection["use_environment_credentials"].as_bool() != Some(false) {
+            let env = markitai_core::config::environment();
+            if let Some(variable) = markitai_core::provider_management::environment_key_variable(
+                connection["provider"].as_str().unwrap_or_default(),
+                &env,
+            ) {
+                key = json!(format!("env:{variable}"));
+                detected = json!("environment");
+            }
+        }
         Ok(
-            json!({"api_key":connection["api_key"],"api_base":connection["api_base"],"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
+            json!({"api_key":key,"api_key_source":detected,"api_base":connection["api_base"],"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
         )
     }
     pub fn resolve_discovery(&self, body: &Value) -> ApiResult<Value> {

@@ -132,7 +132,7 @@ fn a_line_that_starts_like_a_block_is_text() {
                 Inline::LineBreak,
                 Inline::plain(second),
             ]),
-            format!("Line\\\n{written}"),
+            format!("Line  \n{written}"),
             "{second:?}"
         );
     }
@@ -203,7 +203,7 @@ fn cases_a_commonmark_parser_read_wrongly_before_their_fixes() {
                 Inline::LineBreak,
                 Inline::plain("____"),
             ],
-            "x ____[a\\\n\\_\\_\\_\\_",
+            "x ____[a  \n\\_\\_\\_\\_",
         ),
     ];
     for (values, written) in cases {
@@ -220,7 +220,7 @@ fn a_line_break_is_a_hard_break_a_paragraph_break_or_a_space() {
         Inline::LineBreak,
         Inline::plain("   Violets are blue."),
     ]);
-    assert_eq!(poem, "Poem:\\\nRoses are red,\\\nViolets are blue.");
+    assert_eq!(poem, "Poem:  \nRoses are red,  \nViolets are blue.");
     // Two breaks end the paragraph; breaks at the edges show nothing, and the
     // indentation after a break is not a code block.
     assert_eq!(
@@ -242,7 +242,7 @@ fn a_line_break_is_a_hard_break_a_paragraph_break_or_a_space() {
             Inline::LineBreak,
             Inline::plain("after")
         ]),
-        "**bold**\\\nafter"
+        "**bold**  \nafter"
     );
     // A heading and a link's text are one line.
     let mut renderer = renderer("docx");
@@ -308,7 +308,7 @@ fn breaks_at_a_link_s_edges_break_the_line_around_it() {
             ),
             Inline::plain("Follows you"),
         ]),
-        "Name\\\nFollows you"
+        "Name  \nFollows you"
     );
     // In a cell the break after each link is a line of the cell.
     let month = |name: &str| {
@@ -363,10 +363,10 @@ fn breaks_in_list_items_quotes_cells_and_notes_keep_their_containers() {
             marker_label: None,
         }],
     });
-    assert_eq!(renderer.blocks(&[list]), "* a\\\n  b");
+    assert_eq!(renderer.blocks(&[list]), "* a  \n  b");
     assert_eq!(
         renderer.blocks(&[Block::BlockQuote(vec![broken()])]),
-        "> a\\\n> b"
+        "> a  \n> b"
     );
     // A cell's lines are joined with `<br>`, two breaks with an empty line.
     let cell = |values: Vec<Inline>| {
@@ -414,15 +414,15 @@ fn a_label_markdown_does_not_read_keeps_its_line_and_a_number_under_a_paragraph_
     // `a)` is text: a hard break keeps `b)` off the line before.
     assert_eq!(
         renderer.blocks(&[list(vec![item("a)", text("one")), item("b)", text("two"))])]),
-        "a) one\\\nb) two"
+        "a) one  \nb) two"
     );
     // `2.` cannot start a list under a paragraph's line; a blank line lets it.
     assert_eq!(
         renderer.blocks(&[list(vec![item("a)", text("one")), item("2", text("two"))])]),
         "a) one\n\n2. two"
     );
-    // After a fence or a table row a backslash would be text of its own: a
-    // blank line instead. In a cell every item is a line.
+    // After a fence or a table row there is no paragraph a hard break could
+    // continue: a blank line instead. In a cell every item is a line.
     let line = |markdown_marker, interrupts, ends_in_paragraph| ListLine {
         text: String::new(),
         markdown_marker,
@@ -436,7 +436,7 @@ fn a_label_markdown_does_not_read_keeps_its_line_and_a_number_under_a_paragraph_
     );
     assert_eq!(
         list_separator(&line(true, true, true), &label, false),
-        "\\\n"
+        "  \n"
     );
     assert_eq!(list_separator(&label, &line(true, true, true), false), "\n");
     assert_eq!(list_separator(&label, &label, true), "\n");
@@ -511,7 +511,7 @@ fn hard_breaks_survive_normal_output() {
         Inline::LineBreak,
         Inline::plain("three  "),
     ]));
-    assert_eq!(markdown, "one\\\n[two](https://example.test/x)\\\nthree\n");
+    assert_eq!(markdown, "one  \n[two](https://example.test/x)  \nthree\n");
 }
 
 #[test]

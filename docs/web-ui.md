@@ -9,11 +9,13 @@ makes no request to another origin.
 
 ## Layout and interaction
 
-The **home view** is one centered column: a one-line headline, one sentence, a
-tool row (Options, and Upload with a menu for files or a folder) and the source
-card. The source card holds the URL line (Enter converts, Shift+Enter starts a
-new line, a pasted list grows the field up to six rows) and the options drawer,
-which ends with the equivalent CLI command line.
+The **home view** is one centered column: a one-line headline, one sentence and
+the source card. The source card holds the URL line (Enter converts, Shift+Enter
+starts a new line, a pasted list grows the field up to six rows), a bottom row
+with Options and Upload (a menu for files or a folder) on the left and Convert
+on the right, and the options drawer, which ends with the equivalent CLI command
+line. Each option row's ⓘ explains the row and lists its choices; the choices
+themselves show no hover tooltip.
 Under it, one stack of monospaced lines reports, in this order: the upload in
 progress (percentage and bytes, with Cancel), a session that could not be
 restored (with Retry restore), a refusal from the service, an unreachable
@@ -26,7 +28,7 @@ files are dragged over the page, and drops are ignored while a dialog is open.
 
 The **workspace view** (`/jobs`, kept across reloads and Back) shows
 "Conversions" with the session counters (`Current session · 6/8 Done · 1 Skipped
-· 1 Failed`), the same tools beside them, and the actions Stop remaining (only
+· 1 Failed`) and the actions Stop remaining (only
 while original items wait for a conversion slot), Retry all failed (N) and Clear
 all (Clear completed while something runs). Below the compact source card is one
 ledger for the session's jobs and the service's saved jobs, ordered by latest
@@ -65,11 +67,14 @@ result's files with sizes and downloads.
 
 **Settings** is a 760px dialog with a breadcrumb (`Settings / Add models /
 OpenAI`); Escape steps back one level before it closes. The first level lists
-configured models (`routing group · model · Routing weight 1 · Test | Edit |
-Delete`), models detected for this session (Save to config) and the
-configuration source (clicking the path asks the service to open it). Add models
-shows provider cards grouped as configured environment credentials, saved
-providers (with their model count, Edit and Delete), common providers (the
+configured models (`routing group · model · Routing weight 1` with icon buttons
+for Test, Edit and Delete), models detected for this session (Save to config)
+and the configuration source (clicking the path asks the service to open it).
+Edit opens the model's own page (`Settings / OpenAI`): the provider's Connection
+section above the routing fields (routing group, model, routing weight). Add
+models shows provider cards grouped as configured environment credentials, saved
+providers (with their model count, Edit and Delete; Edit opens the provider's
+page), common providers (the
 reference's eight) and "More OpenAI-compatible providers": the sixteen further
 prefixes of the routing table ([LLM providers](llm.md#openai-compatible-prefixes)),
 each card naming its documented host (vLLM: "Server address required"). A
@@ -80,7 +85,15 @@ an optional custom base (prefilled hint: the documented endpoint). It loads the
 catalogue through the provider's `/models` (automatically for Ollama and LM
 Studio) and opens the model picker: search, Select visible, Vision and Configured
 badges, a manual model ID (also when the catalogue cannot be loaded), routing
-group and weight, `N selected · 50 max`. Perplexity, Z.ai and Fireworks AI
+group and weight, `N selected`; the list scrolls after about four models, and the
+selection count with Add and Cancel stays pinned at the bottom of the dialog.
+A saved provider's page starts with a Connection section that manages the key
+and the address separately: the key shows as saved (with its last four
+characters), from an environment variable or not set, with Replace and Remove; a
+key the service finds in the environment (a process variable or a dotenv file)
+is reported as from that variable, with Add storing a literal key instead; the
+address shows as custom, from an environment variable or the default, with
+Edit and Reset to default. Perplexity, Z.ai and Fireworks AI
 document no OpenAI-compatible model list, so their page opens the manual entry
 directly. A hand-typed ID gets the page's prefix unless it already has it, so an
 ID with slashes of its own (`meta-llama/…` on Together AI, `google/…` on
@@ -89,12 +102,14 @@ warning and reports in a notification. API key fields accept literal keys;
 `env:` references belong in the server configuration, not browser requests.
 Environment and saved-provider cards use server-issued connection IDs, allowing
 model discovery without returning the key to the browser. These credentials stay
-bound to their configured endpoint: changing the address requires a replacement
-key or explicitly removing the saved key.
+bound to their configured endpoint: the address form therefore also asks for
+the key to use with the new address (required while a key is saved; left blank,
+the provider connects without one).
 
 The header holds the brand and version, Docs and GitHub (a footer band on
-phones) and three icon buttons: Appearance (language EN/中 and theme
-Auto/Light/Dark), Conversions (the workspace) and Settings. Notifications appear
+phones) and two icon buttons: Appearance (language EN/中 and theme
+Auto/Light/Dark) and Settings. The conversion tasks (the workspace) open from
+the entry under the composer on the home view. Notifications appear
 at the top right (bottom on phones) and stack: an image skipped for lack of text
 offers Enable OCR and retry, which also leaves OCR switched on for new jobs; an
 item that asked for LLM processing without a model offers Retry without LLM; the
@@ -133,10 +148,9 @@ failed archive download are reported the same way.
   from. A `stale_revision` or `config_changed` refusal reloads the lists but keeps
   the draft and its revision; "Use current revision" adopts the new one and the
   next submit uses it. Other refusals (for example `settings_read_only`) stay
-  plain errors. Editing a saved provider never fills the key field with a stored
-  key or environment reference. Leaving it blank retains the server's key;
-  "Remove the saved API key" explicitly clears it. Unchanged fields are omitted.
-  An endpoint change with a retained server key is rejected, including when
+  plain errors. A saved provider's key is never placed in an input; Replace,
+  Remove and the address form each send only the field they change. An
+  endpoint change with a retained server key is rejected, including when
   linked model deployments have their own credential overrides.
 - **Session restore**: the rows of jobs created in this tab are kept in
   `sessionStorage` (`markitai.session`); after a reload each job is asked for

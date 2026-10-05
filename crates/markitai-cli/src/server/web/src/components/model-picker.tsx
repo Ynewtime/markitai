@@ -1,12 +1,11 @@
 // Choose models from a provider's catalogue: search, select what is visible,
 // add an identifier by hand, and set the routing group and weight. Models
 // already configured with the same group and endpoint cannot be added twice.
+// The selection count sits with the dialog's pinned actions.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Deployment, ModelCandidate } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { manualModelId } from "../lib/models.ts";
-
-export const MAX_MODELS = 50;
 
 const normalizeBase = (value: string | null | undefined) => (value ?? "").trim().replace(/\/+$/, "").toLowerCase();
 
@@ -74,17 +73,13 @@ export function ModelPicker({
   const toggle = (model: string) => {
     const next = new Set(selected);
     if (next.has(model)) next.delete(model);
-    else if (next.size < MAX_MODELS) next.add(model);
+    else next.add(model);
     onSelected(next);
   };
   const toggleVisible = () => {
     const next = new Set(selected);
     if (allChosen) for (const candidate of selectable) next.delete(candidate.model);
-    else
-      for (const candidate of selectable) {
-        if (next.size >= MAX_MODELS) break;
-        next.add(candidate.model);
-      }
+    else for (const candidate of selectable) next.add(candidate.model);
     onSelected(next);
   };
   const addManual = () => {
@@ -92,7 +87,7 @@ export function ModelPicker({
     if (!model) return;
     setAdded((previous) => [...previous.filter((candidate) => candidate.model !== model), { model, label: model.split("/").slice(1).join("/") || model, supports_vision: false }]);
     const next = new Set(selected);
-    if (next.size < MAX_MODELS) next.add(model);
+    next.add(model);
     onSelected(next);
     setManual("");
   };
@@ -115,7 +110,7 @@ export function ModelPicker({
               <input
                 type="checkbox"
                 checked={selected.has(candidate.model)}
-                disabled={done || (!selected.has(candidate.model) && selected.size >= MAX_MODELS)}
+                disabled={done}
                 onChange={() => toggle(candidate.model)}
               />
               <span class="picker-option-main">
@@ -172,7 +167,6 @@ export function ModelPicker({
             </label>
           </div>
         </details>
-        <p class="picker-count">{t.modelsSelected(selected.size, MAX_MODELS)}</p>
       </div>
     </div>
   );

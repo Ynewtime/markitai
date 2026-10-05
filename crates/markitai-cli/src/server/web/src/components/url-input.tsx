@@ -1,6 +1,8 @@
 // The URL line: a textarea dressed as one input that grows a row per pasted URL
-// (up to six). Enter converts, Shift+Enter breaks the line, and confirming an
+// (up to six), above a bar with the composer tools on the left and Convert on
+// the right. Enter converts, Shift+Enter breaks the line, and confirming an
 // IME composition never submits.
+import type { ComponentChildren } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict } from "../i18n/index.ts";
@@ -13,6 +15,7 @@ export function UrlInput({
   onConvert,
   busy = false,
   compact = false,
+  tools,
 }: {
   t: Dict;
   text: string;
@@ -20,6 +23,8 @@ export function UrlInput({
   onConvert: (text: string) => Promise<boolean>;
   busy?: boolean;
   compact?: boolean;
+  /** Controls placed at the start of the bottom bar. */
+  tools?: ComponentChildren;
 }) {
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -55,17 +60,28 @@ export function UrlInput({
           }}
         />
       </div>
-      <button
-        type="button"
-        class="tool tool-convert"
-        aria-label={t.convert}
-        disabled={busy || sending || empty}
-        aria-busy={busy || sending || undefined}
-        onClick={() => void submit()}
+      {/* A press on the bar's empty space puts the caret back in the URL line. */}
+      <div
+        class="url-bar"
+        onMouseDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          event.preventDefault();
+          field.current?.focus();
+        }}
       >
-        <Icon name="ArrowRight" size={14} />
-        <span class="tool-text">{t.convert}</span>
-      </button>
+        {tools}
+        <button
+          type="button"
+          class="tool tool-convert"
+          aria-label={t.convert}
+          disabled={busy || sending || empty}
+          aria-busy={busy || sending || undefined}
+          onClick={() => void submit()}
+        >
+          <Icon name="ArrowRight" size={14} />
+          <span class="tool-text">{t.convert}</span>
+        </button>
+      </div>
     </div>
   );
 }

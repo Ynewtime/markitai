@@ -1,5 +1,6 @@
 // Model settings, as a 760px dialog with a breadcrumb: the configured models,
-// then Add models → provider → model catalogue. Escape steps back one level.
+// then Add models → provider → model catalogue, or a model's own page with its
+// provider's connection above the routing fields. Escape steps back one level.
 // Every write carries the revision this draft started from; a conflict keeps
 // the draft and reloads the lists, and the person decides to use the new revision.
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
@@ -22,12 +23,21 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import { useModal } from "../hooks/use-modal.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
-import { CredentialInputError, deploymentCredentials, detectedDeployment, discoveryRequest, providerDraft, providerUpdate, type ProviderDraft } from "../lib/provider-credentials.ts";
+import {
+  CredentialInputError,
+  deploymentCredentials,
+  detectedDeployment,
+  discoveryRequest,
+  providerDraft,
+  providerUpdate,
+  type ProviderChange,
+  type ProviderDraft,
+} from "../lib/provider-credentials.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker } from "./model-picker.tsx";
 import { Notification, type NotificationModel } from "./notification.tsx";
-import { providerLabel, ProviderPicker } from "./provider-picker.tsx";
+import { manageable, providerLabel, ProviderPicker } from "./provider-picker.tsx";
 
 const EXIT_MS = 120;
 type Described = { text: string; detail: string };
@@ -39,6 +49,7 @@ function Secret({
   value,
   placeholder,
   disabled,
+  required = false,
   onInput,
 }: {
   t: Dict;
@@ -47,6 +58,7 @@ function Secret({
   value: string;
   placeholder?: string;
   disabled?: boolean;
+  required?: boolean;
   onInput: (value: string) => void;
 }) {
   const [shown, setShown] = useState(false);
@@ -55,11 +67,13 @@ function Secret({
     <div class="field">
       <label class="field-label" for={id}>
         {label}
+        {required && <span class="field-required">{t.requiredField}</span>}
       </label>
       <div class="secret">
         <input
           id={id}
           type={shown ? "text" : "password"}
+          required={required}
           value={value}
           placeholder={placeholder}
           disabled={disabled}
@@ -110,12 +124,15 @@ export function SettingsModal({
     setTimeout(onClose, EXIT_MS);
   }, [closing, onClose]);
 
-  const refreshProviders = useCallback(async (refresh = false) => {
+  const refreshProviders = useCallback(async (refresh = false): Promise<ProviderCard[] | null> => {
     try {
-      setProviders(await fetchProviders(refresh));
+      const list = await fetchProviders(refresh);
+      setProviders(list);
       setProvidersFailed(false);
+      return list;
     } catch {
       setProvidersFailed(true);
+      return null;
     }
   }, []);
 
@@ -145,11 +162,14 @@ export function SettingsModal({
     onSaved();
   };
 
+  const credentialText = (error: CredentialInputError) =>
+    ({ environment_reference: t.literalCredentialsOnly, endpoint_key_required: t.endpointKeyRequired, key_required: t.keyRequired })[error.reason];
+
   /** A failed write. A revision conflict reloads the lists but keeps the draft and its revision. */
   const fail = async (error: unknown) => {
     setListNote(null);
     if (error instanceof CredentialInputError) {
-      setListError({ text: error.reason === "environment_reference" ? t.literalCredentialsOnly : t.endpointKeyRequired, detail: "" });
+      setListError({ text: credentialText(error), detail: "" });
       return;
     }
     if (isRevisionConflict(error)) {
@@ -231,6 +251,8 @@ export function SettingsModal({
   const [editWeight, setEditWeight] = useState(1);
   const [editWeightDraft, setEditWeightDraft] = useState<string | null>(null);
   const [editBusy, setEditBusy] = useState(false);
+  // Editing opens a sub-level page for the deployment: the provider's
+  // connection (when the page can manage it) above the routing fields.
   const openEdit = (deployment: Deployment) => {
     setEditing(deployment);
     setEditGroup(deployment.routing_group);
@@ -238,6 +260,21 @@ export function SettingsModal({
     setEditWeight(deployment.weight);
     setEditWeightDraft(null);
     setListError(null);
+    const name = deployment.model.includes("/") ? deployment.model.split("/", 1)[0]!.toLowerCase() : "openai";
+    const cards = providers.filter((card) => manageable(card) && card.provider === name);
+    const card = cards.find((card) => card.api_base != null && card.api_base === deployment.api_base) ?? cards[0] ?? null;
+    setProvider(card);
+    resetConnection();
+    if (card) void loadConnection(card);
+    focusHeading();
+  };
+  const closeEdit = () => {
+    const id = editing?.deployment_id;
+    setEditing(null);
+    setProvider(null);
+    resetConnection();
+    if (id !== undefined)
+      requestAnimationFrame(() => card.current?.querySelector<HTMLElement>(`[data-deployment="${CSS.escape(id)}"] .edit-btn`)?.focus());
   };
   const saveEdit = async () => {
     if (!editing || revision === null || editBusy) return;
@@ -251,8 +288,12 @@ export function SettingsModal({
           expected_revision: revision,
         }),
       );
+      const id = editing.deployment_id;
       setEditing(null);
+      setProvider(null);
+      resetConnection();
       announce(t.saved);
+      requestAnimationFrame(() => card.current?.querySelector<HTMLElement>(`[data-deployment="${CSS.escape(id)}"] .edit-btn`)?.focus());
     } catch (error) {
       await fail(error);
     } finally {
@@ -270,77 +311,10 @@ export function SettingsModal({
     }
   };
 
-  // ---- a saved provider's credentials. Unchanged fields are not sent (kept);
-  // clearing a key is an explicit choice; blank input preserves the server key.
-  const [provEdit, setProvEdit] = useState<ProviderCard | null>(null);
-  const [provKey, setProvKey] = useState("");
-  const [provBase, setProvBase] = useState("");
-  const [provLoaded, setProvLoaded] = useState<ProviderDraft | null>(null);
-  const [provClear, setProvClear] = useState(false);
-  const [provBusy, setProvBusy] = useState(false);
-  const provRequest = useRef(0);
-  useEffect(() => {
-    if (!provEdit || !provLoaded) return;
-    const frame = requestAnimationFrame(() => card.current?.querySelector<HTMLElement>("#provider-editor-title")?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [provEdit, provLoaded]);
-  const openProvider = async (connection: ProviderCard) => {
-    if (connection.provider_id === undefined) return;
-    const request = ++provRequest.current;
-    setProvEdit(connection);
-    setProvKey("");
-    setProvClear(false);
-    setProvBase("");
-    setProvLoaded(null);
-    setEditing(null);
-    setListError(null);
-    try {
-      const credentials = await fetchCredentials(connection.provider_id);
-      if (request !== provRequest.current) return;
-      const draft = providerDraft(credentials);
-      setProvBase(draft.base);
-      setProvLoaded(draft);
-    } catch (error) {
-      if (request !== provRequest.current) return;
-      setProvEdit(null);
-      await fail(error);
-    }
-  };
-  const closeProvider = () => {
-    provRequest.current++;
-    setProvEdit(null);
-    setProvLoaded(null);
-  };
-  const saveProvider = async () => {
-    if (!provEdit?.provider_id || !provLoaded || revision === null || provBusy) return;
-    let body: Record<string, unknown>;
-    try {
-      body = providerUpdate(provLoaded, provKey, provBase, provClear, revision);
-    } catch (error) {
-      await fail(error);
-      return;
-    }
-    if (Object.keys(body).length === 1) {
-      closeProvider();
-      return;
-    }
-    setProvBusy(true);
-    try {
-      accept(await updateProvider(provEdit.provider_id, body));
-      closeProvider();
-      void refreshProviders(true);
-      announce(t.providerSaved);
-    } catch (error) {
-      await fail(error);
-    } finally {
-      setProvBusy(false);
-    }
-  };
   const removeProvider = async (connection: ProviderCard) => {
     if (!connection.provider_id || revision === null) return false;
     try {
       accept(await deleteProvider(connection.provider_id, revision));
-      if (provEdit?.provider_id === connection.provider_id) closeProvider();
       void refreshProviders(true);
       return true;
     } catch (error) {
@@ -380,10 +354,98 @@ export function SettingsModal({
     (autoLoads ||
       (needsBase ? draftBase.trim() !== "" && (!keyRequired || draftKey.trim() !== "") : !keyRequired || draftKey.trim() !== ""));
 
+  // ---- a saved provider's connection, at the top of its page. The key and the
+  // address change independently; a write sends only the field that changes,
+  // and moving the address asks for the key to use there.
+  const [conn, setConn] = useState<ProviderDraft | null>(null);
+  const [connFailed, setConnFailed] = useState(false);
+  const [connMode, setConnMode] = useState<"key" | "base" | null>(null);
+  const [connKey, setConnKey] = useState("");
+  const [connBase, setConnBase] = useState("");
+  const [connBusy, setConnBusy] = useState(false);
+  const [connError, setConnError] = useState<string | null>(null);
+  const connRequest = useRef(0);
+  const saved = provider !== null && manageable(provider);
+
+  const closeConnEdit = () => {
+    setConnMode(null);
+    setConnKey("");
+    setConnBase("");
+    setConnError(null);
+  };
+  const resetConnection = () => {
+    connRequest.current++;
+    setConn(null);
+    setConnFailed(false);
+    closeConnEdit();
+  };
+  const loadConnection = async (connection: ProviderCard) => {
+    if (connection.provider_id === undefined) return;
+    const request = ++connRequest.current;
+    setConn(null);
+    setConnFailed(false);
+    try {
+      const credentials = await fetchCredentials(connection.provider_id);
+      if (request === connRequest.current) setConn(providerDraft(credentials));
+    } catch (error) {
+      if (request !== connRequest.current) return;
+      setConnFailed(true);
+      await fail(error);
+    }
+  };
+  const openConnEdit = (mode: "key" | "base", base = "") => {
+    setConnMode(mode);
+    setConnKey("");
+    setConnBase(base);
+    setConnError(null);
+    requestAnimationFrame(() => card.current?.querySelector<HTMLElement>(mode === "key" ? "#conn-key" : "#conn-base")?.focus());
+  };
+  const saveConnection = async (change: ProviderChange, done: string): Promise<boolean> => {
+    const current = provider;
+    if (!current?.provider_id || !conn || revision === null || connBusy) return false;
+    let body: Record<string, unknown> | null;
+    try {
+      body = providerUpdate(conn, change, revision);
+    } catch (error) {
+      if (!(error instanceof CredentialInputError)) throw error;
+      setConnError(credentialText(error));
+      return false;
+    }
+    if (body === null) {
+      closeConnEdit();
+      return true;
+    }
+    setConnBusy(true);
+    setConnError(null);
+    try {
+      accept(await updateProvider(current.provider_id, body));
+      closeConnEdit();
+      announce(done);
+      const list = await refreshProviders(true);
+      // A legacy connection is saved under a new identity: pick it again from the list.
+      if (current.provider_id.startsWith("legacy:")) {
+        backToProviders();
+        focusHeading();
+        return true;
+      }
+      const next = list?.find((item) => item.id === current.id) ?? current;
+      setProvider(next);
+      void loadConnection(next);
+      if (next.supports_discovery !== false) void load(discovery !== null, next);
+      return true;
+    } catch (error) {
+      if (isRevisionConflict(error)) await fail(error);
+      else setConnError(describe(error).text);
+      return false;
+    } finally {
+      setConnBusy(false);
+    }
+  };
+
   const resetAdd = () => {
     setAdding(false);
     setProvider(null);
-    closeProvider();
+    resetConnection();
     setDiscovery(null);
     setSelected(new Set());
     setListError(null);
@@ -391,6 +453,7 @@ export function SettingsModal({
   };
   const backToProviders = () => {
     setProvider(null);
+    resetConnection();
     setDiscovery(null);
     setSelected(new Set());
     setListError(null);
@@ -399,18 +462,27 @@ export function SettingsModal({
   const focusHeading = () => requestAnimationFrame(() => card.current?.querySelector<HTMLElement>("#settings-title")?.focus());
 
   useModal(card, () => {
-    if (adding && provider !== null) {
+    if (connMode !== null) {
+      // An open key or address form closes first; its toggle takes the focus back.
+      const toggle = card.current?.querySelector<HTMLElement>(`[aria-controls="conn-${connMode}-form"]`);
+      closeConnEdit();
+      requestAnimationFrame(() => toggle?.focus());
+    } else if (adding && provider !== null) {
       backToProviders();
       focusHeading();
     } else if (adding) {
       resetAdd();
       focusHeading();
+    } else if (editing) {
+      closeEdit();
     } else requestClose();
   });
 
-  const choose = (next: ProviderCard) => {
+  const choose = (next: ProviderCard, focus = "#settings-title") => {
     setProvider(next);
-    closeProvider();
+    resetConnection();
+    if (manageable(next)) void loadConnection(next);
+    requestAnimationFrame(() => card.current?.querySelector<HTMLElement>(focus)?.focus());
     setDraftKey("");
     setDraftBase("");
     setDiscovery(null);
@@ -419,12 +491,12 @@ export function SettingsModal({
     autoLoaded.current = null;
   };
 
-  const load = async (refresh = false) => {
-    if (!provider || discovering) return;
+  const load = async (refresh = false, from = provider) => {
+    if (!from || discovering) return;
     setDiscovering(true);
     setListError(null);
     try {
-      const result = await discoverModels(discoveryRequest(provider, draftKey, draftBase, refresh));
+      const result = await discoverModels(discoveryRequest(from, draftKey, draftBase, refresh));
       setDiscovery(result);
       const available = new Set(result.models.map((candidate) => candidate.model));
       setSelected((previous) => new Set([...previous].filter((model) => available.has(model))));
@@ -436,11 +508,11 @@ export function SettingsModal({
   };
 
   useEffect(() => {
-    if (!provider || !autoLoads || discovery !== null || discovering || autoLoaded.current === provider.id) return;
+    if (!adding || !provider || !autoLoads || discovery !== null || discovering || autoLoaded.current === provider.id) return;
     autoLoaded.current = provider.id;
     void load(false);
     // `load` reads the current draft; the guard above keys the request by provider.
-  }, [provider, autoLoads, discovery, discovering]);
+  }, [adding, provider, autoLoads, discovery, discovering]);
 
   const addSelected = async () => {
     if (!provider || !selected.size || revision === null || addBusy) return;
@@ -506,9 +578,10 @@ export function SettingsModal({
           <span class="text-actions">
             <button
               type="button"
-              class={`text-btn test-btn${test ? ` is-${test}` : ""}`}
+              class={`row-icon test-btn${test ? ` is-${test}` : ""}`}
               disabled={test === "busy"}
-              aria-label={test === "busy" ? t.testing : test === "ok" ? t.modelTestPassed : test === "fail" ? t.modelTestFailed : t.test}
+              aria-label={test === "busy" ? t.testing : test === "ok" ? t.modelTestPassed : test === "fail" ? t.modelTestFailed : t.testModel(deployment.model)}
+              title={test === "busy" ? t.testing : test === "ok" ? t.modelTestPassed : test === "fail" ? t.modelTestFailed : t.test}
               onClick={() => void runTest(deployment)}
             >
               <span class="test-swap" key={test ?? "idle"}>
@@ -519,7 +592,7 @@ export function SettingsModal({
                 ) : test === "fail" ? (
                   <Icon name="WarningFill" size={15} />
                 ) : (
-                  t.test
+                  <Icon name="PlugsConnected" size={15} />
                 )}
               </span>
             </button>
@@ -529,8 +602,14 @@ export function SettingsModal({
               </button>
             ) : (
               <>
-                <button type="button" class="text-btn" onClick={() => openEdit(deployment)}>
-                  {t.edit}
+                <button
+                  type="button"
+                  class="row-icon edit-btn"
+                  aria-label={t.editModel(deployment.model)}
+                  title={t.edit}
+                  onClick={() => openEdit(deployment)}
+                >
+                  <Icon name="PencilSimple" size={15} />
                 </button>
                 <ConfirmPopover
                   triggerLabel={t.deleteModel(deployment.model)}
@@ -549,60 +628,228 @@ export function SettingsModal({
     );
   };
 
-  const providerEditor = provEdit && (
-    <form
-      key={provEdit.provider_id}
-      class="dialog-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void saveProvider();
-      }}
-    >
-      <h3 id="provider-editor-title" tabIndex={-1} class="group-title">{t.editProvider(providerLabel(t, provEdit))}</h3>
-      <div class="field-grid">
-        <Secret
-          t={t}
-          id="provider-key"
-          label={t.setApiKey}
-          value={provKey}
-          placeholder={provLoaded ? (provLoaded.configured ? t.serverKeyKept : t.setKeyPh) : t.loading}
-          disabled={!provLoaded || provClear}
-          onInput={setProvKey}
-        />
-        <div class="field">
-          <label class="field-label" for="provider-base">
-            {t.setApiBase}
-          </label>
-          <input
-            id="provider-base"
-            type="url"
-            inputMode="url"
-            value={provBase}
-            placeholder={provLoaded ? (provLoaded.baseRetained ? t.serverBaseKept : provLoaded.placeholder || t.setBasePh) : t.loading}
-            disabled={!provLoaded}
-            autoComplete="off"
-            spellcheck={false}
-            onInput={(event) => setProvBase(event.currentTarget.value)}
-          />
+  const label = provider ? providerLabel(t, provider) : "";
+
+  const status = (listError || listNote) && (
+    <>
+      {listError && (
+        <p class="line-error dialog-error" role="alert" title={listError.detail || undefined}>
+          {listError.text}
+          {conflict && (
+            <>
+              {" · "}
+              <button
+                type="button"
+                class="text-link"
+                onClick={() => {
+                  if (settings) setRevision(settings.revision);
+                  setConflict(false);
+                  setListError(null);
+                  setListNote(t.draftKept);
+                }}
+              >
+                {t.useCurrentRevision}
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      {listNote && (
+        <p class="line-note" role="status">
+          {listNote}
+        </p>
+      )}
+    </>
+  );
+
+  const picking = adding && provider !== null && (discovery !== null || manualOnly);
+  const footer =
+    settings === null ? null : adding ? (
+      provider === null ? (
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" onClick={resetAdd}>
+            {t.cancel}
+          </button>
         </div>
-      </div>
-      <p class="dialog-dim">{t.endpointKeyRequired}</p>
-      <label class="field-label">
-        <input type="checkbox" checked={provClear} disabled={!provLoaded || provBusy} onChange={(event) => { setProvClear(event.currentTarget.checked); setProvKey(""); }} />
-        {" "}{t.clearSavedKey}
-      </label>
+      ) : (
+        <div class="form-actions">
+          {picking && <p class="picker-count">{t.modelsSelected(selected.size)}</p>}
+          {picking && (
+            <button type="button" class="btn btn-primary" disabled={addBusy || !selected.size} onClick={() => void addSelected()}>
+              {addBusy ? t.saving : t.addModelsCount(selected.size)}
+            </button>
+          )}
+          <button type="button" class="btn btn-ghost" onClick={backToProviders}>
+            {t.cancel}
+          </button>
+        </div>
+      )
+    ) : editing ? (
       <div class="form-actions">
-        <button type="submit" class="btn btn-primary" disabled={provBusy || !provLoaded}>
-          {provBusy ? t.saving : t.save}
+        {source}
+        <button type="submit" form="edit-deployment" class="btn btn-primary" disabled={editBusy || !editGroup.trim() || !editModel.trim()}>
+          {editBusy ? t.saving : t.save}
         </button>
-        <button type="button" class="btn btn-ghost" onClick={closeProvider}>
+        <button type="button" class="btn btn-ghost" onClick={closeEdit}>
           {t.cancel}
         </button>
       </div>
-    </form>
+    ) : null;
+
+  const keyText = (draft: ProviderDraft) =>
+    draft.key.state === "saved"
+      ? t.keySaved(draft.key.ending ?? "")
+      : draft.key.state === "environment"
+        ? t.fromEnvironment(draft.key.variable)
+        : t.notSet;
+  const baseText = (draft: ProviderDraft) =>
+    draft.baseVariable !== null
+      ? t.fromEnvironment(draft.baseVariable)
+      : draft.base || (draft.placeholder ? t.defaultAddress(draft.placeholder) : t.notSet);
+
+  const connection = saved && (
+    <section class="connection" aria-labelledby="connection-title" aria-busy={connBusy || undefined}>
+      <h3 id="connection-title" class="group-title" tabIndex={-1}>
+        {t.connectionTitle}
+      </h3>
+      {conn === null ? (
+        <p class={connFailed ? "line-error" : "dialog-dim"}>{connFailed ? t.providersLoadFailed : t.loading}</p>
+      ) : (
+        <div class="conn-rows">
+          <div class="conn-row">
+            <span class="conn-label">{t.setApiKey}</span>
+            <span class="conn-value">{keyText(conn)}</span>
+            <span class="text-actions">
+              <button
+                type="button"
+                class="text-btn"
+                aria-expanded={connMode === "key"}
+                aria-controls={connMode === "key" ? "conn-key-form" : undefined}
+                disabled={connBusy}
+                onClick={() => (connMode === "key" ? closeConnEdit() : openConnEdit("key"))}
+              >
+                {conn.key.state === "none" || (conn.key.state === "environment" && !conn.key.stored) ? t.addKey : t.replaceKey}
+              </button>
+              {(conn.key.state === "saved" || (conn.key.state === "environment" && conn.key.stored)) && (
+                <ConfirmPopover
+                  triggerLabel={t.removeKeyLabel(label)}
+                  triggerText={t.removeKey}
+                  title={t.removeKeyTitle}
+                  description={t.removeKeyDescription}
+                  confirmLabel={t.removeKey}
+                  cancelLabel={t.cancel}
+                  busyLabel={t.removing}
+                  disabled={connBusy}
+                  onConfirm={() => saveConnection({ kind: "removeKey" }, t.keyRemoved)}
+                />
+              )}
+            </span>
+          </div>
+          {connMode === "key" && (
+            <form
+              id="conn-key-form"
+              class="conn-edit"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveConnection({ kind: "key", key: connKey }, t.providerSaved);
+              }}
+            >
+              <div class="field-grid is-single">
+                <Secret t={t} id="conn-key" label={t.newApiKey} value={connKey} placeholder={t.setKeyPh} disabled={connBusy} onInput={setConnKey} />
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary" disabled={connBusy || !connKey.trim()}>
+                  {connBusy ? t.saving : t.save}
+                </button>
+                <button type="button" class="btn btn-ghost" disabled={connBusy} onClick={closeConnEdit}>
+                  {t.cancel}
+                </button>
+              </div>
+            </form>
+          )}
+          <div class="conn-row">
+            <span class="conn-label">{t.setApiBase}</span>
+            <span class="conn-value">{baseText(conn)}</span>
+            <span class="text-actions">
+              <button
+                type="button"
+                class="text-btn"
+                aria-expanded={connMode === "base"}
+                aria-controls={connMode === "base" ? "conn-base-form" : undefined}
+                disabled={connBusy}
+                onClick={() => (connMode === "base" ? closeConnEdit() : openConnEdit("base", conn.base))}
+              >
+                {t.editAddress}
+              </button>
+              {(conn.base !== "" || conn.baseRetained) && conn.placeholder !== "" && (
+                <button type="button" class="text-btn" disabled={connBusy} onClick={() => openConnEdit("base", "")}>
+                  {t.resetAddress}
+                </button>
+              )}
+            </span>
+          </div>
+          {connMode === "base" && (
+            <form
+              id="conn-base-form"
+              class="conn-edit"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveConnection({ kind: "base", base: connBase, key: connKey }, t.providerSaved);
+              }}
+            >
+              <div class="field-grid">
+                <div class="field">
+                  <label class="field-label" for="conn-base">
+                    {t.setApiBase}
+                  </label>
+                  <input
+                    id="conn-base"
+                    type="url"
+                    inputMode="url"
+                    value={connBase}
+                    placeholder={conn.placeholder || "https://example.com/v1"}
+                    disabled={connBusy}
+                    autoComplete="off"
+                    spellcheck={false}
+                    onInput={(event) => setConnBase(event.currentTarget.value)}
+                  />
+                </div>
+                <Secret
+                  t={t}
+                  id="conn-base-key"
+                  label={t.addressKeyLabel}
+                  value={connKey}
+                  placeholder={conn.configured ? t.setKeyPh : t.setBasePh}
+                  required={conn.configured}
+                  disabled={connBusy}
+                  onInput={setConnKey}
+                />
+              </div>
+              <p class="conn-note">{conn.configured ? t.addressKeyNote : t.addressNoKeyNote}</p>
+              <div class="form-actions">
+                <button
+                  type="submit"
+                  class="btn btn-primary"
+                  disabled={connBusy || (conn.configured && !connKey.trim()) || (!connBase.trim() && !conn.placeholder)}
+                >
+                  {connBusy ? t.saving : t.save}
+                </button>
+                <button type="button" class="btn btn-ghost" disabled={connBusy} onClick={closeConnEdit}>
+                  {t.cancel}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+      {connError && (
+        <p class="line-error" role="alert">
+          {connError}
+        </p>
+      )}
+    </section>
   );
 
-  const label = provider ? providerLabel(t, provider) : "";
 
   return (
     <div
@@ -646,6 +893,16 @@ export function SettingsModal({
                   </>
                 )}
               </>
+            ) : editing ? (
+              <>
+                <button type="button" onClick={closeEdit}>
+                  {t.settingsTitle}
+                </button>
+                <span aria-hidden="true">/</span>
+                <h2 id="settings-title" tabIndex={-1}>
+                  {provider ? label : editing.model}
+                </h2>
+              </>
             ) : (
               <h2 id="settings-title" tabIndex={-1}>
                 {t.settingsTitle}
@@ -677,17 +934,18 @@ export function SettingsModal({
                     <p class="dialog-dim">{t.loading}</p>
                   )
                 ) : (
-                  <ProviderPicker t={t} providers={providers} onSelect={choose} onEdit={(connection) => void openProvider(connection)} onDelete={removeProvider} />
-                )}
-                {providerEditor}
-                {!provEdit && (
-                  <button type="button" class="btn btn-ghost dialog-end" onClick={resetAdd}>
-                    {t.cancel}
-                  </button>
+                  <ProviderPicker
+                    t={t}
+                    providers={providers}
+                    onSelect={(item) => choose(item)}
+                    onEdit={(item) => choose(item, "#connection-title")}
+                    onDelete={removeProvider}
+                  />
                 )}
               </>
             ) : (
               <>
+                {saved && connection}
                 <section class="provider-detail">
                   <div class="provider-detail-head">
                     <div class="provider-detail-copy">
@@ -785,18 +1043,45 @@ export function SettingsModal({
                     onSelected={setSelected}
                   />
                 )}
-                <div class="form-actions form-actions-ruled">
-                  {(discovery || manualOnly) && (
-                    <button type="button" class="btn btn-primary" disabled={addBusy || !selected.size} onClick={() => void addSelected()}>
-                      {addBusy ? t.saving : t.addModelsCount(selected.size)}
-                    </button>
-                  )}
-                  <button type="button" class="btn btn-ghost" onClick={backToProviders}>
-                    {t.cancel}
-                  </button>
-                </div>
               </>
             )
+          ) : editing ? (
+            <>
+              {saved && connection}
+              <form
+                id="edit-deployment"
+                class="dialog-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveEdit();
+                }}
+              >
+                <h3 class="group-title">{t.routingSection}</h3>
+                <div class="field-grid">
+                  <label class="field">
+                    <span class="field-label">{t.routingGroup}</span>
+                    <input value={editGroup} onInput={(event) => setEditGroup(event.currentTarget.value)} />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">{t.setModel}</span>
+                    <input value={editModel} onInput={(event) => setEditModel(event.currentTarget.value)} />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">{t.weight}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editWeightDraft ?? editWeight}
+                      onInput={(event) => {
+                        setEditWeightDraft(event.currentTarget.value);
+                        setEditWeight(Math.max(0, Math.floor(Number(event.currentTarget.value)) || 0));
+                      }}
+                      onBlur={() => setEditWeightDraft(null)}
+                    />
+                  </label>
+                </div>
+              </form>
+            </>
           ) : (
             <>
               <div class="settings-summary">
@@ -816,79 +1101,17 @@ export function SettingsModal({
                   <div class="model-rows">{settings.detected.map((deployment) => modelRow(deployment, true))}</div>
                 </section>
               )}
-              {editing && (
-                <form
-                  class="dialog-form"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void saveEdit();
-                  }}
-                >
-                  <div class="field-grid">
-                    <label class="field">
-                      <span class="field-label">{t.routingGroup}</span>
-                      <input value={editGroup} onInput={(event) => setEditGroup(event.currentTarget.value)} />
-                    </label>
-                    <label class="field">
-                      <span class="field-label">{t.setModel}</span>
-                      <input value={editModel} onInput={(event) => setEditModel(event.currentTarget.value)} />
-                    </label>
-                    <label class="field">
-                      <span class="field-label">{t.weight}</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={editWeightDraft ?? editWeight}
-                        onInput={(event) => {
-                          setEditWeightDraft(event.currentTarget.value);
-                          setEditWeight(Math.max(0, Math.floor(Number(event.currentTarget.value)) || 0));
-                        }}
-                        onBlur={() => setEditWeightDraft(null)}
-                      />
-                    </label>
-                  </div>
-                  <div class="form-actions">
-                    {source}
-                    <button type="submit" class="btn btn-primary" disabled={editBusy || !editGroup.trim() || !editModel.trim()}>
-                      {editBusy ? t.saving : t.save}
-                    </button>
-                    <button type="button" class="btn btn-ghost" onClick={() => setEditing(null)}>
-                      {t.cancel}
-                    </button>
-                  </div>
-                </form>
-              )}
-              {!editing && source}
+              {source}
             </>
           )}
-          {listError && (
-            <p class="line-error dialog-error" role="alert" title={listError.detail || undefined}>
-              {listError.text}
-              {conflict && (
-                <>
-                  {" · "}
-                  <button
-                    type="button"
-                    class="text-link"
-                    onClick={() => {
-                      if (settings) setRevision(settings.revision);
-                      setConflict(false);
-                      setListError(null);
-                      setListNote(t.draftKept);
-                    }}
-                  >
-                    {t.useCurrentRevision}
-                  </button>
-                </>
-              )}
-            </p>
-          )}
-          {listNote && (
-            <p class="line-note" role="status">
-              {listNote}
-            </p>
-          )}
+          {!footer && status}
         </div>
+        {footer && (
+          <div class="dialog-foot">
+            {status}
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -28,10 +28,10 @@ fn markdown(name: &str, bytes: &[u8]) -> String {
 }
 
 const EXPECTED: [&str; 4] = [
-    "Poem:\\\nRoses are red,\\\nViolets are blue.",
+    "Poem:  \nRoses are red,  \nViolets are blue.",
     "One\n\nTwo",
     "Use [!tip] in snake_case files, 2 * 3.",
-    "Price\\\n\\# not a heading",
+    "Price  \n\\# not a heading",
 ];
 
 #[test]

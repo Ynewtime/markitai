@@ -340,8 +340,8 @@ expanded by the shell). Markitai expands it once, before anything is created; it
 refuses a `~` it cannot expand (no `HOME`) instead of creating a directory with
 that name. To use a directory that really is called `~`, write `./~`.
 
-**There is no progress line.** A batch shows one status line, `[12/340] name  ETA
-0:41`, when stderr is a supported terminal (including Windows consoles),
+**There is no progress line.** A batch shows one status line, `[12/340] name  elapsed
+0:41` (the time taken so far), when stderr is a supported terminal (including Windows consoles),
 and not with `-q`, `--json` or `TERM=dumb`. Piped or redirected output carries only the
 lines described above, unchanged. A single conversion that takes longer than two
 seconds shows a spinner line the same way.

@@ -256,19 +256,27 @@ fn images_to_a_model_off_this_machine_are_announced_once() {
         }),
         Some(home.path().into()),
     );
-    disclose_images(&gate, &entry("ollama", "http://localhost:11434/v1"));
+    // One group: a local model, two remote ones and a second endpoint of the
+    // first remote model.
+    let group = [
+        entry("ollama", "http://localhost:11434/v1"),
+        entry("openai", "https://api.openai.com/v1"),
+        entry("gemini", "https://generativelanguage.googleapis.com"),
+        entry("openai", "https://eu.api.openai.com/v1"),
+    ];
+    let all = [0, 1, 2, 3];
+    // Selecting the local model sends nothing off the machine yet.
+    disclose_images(&gate, &group, &all, 0);
     assert!(seen.lock().unwrap().is_empty());
     for _ in 0..3 {
-        disclose_images(&gate, &entry("openai", "https://api.openai.com/v1"));
-        disclose_images(
-            &gate,
-            &entry("gemini", "https://generativelanguage.googleapis.com"),
-        );
+        disclose_images(&gate, &group, &all, 2);
+        disclose_images(&gate, &group, &all, 1);
     }
+    // Every remote model of the group is named once, whichever was selected.
     assert_eq!(
         *seen.lock().unwrap(),
         [RemoteNotice::Images {
-            model: "openai/model".into()
+            models: vec!["openai/model".into(), "gemini/model".into()]
         }]
     );
     assert!(home.path().join("remote-images").is_file());

@@ -255,6 +255,8 @@ export interface ProviderCard {
 export interface ProviderCredentials {
   /** Server-held value/reference: keep out of editable inputs and outgoing writes. */
   api_key: string | null;
+  /** "environment" when the key was found in the environment rather than the configuration. */
+  api_key_source?: string | null;
   api_base: string | null;
   api_base_placeholder: string | null;
 }

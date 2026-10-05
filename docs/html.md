@@ -67,9 +67,9 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   split over lines lost the words after the break to the link repair of normal
   output, and a heading ended at the break).
 - `<br>` in running text (a poem, an address, a list item, a quotation) is a hard
-  line break, written `\` at the line's end as the document formats write one
-  (two trailing spaces would not survive normal output's cleanup of line ends);
-  a source newline right after it adds nothing. Two or more in a row end the
+  line break, written as two spaces at the line's end as the document formats
+  write one (normal output's cleanup of line ends keeps them where the next line
+  continues the paragraph, and leaves none at a paragraph's end); a source newline right after it adds nothing. Two or more in a row end the
   paragraph, as old pages that space paragraphs with `<br><br>` mean, unless
   emphasis or a link around them would be split (then one hard break). A break
   at the edge of its block is left out, and one that opens or ends an inline

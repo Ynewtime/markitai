@@ -232,6 +232,25 @@ fn discovery_base_variable(provider: &str, env: &HashMap<String, String>) -> Opt
         })
 }
 
+/// The first of the provider's key variables holding a value in `env`, for
+/// reporting that a connection without a stored key is served by the
+/// environment (process variables and dotenv files).
+pub fn environment_key_variable(
+    provider: &str,
+    env: &HashMap<String, String>,
+) -> Option<&'static str> {
+    catalog()
+        .into_iter()
+        .find(|entry| entry.provider == provider)
+        .and_then(|entry| {
+            entry
+                .key_variables
+                .iter()
+                .copied()
+                .find(|name| env.get(*name).is_some_and(|value| !value.trim().is_empty()))
+        })
+}
+
 /// Discover model identifiers using a credential-isolated in-memory cache.
 /// The input contains provider, optional api_key/api_base and optional refresh.
 pub fn discover(request: &Value) -> Result<Value> {

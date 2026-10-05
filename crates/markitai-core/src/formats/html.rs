@@ -4026,13 +4026,13 @@ fn beside(node: htmd::NodeRef<'_>, forward: bool, past_breaks: bool) -> Beside {
     }
 }
 
-/// A `<br>` in running text is a hard line break, written `\` at the line's
-/// end (two trailing spaces would not survive normal output's cleanup of line
-/// ends); two or more in a row end the paragraph, as the old pages that space
-/// their paragraphs so mean, unless emphasis or a link around them would be
-/// split. A break at the edge of its block shows nothing and is left out. In a
-/// heading or a link's text it is a space, in code a line feed, and in a table
-/// cell a line of the cell.
+/// A `<br>` in running text is a hard line break, written as two spaces at
+/// the line's end (normal output's cleanup of line ends keeps them where a
+/// line continues the paragraph); two or more in a row end the paragraph, as
+/// the old pages that space their paragraphs so mean, unless emphasis or a
+/// link around them would be split. A break at the edge of its block shows
+/// nothing and is left out. In a heading or a link's text it is a space, in
+/// code a line feed, and in a table cell a line of the cell.
 fn line_break(node: htmd::NodeRef<'_>) -> &'static str {
     match break_place(node) {
         BreakPlace::Code | BreakPlace::Cell => "\n",
@@ -4042,7 +4042,7 @@ fn line_break(node: htmd::NodeRef<'_>) -> &'static str {
                 return "";
             }
             match beside(node, true, false) {
-                Beside::Content => "\\\n",
+                Beside::Content => "  \n",
                 Beside::Edge => "",
                 Beside::Break if beside(node, true, true) != Beside::Content => "",
                 Beside::Break => {
@@ -4060,7 +4060,7 @@ fn line_break(node: htmd::NodeRef<'_>) -> &'static str {
                                 "b" | "strong" | "i" | "em" | "q" | "sub" | "sup" | "code"
                             )
                         });
-                    if marked { "\\\n" } else { "\n\n" }
+                    if marked { "  \n" } else { "\n\n" }
                 }
             }
         }
@@ -8206,7 +8206,7 @@ map(callbackFn, thisArg)
         // A poem's lines, with and without a source line break after `<br>`.
         assert_eq!(
             body("<p>Poem:<br>Roses are red,<br>\n   Violets are blue,<br>Sugar is sweet.<br></p>"),
-            "Poem:\\\nRoses are red,\\\nViolets are blue,\\\nSugar is sweet."
+            "Poem:  \nRoses are red,  \nViolets are blue,  \nSugar is sweet."
         );
         // Two breaks end a paragraph; breaks at a block's edges show nothing.
         assert_eq!(
@@ -8216,10 +8216,10 @@ map(callbackFn, thisArg)
         // A break that ends an inline element breaks the line after it.
         assert_eq!(
             body("<p><span>now.<br>\n<br>Alex<br></span>Next and <b>bold<br></b>after</p>"),
-            "now.\n\nAlex\\\nNext and **bold**\\\nafter"
+            "now.\n\nAlex  \nNext and **bold**  \nafter"
         );
         // Emphasis is not split into paragraphs.
-        assert_eq!(body("<p><b>bold<br><br>more</b></p>"), "**bold\\\nmore**");
+        assert_eq!(body("<p><b>bold<br><br>more</b></p>"), "**bold  \nmore**");
         // A heading and a link's text are one line.
         assert_eq!(
             body(
@@ -8230,7 +8230,7 @@ map(callbackFn, thisArg)
         // In a list item and a quotation the break keeps their markers.
         assert_eq!(
             body("<ul><li>a<br>b</li></ul><blockquote>c<br>d<br><br>e</blockquote>"),
-            "* a\\\n  b\n\n> c\\\n> d\n>\n> e"
+            "* a  \n  b\n\n> c  \n> d\n>\n> e"
         );
     }
 

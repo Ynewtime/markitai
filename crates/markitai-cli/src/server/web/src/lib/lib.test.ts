@@ -83,8 +83,8 @@ test("the last choice is remembered per browser; damaged, blocked and older stor
 
 test("the CLI line spells out only deviations, quoted for a shell", () => {
   const options = resolveOptions({ ...base, ocr: true, profile: "rag", advanced: { ...ADVANCED_DEFAULTS, noCache: true, strategy: "static" } });
-  assert.equal(cliCommand([], options), "markitai <your-files-or-url-or-url_files> -o out/ --preset minimal --ocr --profile rag --no-cache --strategy static");
-  assert.equal(cliCommand(["https://example.com/a b"], resolveOptions(base)), "markitai 'https://example.com/a b' -o out/ --preset minimal");
+  assert.equal(cliCommand([], options), "markitai <files-or-urls> -o output/ --preset minimal --ocr --profile rag --no-cache --strategy static");
+  assert.equal(cliCommand(["https://example.com/a b"], resolveOptions(base)), "markitai 'https://example.com/a b' -o output/ --preset minimal");
   assert.equal(shellQuote("it's"), `'it'\\''s'`);
   assert.equal(shellQuote("~/x"), "'~/x'");
 });

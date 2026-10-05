@@ -90,9 +90,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 11531,
-    "sha256": "1fc42651b5eaa38bb3872fd161e87dee9160fb9904e10a6cd1263df0b1b0ae1a",
-    "obtained": "generated: the SVG path strings of 26 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 11976,
+    "sha256": "e716fed774336e2c1aefa5f05ed43afff2fc6f80a9cde8115dda5d106150c88a",
+    "obtained": "generated: the SVG path strings of 27 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -133,11 +133,6 @@
         "member": "package/dist/defs/CircleHalfTilt.es.js",
         "bytes": 2777,
         "sha256": "b61d3d344c988122f70d9f27ec0571b35319ded8c4f24f40655cdae1d1762e92"
-      },
-      {
-        "member": "package/dist/defs/ClockCounterClockwise.es.js",
-        "bytes": 2856,
-        "sha256": "9a34caffb9a7ae44e286f42bb8178ca25064fd0a8b6a79a194e79e473aae1eab"
       },
       {
         "member": "package/dist/defs/X.es.js",
@@ -223,6 +218,16 @@
         "member": "package/dist/defs/FolderSimple.es.js",
         "bytes": 2422,
         "sha256": "f389bdc600dee19a042cc48da3c44fc93effdfe787d7f0f04bfa85a9d6bf4c58"
+      },
+      {
+        "member": "package/dist/defs/PencilSimple.es.js",
+        "bytes": 2730,
+        "sha256": "776b248b23ac358c333d188200f6ceca910712b7f49f8bb23ccb2383edd3b683"
+      },
+      {
+        "member": "package/dist/defs/PlugsConnected.es.js",
+        "bytes": 6225,
+        "sha256": "d4cd541281c3cfea781d642570cc1ddaecf24cd0855ce2b25912437e00994a3e"
       }
     ]
   }

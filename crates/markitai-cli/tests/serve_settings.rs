@@ -297,6 +297,40 @@ fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
     server.stop();
 }
 #[test]
+fn credentials_report_a_dotenv_key_when_none_is_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("config.json"),
+        json!({"log":{"dir":null},"cache":{"enabled":false},"history":{"record":false},"llm":{"enabled":true,"providers":[{"id":"saved-openai","provider":"openai","use_environment_credentials":true}],"model_list":[{"model_name":"default","litellm_params":{"model":"openai/gpt-5"},"model_info":{"provider_id":"saved-openai"}}]}})
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(dir.path().join(".env"), "OPENAI_API_KEY=from-dotenv\n").unwrap();
+    let server = Server::start(dir.path(), &[]);
+    let (status, credentials) = server.request(
+        "GET",
+        "/api/settings/llm/providers/saved-openai/credentials",
+        None,
+    );
+    assert_eq!(status, 200);
+    // The key itself is never returned, only the variable that supplies it.
+    assert_eq!(credentials["api_key"], "env:OPENAI_API_KEY");
+    assert_eq!(credentials["api_key_source"], "environment");
+    assert!(!credentials.to_string().contains("from-dotenv"));
+    server.stop();
+    fs::remove_file(dir.path().join(".env")).unwrap();
+    let server = Server::start(dir.path(), &[]);
+    let (status, credentials) = server.request(
+        "GET",
+        "/api/settings/llm/providers/saved-openai/credentials",
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(credentials["api_key"], Value::Null);
+    assert_eq!(credentials["api_key_source"], Value::Null);
+    server.stop();
+}
+#[test]
 fn actual_concurrent_cas_and_invalid_batches_have_one_atomic_winner() {
     let dir = tempfile::tempdir().unwrap();
     configuration(dir.path());

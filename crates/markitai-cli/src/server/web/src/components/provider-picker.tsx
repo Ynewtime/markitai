@@ -1,5 +1,6 @@
 // Provider cards grouped by where their credentials come from. Saved providers
-// show their model count and can be edited or deleted in place.
+// show their model count; Edit opens the provider's page, where its key and
+// address are managed, and Delete removes it in place.
 import type { ProviderCard } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
@@ -12,6 +13,9 @@ export function providerLabel(t: Dict, card: { provider: string; label: string }
   if (!card.label || card.label === "Unknown provider") return card.provider ? `${t.providerUnknown} (${card.provider})` : t.providerUnknown;
   return card.label;
 }
+
+/** A saved provider whose key and address this page can change. */
+export const manageable = (card: ProviderCard): boolean => card.kind === "configured" && card.provider_id !== undefined;
 
 /** The added OpenAI-compatible providers name their documented host on the card. */
 function endpointHost(card: ProviderCard): string | null {
@@ -48,7 +52,7 @@ export function ProviderPicker({
             <div class="provider-grid">
               {cards.map((card) => {
                 const label = providerLabel(t, card);
-                const manageable = card.kind === "configured" && card.provider_id !== undefined;
+                const saved = manageable(card);
                 const models = card.model_count ?? 0;
                 return (
                   <div key={card.id} class="provider-card">
@@ -68,7 +72,7 @@ export function ProviderPicker({
                             : t.providerCardMeta(card.kind, card.status, card.source))}
                       </span>
                     </button>
-                    {manageable && (
+                    {saved && (
                       <span class="provider-tools">
                         <span class="mini-pill">{t.providerModels(models)}</span>
                         <span class="text-actions">

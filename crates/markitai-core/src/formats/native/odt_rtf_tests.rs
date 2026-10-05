@@ -224,7 +224,7 @@ fn rtf_lists_typed_by_hand_are_lists() {
     let doc = extract(rtf.as_bytes(), "rtf").unwrap();
     assert_eq!(
         doc.markdown,
-        "Options:\n\n* Fast\n  \n  * cached\n* Cheap\n\nChoose:\n\na) the first\\\nb) the second\n"
+        "Options:\n\n* Fast\n  \n  * cached\n* Cheap\n\nChoose:\n\na) the first  \nb) the second\n"
     );
 }
 

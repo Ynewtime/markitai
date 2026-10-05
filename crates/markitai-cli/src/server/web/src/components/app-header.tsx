@@ -1,6 +1,7 @@
-// The 56px top bar: brand and version, Docs and GitHub, and three icon buttons
-// (appearance, conversions, settings). At phone width the external links move
-// to a footer band so exactly one copy is ever visible.
+// The 56px top bar: brand and version, Docs and GitHub, and two icon buttons
+// (appearance, settings). Conversion tasks are reached from the entry under
+// the composer. At phone width the external links move to a footer band so
+// exactly one copy is ever visible.
 import type { Ref } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
@@ -191,8 +192,6 @@ export function AppHeader({
   locale,
   onLocale,
   onHome,
-  onWorkspace,
-  workspaceActive,
   settingsOpen,
   onSettings,
   gearRef,
@@ -202,8 +201,6 @@ export function AppHeader({
   locale: Locale;
   onLocale: (locale: Locale) => void;
   onHome: () => void;
-  onWorkspace: () => void;
-  workspaceActive: boolean;
   settingsOpen: boolean;
   onSettings: () => void;
   gearRef: Ref<HTMLButtonElement>;
@@ -232,16 +229,6 @@ export function AppHeader({
         </nav>
         <div class="topbar-tools">
           <Appearance t={t} locale={locale} onLocale={onLocale} />
-          <button
-            type="button"
-            class={workspaceActive ? "icon-btn is-current" : "icon-btn"}
-            aria-label={t.historyAria}
-            aria-current={workspaceActive ? "page" : undefined}
-            title={workspaceActive ? t.historyCurrent : t.historyAria}
-            onClick={onWorkspace}
-          >
-            <Icon name={workspaceActive ? "ClockCounterClockwiseBold" : "ClockCounterClockwise"} size={16} />
-          </button>
           <button
             ref={gearRef}
             type="button"

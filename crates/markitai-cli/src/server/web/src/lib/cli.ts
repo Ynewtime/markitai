@@ -13,7 +13,7 @@ export function shellQuote(word: string): string {
 export function cliCommand(urls: string[], options: JobOptions, table: PresetTable = BUILTIN_PRESETS): string {
   const preset = options.preset as Preset | null;
   const features = preset === null ? null : featuresOf(preset, table);
-  const words = ["markitai", ...(urls.length ? urls.map(shellQuote) : ["<your-files-or-url-or-url_files>"]), "-o", "out/"];
+  const words = ["markitai", ...(urls.length ? urls.map(shellQuote) : ["<files-or-urls>"]), "-o", "output/"];
   if (preset !== null) words.push("--preset", preset);
   for (const key of ["llm", "ocr", "alt", "desc", "screenshot"] as const) {
     const value = options[key];

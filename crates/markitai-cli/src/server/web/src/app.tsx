@@ -655,7 +655,9 @@ export function App() {
       onChange={setComposer}
       onFiles={(files) => submitFiles(files)}
       onFolder={submitFolder}
-      source={<UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} busy={submitting || cloudflare.pending !== null} compact={compact} />}
+      source={(tools) => (
+        <UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} busy={submitting || cloudflare.pending !== null} compact={compact} tools={tools} />
+      )}
     />
   );
 
@@ -678,8 +680,6 @@ export function App() {
         locale={locale}
         onLocale={chooseLocale}
         onHome={goHome}
-        onWorkspace={openWorkspace}
-        workspaceActive={view === "workspace"}
         settingsOpen={settingsOpen}
         onSettings={() => (settingsOpen ? closeSettings() : openSettings())}
         gearRef={gear}
@@ -720,11 +720,13 @@ export function App() {
         <main class="landing page">
           <h1 class="landing-title">{t.heroTitle}</h1>
           <p class="landing-lede">{t.heroSub}</p>
-          {jobs.items.length > 0 && (
-            <button type="button" class="session-link" onClick={openWorkspace}>
-              {jobs.activeCount > 0 ? t.sessProgress(jobs.activeCount) : t.sessResults(jobs.items.length)}
-            </button>
-          )}
+          <button type="button" class="session-link" onClick={openWorkspace}>
+            {jobs.items.length > 0
+              ? jobs.activeCount > 0
+                ? t.sessProgress(jobs.activeCount)
+                : t.sessResults(jobs.items.length)
+              : t.conversions}
+          </button>
           <div class="landing-composer">
             {composerFor(false)}
             {feedback}

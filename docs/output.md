@@ -17,7 +17,8 @@ Explicit reader titles take precedence. Otherwise the basic workflow uses its
 first heading or the source stem. CSV, TSV and XML fall back to the complete source
 filename because a data row or element name is not a reliable document title.
 
-Ordinary Markdown receives heading spacing, trailing whitespace and blank-line
+Ordinary Markdown receives heading spacing, trailing whitespace (a hard break's
+two spaces stay where the next line continues the paragraph) and blank-line
 cleanup, residual placeholder removal, broken-link repair and repeated page-footer
 cleanup. It ends with one newline. Existing input YAML remains part of the body
 beneath the generated frontmatter, matching the reference workflow.

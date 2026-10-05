@@ -14,8 +14,8 @@ use super::is_punctuation;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum Place {
     /// A paragraph's lines, in a list item, quotation or note too: a line
-    /// break is a hard break, `\` at the line's end (two trailing spaces
-    /// would not survive normal output's cleanup of line ends).
+    /// break is a hard break, two spaces at the line's end (normal output's
+    /// cleanup of line ends keeps them where a line continues the paragraph).
     Text,
     /// A table cell, which holds inline content only: a line break is a line
     /// of the cell, joined with `<br>` (see `table_cell`).

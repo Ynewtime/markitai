@@ -127,10 +127,17 @@ pub(super) fn notice_text(notice: &RemoteNotice, lang: Lang) -> String {
                 "提示：{service} 抓取策略会把页面 URL 发送给 {name}，由其抓取并转换页面。使用 -s static 或 -s playwright 可在本机抓取。此提示对每个服务只显示一次。",
             )
         }
-        RemoteNotice::Images { model } => text!(lang =>
-            "Note: images from your documents (page renders, screenshots or pictures) are sent to the model {model} to be read. Use a model running on this machine, or leave out --llm, to keep them here. This note is shown once.",
-            "提示：文档中的图像（页面渲染、截图或图片）会发送给模型 {model} 进行识别。使用在本机运行的模型，或不使用 --llm，即可让图像留在本机。此提示只显示一次。",
-        ),
+        RemoteNotice::Images { models } => {
+            let receivers = match models.as_slice() {
+                [model] => format!("the model {model}"),
+                _ => format!("the models {}", models.join(", ")),
+            };
+            let names = models.join("、");
+            text!(lang =>
+                "Note: images from your documents (page renders, screenshots or pictures) are sent to {receivers} to be read. Use a model running on this machine, or leave out --llm, to keep them here. This note is shown once.",
+                "提示：文档中的图像（页面渲染、截图或图片）会发送给模型 {names} 进行识别。使用在本机运行的模型，或不使用 --llm，即可让图像留在本机。此提示只显示一次。",
+            )
+        }
     }
 }
 
@@ -237,7 +244,7 @@ mod tests {
             "{chinese}"
         );
         let images = RemoteNotice::Images {
-            model: "openai/gpt-test".into(),
+            models: vec!["openai/gpt-test".into()],
         };
         for lang in [Lang::En, Lang::Zh] {
             let text = notice_text(&images, lang);
@@ -247,5 +254,20 @@ mod tests {
             );
         }
         assert!(notice_text(&images, Lang::En).ends_with("This note is shown once."));
+        assert!(
+            notice_text(&images, Lang::En).contains("sent to the model openai/gpt-test to be read")
+        );
+        // Every model that may receive images is named.
+        let several = RemoteNotice::Images {
+            models: vec!["openai/gpt-test".into(), "deepseek/deepseek-flash".into()],
+        };
+        assert!(
+            notice_text(&several, Lang::En)
+                .contains("sent to the models openai/gpt-test, deepseek/deepseek-flash to be read")
+        );
+        assert!(
+            notice_text(&several, Lang::Zh)
+                .contains("发送给模型 openai/gpt-test、deepseek/deepseek-flash 进行识别")
+        );
     }
 }

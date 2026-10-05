@@ -49,9 +49,10 @@ pub enum RemoteNotice {
     /// a URL to this service. Shown once per `MARKITAI_HOME` and service.
     Strategy { service: &'static str },
     /// Images (page renders, screenshots or pictures) are about to be sent to
-    /// a model that is not on this machine, named as configured. Shown once
-    /// per `MARKITAI_HOME`.
-    Images { model: String },
+    /// a model that is not on this machine. `models` names, as configured,
+    /// every model off this machine the request's group can route images to.
+    /// Shown once per `MARKITAI_HOME`.
+    Images { models: Vec<String> },
 }
 
 type Ask = Box<dyn Fn(&ConsentRequest) -> bool + Send + Sync>;
@@ -264,10 +265,11 @@ impl Gate {
         });
     }
 
-    /// The notice before images first go to a model off this machine.
-    pub(crate) fn images(&self, model: &str) {
+    /// The notice before images first go to a model off this machine;
+    /// `models` are all the models off this machine that may receive them.
+    pub(crate) fn images(&self, models: &[&str]) {
         self.once("remote-images", || RemoteNotice::Images {
-            model: model.to_owned(),
+            models: models.iter().map(|model| (*model).to_owned()).collect(),
         });
     }
 
@@ -428,7 +430,7 @@ mod tests {
         let (quiet, quiet_seen) = host(false, None, false);
         let gate = Gate::new(Some(quiet), Some(home.path().into()));
         gate.strategy("jina");
-        gate.images("openai/gpt-test");
+        gate.images(&["openai/gpt-test"]);
         assert_eq!(quiet_seen.notices.lock().unwrap().len(), 2);
         assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
         // Shown: once per key, whatever the number of calls.
@@ -437,8 +439,8 @@ mod tests {
         for _ in 0..3 {
             gate.strategy("jina");
             gate.strategy("defuddle");
-            gate.images("openai/gpt-test");
-            gate.images("gemini/another");
+            gate.images(&["openai/gpt-test"]);
+            gate.images(&["gemini/another"]);
         }
         assert_eq!(
             *seen.notices.lock().unwrap(),
@@ -448,7 +450,7 @@ mod tests {
                     service: "defuddle"
                 },
                 RemoteNotice::Images {
-                    model: "openai/gpt-test".into()
+                    models: vec!["openai/gpt-test".into()]
                 },
             ]
         );
@@ -463,7 +465,7 @@ mod tests {
         let (again, again_seen) = host(false, None, true);
         let gate = Gate::new(Some(again), Some(home.path().into()));
         gate.strategy("jina");
-        gate.images("openai/gpt-test");
+        gate.images(&["openai/gpt-test"]);
         gate.strategy("cloudflare");
         assert_eq!(
             *again_seen.notices.lock().unwrap(),
@@ -475,7 +477,7 @@ mod tests {
         let other = tempfile::tempdir().unwrap();
         let gate = Gate::new(None, Some(other.path().into()));
         gate.strategy("jina");
-        gate.images("openai/gpt-test");
+        gate.images(&["openai/gpt-test"]);
         assert!(std::fs::read_dir(other.path()).unwrap().next().is_none());
     }
 

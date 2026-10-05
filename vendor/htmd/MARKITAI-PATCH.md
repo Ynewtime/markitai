@@ -82,6 +82,11 @@ Each change is marked `markitai` in a comment.
   writes the same emphasis (`b` or `strong` in either, `i` or `em` in either,
   in the same block) adds no markers (see the differences below).
   `tests/markitai_tests.rs`: two tests for these changes.
+- `src/text_util.rs`: `indent_text_except_first_line`, which indents a list
+  item's lines, keeps a hard break written as two trailing spaces on a line
+  that a line with content follows, instead of trimming it with the other
+  blanks at the line's end (see the differences below).
+  `tests/markitai_tests.rs`: one test.
 - `tests/code_tests.rs`, `tests/basic_tests.rs`: the three tests that used the
   rcdom tree or `Attribute` directly use the scraper equivalents;
   `faithful_mode_inline` expects attributes in name order (below).
@@ -138,6 +143,9 @@ Each change is marked `markitai` in a comment.
   literal asterisks and as bold). A block element between the two ends the
   search, so the inner element keeps its markers there; `<b><i>x</i></b>` is
   `***x***` as before.
+- A `<br>` in a list item stays a hard break: `<li>a<br>b</li>` is
+  `*   a  ` then `    b` (upstream: `*   a` then `    b`, one line once
+  rendered).
 
 ## Verification
 

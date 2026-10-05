@@ -19,7 +19,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | MSG | cfb + native properties | Outlook headers, Unicode/ANSI body, HTML fallback and bounded by-value attachments |
 | RST, Org, TeX | native markup readers | Structured sections, lists, code, math, links and tables; unsupported constructs retained with warnings |
 | JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + local OCR | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
-| DOC, DOCX, DOCM; templates DOT, DOTX, DOTM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets; a manual line break is a hard break (`\`), two end the paragraph, and text is escaped only where Markdown would read it as syntax ([below](#document-line-breaks-and-escaping)) |
+| DOC, DOCX, DOCM; templates DOT, DOTX, DOTM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets; a manual line break is a hard break (two trailing spaces), two end the paragraph, and text is escaped only where Markdown would read it as syntax ([below](#document-line-breaks-and-escaping)) |
 | PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, with optional numbered slide markers; embedded charts and worksheets read as their data tables |
 | PPTX, PPTM, PPSX, PPSM; templates POTX, POTM | bounded ZIP + PresentationML reader | Optional ordered slide markers, hidden-slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data, SmartArt text as lists, speaker notes and review comments |
 | XLS, XLSX, XLSM, XLSB; templates XLT, XLTX, XLTM | anydoc document model | Native sheet content with number formats, cell links, cell notes and the text of uncalculated formulas (see [spreadsheets](#spreadsheets)); XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
@@ -548,9 +548,9 @@ used by the readers above.
 Text that goes through the shared document renderer (Word, OpenDocument, RTF,
 EPUB, legacy PowerPoint and spreadsheets) follows the HTML reader's rules for
 line breaks. A manual line break (Word `w:br`, ODT `text:line-break`, RTF
-`\line`, a Word 97 vertical tab, EPUB `<br>`) is a hard break, written `\` at
-the line's end: two trailing spaces did not survive normal output's cleanup
-of line ends, so the lines ran together. Two or more breaks in a row end the
+`\line`, a Word 97 vertical tab, EPUB `<br>`) is a hard break, written as two
+spaces at the line's end; normal output's cleanup of line ends keeps them
+where the next line continues the paragraph. Two or more breaks in a row end the
 paragraph, breaks at the edge of a paragraph show nothing, and the
 indentation after a break is dropped (it would otherwise start a code block
 after a paragraph break). In a heading or a link's text a break is a space; a
@@ -560,7 +560,7 @@ edge of an HTML `<a>` does), and a link the renderer does not write as one
 `file:`) leaves its text and breaks in the line. In
 a table cell a break is `<br>`. A list item whose label Markdown does not read
 (`a)`, `(1)`, `一、`) keeps its line with a hard break after a paragraph, or a
-blank line after a block a backslash cannot follow.
+blank line after a block a hard break cannot follow.
 
 Text is escaped only where CommonMark (with GFM tables, strikethrough and
 footnotes) would read it as syntax in that position, so `snake_case`,

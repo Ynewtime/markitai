@@ -50,6 +50,41 @@ fn without_dangling_breaks(mut lines: Vec<&str>) -> Vec<&str> {
     lines
 }
 
+/// Lines without the blanks at their end, except a hard break written as two
+/// spaces (or more, written as two) on a line the next one continues: not the
+/// last line of a paragraph, of the document, or before a heading or a fenced
+/// block. A line of blanks only is empty, as Markdown reads it, and a line
+/// ending in a backslash hard break or an escape gains no spaces.
+fn trimmed_lines(text: &str) -> Vec<&str> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let continues = |next: &str| {
+        let next = next.trim_start();
+        !next.is_empty()
+            && !next.starts_with(|ch| ('\u{fdd0}'..='\u{fdef}').contains(&ch))
+            && !next.starts_with('#')
+            && !SLIDE.is_match(next)
+    };
+    lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let content = line.trim_end();
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            // What stands before the spaces (a no-break space is text) stays.
+            let before = line.trim_end_matches(' ');
+            let kept = !content.is_empty()
+                && line.len() - before.len() >= 2
+                && !ends_escaped(before)
+                && lines.get(index + 1).is_some_and(|next| continues(next));
+            if kept {
+                &line[..before.len() + 2]
+            } else {
+                content
+            }
+        })
+        .collect()
+}
+
 /// Whether the character at byte `at` follows an odd number of backslashes,
 /// which make it text.
 fn escaped_at(text: &str, at: usize) -> bool {
@@ -356,7 +391,7 @@ pub(crate) fn normalize(source: &str) -> String {
         }
         text
     });
-    let lines = without_dangling_breaks(text.split('\n').map(str::trim_end).collect());
+    let lines = without_dangling_breaks(trimmed_lines(&text));
     let mut output: Vec<&str> = Vec::with_capacity(lines.len());
     for (index, line) in lines.iter().enumerate() {
         let hashes = line.as_bytes().iter().take_while(|&&ch| ch == b'#').count();
@@ -375,6 +410,13 @@ pub(crate) fn normalize(source: &str) -> String {
             }
         } else {
             output.push(*line);
+        }
+    }
+    // A hard break left at a paragraph's end (before a heading's blank line,
+    // or a dropped dangling break) shows nothing.
+    for index in 0..output.len() {
+        if output.get(index + 1).is_none_or(|next| next.is_empty()) {
+            output[index] = output[index].trim_end();
         }
     }
     let joined = output.join("\n");
@@ -410,8 +452,8 @@ mod tests {
 
     #[test]
     fn hard_breaks_and_brackets_written_as_text_survive_the_link_repair() {
-        // A backslash hard break is kept where trailing spaces are trimmed.
-        assert_eq!(normalize("one\\\ntwo  \nthree"), "one\\\ntwo\nthree\n");
+        // A backslash hard break and a two-space one are both kept.
+        assert_eq!(normalize("one\\\ntwo  \nthree"), "one\\\ntwo  \nthree\n");
         // An escaped bracket is text: nothing between it and a later `](`
         // is a link split by a line break, and no line is dropped.
         for source in [
@@ -434,6 +476,35 @@ mod tests {
         // An escaped backslash is text, and code keeps its line ends.
         let kept = "C:\\\\\n\n    echo \\\n\n```sh\nmake \\\n\\\n```\n";
         assert_eq!(normalize(kept), kept);
+    }
+
+    #[test]
+    fn two_space_hard_breaks_are_kept_only_where_a_line_continues() {
+        // More spaces are written as two; a tab is no hard break; a line of
+        // blanks only is empty.
+        assert_eq!(
+            normalize("one   \ntwo\t\nthree  \n   \nfour\u{a0}  \r\nfive"),
+            "one  \ntwo\nthree\n\nfour\u{a0}  \nfive\n"
+        );
+        // Not at a paragraph's or the document's end, before a heading or a
+        // fenced block, or after a backslash (a hard break or an escape).
+        assert_eq!(
+            normalize("a  \n\nb  \n# H  \nc  \n```\nx  \ny\n```\nd\\  \ne  "),
+            "a\n\nb\n\n# H\n\nc\n```\nx  \ny\n```\nd\\\ne\n"
+        );
+        // A break whose next line a removed image or placeholder took.
+        assert_eq!(
+            normalize("Text  \n\u{5f}_MARKITAI_IMAGE_1__\n\nEnd  \n![a]()"),
+            "Text\n\nEnd\n"
+        );
+        assert_eq!(
+            normalize("Text  \n![](.markitai/assets/)  \nmore"),
+            "Text  \nmore\n"
+        );
+        // Normalizing again, as enhanced output is, keeps them.
+        let once = normalize("Poem:  \nRoses are red,  \nViolets are blue.  \n");
+        assert_eq!(once, "Poem:  \nRoses are red,  \nViolets are blue.\n");
+        assert_eq!(normalize(&once), once);
     }
 
     #[test]

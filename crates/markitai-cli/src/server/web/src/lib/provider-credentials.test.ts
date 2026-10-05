@@ -45,30 +45,70 @@ test("fresh credentials accept literal keys and reject environment expressions i
   }
 });
 
-test("opening and saving stored credentials does not expose or echo literal keys or environment references", () => {
-  for (const key of ["stored-secret", "env:OPENAI_API_KEY"]) {
-    const draft = providerDraft({ api_key: key, api_base: "env:OPENAI_API_BASE", api_base_placeholder: "https://api.openai.com/v1" });
-    assert.equal(draft.configured, true);
-    assert.equal(draft.baseRetained, true);
-    assert.equal(draft.base, "");
-    assert.ok(!JSON.stringify(draft).includes(key));
-    assert.deepEqual(providerUpdate(draft, "", "", false, "rev1"), { expected_revision: "rev1" });
-  }
+test("opening stored credentials describes the key without exposing it or an environment reference", () => {
+  const literal = providerDraft({ api_key: "sk-fixture-0000-abcd", api_base: "env:OPENAI_API_BASE", api_base_placeholder: "https://api.openai.com/v1" });
+  assert.deepEqual(literal.key, { state: "saved", ending: "abcd" });
+  assert.equal(literal.configured, true);
+  assert.equal(literal.baseRetained, true);
+  assert.equal(literal.baseVariable, "OPENAI_API_BASE");
+  assert.equal(literal.base, "");
+  assert.ok(!JSON.stringify(literal).includes("sk-fixture-0000-abcd"));
+  // A short key is too revealing to quote even in part.
+  assert.deepEqual(providerDraft({ api_key: "short-key", api_base: null, api_base_placeholder: null }).key, { state: "saved", ending: null });
+  const reference = providerDraft({ api_key: " env:OPENAI_API_KEY ", api_base: null, api_base_placeholder: null });
+  assert.deepEqual(reference.key, { state: "environment", variable: "OPENAI_API_KEY", stored: true });
+  assert.ok(!JSON.stringify(reference).includes("env:"));
+  // A key the server found in the environment is not a stored reference.
+  const detected = providerDraft({ api_key: "env:OPENAI_API_KEY", api_key_source: "environment", api_base: null, api_base_placeholder: null });
+  assert.deepEqual(detected.key, { state: "environment", variable: "OPENAI_API_KEY", stored: false });
+  assert.equal(detected.configured, true);
+  const empty = providerDraft({ api_key: null, api_base: "https://api.example.invalid/v1", api_base_placeholder: null });
+  assert.deepEqual(empty.key, { state: "none" });
+  assert.equal(empty.configured, false);
+  assert.equal(empty.base, "https://api.example.invalid/v1");
 });
 
-test("editing an endpoint requires explicit replacement or removal, while equivalent URLs keep the key", () => {
+test("the key is replaced or removed on its own and never left blank", () => {
+  const draft = providerDraft({ api_key: "stored-secret", api_base: "https://api.example.invalid/v1", api_base_placeholder: null });
+  assert.deepEqual(providerUpdate(draft, { kind: "key", key: " replacement " }, "rev1"), { expected_revision: "rev1", api_key: "replacement" });
+  assert.deepEqual(providerUpdate(draft, { kind: "removeKey" }, "rev1"), { expected_revision: "rev1", api_key: null });
+  assert.throws(() => providerUpdate(draft, { kind: "key", key: "  " }, "rev1"), rejected("key_required"));
+  assert.throws(() => providerUpdate(draft, { kind: "key", key: "env:OTHER_KEY" }, "rev1"), rejected("environment_reference"));
+});
+
+test("moving the address never carries the saved key, while equivalent URLs change nothing", () => {
   const draft = providerDraft({ api_key: "env:OPENAI_API_KEY", api_base: "https://api.example.invalid/v1/", api_base_placeholder: null });
-  assert.deepEqual(providerUpdate(draft, "", "https://api.example.invalid:443/v1", false, "rev1"), { expected_revision: "rev1" });
-  assert.throws(() => providerUpdate(draft, "", "https://other.invalid/v1", false, "rev1"), rejected("endpoint_key_required"));
-  assert.throws(() => providerUpdate(draft, "env:OTHER_KEY", "https://other.invalid/v1", false, "rev1"), rejected("environment_reference"));
-  assert.deepEqual(providerUpdate(draft, "replacement", "https://other.invalid/v1", false, "rev1"), {
+  assert.equal(providerUpdate(draft, { kind: "base", base: "https://api.example.invalid:443/v1", key: "" }, "rev1"), null);
+  assert.deepEqual(providerUpdate(draft, { kind: "base", base: "https://api.example.invalid/v1", key: "replacement" }, "rev1"), {
+    expected_revision: "rev1", api_key: "replacement",
+  });
+  assert.throws(() => providerUpdate(draft, { kind: "base", base: "https://other.invalid/v1", key: "" }, "rev1"), rejected("endpoint_key_required"));
+  assert.throws(() => providerUpdate(draft, { kind: "base", base: "https://other.invalid/v1", key: "env:OTHER_KEY" }, "rev1"), rejected("environment_reference"));
+  assert.throws(() => providerUpdate(draft, { kind: "base", base: "env:OTHER_BASE", key: "replacement" }, "rev1"), rejected("environment_reference"));
+  assert.deepEqual(providerUpdate(draft, { kind: "base", base: "https://other.invalid/v1", key: "replacement" }, "rev1"), {
     expected_revision: "rev1", api_key: "replacement", api_base: "https://other.invalid/v1",
   });
-  assert.deepEqual(providerUpdate(draft, "", "https://other.invalid/v1", true, "rev1"), {
-    expected_revision: "rev1", api_key: null, api_base: "https://other.invalid/v1",
+  // A blank address returns to the provider default, still with a new key.
+  assert.deepEqual(providerUpdate(draft, { kind: "base", base: " ", key: "replacement" }, "rev1"), {
+    expected_revision: "rev1", api_key: "replacement", api_base: null,
   });
 });
 
+test("without a saved key, moving the address explicitly connects without one", () => {
+  const draft = providerDraft({ api_key: null, api_base: null, api_base_placeholder: "https://api.openai.com/v1" });
+  assert.deepEqual(providerUpdate(draft, { kind: "base", base: "https://other.invalid/v1", key: "" }, "rev1"), {
+    expected_revision: "rev1", api_key: null, api_base: "https://other.invalid/v1",
+  });
+  assert.deepEqual(providerUpdate(draft, { kind: "base", base: "https://other.invalid/v1", key: "fresh" }, "rev1"), {
+    expected_revision: "rev1", api_key: "fresh", api_base: "https://other.invalid/v1",
+  });
+  assert.equal(providerUpdate(draft, { kind: "base", base: "", key: "" }, "rev1"), null);
+  // An address read from the environment always counts as a move, back to the default when blank.
+  const retained = providerDraft({ api_key: null, api_base: "env:OPENAI_API_BASE", api_base_placeholder: "https://api.openai.com/v1" });
+  assert.deepEqual(providerUpdate(retained, { kind: "base", base: "", key: "" }, "rev1"), {
+    expected_revision: "rev1", api_key: null, api_base: null,
+  });
+});
 
 test("saving detected API models preserves environment binding without returning a key or endpoint", () => {
   const deployment: Deployment = {

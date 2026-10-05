@@ -444,7 +444,7 @@ fn break_plan(
             _ if edge => "",
             Place::OneLine => " ",
             Place::Text | Place::Cell if count > 1 => "\n\n",
-            Place::Text => "\\\n",
+            Place::Text => "  \n",
             Place::Cell => "\n",
         });
         index = last + 1;
@@ -1166,12 +1166,12 @@ struct ListLine {
 /// a number other than one, under a paragraph) would continue the line
 /// before it: a hard break keeps it a line of its own after a paragraph, and
 /// a blank line after anything else (a fence or a table row cannot end with
-/// a backslash). In a table cell every item is a line of the cell.
+/// a hard break). In a table cell every item is a line of the cell.
 fn list_separator(previous: &ListLine, next: &ListLine, in_cell: bool) -> &'static str {
     if in_cell || (next.markdown_marker && (previous.markdown_marker || next.interrupts)) {
         "\n"
     } else if !next.markdown_marker && previous.ends_in_paragraph {
-        "\\\n"
+        "  \n"
     } else {
         "\n\n"
     }
@@ -1745,7 +1745,7 @@ mod tests {
             )]),
             // A label Markdown does not read (`1-a)`) is text at the head of a
             // line, which the hard break keeps from joining the line before.
-            "1. First\n2. Second\\\n1-a) Composite"
+            "1. First\n2. Second  \n1-a) Composite"
         );
         assert_eq!(
             renderer.blocks(&[list(MarkerKind::Bullet, vec![item("•", "Point")])]),

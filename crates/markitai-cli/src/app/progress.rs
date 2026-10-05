@@ -219,32 +219,35 @@ fn draw(line: &str) {
     SHOWN.store(true, Ordering::SeqCst);
 }
 
-/// `[12/340] name  ETA 0:41`, cut to the terminal width. `eta` is the time
-/// still to go, when there is an estimate.
+/// `[12/340] name  elapsed 0:41`, cut to the terminal width. `elapsed` is
+/// the time the batch has taken so far: a remaining-time estimate swings with
+/// each item's size and with model requests, so it is not shown.
 pub(super) fn batch_line(
     done: usize,
     total: usize,
     name: &str,
-    eta: Option<Duration>,
+    elapsed: Duration,
     lang: Lang,
     columns: usize,
 ) -> String {
     let counter = format!("[{done}/{total}]");
-    let estimate = eta.map(|eta| {
-        let eta = clock(eta.as_secs_f64().round() as u64);
-        match lang {
-            Lang::En => format!("ETA {eta}"),
-            Lang::Zh => format!("预计剩余 {eta}"),
-        }
-    });
-    let tail = estimate.map(|text| format!("  {text}")).unwrap_or_default();
+    let elapsed = clock(elapsed.as_secs());
+    let tail = match lang {
+        Lang::En => format!("  elapsed {elapsed}"),
+        Lang::Zh => format!("  已用时 {elapsed}"),
+    };
     let tail_width: usize = tail.chars().map(width).sum();
     let room = columns
         .saturating_sub(1)
         .saturating_sub(counter.len() + 1 + tail_width);
     if room < 8 {
-        // Too narrow for a name: the counter alone still says how far along.
-        return fit(&format!("{counter}{tail}"), columns.saturating_sub(1));
+        // Too narrow for a name: the counter (with the clock when it fits)
+        // still says how far along.
+        let limit = columns.saturating_sub(1);
+        if counter.len() + tail_width <= limit {
+            return format!("{counter}{tail}");
+        }
+        return fit(&counter, limit);
     }
     format!("{counter} {}{tail}", fit(name, room))
 }
@@ -256,9 +259,6 @@ pub(super) struct Progress {
     started: Instant,
     drawn: Option<Instant>,
     line: String,
-    /// The estimate made when the latest item finished, and when.
-    anchor: Option<(Duration, Instant)>,
-    finished: usize,
 }
 
 impl Progress {
@@ -269,28 +269,7 @@ impl Progress {
             started: Instant::now(),
             drawn: None,
             line: String::new(),
-            anchor: None,
-            finished: 0,
         }
-    }
-
-    /// The time still to go. Each finished item re-estimates it from the pace
-    /// so far; between completions it counts down, so a slow item does not
-    /// make the estimate climb. An estimate needs a finished item and a little
-    /// history to be of any use.
-    fn eta(&mut self, done: usize) -> Option<Duration> {
-        if done != self.finished {
-            self.finished = done;
-            let elapsed = self.started.elapsed();
-            self.anchor = (done > 0 && done < self.total && elapsed >= Duration::from_secs(1))
-                .then(|| {
-                    let remaining =
-                        elapsed.as_secs_f64() / done as f64 * (self.total - done) as f64;
-                    (Duration::from_secs_f64(remaining), Instant::now())
-                });
-        }
-        self.anchor
-            .map(|(estimate, at)| estimate.saturating_sub(at.elapsed()))
     }
 
     /// Show `done` items finished and `current` as the latest one started.
@@ -303,10 +282,10 @@ impl Progress {
         }
         self.drawn = Some(Instant::now());
         let done = done.min(self.total);
-        let eta = self.eta(done);
-        let line = batch_line(done, self.total, current, eta, i18n::lang(), columns());
-        // The estimate changes about once a second; an identical line is not
-        // worth terminal traffic (unless something erased it since).
+        let elapsed = self.started.elapsed();
+        let line = batch_line(done, self.total, current, elapsed, i18n::lang(), columns());
+        // The clock changes once a second; an identical line is not worth
+        // terminal traffic (unless something erased it since).
         if line != self.line || !SHOWN.load(Ordering::SeqCst) {
             draw(&line);
             self.line = line;
@@ -406,48 +385,25 @@ mod tests {
     }
 
     #[test]
-    fn the_line_names_progress_and_an_estimate_once_there_is_history() {
-        let line = |done, total, eta: Option<u64>| {
+    fn the_line_names_progress_and_the_time_taken_so_far() {
+        let line = |done, total, seconds| {
             batch_line(
                 done,
                 total,
                 "docs/report.pdf",
-                eta.map(Duration::from_secs),
+                Duration::from_secs(seconds),
                 Lang::En,
                 80,
             )
         };
-        assert_eq!(line(0, 340, None), "[0/340] docs/report.pdf");
+        assert_eq!(line(0, 340, 0), "[0/340] docs/report.pdf  elapsed 0:00");
+        assert_eq!(line(12, 340, 164), "[12/340] docs/report.pdf  elapsed 2:44");
+        // Partial seconds do not round up ahead of the clock.
         assert_eq!(
-            line(12, 340, Some(164)),
-            "[12/340] docs/report.pdf  ETA 2:44"
-        );
-        assert_eq!(
-            batch_line(1, 4, "a.docx", Some(Duration::from_secs(9)), Lang::Zh, 80),
-            "[1/4] a.docx  预计剩余 0:09"
+            batch_line(1, 4, "a.docx", Duration::from_millis(9900), Lang::Zh, 80),
+            "[1/4] a.docx  已用时 0:09"
         );
         assert_eq!(clock(3725), "1:02:05");
-    }
-
-    #[test]
-    fn the_estimate_is_made_when_an_item_finishes_and_counts_down_after_that() {
-        let mut progress = Progress::new(10, true);
-        // No finished item, or no history yet: no estimate.
-        assert_eq!(progress.eta(0), None);
-        assert_eq!(progress.eta(3), None);
-        // Pretend the run began 6 s ago. 4 items in 6 s leave 6 at 1.5 s each.
-        progress.started = Instant::now() - Duration::from_secs(6);
-        let first = progress.eta(4).unwrap();
-        assert!(
-            (Duration::from_millis(8800)..=Duration::from_millis(9200)).contains(&first),
-            "{first:?}"
-        );
-        // The same count again does not re-estimate; time passing only lowers it.
-        std::thread::sleep(Duration::from_millis(30));
-        let later = progress.eta(4).unwrap();
-        assert!(later < first, "{later:?} {first:?}");
-        // Nothing left to estimate at the end.
-        assert_eq!(progress.eta(10), None);
     }
 
     #[test]
@@ -456,17 +412,24 @@ mod tests {
             3,
             9,
             "a/very/long/directory/structure/with/many/parts/final-report-2026.pdf",
-            Some(Duration::from_secs(2)),
+            Duration::from_secs(2),
             Lang::En,
-            40,
+            48,
         );
         assert!(line.starts_with("[3/9] …"), "{line}");
         assert!(line.contains("final-report-2026.pdf"), "{line}");
-        assert!(line.chars().map(width).sum::<usize>() < 40, "{line}");
+        assert!(line.chars().map(width).sum::<usize>() < 48, "{line}");
         // Wide characters count double.
-        let wide = batch_line(1, 2, &"报告".repeat(30), None, Lang::En, 40);
+        let wide = batch_line(1, 2, &"报告".repeat(30), Duration::ZERO, Lang::En, 40);
         assert!(wide.chars().map(width).sum::<usize>() < 40, "{wide}");
         // A terminal too narrow for a name still gets the counter.
-        assert_eq!(batch_line(1, 2, "name.pdf", None, Lang::En, 10), "[1/2]");
+        assert_eq!(
+            batch_line(1, 2, "name.pdf", Duration::ZERO, Lang::En, 10),
+            "[1/2]"
+        );
+        assert_eq!(
+            batch_line(1, 2, "name.pdf", Duration::ZERO, Lang::En, 24),
+            "[1/2]  elapsed 0:00"
+        );
     }
 }

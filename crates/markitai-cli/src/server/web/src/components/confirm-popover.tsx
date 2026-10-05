@@ -9,6 +9,7 @@ let cards = 0;
 
 export function ConfirmPopover({
   triggerLabel,
+  triggerText,
   title,
   description,
   confirmLabel,
@@ -18,6 +19,8 @@ export function ConfirmPopover({
   onConfirm,
 }: {
   triggerLabel: string;
+  /** A visible word instead of the trash icon, for a text-button row. */
+  triggerText?: string;
   title: string;
   description: string;
   confirmLabel: string;
@@ -125,16 +128,16 @@ export function ConfirmPopover({
       <button
         ref={trigger}
         type="button"
-        class="row-icon is-danger"
+        class={triggerText ? "text-btn" : "row-icon is-danger"}
         aria-label={triggerLabel}
-        title={triggerLabel}
+        title={triggerText ? undefined : triggerLabel}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         disabled={disabled || busy}
         onClick={() => setOpen((value) => !value)}
       >
-        <Icon name="Trash" size={14} />
+        {triggerText ?? <Icon name="Trash" size={14} />}
       </button>
       {open &&
         createPortal(
