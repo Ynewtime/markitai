@@ -61,7 +61,9 @@ mode", the file name (a URL links to its page), then a
 panel with the tabs Rendered, Source, Diff (only for an exact base/LLM pair) and
 Files. The bar on the right shows words and bytes, PDF settings (custom header
 and footer), Export PDF and Download
-.md; a paired result's Base | LLM switch floats at the panel's lower right.
+.md; a paired result's Base | LLM switch floats at the lower right of the
+Rendered and Source panes, which show one version each (Diff and Files carry no
+switch: it has nothing to change there and would cover the content).
 Rendered shows the document without its YAML front matter; Source is an
 always-dark terminal card with the front matter dimmed and a Copy pill; Diff
 lists both line numbers with added and removed lines tinted; Files lists the

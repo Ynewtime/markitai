@@ -1,6 +1,7 @@
 // The preview panel: Rendered, Source, Diff (when an exact base/LLM pair exists)
-// and Files tabs; a Base | LLM switch for paired results; PDF export and the
-// Markdown download. Rendering is sanitized and pinned to the result's files.
+// and Files tabs; a Base | LLM switch for paired results on the panes that show
+// one version; PDF export and the Markdown download. Rendering is sanitized and
+// pinned to the result's files.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fetchBlob, fetchResult, fetchText, filePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
@@ -19,6 +20,11 @@ import { PdfSettings, readFurniture, storeFurniture } from "./pdf-settings.tsx";
 const DIFF_BYTES = 8 * 1024 * 1024;
 
 type Tab = "rendered" | "source" | "diff" | "files";
+
+/** The panes that show one version, where the Base | LLM switch has an effect.
+ * Diff shows both versions and Files is a listing, so the floating switch is
+ * absent there rather than covering the diff's last lines or a file row. */
+const VERSION_TABS: readonly Tab[] = ["rendered", "source"];
 
 export interface PreviewTarget {
   key: string;
@@ -447,7 +453,7 @@ export function MarkdownView({
           </ul>
         )}
       </div>
-      {pair && (
+      {pair && VERSION_TABS.includes(tab) && (
         <span class="seg viewer-version" role="group" aria-label={t.versionAria}>
           {(["base", "llm"] as const).map((value) => (
             <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => setVersion(value)}>
