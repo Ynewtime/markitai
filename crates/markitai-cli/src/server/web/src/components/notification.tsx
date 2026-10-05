@@ -1,7 +1,8 @@
 // A flat notification card at the top right (docked to the bottom on phones):
-// a coloured rule, readable full details, and optional actions.
+// a coloured rule, readable full details, and optional actions. A card without
+// an action hides itself after a short read; hovering or focusing it keeps it.
 import { createPortal } from "preact/compat";
-import { useLayoutEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { dicts } from "../i18n/index.ts";
 
@@ -85,6 +86,32 @@ export function Notification({ note, replay = 0, closeLabel, detailsLabel, warni
     // A newly shown or replayed notice is the topmost non-modal notice.
     return registerNotice({ node, close: () => close.current() });
   }, [note, replay]);
+  // A notice that asks nothing hides itself; resting on it keeps it open.
+  useEffect(() => {
+    if (note.action) return;
+    const node = card.current;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const ms = 6000 + (note.warnings?.length ?? 0) * 1500;
+    const arm = () => {
+      if (timer === null) timer = setTimeout(() => close.current(), ms);
+    };
+    const hold = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    };
+    arm();
+    node?.addEventListener("pointerenter", hold);
+    node?.addEventListener("pointerleave", arm);
+    node?.addEventListener("focusin", hold);
+    node?.addEventListener("focusout", arm);
+    return () => {
+      hold();
+      node?.removeEventListener("pointerenter", hold);
+      node?.removeEventListener("pointerleave", arm);
+      node?.removeEventListener("focusin", hold);
+      node?.removeEventListener("focusout", arm);
+    };
+  }, [note, replay]);
   // The existing settings dialog supplies only closeLabel; use the active document language.
   const words = dicts[document.documentElement.lang.startsWith("zh") ? "zh" : "en"];
   const warningsTitle = note.warningsTitle ?? warningsLabel ?? words.itemWarningsTitle;
@@ -103,7 +130,7 @@ export function Notification({ note, replay = 0, closeLabel, detailsLabel, warni
       <div class="notice-copy">
         <div class="notice-content">
           <strong>{note.title}</strong>
-          <p class="notice-message">{note.message}</p>
+          {note.message && <p class="notice-message">{note.message}</p>}
           {note.cost && <p class="notice-cost">{note.cost}</p>}
           {note.warnings && note.warnings.length > 0 && (
             <section class="notice-warnings" aria-label={warningsTitle}>

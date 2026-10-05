@@ -138,6 +138,8 @@ or a missing permission.
 **`Warning: Some observed LLM requests could not be priced`.** The model or
 endpoint is not in the bundled [price catalog](pricing.md), so `cost_usd` only
 counts the requests whose price is known. It does not mean the call was free.
+Documents served by a subscription runtime carry its own notice instead of this
+one.
 
 **`error: --playwright has been removed, use '-s playwright' instead.`** The old
 `--playwright`, `--static`, `--jina`, `--defuddle` and `--cloudflare` switches

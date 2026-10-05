@@ -1100,9 +1100,12 @@ textarea {
   font-size: var(--text-sm);
 }
 .notice-warnings ul {
+  max-height: 168px;
   margin-top: 4px;
   padding-left: 18px;
+  overflow-y: auto;
   list-style: disc;
+  scrollbar-width: thin;
 }
 .notice-warnings li + li {
   margin-top: 4px;
@@ -2447,35 +2450,27 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.preview-warnings {
-  flex: none;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--hairline);
-  font-size: var(--text-sm);
-  color: var(--text-2);
-}
-.preview-warnings-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-  font-weight: 600;
-  color: var(--warning);
-}
-.preview-warnings ul {
-  padding-left: 20px;
-  list-style: disc;
-}
-.preview-warnings li {
-  overflow-wrap: anywhere;
-}
 
 .viewer {
+  position: relative;
   overflow: hidden;
   border: 1px solid var(--hairline);
   border-radius: var(--r-panel);
   background: var(--surface);
   container-type: inline-size;
+}
+/* the Base/LLM pair switch floats at the lower right of the result */
+.viewer-version {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 6;
+  box-shadow: var(--shadow-pop);
+}
+.viewer-version button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 .dialog-preview .viewer {
   min-height: 0;
@@ -2526,7 +2521,7 @@ textarea {
 .viewer-side {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
 }
 .viewer-meta {
   font-family: var(--font-mono);

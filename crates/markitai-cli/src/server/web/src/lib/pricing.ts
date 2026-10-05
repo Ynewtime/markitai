@@ -158,8 +158,11 @@ export function itemNotification(item: SessionItem, t: Dict, locale: Locale, act
   const name = displayName(item.name);
   const failedAttempt = last?.status === "error";
   const actionTitle = action?.operation === "retry" ? t.retryFailed : action?.operation === "enhance" ? t.llmEnhanceFailed : action?.operation === "delete" ? t.deleteFailed : t.jobLoadFailed;
-  const heading = action ? actionTitle : retained ? t.rerunRetained(retained.operation) : noModel ? t.noModelTitle : imageSkip ? t.imageSkippedTitle : item.skipReason === "user_stopped" ? t.statusStopped : problem ? t.statusFailed : failedAttempt ? PRICE_WORDS[locale].lastFailed : `${t.statusDone} · ${t.itemWarningsTitle}`;
-  const message = action?.text || (noModel ? t.noModelMessage(name) : imageSkip ? t.imageSkipped(name) : problem?.text || (failedAttempt ? itemErrorText(locale, { error: last.error, kind: item.kind }).text : "")) || (warnings.length ? t.itemWarnings(warnings.length) : attempt?.label ? t.attemptUsageNotice : "") || t.statusFailed;
+  const heading = action ? actionTitle : retained ? t.rerunRetained(retained.operation) : noModel ? t.noModelTitle : imageSkip ? t.imageSkippedTitle : item.skipReason === "user_stopped" ? t.statusStopped : problem ? t.statusFailed : failedAttempt ? PRICE_WORDS[locale].lastFailed : t.statusDone;
+  // A plain "done with warnings" card carries no text line: the tone icon and
+  // the warnings section right below already say it.
+  let message = action?.text || (noModel ? t.noModelMessage(name) : imageSkip ? t.imageSkipped(name) : problem?.text || (failedAttempt ? itemErrorText(locale, { error: last?.error ?? null, kind: item.kind }).text : ""));
+  if (!message) message = warnings.length ? "" : attempt?.label ? t.attemptUsageNotice : t.statusFailed;
   // Raw wording lives in the disclosure, once. Unknown errors already appear in full.
   const raw = [action?.detail, failure?.error, item.error, failedAttempt ? last.error : null]
     .filter((value): value is string => typeof value === "string" && value.trim() !== "" && value.trim() !== message.trim());

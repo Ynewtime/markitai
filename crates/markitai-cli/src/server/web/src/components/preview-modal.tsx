@@ -1,5 +1,6 @@
 // The 1120px preview dialog (a full-screen sheet on phones). A URL item's title
-// links to the page it came from; conversion warnings are listed above the panel.
+// links to the page it came from; conversion warnings live in the item's
+// notification, not here.
 import { useRef } from "preact/hooks";
 import { useModal } from "../hooks/use-modal.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
@@ -10,7 +11,6 @@ export function PreviewModal({
   t,
   locale,
   item,
-  warnings,
   kind,
   createdAt,
   onClose,
@@ -20,7 +20,6 @@ export function PreviewModal({
   t: Dict;
   locale: Locale;
   item: PreviewTarget;
-  warnings: string[];
   kind: "file" | "url";
   createdAt: string | null;
   onClose: () => void;
@@ -56,19 +55,6 @@ export function PreviewModal({
             <Icon name="X" size={16} />
           </button>
         </div>
-        {warnings.length > 0 && (
-          <div class="preview-warnings" role="note" aria-label={t.itemWarningsTitle}>
-            <p class="preview-warnings-title">
-              <Icon name="WarningFill" size={14} />
-              <span>{t.itemWarningsTitle}</span>
-            </p>
-            <ul>
-              {warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          </div>
-        )}
         <MarkdownView t={t} locale={locale} item={item} createdAt={createdAt} announce={announce} describe={describe} />
       </div>
     </div>

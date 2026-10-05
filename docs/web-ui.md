@@ -39,7 +39,8 @@ Queued). Row actions are Download .md, Enhance with LLM (disabled with the reaso
 until LLM enhancement is available and switched on), Retry and Delete, which asks
 for confirmation in a card anchored to the row. Failed operations and conversion
 warnings use the shared notification card at the top right (docked at the bottom
-on phones). Clicking the status icon, or pressing Enter or Space on it, reopens
+on phones), which hides itself after a few seconds unless it asks for a decision
+or the pointer rests on it. Clicking the status icon, or pressing Enter or Space on it, reopens
 the complete notice; clicking the row still opens the document preview. A failed
 enhancement that retains an earlier result keeps its download and retry available.
 Warnings from that result are labelled separately from the latest attempt's
@@ -56,11 +57,12 @@ reference previews only the first result). Retry and Enhance on a saved
 single-item job also bring it into the session.
 
 The **preview** is a 1120px dialog (a full-screen sheet on phones): "Preview
-mode", the file name (a URL links to its page), the conversion warnings, then a
+mode", the file name (a URL links to its page), then a
 panel with the tabs Rendered, Source, Diff (only for an exact base/LLM pair) and
-Files. The bar on the right shows words and bytes, a Base | LLM switch for a
-paired result, PDF settings (custom header and footer), Export PDF and Download
-.md. Rendered shows the document without its YAML front matter; Source is an
+Files. The bar on the right shows words and bytes, PDF settings (custom header
+and footer), Export PDF and Download
+.md; a paired result's Base | LLM switch floats at the panel's lower right.
+Rendered shows the document without its YAML front matter; Source is an
 always-dark terminal card with the front matter dimmed and a Copy pill; Diff
 lists both line numbers with added and removed lines tinted; Files lists the
 result's files with sizes and downloads.

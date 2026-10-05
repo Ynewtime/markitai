@@ -89,9 +89,6 @@ pub(crate) fn process_document_with_runtime(
             }),
     );
     let mut warnings = Vec::new();
-    if subscription_pool {
-        warnings.push(claude::warning(cfg).into());
-    }
     let mut work = Vec::with_capacity(sources.len());
     for source in sources {
         let prompts = document_prompts(&source, source_label, metadata_only, cfg)?;
@@ -441,6 +438,9 @@ pub(super) fn checked(
     if !metadata_only && let Some(salvage) = degeneration::salvage(&answer.markdown, original) {
         answer.salvaged = Some(salvage.warning());
         answer.markdown = salvage.text;
+    }
+    if !metadata_only {
+        protected.no_literal_copies(&answer.markdown)?;
     }
     validate_answer(
         protected,

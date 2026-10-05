@@ -572,9 +572,6 @@ fn enhance_cached(
         .filter(|scope| *scope != "pool:none")
         .map(|scope| llm_cache::key(markdown, &prompts.cache_scope, scope));
     let mut warnings = Vec::new();
-    if subscription_pool {
-        warnings.push(claude::warning(cfg).into());
-    }
     if let (Some(cache), Some(key)) = (&cache, &cache_key) {
         match cache.get(key) {
             Ok(Some(markdown)) => return Ok(Enhancement {
@@ -585,6 +582,11 @@ fn enhance_cached(
         }
     }
     let (answer, usage) = run_with_runtime(&prompts, cfg, environment(), sleep, runtime)?;
+    // The subscription notice follows the runtime that actually served, not
+    // merely one configured in the pool.
+    if usage.subscription_observed() {
+        warnings.push(claude::warning(cfg).into());
+    }
     // A repeated tail is cut; the salvaged answer is used but not cached.
     let salvage = degeneration::salvage(&answer, markdown);
     let salvaged = salvage.is_some();
@@ -1458,7 +1460,21 @@ fn run_mode(
                 (selected, response, moves)
             };
             match result {
-                Ok(text) => return Ok((text, usage)),
+                Ok(text) => {
+                    // The subscription notice follows the runtime that actually
+                    // served, not merely one configured in the pool.
+                    if providers::SUBSCRIPTIONS.contains(&entries[selected].provider.as_str()) {
+                        note_document_warning(
+                            if entries[selected].provider == "copilot" {
+                                copilot::WARNING
+                            } else {
+                                claude::WARNING
+                            }
+                            .into(),
+                        );
+                    }
+                    return Ok((text, usage));
+                }
                 Err(failure) => {
                     failed.insert(selected);
                     last_error = VisionFailure {

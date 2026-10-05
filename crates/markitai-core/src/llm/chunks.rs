@@ -104,6 +104,24 @@ fn declared_window(cfg: &Value) -> Result<Option<usize>> {
     Ok(smallest)
 }
 
+/// Whitespace-insensitive comparison form for duplicate detection.
+fn squash(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A protected literal without its enclosing fence delimiters.
+fn literal_core(literal: &str) -> String {
+    let is_fence = |line: &str| {
+        let body = line.trim_start_matches(['>', ' ']);
+        body.starts_with("```") || body.starts_with("~~~")
+    };
+    literal
+        .lines()
+        .filter(|line| !is_fence(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub(super) struct Protected {
     pub text: String,
     prefix: String,
@@ -293,6 +311,22 @@ impl Protected {
             return Err(Error::Conversion(
                 "LLM changed, removed, duplicated or reordered a protected document marker".into(),
             ));
+        }
+        Ok(())
+    }
+
+    /// Reject an answer that re-creates the content a marker already stands
+    /// for (for example transcribing a fenced block visible in an image):
+    /// restore puts the literal back, so the second copy would duplicate it.
+    pub fn no_literal_copies(&self, answer: &str) -> Result<()> {
+        let haystack = squash(&self.without_markers(answer));
+        for (_, literal) in &self.literals {
+            let core = squash(&literal_core(literal));
+            if core.chars().count() >= 32 && haystack.contains(&core) {
+                return Err(Error::Conversion(
+                    "LLM answer re-creates content a protected marker already stands for".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -600,6 +634,22 @@ mod tests {
                 .restore(&format!("{}{token}", protected.text))
                 .is_err()
         );
+    }
+    #[test]
+    fn answers_that_transcribe_a_protected_literal_are_rejected() {
+        let source = "Setup:\n\n```\ncd app\nbun install\nbunx vite --port 5173\n```\n\nThen open the preview.\n";
+        let protected = Protected::new(source);
+        let token = &protected.literals[0].0;
+        // A faithful answer keeps the token and nothing of its content.
+        let faithful = format!("Setup:\n\n{token}\n\nThen open the preview.\n");
+        assert!(protected.no_literal_copies(&faithful).is_ok());
+        assert_eq!(protected.restore(&faithful).unwrap(), source);
+        // A transcription of the token's content (even re-fenced with a
+        // language tag) duplicates what restore puts back.
+        let copied = format!(
+            "Setup:\n\n{token}\n\n```sh\ncd app\nbun install\nbunx vite --port 5173\n```\n\nThen open the preview.\n"
+        );
+        assert!(protected.no_literal_copies(&copied).is_err());
     }
     #[test]
     fn unicode_chunks_keep_tail_and_exact_concatenation() {

@@ -167,6 +167,38 @@ impl ConversionUsage {
         });
         priced == Some(self.requests)
     }
+
+    /// Whether an official subscription runtime (Claude, ChatGPT, Copilot)
+    /// served any observed request; its rows carry no dollar quote.
+    pub fn subscription_observed(&self) -> bool {
+        self.by_model.keys().any(|key| subscription_row(key))
+    }
+
+    /// Whether requests served by priced-API models lack a complete tariff
+    /// quote. Subscription rows are covered by the subscription warning.
+    pub fn has_unpriced_non_subscription(&self) -> bool {
+        self.by_model.iter().any(|(key, row)| {
+            !subscription_row(key)
+                && (row
+                    .get("incomplete_request_observations")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    > 0
+                    || row
+                        .get("unpriced_requests")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        > 0
+                    || row.get("cost_status").and_then(Value::as_str) != Some("complete"))
+        })
+    }
+}
+
+/// Usage rows of official subscription runtimes are keyed by these prefixes.
+fn subscription_row(key: &str) -> bool {
+    ["claude-agent/", "chatgpt/", "copilot/"]
+        .iter()
+        .any(|prefix| key.starts_with(prefix))
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

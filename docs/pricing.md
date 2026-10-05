@@ -120,9 +120,11 @@ Whenever model requests were observed, a summary object
 - MCP single-source results, `batch_convert` items, and an aggregate `pricing`
   and `cost_usd` on `job_status` ([MCP](mcp.md)).
 
-When any observed request is unpriced, the CLI also prints
+When any observed request to a priced-API model is unpriced, the CLI also prints
 `Warning: Some observed LLM requests could not be priced. cost_usd is the known
-priced subtotal; the complete cost is unknown.`
+priced subtotal; the complete cost is unknown.` Documents served by a
+[subscription runtime](subscriptions.md) carry its own notice instead; requests
+through one never carry a dollar quote.
 
 ## Dollar continuation budget
 

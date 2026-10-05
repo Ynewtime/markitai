@@ -426,7 +426,7 @@ export function App() {
 
   // ---- preview
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ target: PreviewTarget; warnings: string[]; kind: "file" | "url"; createdAt: string | null } | null>(null);
+  const [preview, setPreview] = useState<{ target: PreviewTarget; kind: "file" | "url"; createdAt: string | null } | null>(null);
   const opener = useRef<HTMLElement | null>(null);
   const returnKey = useRef<string | null>(null);
   const toTarget = (item: SessionItem): PreviewTarget => ({
@@ -445,7 +445,7 @@ export function App() {
     setSelectedKey(key);
     opener.current = from;
     returnKey.current = key;
-    setPreview({ target: toTarget(item), warnings: item.warnings, kind: item.kind, createdAt: jobsRef.current.jobs[item.jobId]?.createdAt ?? null });
+    setPreview({ target: toTarget(item), kind: item.kind, createdAt: jobsRef.current.jobs[item.jobId]?.createdAt ?? null });
   }, []);
   const closePreview = useCallback(() => {
     setPreview(null);
@@ -496,7 +496,6 @@ export function App() {
           llmEnhanced: item.llm_enhanced,
           operation: item.operation,
         },
-        warnings: item.warnings ?? [],
         kind: item.kind,
         createdAt: snapshot.created_at,
       });
@@ -692,7 +691,6 @@ export function App() {
           t={t}
           locale={locale}
           item={preview.target}
-          warnings={preview.warnings}
           kind={preview.kind}
           createdAt={preview.createdAt}
           onClose={closePreview}

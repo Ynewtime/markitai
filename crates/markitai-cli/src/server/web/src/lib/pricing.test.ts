@@ -89,8 +89,10 @@ test("successful warnings preserve every full value and never call conversion fa
   for (const [locale, words] of [["en", en], ["zh", zh]] as const) {
     const notice = itemNotification(item, words, locale);
     assert.equal(notice?.tone, "warning");
-    assert.equal(notice?.title, `报告.pdf · ${words.statusDone} · ${words.itemWarningsTitle}`);
-    assert.equal(notice?.message, words.itemWarnings(4));
+    // The tone icon and the warnings section carry the state; no text suffix
+    // or count line repeats them.
+    assert.equal(notice?.title, `报告.pdf · ${words.statusDone}`);
+    assert.equal(notice?.message, "");
     assert.deepEqual(notice?.warnings, item.warnings);
     assert.ok(!notice?.title.includes(words.statusFailed));
     notice!.warnings![0] = "only the notification copy changed";

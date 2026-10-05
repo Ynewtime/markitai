@@ -281,15 +281,6 @@ export function MarkdownView({
               {meta.words.toLocaleString(locale === "zh" ? "zh-CN" : "en")} {t.words} · {fmtBytes(meta.bytes)}
             </span>
           )}
-          {pair && (
-            <span class="seg seg-sm" role="group" aria-label={t.versionAria}>
-              {(["base", "llm"] as const).map((value) => (
-                <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => setVersion(value)}>
-                  {value === "base" ? t.baseTag : t.llmTag}
-                </button>
-              ))}
-            </span>
-          )}
           <PdfSettings
             t={t}
             disabled={markdown === null}
@@ -456,6 +447,16 @@ export function MarkdownView({
           </ul>
         )}
       </div>
+      {pair && (
+        <span class="seg viewer-version" role="group" aria-label={t.versionAria}>
+          {(["base", "llm"] as const).map((value) => (
+            <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => setVersion(value)}>
+              <Icon name={value === "base" ? "FileText" : "MagicWand"} size={12} />
+              {value === "base" ? t.baseTag : t.llmTag}
+            </button>
+          ))}
+        </span>
+      )}
     </div>
   );
 }
