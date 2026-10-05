@@ -8,8 +8,18 @@ import { hasCloudflareRequest } from "../lib/cloudflare.ts";
 import { fmtCost, fmtDur } from "../lib/format.ts";
 import type { ItemRequestFailure } from "../lib/pricing.ts";
 import type { NotificationModel } from "./notification.tsx";
-import { mergeLedger, rowMatches, STATUS_FILTERS, type SessionItem, type SessionJob, type SessionStats, type StatusFilter } from "../lib/session.ts";
+import {
+  mergeLedger,
+  rowMatches,
+  STATUS_FILTERS,
+  type LedgerRow as LedgerRowModel,
+  type SessionItem,
+  type SessionJob,
+  type SessionStats,
+  type StatusFilter,
+} from "../lib/session.ts";
 import { ArchiveRow } from "./archive-row.tsx";
+import { GroupRow, groupRows } from "./group-row.tsx";
 import { domKey, LedgerRow } from "./ledger-row.tsx";
 
 const NO_ENTRIES: HistoryEntry[] = [];
@@ -78,6 +88,19 @@ export function Ledger({
   const rows = useMemo(() => mergeLedger(items, jobs, saved), [items, jobs, saved]);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
+  // A batch reads as one row until the reader opens it; the choice stays with
+  // the row while the job runs and after it settles.
+  const [openGroups, setOpenGroups] = useState<Record<string, true>>({});
+  const toggleGroup = useCallback((key: string) => {
+    setOpenGroups((previous) => {
+      if (previous[key]) {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      }
+      return { ...previous, [key]: true };
+    });
+  }, []);
   const filterable = rows.length > 10;
   useEffect(() => {
     if (!filterable) {
@@ -86,8 +109,27 @@ export function Ledger({
     }
   }, [filterable]);
   const filtering = filterable && (query.trim() !== "" || status !== "all");
-  const visible = useMemo(() => (filtering ? rows.filter((row) => rowMatches(row, status, query)) : rows), [filtering, rows, status, query]);
-  const position = useMemo(() => new Map(rows.map((row, index) => [row.key, index])), [rows]);
+  const matched = useMemo(() => (filtering ? rows.filter((row) => rowMatches(row, status, query)) : rows), [filtering, rows, status, query]);
+  const visible = useMemo(() => {
+    const flat: LedgerRowModel[] = [];
+    for (const row of matched) {
+      flat.push(row);
+      // Filtering shows the items themselves, so what matched is on screen.
+      if (row.kind === "group" && (filtering || openGroups[row.key])) flat.push(...groupRows(row));
+    }
+    return flat;
+  }, [matched, filtering, openGroups]);
+  // A group is one numbered row; the items inside it are indented without one.
+  const position = useMemo(() => {
+    const numbers = new Map<string, number | null>();
+    let next = 0;
+    for (const row of rows) {
+      numbers.set(row.key, next);
+      next += 1;
+      if (row.kind === "group") for (const item of row.items) numbers.set(item.key, null);
+    }
+    return numbers;
+  }, [rows]);
 
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const visibleKeys = useMemo(() => new Set(visible.map((row) => row.key)), [visible]);
@@ -204,7 +246,24 @@ export function Ledger({
       </div>
       <div ref={list} role="listbox" aria-label={t.itemsAria} onKeyDown={onKeyDown}>
         {visible.map((row) => {
-          const index = position.get(row.key) ?? 0;
+          // `null` marks a row inside an open group: it is indented and carries
+          // no number of its own.
+          const number = position.get(row.key) ?? null;
+          const index = number ?? 0;
+          if (row.kind === "group") {
+            return (
+              <GroupRow
+                key={row.key}
+                t={t}
+                row={row}
+                index={index ?? 0}
+                open={filtering || openGroups[row.key] === true}
+                tabbable={row.key === tabStop}
+                onToggle={toggleGroup}
+                onRowFocus={setActiveKey}
+              />
+            );
+          }
           if (row.kind === "session") {
             return (
               <LedgerRow
@@ -212,7 +271,7 @@ export function Ledger({
                 t={t}
                 locale={locale}
                 item={row.item}
-                index={index}
+                index={number}
                 selected={row.key === selectedKey}
                 tabbable={row.key === tabStop}
                 canDelete={jobs[row.item.jobId]?.status !== undefined && jobs[row.item.jobId]?.status !== "running"}

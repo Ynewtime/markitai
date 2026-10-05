@@ -7,6 +7,8 @@ import {
   settleCurrentJobSnapshot,
   failedToRetry,
   mergeItem,
+  groupItemRows,
+  groupLabel,
   mergeLedger,
   readSeeds,
   reconcile,
@@ -51,7 +53,7 @@ const job = (jobId: string, status: SessionJob["status"], createdAt: string | nu
   status,
   createdAt,
   options: emptyOptions(),
-  persistenceError: null,
+  persistenceError: null, label: null,
 });
 
 test("delayed final snapshots cannot overwrite a later retry or repopulate cleared jobs", async () => {
@@ -191,16 +193,37 @@ test("live and saved jobs share one ledger, newest activity first, running on to
     entry("saved", "2026-10-01T12:00:00Z"),
     entry("live", "2026-10-02T00:00:00Z"),
   ]);
+  // The two-item submission is one row that opens into its items.
   assert.deepEqual(
     rows.map((value) => value.key),
-    ["live/1", "live/2", "archive:saved", "old/1"],
+    ["group:live", "archive:saved", "old/1"],
   );
-  const [first, , saved] = rows;
+  const [first, saved] = rows;
   assert.ok(first && saved);
+  assert.equal(saved.kind, "archive");
+  assert.equal(first.kind, "group");
+  if (first.kind !== "group") throw new Error("expected a group");
+  assert.deepEqual(
+    groupItemRows(first).map((value) => value.key),
+    ["live/1", "live/2"],
+  );
   assert.equal(rowMatches(first, "all", "1.PDF"), true);
+  assert.equal(rowMatches(first, "all", "nothing-matches"), false);
   assert.equal(rowMatches(saved, "failed", ""), false);
   assert.equal(rowMatches(saved, "done", "b.doc"), true);
   assert.equal(rowMatches({ kind: "session", key: "k", item: row("x", "9", { skipped: true }) }, "skipped", ""), true);
+});
+
+test("a group carries the name its submission gave it", () => {
+  const items = [row("live", "1"), row("live", "2")];
+  const named = mergeLedger(items, { live: { ...job("live", "running"), label: "sample-folder" } }, []);
+  const bare = mergeLedger(items, { live: job("live", "running") }, []);
+  assert.equal(named[0]?.kind === "group" ? named[0].label : null, "sample-folder");
+  assert.equal(bare[0]?.kind === "group" ? bare[0].label : null, null);
+  const words = { itemsNotice: (count: number) => `${count} items` };
+  assert.equal(groupLabel("sample-folder", items, words), "sample-folder");
+  // Without a name the group reads as the first item plus the rest.
+  assert.equal(groupLabel(null, items, words), "1.pdf +1");
 });
 
 test("session seeds survive a reload and a damaged store reads as empty", () => {

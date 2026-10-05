@@ -27,10 +27,19 @@ progress (percentage and bytes, with Cancel), a session that could not be
 restored (with Retry restore), a refusal from the service, an unreachable
 service, a rejected input, a job that could not be saved, a folder notice, and
 "LLM not configured · Configure LLM to enable enhancement" while no model is
-routable. Files dropped anywhere on the page, or chosen with Upload or its folder choice,
-start a job at once, except when the selected Cloudflare service needs the
-confirmation described below; a hairline veil with "Drop to convert" shows while
-files are dragged over the page, and drops are ignored while a dialog is open.
+routable. One dropped or chosen file starts a job at once, except when the
+selected Cloudflare service needs the confirmation described below; a hairline
+veil with "Drop to convert" shows while files are dragged over the page, and
+drops are ignored while a dialog is open. A batch waits for Convert instead: the
+Upload menu's folder choice, a drop that reached into a folder, several chosen
+files, and a `.urls` list. The source card then shows one staged line naming the
+folder or list (`sample-folder · 43 files`) with a ✕ to drop it, Convert turns
+enabled, and pressing it sends the staged batch together with any typed URLs as
+one job. An uploaded `.urls` list is read as the list it is: one URL item per
+entry, a line starting with `#` and a blank line skipped, an entry that names an
+output (`https://example.com/report  Report`, or `{"url": …, "output_name": …}`
+in a JSON array) keeping that name, and a list with no usable URL refused with
+the file named instead of converting nothing.
 
 The **workspace view** (`/jobs`, kept across reloads and Back) shows
 "Conversions" with the session counters (`Current session · 6/8 Done · 1 Skipped
@@ -38,7 +47,15 @@ The **workspace view** (`/jobs`, kept across reloads and Back) shows
 while original items wait for a conversion slot), Retry all failed (N) and Clear
 all (Clear completed while something runs). Below the compact source card is one
 ledger for the session's jobs and the service's saved jobs, ordered by latest
-activity with running jobs first and numbered 01, 02, … in that order. Columns
+activity with running jobs first and numbered 01, 02, … in that order. One
+submission that carried several items reads as one group row — a folder, several
+files, a URL list or a batch of URLs — showing what the submission was called,
+how many items it holds, and the same aggregated facts as other rows (total
+duration, latest finish, Base/LLM with the summed cost, and a dark pill such as
+`3 Done · 1 Failed`). Clicking the row, or pressing Enter or Space on it, opens
+it into its items; they are indented without a number of their own and keep
+every per-item action. Arrow Left and Right close and open a group. A name or
+status filter flattens groups and shows the items that match. Columns
 are Name, Duration (a running row counts live), Finished, LLM / Cost (Base, or
 LLM with its cost) and Status (✓, ×, a warning mark for skipped rows, a spinner,
 Queued). Row actions are Download .md, Enhance with LLM (disabled with the reason

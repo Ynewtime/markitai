@@ -67,6 +67,8 @@ export interface SessionJob {
   createdAt: string | null;
   options: JobOptions;
   persistenceError: string | null;
+  /** What the submission called itself (a folder or URL list name), for a group. */
+  label: string | null;
 }
 
 export interface Seed {
@@ -245,7 +247,23 @@ export function waitingJobs(items: SessionItem[], jobs: Record<string, SessionJo
 
 export type LedgerRow =
   | { kind: "session"; key: string; item: SessionItem }
+  // One submission that carried several items: a folder, several files, a URL
+  // list or a batch of URLs. It reads as one row and opens into its items.
+  | { kind: "group"; key: string; jobId: string; items: SessionItem[]; label: string | null }
   | { kind: "archive"; key: string; entry: HistoryEntry };
+
+/** The rows a group shows when it is open. */
+export function groupItemRows(row: Extract<LedgerRow, { kind: "group" }>): LedgerRow[] {
+  return row.items.map((item) => ({ kind: "session" as const, key: item.key, item }));
+}
+
+/** What a submitted batch is called in the ledger: the folder it came from, the
+ * URL list it came from, or the number of items it holds. */
+export function groupLabel(label: string | null | undefined, items: SessionItem[], t: { itemsNotice: (count: number) => string }): string {
+  if (label) return label;
+  const first = items[0] ? displayName(items[0].name) : "";
+  return items.length > 1 ? `${first} +${items.length - 1}` : first || t.itemsNotice(items.length);
+}
 
 function activity(items: SessionItem[], createdAt: string | null | undefined): number {
   if (items.some(isActive)) return Number.POSITIVE_INFINITY;
@@ -275,11 +293,15 @@ export function mergeLedger(items: SessionItem[], jobs: Record<string, SessionJo
   const ordered: Group[] = [];
   for (const [jobId, group] of groups) {
     const createdAt = jobs[jobId]?.createdAt ?? null;
+    const rows: LedgerRow[] =
+      group.length > 1
+        ? [{ kind: "group", key: `group:${jobId}`, jobId, items: group, label: jobs[jobId]?.label ?? null }]
+        : group.map((item) => ({ kind: "session", key: item.key, item }));
     ordered.push({
       jobId,
       at: activity(group, createdAt),
       created: createdAt === null ? Number.POSITIVE_INFINITY : (timestampMs(createdAt) ?? 0),
-      rows: group.map((item) => ({ kind: "session", key: item.key, item })),
+      rows,
     });
   }
   for (const entry of archive) {
@@ -301,6 +323,12 @@ export const STATUS_FILTERS: StatusFilter[] = ["all", "done", "failed", "skipped
 
 export function rowMatches(row: LedgerRow, filter: StatusFilter, query: string): boolean {
   const needle = query.trim().toLowerCase();
+  if (row.kind === "group") {
+    // A group matches when any of its items does, and opens to show them.
+    return row.items.some((item) =>
+      rowMatches({ kind: "session", key: item.key, item }, filter, query),
+    ) || (!needle && filter === "all");
+  }
   if (row.kind === "session") {
     const item = row.item;
     const status =
@@ -324,6 +352,8 @@ export const SESSION_KEY = "markitai.session";
 
 export interface StoredJob {
   jobId: string;
+  /** What the submission called itself, so a reload keeps the group's name. */
+  label?: string | null;
   items: Seed[];
 }
 

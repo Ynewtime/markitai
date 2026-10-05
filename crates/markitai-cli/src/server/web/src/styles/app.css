@@ -667,6 +667,53 @@ textarea {
 .url-field {
   min-width: 0;
 }
+/* A batch waiting for Convert: a folder, several files or a URL list. */
+.staged-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--strip);
+  color: var(--text-2);
+}
+.staged-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.staged-count {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+.staged-clear {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.staged-clear:hover {
+  border-color: var(--hairline-strong);
+  color: var(--text-1);
+}
+
 /* the composer's bottom bar: tools at the start, Convert at the end */
 .url-bar {
   display: flex;
@@ -1372,6 +1419,40 @@ textarea {
 }
 .ledger [role="option"][aria-disabled="true"] {
   cursor: default;
+}
+/* A submission that carried several items reads as one row and opens. */
+.lg-row.is-group .cell-name {
+  font-weight: 600;
+}
+.lg-row.is-group .tag-count {
+  border-color: transparent;
+  background: var(--strip);
+}
+.group-caret {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) ease;
+}
+.lg-row.is-group:hover .group-caret,
+.lg-row.is-group:focus-visible .group-caret {
+  color: var(--text-1);
+}
+/* An item inside an open group: indented, quieter, still its own row. */
+.lg-row.is-nested {
+  padding-left: 26px;
+}
+.lg-row.is-nested .cell-num {
+  color: transparent;
+}
+.lg-row.is-nested .cell-name {
+  color: var(--text-2);
+}
+.mark.is-warn {
+  color: var(--warning);
 }
 .lg-row.is-selected::before {
   content: "";

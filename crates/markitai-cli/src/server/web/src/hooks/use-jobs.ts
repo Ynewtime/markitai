@@ -35,13 +35,16 @@ import {
 
 const terminal = (status: string) => status !== "running";
 
-function jobRecord(snapshot: JobSnapshot): SessionJob {
+function jobRecord(snapshot: JobSnapshot, label: string | null = null): SessionJob {
   return {
     jobId: snapshot.job_id,
     status: snapshot.status,
     createdAt: snapshot.created_at,
     options: publicOptions(snapshot.options),
     persistenceError: snapshot.persistence_error ?? null,
+    // The label belongs to the submission, not to the service's answer, so a
+    // snapshot keeps the one this session recorded.
+    label,
   };
 }
 
@@ -52,6 +55,7 @@ function storeSnapshotSeeds(jobId: string, payloads: ItemPayload[]): void {
       const sizes = new Map(job.items.map((seed) => [seed.itemId, seed.sizeBytes]));
       return {
         jobId,
+        label: job.label ?? null,
         items: payloads.map((item) => ({ itemId: item.item_id, name: item.name, kind: item.kind, sizeBytes: sizes.get(item.item_id) ?? null })),
       };
     }),
@@ -69,7 +73,8 @@ export interface JobsApi {
   restoreFailed: Set<string>;
   /** Job ids restored from this tab's seeds; their first outcome stays quiet. */
   restoredQuiet: Set<string>;
-  submit(files: File[], urls: string[], options: JobOptions, hooks?: UploadHooks): Promise<boolean>;
+  /** `label` names the submission in the ledger when it carries several items. */
+  submit(files: File[], urls: string[], options: JobOptions, hooks?: UploadHooks, label?: string | null): Promise<boolean>;
   retry(item: SessionItem, options?: JobOptions): Promise<unknown>;
   enhance(item: SessionItem, options: JobOptions): Promise<unknown>;
   retryArchived(snapshot: JobSnapshot, itemId: string, options?: JobOptions, operation?: "retry" | "enhance"): Promise<unknown>;
@@ -126,7 +131,10 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
   const applySnapshot = useCallback(
     (snapshot: JobSnapshot) => {
       const now = Date.now();
-      setJobs((previous) => ({ ...previous, [snapshot.job_id]: jobRecord(snapshot) }));
+      setJobs((previous) => ({
+        ...previous,
+        [snapshot.job_id]: jobRecord(snapshot, previous[snapshot.job_id]?.label ?? null),
+      }));
       setItems((previous) => reconcile(previous, snapshot.job_id, snapshot.items, now));
       storeSnapshotSeeds(snapshot.job_id, snapshot.items);
     },
@@ -225,25 +233,25 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
   );
 
   const adoptCreated = useCallback(
-    (created: CreateJobResponse, sizes: (number | null)[], options: JobOptions) => {
+    (created: CreateJobResponse, sizes: (number | null)[], options: JobOptions, label?: string | null) => {
       const jobId = created.job_id;
-      setJobs((previous) => ({ ...previous, [jobId]: { jobId, status: "running", createdAt: null, options, persistenceError: null } }));
+      setJobs((previous) => ({ ...previous, [jobId]: { jobId, status: "running", createdAt: null, options, persistenceError: null, label: label ?? null } }));
       const seeds: Seed[] = created.items.map((item, index) => ({ itemId: item.item_id, name: item.name, kind: item.kind, sizeBytes: sizes[index] ?? null }));
       setItems((previous) => [...previous, ...seeds.map((seed) => seedItem(jobId, seed))]);
-      writeSeeds([...readSeeds(), { jobId, items: seeds }]);
+      writeSeeds([...readSeeds(), { jobId, label: label ?? null, items: seeds }]);
       listen(jobId);
     },
     [listen],
   );
 
   const submit = useCallback(
-    async (files: File[], urls: string[], options: JobOptions, hooks: UploadHooks = {}) => {
+    async (files: File[], urls: string[], options: JobOptions, hooks: UploadHooks = {}, label?: string | null) => {
       askNotifyPermission();
       setSubmitError(null);
       try {
         const created = await createJob(files, urls, options, hooks);
         // The service lists files first, then URLs, in submission order.
-        adoptCreated(created, created.items.map((item, index) => (item.kind === "file" ? (files[index]?.size ?? null) : null)), options);
+        adoptCreated(created, created.items.map((item, index) => (item.kind === "file" ? (files[index]?.size ?? null) : null)), options, label);
         return true;
       } catch (error) {
         if (!hooks.signal?.aborted) setSubmitError(error);
@@ -299,7 +307,10 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
       close(snapshot.job_id);
       const now = Date.now();
       const rows = snapshot.items.map((payload) => transform(itemFromPayload(snapshot.job_id, payload, now)));
-      setJobs((previous) => ({ ...previous, [snapshot.job_id]: jobRecord(snapshot) }));
+      setJobs((previous) => ({
+        ...previous,
+        [snapshot.job_id]: jobRecord(snapshot, previous[snapshot.job_id]?.label ?? null),
+      }));
       setItems((previous) => [...previous.filter((item) => item.jobId !== snapshot.job_id), ...rows]);
       const stored: StoredJob = {
         jobId: snapshot.job_id,
@@ -449,7 +460,7 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
     setItems(stored.flatMap((job) => job.items.map((seed) => seedItem(job.jobId, seed))));
     setJobs(
       Object.fromEntries(
-        stored.map((job) => [job.jobId, { jobId: job.jobId, status: "running", createdAt: null, options: emptyOptions(), persistenceError: null }]),
+        stored.map((job) => [job.jobId, { jobId: job.jobId, status: "running", createdAt: null, options: emptyOptions(), persistenceError: null, label: job.label ?? null }]),
       ),
     );
     for (const job of stored) void reconcileJob(job.jobId);

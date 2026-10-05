@@ -57,6 +57,82 @@ pub(super) async fn capabilities(
     )
 }
 
+/// Reads an uploaded `.urls` list; its entries become URL items of this job.
+/// A hand-written list may carry a comment, a blank line or a line that is not
+/// an HTTP(S) URL, which is skipped the way the CLI skips it; a list that holds
+/// no usable URL is refused rather than silently converting nothing.
+async fn read_url_list(
+    field: &mut axum::extract::multipart::Field<'_>,
+    filename: &str,
+) -> ApiResult<Vec<(String, Option<String>)>> {
+    const MAX_URL_LIST: usize = 1024 * 1024;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = field
+        .chunk()
+        .await
+        .map_err(|e| ApiError::multipart(e.status()))?
+    {
+        if bytes.len() + chunk.len() > MAX_URL_LIST {
+            return Err(ApiError::new(
+                413,
+                "url_list_too_large",
+                format!("{filename} exceeds the URL list limit"),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let text = String::from_utf8(bytes).map_err(|_| {
+        ApiError::new(
+            422,
+            "invalid_url_list",
+            format!("{filename} is not UTF-8 text"),
+        )
+    })?;
+    let parsed = markitai_core::url_list::parse(&text).map_err(|error| {
+        ApiError::new(
+            422,
+            "invalid_url_list",
+            format!("{filename} is not a JSON URL list: {error}"),
+        )
+    })?;
+    let mut entries = Vec::new();
+    for entry in parsed.entries {
+        let url = entry.url.trim().to_owned();
+        let usable = url::Url::parse(&url).is_ok_and(|parsed| {
+            ["http", "https"].contains(&parsed.scheme()) && parsed.host_str().is_some()
+        });
+        if !usable {
+            continue;
+        }
+        let name = match entry.output_name.map(|name| name.trim().to_owned()) {
+            None => None,
+            Some(name) if name.is_empty() => None,
+            Some(name) => {
+                let base = name.strip_suffix(".md").unwrap_or(&name).to_owned();
+                if name.contains(['/', '\\']) || base == "." || base == ".." {
+                    return Err(ApiError::new(
+                        422,
+                        "invalid_output_name",
+                        format!(
+                            "{filename}: a URL output name must be a filename without directory components"
+                        ),
+                    ));
+                }
+                Some(base)
+            }
+        };
+        entries.push((url, name));
+    }
+    if entries.is_empty() {
+        return Err(ApiError::new(
+            422,
+            "empty_url_list",
+            format!("{filename} holds no HTTP(S) URLs"),
+        ));
+    }
+    Ok(entries)
+}
+
 pub(super) async fn create(
     ExtractState(state): ExtractState<Arc<State>>,
     request: Request,
@@ -79,7 +155,9 @@ pub(super) async fn create(
     store::private_dir(&stage.path().join("out")).map_err(ApiError::internal)?;
     let mut items = Vec::new();
     let mut names = HashSet::new();
-    let mut urls = None;
+    // URL entries from either the `urls` field or an uploaded `.urls` list.
+    let mut urls: Vec<(String, Option<String>)> = Vec::new();
+    let mut url_field = None;
     let mut options = None;
     if request
         .headers()
@@ -97,7 +175,7 @@ pub(super) async fn create(
             .map_err(|_| ApiError::new(413, "form_field_too_large", "form field exceeds limit"))?;
         for (name, value) in url::form_urlencoded::parse(&body) {
             if name == "urls" {
-                urls = Some(value.as_bytes().to_vec());
+                url_field = Some(value.as_bytes().to_vec());
             } else if name == "options" {
                 options = Some(value.as_bytes().to_vec());
             }
@@ -134,6 +212,12 @@ pub(super) async fn create(
                     return Err(ApiError::new(422, "too_many_items", "too many job items"));
                 }
                 let filename = jobs::unique_name(&jobs::sanitize_name(filename), &mut names);
+                if filename.to_ascii_lowercase().ends_with(".urls") {
+                    for entry in read_url_list(&mut field, &filename).await? {
+                        urls.push(entry);
+                    }
+                    continue;
+                }
                 let path = stage.path().join("uploads").join(&filename);
                 let mut options = tokio::fs::OpenOptions::new();
                 options.write(true).create_new(true);
@@ -178,30 +262,30 @@ pub(super) async fn create(
                     bytes.extend_from_slice(&chunk);
                 }
                 if name == "urls" {
-                    urls = Some(bytes);
+                    url_field = Some(bytes);
                 } else if name == "options" {
                     options = Some(bytes);
                 }
             }
         }
     }
-    let urls: Vec<String> = match urls.filter(|bytes| !bytes.iter().all(u8::is_ascii_whitespace)) {
-        None => Vec::new(),
-        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| {
-            ApiError::new(422, "invalid_urls", "urls must be a JSON array of strings")
-        })?,
-    };
-    if urls.iter().any(|url| url.trim().is_empty()) {
+    let listed: Vec<String> =
+        match url_field.filter(|bytes| !bytes.iter().all(u8::is_ascii_whitespace)) {
+            None => Vec::new(),
+            Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| {
+                ApiError::new(422, "invalid_urls", "urls must be a JSON array of strings")
+            })?,
+        };
+    if listed.iter().any(|url| url.trim().is_empty()) {
         return Err(ApiError::new(
             422,
             "invalid_urls",
             "urls must be a JSON array of non-empty strings",
         ));
     }
-    let urls = urls
-        .into_iter()
-        .map(|v| v.trim().to_owned())
-        .collect::<Vec<_>>();
+    for url in listed {
+        urls.push((url.trim().to_owned(), None));
+    }
     if !urls.is_empty() && !trusted {
         return Err(ApiError::new(
             403,
@@ -212,7 +296,7 @@ pub(super) async fn create(
     if items.len() + urls.len() > MAX_ITEMS {
         return Err(ApiError::new(422, "too_many_items", "too many job items"));
     }
-    for url in urls {
+    for (url, output_name) in urls {
         let parsed =
             url::Url::parse(&url).map_err(|_| ApiError::new(422, "invalid_url", "invalid URL"))?;
         if !["http", "https"].contains(&parsed.scheme()) || parsed.host_str().is_none() {
@@ -222,7 +306,10 @@ pub(super) async fn create(
                 "URLs must use http or https",
             ));
         }
-        items.push(Item::new(items.len() + 1, url, "url", None));
+        // A named entry keeps its name as the base it reserves below. The list
+        // reader has already refused a name that is not a plain filename.
+        let name = output_name.map(|name| jobs::sanitize_name(&name));
+        items.push(Item::new(items.len() + 1, url, "url", name));
     }
     if items.is_empty() {
         return Err(ApiError::new(

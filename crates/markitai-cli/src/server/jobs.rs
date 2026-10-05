@@ -233,7 +233,11 @@ pub(super) fn reserve_outputs(items: &[Item]) -> HashMap<String, String> {
     let mut result = HashMap::new();
     for item in items {
         let raw = if item.kind == "url" {
-            markitai_core::output::url_name(&item.name, &Default::default())
+            // An entry of an uploaded `.urls` list may name its own output; the
+            // name has already been checked to be a plain filename.
+            item.output_name
+                .clone()
+                .unwrap_or_else(|| markitai_core::output::url_name(&item.name, &Default::default()))
         } else {
             item.name.clone()
         };

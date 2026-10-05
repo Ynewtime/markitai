@@ -2396,19 +2396,25 @@ fn absolute(path: &Path) -> PathBuf {
         }
     })
 }
-/// Where an entry of a `.urls` list was found.
-#[derive(Clone, Copy)]
-enum Place {
-    Entry(usize),
-    Line(usize),
+/// Where an entry of a `.urls` list was found; the split itself is the core's.
+struct Place(markitai_core::url_list::Place);
+
+impl From<markitai_core::url_list::Place> for Place {
+    fn from(place: markitai_core::url_list::Place) -> Self {
+        Self(place)
+    }
 }
 
 impl Place {
     /// The place named in English and in Chinese.
     fn names(self) -> (String, String) {
-        match self {
-            Place::Entry(number) => (format!("entry {number}"), format!("第 {number} 项")),
-            Place::Line(number) => (format!("line {number}"), format!("第 {number} 行")),
+        match self.0 {
+            markitai_core::url_list::Place::Entry(number) => {
+                (format!("entry {number}"), format!("第 {number} 项"))
+            }
+            markitai_core::url_list::Place::Line(number) => {
+                (format!("line {number}"), format!("第 {number} 行"))
+            }
         }
     }
 }
@@ -2416,69 +2422,37 @@ impl Place {
 fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
     let text = std::fs::read_to_string(path)
         .map_err(|error| runtime(format!("Cannot read {}: {error}", path.display())))?;
-    let body = text.trim_start_matches('\u{feff}');
-    let raw = body.trim();
-    // Each entry keeps where it came from, so a rejected one can be located
-    // without echoing its text (which may hold credentials).
-    let mut entries = Vec::new();
-    if raw.starts_with('[') {
-        let values: Vec<Value> = serde_json::from_str(raw).map_err(|error| {
-            runtime(format!(
-                "Cannot parse {} as a JSON URL list: {error}",
-                path.display()
-            ))
-        })?;
-        for (index, value) in values.into_iter().enumerate() {
-            let location = Place::Entry(index + 1);
-            let pair = if let Some(url) = value.as_str() {
-                Some((url.to_string(), None))
-            } else {
-                value["url"].as_str().map(|url| {
-                    (
-                        url.to_string(),
-                        value["output_name"].as_str().map(String::from),
-                    )
-                })
-            };
-            match pair {
-                Some((url, name)) => entries.push((location, url, name)),
-                None => {
-                    let (location, place) = location.names();
-                    let path = path.display();
-                    say!(
-                        "Warning: skipping {location} in {path}: expected a URL string or an object with \"url\"",
-                        "Warning: 跳过 {path} 的{place}：应为 URL 字符串，或带有 \"url\" 字段的对象"
-                    );
-                }
-            }
-        }
-    } else {
-        // Untrimmed lines keep their numbers; blank ones are skipped anyway.
-        for (number, line) in body.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let (url, name) = line
-                .split_once(char::is_whitespace)
-                .map(|(u, n)| (u, Some(n.trim().trim_matches(['\'', '"']).to_string())))
-                .unwrap_or((line, None));
-            entries.push((Place::Line(number + 1), url.into(), name));
-        }
+    // The split lives in the core, which the workbench reads uploads with too.
+    let parsed = markitai_core::url_list::parse(&text).map_err(|error| {
+        runtime(format!(
+            "Cannot parse {} as a JSON URL list: {error}",
+            path.display()
+        ))
+    })?;
+    for place in parsed.skipped {
+        let (location, place) = Place::from(place).names();
+        let path = path.display();
+        say!(
+            "Warning: skipping {location} in {path}: expected a URL string or an object with \"url\"",
+            "Warning: 跳过 {path} 的{place}：应为 URL 字符串，或带有 \"url\" 字段的对象"
+        );
     }
     let mut tasks = Vec::new();
-    for (location, url, name) in entries {
-        let url = url.trim();
+    for entry in parsed.entries {
+        let (location, place) = Place::from(entry.place).names();
+        let shown = path.display();
+        let url = entry.url.trim();
         if !is_url(url) {
-            let (location, place) = location.names();
-            let path = path.display();
             say!(
-                "Warning: skipping {location} in {path}: not an HTTP(S) URL",
-                "Warning: 跳过 {path} 的{place}：不是 HTTP(S) URL"
+                "Warning: skipping {location} in {shown}: not an HTTP(S) URL",
+                "Warning: 跳过 {shown} 的{place}：不是 HTTP(S) URL"
             );
             continue;
         }
-        let name = name.filter(|name| !name.is_empty());
+        let name = entry
+            .output_name
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty());
         let report_key = name
             .as_ref()
             .map(|name| format!("{url} {name}"))
@@ -3182,11 +3156,11 @@ mod tests {
         }
         // A rejected `.urls` entry is located in both languages.
         assert_eq!(
-            Place::Entry(3).names(),
+            Place::from(markitai_core::url_list::Place::Entry(3)).names(),
             ("entry 3".to_owned(), "第 3 项".to_owned())
         );
         assert_eq!(
-            Place::Line(12).names(),
+            Place::from(markitai_core::url_list::Place::Line(12)).names(),
             ("line 12".to_owned(), "第 12 行".to_owned())
         );
     }

@@ -28,7 +28,7 @@ import { useConnectivity } from "./hooks/use-connectivity.ts";
 import { useJobs } from "./hooks/use-jobs.ts";
 import { detectLocale, dicts, storeLocale, type Locale } from "./i18n/index.ts";
 import { apiErrorText, persistenceText } from "./i18n/errors.ts";
-import { oversized, type Walked } from "./lib/files.ts";
+import { oversized, stagedBatch, type StagedSubmission, type Walked } from "./lib/files.ts";
 import { fmtBytes } from "./lib/format.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { canRetry, failedToRetry, isPreviewable, isSettled, settledIdentity, itemFromPayload, waitingJobs, type SessionItem } from "./lib/session.ts";
@@ -279,6 +279,9 @@ export function App() {
   const urls = useMemo(() => parseUrls(urlText).urls, [urlText]);
   const [dropNotice, setDropNotice] = useState<string | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
+  // A batch that is waiting for Convert: a folder, several files or a `.urls`
+  // list. Nothing is sent until the button is pressed.
+  const [staged, setStaged] = useState<StagedSubmission | null>(null);
   const controllers = useRef(new Set<AbortController>());
   const [upload, setUpload] = useState<Upload | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -293,7 +296,7 @@ export function App() {
 
   const sending = useRef(false);
   const send = useCallback(
-    async (files: File[], list: string[]) => {
+    async (files: File[], list: string[], label: string | null = null) => {
       if (sending.current) return false;
       sending.current = true;
       try {
@@ -316,7 +319,7 @@ export function App() {
             last = now;
             setUpload({ loaded, total });
           },
-        });
+        }, label);
         controllers.current.delete(controller);
         setSubmitting(controllers.current.size > 0);
         if (!controllers.current.size) setUpload(null);
@@ -333,7 +336,7 @@ export function App() {
   }, [jobs.submitError, refreshCaps]);
 
   const submitFiles = useCallback(
-    (files: File[], folder?: { hidden: number; unreadable: number; truncated: boolean }) => {
+    (files: File[], folder?: { hidden: number; unreadable: number; truncated: boolean; folder?: boolean }) => {
       setInputError(null);
       jobsRef.current.clearSubmitError();
       const notes: string[] = [];
@@ -354,11 +357,25 @@ export function App() {
         setInputError(t.filesTooLarge(large.map((file) => `${file.name} (${fmtBytes(file.size)})`).join(", ")));
         return;
       }
+      // A folder, several files or a `.urls` list is a batch: it waits for
+      // Convert, so its options can be chosen and its size seen first. One file
+      // starts at once.
+      const batch = stagedBatch(chosen, folder?.folder === true);
+      if (batch) {
+        setStaged(batch);
+        navigate("workspace");
+        return;
+      }
       void send(chosen, []);
     },
-    [maxItems, send, t],
+    [maxItems, navigate, send, t],
   );
-  const submitFolder = useCallback((files: File[], hidden: number) => submitFiles(files, { hidden, unreadable: 0, truncated: false }), [submitFiles]);
+  // Choosing the Folder entry is always a batch; a drop is one when it reached
+  // into a directory or carried several files.
+  const submitFolder = useCallback(
+    (files: File[], hidden: number) => submitFiles(files, { hidden, unreadable: 0, truncated: false, folder: true }),
+    [submitFiles],
+  );
   const submitWalked = useCallback((walked: Walked) => submitFiles(walked.files, walked), [submitFiles]);
 
   const submitUrls = useCallback(
@@ -376,9 +393,14 @@ export function App() {
         setDropNotice(t.dropTruncated(maxItems, list.length));
         list = list.slice(0, maxItems);
       }
-      return list.length ? send([], list) : false;
+      const files = staged?.files ?? [];
+      const label = staged ? staged.label : list.length > 1 ? t.itemsNotice(list.length) : null;
+      if (!list.length && !files.length) return false;
+      const ok = await send(files, list, label);
+      if (ok) setStaged(null);
+      return ok;
     },
-    [maxItems, send, t],
+    [maxItems, send, staged, t],
   );
 
   // ---- ledger actions
@@ -674,7 +696,17 @@ export function App() {
       onFiles={(files) => submitFiles(files)}
       onFolder={submitFolder}
       source={(tools) => (
-        <UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} busy={submitting || cloudflare.pending !== null} compact={compact} tools={tools} />
+        <UrlInput
+          t={t}
+          text={urlText}
+          onText={setUrlText}
+          onConvert={submitUrls}
+          busy={submitting || cloudflare.pending !== null}
+          compact={compact}
+          staged={staged}
+          onClearStaged={() => setStaged(null)}
+          tools={tools}
+        />
       )}
     />
   );

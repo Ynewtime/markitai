@@ -328,6 +328,77 @@ fn zip_contents(bytes: &[u8]) -> HashMap<String, Vec<u8>> {
         .collect()
 }
 
+/// An uploaded `.urls` list is a batch of URLs, not a document: its entries
+/// become URL items, a named entry keeps its output name, and a comment, a blank
+/// line and a line that is not a URL are skipped the way the CLI skips them.
+#[test]
+fn an_uploaded_urls_list_becomes_url_items_with_the_names_it_asks_for() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let list = b"# sources\r\n\r\nhttps://example.test/one\r\nhttps://example.test/two  Report\r\nnot a url\r\n";
+    let created = server.submit(&[("links.urls", list)], json!([]), json!({}));
+    let items = created["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{created}");
+    assert_eq!(items[0]["kind"], "url");
+    assert_eq!(items[0]["name"], "https://example.test/one");
+    assert_eq!(items[1]["name"], "https://example.test/two");
+    // The reserved output name is what the job reports and the ledger shows: an
+    // entry without a name is named from its URL, and a named one keeps that name
+    // instead of the URL's last segment (`two`).
+    let snapshot = server.json(&format!(
+        "/api/jobs/{}",
+        created["job_id"].as_str().unwrap()
+    ));
+    let items = snapshot["items"].as_array().unwrap();
+    assert_eq!(items[0]["output_name"], "one.md", "{snapshot}");
+    assert_eq!(items[1]["output_name"], "Report.md", "{snapshot}");
+    let _ = server.request(
+        "DELETE",
+        &format!("/api/jobs/{}", created["job_id"].as_str().unwrap()),
+        &[],
+        &[],
+    );
+}
+
+/// A JSON list carries names too, and a list that holds nothing usable is
+/// refused with the file named rather than converting nothing quietly.
+#[test]
+fn a_urls_list_refuses_an_empty_result_and_a_json_list_keeps_its_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let created = server.submit(
+        &[(
+            "links.urls",
+            br#"[{"url": "https://example.test/a", "output_name": "A"}]"#,
+        )],
+        json!([]),
+        json!({}),
+    );
+    let items = created["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{created}");
+    let snapshot = server.json(&format!(
+        "/api/jobs/{}",
+        created["job_id"].as_str().unwrap()
+    ));
+    assert_eq!(snapshot["items"][0]["output_name"], "A.md", "{snapshot}");
+
+    for (name, body) in [
+        ("empty.urls", b"# only a comment\n".as_slice()),
+        ("junk.urls", b"mailto:someone@example.test\n".as_slice()),
+        ("broken.urls", b"[\"https://example.test/a\"".as_slice()),
+    ] {
+        let (content_type, body) = multipart(&[(name, body)], json!([]), json!({}));
+        let reply = server.request(
+            "POST",
+            "/api/jobs",
+            &[("Content-Type", &content_type)],
+            &body,
+        );
+        assert_eq!(reply.status, 422, "{}", reply.text());
+        assert!(reply.text().contains(name), "{}", reply.text());
+    }
+}
+
 #[test]
 fn multipart_jobs_preserve_member_identity_sse_results_and_restart_history() {
     let temp = tempfile::tempdir().unwrap();

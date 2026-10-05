@@ -4,6 +4,15 @@
 
 export const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
+/** A batch waiting for Convert: a folder, several files, or a `.urls` list.
+ * One file converts as soon as it is chosen; a batch is worth a look first. */
+export interface StagedSubmission {
+  files: File[];
+  /** What the batch is called: the folder name, the list name, or its files. */
+  label: string;
+  kind: "folder" | "files" | "urls";
+}
+
 const SYSTEM_FILE = /^(?:thumbs\.db|desktop\.ini)$/i;
 export const isHiddenName = (name: string): boolean => name.startsWith(".") || SYSTEM_FILE.test(name);
 
@@ -30,6 +39,8 @@ export interface Walked {
   hidden: number;
   truncated: boolean;
   unreadable: number;
+  /** Whether the gesture reached into a directory, which makes it a batch. */
+  folder: boolean;
 }
 
 interface EntryLike {
@@ -76,6 +87,7 @@ export async function walkEntries(
   let truncated = false;
   let seen = 0;
   let unreadable = 0;
+  let folder = false;
   async function visit(entry: EntryLike, path: string, level: number): Promise<void> {
     if (truncated) return;
     if (++seen > visits || level > depth) {
@@ -99,6 +111,7 @@ export async function walkEntries(
         unreadable++;
       }
     } else if (entry.isDirectory) {
+      folder = true;
       let children: EntryLike[];
       try {
         children = await readAll(entry);
@@ -111,7 +124,24 @@ export async function walkEntries(
     }
   }
   for (const entry of entries) await visit(entry, entry.name, 0);
-  return { files, hidden, truncated, unreadable };
+  return { files, hidden, truncated, unreadable, folder };
 }
 
 export const oversized = (files: File[]): File[] => files.filter((file) => file.size > MAX_FILE_BYTES);
+
+/** What a chosen set of files is, when it should wait for Convert: a folder, a
+ * URL list, or several files. A single file returns null and converts at once. */
+export function stagedBatch(files: File[], folder: boolean): StagedSubmission | null {
+  const list = files.find((file) => /\.urls$/i.test(relativePath(file)));
+  if (list) {
+    const path = relativePath(list);
+    return { files, label: path.slice(path.lastIndexOf("/") + 1), kind: "urls" };
+  }
+  if (folder) {
+    const path = relativePath(files[0] ?? new File([], ""));
+    const name = path.includes("/") ? path.slice(0, path.indexOf("/")) : "";
+    return { files, label: name || `${files.length} files`, kind: "folder" };
+  }
+  if (files.length < 2) return null;
+  return { files, label: `${files.length} files`, kind: "files" };
+}

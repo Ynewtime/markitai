@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { cliCommand, shellQuote } from "./cli.ts";
 import { compareLines } from "./diff.ts";
-import { isHiddenName, selectFolderFiles, walkEntries } from "./files.ts";
+import { isHiddenName, selectFolderFiles, stagedBatch, walkEntries } from "./files.ts";
 import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, splitName, timestampMs } from "./format.ts";
 import { artifactPath, loadArtifactImages, markdownPair, rewrite, splitFrontmatter } from "./markdown.ts";
 import { endpointFor, manualModelId, sameEndpoint } from "./models.ts";
@@ -194,8 +194,33 @@ test("dropped folders are walked in order, in batches, bounded and with unreadab
     ["root/a.md", "root/b.md", "root/sub/c.md"],
   );
   assert.deepEqual([walked.hidden, walked.unreadable, walked.truncated], [1, 1, false]);
+  assert.equal(walked.folder, true);
   const limited = await walkEntries([tree as never], { limit: 2 });
   assert.deepEqual([limited.files.length, limited.truncated], [2, true]);
+  // A single dropped file is not a folder, so it still converts at once.
+  const single = await walkEntries([leaf("a.md") as never]);
+  assert.equal(single.folder, false);
+});
+
+test("a batch waits for Convert, a single file does not, and names say what it is", () => {
+  const file = (path: string) => Object.assign(new File(["x"], path.split("/").pop() ?? path), { markitaiPath: path });
+  // One file, chosen with the Files entry: convert at once.
+  assert.equal(stagedBatch([file("a.md")], false), null);
+  // Several files, or any folder, wait.
+  const several = stagedBatch([file("a.md"), file("b.md")], false);
+  assert.equal(several?.kind, "files");
+  assert.equal(several?.files.length, 2);
+  const folder = stagedBatch([file("top/a.md"), file("top/sub/b.md")], true);
+  assert.equal(folder?.kind, "folder");
+  assert.equal(folder?.label, "top");
+  // A `.urls` list is a batch of URLs, even on its own, and keeps its siblings.
+  const list = stagedBatch([file("links.urls")], false);
+  assert.equal(list?.kind, "urls");
+  assert.equal(list?.label, "links.urls");
+  const mixed = stagedBatch([file("a.md"), file("dir/links.URLS")], false);
+  assert.equal(mixed?.kind, "urls");
+  assert.equal(mixed?.label, "links.URLS");
+  assert.deepEqual(mixed?.files.map((item) => item.name), ["a.md", "links.URLS"]);
 });
 
 test("a catalogue reads its deployments at the page's own endpoint", () => {

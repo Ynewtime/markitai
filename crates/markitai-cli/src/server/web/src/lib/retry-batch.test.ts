@@ -10,7 +10,7 @@ const caps: CloudflareCapability = { configured: true, available: true, reason: 
 const cloud: JobOptions = { ...emptyOptions(), strategy: "cloudflare", backend: "cloudflare", screenshot: false, ocr: false };
 const native: JobOptions = { ...emptyOptions(), strategy: "auto", backend: "native" };
 const item = (jobId: string, kind: "file" | "url", name: string): SessionItem => ({ ...seedItem(jobId, { itemId: "0", name, kind, sizeBytes: null }), status: "error" });
-const job = (jobId: string, options: JobOptions): SessionJob => ({ jobId, status: "done", createdAt: null, options, persistenceError: null });
+const job = (jobId: string, options: JobOptions): SessionJob => ({ jobId, status: "done", createdAt: null, options, persistenceError: null, label: null });
 const toRequests = (batch: ReturnType<typeof prepareRetryBatch>) => freezeCloudflareRequests(batch.map(({ item, options }) => ({ options, sources: [{ name: item.name, kind: item.kind }] })));
 
 test("one mixed-batch scope includes every selected URL/file and native fallback", () => {

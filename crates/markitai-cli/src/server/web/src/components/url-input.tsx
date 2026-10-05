@@ -6,6 +6,7 @@ import type { ComponentChildren } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict } from "../i18n/index.ts";
+import type { StagedSubmission } from "../lib/files.ts";
 import { Icon } from "./icons.tsx";
 
 export function UrlInput({
@@ -15,6 +16,8 @@ export function UrlInput({
   onConvert,
   busy = false,
   compact = false,
+  staged = null,
+  onClearStaged,
   tools,
 }: {
   t: Dict;
@@ -23,13 +26,17 @@ export function UrlInput({
   onConvert: (text: string) => Promise<boolean>;
   busy?: boolean;
   compact?: boolean;
+  /** A batch that is waiting for Convert: a folder, several files or a URL list. */
+  staged?: StagedSubmission | null;
+  onClearStaged?: () => void;
   /** Controls placed at the start of the bottom bar. */
   tools?: ComponentChildren;
 }) {
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
   const narrow = useMedia(NARROW);
-  const empty = text.trim() === "";
+  // A staged batch is something to convert even with no URL typed.
+  const empty = text.trim() === "" && staged === null;
   const rows = Math.min(6, Math.max(1, text.split("\n").length));
   const submit = async () => {
     if (empty || sending) return;
@@ -43,6 +50,24 @@ export function UrlInput({
   };
   return (
     <div class={compact ? "url-row is-compact" : "url-row"}>
+      {staged && (
+        <div class="staged-row">
+          <Icon name={staged.kind === "urls" ? "Globe" : staged.kind === "folder" ? "FolderSimple" : "FileText"} size={14} />
+          <span class="staged-name" title={staged.label}>
+            {staged.label}
+          </span>
+          <span class="staged-count">{t.stagedCount(staged.files.length)}</span>
+          <button
+            type="button"
+            class="staged-clear"
+            aria-label={t.stagedClear(staged.label)}
+            title={t.stagedClear(staged.label)}
+            onClick={() => onClearStaged?.()}
+          >
+            <Icon name="X" size={12} />
+          </button>
+        </div>
+      )}
       <div class="url-field">
         <textarea
           ref={field}

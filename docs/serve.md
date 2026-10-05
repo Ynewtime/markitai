@@ -42,7 +42,15 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    precede URL entries. Upload names are sanitized and made unique, including
    case-folded collisions. Base and enhanced Markdown names are reserved as a
    pair, so an upload named `notes.llm` cannot overwrite another item's enhanced
-   result.
+   result. An uploaded `*.urls` file is read as a URL list rather than converted
+   as a document: each entry becomes a URL item, a line starting with `#` and a
+   blank line are skipped, an entry that names its output (`https://example.com/x
+   Report`, or `{"url": …, "output_name": …}` inside a JSON array) reserves that
+   name, and a non-HTTP(S) entry is skipped the way the CLI skips it. A list that
+   cannot be read is 422 with the filename in `detail`: `invalid_url_list` (not
+   UTF-8, or a JSON array the parser rejects), `empty_url_list` (no usable URL),
+   `url_list_too_large` (over 1 MiB) or `invalid_output_name` (a name with a
+   directory component).
 3. `GET /api/jobs/{job_id}` returns the current snapshot. Items move from
    `queued` to `running` to `done` or `error`; failed conversions remain in the
    job with their error and nullable output. A job containing failed items

@@ -95,7 +95,7 @@ export interface RowProps {
   t: Dict;
   locale: Locale;
   item: SessionItem;
-  index: number;
+  index: number | null;
   selected: boolean;
   tabbable: boolean;
   canDelete: boolean;
@@ -228,7 +228,7 @@ export const LedgerRow = memo(function LedgerRow({
       aria-label={spoken.join(", ")}
       aria-describedby={skipped && skipText ? `${rowId}-note` : undefined}
       tabIndex={tabbable ? 0 : -1}
-      class={`lg-row${selected ? " is-selected" : ""}${failed ? " is-actionable" : ""}`}
+      class={`lg-row${selected ? " is-selected" : ""}${failed ? " is-actionable" : ""}${index === null ? " is-nested" : ""}`}
       onClick={(event) => {
         event.currentTarget.focus({ preventScroll: true });
         activate(event.currentTarget);
@@ -242,7 +242,7 @@ export const LedgerRow = memo(function LedgerRow({
         }
       }}
     >
-      <span class="cell-num">{String(index + 1).padStart(2, "0")}</span>
+      <span class="cell-num">{index === null ? "" : String(index + 1).padStart(2, "0")}</span>
       <span class="cell-name">
         <Icon name={item.kind === "file" ? "FileText" : "Globe"} size={14} />
         <FileName name={name} title={size ? `${item.name} · ${size}` : item.name} />
