@@ -85,7 +85,8 @@ function Segments<T extends string | null>({
   onPick,
 }: {
   labelledBy: string;
-  value: T;
+  /** null selects no choice: the row is in a state none of them describe. */
+  value: T | null;
   choices: readonly T[];
   label: (choice: T) => string;
   help: (choice: T) => HelpItem;
@@ -291,9 +292,11 @@ export function OptionsPanel({
               <div class="opt-row">
                 <RowLabel id={`${id}-preset`} text={t.preset} hint={t.presetHint} items={PRESETS.map(presetHelp)} helpLabel={t.helpLabel} />
                 <div class="opt-controls">
+                  {/* Only a request that still equals a preset marks it: a
+                      customized set leaves all three plain and says so itself. */}
                   <Segments
                     labelledBy={`${id}-preset`}
-                    value={shownPreset}
+                    value={matched}
                     choices={PRESETS}
                     label={(preset) => presetLabel[preset]}
                     help={presetHelp}

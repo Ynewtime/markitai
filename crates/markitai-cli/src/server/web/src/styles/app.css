@@ -759,9 +759,20 @@ textarea {
 .cloudflare-session { display: block; font-size: var(--text-xs); }
 .tag-cloudflare { flex-shrink: 0; }
 .seg button[aria-disabled="true"] { color: var(--text-3); cursor: not-allowed; }
+/* The row's current state when no preset describes it any more: the same shape
+   as a chosen segment, so no preset looks chosen in its place. */
 .opt-custom {
-  font-size: var(--text-xs);
-  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--hairline-strong));
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-1);
 }
 .opt-fold .opt-fold-btn {
   gap: 4px;
@@ -2180,8 +2191,11 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px 0 14px;
-  border-bottom: 1px solid var(--hairline);
+  margin: 4px 0 10px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--strip);
 }
 /* One field and its decision on one line: the key editor commits where it
    writes. The two-field address editor keeps its actions under its fields. */
@@ -2371,9 +2385,14 @@ textarea {
   border-bottom: 1px solid var(--hairline);
   cursor: pointer;
 }
-.picker-option.is-disabled {
-  opacity: 0.58;
-  cursor: default;
+/* Unticked but still routed: the row stays readable and says what Save does. */
+.picker-option.is-removed .picker-option-main > span:first-child {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.mini-pill.is-removed {
+  border-color: color-mix(in srgb, var(--err) 45%, var(--hairline-strong));
+  color: var(--err);
 }
 .picker-option-main {
   display: flex;
@@ -2404,6 +2423,12 @@ textarea {
    directly instead of adding a second rule and a second gap. */
 .picker > .disclosure {
   width: 100%;
+}
+.picker-folds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 24px;
 }
 .picker-foot {
   display: flex;

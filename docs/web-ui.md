@@ -16,7 +16,10 @@ with Options and Upload (a menu for files or a folder) on the left and Convert
 on the right, and the options drawer, which ends with the equivalent CLI command
 line. That line names a preset only while the request still equals it: changing
 one of its features spells the features out instead, so the line never claims a
-preset it then overrides. Each option row's ⓘ explains the row and lists its
+preset it then overrides. The preset row marks a preset only while the request
+still equals it: a customized request leaves all three unmarked and carries its
+own Custom chip, so no preset looks chosen in its place. Each option row's ⓘ
+explains the row and lists its
 choices; the choices
 themselves show no hover tooltip.
 Under it, one stack of monospaced lines reports, in this order: the upload in
@@ -100,18 +103,22 @@ an optional custom base (prefilled hint: the documented endpoint). It loads the
 catalogue through the provider's `/models` (automatically for Ollama, LM
 Studio and a saved connection) and opens the model picker: search, Select all,
 Vision and Configured badges (models this group already routes at the connection
-head the list, ticked and locked), a manual model ID (also when the
+head the list and come ticked), a manual model ID (also when the
 catalogue cannot be loaded), routing
-group and weight, and a selection count while something is selected; the list
+group and weight, and a footer that names what Save will do while anything is
+pending (`Add 2 models · Remove 1 model`); the list
 scrolls after about four models, and Cancel with Save stays pinned at the bottom
-of the dialog.
+of the dialog. Unticking a configured model marks its row and its badge
+(`Will be removed`) and saves as a removal; the two folds, manual entry and
+advanced, share one quiet line below the catalogue.
 A saved provider's page starts with a Connection section that manages the key
 and the address separately: the key shows as saved (with its last four
 characters), from an environment variable or not set, with Replace and Remove; a
 key the service finds in the environment (a process variable or a dotenv file)
 is reported as from that variable, with Add storing a literal key instead; the
 one key field says it replaces the saved key, and its Save and Cancel sit on the
-field's line; the
+field's line inside an inset editor panel that keeps the connection table itself
+two clean rows; the
 address shows as custom, from an environment variable or the default, with
 Edit and Reset to default. Perplexity, Z.ai and Fireworks AI
 document no OpenAI-compatible model list, so their page opens the manual entry

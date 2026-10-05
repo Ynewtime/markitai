@@ -22,6 +22,7 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import { useModal } from "../hooks/use-modal.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
+import { endpointFor, sameEndpoint } from "../lib/models.ts";
 import {
   CredentialInputError,
   deploymentCredentials,
@@ -288,6 +289,8 @@ export function SettingsModal({
   const [discovery, setDiscovery] = useState<DiscoveryResult | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [selected, setSelected] = useState(new Set<string>());
+  /** Models this group and endpoint already route that the reader unticked. */
+  const [dropped, setDropped] = useState(new Set<string>());
   const [group, setGroup] = useState("default");
   const [weight, setWeight] = useState(1);
   const [addBusy, setAddBusy] = useState(false);
@@ -405,6 +408,7 @@ export function SettingsModal({
     resetConnection();
     setDiscovery(null);
     setSelected(new Set());
+    setDropped(new Set());
     setListError(null);
     autoLoaded.current = null;
   };
@@ -413,6 +417,7 @@ export function SettingsModal({
     resetConnection();
     setDiscovery(null);
     setSelected(new Set());
+    setDropped(new Set());
     setListError(null);
     autoLoaded.current = null;
   };
@@ -442,6 +447,7 @@ export function SettingsModal({
     setDraftBase("");
     setDiscovery(null);
     setSelected(new Set());
+    setDropped(new Set());
     setListError(null);
     autoLoaded.current = null;
   };
@@ -455,6 +461,7 @@ export function SettingsModal({
       setDiscovery(result);
       const available = new Set(result.models.map((candidate) => candidate.model));
       setSelected((previous) => new Set([...previous].filter((model) => available.has(model))));
+      setDropped((previous) => new Set([...previous].filter((model) => available.has(model))));
     } catch (error) {
       await fail(error);
     } finally {
@@ -469,8 +476,13 @@ export function SettingsModal({
     // `load` reads the current draft; the guard above keys the request by provider.
   }, [adding, provider, autoLoads, discovery, discovering]);
 
+  /** The routing entry of one configured model, for a pending removal. */
+  const endpoint = endpointFor(draftBase, provider?.api_base);
+  const deploymentId = (model: string) =>
+    settings?.deployments.find((item) => item.model === model && item.routing_group === group.trim() && sameEndpoint(item.api_base, endpoint))?.deployment_id ?? null;
+
   const addSelected = async () => {
-    if (!provider || !selected.size || revision === null || addBusy) return;
+    if (!provider || (!selected.size && !dropped.size) || revision === null || addBusy) return;
     let credentials: Partial<NewDeployment>;
     try {
       credentials = deploymentCredentials(provider, draftKey, draftBase);
@@ -486,13 +498,26 @@ export function SettingsModal({
       ...credentials,
     }));
     try {
-      accept(await addDeployments(revision, deployments));
+      // Removals first, one write at a time: each returns the revision the next
+      // call has to quote.
+      let current = revision;
+      let removed = 0;
+      for (const model of dropped) {
+        const id = deploymentId(model);
+        if (id === null) continue;
+        const view = await deleteDeployment(id, current);
+        accept(view);
+        current = view.revision;
+        removed += 1;
+      }
+      if (deployments.length) accept(await addDeployments(current, deployments));
       setAdding(false);
       setProvider(null);
       setDiscovery(null);
       setSelected(new Set());
+      setDropped(new Set());
       void refreshProviders(true);
-      announce(t.modelsAdded(deployments.length));
+      announce([deployments.length ? t.modelsAdded(deployments.length) : "", removed ? t.modelsRemoved(removed) : ""].filter(Boolean).join(" · "));
     } catch (error) {
       await fail(error);
     } finally {
@@ -627,12 +652,18 @@ export function SettingsModal({
       </div>
     ) : (
       <div class="form-actions">
-        {picking && selected.size > 0 && <p class="picker-count">{t.modelsSelected(selected.size)}</p>}
+        {picking && (selected.size > 0 || dropped.size > 0) && (
+          <p class="picker-count">
+            {selected.size > 0 && <span>{t.modelsToAdd(selected.size)}</span>}
+            {selected.size > 0 && dropped.size > 0 && " · "}
+            {dropped.size > 0 && <span>{t.modelsToRemove(dropped.size)}</span>}
+          </p>
+        )}
         <button type="button" class="btn btn-ghost" onClick={backToProviders}>
           {t.cancel}
         </button>
         {picking && (
-          <button type="button" class="btn btn-primary" disabled={addBusy || !selected.size} onClick={() => void addSelected()}>
+          <button type="button" class="btn btn-primary" disabled={addBusy || (!selected.size && !dropped.size)} onClick={() => void addSelected()}>
             {addBusy ? t.saving : t.save}
           </button>
         )}
@@ -977,13 +1008,15 @@ export function SettingsModal({
                     deployments={settings.deployments}
                     // A saved provider's page reads its own address: what this
                     // connection already routes is what the catalogue marks.
-                    apiBase={draftBase.trim() || provider.api_base || ""}
+                    apiBase={endpoint}
                     group={group}
                     weight={weight}
                     selected={selected}
+                    dropped={dropped}
                     onGroup={setGroup}
                     onWeight={setWeight}
                     onSelected={setSelected}
+                    onDropped={setDropped}
                   />
                 )}
               </>

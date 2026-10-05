@@ -40,6 +40,9 @@
 
 ### Fixed
 
+- The preset row marks a preset only while the request still equals it: enabling LLM enhancement on the minimal preset leaves all three unmarked and shows the Custom chip, instead of keeping Minimal selected beside the overridden CLI line.
+- A configured model can be unticked in the model picker: its row and badge say `Will be removed`, the footer names the pending change, and Save removes that routing entry (additions and removals are applied in one pass). The provider page keeps the connection table to two rows: an open key or address editor is an inset panel, and the manual-entry and advanced folds share one line below the catalogue.
+- The appearance menu stays open while a choice is pressed in a browser that focuses no button on click (Safari, Firefox), so switching the language or the theme works there instead of closing the menu before the click lands.
 - A saved job's row opens its document even when the result carries conversion warnings or a retained failed attempt: the row joins the session ledger so its warning mark can replay that notice, and the click no longer lands on the notice card instead of the preview. A session restored after a reload reports itself quietly, so entering the workbench no longer replays a notice for a job this tab already knew about.
 - The composer's CLI line names a preset only while the request still equals it; enabling LLM enhancement on the minimal preset now reads `markitai <files-or-urls> -o output/ --llm` instead of claiming `--preset minimal --llm`. The appearance menu opens above the notice column, so a live notice no longer swallows clicks on its language buttons.
 - LLM enhancement no longer emits protected content twice: a visual-enhancement answer that re-transcribes a protected block (for example code visible in a page screenshot) is rejected and retried, and the prompt states that markers already stand for that content.

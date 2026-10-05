@@ -78,8 +78,14 @@ not accepted in HTTP requests; old server configuration retains its environment
 fallback unless the flag is explicitly false.
 
 The workbench leaves the key input blank when editing a saved connection. Blank
-means keep; the clear-key checkbox explicitly removes it. Stored values and
+means keep; the row's Remove action deletes it. Stored values and
 references are never copied into editable key inputs or echoed in updates.
+
+A replacement key is written over the stored one in the selected configuration
+file (file `0600`, parent `0700`) and into every deployment linked to that
+provider, so the previous value is gone: one key per provider, with no second
+slot, backup or history. The page only ever reads back whether a key is saved and
+its last four characters, or the variable an environment reference names.
 
 Omitting a patch field keeps it. Explicit `null` clears `api_key` or `api_base`;
 an empty provider credential field is invalid. Model names cannot be null. Weight

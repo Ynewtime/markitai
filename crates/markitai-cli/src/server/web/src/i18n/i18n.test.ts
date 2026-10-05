@@ -27,7 +27,8 @@ test("visible copy keeps the voice: no dashes as separators", () => {
     }
   }
   assert.equal(en.sessResults(1), "1 item in session · View results");
-  assert.equal(en.modelsSelected(2), "2 selected");
+  assert.equal(en.modelsToAdd(2), "Add 2 models");
+  assert.equal(en.modelsToRemove(1), "Remove 1 model");
   assert.equal(zh.retryAllFailed(3), "重试全部失败项（3）");
 });
 

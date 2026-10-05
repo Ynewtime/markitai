@@ -5,7 +5,7 @@ import { compareLines } from "./diff.ts";
 import { isHiddenName, selectFolderFiles, walkEntries } from "./files.ts";
 import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, splitName, timestampMs } from "./format.ts";
 import { artifactPath, loadArtifactImages, markdownPair, rewrite, splitFrontmatter } from "./markdown.ts";
-import { manualModelId } from "./models.ts";
+import { endpointFor, manualModelId, sameEndpoint } from "./models.ts";
 import {
   ADVANCED_DEFAULTS,
   applyPreset,
@@ -196,6 +196,19 @@ test("dropped folders are walked in order, in batches, bounded and with unreadab
   assert.deepEqual([walked.hidden, walked.unreadable, walked.truncated], [1, 1, false]);
   const limited = await walkEntries([tree as never], { limit: 2 });
   assert.deepEqual([limited.files.length, limited.truncated], [2, true]);
+});
+
+test("a catalogue reads its deployments at the page's own endpoint", () => {
+  // What the reader typed wins; a saved connection's address is the fallback.
+  assert.equal(endpointFor(" http://127.0.0.1:8000/v1 ", "http://saved"), "http://127.0.0.1:8000/v1");
+  assert.equal(endpointFor("", "http://saved"), "http://saved");
+  assert.equal(endpointFor("   ", null), "");
+  // A deployment the provider reaches at its default address stores none, and a
+  // trailing slash is not a different address.
+  assert.ok(sameEndpoint(null, "http://127.0.0.1:8000/v1"));
+  assert.ok(sameEndpoint("http://127.0.0.1:8000/v1/", "http://127.0.0.1:8000/v1"));
+  assert.ok(sameEndpoint("HTTP://127.0.0.1:8000/V1", "http://127.0.0.1:8000/v1"));
+  assert.ok(!sameEndpoint("http://127.0.0.1:9000/v1", "http://127.0.0.1:8000/v1"));
 });
 
 test("a hand-typed model ID routes to the page's provider, slashes and all", () => {

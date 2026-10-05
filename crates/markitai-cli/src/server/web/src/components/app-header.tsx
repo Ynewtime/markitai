@@ -156,6 +156,10 @@ function Appearance({ t, locale, onLocale }: { t: Dict; locale: Locale; onLocale
       ref={root}
       onFocusOut={(event) => {
         const next = (event as FocusEvent).relatedTarget;
+        // A browser that does not focus a button on press (Safari, Firefox)
+        // reports no new target. That press is still inside the menu, and
+        // closing here would hide the button before its click lands.
+        if (next === null) return;
         if (!(next instanceof Node) || !root.current?.contains(next)) setOpen(false);
       }}
     >
