@@ -344,6 +344,7 @@ export const zh: Dict = {
   modelWeight: (n) => `路由权重 ${n}`,
   modelWeightShort: (n) => `权重 ${n}`,
   weightHint: "同一路由组有多个模型时，用于决定各模型被选中的比例",
+  itemsNotice: (n) => `${n} 个任务`,
   modelsToAdd: (n) => `将添加 ${n} 个模型`,
   modelsToRemove: (n) => `将移除 ${n} 个模型`,
   modelsRemoved: (n) => `已移除 ${n} 个模型`,

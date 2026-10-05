@@ -192,6 +192,88 @@ impl ConversionUsage {
                     || row.get("cost_status").and_then(Value::as_str) != Some("complete"))
         })
     }
+
+    /// The rows that keep the cost incomplete, as `(model, requests, reason)`,
+    /// for priced-API models only. The map iterates in key order, so the
+    /// resulting warning is stable for one usage record.
+    pub fn unpriced_breakdown(&self) -> Vec<(String, u64, UnpricedReason)> {
+        let mut rows = Vec::new();
+        for (model, row) in &self.by_model {
+            if subscription_row(model)
+                || row.get("cost_status").and_then(Value::as_str) == Some("complete")
+            {
+                continue;
+            }
+            let count = |key: &str| row.get(key).and_then(Value::as_u64).unwrap_or(0);
+            let unreported = count("incomplete_request_observations");
+            let unpriced = count("unpriced_requests");
+            if unreported > 0 {
+                rows.push((model.clone(), unreported, UnpricedReason::NoCounts));
+            }
+            if unpriced > 0 {
+                rows.push((model.clone(), unpriced, UnpricedReason::NoTariff));
+            }
+            if unreported == 0 && unpriced == 0 {
+                // Observations without counts, without a quote and without a
+                // status still name a model the reader has to know about.
+                rows.push((
+                    model.clone(),
+                    count("requests").max(1),
+                    UnpricedReason::NoTariff,
+                ));
+            }
+        }
+        rows
+    }
+
+    /// The warning naming what could not be priced, or `None` when the cost is
+    /// complete or only subscription rows lack a quote (those carry their own
+    /// notice). Naming the model and the reason is what lets a reader act:
+    /// "some requests" never says which price is missing.
+    pub fn unpriced_warning(&self) -> Option<String> {
+        let rows = self.unpriced_breakdown();
+        if rows.is_empty() {
+            return None;
+        }
+        // Three named models are enough to act on; the rest are counted.
+        const NAMED: usize = 3;
+        let mut parts: Vec<String> = rows
+            .iter()
+            .take(NAMED)
+            .map(|(model, requests, reason)| {
+                let count = if *requests == 1 {
+                    "1 request".to_owned()
+                } else {
+                    format!("{requests} requests")
+                };
+                match reason {
+                    UnpricedReason::NoTariff => {
+                        let verb = if *requests == 1 { "has" } else { "have" };
+                        format!("{count} to {model} {verb} no reviewed price")
+                    }
+                    UnpricedReason::NoCounts => {
+                        format!("{count} to {model} reported no usage counts")
+                    }
+                }
+            })
+            .collect();
+        if rows.len() > NAMED {
+            parts.push(format!("{} more models", rows.len() - NAMED));
+        }
+        Some(format!(
+            "Cost is incomplete: {}. cost_usd is the known priced subtotal; the complete cost is unknown.",
+            parts.join("; ")
+        ))
+    }
+}
+
+/// Why an observed request has no complete price.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnpricedReason {
+    /// The request was observed with counts, but no reviewed tariff covers it.
+    NoTariff,
+    /// The provider reported no usage counts for the request.
+    NoCounts,
 }
 
 /// Usage rows of official subscription runtimes are keyed by these prefixes.

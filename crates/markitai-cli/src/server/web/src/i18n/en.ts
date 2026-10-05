@@ -372,6 +372,7 @@ export const en = {
   modelWeight: (n: number) => `Routing weight ${n}`,
   modelWeightShort: (n: number) => `Weight ${n}`,
   weightHint: "Routing weight used when models share the same routing group",
+  itemsNotice: (n: number) => `${n} ${plural(n, "item", "items")}`,
   modelsToAdd: (n: number) => `Add ${n} ${plural(n, "model", "models")}`,
   modelsToRemove: (n: number) => `Remove ${n} ${plural(n, "model", "models")}`,
   modelsRemoved: (n: number) => `${n} ${plural(n, "model", "models")} removed`,

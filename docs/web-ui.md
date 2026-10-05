@@ -46,7 +46,10 @@ until LLM enhancement is available and switched on), Retry and Delete, which ask
 for confirmation in a card anchored to the row. Failed operations and conversion
 warnings use the shared notification card at the top right (docked at the bottom
 on phones), which hides itself after a few seconds unless it asks for a decision
-or the pointer rests on it. Clicking the status icon, or pressing Enter or Space on it, reopens
+or the pointer rests on it. One warning shared by several rows reports once: the
+card keeps the first row's warning text, counts the rows it speaks for (`12
+items`), and lists them under its details, instead of a card per row; the rows
+keep their own warning marks, and each mark replays that row's notice. Clicking the status icon, or pressing Enter or Space on it, reopens
 the complete notice; clicking the row still opens the document preview. A failed
 enhancement that retains an earlier result keeps its download and retry available.
 Warnings from that result are labelled separately from the latest attempt's

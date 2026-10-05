@@ -40,6 +40,7 @@
 
 ### Fixed
 
+- The incomplete-cost warning names the model and the reason (`Cost is incomplete: 2 requests to deepseek-chat have no reviewed price…`, or `reported no usage counts` when the provider sent no token counts) instead of saying "some observed requests"; up to three models are named and the rest are counted. One warning shared by several rows now reports as a single card that counts the rows it speaks for and lists them under its details, rather than a card per row.
 - The preset row marks a preset only while the request still equals it: enabling LLM enhancement on the minimal preset leaves all three unmarked and shows the Custom chip, instead of keeping Minimal selected beside the overridden CLI line.
 - A configured model can be unticked in the model picker: its row and badge say `Will be removed`, the footer names the pending change, and Save removes that routing entry (additions and removals are applied in one pass). The provider page keeps the connection table to two rows: an open key or address editor is an inset panel, and the manual-entry and advanced folds share one line below the catalogue.
 - The appearance menu stays open while a choice is pressed in a browser that focuses no button on click (Safari, Firefox), so switching the language or the theme works there instead of closing the menu before the click lands.

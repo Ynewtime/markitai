@@ -173,6 +173,7 @@ export function itemNotification(item: SessionItem, t: Dict, locale: Locale, act
   return {
     tone: action || retained || (problem && item.status === "error" && !noModel) || failedAttempt ? "error" : "warning",
     title: `${name} · ${heading}`,
+    covers: [name],
     message,
     ...(detail ? { detail } : {}),
     ...(warnings.length ? { warnings, warningsTitle: previousWarnings ? t.previousResultWarnings : t.itemWarningsTitle, ...(warningsContext ? { warningsContext } : {}) } : {}),
@@ -204,6 +205,34 @@ export function quietRestored<T extends { jobId: string }>(changed: T[], quiet: 
 export interface NotificationState {
   sequence: number;
   note: NotificationModel | null;
+}
+
+/** The card on screen already reports this warning for other rows: widen it
+ * instead of replacing it, so a batch that shares one warning reports once, and
+ * the count grows while the announcement and the reading timer stay put. Only a
+ * plain conversion warning widens; anything with an action or its own error is
+ * about one row and replaces the card as before. */
+export function widenNotice(current: NotificationModel | null, next: NotificationModel): NotificationModel | null {
+  const sameWarning = (): boolean => {
+    if (current === null || next.tone !== "warning" || current.tone !== "warning") return false;
+    if (current.action || next.action) return false;
+    const left = current.warnings ?? [];
+    const right = next.warnings ?? [];
+    return left.length > 0 && left.length === right.length && left.every((warning, index) => warning === right[index]);
+  };
+  if (!sameWarning() || current === null) return null;
+  const covers = [...new Set([...(current.covers ?? []), ...(next.covers ?? [])])];
+  if (covers.length < 2) return null;
+  return {
+    tone: "warning",
+    title: current.title,
+    message: current.message,
+    warnings: current.warnings,
+    warningsTitle: current.warningsTitle,
+    covers,
+    // The names answer "which rows?", and a per-row subtotal would now be wrong.
+    detail: covers.join("\n"),
+  };
 }
 
 /** Closing does not consume the sequence; every explicit replay remounts its live region. */

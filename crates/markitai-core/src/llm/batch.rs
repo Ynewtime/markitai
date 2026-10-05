@@ -469,8 +469,10 @@ impl Plan {
             &json!({"output":{"profile":self.profile,"wikilinks":self.wikilinks}}),
         );
         let mut warnings = self.warnings.clone();
-        if !usage.cost_complete() {
-            warnings.push("Some observed LLM requests could not be priced. cost_usd is the known priced subtotal; the complete cost is unknown.".into());
+        if !usage.cost_complete()
+            && let Some(warning) = usage.unpriced_warning()
+        {
+            warnings.push(warning);
         }
         DecodedDocument {
             markdown,

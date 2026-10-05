@@ -1,7 +1,7 @@
 // Cost labels; scripts/test_ui_pricing.cjs runs this file for the repository gate.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { actionNotification, attemptNotice, attemptPricing, itemNotification, publishNotice, quietRestored, terminalNotices, PRICE_WORDS, priceText } from "./pricing.ts";
+import { actionNotification, attemptNotice, attemptPricing, itemNotification, publishNotice, quietRestored, terminalNotices, widenNotice, PRICE_WORDS, priceText } from "./pricing.ts";
 import { en } from "../i18n/en.ts";
 import { zh } from "../i18n/zh.ts";
 import { seedItem, type SessionItem } from "./session.ts";
@@ -188,4 +188,24 @@ test("replaying the same notice while open or after close publishes a new live-r
   assert.equal(reopened.sequence, closed.sequence + 1);
   assert.equal(first.note, notice);
   assert.equal(first.sequence, 1);
+});
+
+test("a shared conversion warning widens one card instead of repeating per row", () => {
+  const warning = "Cost is incomplete: 2 requests to openai/gpt-4.1-mini have no reviewed price.";
+  const first = itemNotification({ ...result, warnings: [warning] }, en, "en")!;
+  const second = itemNotification({ ...result, key: "private-job/2", name: "b.pdf", warnings: [warning] }, en, "en")!;
+  assert.deepEqual(first.covers, ["报告.pdf"]);
+  const widened = widenNotice(first, second);
+  assert.deepEqual(widened?.covers, ["报告.pdf", "b.pdf"]);
+  assert.deepEqual(widened?.warnings, [warning]);
+  assert.equal(widened?.detail, "报告.pdf\nb.pdf");
+  assert.equal(widened?.warningsContext, undefined, "a per-row subtotal would be wrong for two rows");
+  // A different warning, an action card or a failure is about one row and replaces the card.
+  const other = "Image analysis failed; base Markdown and assets retained: timeout";
+  assert.equal(widenNotice(first, itemNotification({ ...result, warnings: [other] }, en, "en")!), null);
+  assert.equal(widenNotice(first, itemNotification({ ...result, warnings: [warning] }, en, "en", { operation: "retry", text: "refused", detail: "" })!), null);
+  assert.equal(widenNotice(first, itemNotification({ ...result, status: "error", error: "boom", warnings: [warning] }, en, "en")!), null);
+  assert.equal(widenNotice(null, second), null);
+  // The same row twice does not inflate the count.
+  assert.equal(widenNotice(first, itemNotification({ ...result, warnings: [warning] }, en, "en")!), null);
 });

@@ -121,8 +121,13 @@ Whenever model requests were observed, a summary object
   and `cost_usd` on `job_status` ([MCP](mcp.md)).
 
 When any observed request to a priced-API model is unpriced, the CLI also prints
-`Warning: Some observed LLM requests could not be priced. cost_usd is the known
-priced subtotal; the complete cost is unknown.` Documents served by a
+a warning naming each model and the reason, for example `Warning: Cost is
+incomplete: 2 requests to deepseek-chat have no reviewed price. cost_usd is the
+known priced subtotal; the complete cost is unknown.` The model is the one the
+provider reports, the same key the cost breakdown uses. Up to three models are
+named and the rest are counted (`and 2 more models`). A row whose provider
+reported no token counts says so instead (`reported no usage counts`), because
+that is a different root cause. Documents served by a
 [subscription runtime](subscriptions.md) carry its own notice instead; requests
 through one never carry a dollar quote.
 

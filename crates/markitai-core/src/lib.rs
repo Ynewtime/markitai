@@ -881,8 +881,11 @@ fn convert_inner(
         }
         if result.usage.requests > 0 || !result.usage.by_model.is_empty() {
             result.llm_cache_hit = false;
-            if !result.usage.cost_complete() && result.usage.has_unpriced_non_subscription() {
-                result.warnings.push("Some observed LLM requests could not be priced. cost_usd is the known priced subtotal; the complete cost is unknown.".into());
+            if !result.usage.cost_complete()
+                && result.usage.has_unpriced_non_subscription()
+                && let Some(warning) = result.usage.unpriced_warning()
+            {
+                result.warnings.push(warning);
             }
         }
     }

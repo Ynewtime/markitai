@@ -234,3 +234,93 @@ fn zero_token_observation_is_priced_but_absent_work_has_no_synthetic_row() {
     assert_eq!(usage.cost_usd, 0.0);
     assert_eq!(usage.by_model["openai/gpt-4.1"]["cost_status"], "complete");
 }
+
+#[test]
+fn the_incomplete_cost_warning_names_each_model_and_its_reason() {
+    let mut usage = response("m", 1000, 100, known());
+    assert!(
+        usage.unpriced_warning().is_none(),
+        "a complete quote says nothing"
+    );
+    merge(
+        &mut usage,
+        &response(
+            "openai/gpt-4.1-mini",
+            10,
+            5,
+            Quote::Unknown(UnknownPrice::Model),
+        ),
+    );
+    assert_eq!(
+        usage.unpriced_warning().as_deref(),
+        Some(
+            "Cost is incomplete: 1 request to openai/gpt-4.1-mini has no reviewed price. cost_usd is the known priced subtotal; the complete cost is unknown."
+        )
+    );
+    // Several unpriced requests to one model read as a population, not as "some".
+    let mut twice = response(
+        "openai/gpt-4.1-mini",
+        10,
+        5,
+        Quote::Unknown(UnknownPrice::Model),
+    );
+    merge(
+        &mut twice,
+        &response(
+            "openai/gpt-4.1-mini",
+            10,
+            5,
+            Quote::Unknown(UnknownPrice::Model),
+        ),
+    );
+    assert_eq!(
+        twice.unpriced_warning().as_deref(),
+        Some(
+            "Cost is incomplete: 2 requests to openai/gpt-4.1-mini have no reviewed price. cost_usd is the known priced subtotal; the complete cost is unknown."
+        )
+    );
+    // A subscription row keeps its own notice and never appears here.
+    let subscription = crate::ConversionUsage {
+        requests: 1,
+        by_model: [(
+            "chatgpt/gpt-5.5".to_owned(),
+            json!({"requests":1,"priced_requests":0,"unpriced_requests":0,"cost_status":"unknown"}),
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    assert!(subscription.unpriced_warning().is_none());
+    assert!(!subscription.has_unpriced_non_subscription());
+    // Provider-reported counts are missing, which is a different root cause.
+    let uncounted: crate::ConversionUsage = serde_json::from_value(json!({
+        "cost_usd": 0.0,
+        "requests": 3,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "by_model": {"local/vllm-x": {"requests":3,"priced_requests":0,"unpriced_requests":0,"incomplete_request_observations":3,"cost_status":"unknown"}}
+    }))
+    .expect("usage");
+    assert_eq!(
+        uncounted.unpriced_warning().as_deref(),
+        Some(
+            "Cost is incomplete: 3 requests to local/vllm-x reported no usage counts. cost_usd is the known priced subtotal; the complete cost is unknown."
+        )
+    );
+    // More models than the warning names are counted instead of listed.
+    let mut many = crate::ConversionUsage::default();
+    for index in 0..5 {
+        merge(
+            &mut many,
+            &response(
+                &format!("local/model-{index}"),
+                1,
+                1,
+                Quote::Unknown(UnknownPrice::Model),
+            ),
+        );
+    }
+    let warning = many.unpriced_warning().expect("a breakdown");
+    assert!(warning.contains("local/model-0"), "{warning}");
+    assert!(warning.contains("2 more models"), "{warning}");
+}

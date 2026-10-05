@@ -11,6 +11,9 @@ export type Tone = "warning" | "success" | "error";
 export interface NotificationModel {
   tone: Tone;
   title: string;
+  /** Rows this card speaks for. More than one means several settled rows share
+   * the same warning, and the card titles itself by that count. */
+  covers?: string[];
   message: string;
   detail?: string;
   warnings?: string[];
@@ -115,21 +118,23 @@ export function Notification({ note, replay = 0, closeLabel, detailsLabel, warni
   // The existing settings dialog supplies only closeLabel; use the active document language.
   const words = dicts[document.documentElement.lang.startsWith("zh") ? "zh" : "en"];
   const warningsTitle = note.warningsTitle ?? warningsLabel ?? words.itemWarningsTitle;
+  // A card that speaks for several rows says so instead of naming the first one.
+  const title = note.covers && note.covers.length > 1 ? words.itemsNotice(note.covers.length) : note.title;
   return createPortal(
     <aside
       ref={card}
       class={`notice-card is-${note.tone}`}
-      aria-label={note.title}
+      aria-label={title}
     >
       <span key={replay} class="sr-only" role={note.tone === "error" ? "alert" : "status"} aria-live={note.tone === "error" ? "assertive" : "polite"}>
-        {note.title}. {note.message} {note.cost}
+        {title}. {note.message} {note.cost}
       </span>
       <span class="notice-icon" aria-hidden="true">
         <Icon name={note.tone === "success" ? "CheckBold" : "WarningFill"} size={18} />
       </span>
       <div class="notice-copy">
         <div class="notice-content">
-          <strong>{note.title}</strong>
+          <strong>{title}</strong>
           {note.message && <p class="notice-message">{note.message}</p>}
           {note.cost && <p class="notice-cost">{note.cost}</p>}
           {note.warnings && note.warnings.length > 0 && (

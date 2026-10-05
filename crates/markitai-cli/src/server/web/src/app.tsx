@@ -32,7 +32,7 @@ import { oversized, type Walked } from "./lib/files.ts";
 import { fmtBytes } from "./lib/format.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { canRetry, failedToRetry, isPreviewable, isSettled, settledIdentity, itemFromPayload, waitingJobs, type SessionItem } from "./lib/session.ts";
-import { itemNotification, publishNotice, quietRestored, terminalNotices, type ItemRequestFailure, type NotificationState } from "./lib/pricing.ts";
+import { itemNotification, publishNotice, quietRestored, terminalNotices, widenNotice, type ItemRequestFailure, type NotificationState } from "./lib/pricing.ts";
 import { parseUrls } from "./lib/urls.ts";
 
 type View = "home" | "workspace";
@@ -134,7 +134,12 @@ export function App() {
       // An automatic replacement keeps the original trigger while the user reads the card.
       if (active && active !== document.body && !active.closest(".notice-card")) noticeOpener.current = active;
     }
-    setNotification((previous) => publishNotice(previous, next));
+    setNotification((previous) => {
+      // A repeated conversion warning widens the card already on screen; its
+      // sequence stays, so it is not announced again for every row.
+      const widened = next === null ? null : widenNotice(previous.note, next);
+      return widened === null ? publishNotice(previous, next) : { ...previous, note: widened };
+    });
   }, []);
   const closeNote = useCallback(() => {
     const restore = document.activeElement instanceof HTMLElement && document.activeElement.closest(".notice-card") ? noticeOpener.current : null;
