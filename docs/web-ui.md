@@ -49,8 +49,10 @@ all (Clear completed while something runs). Below the compact source card is one
 ledger for the session's jobs and the service's saved jobs, ordered by latest
 activity with running jobs first and numbered 01, 02, … in that order. One
 submission that carried several items reads as one group row — a folder, several
-files, a URL list or a batch of URLs — showing what the submission was called,
-how many items it holds, and the same aggregated facts as other rows (total
+files, a URL list or a batch of URLs — showing what the submission was called (a
+folder is named for the folder even when the submission holds a `.urls` list; a
+batch that named nothing reads as its job id, not as one file inside it), how
+many items it holds, and the same aggregated facts as other rows (total
 duration, latest finish, Base/LLM with the summed cost, and a dark pill such as
 `3 Done · 1 Failed`). Clicking the row, or pressing Enter or Space on it, opens
 it into its items; they are indented without a number of their own and keep
@@ -66,7 +68,12 @@ on phones), which hides itself after a few seconds unless it asks for a decision
 or the pointer rests on it. One warning shared by several rows reports once: the
 card keeps the first row's warning text, counts the rows it speaks for (`12
 items`), and lists them under its details, instead of a card per row; the rows
-keep their own warning marks, and each mark replays that row's notice. Clicking the status icon, or pressing Enter or Space on it, reopens
+keep their own warning marks, and each mark replays that row's notice. An
+incomplete-cost warning is added up rather than repeated: the card says which
+models have no reviewed price and how many requests each one accounts for
+(`3 requests to alpha have no reviewed price`), in the page's language, naming
+three models at most and counting the rest, while the rows' own names stay under
+its details. A row that reports a different problem keeps its own card. Clicking the status icon, or pressing Enter or Space on it, reopens
 the complete notice; clicking the row still opens the document preview. A failed
 enhancement that retains an earlier result keeps its download and retry available.
 Warnings from that result are labelled separately from the latest attempt's

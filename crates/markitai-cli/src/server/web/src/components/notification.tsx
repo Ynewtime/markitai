@@ -5,6 +5,7 @@ import { createPortal } from "preact/compat";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { dicts } from "../i18n/index.ts";
+import type { CostWarningEntry } from "../lib/pricing.ts";
 
 export type Tone = "warning" | "success" | "error";
 
@@ -19,7 +20,10 @@ export interface NotificationModel {
   warnings?: string[];
   warningsTitle?: string;
   warningsContext?: string;
-  cost?: string;
+  /** Incomplete-cost entries added up over the rows this card speaks for. */
+  cost?: CostWarningEntry[];
+  /** A per-row subtotal, printed under the title. */
+  costLine?: string;
   action?: { label: string; run: () => void };
 }
 
@@ -127,7 +131,7 @@ export function Notification({ note, replay = 0, closeLabel, detailsLabel, warni
       aria-label={title}
     >
       <span key={replay} class="sr-only" role={note.tone === "error" ? "alert" : "status"} aria-live={note.tone === "error" ? "assertive" : "polite"}>
-        {title}. {note.message} {note.cost}
+        {title}. {note.message} {note.costLine} {note.cost ? words.costIncomplete(note.cost) : ""}
       </span>
       <span class="notice-icon" aria-hidden="true">
         <Icon name={note.tone === "success" ? "CheckBold" : "WarningFill"} size={18} />
@@ -136,7 +140,15 @@ export function Notification({ note, replay = 0, closeLabel, detailsLabel, warni
         <div class="notice-content">
           <strong>{title}</strong>
           {note.message && <p class="notice-message">{note.message}</p>}
-          {note.cost && <p class="notice-cost">{note.cost}</p>}
+          {note.costLine && <p class="notice-cost">{note.costLine}</p>}
+          {note.cost && (
+            <section class="notice-warnings" aria-label={warningsTitle}>
+              <strong>{warningsTitle}</strong>
+              <ul>
+                <li>{words.costIncomplete(note.cost)}</li>
+              </ul>
+            </section>
+          )}
           {note.warnings && note.warnings.length > 0 && (
             <section class="notice-warnings" aria-label={warningsTitle}>
               <strong>{warningsTitle}</strong>

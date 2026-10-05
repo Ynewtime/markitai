@@ -203,6 +203,17 @@ export const zh: Dict = {
   skipPendingBatch: "LLM 批处理仍在进行，请用 CLI 收取结果",
   itemWarnings: (n) => `${n} 条提示`,
   itemWarningsTitle: "转换提示",
+  // 与内核 `ConversionUsage::unpriced_warning` 同一套说法：最多点名三个模型，
+  // 其余按数量归并。
+  costIncomplete: (entries) => {
+    const named = entries.slice(0, 3).map((entry) =>
+      entry.reason === "noCounts"
+        ? `${entry.model} 的 ${entry.requests} 次请求未返回用量计数`
+        : `${entry.model} 的 ${entry.requests} 次请求没有价目表`,
+    );
+    if (entries.length > 3) named.push(`另有 ${entries.length - 3} 个模型`);
+    return `成本不完整：${named.join("；")}。cost_usd 只是已定价部分，完整成本未知。`;
+  },
   stagedCount: (n) => `${n} 个文件`,
   stagedClear: (label) => `从本次提交中移除 ${label}`,
   groupExpand: (label) => `展开 ${label}`,

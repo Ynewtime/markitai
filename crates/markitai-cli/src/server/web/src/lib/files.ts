@@ -132,16 +132,18 @@ export const oversized = (files: File[]): File[] => files.filter((file) => file.
 /** What a chosen set of files is, when it should wait for Convert: a folder, a
  * URL list, or several files. A single file returns null and converts at once. */
 export function stagedBatch(files: File[], folder: boolean): StagedSubmission | null {
+  // A folder is named for the folder, even when a list sits inside it: that list
+  // is one of its files, not the submission.
+  if (folder) {
+    const path = files[0] ? relativePath(files[0]) : "";
+    const name = path.includes("/") ? path.slice(0, path.indexOf("/")) : "";
+    return { files, label: name, kind: "folder" };
+  }
   const list = files.find((file) => /\.urls$/i.test(relativePath(file)));
   if (list) {
     const path = relativePath(list);
     return { files, label: path.slice(path.lastIndexOf("/") + 1), kind: "urls" };
   }
-  if (folder) {
-    const path = relativePath(files[0] ?? new File([], ""));
-    const name = path.includes("/") ? path.slice(0, path.indexOf("/")) : "";
-    return { files, label: name || `${files.length} files`, kind: "folder" };
-  }
   if (files.length < 2) return null;
-  return { files, label: `${files.length} files`, kind: "files" };
+  return { files, label: "", kind: "files" };
 }

@@ -394,7 +394,8 @@ export function App() {
         list = list.slice(0, maxItems);
       }
       const files = staged?.files ?? [];
-      const label = staged ? staged.label : list.length > 1 ? t.itemsNotice(list.length) : null;
+      // A batch that named nothing is named by its own id in the ledger.
+      const label = staged?.label.trim() ? staged.label : null;
       if (!list.length && !files.length) return false;
       const ok = await send(files, list, label);
       if (ok) setStaged(null);

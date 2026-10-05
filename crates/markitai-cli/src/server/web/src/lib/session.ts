@@ -257,12 +257,12 @@ export function groupItemRows(row: Extract<LedgerRow, { kind: "group" }>): Ledge
   return row.items.map((item) => ({ kind: "session" as const, key: item.key, item }));
 }
 
-/** What a submitted batch is called in the ledger: the folder it came from, the
- * URL list it came from, or the number of items it holds. */
-export function groupLabel(label: string | null | undefined, items: SessionItem[], t: { itemsNotice: (count: number) => string }): string {
-  if (label) return label;
-  const first = items[0] ? displayName(items[0].name) : "";
-  return items.length > 1 ? `${first} +${items.length - 1}` : first || t.itemsNotice(items.length);
+/** What a submitted batch is called in the ledger: the folder or URL list it
+ * came from. A batch that named nothing reads as the batch itself — its job id —
+ * rather than as one file that happens to be inside it; the count says how many
+ * items it holds. */
+export function groupLabel(label: string | null | undefined, jobId: string): string {
+  return label?.trim() || jobId;
 }
 
 function activity(items: SessionItem[], createdAt: string | null | undefined): number {

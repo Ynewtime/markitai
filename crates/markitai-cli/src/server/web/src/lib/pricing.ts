@@ -177,7 +177,7 @@ export function itemNotification(item: SessionItem, t: Dict, locale: Locale, act
     message,
     ...(detail ? { detail } : {}),
     ...(warnings.length ? { warnings, warningsTitle: previousWarnings ? t.previousResultWarnings : t.itemWarningsTitle, ...(warningsContext ? { warningsContext } : {}) } : {}),
-    ...(lastCost ? { cost: fill(PRICE_WORDS[locale].last, { cost: lastCost }) } : {}),
+    ...(lastCost ? { costLine: fill(PRICE_WORDS[locale].last, { cost: lastCost }) } : {}),
   };
 }
 
@@ -202,6 +202,91 @@ export function quietRestored<T extends { jobId: string }>(changed: T[], quiet: 
   return changed.filter((item) => !quiet.has(item.jobId));
 }
 
+/// One model the cost warning names: how many requests had no reviewed price,
+/// or reported no usage counts at all.
+export interface CostWarningEntry {
+  model: string;
+  requests: number;
+  reason: "noTariff" | "noCounts";
+}
+
+/** The parts of the core's incomplete-cost sentence, so several rows can be
+ * added up into one. The wording is `ConversionUsage::unpriced_warning`; a
+ * sentence that does not match this shape keeps its own text. */
+const COST_HEAD = "Cost is incomplete: ";
+const COST_TAIL = ". cost_usd is the known priced subtotal; the complete cost is unknown.";
+
+/** Reads one incomplete-cost warning, or `None` for any other warning. */
+export function parseCostWarning(text: string): CostWarningEntry[] | null {
+  if (!text.startsWith(COST_HEAD) || !text.endsWith(COST_TAIL)) return null;
+  const body = text.slice(COST_HEAD.length, text.length - COST_TAIL.length);
+  const entries: CostWarningEntry[] = [];
+  for (const part of body.split("; ")) {
+    // `3 more models` is a count of what the sentence left out; adding rows up
+    // recomputes it.
+    if (/^\d+ more models?$/.test(part)) continue;
+    const priced = /^(\d+) requests? to (.+) (?:has|have) no reviewed price$/.exec(part);
+    if (priced) {
+      entries.push({ model: priced[2]!, requests: Number(priced[1]), reason: "noTariff" });
+      continue;
+    }
+    const counts = /^(\d+) requests? to (.+) reported no usage counts$/.exec(part);
+    if (counts) {
+      entries.push({ model: counts[2]!, requests: Number(counts[1]), reason: "noCounts" });
+      continue;
+    }
+    return null;
+  }
+  return entries.length > 0 ? entries : null;
+}
+
+/** What a warning card shows once several rows have reported: the cost warnings
+ * added up per model, and every other warning kept as it was written. */
+export interface MergedWarnings {
+  cost: CostWarningEntry[] | null;
+  other: string[];
+}
+
+function readWarnings(warnings: string[]): { cost: CostWarningEntry[]; other: string[] } {
+  const cost: CostWarningEntry[] = [];
+  const other: string[] = [];
+  for (const warning of warnings) {
+    const parsed = parseCostWarning(warning);
+    if (parsed) cost.push(...parsed);
+    else other.push(warning);
+  }
+  return { cost, other };
+}
+
+function sameList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/** Adds one row's warnings to what the card already reports. Two rows join when
+ * they share every warning that is not an incomplete cost: those are about the
+ * batch, while an incomplete cost is about the rows and adds up. Returns `null`
+ * when the two rows report different problems, which stay separate cards. */
+export function mergeWarnings(current: MergedWarnings, warnings: string[]): MergedWarnings | null {
+  const next = readWarnings(warnings);
+  if (next.cost.length === 0 && current.cost === null) {
+    return sameList(current.other, next.other) ? current : null;
+  }
+  if (!sameList(current.other, next.other)) return null;
+  const totals = new Map<string, CostWarningEntry>();
+  for (const entry of [...(current.cost ?? []), ...next.cost]) {
+    const key = `${entry.reason}\u0000${entry.model}`;
+    const seen = totals.get(key);
+    if (seen) seen.requests += entry.requests;
+    else totals.set(key, { ...entry });
+  }
+  // Most requests first, then by name, so the sentence reads the same for the
+  // same set of rows whichever order they settled in.
+  const cost = [...totals.values()].sort(
+    (left, right) => right.requests - left.requests || left.model.localeCompare(right.model),
+  );
+  return { cost: cost.length ? cost : null, other: current.other };
+}
+
 export interface NotificationState {
   sequence: number;
   note: NotificationModel | null;
@@ -213,22 +298,35 @@ export interface NotificationState {
  * plain conversion warning widens; anything with an action or its own error is
  * about one row and replaces the card as before. */
 export function widenNotice(current: NotificationModel | null, next: NotificationModel): NotificationModel | null {
-  const sameWarning = (): boolean => {
-    if (current === null || next.tone !== "warning" || current.tone !== "warning") return false;
-    if (current.action || next.action) return false;
+  const joinable = (): MergedWarnings | null => {
+    if (current === null || next.tone !== "warning" || current.tone !== "warning") return null;
+    if (current.action || next.action) return null;
     const left = current.warnings ?? [];
-    const right = next.warnings ?? [];
-    return left.length > 0 && left.length === right.length && left.every((warning, index) => warning === right[index]);
+    // A card that already added a cost up carries it instead of the sentence.
+    if (left.length === 0 && (current.cost ?? []).length === 0) return null;
+    // The card may already speak for several rows: what it added up is kept, and
+    // what it still reports as text is read back in.
+    const reported = readWarnings(left);
+    const carried = [...(current.cost ?? []), ...reported.cost];
+    return mergeWarnings(
+      { cost: carried.length ? carried : null, other: reported.other },
+      next.warnings ?? [],
+    );
   };
-  if (!sameWarning() || current === null) return null;
+  const merged = joinable();
+  if (merged === null || current === null) return null;
   const covers = [...new Set([...(current.covers ?? []), ...(next.covers ?? [])])];
   if (covers.length < 2) return null;
   return {
     tone: "warning",
     title: current.title,
     message: current.message,
-    warnings: current.warnings,
+    // What the rows report besides the cost, and the cost added up in place of
+    // one sentence per row.
+    warnings: merged.other,
+    ...(merged.cost === null ? {} : { cost: merged.cost }),
     warningsTitle: current.warningsTitle,
+    warningsContext: current.warningsContext,
     covers,
     // The names answer "which rows?", and a per-row subtotal would now be wrong.
     detail: covers.join("\n"),

@@ -260,8 +260,9 @@ export const LedgerRow = memo(function LedgerRow({
       </span>
       <span class="cell-state">
         <StatusMark t={t} item={item} notice={notice} onShow={(opener) => onItemNotice(item, opener)} />
-        {(previewable || enhanceable || retryable || canDelete) && (
-          <span class="row-tools">
+        {/* The slot stays even when a row has no actions, so the status marks of
+            every row sit in one column. */}
+        <span class="row-tools">
             {output !== null && (
               <a
                 class="row-icon"
@@ -319,8 +320,7 @@ export const LedgerRow = memo(function LedgerRow({
                 onConfirm={remove}
               />
             )}
-          </span>
-        )}
+        </span>
       </span>
       <span class="row-facts">
         {facts.map((fact) => (

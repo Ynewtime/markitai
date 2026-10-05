@@ -1,7 +1,8 @@
 // Cost labels; scripts/test_ui_pricing.cjs runs this file for the repository gate.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { actionNotification, attemptNotice, attemptPricing, itemNotification, publishNotice, quietRestored, terminalNotices, widenNotice, PRICE_WORDS, priceText } from "./pricing.ts";
+import { actionNotification, attemptNotice, attemptPricing, itemNotification, parseCostWarning, publishNotice, quietRestored, terminalNotices, widenNotice, PRICE_WORDS, priceText } from "./pricing.ts";
+import { dicts } from "../i18n/index.ts";
 import { en } from "../i18n/en.ts";
 import { zh } from "../i18n/zh.ts";
 import { seedItem, type SessionItem } from "./session.ts";
@@ -62,7 +63,7 @@ test("a retained output without attempt usage never invents a free or priced att
     assert.ok(notice?.title.includes(words.rerunRetained("enhance")));
     assert.ok(notice?.title.includes("报告.pdf"));
     assert.equal(notice?.detail, retained.rerunFailure?.error);
-    assert.equal(notice?.cost, undefined);
+    assert.equal(notice?.costLine, undefined);
     assert.ok(!JSON.stringify(notice).includes("$0.000000"));
     assert.ok(!JSON.stringify(notice).includes("$0.500000"));
   }
@@ -75,13 +76,13 @@ test("a paid failed attempt reports its own partial coverage and complete raw er
   const item: SessionItem = { ...retained, diagnostics: { last_attempt: { operation: "enhance", status: "error", error: "Different provider wording\nwith all details", usage: { requests: 2, cost_usd: 0.25, by_model: { local: { requests: 2, cost_usd: 0.25, priced_requests: 1, unpriced_requests: 1, cost_status: "partial" } } } } } };
   const before = structuredClone(item);
   const notice = itemNotification(item, en, "en");
-  assert.equal(notice?.cost, "Last attempt: $0.250000 known subtotal · 1 unpriced request(s)");
+  assert.equal(notice?.costLine, "Last attempt: $0.250000 known subtotal · 1 unpriced request(s)");
   assert.equal(notice?.detail, `${retained.rerunFailure?.error}\n\nDifferent provider wording\nwith all details`);
-  assert.ok(notice?.cost);
-  assert.ok(!notice.cost.includes("$0.500000"));
+  assert.ok(notice?.costLine);
+  assert.ok(!notice.costLine.includes("$0.500000"));
   assert.deepEqual(item, before);
   const complete = { ...item, diagnostics: { last_attempt: { ...item.diagnostics!.last_attempt!, usage: { requests: 1, cost_usd: 0.1, by_model: { local: { requests: 1, cost_usd: 0.1, priced_requests: 1, unpriced_requests: 0, cost_status: "complete" } } } } } };
-  assert.equal(itemNotification(complete, zh, "zh")?.cost, "上次尝试：$0.100000 · 所有记录的请求均已计价");
+  assert.equal(itemNotification(complete, zh, "zh")?.costLine, "上次尝试：$0.100000 · 所有记录的请求均已计价");
 });
 
 test("successful warnings preserve every full value and never call conversion failed", () => {
@@ -138,14 +139,14 @@ test("retained warnings belong to the prior result, independently of a new unpri
   assert.equal(notice?.warningsTitle, "旧结果提示");
   assert.deepEqual(notice?.warnings, [raw]);
   assert.equal(notice?.warningsContext, "价格未知 · 已知小计 $0.000000");
-  assert.equal(notice?.cost, undefined);
+  assert.equal(notice?.costLine, undefined);
   assert.deepEqual(item, before);
   const paid: SessionItem = { ...item, diagnostics: { last_attempt: { operation: "enhance", status: "error", error: "HTTP 503 current attempt", usage: { cost_usd: 0.1, requests: 1, by_model: { local: { requests: 1, priced_requests: 1, unpriced_requests: 0, cost_status: "complete" } } } } } };
   const paidNote = itemNotification(paid, en, "en");
   assert.equal(paidNote?.warningsTitle, "Previous result warnings");
   assert.deepEqual(paidNote?.warnings, [raw]);
   assert.equal(paidNote?.warningsContext, "Price unknown · $0.000000 known subtotal");
-  assert.equal(paidNote?.cost, "Last attempt: $0.100000 · all recorded requests priced");
+  assert.equal(paidNote?.costLine, "Last attempt: $0.100000 · all recorded requests priced");
 });
 
 test("terminal identities are quiet for identical snapshots, locale changes and first history adoption", () => {
@@ -188,6 +189,61 @@ test("replaying the same notice while open or after close publishes a new live-r
   assert.equal(reopened.sequence, closed.sequence + 1);
   assert.equal(first.note, notice);
   assert.equal(first.sequence, 1);
+});
+
+test("an incomplete cost adds up over the rows a card speaks for", () => {
+  const core = (parts: string) =>
+    `Cost is incomplete: ${parts}. cost_usd is the known priced subtotal; the complete cost is unknown.`;
+  // What the core writes for one row, in both reasons and both numbers.
+  assert.deepEqual(parseCostWarning(core("1 request to alpha has no reviewed price")), [
+    { model: "alpha", requests: 1, reason: "noTariff" },
+  ]);
+  assert.deepEqual(parseCostWarning(core("4 requests to beta reported no usage counts")), [
+    { model: "beta", requests: 4, reason: "noCounts" },
+  ]);
+  assert.deepEqual(parseCostWarning(core("1 request to a has no reviewed price; 2 requests to b have no reviewed price")), [
+    { model: "a", requests: 1, reason: "noTariff" },
+    { model: "b", requests: 2, reason: "noTariff" },
+  ]);
+  // Anything else keeps its own text.
+  assert.equal(parseCostWarning("Image analysis failed; base Markdown retained"), null);
+  assert.equal(parseCostWarning("Cost is incomplete: something new happened."), null);
+
+  // Two rows that each priced nothing for the same models report one sentence.
+  const first = itemNotification({ ...result, warnings: [core("1 request to alpha has no reviewed price; 1 request to beta reported no usage counts")] }, en, "en")!;
+  const second = itemNotification({ ...result, key: "job/2", name: "b.pdf", warnings: [core("2 requests to alpha have no reviewed price; 1 request to beta reported no usage counts")] }, en, "en")!;
+  const widened = widenNotice(first, second);
+  assert.deepEqual(widened?.cost, [
+    { model: "alpha", requests: 3, reason: "noTariff" },
+    { model: "beta", requests: 2, reason: "noCounts" },
+  ]);
+  assert.deepEqual(widened?.covers, ["报告.pdf", "b.pdf"]);
+  assert.equal(widened?.detail, "报告.pdf\nb.pdf");
+  // The card says it in the reader's language, naming three models at most.
+  const words = dicts.en;
+  assert.equal(
+    words.costIncomplete(widened?.cost ?? []),
+    core("3 requests to alpha have no reviewed price; 2 requests to beta reported no usage counts"),
+  );
+  const many = [1, 2, 3, 4].map((requests) => ({ model: `m${requests}`, requests, reason: "noTariff" as const }));
+  assert.ok(dicts.zh.costIncomplete(many).includes("另有 1 个模型"));
+  // The English sentence mirrors the core, which counts the rest the same way.
+  assert.ok(dicts.en.costIncomplete(many).includes("1 more models"));
+  assert.ok(dicts.en.costIncomplete(many).endsWith("cost_usd is the known priced subtotal; the complete cost is unknown."));
+
+  // A row that reports a different problem keeps its own card.
+  const other = itemNotification({ ...result, key: "job/3", name: "c.pdf", warnings: ["Image analysis failed; base Markdown retained"] }, en, "en")!;
+  assert.equal(widenNotice(first, other), null);
+  // A row whose problems are not the card's is its own card: the cost adds up,
+  // the rest of the sentence does not.
+  const mixed = itemNotification({ ...result, key: "job/4", name: "d.pdf", warnings: [core("1 request to alpha has no reviewed price"), "Image analysis failed; base Markdown retained"] }, en, "en")!;
+  assert.equal(widenNotice(first, mixed), null);
+  // Two rows that report the same other warning join, and their costs add up.
+  const mixedTwo = itemNotification({ ...result, key: "job/5", name: "e.pdf", warnings: [core("2 requests to alpha have no reviewed price"), "Image analysis failed; base Markdown retained"] }, en, "en")!;
+  const joined = widenNotice(mixed, mixedTwo);
+  assert.deepEqual(joined?.cost, [{ model: "alpha", requests: 3, reason: "noTariff" }]);
+  assert.deepEqual(joined?.warnings, ["Image analysis failed; base Markdown retained"]);
+  assert.deepEqual(joined?.covers, ["d.pdf", "e.pdf"]);
 });
 
 test("a shared conversion warning widens one card instead of repeating per row", () => {

@@ -1647,6 +1647,12 @@ textarea {
 .run-state.is-queued {
   color: var(--text-3);
 }
+/* A spinner takes the same box as a status mark, so every status of every row
+   shares one centre; the queued word keeps its own width. */
+.run-state:not(.is-queued) {
+  width: 20px;
+  justify-content: center;
+}
 .spinner {
   flex: none;
   width: 12px;

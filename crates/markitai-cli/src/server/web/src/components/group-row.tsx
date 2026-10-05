@@ -33,7 +33,7 @@ export const GroupRow = memo(function GroupRow({
 }: GroupRowProps) {
   const items: SessionItem[] = row.items;
   const stats = sessionStats(items);
-  const label = groupLabel(row.label, items, t);
+  const label = groupLabel(row.label, row.jobId);
   const done = Math.max(0, stats.done);
   const parts = [`${done} ${t.statusDone}`];
   if (stats.failed > 0) parts.push(`${stats.failed} ${t.statusFailed}`);

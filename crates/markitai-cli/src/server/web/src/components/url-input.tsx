@@ -53,15 +53,17 @@ export function UrlInput({
       {staged && (
         <div class="staged-row">
           <Icon name={staged.kind === "urls" ? "Globe" : staged.kind === "folder" ? "FolderSimple" : "FileText"} size={14} />
-          <span class="staged-name" title={staged.label}>
-            {staged.label}
-          </span>
-          <span class="staged-count">{t.stagedCount(staged.files.length)}</span>
+          {staged.label && (
+            <span class="staged-name" title={staged.label}>
+              {staged.label}
+            </span>
+          )}
+          <span class={staged.label ? "staged-count" : "staged-name"}>{t.stagedCount(staged.files.length)}</span>
           <button
             type="button"
             class="staged-clear"
-            aria-label={t.stagedClear(staged.label)}
-            title={t.stagedClear(staged.label)}
+            aria-label={t.stagedClear(staged.label || t.stagedCount(staged.files.length))}
+            title={t.stagedClear(staged.label || t.stagedCount(staged.files.length))}
             onClick={() => onClearStaged?.()}
           >
             <Icon name="X" size={12} />

@@ -220,10 +220,10 @@ test("a group carries the name its submission gave it", () => {
   const bare = mergeLedger(items, { live: job("live", "running") }, []);
   assert.equal(named[0]?.kind === "group" ? named[0].label : null, "sample-folder");
   assert.equal(bare[0]?.kind === "group" ? bare[0].label : null, null);
-  const words = { itemsNotice: (count: number) => `${count} items` };
-  assert.equal(groupLabel("sample-folder", items, words), "sample-folder");
-  // Without a name the group reads as the first item plus the rest.
-  assert.equal(groupLabel(null, items, words), "1.pdf +1");
+  assert.equal(groupLabel("sample-folder", "3f9c2a1b4d0e"), "sample-folder");
+  // A batch that named nothing reads as itself, not as one file inside it.
+  assert.equal(groupLabel(null, "3f9c2a1b4d0e"), "3f9c2a1b4d0e");
+  assert.equal(groupLabel("   ", "3f9c2a1b4d0e"), "3f9c2a1b4d0e");
 });
 
 test("session seeds survive a reload and a damaged store reads as empty", () => {

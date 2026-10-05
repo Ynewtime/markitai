@@ -216,6 +216,19 @@ export const en = {
   skipPendingBatch: "LLM batch still running · collect it with the CLI",
   itemWarnings: (n: number) => (n === 1 ? "1 warning" : `${n} warnings`),
   itemWarningsTitle: "Conversion warnings",
+  // The incomplete-cost sentence, added up over the rows a card speaks for. It
+  // mirrors `ConversionUsage::unpriced_warning` in the core: three models are
+  // named and the rest are counted.
+  costIncomplete: (entries: { model: string; requests: number; reason: "noTariff" | "noCounts" }[]) => {
+    const named = entries.slice(0, 3).map((entry) => {
+      const count = entry.requests === 1 ? "1 request" : `${entry.requests} requests`;
+      return entry.reason === "noCounts"
+        ? `${count} to ${entry.model} reported no usage counts`
+        : `${count} to ${entry.model} ${entry.requests === 1 ? "has" : "have"} no reviewed price`;
+    });
+    if (entries.length > 3) named.push(`${entries.length - 3} more models`);
+    return `Cost is incomplete: ${named.join("; ")}. cost_usd is the known priced subtotal; the complete cost is unknown.`;
+  },
   stagedCount: (n: number) => (n === 1 ? "1 file" : `${n} files`),
   stagedClear: (label: string) => `Remove ${label} from this submission`,
   groupExpand: (label: string) => `Open ${label}`,
