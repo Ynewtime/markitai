@@ -83,10 +83,20 @@ test("the last choice is remembered per browser; damaged, blocked and older stor
 
 test("the CLI line spells out only deviations, quoted for a shell", () => {
   const options = resolveOptions({ ...base, ocr: true, profile: "rag", advanced: { ...ADVANCED_DEFAULTS, noCache: true, strategy: "static" } });
-  assert.equal(cliCommand([], options), "markitai <files-or-urls> -o output/ --preset minimal --ocr --profile rag --no-cache --strategy static");
+  assert.equal(cliCommand([], options), "markitai <files-or-urls> -o output/ --ocr --profile rag --no-cache --strategy static");
   assert.equal(cliCommand(["https://example.com/a b"], resolveOptions(base)), "markitai 'https://example.com/a b' -o output/ --preset minimal");
   assert.equal(shellQuote("it's"), `'it'\\''s'`);
   assert.equal(shellQuote("~/x"), "'~/x'");
+});
+
+test("a preset is named only while the request still equals it", () => {
+  // Enabling enhancement leaves the minimal preset: the line names no preset it
+  // would then override, and the reader's own choice is what it shows.
+  assert.equal(cliCommand([], resolveOptions({ ...base, llm: true })), "markitai <files-or-urls> -o output/ --llm");
+  assert.equal(cliCommand([], resolveOptions(applyPreset(base, "rich"))), "markitai <files-or-urls> -o output/ --preset rich");
+  // Changing one feature of a larger preset lists what the request now means.
+  const standard = resolveOptions({ ...applyPreset(base, "standard"), advanced: { ...ADVANCED_DEFAULTS, desc: false } });
+  assert.equal(cliCommand([], standard), "markitai <files-or-urls> -o output/ --llm --alt");
 });
 
 test("URL lines accept bare domains and report the first unusable line", () => {

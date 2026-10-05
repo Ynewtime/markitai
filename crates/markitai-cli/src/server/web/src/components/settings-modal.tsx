@@ -627,13 +627,13 @@ export function SettingsModal({
       </div>
     ) : (
       <div class="form-actions">
-        {picking && <p class="picker-count">{t.modelsSelected(selected.size)}</p>}
+        {picking && selected.size > 0 && <p class="picker-count">{t.modelsSelected(selected.size)}</p>}
         <button type="button" class="btn btn-ghost" onClick={backToProviders}>
           {t.cancel}
         </button>
         {picking && (
           <button type="button" class="btn btn-primary" disabled={addBusy || !selected.size} onClick={() => void addSelected()}>
-            {addBusy ? t.saving : t.addModelsCount(selected.size)}
+            {addBusy ? t.saving : t.save}
           </button>
         )}
       </div>
@@ -691,7 +691,7 @@ export function SettingsModal({
           {connMode === "key" && (
             <form
               id="conn-key-form"
-              class="conn-edit"
+              class="conn-edit is-row"
               onSubmit={(event) => {
                 event.preventDefault();
                 void saveConnection({ kind: "key", key: connKey }, t.providerSaved);
@@ -882,7 +882,7 @@ export function SettingsModal({
                 <section class="provider-detail">
                   <div class="provider-detail-head">
                     <div class="provider-detail-copy">
-                      <h3>{autoLoads ? t.modelCatalogTitle : t.connectProviderTitle(label)}</h3>
+                      <h3 class="group-title">{autoLoads ? t.modelCatalogTitle : t.connectProviderTitle(label)}</h3>
                       <p>{t.providerDetailHint(provider.kind, provider.provider, provider.source, { local, manualOnly, needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom" })}</p>
                       {(provider.kind === "common" || provider.kind === "compatible") && (provider.default_base || provider.key_variable) && (
                         <p class="provider-facts">
@@ -975,7 +975,9 @@ export function SettingsModal({
                     provider={provider.provider}
                     candidates={discovery?.models ?? []}
                     deployments={settings.deployments}
-                    apiBase={draftBase}
+                    // A saved provider's page reads its own address: what this
+                    // connection already routes is what the catalogue marks.
+                    apiBase={draftBase.trim() || provider.api_base || ""}
                     group={group}
                     weight={weight}
                     selected={selected}

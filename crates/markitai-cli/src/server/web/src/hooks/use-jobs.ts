@@ -67,6 +67,8 @@ export interface JobsApi {
   terminalJobCount: number;
   submitError: unknown;
   restoreFailed: Set<string>;
+  /** Job ids restored from this tab's seeds; their first outcome stays quiet. */
+  restoredQuiet: Set<string>;
   submit(files: File[], urls: string[], options: JobOptions, hooks?: UploadHooks): Promise<boolean>;
   retry(item: SessionItem, options?: JobOptions): Promise<unknown>;
   enhance(item: SessionItem, options: JobOptions): Promise<unknown>;
@@ -91,6 +93,10 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
   const sources = useRef(new Map<string, EventStream>());
   const generations = useRef(new Map<string, symbol>());
   const notified = useRef(new Set<string>());
+  // Jobs hydrated from this tab's seeds: their first settled outcome is not news
+  // the user just watched happen, so the ledger reports it without a notice.
+  // Acting on one of them (retry or enhance) makes its outcome reportable again.
+  const restoredQuiet = useRef(new Set<string>());
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const jobsRef = useRef(jobs);
@@ -250,6 +256,7 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
   const requeue = useCallback(
     (item: SessionItem, operation: "retry" | "enhance") => {
       notified.current.delete(item.jobId);
+      restoredQuiet.current.delete(item.jobId);
       patchJob(item.jobId, { status: "running" });
       setItems((previous) => previous.map((candidate) => (candidate.key === item.key ? requeued(candidate, operation) : candidate)));
       listen(item.jobId);
@@ -310,6 +317,7 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
         await retryItem(snapshot.job_id, itemId, options, operation);
         adoptSnapshot(snapshot, (item) => (item.itemId === itemId ? requeued(item, operation) : item));
         notified.current.delete(snapshot.job_id);
+        restoredQuiet.current.delete(snapshot.job_id);
         patchJob(snapshot.job_id, { status: "running" });
         listen(snapshot.job_id);
         return null;
@@ -437,6 +445,7 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
     restored.current = true;
     const stored = readSeeds();
     if (!stored.length) return;
+    for (const job of stored) restoredQuiet.current.add(job.jobId);
     setItems(stored.flatMap((job) => job.items.map((seed) => seedItem(job.jobId, seed))));
     setJobs(
       Object.fromEntries(
@@ -475,6 +484,7 @@ export function useJobs(notifyText: (done: number, failed: number, retained: num
     terminalJobCount,
     submitError,
     restoreFailed,
+    restoredQuiet: restoredQuiet.current,
     submit,
     retry,
     enhance,

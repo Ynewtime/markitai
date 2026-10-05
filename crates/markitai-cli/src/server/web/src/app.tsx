@@ -32,7 +32,7 @@ import { oversized, type Walked } from "./lib/files.ts";
 import { fmtBytes } from "./lib/format.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { canRetry, failedToRetry, isPreviewable, isSettled, settledIdentity, itemFromPayload, waitingJobs, type SessionItem } from "./lib/session.ts";
-import { itemNotification, publishNotice, terminalNotices, type ItemRequestFailure, type NotificationState } from "./lib/pricing.ts";
+import { itemNotification, publishNotice, quietRestored, terminalNotices, type ItemRequestFailure, type NotificationState } from "./lib/pricing.ts";
 import { parseUrls } from "./lib/urls.ts";
 
 type View = "home" | "workspace";
@@ -207,17 +207,18 @@ export function App() {
   // Announce/notify only a new terminal identity already observed by this tab.
   // Locale changes, reconnect duplicates and first adopted history are quiet.
   const settledBefore = useRef(new Map<string, string | null>());
+  const restoredQuiet = jobs.restoredQuiet;
   useEffect(() => {
     const { next, changed } = terminalNotices(settledBefore.current, jobs.items);
     settledBefore.current = next;
     const total = jobs.items.length;
     const settled = jobs.items.filter(isSettled).length;
-    for (const item of changed) {
+    for (const item of quietRestored(changed, restoredQuiet)) {
       const word = item.rerunFailure ? t.rerunRetained(item.rerunFailure.operation) : item.status === "error" ? t.statusFailed : item.skipped ? t.statusSkipped : t.statusDone;
       announce(t.announceItem(item.name, word, settled, total));
       showItemNotice(item);
     }
-  }, [jobs.items, t, announce, showItemNotice]);
+  }, [jobs.items, jobs.restoredQuiet, t, announce, showItemNotice]);
 
   // ---- connectivity
   const offline = useConnectivity(() => {
@@ -464,41 +465,54 @@ export function App() {
     async (jobId: string, from: HTMLElement) => {
       const snapshot = await archive.open(jobId);
       if (snapshot === null) return;
+      const openDocument = (item: NonNullable<(typeof snapshot.items)[number]>) => {
+        const key = `${snapshot.job_id}/${item.item_id}`;
+        setSelectedKey(key);
+        opener.current = from;
+        returnKey.current = key;
+        setPreview({
+          target: {
+            key,
+            jobId: snapshot.job_id,
+            itemId: item.item_id,
+            name: item.name,
+            output: item.output,
+            finishedAt: item.finished_at,
+            llmEnhanced: item.llm_enhanced,
+            operation: item.operation,
+          },
+          kind: item.kind,
+          createdAt: snapshot.created_at,
+        });
+      };
+      const finished = (item: (typeof snapshot.items)[number]) => item.status === "done" && item.output !== null && !item.skipped;
+      const single = snapshot.items.length === 1 ? snapshot.items[0] : null;
       // A saved job of several items joins the session ledger, so each of its
       // rows can be previewed, retried or deleted (an extension of the reference,
-      // which previews only the first result).
-      if (snapshot.items.length > 1 || snapshot.items.some((item) => item.status === "error" || item.rerun_failure != null || (item.warnings?.length ?? 0) > 0)) {
+      // which previews only the first result). A single item joins it only while
+      // it has something to report — its row's warning mark is what replays that
+      // notice — and the click still opens the document.
+      const worried = snapshot.items.length > 1 || (single !== null && (single.status === "error" || single.rerun_failure != null || (single.warnings?.length ?? 0) > 0));
+      if (worried) {
         jobsRef.current.adopt(snapshot);
-        const first = snapshot.items.find((candidate) => candidate.status === "error" || candidate.rerun_failure != null || (candidate.warnings?.length ?? 0) > 0) ?? snapshot.items.find((candidate) => candidate.status === "done" && candidate.output !== null && !candidate.skipped) ?? snapshot.items[0];
-        if (first) {
-          setFocusKey(`${snapshot.job_id}/${first.item_id}`);
-          showItemNotice(itemFromPayload(snapshot.job_id, first, Date.now()), from);
+        if (single === null || !finished(single)) {
+          const first = snapshot.items.find((candidate) => candidate.status === "error" || candidate.rerun_failure != null || (candidate.warnings?.length ?? 0) > 0) ?? snapshot.items.find(finished) ?? snapshot.items[0];
+          if (first) {
+            setFocusKey(`${snapshot.job_id}/${first.item_id}`);
+            showItemNotice(itemFromPayload(snapshot.job_id, first, Date.now()), from);
+          }
+          announce(t.adoptedJob(snapshot.items.length));
+          return;
         }
         announce(t.adoptedJob(snapshot.items.length));
-        return;
       }
-      const item = snapshot.items.find((candidate) => candidate.status === "done" && candidate.output !== null && !candidate.skipped);
+      const item = snapshot.items.find(finished);
       if (!item) {
         announce(t.nothingToPreview);
         setNote({ tone: "warning", title: snapshot.items[0]?.name ?? snapshot.job_id, message: t.nothingToPreview });
         return;
       }
-      opener.current = from;
-      returnKey.current = null;
-      setPreview({
-        target: {
-          key: `${snapshot.job_id}/${item.item_id}`,
-          jobId: snapshot.job_id,
-          itemId: item.item_id,
-          name: item.name,
-          output: item.output,
-          finishedAt: item.finished_at,
-          llmEnhanced: item.llm_enhanced,
-          operation: item.operation,
-        },
-        kind: item.kind,
-        createdAt: snapshot.created_at,
-      });
+      openDocument(item);
     },
     [archive.open, announce, t, showItemNotice],
   );

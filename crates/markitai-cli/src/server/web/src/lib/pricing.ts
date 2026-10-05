@@ -192,6 +192,15 @@ export function terminalNotices(previous: ReadonlyMap<string, string | null>, it
   return { next, changed };
 }
 
+/** Drop the first settled outcome of a job this page restored from its own
+ * seeds. Reopening the workbench is not an event the reader just watched
+ * happen: the row, the session counters and the operating system notification
+ * already carry it. A retry or enhance the reader starts clears the job's quiet
+ * mark, so that outcome is reported. */
+export function quietRestored<T extends { jobId: string }>(changed: T[], quiet: ReadonlySet<string>): T[] {
+  return changed.filter((item) => !quiet.has(item.jobId));
+}
+
 export interface NotificationState {
   sequence: number;
   note: NotificationModel | null;

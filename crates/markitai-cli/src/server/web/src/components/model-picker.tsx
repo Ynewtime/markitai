@@ -55,10 +55,16 @@ export function ModelPicker({
     for (const candidate of [...candidates, ...added]) byModel.set(candidate.model, candidate);
     return [...byModel.values()];
   }, [candidates, added]);
+  // A deployment the provider reaches at its own default address stores none, so
+  // an absent stored address matches the address this page is working with. The
+  // model id already names the provider.
+  const sameEndpoint = (stored: string | null | undefined) => {
+    const value = normalizeBase(stored);
+    return value === "" || value === normalizeBase(apiBase);
+  };
   const configured = (model: string) =>
     deployments.some(
-      (deployment) =>
-        deployment.model === model && deployment.routing_group === group.trim() && normalizeBase(deployment.api_base) === normalizeBase(apiBase),
+      (deployment) => deployment.model === model && deployment.routing_group === group.trim() && sameEndpoint(deployment.api_base),
     );
   const needle = query.trim().toLowerCase();
   const matching = all.filter((candidate) => !needle || candidate.model.toLowerCase().includes(needle) || candidate.label.toLowerCase().includes(needle));
@@ -101,7 +107,7 @@ export function ModelPicker({
         <input type="search" value={query} placeholder={t.searchModels} aria-label={t.searchModels} onInput={(event) => setQuery(event.currentTarget.value)} />
         <label class="check-line">
           <input ref={selectAll} type="checkbox" checked={allChosen} disabled={!selectable.length} onChange={toggleVisible} />
-          {t.selectVisible}
+          {t.selectAll}
         </label>
       </div>
       <div class="picker-list" role="group" aria-label={t.modelsAvailable}>
@@ -109,9 +115,11 @@ export function ModelPicker({
           const done = configured(candidate.model);
           return (
             <label key={candidate.model} class={done ? "picker-option is-disabled" : "picker-option"}>
+              {/* A model this group and endpoint already route is on: the row
+                  states the configuration instead of asking for it again. */}
               <input
                 type="checkbox"
-                checked={selected.has(candidate.model)}
+                checked={done || selected.has(candidate.model)}
                 disabled={done}
                 onChange={() => toggle(candidate.model)}
               />

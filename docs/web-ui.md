@@ -14,7 +14,10 @@ the source card. The source card holds the URL line (Enter converts, Shift+Enter
 starts a new line, a pasted list grows the field up to six rows), a bottom row
 with Options and Upload (a menu for files or a folder) on the left and Convert
 on the right, and the options drawer, which ends with the equivalent CLI command
-line. Each option row's ⓘ explains the row and lists its choices; the choices
+line. That line names a preset only while the request still equals it: changing
+one of its features spells the features out instead, so the line never claims a
+preset it then overrides. Each option row's ⓘ explains the row and lists its
+choices; the choices
 themselves show no hover tooltip.
 Under it, one stack of monospaced lines reports, in this order: the upload in
 progress (percentage and bytes, with Cancel), a session that could not be
@@ -53,8 +56,16 @@ for jobs recorded by the command line, a status mark for one item or a dark pill
 such as `4 Done · 1 Skipped` for several. Clicking a saved job of one item opens
 its preview; a saved job of several items is brought into the session ledger so
 each of its items can be previewed, retried or deleted (an extension; the
-reference previews only the first result). Retry and Enhance on a saved
+reference previews only the first result). A single item joins the ledger as well
+while it has something to report (conversion warnings, a retained failed
+attempt), so its warning mark can replay that notice; the click still opens the
+document rather than the notice. Retry and Enhance on a saved
 single-item job also bring it into the session.
+
+A session restored after a reload reports itself quietly: the ledger rows and the
+session counters show what settled while the page was away, and no notice replays
+for a job this tab already knew about. A retry or enhancement the reader starts
+reports its outcome as usual.
 
 The **preview** is a 1120px dialog (a full-screen sheet on phones): "Preview
 mode", the file name (a URL links to its page), then a
@@ -86,17 +97,21 @@ provider's page shows the documented endpoint and key variable of a built-in
 provider and asks for what it needs: an API key (marked optional for LM Studio and
 vLLM, absent for Ollama), a base URL for Azure, OpenAI-compatible endpoints and vLLM,
 an optional custom base (prefilled hint: the documented endpoint). It loads the
-catalogue through the provider's `/models` (automatically for Ollama and LM
-Studio) and opens the model picker: search, Select visible, Vision and Configured
-badges (already-enabled models head the list), a manual model ID (also when the
+catalogue through the provider's `/models` (automatically for Ollama, LM
+Studio and a saved connection) and opens the model picker: search, Select all,
+Vision and Configured badges (models this group already routes at the connection
+head the list, ticked and locked), a manual model ID (also when the
 catalogue cannot be loaded), routing
-group and weight, `N selected`; the list scrolls after about four models, and the
-selection count with Cancel and Add stays pinned at the bottom of the dialog.
+group and weight, and a selection count while something is selected; the list
+scrolls after about four models, and Cancel with Save stays pinned at the bottom
+of the dialog.
 A saved provider's page starts with a Connection section that manages the key
 and the address separately: the key shows as saved (with its last four
 characters), from an environment variable or not set, with Replace and Remove; a
 key the service finds in the environment (a process variable or a dotenv file)
 is reported as from that variable, with Add storing a literal key instead; the
+one key field says it replaces the saved key, and its Save and Cancel sit on the
+field's line; the
 address shows as custom, from an environment variable or the default, with
 Edit and Reset to default. Perplexity, Z.ai and Fireworks AI
 document no OpenAI-compatible model list, so their page opens the manual entry
@@ -113,7 +128,8 @@ the provider connects without one).
 
 The header holds the brand and version, Docs and GitHub (a footer band on
 phones) and two icon buttons: Appearance (language EN/中 and theme
-Auto/Light/Dark) and Settings. The conversion tasks (the workspace) open from
+Auto/Light/Dark) and Settings. The appearance menu opens over the notice column,
+so a live notice never takes its clicks. The conversion tasks (the workspace) open from
 the entry under the composer on the home view. Notifications appear
 at the top right (bottom on phones) and stack: an image skipped for lack of text
 offers Enable OCR and retry, which also leaves OCR switched on for new jobs; an

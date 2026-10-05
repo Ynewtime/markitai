@@ -1,7 +1,7 @@
 // Cost labels; scripts/test_ui_pricing.cjs runs this file for the repository gate.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { actionNotification, attemptNotice, attemptPricing, itemNotification, publishNotice, terminalNotices, PRICE_WORDS, priceText } from "./pricing.ts";
+import { actionNotification, attemptNotice, attemptPricing, itemNotification, publishNotice, quietRestored, terminalNotices, PRICE_WORDS, priceText } from "./pricing.ts";
 import { en } from "../i18n/en.ts";
 import { zh } from "../i18n/zh.ts";
 import { seedItem, type SessionItem } from "./session.ts";
@@ -164,6 +164,15 @@ test("terminal identities are quiet for identical snapshots, locale changes and 
   assert.deepEqual(terminalNotices(afterFailure.next, [{ ...retained }]).changed, []);
   const secondFailure = { ...retained, rerunFailure: { ...retained.rerunFailure!, failed_at: "2026-10-03T02:00:00Z" } };
   assert.deepEqual(terminalNotices(afterFailure.next, [secondFailure]).changed, [secondFailure]);
+});
+
+test("a job restored from this tab's seeds settles without a notice until the reader acts on it", () => {
+  const quiet = new Set([result.jobId]);
+  assert.deepEqual(quietRestored([result], quiet), []);
+  assert.deepEqual(quietRestored([{ ...result, jobId: "fresh-job" }], quiet), [{ ...result, jobId: "fresh-job" }]);
+  // Retry or enhance clears the mark: that run is one the reader asked for.
+  quiet.delete(result.jobId);
+  assert.deepEqual(quietRestored([result], quiet), [result]);
 });
 
 test("replaying the same notice while open or after close publishes a new live-region key", () => {

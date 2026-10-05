@@ -395,7 +395,9 @@ textarea {
   position: absolute;
   top: calc(100% + 8px);
   right: -88px;
-  z-index: 40;
+  /* Above the notice column (80): the menu the reader just opened takes the
+     clicks, and the notices behind it stay where they are. */
+  z-index: 90;
   display: grid;
   gap: 2px;
   width: max-content;
@@ -2108,11 +2110,13 @@ textarea {
 .provider-detail-copy {
   min-width: 0;
 }
-.provider-detail-copy h3 {
-  font-size: var(--text-md);
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: var(--text-1);
+/* The section heading carries `.group-title`, the same label as the connection
+   block above it: the dialog's breadcrumb is this page's title, so neither body
+   section repeats it at title size. */
+/* A credential hint is guidance, not the value the field will hold. */
+.provider-detail input::placeholder,
+.connection input::placeholder {
+  font-size: var(--text-sm);
 }
 .provider-detail-copy p {
   max-width: 56ch;
@@ -2178,6 +2182,20 @@ textarea {
   gap: 12px;
   padding: 12px 0 14px;
   border-bottom: 1px solid var(--hairline);
+}
+/* One field and its decision on one line: the key editor commits where it
+   writes. The two-field address editor keeps its actions under its fields. */
+.conn-edit.is-row {
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+.conn-edit.is-row > .field-grid {
+  flex: 1;
+}
+.conn-edit.is-row > .field-grid .field-label {
+  white-space: nowrap;
 }
 .conn-note {
   font-size: var(--text-xs);
@@ -2382,11 +2400,10 @@ textarea {
 .picker-note {
   padding: 12px 10px;
 }
-/* the manual-entry fold is ruled off from the catalogue above it */
+/* The catalogue's own last row rules it off; the manual-entry fold follows it
+   directly instead of adding a second rule and a second gap. */
 .picker > .disclosure {
   width: 100%;
-  padding-top: 12px;
-  border-top: 1px solid var(--hairline);
 }
 .picker-foot {
   display: flex;
