@@ -4,6 +4,7 @@
 
 ### 新增
 
+- `--help` 末尾打印该二进制的构建身份：版本、来源提交（工作区有改动时标为 `(local changes)`，非检出目录为 `unknown`）、目标与构建类型，以及编译器运行的 UTC 时间。`SOURCE_DATE_EPOCH` 可固定该时间，便于可复现构建；`-h` 与单行 `--version` 保持不变。
 - 原生 Rust 转换核心、独立 CLI，以及进程内调用的 Python、Node.js 和 Go 绑定；CLI 包无需安装这些语言运行时。
 - Windows x64/ARM64 ZIP 与 macOS/Linux CLI 压缩包，附命令别名、依赖许可证及离线 Markdown 指南，包括 `llms.txt`、`llms-full.txt`。可选静态 Go 包支持 macOS arm64 和 Linux x86-64；Windows Go/cgo 分发仍未验证。
 - 内嵌 `markitai serve` 工作台，支持中英文、明暗主题、响应式布局、文件/文件夹/URL 提交、上传进度和取消、结果预览、增强前后对比、历史、重试及下载。

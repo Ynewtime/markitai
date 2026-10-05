@@ -32,7 +32,12 @@
 // carry DT_RELR and run correctly here, so a cross build, an older C library
 // or a linker without the option keeps ordinary relocations.
 
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 const DELAYED: [&str; 5] = [
     "CoreFoundation",
@@ -46,6 +51,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../markitai-core/build.rs");
     println!("cargo:rerun-if-env-changed=RUSTC_LINKER");
+    build_metadata();
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu") && packs_relocations() {
             println!("cargo:rustc-link-arg=-Wl,-z,pack-relative-relocs");
@@ -183,4 +189,99 @@ fn has_relr(image: &[u8]) -> bool {
             .take_while(|&tag| tag != 0)
             .any(|tag| tag == DT_RELR)
     })
+}
+
+/// The build identity a package may show in its help: the commit it was built
+/// from, whether the worktree differed, the target and profile, and when the
+/// build script ran. `SOURCE_DATE_EPOCH` fixes the timestamp, so a reproducible
+/// build reports the identity of the build it reproduces; without a checkout the
+/// commit is `unknown`.
+///
+/// Every package including this script publishes its own copy as `rustc-env`;
+/// `markitai_core::build_info` reads this crate's, and the CLI prints that. A
+/// package whose build script is this file through `include!` is not recompiled
+/// when the file changes, so a copy taken from there could go stale.
+fn build_metadata() {
+    // The timestamp follows this variable, so a value that changes has to run
+    // this script again.
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    let checkout = git_checkout();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(checkout.as_ref()?.0.as_path())
+            .args(args)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    };
+    let commit = git(&["rev-parse", "--short", "HEAD"])
+        .filter(|hash| !hash.is_empty())
+        .unwrap_or_else(|| "unknown".into());
+    let dirty = git(&["status", "--porcelain"])
+        .map(|changes| !changes.is_empty())
+        .unwrap_or(false);
+    let epoch = env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|since| since.as_secs())
+        })
+        .unwrap_or(0);
+    println!("cargo:rustc-env=MARKITAI_BUILD_COMMIT={commit}");
+    println!("cargo:rustc-env=MARKITAI_BUILD_DIRTY={}", u8::from(dirty));
+    println!("cargo:rustc-env=MARKITAI_BUILD_EPOCH={epoch}");
+    println!(
+        "cargo:rustc-env=MARKITAI_BUILD_TARGET={}",
+        env::var("TARGET").unwrap_or_else(|_| "unknown".into())
+    );
+    println!(
+        "cargo:rustc-env=MARKITAI_BUILD_PROFILE={}",
+        env::var("PROFILE").unwrap_or_else(|_| "unknown".into())
+    );
+    // A new commit has to refresh the identity, so the branch pointers are
+    // watched. A source archive has no `.git`, and a watched path that does not
+    // exist would rerun this script, and rebuild the package, on every build.
+    if let Some((_, git)) = checkout {
+        for path in [git.join("HEAD"), git.join("refs")] {
+            if path.exists() {
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
+        }
+    }
+}
+
+/// The checkout above this package: its worktree (what `git status` needs to
+/// see uncommitted changes) and its git directory (what holds `HEAD`). A linked
+/// worktree has a `.git` file naming a git directory elsewhere.
+fn git_checkout() -> Option<(PathBuf, PathBuf)> {
+    let mut directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR").ok()?);
+    for _ in 0..4 {
+        let dot = directory.join(".git");
+        if dot.is_dir() {
+            return Some((directory.clone(), dot));
+        }
+        if dot.is_file() {
+            let text = fs::read_to_string(&dot).ok()?;
+            let named = text
+                .lines()
+                .find_map(|line| line.strip_prefix("gitdir:"))?
+                .trim();
+            let git = Path::new(named);
+            let path = if git.is_absolute() {
+                git.to_path_buf()
+            } else {
+                directory.join(git)
+            };
+            return Some((directory, path));
+        }
+        directory = directory.parent()?.to_path_buf();
+    }
+    None
 }

@@ -64,6 +64,11 @@ OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 | `--log-level` | 文件日志级别；不启用尚未配置的日志目录 |
 | `-I/--interactive` | 终端转换向导；不能与 `--json` 或子命令合用 |
 
+`--help` 末尾打印本次构建的身份：版本、提交（工作区有未提交改动时标为
+`(local changes)`，非检出目录为 `unknown`）、目标与构建类型、以及编译器运行的
+UTC 时间。`SOURCE_DATE_EPOCH` 可固定该时间，使可复现构建报告被复现构建的身份。
+`-h` 与 `--version` 保持原样（`--version` 仍是一行，版本号在最后一个词）。
+
 布尔正反开关重复时最后一个生效。preset 先应用，显式参数再覆盖。
 `-s static`/`playwright` 在本机抓取，但仍访问输入网址；`--no-remote-fetch`
 不是断网开关。离线用本地文件、native 后端并关闭 LLM；OCR 模型或 Office

@@ -2,6 +2,7 @@ mod asset_store;
 mod browser;
 mod browser_install;
 mod browser_runtime;
+pub mod build_info;
 pub mod config;
 mod fetch;
 pub mod fetch_cache;

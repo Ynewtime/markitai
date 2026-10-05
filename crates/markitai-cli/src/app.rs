@@ -14,6 +14,7 @@ macro_rules! print {
 }
 #[path = "app/auth.rs"]
 mod auth;
+mod build_info;
 #[path = "app/compat.rs"]
 mod compat;
 #[path = "app/doctor.rs"]
@@ -291,6 +292,10 @@ fn cli_command() -> clap::Command {
         i18n::Lang::En => english_command_at_width(progress::columns()),
         i18n::Lang::Zh => help_zh::localize(english_command),
     };
+    // `--help` ends with the identity of this build: which commit it came from
+    // and when it was built. `-h` keeps its short form.
+    let closing = command.get_after_help().map(|text| text.to_string());
+    let command = command.after_long_help(build_info::append(i18n::lang(), closing));
     if progress::initialize() {
         command
     } else {

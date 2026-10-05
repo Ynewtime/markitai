@@ -36,6 +36,21 @@ fn stdout(output: &Output) -> String {
     String::from_utf8(output.stdout.clone()).unwrap()
 }
 
+/// The build identity `--help` ends with carries a commit and a build time, so
+/// the snapshot pins where it sits and not what it says; the content is checked
+/// by `help_ends_with_the_build_identity`.
+fn without_build_identity(help: &str) -> String {
+    for marker in ["\nBuild:\n", "\n构建信息:\n"] {
+        if let Some(at) = help.find(marker) {
+            return format!(
+                "{}Build identity: <commit, target, time>\n",
+                &help[..at + 1]
+            );
+        }
+    }
+    help.to_owned()
+}
+
 /// Names listed under the commands heading of a help text.
 fn children(help: &str, heading: &str) -> Vec<String> {
     let mut lines = help.lines().skip_while(|line| line.trim() != heading);
@@ -82,7 +97,7 @@ fn snapshot(root: &Path, envs: &[(&str, &str)], heading: &str) -> String {
                 "=== {title} (exit {}, stderr {} bytes) ===\n{}",
                 output.status.code().unwrap(),
                 output.stderr.len(),
-                stdout(&output)
+                without_build_identity(&stdout(&output))
             ));
         }
     }
@@ -338,4 +353,69 @@ fn chinese_help_does_not_change_how_arguments_are_parsed_or_reported() {
     );
     assert!(output.status.success());
     assert_eq!(stdout(&output), "Text\n");
+}
+
+/// The build identity is what an installed binary is: the version, the commit
+/// it came from, the target and profile, and when it was built. `-h` keeps its
+/// short form, and `--version` stays one line whose last word is the version,
+/// which packaging scripts read.
+#[test]
+fn help_ends_with_the_build_identity() {
+    let root = tempfile::tempdir().unwrap();
+    for (envs, heading, labels) in [
+        (
+            vec![],
+            "Build:",
+            ["version", "commit", "target", "built"].as_slice(),
+        ),
+        (
+            vec![("MARKITAI_LANG", "zh")],
+            "构建信息:",
+            ["版本", "提交", "目标", "构建"].as_slice(),
+        ),
+    ] {
+        let long = stdout(&run(root.path(), &envs, &["--help"]));
+        let at = long
+            .find(&format!("\n{heading}\n"))
+            .unwrap_or_else(|| panic!("{heading} missing\n{long}"));
+        let block = &long[at + 1..];
+        for label in labels {
+            assert!(block.contains(label), "{label} missing\n{block}");
+        }
+        assert!(block.contains(markitai_core_version()), "{block}");
+        // The commit is a hash, or `unknown` in a source archive, and the build
+        // time is formatted in UTC.
+        assert!(
+            block.contains("unknown") || block.contains(" UTC"),
+            "no commit or time\n{block}"
+        );
+        assert!(
+            block.trim_end().ends_with("UTC") || block.trim_end().ends_with("unknown"),
+            "{block}"
+        );
+        // Every other way to ask for help stays as it was.
+        let short = stdout(&run(root.path(), &envs, &["-h"]));
+        assert!(
+            !short.contains(heading),
+            "-h carries the build identity\n{short}"
+        );
+        for args in [vec!["config", "--help"], vec!["serve", "--help"]] {
+            let sub = stdout(&run(root.path(), &envs, &args));
+            assert!(
+                !sub.contains(heading),
+                "{args:?} carries the build identity"
+            );
+        }
+    }
+    let version = stdout(&run(root.path(), &[], &["--version"]));
+    assert_eq!(version.lines().count(), 1, "{version}");
+    assert_eq!(
+        version.split_whitespace().last(),
+        Some(markitai_core_version()),
+        "{version}"
+    );
+}
+
+fn markitai_core_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }

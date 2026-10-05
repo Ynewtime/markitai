@@ -17,7 +17,7 @@ Arguments:
           Document, URL, .urls list, directory or atomic .numbers package
 
 Options:
-  -h, --help     Print help
+  -h, --help     Print help (see more with '--help')
   -V, --version  Print version
 
 Output:
@@ -157,18 +157,25 @@ Arguments:
           Document, URL, .urls list, directory or atomic .numbers package
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Output:
   -o, --output <PATH>
           Output directory, or exact .md path for a single input. Omit for Markdown on stdout
+
       --json
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
+
       --dry-run
           Preview discovery without conversion or output publication
+
       --page-markers
           Keep PDF page and slide-number comments in final Markdown (off by default)
+
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived
@@ -176,13 +183,18 @@ Output:
 Configuration:
   -c, --config <PATH>
           Configuration path; must exist except for config set/edit, which can create it
+
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
   -p, --preset <NAME>
           Use minimal, standard, rich or a configured preset (case-insensitive)
+
       --profile <NAME>
-          Shape assets/frontmatter for rag, obsidian or okf; independent of the preset [possible
-          values: rag, obsidian, okf]
+          Shape assets/frontmatter for rag, obsidian or okf; independent of the preset
+          
+          [possible values: rag, obsidian, okf]
+
   -I, --interactive
           Choose a conversion in a terminal; edits apply to this session only
 
@@ -190,24 +202,32 @@ LLM, OCR and screenshots:
       --llm
           Enable model processing (--no-llm disables). The last of a flag pair wins; without either,
           the configuration decides
+
       --alt
           Generate image alt text when LLM processing is enabled (--no-alt disables)
+
       --desc
           Write image descriptions when LLM processing is enabled (--no-desc disables)
+
       --ocr
           Read scanned content with local OCR or a vision model (--no-ocr disables)
+
       --screenshot
           Capture supported document pages or browser pages; optional backends may be required
           (--no-screenshot disables)
+
       --screenshot-only
           Use screenshots as content (implies --screenshot). With --llm, read pixels; without --llm,
           ordinary web pages save images without Markdown. PDF media retains Markdown. URL --pure
           takes precedence
+
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+
       --keep-base
           Keep the base Markdown alongside enhanced output
+
       --llm-concurrency <N>
           Maximum in-flight model requests shared by this conversion run
 
@@ -215,11 +235,16 @@ URL fetching and backends:
   -s, --strategy <NAME>
           URL strategy: auto (static, then the local browser; remote services only after you opt in
           with fetch.remote_consent), static or playwright run locally; defuddle, jina and
-          cloudflare (your account) send the URL to that remote service [possible values: auto,
-          static, playwright, defuddle, jina, cloudflare]
+          cloudflare (your account) send the URL to that remote service
+          
+          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+
   -b, --backend <NAME>
           File backend: native, or cloudflare to convert supported files with Workers AI in your
-          Cloudflare account (the file is uploaded) [possible values: native, cloudflare]
+          Cloudflare account (the file is uploaded)
+          
+          [possible values: native, cloudflare]
+
       --no-remote-fetch
           Forbid remote extraction services; does not disable explicitly configured model requests
 
@@ -227,28 +252,37 @@ Batch processing:
       --resume
           Resume a directory or .urls batch with matching paths/options; completed entries stay
           completed
+
   -j, --batch-concurrency <N>
           Maximum concurrent file conversions; independent of URL and model request limits
+
       --url-concurrency <N>
           Maximum concurrent URL conversions, separately from file processing
+
   -g, --glob <PATTERN>
           Include/exclude relative directory paths; repeatable, ! prefix excludes. Quote patterns in
           the shell
+
       --max-depth <N>
           Directory scan depth; 0 scans only the input directory
+
       --llm-batch
           Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
           in -o
+
       --llm-batch-timeout <SECONDS>
           Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
+
       --llm-batch-collect <BATCH_ID>
           Collect a saved provider batch into its original -o directory; no input is required
 
 Cache and images:
       --no-cache
           Bypass cache reads while still writing successful fresh results (--cache restores reads)
+
       --no-cache-for <PATTERNS>
           Comma-separated glob patterns that bypass cache reads for matching inputs
+
       --no-compress
           Disable image compression (--compress enables it)
 
@@ -256,10 +290,13 @@ Messages and logging:
   -v, --verbose
           Show details such as the report path. Single inputs are otherwise quiet by default: only
           the written path, warnings and errors; stdout Markdown stays clean
+
   -q, --quiet
           Print errors only: no written path, warnings, progress or batch summary
+
       --log-level <LEVEL>
           Conversion file-log level; needs log.dir. Console output still follows --verbose/--quiet
+          
           [possible values: DEBUG, INFO, WARNING, ERROR, CRITICAL]
 
 Presets (-p):
@@ -278,6 +315,8 @@ Examples:
   markitai report.pdf -p standard -o out/  Enhance with the configured model
   markitai init                            Create a configuration file
   markitai doctor                          Check models and optional backends
+
+Build identity: <commit, target, time>
 === markitai config -h (exit 0, stderr 0 bytes) ===
 Inspect or edit configuration
 
@@ -1310,7 +1349,7 @@ Arguments:
           Document, URL, .urls list, directory or atomic .numbers package
 
 Options:
-  -h, --help     Print help
+  -h, --help     Print help (see more with '--help')
   -V, --version  Print version
 
 Output:
@@ -1452,7 +1491,7 @@ Arguments:
           Document, URL, .urls list, directory or atomic .numbers package
 
 Options:
-  -h, --help     Print help
+  -h, --help     Print help (see more with '--help')
   -V, --version  Print version
 
 Output:
