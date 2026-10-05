@@ -1,11 +1,11 @@
 //! The build identity `--help` ends with: the version, the commit this binary
 //! was built from (marked when the worktree differed from it), the target and
-//! profile, and when the compiler ran.
+//! profile, and when the build ran (local time with its UTC offset).
 //!
 //! Only `--help` carries this: `-h` stays as it was, and scripts read the
 //! version from the last word of the `--version` line.
 use crate::app::i18n::Lang;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use markitai_core::build_info;
 
 /// The commit as one reads it: a hash, with a marker when the build included
@@ -20,11 +20,15 @@ fn commit(lang: Lang) -> String {
     }
 }
 
-/// Compiler start time in UTC, or `unknown` when no clock and no
-/// `SOURCE_DATE_EPOCH` were available.
+/// When the build ran, in the reader's own time zone with its UTC offset so the
+/// value stays unambiguous when it is pasted somewhere else. `unknown` when no
+/// clock and no `SOURCE_DATE_EPOCH` were available.
 fn built() -> String {
     match DateTime::<Utc>::from_timestamp(build_info::epoch(), 0) {
-        Some(at) => at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        Some(at) => at
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S %:z")
+            .to_string(),
         None => "unknown".to_owned(),
     }
 }

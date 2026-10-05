@@ -383,15 +383,23 @@ fn help_ends_with_the_build_identity() {
             assert!(block.contains(label), "{label} missing\n{block}");
         }
         assert!(block.contains(markitai_core_version()), "{block}");
-        // The commit is a hash, or `unknown` in a source archive, and the build
-        // time is formatted in UTC.
+        // The commit is a hash, or `unknown` in a source archive; the build time
+        // is the reader's local time, followed by its offset so the value stays
+        // unambiguous wherever it is pasted (`+08:00`; a machine in UTC reads
+        // `+00:00`).
+        let last = block.trim_end().lines().next_back().unwrap_or_default();
+        let offset = last
+            .split_whitespace()
+            .next_back()
+            .unwrap_or_default()
+            .as_bytes();
+        assert_eq!(offset.len(), 6, "{last}");
         assert!(
-            block.contains("unknown") || block.contains(" UTC"),
-            "no commit or time\n{block}"
-        );
-        assert!(
-            block.trim_end().ends_with("UTC") || block.trim_end().ends_with("unknown"),
-            "{block}"
+            matches!(offset[0], b'+' | b'-')
+                && offset[3] == b':'
+                && offset[1..3].iter().all(u8::is_ascii_digit)
+                && offset[4..6].iter().all(u8::is_ascii_digit),
+            "{last}"
         );
         // Every other way to ask for help stays as it was.
         let short = stdout(&run(root.path(), &envs, &["-h"]));
