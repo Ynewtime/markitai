@@ -4869,12 +4869,23 @@ async def test_conditional_fetch_forwards_accept_header():
         url="https://example.com",
     )
 
+    client = MagicMock()
+    client.name = "httpx"
+    client.get = AsyncMock(return_value=mock_resp)
     with patch(
-        "markitai.fetch_http.HttpxClient.get",
-        new_callable=AsyncMock,
-        return_value=mock_resp,
-    ) as _mock_get:
-        await fetch_with_static_conditional("https://example.com")
+        "markitai.fetch_strategies.static.get_static_http_client",
+        return_value=client,
+    ):
+        await fetch_with_static_conditional(
+            "https://example.com",
+            cached_etag='"v1"',
+            cached_last_modified="Wed, 01 Jan 2025 00:00:00 GMT",
+        )
+
+    headers = client.get.await_args.kwargs["headers"]
+    assert headers["Accept"] == "text/markdown, text/html;q=0.9, */*;q=0.5"
+    assert headers["If-None-Match"] == '"v1"'
+    assert headers["If-Modified-Since"] == "Wed, 01 Jan 2025 00:00:00 GMT"
 
 
 def test_fetch_metadata_contains_policy_reason_without_user_noise():

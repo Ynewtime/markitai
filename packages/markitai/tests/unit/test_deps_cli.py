@@ -681,6 +681,19 @@ class TestOutputFormatting:
                 "markitai.utils.office.find_libreoffice",
                 return_value="/usr/bin/soffice",
             ),
+            # The legacy and serve extras may be absent from the test venv
+            patch(
+                "markitai.cli.commands.doctor._check_anydoc",
+                return_value={
+                    "name": "anydoc",
+                    "description": "Legacy Office conversion (.doc/.ppt)",
+                    "status": "ok",
+                    "optional": True,
+                    "message": "v1.0.0",
+                    "install_hint": "",
+                },
+            ),
+            patch("markitai.serve.is_serve_available", return_value=True),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = True

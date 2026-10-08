@@ -5,12 +5,14 @@ from __future__ import annotations
 import sys
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from markitai.cli import app
 
 
 def test_mcp_subcommand_runs_the_stdio_server() -> None:
+    pytest.importorskip("mcp")
     with patch("markitai.mcp.server.main") as main:
         result = CliRunner().invoke(app, ["mcp"])
     assert result.exit_code == 0, result.output

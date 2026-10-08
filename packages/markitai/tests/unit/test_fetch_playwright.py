@@ -36,12 +36,13 @@ class TestIsPlaywrightAvailable:
 
     def test_returns_false_when_not_installed(self):
         """Returns False when playwright is not installed."""
-        with patch("markitai.fetch_playwright.find_spec", return_value=None):
-            from markitai import fetch_playwright
+        from markitai.fetch_playwright import is_playwright_available
 
-            # Call the function directly with the patched find_spec
-            result = fetch_playwright.find_spec("playwright") is not None
-            assert result is False
+        with patch(
+            "markitai.fetch_playwright.find_spec", return_value=None
+        ) as find_spec:
+            assert is_playwright_available() is False
+        find_spec.assert_called_once_with("playwright")
 
 
 class TestIsPlaywrightBrowserInstalled:
@@ -2512,6 +2513,10 @@ def test_browser_lookup_honours_playwright_browsers_path(
     (browsers / "chromium-9999").mkdir(parents=True)
     (browsers / "chromium-9999" / "INSTALLATION_COMPLETE").write_text("")
     monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    # The lookup is under test, not whether the browser extra is installed
+    monkeypatch.setattr(
+        "markitai.fetch_playwright.is_playwright_available", lambda: True
+    )
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(browsers))
     assert is_playwright_browser_installed(use_cache=False) is True
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nowhere"))
