@@ -2596,11 +2596,9 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 }
                 let path =
                     selected_config(cli).unwrap_or_else(|| config::home().join("config.json"));
-                let mut raw = if path.is_file() {
-                    serde_json::from_slice::<Value>(&std::fs::read(&path).map_err(runtime)?)
-                        .map_err(runtime)?
-                } else {
-                    json!({})
+                let mut raw = match config::read_file(&path).map_err(runtime)? {
+                    Some(bytes) => serde_json::from_slice::<Value>(&bytes).map_err(runtime)?,
+                    None => json!({}),
                 };
                 if !raw.is_object() {
                     return Err((1, "Configuration must be a JSON object".into()));
@@ -2898,30 +2896,11 @@ fn print_table(prefix: &str, value: &Value) {
     }
 }
 fn write_config(path: &Path, value: &Value) -> CliResult<()> {
-    // Configuration paths are user-selected; preserve an existing symlink and
-    // atomically update its target, as the Python configuration manager did.
-    let resolved;
-    let path = if path.is_symlink() {
-        resolved = std::fs::canonicalize(path).map_err(runtime)?;
-        &resolved
-    } else {
-        path
-    };
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent).map_err(runtime)?;
-    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(runtime)?;
-    serde_json::to_writer_pretty(&mut file, value).map_err(runtime)?;
-    writeln!(file).map_err(runtime)?;
-    file.as_file().sync_all().map_err(runtime)?;
-    file.persist(path).map_err(runtime)?;
-    #[cfg(unix)]
-    std::fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(runtime)?;
-    Ok(())
+    // Configuration paths are user-selected; an existing symlink is preserved
+    // and its target atomically updated, as the Python configuration manager did.
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(runtime)?;
+    bytes.push(b'\n');
+    config::write_file(path, &bytes).map_err(runtime)
 }
 
 #[cfg(test)]

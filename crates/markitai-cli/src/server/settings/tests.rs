@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 fn setup(value: Value) -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.json");
@@ -321,23 +322,28 @@ fn session_overrides_and_invalid_storage_cannot_replace_saved_state() {
 }
 #[cfg(unix)]
 #[test]
-fn symlink_and_fifo_config_fail_before_read_or_write() {
+fn symlinked_config_saves_through_the_link_and_fifo_config_fails() {
     use std::os::unix::fs::symlink;
     let (dir, store) = setup(fixture());
+    // A dotfile-managed configuration: the link stays, its target changes.
     let real = dir.path().join("real.json");
     fs::rename(&store.source.path, &real).unwrap();
     symlink(&real, &store.source.path).unwrap();
-    assert!(store.config_path().is_err());
+    assert_eq!(store.config_path().unwrap(), store.source.path);
+    ok(store.mutate(Mutation::Delete {
+        key: "same".into(),
+        revision: None,
+        legacy: true,
+    }));
     assert!(
-        store
-            .mutate(Mutation::Delete {
-                key: "same".into(),
-                revision: None,
-                legacy: true
-            })
-            .is_err()
+        fs::symlink_metadata(&store.source.path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
     );
-    assert_eq!(fs::read(&real).unwrap(), fixture().to_string().as_bytes());
+    let raw: Value = serde_json::from_slice(&fs::read(&real).unwrap()).unwrap();
+    assert!(raw["llm"]["model_list"].as_array().unwrap().is_empty());
+    assert_eq!(raw["unknown"], fixture()["unknown"]);
     fs::remove_file(&store.source.path).unwrap();
     let path = std::ffi::CString::new(store.source.path.as_os_str().as_encoded_bytes()).unwrap();
     assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);

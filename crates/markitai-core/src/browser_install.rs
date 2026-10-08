@@ -349,13 +349,12 @@ fn publish(
         source: chosen.url,
     };
     let destination = root.join(&receipt.directory);
-    fs::rename(stage.path(), &destination)
+    crate::platform::rename(stage.path(), &destination)
         .map_err(|_| failure("cannot publish browser directory"))?;
     let mut current = tempfile::NamedTempFile::new_in(root)?;
     serde_json::to_writer_pretty(current.as_file_mut(), &receipt)?;
     current.as_file().sync_all()?;
-    current
-        .persist(root.join("current.json"))
+    crate::platform::persist(current, &root.join("current.json"))
         .map_err(|_| failure("browser downloaded but current installation could not be updated"))?;
     #[cfg(unix)]
     File::open(root)?.sync_all()?;

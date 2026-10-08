@@ -3,11 +3,9 @@ use super::i18n::{Lang, lang};
 use super::{CliResult, runtime, write_config};
 use markitai_core::config;
 use serde_json::{Value, json};
-use std::fs;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
-const CONFIG_LIMIT: u64 = 8 * 1024 * 1024;
 const PAGE: usize = 15;
 
 struct Setting {
@@ -60,46 +58,16 @@ pub(super) fn prompt(
 }
 
 fn read_bytes(path: &Path) -> CliResult<Option<Vec<u8>>> {
-    match fs::metadata(path) {
-        Ok(metadata) if !metadata.is_file() => {
-            return Err(runtime(text!(
-                "Configuration must be a regular file",
-                "配置必须是普通文件"
-            )));
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(runtime(error)),
-        _ => {}
-    }
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = match options.open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(runtime(error)),
-    };
-    if !file.metadata().map_err(runtime)?.is_file() {
-        return Err(runtime(text!(
+    config::read_file(path).map_err(|error| match error.kind() {
+        io::ErrorKind::InvalidInput => runtime(text!(
             "Configuration must be a regular file",
             "配置必须是普通文件"
-        )));
-    }
-    let mut bytes = Vec::new();
-    file.take(CONFIG_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(runtime)?;
-    if bytes.len() as u64 > CONFIG_LIMIT {
-        return Err(runtime(text!(
-            "Configuration exceeds 8 MiB",
-            "配置文件超过 8 MiB"
-        )));
-    }
-    Ok(Some(bytes))
+        )),
+        io::ErrorKind::FileTooLarge => {
+            runtime(text!("Configuration exceeds 8 MiB", "配置文件超过 8 MiB"))
+        }
+        _ => runtime(error),
+    })
 }
 fn parse_config(bytes: Option<&[u8]>) -> CliResult<Value> {
     let raw: Value = bytes
@@ -826,6 +794,7 @@ fn choice_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     #[test]
     fn navigation_validates_before_saving_and_preserves_unknown_and_secret_fields() {
         let dir = tempfile::tempdir().unwrap();

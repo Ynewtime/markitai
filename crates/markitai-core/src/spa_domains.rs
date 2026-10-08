@@ -100,7 +100,7 @@ fn open(cfg: &Value, create: bool, write: bool) -> Result<Option<Connection>> {
         builder.create(parent).map_err(|_| unavailable())?;
         crate::output::check_path(&path, false).map_err(|_| unavailable())?;
         let temporary = tempfile::NamedTempFile::new_in(parent).map_err(|_| unavailable())?;
-        match temporary.persist_noclobber(&path) {
+        match crate::platform::persist_noclobber(temporary, &path) {
             Ok(_) => {}
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(_) => return Err(unavailable()),

@@ -14,6 +14,8 @@ Markitai 的配置是一个 UTF-8 JSON 对象，只需写出与默认值不同�
 4. 用户配置 `MARKITAI_HOME/config.json`，未设置 `MARKITAI_HOME` 时为 `~/.markitai/config.json`
 5. 都不存在时使用内建默认值
 
+配置文件必须是不超过 8 MiB 的普通文件。符号链接（例如由 dotfiles 管理的配置）会被跟随；`config set/edit`、`init` 和工作台保存时保留链接，原子替换其指向的文件。
+
 `--config-json '{...}'` 在选中的文件之上深度合并，仅对本次运行有效；`-p/--preset` 再覆盖功能开关，命令行显式参数最后生效。根级 `-c` 与 `--config-json` 对子命令同样有效。`markitai config path` 显示当前选中的文件。
 
 ### 常用命令

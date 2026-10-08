@@ -108,6 +108,119 @@ pub fn selected_path(explicit: Option<&Path>) -> Option<PathBuf> {
     choose_path(explicit, env_path, &cwd, &home()).map(|path| expand_home(&path))
 }
 
+/// Largest configuration file that is read or written.
+pub const FILE_LIMIT: usize = 8 * 1024 * 1024;
+
+/// Read the configuration file at `path`; `None` when nothing is there. A
+/// final symbolic link (a dotfile-managed configuration) is followed. The file
+/// must be regular (`InvalidInput` otherwise) and at most [`FILE_LIMIT`] bytes
+/// (`FileTooLarge`); opening never blocks on a FIFO.
+pub fn read_file(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::{ErrorKind, Read};
+    let regular = |metadata: std::fs::Metadata| {
+        if metadata.is_file() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "configuration must be a regular file",
+            ))
+        }
+    };
+    match std::fs::metadata(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        metadata => regular(metadata?)?,
+    }
+    let file = match crate::platform::open_read(path, true) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        file => file?,
+    };
+    // The name may have changed since the check above.
+    regular(file.metadata()?)?;
+    let mut bytes = Vec::new();
+    file.take(FILE_LIMIT as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > FILE_LIMIT {
+        return Err(std::io::Error::new(
+            ErrorKind::FileTooLarge,
+            "configuration exceeds 8 MiB",
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+/// A replacement configuration, staged beside the file it replaces.
+pub struct StagedFile {
+    temporary: tempfile::NamedTempFile,
+    destination: PathBuf,
+}
+
+/// Stage `bytes` to replace the configuration at `path`. A final symbolic link
+/// is kept and the file it names is replaced, as [`read_file`] reads through
+/// it. An existing destination must be a regular file and `bytes` at most
+/// [`FILE_LIMIT`]. A missing parent directory is created private; the staged
+/// file is owner-only.
+pub fn stage_file(path: &Path, bytes: &[u8]) -> std::io::Result<StagedFile> {
+    use std::io::{ErrorKind, Write};
+    if bytes.len() > FILE_LIMIT {
+        return Err(std::io::Error::new(
+            ErrorKind::FileTooLarge,
+            "configuration exceeds 8 MiB",
+        ));
+    }
+    let destination = match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_symlink() => crate::platform::canonicalize(path)?,
+        Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
+        _ => path.to_owned(),
+    };
+    match std::fs::symlink_metadata(&destination) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "configuration must be a regular file",
+            ));
+        }
+        Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    crate::platform::private_directory()
+        .recursive(true)
+        .create(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(bytes)?;
+    temporary.as_file().sync_all()?;
+    Ok(StagedFile {
+        temporary,
+        destination,
+    })
+}
+
+impl StagedFile {
+    /// The directory whose entry [`StagedFile::publish`] replaces.
+    pub fn directory(&self) -> &Path {
+        self.temporary.path().parent().unwrap_or(Path::new("."))
+    }
+
+    /// Atomically replace the destination. Durability needs a later
+    /// [`crate::platform::sync_directory`] of [`StagedFile::directory`].
+    pub fn publish(self) -> std::io::Result<()> {
+        crate::platform::persist(self.temporary, &self.destination)
+            .map(drop)
+            .map_err(|error| error.error)
+    }
+}
+
+/// Durably replace the configuration at `path` with `bytes` ([`stage_file`]).
+pub fn write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let staged = stage_file(path, bytes)?;
+    let directory = staged.directory().to_owned();
+    staged.publish()?;
+    crate::platform::sync_directory(&directory)
+}
+
 pub fn load(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
     normalize(&raw(explicit, overrides)?)
 }
@@ -120,8 +233,8 @@ pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
     let selected = selected_path(explicit);
     let mut value = json!({});
     if let Some(path) = selected {
-        match std::fs::read(&path) {
-            Ok(bytes) => {
+        match read_file(&path) {
+            Ok(Some(bytes)) => {
                 value = serde_json::from_slice(&bytes).map_err(|error| {
                     Error::Config(format!("Invalid JSON in {}: {error}", path.display()))
                 })?;
@@ -129,7 +242,7 @@ pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
                     return Err(invalid("", "must be a JSON object"));
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(None) => {
                 // The CLI separately rejects a missing explicit -c. The library
                 // loader historically warns and falls back without selecting another file.
                 eprintln!(
@@ -964,6 +1077,64 @@ fn assign(target: &mut Value, parts: &[String], value: Value, path: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_files_are_bounded_regular_files_written_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new/config.json");
+        assert_eq!(read_file(&path).unwrap(), None);
+        write_file(&path, b"{}\n").unwrap();
+        assert_eq!(read_file(&path).unwrap().as_deref(), Some(&b"{}\n"[..]));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&path), 0o600);
+            assert_eq!(mode(path.parent().unwrap()), 0o700);
+        }
+        let large = vec![b' '; FILE_LIMIT + 1];
+        let error = write_file(&path, &large).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::FileTooLarge);
+        std::fs::write(&path, &large).unwrap();
+        let error = read_file(&path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::FileTooLarge);
+        let error = read_file(dir.path()).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        let error = write_file(dir.path().join("new").as_path(), b"{}").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_config_symlink_is_kept_and_a_fifo_never_blocks() {
+        use std::os::unix::fs::FileTypeExt;
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles/markitai.json");
+        std::fs::create_dir(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, b"{\"old\":true}").unwrap();
+        let link = dir.path().join("config.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(
+            read_file(&link).unwrap().as_deref(),
+            Some(&b"{\"old\":true}"[..])
+        );
+        write_file(&link, b"{}").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"{}");
+        let fifo = dir.path().join("fifo.json");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let error = read_file(&fifo).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        let error = write_file(&fifo, b"{}").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            std::fs::symlink_metadata(&fifo)
+                .unwrap()
+                .file_type()
+                .is_fifo()
+        );
+    }
 
     #[test]
     fn inactive_key_warnings_only_inspect_explicit_raw_fields() {

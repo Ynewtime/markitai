@@ -4,12 +4,9 @@ use super::{
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    fs,
-    io::{Read, Write},
     path::Path,
     sync::{Arc, Mutex},
 };
-const LIMIT: usize = 8 * 1024 * 1024;
 
 pub(super) struct Data {
     pub cfg: Arc<Value>,
@@ -475,37 +472,15 @@ fn parse(bytes: Option<&[u8]>) -> ApiResult<Value> {
     Ok(value)
 }
 fn read(path: &Path) -> ApiResult<Option<Vec<u8>>> {
-    match fs::symlink_metadata(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Ok(m) if m.is_file() && !m.file_type().is_symlink() && m.len() <= LIMIT as u64 => {}
-        _ => return Err(failure()),
-    }
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path).map_err(|_| failure())?;
-    if !file.metadata().map_err(|_| failure())?.is_file() {
-        return Err(failure());
-    }
-    let mut bytes = Vec::new();
-    file.take(LIMIT as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| failure())?;
-    if bytes.len() > LIMIT {
-        return Err(failure());
-    }
-    Ok(Some(bytes))
+    markitai_core::config::read_file(path).map_err(|_| failure())
 }
 fn save(path: &Path, value: &Value, original: Option<&[u8]>) -> ApiResult<bool> {
-    save_with_sync(path, value, original, |_parent| {
-        #[cfg(unix)]
-        fs::File::open(_parent)?.sync_all()?;
-        Ok(())
-    })
+    save_with_sync(
+        path,
+        value,
+        original,
+        markitai_core::platform::sync_directory,
+    )
 }
 fn save_with_sync(
     path: &Path,
@@ -515,34 +490,13 @@ fn save_with_sync(
 ) -> ApiResult<bool> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|_| failure())?;
     bytes.push(b'\n');
-    if bytes.len() > LIMIT {
-        return Err(ApiError::new(
-            422,
-            "config_too_large",
-            "configuration exceeds 8 MiB limit",
-        ));
-    }
-    markitai_core::output::check_path(path, false).map_err(|_| failure())?;
-    let parent = path.parent().ok_or_else(failure)?;
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(parent).map_err(|_| failure())?;
-    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|_| failure())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.as_file()
-            .set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|_| failure())?;
-    }
-    file.write_all(&bytes)
-        .and_then(|()| file.as_file().sync_all())
-        .map_err(|_| failure())?;
+    let staged = markitai_core::config::stage_file(path, &bytes).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::FileTooLarge {
+            ApiError::new(422, "config_too_large", "configuration exceeds 8 MiB limit")
+        } else {
+            failure()
+        }
+    })?;
     if read(path)?.as_deref() != original {
         return Err(ApiError::new(
             409,
@@ -550,9 +504,10 @@ fn save_with_sync(
             "Configuration changed during save; reload settings",
         ));
     }
-    file.persist(path).map_err(|_| failure())?;
+    let directory = staged.directory().to_owned();
+    staged.publish().map_err(|_| failure())?;
     // The rename has committed. A later sync failure cannot truthfully roll back memory.
-    Ok(sync(parent).is_ok())
+    Ok(sync(&directory).is_ok())
 }
 
 #[cfg(test)]

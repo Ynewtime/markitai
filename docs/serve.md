@@ -10,8 +10,9 @@ See [browser workbench](web-ui.md), [settings](service-settings.md) and
 
 The configuration destination is fixed at startup: explicit `--config`, then
 `MARKITAI_CONFIG`, project `markitai.json`, user `config.json`, or a new file
-under the isolated Markitai home. Service reads reject nonregular files,
-symlinks and files larger than 8 MiB. Settings saves change the configuration
+under the isolated Markitai home. Service reads follow a symlinked
+configuration to its file and reject nonregular files and files larger than
+8 MiB, as the CLI does. Settings saves change the configuration
 snapshot for newly admitted jobs and retries; an active job keeps its original
 snapshot. CLI model/provider session overrides remain effective and make
 settings writes unavailable until restart without those overrides.
