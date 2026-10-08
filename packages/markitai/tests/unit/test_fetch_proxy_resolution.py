@@ -907,3 +907,68 @@ class TestStaticClientsPerProxy:
 
         await client.close()
         assert set(closed) == {proxied, direct}
+
+
+# Real `scutil --proxy` layout: keys are printed alphabetically, so the port
+# comes before the host.
+SCUTIL_PROXY_OUTPUT = """<dictionary> {
+  ExceptionsList : <array> {
+    0 : *.local
+    1 : 169.254/16
+    2 : corp.example
+  }
+  FTPPassive : 1
+  HTTPEnable : 1
+  HTTPPort : 7890
+  HTTPProxy : 127.0.0.1
+  HTTPSEnable : 1
+  HTTPSPort : 7891
+  HTTPSProxy : proxy.corp.example
+  ProxyAutoConfigEnable : 0
+  SOCKSEnable : 0
+}
+"""
+
+
+class TestMacSystemProxy:
+    """Regression: the scutil parser stopped at HTTPSPort, before it had seen
+    HTTPSProxy, so macOS proxy auto-detection always found nothing."""
+
+    def test_parses_https_proxy_and_exceptions(self) -> None:
+        from markitai.fetch_session import _parse_scutil_proxy
+
+        proxy, bypass = _parse_scutil_proxy(SCUTIL_PROXY_OUTPUT)
+
+        assert proxy == "http://proxy.corp.example:7891"
+        assert bypass == "*.local,169.254/16,corp.example"
+
+    def test_falls_back_to_http_proxy(self) -> None:
+        from markitai.fetch_session import _parse_scutil_proxy
+
+        output = SCUTIL_PROXY_OUTPUT.replace("HTTPSEnable : 1", "HTTPSEnable : 0")
+
+        assert _parse_scutil_proxy(output)[0] == "http://127.0.0.1:7890"
+
+    def test_no_enabled_proxy(self) -> None:
+        from markitai.fetch_session import _parse_scutil_proxy
+
+        output = SCUTIL_PROXY_OUTPUT.replace("Enable : 1", "Enable : 0")
+
+        assert _parse_scutil_proxy(output) == ("", "*.local,169.254/16,corp.example")
+
+    def test_get_system_proxy_on_darwin(self) -> None:
+        import subprocess
+
+        from markitai.fetch_session import _get_system_proxy
+
+        completed = subprocess.CompletedProcess(
+            ["scutil", "--proxy"], 0, stdout=SCUTIL_PROXY_OUTPUT, stderr=""
+        )
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("subprocess.run", return_value=completed),
+        ):
+            proxy, bypass = _get_system_proxy()
+
+        assert proxy == "http://proxy.corp.example:7891"
+        assert "corp.example" in bypass

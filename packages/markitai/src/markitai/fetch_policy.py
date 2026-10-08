@@ -445,7 +445,8 @@ def match_local_only(domain: str, patterns: list[str]) -> bool:
     """Check if domain matches any local-only exemption pattern.
 
     Supports NO_PROXY syntax:
-    - Domain exact: ``internal.corp.com``
+    - Domain: ``internal.corp.com`` (the domain and its subdomains, as
+      curl, urllib and Go read NO_PROXY)
     - Suffix: ``.internal.com`` (matches subdomains only)
     - Wildcard: ``*.internal.com`` (same as ``.internal.com``)
     - IP exact: ``10.0.1.5``
@@ -490,8 +491,8 @@ def match_local_only(domain: str, patterns: list[str]) -> bool:
                 pass
             continue
 
-        # Exact match (domain or IP)
-        if host == p:
+        # Exact match (domain or IP), or a subdomain of a bare domain
+        if host == p or host.endswith("." + p):
             return True
 
     return False
