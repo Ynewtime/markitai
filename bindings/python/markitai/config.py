@@ -23,7 +23,18 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from typing import Any
 
-_SCHEMA = json.loads(_native.config_json("{}", schema=True))
+
+def _native_config(overrides: str, **options: Any) -> Any:
+    """The native configuration call's result; a failure raises as a conversion's does."""
+    envelope = json.loads(_native.config_json(overrides, **options))
+    if not envelope["ok"]:
+        from .api import _error
+
+        raise _error(envelope["error"])
+    return envelope["result"]
+
+
+_SCHEMA = _native_config("{}", schema=True)
 _MODELS: dict[str, type[_Section]] = {}
 _MISSING = object()
 
@@ -95,7 +106,7 @@ def _default_for(model: str, key: str) -> Any:
     default = node["default"]
     if "$ref" in node:
         name = node["$ref"].rsplit("/", 1)[-1]
-        return json.loads(_native.config_json(json.dumps(default), model=name))
+        return _native_config(json.dumps(default), model=name)
     return default
 
 
@@ -188,7 +199,7 @@ def _check_options(value: Any, node: dict[str, Any], strict: bool, forbid_extra:
 class _Section:
     def __init__(self, **values: Any) -> None:
         supplied = json.loads(json.dumps(values, default=_json_value))
-        normalized = json.loads(_native.config_json(json.dumps(supplied), model=type(self).__name__))
+        normalized = _native_config(json.dumps(supplied), model=type(self).__name__)
         self._initialize(normalized, values)
 
     def _initialize(self, data: dict[str, Any], supplied: Any = _MISSING) -> None:

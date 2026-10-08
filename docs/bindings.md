@@ -248,7 +248,8 @@ dictionaries and external objects exposing
 `model_dump(mode="json")` also work. The wrapper never mutates supplied config.
 Native `fetch_error` maps to `FetchError`; input/configuration errors map to
 `ValueError`; conversion/unsupported errors and a native panic
-(`internal_error`) map to `ConversionError` with a `code` attribute. Specific filesystem and missing-model codes map to the
+(`internal_error`), in conversion or in the configuration models' native
+normalization, map to `ConversionError` with a `code` attribute. Specific filesystem and missing-model codes map to the
 existing named exception types when supplied by the core.
 
 The wheel contains the extension and small typed Python wrapper; see

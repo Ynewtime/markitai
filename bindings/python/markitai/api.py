@@ -90,36 +90,40 @@ def enable_worker_processes() -> None:
     """Compatibility no-op; Rust manages conversion concurrency internally."""
 
 
+def _error(error: Mapping[str, Any]) -> Exception:
+    """The exception for a native failure envelope's `error`, by its code."""
+    code, message = error["code"], error["message"]
+    raw_usage = error.get("usage")
+    usage = None
+    if raw_usage is not None:
+        _, usage_type = _load_records()
+        usage = usage_type(**raw_usage)
+    if code == "fetch_error":
+        exception = FetchError(message)
+    elif code == "no_model_configured":
+        exception = NoModelConfiguredError(message)
+    elif code in {"invalid_input", "invalid_json", "config_error"}:
+        exception = ValueError(message)
+    elif code == "not_found":
+        exception = FileNotFoundError(message)
+    elif code == "is_directory":
+        exception = IsADirectoryError(message)
+    elif code == "io_error":
+        exception = OSError(message)
+    else:
+        exception = ConversionError(message, code=code)
+    # Preserve built-in and public exception categories. None means the
+    # producer supplied no accounting, not that the failed call was free.
+    exception.usage = usage
+    return exception
+
+
 def _result(response: str) -> ConversionOutput:
     import json
 
     envelope = json.loads(response)
     if not envelope["ok"]:
-        error = envelope["error"]
-        code, message = error["code"], error["message"]
-        raw_usage = error.get("usage")
-        usage = None
-        if raw_usage is not None:
-            _, usage_type = _load_records()
-            usage = usage_type(**raw_usage)
-        if code == "fetch_error":
-            exception = FetchError(message)
-        elif code == "no_model_configured":
-            exception = NoModelConfiguredError(message)
-        elif code in {"invalid_input", "invalid_json", "config_error"}:
-            exception = ValueError(message)
-        elif code == "not_found":
-            exception = FileNotFoundError(message)
-        elif code == "is_directory":
-            exception = IsADirectoryError(message)
-        elif code == "io_error":
-            exception = OSError(message)
-        else:
-            exception = ConversionError(message, code=code)
-        # Preserve built-in and public exception categories. None means the
-        # producer supplied no accounting, not that the failed call was free.
-        exception.usage = usage
-        raise exception
+        raise _error(envelope["error"])
     from pathlib import Path
 
     output_type, usage_type = _load_records()

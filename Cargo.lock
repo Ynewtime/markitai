@@ -2147,7 +2147,6 @@ dependencies = [
  "markitai-core",
  "pyo3",
  "pyo3-build-config",
- "serde_json",
 ]
 
 [[package]]

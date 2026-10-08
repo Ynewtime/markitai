@@ -971,7 +971,38 @@ pub fn convert_json(request: &str) -> String {
 /// failure envelope with the code `internal_error`, which the Python, Node.js
 /// and Go wrappers map to their conversion error like any other code.
 pub fn internal_error_json() -> String {
-    json!({"ok":false,"error":{"code":"internal_error","message":"Native conversion failed unexpectedly"}}).to_string()
+    internal_error_as("Native conversion failed unexpectedly")
+}
+
+fn internal_error_as(message: &str) -> String {
+    json!({"ok":false,"error":{"code":"internal_error","message":message}}).to_string()
+}
+
+/// The Python binding's configuration call, answered with [`convert_json`]'s
+/// envelope: the `model` section normalized from the `overrides` object (or,
+/// with `schema`, the configuration contract) as the result, or a failure
+/// with its code; a panic is the `internal_error` failure, so the wrapper
+/// raises it as it raises a conversion's.
+pub fn config_json_caught(overrides: &str, model: &str, schema: bool) -> String {
+    config_answer(|| {
+        if schema {
+            return Ok(config::schema().clone());
+        }
+        let overrides: Value = serde_json::from_str(overrides)?;
+        if !overrides.is_object() {
+            return Err(Error::Config("config must be an object".into()));
+        }
+        config::normalize_model(model, &overrides)
+    })
+}
+
+fn config_answer(call: impl FnOnce() -> Result<Value>) -> String {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match call() {
+        Ok(result) => json!({"ok":true,"result":result}).to_string(),
+        Err(error) => json!({"ok":false,"error":{"code":error.code(),"message":error.to_string()}})
+            .to_string(),
+    }))
+    .unwrap_or_else(|_| internal_error_as("Native configuration failed unexpectedly"))
 }
 
 /// [`convert_json`] for a language binding: a panic is answered with
@@ -1031,6 +1062,37 @@ mod json_output_tests {
             response["error"]["message"],
             "Native conversion failed unexpectedly"
         );
+    }
+
+    #[test]
+    fn the_configuration_call_answers_with_the_shared_envelope() {
+        let answer = |text: String| -> Value { serde_json::from_str(&text).expect("an envelope") };
+        let panicked = answer(config_answer(|| {
+            std::panic::resume_unwind(Box::new("boom"))
+        }));
+        assert_eq!(
+            panicked,
+            json!({"ok":false,"error":{"code":"internal_error",
+                "message":"Native configuration failed unexpectedly"}})
+        );
+        let normalized = answer(config_json_caught(
+            r#"{"llm":{"concurrency":"7"}}"#,
+            "MarkitaiConfig",
+            false,
+        ));
+        assert_eq!(normalized["ok"], true);
+        assert_eq!(normalized["result"]["llm"]["concurrency"], 7);
+        let schema = answer(config_json_caught("not json", "MarkitaiConfig", true));
+        assert_eq!(&schema["result"], config::schema());
+        for (overrides, model, code) in [
+            ("not json", "MarkitaiConfig", "invalid_json"),
+            ("[]", "MarkitaiConfig", "config_error"),
+            ("{}", "NoSuchModel", "config_error"),
+        ] {
+            let failed = answer(config_json_caught(overrides, model, false));
+            assert_eq!(failed["ok"], false);
+            assert_eq!(failed["error"]["code"], code, "{overrides} {model}");
+        }
     }
 
     #[test]

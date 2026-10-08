@@ -5,7 +5,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from markitai import MarkitaiConfig, _native
+from markitai import ConversionError, MarkitaiConfig, _native
 from markitai.config import (
     CloudflareConfig, DomainProfileConfig, EnvVarNotFoundError, FetchPolicyConfig,
     JinaConfig, LLMConfig, LiteLLMParams, ModelConfig, OutputConfig, PresetConfig,
@@ -17,7 +17,9 @@ class ConfigurationTests(unittest.TestCase):
         raw = {"llm": {"concurrency": "7", "model_list": [
             {"model_name": "default", "litellm_params": {"model": "test", "weight": "2"}}
         ]}, "image": {"compress": "off"}, "unknown": "ignored"}
-        value = json.loads(_native.config_json(json.dumps(raw)))
+        envelope = json.loads(_native.config_json(json.dumps(raw)))
+        self.assertIs(envelope["ok"], True)
+        value = envelope["result"]
         self.assertEqual(value["llm"]["concurrency"], 7)
         self.assertEqual(value["llm"]["model_list"][0]["litellm_params"]["weight"], 2)
         self.assertIsNone(value["llm"]["model_list"][0]["model_info"])
@@ -111,6 +113,20 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             LLMConfig.model_validate({"unknown": 1}, extra="forbid")
         self.assertFalse(LLMConfig.model_validate({"unknown": 1}).enabled)
+
+    def test_native_failures_raise_by_code_and_a_panic_is_a_conversion_error(self):
+        failure = json.loads(_native.config_json("[]"))["error"]
+        self.assertEqual(failure, {"code": "config_error", "message": "config must be an object"})
+        with self.assertRaisesRegex(ValueError, "is not a valid integer|concurrency"):
+            LLMConfig(concurrency="many")
+        # A native panic answers with the shared envelope, as conversion does.
+        panic = json.dumps({"ok": False, "error": {
+            "code": "internal_error", "message": "Native configuration failed unexpectedly"}})
+        with patch.object(_native, "config_json", return_value=panic):
+            with self.assertRaises(ConversionError) as caught:
+                LLMConfig(concurrency="3")
+        self.assertEqual(caught.exception.code, "internal_error")
+        self.assertEqual(str(caught.exception), "Native configuration failed unexpectedly")
 
     def test_explicit_environment_references_do_not_fall_back_on_missing(self):
         with patch.dict(os.environ, {"JINA_API_KEY": "fallback", "EMPTY": "", "CLOUDFLARE_ACCOUNT_ID": "account"}, clear=True):
