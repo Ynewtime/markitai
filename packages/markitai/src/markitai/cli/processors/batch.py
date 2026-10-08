@@ -889,6 +889,11 @@ async def process_batch(
             "pass an output directory"
         )
 
+    # A resumed state hands back absolute file paths; resolve the input
+    # once so per-file output dirs and display names are computed against
+    # the same absolute base for new and resumed files alike.
+    input_dir = input_dir.resolve()
+
     from datetime import UTC, datetime
 
     from markitai.batch import (
