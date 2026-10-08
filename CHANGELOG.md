@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Copilot provider works with the GitHub Copilot SDK again**: it passed `create_session` and `send_and_wait` a single dict, and the PATH-CLI fallback a `{"cli_path": ...}` dict, which every supported SDK version (0.2.0 and later) rejects, so every `copilot/` request failed. It now uses the keyword arguments the SDK defines, and passes the request timeout to `send_and_wait`, whose own default stopped requests after 60 seconds.
 - `markitai serve` no longer returns stored API keys: `GET /api/settings/llm/providers/{id}/credentials` answers `api_key_masked` (`sk…7890`; `env:` references as is) instead of the raw `api_key`. The provider editor shows that masked value and sends a key only when you change it, so saving an edit that leaves the field alone keeps the stored key; clearing the field still removes it.
 - The `markitai serve` settings errors for a key paired with an address it wasn't saved with now say what works: enter the key itself, or set the pair up in the config file. The serve and configuration guides explain the rule and both ways.
+- An image that is still over the 5 MB vision limit after being scaled down to 512 px is sent at 512 px instead of at its original, larger size. The scaling also stops exactly at 512 px instead of at the last step above it.
 
 ## [1.2.0] - 2026-09-28
 
