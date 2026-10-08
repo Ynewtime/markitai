@@ -117,7 +117,7 @@ from markitai.llm.types import (
     LLMResponse,
 )
 from markitai.providers.common import has_images
-from markitai.utils.mime import get_mime_type
+from markitai.utils.mime import get_llm_image_mime
 from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
@@ -826,7 +826,7 @@ class DocumentEnhancer:
         # Load screenshot early so the cache key includes a content fingerprint.
         # A re-fetch of the same URL produces the same filename, so keying by
         # filename alone would return stale results when content changed.
-        _, base64_image = self._get_cached_image(screenshot_path)
+        screenshot_bytes, base64_image = self._get_cached_image(screenshot_path)
         image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
 
         cache_key = self._prompt_scoped_key(
@@ -853,7 +853,7 @@ class DocumentEnhancer:
         ]
 
         # Add screenshot (base64_image was loaded above for the cache key)
-        mime_type = get_mime_type(screenshot_path.suffix)
+        mime_type = get_llm_image_mime(screenshot_bytes, screenshot_path.suffix)
         content_parts.append({"type": "text", "text": SCREENSHOT_LABEL})
         content_parts.append(
             {
@@ -892,7 +892,9 @@ class DocumentEnhancer:
             cache_content=cache_content,
             cache_model=self._vision_cache_model_scope,
             validate=_guard_degeneration,
-            cache_if=lambda _result: not degenerated,
+            cache_if=lambda result: (
+                not degenerated and bool(result.cleaned_markdown.strip())
+            ),
             serialize=_document_result_to_cache_value,
             deserialize=_document_result_from_cache_value,
             router=self._get_vision_router(),
@@ -981,7 +983,7 @@ class DocumentEnhancer:
 
         # Add screenshot
         _, base64_image = self._get_cached_image(screenshot_path)
-        mime_type = get_mime_type(screenshot_path.suffix)
+        mime_type = get_llm_image_mime(screenshot_bytes, screenshot_path.suffix)
         content_parts.append({"type": "text", "text": SCREENSHOT_LABEL})
         content_parts.append(
             {
@@ -1164,8 +1166,8 @@ class DocumentEnhancer:
 
         # Add page images (using cache to avoid repeated reads)
         for i, image_path in enumerate(page_images, 1):
-            _, base64_image = self._get_cached_image(image_path)
-            mime_type = get_mime_type(image_path.suffix)
+            image_bytes, base64_image = self._get_cached_image(image_path)
+            mime_type = get_llm_image_mime(image_bytes, image_path.suffix)
 
             # Unique page label that won't conflict with document content
             content_parts.append(
@@ -1534,8 +1536,8 @@ class DocumentEnhancer:
 
         # Add page images
         for i, image_path in enumerate(page_images, 1):
-            _, base64_image = self._get_cached_image(image_path)
-            mime_type = get_mime_type(image_path.suffix)
+            image_bytes, base64_image = self._get_cached_image(image_path)
+            mime_type = get_llm_image_mime(image_bytes, image_path.suffix)
             # Unique page label that won't conflict with document content
             content_parts.append(
                 {"type": "text", "text": PAGE_LABEL_TEMPLATE.format(index=i)}

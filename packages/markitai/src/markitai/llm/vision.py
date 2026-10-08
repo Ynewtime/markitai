@@ -22,6 +22,7 @@ from markitai.constants import (
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
 from markitai.llm.engine import (
+    EmptyLLMResponseError,
     LLMCall,
     extract_cached_tokens,
     find_budget_exceeded_error,
@@ -39,7 +40,7 @@ from markitai.llm.types import (
 )
 from markitai.providers.common import has_images
 from markitai.utils.mime import (
-    get_llm_effective_mime,
+    get_llm_image_mime,
     is_llm_supported_image,
 )
 from markitai.utils.text import format_error_message
@@ -416,7 +417,7 @@ class VisionAnalyzer:
 
         # SHA256 of the base64 as the fingerprint: JPEG files share a header,
         # so a prefix would collide.
-        _, base64_image = self._get_cached_image(image_path)
+        image_bytes, base64_image = self._get_cached_image(image_path)
         cache_key = self._image_analysis_cache_key()
         cache_content_key = _vision_cache_content_key(
             hashlib.sha256(base64_image.encode()).hexdigest(), document_context
@@ -454,7 +455,7 @@ class VisionAnalyzer:
             document_context=_document_context_suffix(document_context),
             language=language,
         )
-        mime_type = get_llm_effective_mime(image_path.suffix)
+        mime_type = get_llm_image_mime(image_bytes, image_path.suffix)
         return ImagePlan(
             image_path=image_path,
             context=context,
@@ -498,7 +499,9 @@ class VisionAnalyzer:
                 description=result.description,
                 extracted_text=result.extracted_text,
             )
-        if not _guard_degenerate_extracted_text(result, plan.image_path.name):
+        if result.caption.strip() and not _guard_degenerate_extracted_text(
+            result, plan.image_path.name
+        ):
             self._engine.persistent_cache.set(
                 plan.cache_key,
                 plan.cache_content_key,
@@ -819,8 +822,8 @@ class VisionAnalyzer:
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
 
         for i, image_path in enumerate(uncached_paths, 1):
-            _, base64_image = self._get_cached_image(image_path)
-            mime_type = get_llm_effective_mime(image_path.suffix)
+            image_bytes, base64_image = self._get_cached_image(image_path)
+            mime_type = get_llm_image_mime(image_bytes, image_path.suffix)
 
             # Unique image label that won't conflict with document content
             content_parts.append(
@@ -927,7 +930,7 @@ class VisionAnalyzer:
             new_results: list[ImageAnalysis] = []
             for pos in range(len(uncached_paths)):
                 img_result = aligned[pos]
-                if img_result is None:
+                if img_result is None or not img_result.caption.strip():
                     new_results.append(
                         ImageAnalysis(
                             caption="Image",
@@ -1096,6 +1099,9 @@ class VisionAnalyzer:
             router=self._get_vision_router(),
         )
         response, raw_response = await self._engine.complete_structured(call)
+        if not response.caption.strip():
+            # Never let an empty answer through: the fallback asks again
+            raise EmptyLLMResponseError("image analysis returned an empty caption")
 
         # Build llm_usage dict for this analysis from the raw response
         # (aggregate usage accounting itself is handled by the engine)
@@ -1170,6 +1176,10 @@ class VisionAnalyzer:
             ],
             context=context,
         )
+
+        # An empty answer is a failed analysis, never a result to cache
+        if not caption_response.content.strip():
+            raise EmptyLLMResponseError("image caption call returned no content")
 
         # Generate description using system/user prompts
         desc_system = self._prompt_manager.get_prompt(
