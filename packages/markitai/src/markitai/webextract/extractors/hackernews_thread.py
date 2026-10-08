@@ -1,13 +1,13 @@
-from __future__ import annotations
-
-from urllib.parse import parse_qs
-
 """Extractor for Hacker News thread pages.
 
 Implements the shared resolver pattern to prove the ConversationThread /
 render_semantic_content abstraction applies to HN-style threaded discussions,
 not just X/Twitter, GitHub, and Reddit.
 """
+
+from __future__ import annotations
+
+from urllib.parse import parse_qs
 
 from bs4 import BeautifulSoup, Tag
 
