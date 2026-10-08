@@ -308,7 +308,7 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 
 ### 自定义 API 端点
 
-`api_base` 把提供商指向另一个端点：自建推理服务、地区代理或 API 网关。和 `api_key` 一样支持 `env:VAR_NAME`：
+`api_base` 把提供商指向另一个端点：自建推理服务、地区代理或 API 网关。和 `api_key` 一样支持 `env:VAR_NAME`。`markitai serve` 的设置弹窗不允许把 `env:` key 和自定义端点配在一起（见 [LLM 设置](/zh/guide/serve#llm-设置)），请在这里配置，或在弹窗里直接输入 key 本身：
 
 ```json
 {
