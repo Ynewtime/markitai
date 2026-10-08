@@ -75,6 +75,8 @@ Every option has hover or tap help that says what it depends on, where the data 
 
 The settings dialog edits the same configuration as `markitai config`: discover providers, browse model lists, set weights and test connections without exposing stored keys. Changes apply to web jobs and to later CLI runs alike.
 
+The provider editor shows a saved key only in masked form (`sk…7890`; an `env:` reference is shown as is). Leave the field as it is to keep the saved key, type a new key to replace it, or clear it to remove the key.
+
 ## History
 
 Finished jobs stay under `~/.markitai/serve/jobs/` for 7 days. From the history page you can reopen a job, download its outputs again, delete it, or download everything as one zip.

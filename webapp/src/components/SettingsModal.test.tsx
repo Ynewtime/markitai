@@ -348,6 +348,83 @@ describe("SettingsModal", () => {
     expect(screen.queryByText(/ready · config|ok · live_api/)).not.toBeInTheDocument();
   });
 
+  it("sends the provider key only when the user changed it", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue(emptySettings);
+    api.fetchProviders.mockResolvedValue([
+      {
+        id: "provider:deepseek-1",
+        provider_id: "deepseek-1",
+        provider: "deepseek",
+        label: "DeepSeek",
+        kind: "configured" as const,
+        status: "ready",
+        source: "config",
+        api_key_configured: true,
+        api_base_configured: true,
+        api_base: "https://proxy.example",
+        model_count: 0,
+        supports_discovery: true,
+      },
+    ]);
+    api.fetchCredentials.mockResolvedValue({
+      api_key_masked: "sk…cret",
+      api_base: "https://proxy.example/v1",
+      api_base_placeholder: "https://api.deepseek.com",
+    });
+    api.updateProvider.mockResolvedValue({ ...emptySettings, revision: "revision-2" });
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        onClose={() => undefined}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: dicts.en.addModels }),
+    );
+    const openEditor = async () => {
+      await user.click(
+        await screen.findByRole("button", {
+          name: dicts.en.editProvider("DeepSeek"),
+        }),
+      );
+      await waitFor(() =>
+        expect(screen.getByLabelText(dicts.en.setApiKey)).toHaveValue("sk…cret"),
+      );
+    };
+
+    // Untouched key: only the base goes out, so the stored key stays.
+    await openEditor();
+    const baseInput = screen.getByLabelText(dicts.en.setApiBase);
+    await user.clear(baseInput);
+    await user.type(baseInput, "https://proxy.example/v2");
+    await user.click(screen.getByRole("button", { name: dicts.en.save }));
+    await waitFor(() => expect(api.updateProvider).toHaveBeenCalledTimes(1));
+    expect(api.updateProvider).toHaveBeenLastCalledWith("deepseek-1", {
+      api_base: "https://proxy.example/v2",
+      expected_revision: "revision-1",
+    });
+
+    // Typing and restoring the mask is still "unchanged".
+    await openEditor();
+    const keyInput = screen.getByLabelText(dicts.en.setApiKey);
+    await user.type(keyInput, "x");
+    await user.type(keyInput, "{Backspace}");
+    await user.click(screen.getByRole("button", { name: dicts.en.save }));
+    await waitFor(() => expect(api.updateProvider).toHaveBeenCalledTimes(2));
+    expect(api.updateProvider.mock.lastCall?.[1]).not.toHaveProperty("api_key");
+
+    // Clearing the field removes the key.
+    await openEditor();
+    await user.clear(screen.getByLabelText(dicts.en.setApiKey));
+    await user.click(screen.getByRole("button", { name: dicts.en.save }));
+    await waitFor(() => expect(api.updateProvider).toHaveBeenCalledTimes(3));
+    expect(api.updateProvider.mock.lastCall?.[1]).toMatchObject({ api_key: null });
+  });
+
   it("edits and explicitly deletes a saved provider connection", async () => {
     const user = userEvent.setup();
     const provider = {
@@ -367,7 +444,7 @@ describe("SettingsModal", () => {
     api.fetchSettings.mockResolvedValue(emptySettings);
     api.fetchProviders.mockResolvedValue([provider]);
     api.fetchCredentials.mockResolvedValue({
-      api_key: "sk-current-secret",
+      api_key_masked: "sk…cret",
       api_base: "https://api.deepseek.com/v1",
     });
     api.updateProvider.mockResolvedValue({ ...emptySettings, revision: "revision-2" });
@@ -397,7 +474,7 @@ describe("SettingsModal", () => {
     const baseInput = screen.getByLabelText(dicts.en.setApiBase);
     expect(api.fetchCredentials).toHaveBeenCalledWith("deepseek-1");
     expect(keyInput).toHaveAttribute("type", "password");
-    expect(keyInput).toHaveValue("sk-current-secret");
+    expect(keyInput).toHaveValue("sk…cret");
     expect(baseInput).toHaveAttribute("type", "url");
     expect(baseInput).toHaveValue("https://api.deepseek.com/v1");
     expect(

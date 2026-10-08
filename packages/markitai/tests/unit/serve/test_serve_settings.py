@@ -643,7 +643,7 @@ class TestProviderConnections:
 
 
 class TestProviderCredentialLifecycle:
-    async def test_credentials_are_revealed_only_by_explicit_provider_request(
+    async def test_credentials_endpoint_returns_only_a_masked_key(
         self, tmp_path: Path
     ) -> None:
         config_path = tmp_path / "config.json"
@@ -680,10 +680,11 @@ class TestProviderCredentialLifecycle:
         assert "sk-visible-on-request" not in cards_response.text
         assert credentials.status_code == 200
         assert credentials.headers["cache-control"] == "no-store"
+        assert "sk-visible-on-request" not in credentials.text
         # An explicitly-saved base is returned verbatim; the default is offered
         # separately for the editor placeholder.
         assert credentials.json() == {
-            "api_key": "sk-visible-on-request",
+            "api_key_masked": "sk…uest",
             "api_base": "https://proxy.example/v1",
             "api_base_placeholder": "https://api.deepseek.com",
         }
@@ -724,10 +725,48 @@ class TestProviderCredentialLifecycle:
         # A key-only connection saves no base (stays on the provider default);
         # the editor field is empty with the default as its placeholder.
         assert credentials.json() == {
-            "api_key": "sk-deepseek",
+            "api_key_masked": "…ek",
             "api_base": None,
             "api_base_placeholder": "https://api.deepseek.com",
         }
+
+    async def test_editor_save_without_key_keeps_stored_key(
+        self, tmp_path: Path
+    ) -> None:
+        """The editor gets a masked key and omits it on save; the stored key stays."""
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "openai/gpt-test",
+                api_key="sk-stored-1234567890",
+                api_base="https://proxy.example/v1",
+            )
+        ]
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, cfg, config_path=config_path)
+        ) as client:
+            payload = (await client.get("/api/settings/llm")).json()
+            provider_id = "legacy:" + payload["deployments"][0]["deployment_id"]
+            credentials = await client.get(
+                f"/api/settings/llm/providers/{provider_id}/credentials"
+            )
+            saved = await client.patch(
+                f"/api/settings/llm/providers/{provider_id}",
+                json={
+                    "api_base": credentials.json()["api_base"],
+                    "expected_revision": payload["revision"],
+                },
+            )
+
+        assert credentials.status_code == 200
+        assert "sk-stored-1234567890" not in credentials.text
+        assert credentials.json()["api_key_masked"] == "sk…7890"
+        assert saved.status_code == 200, saved.text
+        written = json.loads(config_path.read_text(encoding="utf-8"))
+        providers = written["llm"]["providers"]
+        assert [p["api_key"] for p in providers] == ["sk-stored-1234567890"]
+        assert [p["api_base"] for p in providers] == ["https://proxy.example/v1"]
 
     async def test_legacy_embedded_credentials_migrate_before_last_model_delete(
         self, tmp_path: Path

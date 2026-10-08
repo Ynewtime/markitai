@@ -151,7 +151,8 @@ export type LLMSettingsUpdate =
   | { deployment_id: string };
 
 export interface LLMProviderCredentials {
-  api_key: string | null;
+  // the stored key is never sent back, only masked (env: references verbatim)
+  api_key_masked: string | null;
   // the RAW saved base (null when the connection uses the provider default)
   api_base: string | null;
   // the provider default, offered for the editor's placeholder only

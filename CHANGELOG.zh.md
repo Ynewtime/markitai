@@ -49,6 +49,7 @@
 - 文件批处理在每个文件结束后释放 LLM 图片缓存，不再把已完成文件的页面图片和截图（最多 500 MB）一直留到批处理结束。
 - 文档与代码保持一致：命令行用法错误以 `2` 退出，在转换开始前被拒绝的输入（文件不存在或格式不支持、`--llm-batch` 未配 `--llm`）以 `1` 退出；配置文件的优先级高于环境变量，环境变量只作后备，`MARKITAI_RECORD_HISTORY`、`MARKITAI_PURE` 和 `MARKITAI_NO_REMOTE_FETCH` 除外；`batch.heavy_task_limit: 0` 按内存自动检测（不是"不限制"）；`batch.scan_max_files` 统计整个输入目录树；只有 Copilot 会自动伸缩请求超时。
 - **Copilot 提供方重新可以配合 GitHub Copilot SDK 使用**：此前 `create_session` 和 `send_and_wait` 收到的是单个字典，回退到 PATH 中 CLI 时传的是 `{"cli_path": ...}` 字典，所有受支持的 SDK 版本（0.2.0 及以上）都不接受，因此每个 `copilot/` 请求都会失败。现在按 SDK 定义的关键字参数调用，并把请求超时传给 `send_and_wait`（其默认超时会在 60 秒时中断请求）。
+- `markitai serve` 不再返回已保存的 API key：`GET /api/settings/llm/providers/{id}/credentials` 返回打码后的 `api_key_masked`（`sk…7890`；`env:` 引用原样返回），不再返回原始 `api_key`。提供商编辑器显示这个打码值，只有你改动 key 时才发送，所以保存时不动该字段就保留已保存的 key；清空字段仍会删除 key。
 
 ## [1.2.0] - 2026-09-28
 
