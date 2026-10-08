@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- Workbook page capture no longer fails because of an optional repair step: an ODS, XLS or XLSB workbook whose right-edge overflow cannot be measured keeps LibreOffice's layout with a warning, and an XLSX/XLSM workbook whose styles the font-color policy cannot parse keeps LibreOffice's own font colors instead of aborting the export.
 - `--screenshot` and `--ocr` capture Office templates (`.dotx`, `.potx`, `.xltx`, `.ott` and the other template extensions) as the documents they make, instead of silently converting only their text.
 - Portable OCR no longer loses the text lower on a dense or noisy scan: specks and faint marks are discarded before the 1,000-region limit is applied, and an image or page that still has more text regions than that gets a warning naming it instead of silently missing its lower text.
 - Portable OCR tries an optional Korean model that cannot load (offline, say) once per process instead of for every image with uncertain lines, and loading one model no longer holds up OCR threads that read with a model already loaded. A long-running `serve` or MCP process uses a Korean model installed later after a restart.

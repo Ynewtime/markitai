@@ -344,10 +344,19 @@ fn export_with(
     if requested_kind == OfficeKind::Spreadsheet {
         let count = expected.expect("workbook import was counted");
         workbooks::validate_pdf(&bytes, count)?;
-        let plan = overflow::inspect(&bytes, count, deadline)?;
+        let repairable = matches!(extension.as_str(), "xlsx" | "xlsm");
+        let plan = match overflow::inspect(&bytes, count, deadline) {
+            // Only a repair needs a plan; other workbooks keep their layout.
+            Err(_) if !repairable => {
+                overflow::check_deadline(deadline)?;
+                warnings.push("Workbook right-edge text overflow could not be measured; automatic overflow repair currently supports XLSX/XLSM only, so this ODS or imported legacy workbook retains its original LibreOffice layout".into());
+                overflow::Plan::default()
+            }
+            plan => plan?,
+        };
         warnings.extend(plan.warnings.iter().cloned());
         if !plan.extensions.is_empty() {
-            if matches!(extension.as_str(), "xlsx" | "xlsm") {
+            if repairable {
                 // Charge every intermediate to one cumulative output budget;
                 // the single deadline and process permit cover both exports.
                 remaining_output = remaining_output

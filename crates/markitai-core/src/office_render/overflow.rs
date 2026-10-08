@@ -10,12 +10,15 @@ mod tests;
 mod xml;
 
 /// Independent import compatibility policy; geometry repair remains byte-preserving.
+/// The policy is optional: a workbook it cannot read or rewrite within its
+/// budget keeps LibreOffice's own font colors, and only the deadline fails.
 pub(super) fn normalize_default_font(
     bytes: &[u8],
     deadline: Instant,
     limit: u64,
 ) -> Result<Option<Vec<u8>>> {
     default_font::normalize(bytes, deadline, limit)
+        .or_else(|_| check_deadline(deadline).map(|()| None))
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -327,6 +327,67 @@ fn workbook_export_selects_whole_sheet_mode_and_rejects_lost_sheets() {
     assert!(error.to_string().contains("every workbook sheet"));
 }
 
+/// A `count`-page PDF whose first page has text far beyond its right edge.
+#[cfg(unix)]
+fn distant_text_pdf(count: usize) -> Vec<u8> {
+    let mut pdf = lopdf::Document::load_mem(&self::pdf(count)).unwrap();
+    let font =
+        pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica"});
+    let text = pdf.add_object(Stream::new(
+        dictionary! {},
+        b"BT /F1 12 Tf 1500 20 Td (FAR) Tj ET".to_vec(),
+    ));
+    let first = *pdf.get_pages().get(&1).unwrap();
+    let page = pdf.get_dictionary_mut(first).unwrap();
+    page.set("Contents", text);
+    page.set("Resources", dictionary! {"Font"=>dictionary!{"F1"=>font}});
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+#[cfg(unix)]
+#[test]
+fn unrepaired_workbooks_keep_their_layout_when_overflow_cannot_be_planned() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = directory.path().join("pages.pdf");
+    fs::write(&fixture, distant_text_pdf(4)).unwrap();
+    let program = mock(
+        directory.path(),
+        &format!("cp {} \"$out/document.pdf\"", quote(&fixture)),
+    );
+    let export = |name: &str, bytes: &[u8]| {
+        let input = directory.path().join(name);
+        fs::write(&input, bytes).unwrap();
+        export_with(
+            &program,
+            &input,
+            OfficeKind::Spreadsheet,
+            Duration::from_secs(5),
+            MAX_BYTES,
+        )
+    };
+    // ODS is never repaired: overflow too distant to repair is a warning.
+    let result = export("source.ods", include_bytes!("fixtures/whole-workbook.ods")).unwrap();
+    assert_eq!(result.pages, 4);
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("could not be measured")),
+        "{:?}",
+        result.warnings
+    );
+    // XLSX repair still refuses to guess.
+    let error = export(
+        "source.xlsx",
+        include_bytes!("fixtures/whole-workbook.xlsx"),
+    )
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("too distant"), "{error}");
+}
+
 #[cfg(unix)]
 #[test]
 fn templates_export_as_the_documents_they_make_from_a_copy_under_their_own_name() {

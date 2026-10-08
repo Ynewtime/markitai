@@ -90,10 +90,14 @@ black for fonts that declare no color. This is a rendering compatibility policy;
 explicit RGB, indexed, theme and automatic color declarations are preserved,
 and the original file is unchanged. The adjustment is skipped when conditional
 formatting, rich text, unknown XML parts or ambiguous inheritance prevent a safe
-decision, or when an inspected part uses an unsupported encoding such as UTF-16.
-Those workbooks retain LibreOffice's original color handling. Native table text
+decision, when an inspected part uses an unsupported encoding such as UTF-16,
+or when a part cannot be parsed or the rewritten copy would exceed the export
+budget. Those workbooks retain LibreOffice's original color handling. Native table text
 is unaffected. Any later right-edge geometry repair preserves the styles in its
-input copy; it does not override explicit colors to make text visible.
+input copy; it does not override explicit colors to make text visible. Only
+XLSX/XLSM text that overflows the right page edge is repaired; ODS and imported
+XLS/XLSB workbooks keep LibreOffice's layout with a warning, also when their
+overflow cannot be measured.
 
 XLSX/XLSM sheet lists and ODS tables are counted from bounded source XML, including
 hidden and empty sheets. Binary XLS/XLSB is first imported into a private ODS copy,
