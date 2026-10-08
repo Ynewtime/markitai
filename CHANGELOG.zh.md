@@ -30,7 +30,7 @@
 - **网页提取的清理**：内联 SVG 里的 `javascript:` 链接（`xlink:href`）、`srcset`/`poster`/`data` 中的此类链接，以及被制表符、换行或控制字符拆开的写法（`java&#9;script:`）都会被移除，不再进入 Markdown。
 - **`markitai-mcp` 的日志**与 `markitai mcp` 一致：stderr 上只有错误，URL 中的凭据会被去掉。此前它会打印调试信息和完整 URL，包括其中的 `user:password@` 或令牌。
 - **PDF 隐藏文字**：`security.pdf_sanitize = "remove"` 不再删除与隐藏片段相同的可见文字（以前一个隐藏的 `e` 会删掉整页所有的 `e`），深色背景上的白字不再被当作隐藏文字，`--ocr --llm` 也会像其他路径一样检查发给模型的文字。
-- **页眉页脚清理**：对所有带页面或幻灯片标记的输出执行的清理，改用 PDF 转换器的规则：只看每页开头和结尾各两行，一行至少要在 60% 的页面（且不少于 3 页）重复出现，不足 4 页的文档不处理，标题和表格行永远不删。此前它会把正文中任意位置出现的同一短行删掉，只在一半页面出现的行也会被删，且漏掉页眉。幻灯片页面会再处理一轮，所以三行的 PowerPoint 页脚（日期、文字、页码）仍会完整删除。`markitai.utils.text.clean_ppt_headers_footers` 由 `markitai.utils.page_chrome.strip_repeated_marker_lines` 取代。
+- **页眉页脚清理**：对所有带页面或幻灯片标记的输出执行的清理，改用 PDF 转换器的规则：只看每页开头和结尾各两行，一行至少要在 60% 的页面（且不少于 3 页）重复出现，不足 4 页的文档不处理，标题和表格行永远不删。此前它会把正文中任意位置出现的同一短行删掉，只在一半页面出现的行也会被删，且漏掉页眉。页面和幻灯片都会再处理一轮，所以三行的页脚（如 PowerPoint 的日期、文字、页码）仍会完整删除。`markitai.utils.text.clean_ppt_headers_footers` 由 `markitai.utils.page_chrome.strip_repeated_marker_lines` 取代。
 - **`.numbers`**：不加 `-b cloudflare` 时，Apple Numbers 文件现在会转换失败并说明原因（导出为 `.xlsx`/`.csv`，或使用 `-b cloudflare`），不再报告为转换成功、内容却只有包内的元数据。
 - **转换器**：旧编码（Latin-1、GBK、带 `<meta charset>` 的网页）的 `.txt`/`.md`、HTML、XML、reStructuredText、Org 和 LaTeX 文件能正确读取，不再报错或变成替换字符；检测不出编码的 CSV 保留原有行，不再变成 `None`；带嵌入二进制数据（`\bin`）的 RTF 可以转换；LaTeX 的 `\href{url}{text}` 转成链接；选取标题时，正文里的两条水平分隔线之间的内容不再被当作 frontmatter；含反斜杠的图片描述（`C:\temp`）按原样写入。
 - LLM 限流报错里出现 "402"（例如 token 数 "Used 29402"）时仍会重试，`1.204s`、`750ms`、`6m0s` 这类等待时间也能正确识别；只有 HTTP 402 才算计费错误。
