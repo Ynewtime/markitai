@@ -3,7 +3,7 @@ use super::{
     jobs::{self, Job, JobData},
     security::Trusted,
     store,
-    types::{ApiError, ApiResult, Item, JobOptions, MAX_ITEMS, MAX_UPLOAD, now},
+    types::{ApiError, ApiResult, Item, JobOptions, MAX_ITEMS, MAX_UPLOAD, instant, now},
 };
 use axum::{
     Json,
@@ -573,8 +573,8 @@ pub(super) async fn history(
             (data.status == "done").then(|| data.history())
         })
         .collect::<Vec<_>>();
-    crate::sort::by(&mut entries, |a, b| {
-        b["created_at"].as_str().cmp(&a["created_at"].as_str())
+    crate::sort::by_key(&mut entries, |entry| {
+        std::cmp::Reverse(entry["created_at"].as_str().and_then(instant))
     });
     Ok(Json(json!(entries)))
 }
@@ -719,6 +719,11 @@ mod error_code_tests {
         let router = Router::new()
             .route("/api/jobs", post(create))
             .route("/api/jobs/{job_id}", get(snapshot))
+            .route("/api/history", get(history))
+            .route(
+                "/api/history/archive",
+                get(super::super::files::history_archive),
+            )
             .route("/api/jobs/{job_id}/cancel", post(stop))
             .route(
                 "/api/jobs/{job_id}/items/{item_id}/retry",
@@ -1031,5 +1036,70 @@ mod error_code_tests {
             assert_eq!(value["reason"], reason, "{path}");
             assert!(value["detail"].is_string(), "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn history_is_newest_first_across_time_zones() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_state, router) = service(temp.path());
+        // A CLI history records local time with its offset, the server UTC.
+        for (id, created) in [
+            ("00000000000a", "2026-10-09T09:30:00.000+08:00"),
+            ("00000000000b", "2026-10-09T02:00:00.000Z"),
+            ("00000000000c", "2026-10-08T23:00:00.000-05:00"),
+        ] {
+            let folder = temp.path().join(id);
+            store::private_dir(&folder.join("out")).unwrap();
+            std::fs::write(folder.join("out/notes.md"), id).unwrap();
+            let item = json!({"item_id":"1","name":"notes.txt","kind":"url","status":"done",
+                "output":"notes.md","output_name":"notes.md"});
+            std::fs::write(
+                folder.join("meta.json"),
+                json!({"job_id":id,"created_at":created,"finished_at":created,
+                    "status":"done","options":{"origin":"cli"},"items":[item]})
+                .to_string(),
+            )
+            .unwrap();
+        }
+        let (status, entries) = call(&router, "GET", "/api/history", &[]).await;
+        assert_eq!(status, 200, "{entries}");
+        let order: Vec<_> = entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["job_id"].as_str().unwrap())
+            .collect();
+        // 04:00Z, 02:00Z, 01:30Z: text order would put the +08:00 job first.
+        assert_eq!(order, ["00000000000c", "00000000000b", "00000000000a"]);
+        // The archive names same-named jobs oldest first.
+        let response = router
+            .clone()
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/api/history/archive")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut folders = Vec::new();
+        for index in 0..archive.len() {
+            let mut file = archive.by_index(index).unwrap();
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut file, &mut text).unwrap();
+            folders.push((file.name().to_owned(), text));
+        }
+        folders.sort();
+        assert_eq!(
+            folders,
+            [
+                ("notes (2)/notes.md".to_owned(), "00000000000b".to_owned()),
+                ("notes (3)/notes.md".to_owned(), "00000000000c".to_owned()),
+                ("notes/notes.md".to_owned(), "00000000000a".to_owned()),
+            ]
+        );
     }
 }

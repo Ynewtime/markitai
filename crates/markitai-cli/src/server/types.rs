@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -13,6 +13,14 @@ pub(super) const MAX_REQUEST: usize = 5 * 1024 * 1024 * 1024 + 64 * 1024 * 1024;
 
 pub(super) fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+/// The instant a stored RFC 3339 timestamp names. CLI histories record local
+/// time with its offset and the server records UTC, so their text does not sort.
+pub(super) fn instant(text: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|time| time.with_timezone(&Utc))
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
