@@ -667,7 +667,9 @@ async def _analyze_url_images_stage(
             new_ref = markdown_image_reference(
                 analysis.caption, f"{ASSETS_REL_PATH}/{image_path.name}"
             )
-            llm_content = re.sub(old_pattern, new_ref, llm_content)
+            # A function, not a template: a template reads the caption's
+            # backslashes as escapes (C:\\temp became C:\temp)
+            llm_content = re.sub(old_pattern, lambda _m, ref=new_ref: ref, llm_content)
 
     if cfg.image.alt_enabled and llm_content != llm_md.read_text(encoding="utf-8"):
         from markitai.security import atomic_write_text

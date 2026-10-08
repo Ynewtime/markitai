@@ -22,6 +22,7 @@ from markitai.converter.base import (
     conversion_failed,
     register_converter,
 )
+from markitai.utils.charset import read_text_file
 
 # Below this, the original document is kept verbatim in a fenced block so no
 # structure (attribute order, mixed content, namespaces) is lost.
@@ -78,7 +79,7 @@ class XmlConverter(BaseConverter):
             "converter": "xml",
         }
 
-        text = input_path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_file(input_path)
 
         if _DECLARATION_RE.search(text):
             logger.warning("[XmlConverter] {}: DTD refused", input_path.name)

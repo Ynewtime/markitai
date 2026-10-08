@@ -418,6 +418,10 @@ class _Parser:
                 if self._state.sink not in ("skip", "skipalt"):
                     self._unicode_char(param)
                 return self._skip_fallback(match.end(), self._state.uc)
+            if name == "bin" and param is not None and param > 0:
+                # N raw bytes follow (embedded objects, pictures); they may
+                # hold braces and backslashes, so they are skipped unread.
+                return min(match.end() + param, len(data))
             self._control_word(name, param)
             return match.end()
 

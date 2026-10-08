@@ -27,9 +27,10 @@ def convert_csv(path: Path) -> ConvertResult:
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
-        from charset_normalizer import from_bytes
+        from markitai.utils.charset import decode_body
 
-        text = str(from_bytes(data).best())
+        # str() of the detector's answer was "None" when it found none
+        text = decode_body(data, html=False)[0]
     reader = csv.reader(io.StringIO(text))
     try:
         header = next(reader, None)

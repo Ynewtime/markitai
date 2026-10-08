@@ -109,6 +109,15 @@ class TestTexConverter:
 
         assert markdown.strip() == "Kept words"
 
+    def test_href_becomes_a_markdown_link(self, tmp_path: Path) -> None:
+        markdown = _convert(
+            tmp_path,
+            "\\begin{document}\nSee \\href{https://example.com/a\\_b}"
+            "{\\textbf{the site}} now.\n\\end{document}\n",
+        )
+
+        assert markdown.strip() == "See [**the site**](https://example.com/a_b) now."
+
     def test_double_backslash_breaks_the_line(self, tmp_path: Path) -> None:
         markdown = _convert(
             tmp_path, "\\begin{document}\none \\\\ two\n\\end{document}"
