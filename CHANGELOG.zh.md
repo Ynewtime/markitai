@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [1.2.1]
+
+### 修复
+
+- **Claude Agent 和 Copilot 提供方不再开放任何工具**：不再自动批准 Bash、写文件和网页抓取，被注入提示词的文档或网页无法以你的身份执行命令。
+
 ## [1.2.0] - 2026-09-28
 
 ### 新增
