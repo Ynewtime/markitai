@@ -729,10 +729,7 @@ fn url_names_and_explicit_pure_output_follow_existing_contracts() {
         ("https://example.com/%FF%FE", "%FF%FE"),
         ("https://example.com/%2E%2E", "example_com"),
     ] {
-        assert_eq!(
-            markitai_core::output::url_name(url, &Default::default()),
-            name
-        );
+        assert_eq!(markitai_core::output::url_name(url), name);
     }
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("input.txt");
@@ -764,7 +761,7 @@ fn url_names_from_queries_and_posts_stay_bounded_and_filesystem_safe() {
         "https://example.com/watch?v=%00%2F%5C:*%3F%22%3C%3E%7C".to_string(),
         "https://example.com/p?id=%E4%BA%BA%2F%E5%8D%95".to_string(),
     ] {
-        let name = markitai_core::output::url_name(&url, &Default::default());
+        let name = markitai_core::output::url_name(&url);
         assert!(!name.is_empty() && name.chars().count() <= 200, "{name}");
         assert!(
             !name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0']),
@@ -773,17 +770,11 @@ fn url_names_from_queries_and_posts_stay_bounded_and_filesystem_safe() {
         assert!(!name.starts_with('.') && !name.ends_with('.'), "{name}");
     }
     assert_eq!(
-        markitai_core::output::url_name(
-            &format!("https://example.com/p?id={long}"),
-            &Default::default()
-        ),
+        markitai_core::output::url_name(&format!("https://example.com/p?id={long}")),
         format!("example_com_p_{}", "a".repeat(64))
     );
     assert_eq!(
-        markitai_core::output::url_name(
-            "https://example.com/p?id=%E4%BA%BA%2F%E5%8D%95",
-            &Default::default()
-        ),
+        markitai_core::output::url_name("https://example.com/p?id=%E4%BA%BA%2F%E5%8D%95"),
         "example_com_p_人-单"
     );
 }

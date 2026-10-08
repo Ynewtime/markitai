@@ -312,7 +312,7 @@ pub(super) fn item_base(
                 .next()
                 .unwrap_or("")
                 .to_owned(),
-            "url" => markitai_core::output::url_name(&item.name, &Default::default()),
+            "url" => markitai_core::output::url_name(&item.name),
             _ => return Err(invalid()),
         }
     };

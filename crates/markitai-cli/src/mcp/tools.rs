@@ -231,7 +231,7 @@ fn existing_paths(source: &str, directory: &Path, cfg: &Value) -> Option<(PathBu
         return None;
     }
     let source_name = if is_url(source) {
-        markitai_core::output::url_name(source, &Map::new())
+        markitai_core::output::url_name(source)
     } else {
         Path::new(source)
             .file_name()?

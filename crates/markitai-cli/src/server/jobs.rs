@@ -237,7 +237,7 @@ pub(super) fn reserve_outputs(items: &[Item]) -> HashMap<String, String> {
             // name has already been checked to be a plain filename.
             item.output_name
                 .clone()
-                .unwrap_or_else(|| markitai_core::output::url_name(&item.name, &Default::default()))
+                .unwrap_or_else(|| markitai_core::output::url_name(&item.name))
         } else {
             item.name.clone()
         };

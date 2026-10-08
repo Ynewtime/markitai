@@ -1424,7 +1424,7 @@ fn reserve_batch_names(tasks: &mut [Task], cfg: &Value) -> CliResult<()> {
         let stem = if let Some(name) = &task.filename {
             name.strip_suffix(".md").unwrap_or(name).to_owned()
         } else if is_url(&task.source) {
-            markitai_core::output::url_name(&task.source, &serde_json::Map::new())
+            markitai_core::output::url_name(&task.source)
         } else {
             Path::new(&task.source)
                 .file_name()
@@ -1644,7 +1644,7 @@ fn complete_item(
     if progress.history_enabled && record.skip_reason.as_deref() == Some("exists") {
         record.history_output = task.output.as_ref().map(|directory| {
             let fallback = if is_url(&task.source) {
-                markitai_core::output::url_name(&task.source, &Default::default())
+                markitai_core::output::url_name(&task.source)
             } else {
                 Path::new(&task.source)
                     .file_name()

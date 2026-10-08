@@ -38,7 +38,7 @@ impl Preview {
 
 fn source_name(task: &Task) -> String {
     if is_url(&task.source) {
-        markitai_core::output::url_name(&task.source, &serde_json::Map::new())
+        markitai_core::output::url_name(&task.source)
     } else {
         Path::new(&task.source)
             .file_name()

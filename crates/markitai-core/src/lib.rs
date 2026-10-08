@@ -79,12 +79,6 @@ pub fn local_ocr_available() -> bool {
 
 pub use ocr::{LocalOcrModel, LocalOcrModelState};
 
-/// The local OCR engine this process reads with: `vision` (macOS), `paddle`
-/// (the portable PaddleOCR engine) or `unavailable`.
-pub fn local_ocr_backend() -> &'static str {
-    ocr::backend()
-}
-
 /// The model files the portable OCR engine needs for the configuration's
 /// `ocr.lang`, each with whether it is installed; `None` when this process
 /// reads with another engine. Probing never downloads or creates files.
@@ -367,7 +361,7 @@ fn convert_inner(
         )));
     }
     let name = if is_url {
-        output::url_name(source, &Default::default())
+        output::url_name(source)
     } else {
         input_path
             .file_name()

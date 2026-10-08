@@ -13,10 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
+/// The oldest release of the supported line.
 pub const CLI_VERSION: &str = "2.1.284";
-/// `CLI_VERSION` as numbers: the oldest release of the supported line.
-const PINNED: (u64, u64, u64) = (2, 1, 284);
-pub const SDK_VERSION: &str = "0.3.284";
 const INPUT_LIMIT: usize = 10 * 1024 * 1024;
 const TEXT_LIMIT: usize = 8 * 1024 * 1024;
 
@@ -159,6 +157,15 @@ fn small_command(
 /// validated message by message.
 fn supported_version(version: &str) -> bool {
     let version = version.strip_suffix(" (Claude Code)").unwrap_or(version);
+    match (release(version), release(CLI_VERSION)) {
+        (Some((major, minor, patch)), Some(pinned)) => {
+            (major, minor) == (pinned.0, pinned.1) && patch >= pinned.2
+        }
+        _ => false,
+    }
+}
+/// `major.minor.patch` of plain decimal numbers.
+fn release(version: &str) -> Option<(u64, u64, u64)> {
     let mut parts = version.split('.').map(|part| {
         (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
             .then(|| part.parse::<u64>().ok())
@@ -166,9 +173,9 @@ fn supported_version(version: &str) -> bool {
     });
     match (parts.next(), parts.next(), parts.next(), parts.next()) {
         (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) => {
-            (major, minor) == (PINNED.0, PINNED.1) && patch >= PINNED.2
+            Some((major, minor, patch))
         }
-        _ => false,
+        _ => None,
     }
 }
 /// The installed runtime's release, when it is one this adapter speaks.

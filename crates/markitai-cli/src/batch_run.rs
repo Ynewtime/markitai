@@ -41,7 +41,7 @@ fn stem(task: &Task, cfg: &Value) -> String {
         })
         .unwrap_or_else(|| {
             if is_url(&task.source) {
-                markitai_core::output::url_name(&task.source, &Default::default())
+                markitai_core::output::url_name(&task.source)
             } else {
                 Path::new(&task.source)
                     .file_name()
