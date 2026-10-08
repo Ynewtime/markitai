@@ -133,7 +133,7 @@ class TestLLMProcessorAsync:
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
-        # Set response for clean_markdown only (frontmatter is generated programmatically)
+        # Plain-text response (frontmatter is generated programmatically)
         clean_response = MagicMock()
         clean_response.choices = [
             MagicMock(message=MagicMock(content="# Test Heading\n\nCleaned content"))

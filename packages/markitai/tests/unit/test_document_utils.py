@@ -872,7 +872,7 @@ class TestFallbackFrontmatterDegradation:
 class TestRefusalIsNotACleanup:
     """A refusal must neither replace the document nor reach the cache.
 
-    Regression: after the structured call failed, clean_markdown accepted
+    Regression: after the structured call failed, the text cleaner accepted
     any non-empty answer for a document without placeholders, so "I'm
     sorry, but I can't help with that request." replaced the whole body
     (and the title derived from it) and was written to the TTL-less
@@ -1136,9 +1136,6 @@ Original second page.
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-        processor.clean_markdown = AsyncMock(
-            side_effect=AssertionError("cleaner should not run")
-        )
 
         original_content = """<!-- Page number: 1 -->
 
@@ -2583,7 +2580,6 @@ class TestFallbackFrontmatterTitle:
         mixin._run_document_call = AsyncMock(
             side_effect=Exception("structured processing failed")
         )
-        mixin.clean_markdown = AsyncMock(return_value="# Other\n\nx")
 
         with pytest.raises(LLMEnhancementDegradedError) as exc_info:
             await mixin.process_document(
@@ -2592,6 +2588,5 @@ class TestFallbackFrontmatterTitle:
                 title="Original Title",
             )
 
-        mixin.clean_markdown.assert_not_called()
         assert exc_info.value.cleaned_markdown == original_markdown
         assert "Original Title" in exc_info.value.frontmatter
