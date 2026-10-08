@@ -2,12 +2,11 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+/// A panic is answered with the shared `internal_error` envelope, which the
+/// Python wrapper raises as a `ConversionError` like any other code.
 #[pyfunction]
 fn convert_json(py: Python<'_>, request: String) -> PyResult<String> {
-    py.detach(move || {
-        catch_unwind(AssertUnwindSafe(|| markitai_core::convert_json(&request)))
-            .map_err(|_| PyRuntimeError::new_err("Native conversion failed unexpectedly"))
-    })
+    Ok(py.detach(move || markitai_core::convert_json_caught(&request)))
 }
 
 #[pyfunction]

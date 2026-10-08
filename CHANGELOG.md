@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- A native panic during conversion reaches Python and Node.js as a `ConversionError` with the code `internal_error`, as it already did in Go and as the bindings guide states, instead of a Python `RuntimeError` or a Node.js `Error` without a code.
 - Workbook page capture no longer fails because of an optional repair step: an ODS, XLS or XLSB workbook whose right-edge overflow cannot be measured keeps LibreOffice's layout with a warning, and an XLSX/XLSM workbook whose styles the font-color policy cannot parse keeps LibreOffice's own font colors instead of aborting the export.
 - `--screenshot` and `--ocr` capture Office templates (`.dotx`, `.potx`, `.xltx`, `.ott` and the other template extensions) as the documents they make, instead of silently converting only their text.
 - Portable OCR no longer loses the text lower on a dense or noisy scan: specks and faint marks are discarded before the 1,000-region limit is applied, and an image or page that still has more text regions than that gets a warning naming it instead of silently missing its lower text.

@@ -981,6 +981,24 @@ pub fn convert_json(request: &str) -> String {
     }
 }
 
+/// The [`convert_json`] response for a conversion that panicked: the shared
+/// failure envelope with the code `internal_error`, which the Python, Node.js
+/// and Go wrappers map to their conversion error like any other code.
+pub fn internal_error_json() -> String {
+    json!({"ok":false,"error":{"code":"internal_error","message":"Native conversion failed unexpectedly"}}).to_string()
+}
+
+/// [`convert_json`] for a language binding: a panic is answered with
+/// [`internal_error_json`] instead of unwinding into the host.
+pub fn convert_json_caught(request: &str) -> String {
+    caught(|| convert_json(request))
+}
+
+fn caught(convert: impl FnOnce() -> String) -> String {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(convert))
+        .unwrap_or_else(|_| internal_error_json())
+}
+
 // JSON paths must be representable before conversion can publish files or incur
 // usage. Native Rust callers may still use arbitrary platform paths.
 fn validate_json_output_directory(path: &Path) -> Result<()> {
@@ -1015,6 +1033,19 @@ fn json_output_value(result: ConversionOutput) -> DetailedResult<Value> {
 #[cfg(test)]
 mod json_output_tests {
     use super::*;
+
+    #[test]
+    fn a_panic_is_the_shared_internal_error_envelope() {
+        assert_eq!(caught(|| "answer".into()), "answer");
+        let response = caught(|| std::panic::resume_unwind(Box::new("boom")));
+        let response: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "internal_error");
+        assert_eq!(
+            response["error"]["message"],
+            "Native conversion failed unexpectedly"
+        );
+    }
 
     #[test]
     fn output_preflight_accepts_new_utf8_directories_without_creating_them() {

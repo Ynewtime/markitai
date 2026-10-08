@@ -1,10 +1,10 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
+/// A panic is answered with the shared `internal_error` envelope, which the
+/// JavaScript wrapper turns into a `ConversionError` like any other code.
 fn run(request: &str) -> Result<String> {
-    catch_unwind(AssertUnwindSafe(|| markitai_core::convert_json(request)))
-        .map_err(|_| Error::from_reason("Native conversion failed unexpectedly"))
+    Ok(markitai_core::convert_json_caught(request))
 }
 
 pub struct ConvertTask {
