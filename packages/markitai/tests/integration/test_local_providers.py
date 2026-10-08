@@ -882,6 +882,7 @@ class TestCopilotIntegration:
                 mock_client,
             ]
         )
+        mock_copilot_module = MagicMock(CopilotClient=mock_copilot_client_class)
 
         with (
             patch(
@@ -892,12 +893,7 @@ class TestCopilotIntegration:
                 "markitai.providers.copilot._find_copilot_cli",
                 return_value="/usr/local/bin/copilot",
             ) as mock_find_cli,
-            patch.dict(
-                "sys.modules",
-                {
-                    "copilot": MagicMock(CopilotClient=mock_copilot_client_class),
-                },
-            ),
+            patch.dict("sys.modules", {"copilot": mock_copilot_module}),
         ):
             response = await provider.acompletion(
                 model="copilot/gpt-4.1",
@@ -906,9 +902,12 @@ class TestCopilotIntegration:
 
         assert response.choices[0]["message"]["content"] == "Hello from PATH CLI!"
         assert mock_copilot_client_class.call_args_list[0].args == ()
-        assert mock_copilot_client_class.call_args_list[1].args == (
-            {"cli_path": "/usr/local/bin/copilot"},
+        mock_copilot_module.RuntimeConnection.for_stdio.assert_called_once_with(
+            path="/usr/local/bin/copilot"
         )
+        assert mock_copilot_client_class.call_args_list[1].kwargs == {
+            "connection": mock_copilot_module.RuntimeConnection.for_stdio.return_value
+        }
         mock_find_cli.assert_called_once_with()
 
         await provider.close()
