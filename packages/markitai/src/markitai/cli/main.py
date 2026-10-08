@@ -1313,8 +1313,6 @@ def app(
                     # every item below. Any other exit ends the run here.
                     if normalize_exit_code(exc.code) != 10:
                         raise
-                if dry_run:
-                    return
 
                 def remember_submission(submitted: BatchHandoff) -> None:
                     # Until the wait ends, a Ctrl-C reports this batch (see

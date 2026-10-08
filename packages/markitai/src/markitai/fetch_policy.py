@@ -535,7 +535,6 @@ class FetchPolicyEngine:
         explicit_strategy: str | None,
         fallback_patterns: list[str],
         policy_enabled: bool,
-        has_jina_key: bool = False,
         domain_prefer_strategy: str | None = None,
         global_strategy_priority: list[str] | None = None,
         domain_strategy_priority: list[str] | None = None,

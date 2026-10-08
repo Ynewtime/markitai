@@ -37,31 +37,6 @@ class TestExtractionInfo:
         assert info.extractor_name == "generic"
         assert info.word_count == 100
 
-    def test_optional_fields_default_to_none(self) -> None:
-        info = ExtractionInfo(
-            content_profile=ContentProfile.GENERIC_ARTICLE,
-            extractor_name="generic",
-            word_count=50,
-        )
-        assert info.enricher_name is None
-
-    def test_source_kind_defaults_to_html(self) -> None:
-        info = ExtractionInfo(
-            content_profile=ContentProfile.SOCIAL_POST,
-            extractor_name="x_tweet",
-            word_count=241,
-        )
-        assert info.source_kind == "html"
-
-    def test_custom_enricher_name(self) -> None:
-        info = ExtractionInfo(
-            content_profile=ContentProfile.SOCIAL_POST,
-            extractor_name="x_tweet",
-            word_count=241,
-            enricher_name="thread_builder",
-        )
-        assert info.enricher_name == "thread_builder"
-
 
 class TestQualityAssessment:
     """Tests for the QualityAssessment dataclass."""

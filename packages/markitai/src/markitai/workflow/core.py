@@ -105,12 +105,7 @@ class ConversionContext:
     warnings: list[str] = field(default_factory=list)
 
     # Additional tracking (for caller use)
-    duration: float = 0.0
     cache_hit: bool = False
-    input_base_dir: Path | None = None  # For batch relative path calculation
-
-    # Optional callback for stage completion (stage_name, duration)
-    on_stage_complete: Callable[[str, float], None] | None = None
 
     @property
     def produced_file(self) -> Path | None:

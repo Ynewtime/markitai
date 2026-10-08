@@ -14,15 +14,15 @@ from dataclasses import dataclass
 class ThreadPolicy:
     """Controls which items are included from a threaded conversation.
 
+    The focal/root post is always included.
+
     Attributes:
-        include_main_item: Whether to include the focal/root post.
         include_author_thread: Whether to include the original author's
             own follow-up replies.
         include_third_party_replies: Whether to include replies from
             other users.
     """
 
-    include_main_item: bool = True
     include_author_thread: bool = True
     include_third_party_replies: bool = False
 

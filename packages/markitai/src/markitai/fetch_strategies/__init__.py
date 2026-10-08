@@ -49,8 +49,6 @@ class StrategyContext:
     session: FetchSession
     explicit: bool
     screenshot_kwargs: dict[str, Any]
-    cached_etag: str | None = None
-    cached_last_modified: str | None = None
 
 
 class StrategyRunner(Protocol):
