@@ -4,7 +4,6 @@ use markitai_core::{
     convert_with_context_detailed,
 };
 use serde_json::{Value, json};
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -15,13 +14,6 @@ fn isolated(name: &str) -> bool {
         return false;
     }
     let root = tempfile::tempdir().unwrap();
-    let executable = root.path().join("fake codex");
-    std::fs::write(
-        &executable,
-        include_bytes!("../../src/subscription/chatgpt/fake_exec.py"),
-    )
-    .unwrap();
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     let out = root.path().join("stdout");
     let err = root.path().join("stderr");
     let mut command = Command::new(std::env::current_exe().unwrap());
@@ -31,7 +23,9 @@ fn isolated(name: &str) -> bool {
         .env("MARKITAI_CODEX_TEST", &exact)
         .env("MARKITAI_CODEX_TEST_ROOT", root.path())
         .env("MARKITAI_HOME", root.path().join("state"))
-        .env("CODEX_CLI_PATH", executable)
+        // This test binary plays Codex once `mode` installs a scenario there.
+        .env("CODEX_HOME", root.path().join("codex"))
+        .env("CODEX_CLI_PATH", super::fake_runtime::program())
         .env("OPENAI_API_KEY", "must-not-enter-runtime")
         .current_dir(root.path())
         .stdout(Stdio::from(std::fs::File::create(&out).unwrap()))
@@ -63,12 +57,12 @@ fn isolated(name: &str) -> bool {
 fn root() -> PathBuf {
     std::env::var_os("MARKITAI_CODEX_TEST_ROOT").unwrap().into()
 }
+/// The fake Codex home, where it reads its scenario and records its calls.
+fn codex() -> PathBuf {
+    root().join("codex")
+}
 fn mode(name: &str) {
-    std::fs::write(
-        root().join("scenario.json"),
-        json!({"name":name}).to_string(),
-    )
-    .unwrap();
+    super::fake_runtime::install(&codex(), &json!({"name":name}));
 }
 fn cfg() -> Value {
     json!({"log":{"dir":null},"history":{"record":false},"prompts":{"dir":root().join("prompts")},"cache":{"enabled":true,"global_dir":root().join("cache")},"image":{"compress":false,"alt_enabled":false,"desc_enabled":false},"llm":{"enabled":true,"keep_base":true,"on_failure":"fail","router_settings":{"num_retries":2,"timeout":5},"model_list":[{"model_name":"default","litellm_params":{"model":"chatgpt/gpt-5.5"},"model_info":{"supports_vision":true}}]}})
@@ -85,7 +79,7 @@ fn source() -> PathBuf {
     path
 }
 fn records(name: &str) -> Vec<Value> {
-    std::fs::read_to_string(root().join(name))
+    std::fs::read_to_string(codex().join(name))
         .unwrap_or_default()
         .lines()
         .map(|v| serde_json::from_str(v).unwrap())

@@ -984,6 +984,8 @@ mod copilot;
 mod chatgpt;
 #[path = "conversion/claude.rs"]
 mod claude;
+#[path = "../src/subscription/fake_runtime.rs"]
+mod fake_runtime;
 
 #[cfg(test)]
 mod bounded_fixture_io {
