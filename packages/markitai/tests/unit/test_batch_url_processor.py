@@ -32,7 +32,7 @@ def fetched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     shot = tmp_path / "out" / ".markitai" / "screenshots" / "docs.full.jpg"
     shot.parent.mkdir(parents=True)
     shot.write_bytes(b"jpeg")
-    state: dict[str, Any] = {"screenshot": shot, "static_content": None}
+    state: dict[str, Any] = {"screenshot": shot}
 
     async def _fetch(url: str, *args: Any, **kwargs: Any) -> FetchResult:
         return FetchResult(
@@ -41,7 +41,6 @@ def fetched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
             url=url,
             final_url=FINAL_URL,
             screenshot_path=state["screenshot"],
-            static_content=state["static_content"],
         )
 
     monkeypatch.setattr("markitai.fetch.fetch_url", _fetch)
@@ -151,24 +150,6 @@ async def test_screenshot_only_llm_failure_fails_the_url_with_a_base_md(
     # The fallback references the screenshot the page is read from
     assert "screenshots/docs.full.jpg" in base
     assert not (out / "docs.llm.md").exists()
-
-
-@pytest.mark.asyncio
-async def test_vision_llm_failure_fails_the_url_with_a_base_md(
-    tmp_path: Path, fetched: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    fetched["static_content"] = "static text"  # multi-source: vision branch
-
-    async def _vision(*args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("vision and fallback both failed")
-
-    monkeypatch.setattr("markitai.cli.processors.url.process_url_with_vision", _vision)
-    out = tmp_path / "out"
-    result = await _run_directory_worker(_cfg(llm=True, fail_on_llm_error=True), out)
-
-    assert not result.success
-    assert "LLM processing failed" in (result.error or "")
-    assert "Text layer." in (out / "docs.md").read_text()
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,6 @@ from markitai.fetch_types import FetchResult
 from markitai.workflow.url import (
     convert_url_cascade,
     uses_screenshot_only,
-    uses_vision_enhancement,
 )
 
 
@@ -23,7 +22,7 @@ def _cfg() -> MarkitaiConfig:
     return cfg
 
 
-def _fetch_result(tmp_path: Path, *, multi_source: bool = True) -> FetchResult:
+def _fetch_result(tmp_path: Path) -> FetchResult:
     shot = tmp_path / "shot.png"
     shot.write_bytes(b"png")
     return FetchResult(
@@ -33,15 +32,11 @@ def _fetch_result(tmp_path: Path, *, multi_source: bool = True) -> FetchResult:
         url="https://example.com/x",
         screenshot_path=shot,
         screenshot_tiles=[shot],
-        static_content="# Page static" if multi_source else None,
     )
 
 
 def _processor() -> MagicMock:
     proc = MagicMock()
-    proc.enhance_url_with_vision = AsyncMock(
-        return_value=("# Clean", "---\ntitle: Page")
-    )
     proc.extract_from_screenshot = AsyncMock(
         return_value=("# Tile", "---\ntitle: Page")
     )
@@ -54,19 +49,6 @@ def _processor() -> MagicMock:
 
 
 class TestBranchPredicates:
-    def test_vision_requires_screenshot_and_multi_source(self, tmp_path: Path) -> None:
-        cfg = _cfg()
-        assert uses_vision_enhancement(cfg, _fetch_result(tmp_path)) is True
-        assert (
-            uses_vision_enhancement(cfg, _fetch_result(tmp_path, multi_source=False))
-            is False
-        )
-        no_shot = _fetch_result(tmp_path)
-        no_shot.screenshot_path = None
-        assert uses_vision_enhancement(cfg, no_shot) is False
-        cfg.llm.pure = True
-        assert uses_vision_enhancement(cfg, _fetch_result(tmp_path)) is False
-
     def test_screenshot_only_flag(self, tmp_path: Path) -> None:
         cfg = _cfg()
         assert uses_screenshot_only(cfg, _fetch_result(tmp_path)) is False
@@ -77,7 +59,7 @@ class TestBranchPredicates:
 
 
 class TestCascadeBranches:
-    async def test_vision_branch_writes_llm_md_with_screenshot_comment(
+    async def test_screenshot_without_screenshot_only_runs_document_stage(
         self, tmp_path: Path
     ) -> None:
         cfg = _cfg()
@@ -88,31 +70,11 @@ class TestCascadeBranches:
             tmp_path / "out",
             fetch_result=_fetch_result(tmp_path),
             processor=proc,
-            llm_error_policy="fallback",
         )
-        proc_target = result.llm_output_path
-        assert proc_target is not None and proc_target.exists()
-        text = proc_target.read_text(encoding="utf-8")
-        assert "# Clean" in text
-        assert "Screenshot for reference" in text
-
-    async def test_vision_failure_falls_back_to_document_stage(
-        self, tmp_path: Path
-    ) -> None:
-        cfg = _cfg()
-        proc = _processor()
-        proc.enhance_url_with_vision.side_effect = RuntimeError("vision down")
-        result = await convert_url_cascade(
-            "https://example.com/x",
-            cfg,
-            tmp_path / "out",
-            fetch_result=_fetch_result(tmp_path),
-            processor=proc,
-        )
-        assert result.llm_error is None  # fallback succeeded
         assert result.llm_output_path is not None
         assert "# Std" in result.llm_output_path.read_text(encoding="utf-8")
         proc.process_document.assert_awaited_once()
+        proc.extract_from_screenshot.assert_not_awaited()
 
     async def test_screenshot_only_reads_tiles(self, tmp_path: Path) -> None:
         cfg = _cfg()
@@ -176,7 +138,7 @@ class TestCascadeImageAnalysis:
         img.parent.mkdir(parents=True)
         img.write_bytes(b"jpg")
         # 让 fetch 的 markdown 里引用这张图（模拟已下载）
-        fetch = _fetch_result(tmp_path, multi_source=False)
+        fetch = _fetch_result(tmp_path)
         fetch.content = "# Page\n\n![old alt](.markitai/assets/pic.jpg)"
         analysis = ImageAnalysis(
             caption="A nice picture", description="d", llm_usage={}, extracted_text=""

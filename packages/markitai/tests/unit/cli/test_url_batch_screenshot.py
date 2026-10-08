@@ -34,8 +34,6 @@ def _make_fetch_result(
     result.strategy_used = "playwright"
     result.screenshot_path = screenshot_path
     result.title = f"Title of {url}"
-    result.static_content = None
-    result.browser_content = None
     result.metadata = {}
     return result
 

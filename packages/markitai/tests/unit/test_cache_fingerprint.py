@@ -1,5 +1,6 @@
 """Tests for cache fingerprint collision resistance."""
 
+import base64
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -93,7 +94,8 @@ class TestVisionCacheKeysIncludeImages:
         prompts.get_prompt.return_value = "prompt"
 
         def get_cached_image(path: Path) -> tuple[bytes, str]:
-            return images[path.name], "b64"
+            data = images[path.name]
+            return data, base64.b64encode(data).decode()
 
         enhancer = DocumentEnhancer(
             engine=engine,
@@ -129,13 +131,13 @@ class TestVisionCacheKeysIncludeImages:
 
         assert seen[0] != seen[1]
 
-    async def test_url_vision_cache_content_follows_screenshot_bytes(self):
+    async def test_screenshot_extract_cache_content_follows_screenshot_bytes(self):
         seen = []
         for shot in (b"screenshot v1", b"screenshot v2"):
             enhancer, engine = self._enhancer({"page.full.jpg": shot})
             with pytest.raises(RuntimeError, match="stop"):
-                await enhancer.enhance_url_with_vision(
-                    "same text", Path("page.full.jpg"), "https://example.com"
+                await enhancer.extract_from_screenshot(
+                    Path("page.full.jpg"), "https://example.com"
                 )
             seen.append(engine.complete_structured.call_args.args[0].cache_content)
 

@@ -1265,8 +1265,6 @@ class TestBatchResume:
         result.strategy_used = "static"
         result.screenshot_path = None
         result.title = "Test Page"
-        result.static_content = None
-        result.browser_content = None
         result.metadata = {}
         return result
 
