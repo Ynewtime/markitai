@@ -531,11 +531,10 @@ def run_config_editor(config_path: Path | None = None) -> None:
         config_path: The file to edit (the root ``-c``); None follows the
             default config search chain.
     """
-    from rich.console import Console
-
     from markitai.config import ConfigManager
+    from markitai.utils.term import make_stderr_console
 
-    console = Console(stderr=True)
+    console = make_stderr_console()
     manager = ConfigManager()
     manager.load(config_path=config_path)
     cfg = manager.config

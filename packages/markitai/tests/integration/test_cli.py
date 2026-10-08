@@ -357,6 +357,18 @@ class TestStdoutPipePurity:
         assert result.exit_code == 1
         assert result.stdout == ""
         assert "does not exist" in result.stderr
+        assert str(missing) in result.stderr
+
+    def test_long_error_message_is_not_hard_wrapped_off_a_tty(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Piped stderr keeps each diagnostic on one line (no 80-col wrap)."""
+        missing = tmp_path / ("x" * 120) / "missing.pdf"
+
+        result = runner.invoke(app, [str(missing)])
+
+        assert result.exit_code == 1
+        assert result.stderr == f"Error: Path '{missing}' does not exist.\n"
 
     def test_image_without_ocr_or_llm_is_not_a_successful_empty_conversion(
         self, runner: CliRunner, fixtures_dir: Path
