@@ -696,6 +696,24 @@ pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {
     Ok(base.exists() || llm.exists())
 }
 
+/// Create the private state directory `path`, and any missing parent, owner-only
+/// (0700 on Unix), refusing symbolic links anywhere in it. An existing directory
+/// is used as it is.
+pub fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    check_path(path, false).map_err(std::io::Error::other)?;
+    crate::platform::private_directory()
+        .recursive(true)
+        .create(path)?;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Private directory is not a regular directory",
+        ));
+    }
+    Ok(())
+}
+
 /// Staging for user-facing outputs: documents, assets, sidecars and reports.
 /// Like an ordinary new file and the reference writer, the final mode follows
 /// the process umask rather than tempfile's private 0600. Ownership records,
@@ -1936,6 +1954,31 @@ mod path_check_tests {
 
     fn outcome(result: Result<()>) -> std::result::Result<(), String> {
         result.map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn private_state_directories_are_owner_only_and_never_links() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        use std::fs;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let nested = root.path().join("a/b/c");
+        create_private_dir(&nested).unwrap();
+        for path in [
+            root.path().join("a"),
+            root.path().join("a/b"),
+            nested.clone(),
+        ] {
+            assert_eq!(mode(&path), 0o700, "{}", path.display());
+        }
+        create_private_dir(&nested).unwrap();
+        let link = root.path().join("link");
+        symlink(&nested, &link).unwrap();
+        assert!(create_private_dir(&link).is_err());
+        assert!(create_private_dir(&link.join("below")).is_err());
+        let file = root.path().join("file");
+        fs::write(&file, b"x").unwrap();
+        assert!(create_private_dir(&file).is_err());
     }
 
     #[test]

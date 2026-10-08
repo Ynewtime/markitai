@@ -90,14 +90,7 @@ fn open(cfg: &Value, create: bool, write: bool) -> Result<Option<Connection>> {
             return Ok(None);
         }
         let parent = path.parent().ok_or_else(unavailable)?;
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder.create(parent).map_err(|_| unavailable())?;
+        crate::output::create_private_dir(parent).map_err(|_| unavailable())?;
         crate::output::check_path(&path, false).map_err(|_| unavailable())?;
         let temporary = tempfile::NamedTempFile::new_in(parent).map_err(|_| unavailable())?;
         match crate::platform::persist_noclobber(temporary, &path) {

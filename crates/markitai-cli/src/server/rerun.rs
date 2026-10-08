@@ -13,6 +13,7 @@ use axum::{
     extract::{Path, Request, State as ExtractState},
     http::StatusCode,
 };
+use markitai_core::output::create_private_dir;
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
@@ -260,7 +261,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
         let result = (|| -> ApiResult<()> {
             let stage = transaction::stage(&worker.folder).map_err(ApiError::internal)?;
             let out = stage.path().join("out");
-            store::private_dir(&out).map_err(ApiError::internal)?;
+            create_private_dir(&out).map_err(ApiError::internal)?;
             let source = if work.prior.kind == "url" {
                 work.prior.name.clone()
             } else {
@@ -591,7 +592,7 @@ pub(super) async fn delete(
         let prior = data.clone();
         let stage = transaction::stage(&job.folder).map_err(ApiError::internal)?;
         let staged = stage.path().join("out");
-        store::private_dir(&staged).map_err(ApiError::internal)?;
+        create_private_dir(&staged).map_err(ApiError::internal)?;
         let _sidecar_locks = super::sidecar::prune(&staged, &job.folder.join("out"), &owned)
             .map_err(ApiError::internal)?;
         let replacements = store::files(&staged)

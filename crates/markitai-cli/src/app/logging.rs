@@ -290,14 +290,9 @@ fn private_directory(path: &Path) -> io::Result<()> {
     if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink() || !m.is_dir()) {
         return Err(invalid("Log directory must be a directory, not a symlink"));
     }
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(path)
+    markitai_core::platform::private_directory()
+        .recursive(true)
+        .create(path)
 }
 fn private_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();

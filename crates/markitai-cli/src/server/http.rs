@@ -15,6 +15,7 @@ use axum::{
     },
 };
 use futures_util::stream;
+use markitai_core::output::create_private_dir;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -146,10 +147,10 @@ pub(super) async fn create(
         .prefix(".upload-")
         .tempdir_in(&state.root)
         .map_err(ApiError::internal)?;
-    store::private_dir(stage.path()).map_err(ApiError::internal)?;
+    create_private_dir(stage.path()).map_err(ApiError::internal)?;
     store::mark_upload(stage.path()).map_err(ApiError::internal)?;
-    store::private_dir(&stage.path().join("uploads")).map_err(ApiError::internal)?;
-    store::private_dir(&stage.path().join("out")).map_err(ApiError::internal)?;
+    create_private_dir(&stage.path().join("uploads")).map_err(ApiError::internal)?;
+    create_private_dir(&stage.path().join("out")).map_err(ApiError::internal)?;
     let mut items = Vec::new();
     let mut names = HashSet::new();
     // URL entries from either the `urls` field or an uploaded `.urls` list.
@@ -708,7 +709,7 @@ mod error_code_tests {
     use tower::ServiceExt;
 
     fn service(root: &std::path::Path) -> (Arc<State>, Router) {
-        store::private_dir(root).unwrap();
+        create_private_dir(root).unwrap();
         let (shutdown, _) = watch::channel(false);
         let cfg = markitai_core::config::normalize(
             &json!({"llm":{"enabled":false},"cache":{"enabled":false},"log":{"dir":null}}),
@@ -1073,7 +1074,7 @@ mod error_code_tests {
             ("00000000000c", "2026-10-08T23:00:00.000-05:00"),
         ] {
             let folder = temp.path().join(id);
-            store::private_dir(&folder.join("out")).unwrap();
+            create_private_dir(&folder.join("out")).unwrap();
             std::fs::write(folder.join("out/notes.md"), id).unwrap();
             let item = json!({"item_id":"1","name":"notes.txt","kind":"url","status":"done",
                 "output":"notes.md","output_name":"notes.md"});
@@ -1133,7 +1134,7 @@ mod error_code_tests {
         let (state, router) = service(temp.path());
         let id = "0123456789ab";
         let folder = temp.path().join(id);
-        store::private_dir(&folder.join("out/assets")).unwrap();
+        create_private_dir(&folder.join("out/assets")).unwrap();
         for name in ["a", "b"] {
             std::fs::write(folder.join(format!("out/{name}.md")), name).unwrap();
         }

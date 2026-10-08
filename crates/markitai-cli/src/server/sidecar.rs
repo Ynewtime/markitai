@@ -1,7 +1,7 @@
 //! Rebase staged image metadata and preserve sibling entries under the core lock.
 //! Writers hold the sidecar `.images.lock`, never `images.json`, so a Windows
 //! (mandatory) lock never refuses a reader of the index.
-use super::store;
+use markitai_core::output::create_private_dir;
 use markitai_core::platform;
 use serde_json::{Value, json};
 use std::{
@@ -53,7 +53,7 @@ impl Drop for ImageMetadataLock {
 }
 
 fn lock(directory: &Path) -> io::Result<ImageMetadataLock> {
-    store::private_dir(directory)?;
+    create_private_dir(directory)?;
     let path = directory.join(".images.lock");
     markitai_core::output::check_path(&path, false).map_err(io::Error::other)?;
     let mut options = OpenOptions::new();
@@ -208,7 +208,7 @@ pub(super) fn prune(
         }
         if changed {
             let target = staged.join(prefix).join("images.json");
-            store::private_dir(target.parent().unwrap())?;
+            create_private_dir(target.parent().unwrap())?;
             let bytes = serde_json::to_vec_pretty(&value).map_err(io::Error::other)?;
             if bytes.len() as u64 > LIMIT {
                 return Err(io::Error::other("image metadata exceeds limit"));
