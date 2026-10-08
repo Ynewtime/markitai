@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP `batch_convert` with LLM enabled shares one LLM processor across the job, so `llm.concurrency` limits the whole batch instead of each item (a 10-item batch could have about 100 requests in flight).
 - Fetching a batch that mixes proxied and NO_PROXY or loopback hosts no longer fails at random: the static HTTP client keeps one connection pool per proxy instead of closing the shared one while other requests still use it.
 - An explicit `-s jina`, `-s defuddle` or `-s cloudflare` is consent for that service only: when it refuses and markitai falls back to the auto chain, `fetch.remote_consent` decides whether the other remote services (defuddle.md, Cloudflare, FxTwitter) may receive the URL.
+- macOS system proxy auto-detection works again (`scutil --proxy` lists the port before the host, so no proxy was ever found), and a `NO_PROXY` or `local_only_patterns` entry such as `corp.example` now also covers its subdomains (`api.corp.example`), as in curl, urllib and Go.
 
 ## [1.2.0] - 2026-09-28
 
