@@ -36,16 +36,37 @@ pub(crate) use vision::{
 
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
 const MAX_BACKOFF_SECONDS: u64 = 60;
-const DEFAULT_MODELS: [(&str, &str); 5] = [
-    ("ANTHROPIC_API_KEY", "anthropic/claude-haiku-4-5"),
-    ("OPENAI_API_KEY", "openai/gpt-5.6-luna"),
-    ("GEMINI_API_KEY", "gemini/gemini-flash-lite-latest"),
-    ("DEEPSEEK_API_KEY", "deepseek/deepseek-v4-flash"),
+/// (provider, API key variable, model) used without `llm.model_list`, in the
+/// reference's detection priority.
+const DEFAULT_MODELS: [(&str, &str, &str); 5] = [
     (
+        "anthropic",
+        "ANTHROPIC_API_KEY",
+        "anthropic/claude-haiku-4-5",
+    ),
+    ("openai", "OPENAI_API_KEY", "openai/gpt-5.6-luna"),
+    (
+        "gemini",
+        "GEMINI_API_KEY",
+        "gemini/gemini-flash-lite-latest",
+    ),
+    ("deepseek", "DEEPSEEK_API_KEY", "deepseek/deepseek-v4-flash"),
+    (
+        "openrouter",
         "OPENROUTER_API_KEY",
         "openrouter/google/gemini-3.1-flash-lite",
     ),
 ];
+
+/// (provider, model) of each default whose API key is set and not blank.
+pub(crate) fn keyed_defaults(
+    env: &HashMap<String, String>,
+) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+    DEFAULT_MODELS
+        .iter()
+        .filter(|(_, key, _)| env.get(*key).is_some_and(|value| !value.trim().is_empty()))
+        .map(|&(provider, _, model)| (provider, model))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Protocol {
@@ -664,13 +685,13 @@ fn nonempty(value: Option<&Value>) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-fn automatic_entries(env: &HashMap<String, String>) -> Vec<Value> {
+/// The deployments used without `llm.model_list`: `MODEL`, else the defaults
+/// whose API keys are set.
+pub(crate) fn automatic_entries(env: &HashMap<String, String>) -> Vec<Value> {
     if let Some(model) = env.get("MODEL").filter(|model| !model.is_empty()) {
         vec![json!({"model_name":"default","litellm_params":{"model":model}})]
     } else {
-        DEFAULT_MODELS
-            .iter()
-            .filter(|(key, _)| env.get(*key).is_some_and(|value| !value.is_empty()))
+        keyed_defaults(env)
             .map(|(_, model)| json!({"model_name":"default","litellm_params":{"model":model}}))
             .collect()
     }
@@ -2340,6 +2361,37 @@ mod tests {
             assert_eq!(answer.0, "after failure");
             assert_eq!(next.finish().len(), 1);
         }
+    }
+
+    #[test]
+    fn default_models_follow_pool_priority_and_skip_blank_keys() {
+        let env = HashMap::from([
+            ("OPENROUTER_API_KEY".into(), "fake-test-key".into()),
+            ("OPENAI_API_KEY".into(), "fake-test-key".into()),
+            ("GEMINI_API_KEY".into(), " ".into()),
+            ("ANTHROPIC_API_KEY".into(), "fake-test-key".into()),
+        ]);
+        // Quick-add detection used its own table, OpenAI first; it now shares
+        // the automatic pool's order.
+        let providers: Vec<_> = keyed_defaults(&env).map(|(provider, _)| provider).collect();
+        assert_eq!(providers, ["anthropic", "openai", "openrouter"]);
+        let models: Vec<_> = automatic_entries(&env)
+            .iter()
+            .map(|entry| {
+                entry["litellm_params"]["model"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(
+            models,
+            [
+                "anthropic/claude-haiku-4-5",
+                "openai/gpt-5.6-luna",
+                "openrouter/google/gemini-3.1-flash-lite"
+            ]
+        );
     }
 
     #[test]

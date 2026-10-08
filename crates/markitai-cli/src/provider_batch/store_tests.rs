@@ -32,7 +32,7 @@ impl Fixture {
             NewItem {
                 custom_id: format!("item_{index}"), source: self.input.join(&key).to_string_lossy().into_owned(),
                 key: key.clone(), base: format!("{name}.md").into(), enhanced: format!("{name}.llm.md").into(),
-                base_sha256: hex(b"base body"),
+                base_sha256: sha256_hex(b"base body"),
                 owner: Owner {generation: id.clone(), mode: "directory".into(), input: self.input.clone(),
                     output: self.output.clone(), kind: "file".into(), key},
                 plan: json!({"frozen_content":format!("original {name}"),"model":"fixture-model"}),
@@ -114,8 +114,8 @@ fn published(store: &Store, index: usize) -> Published {
     Published {
         path: store.state().items[index].enhanced.clone(),
         bytes: 8,
-        sha256: hex(b"enhanced"),
-        receipt_sha256: hex(b"canonical receipt"),
+        sha256: sha256_hex(b"enhanced"),
+        receipt_sha256: sha256_hex(b"canonical receipt"),
     }
 }
 

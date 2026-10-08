@@ -9,7 +9,7 @@ use std::io::Write;
 
 const DPI: f64 = 150.0;
 const MAX_PAGES: usize = 1_000;
-const MAX_PAGE_PIXELS: u64 = 32_000_000;
+use crate::images::MAX_PIXELS as MAX_PAGE_PIXELS;
 const MAX_DOCUMENT_PIXELS: u64 = 2_000_000_000;
 const MAX_SHOT_BYTES: usize = 5 * 1024 * 1024;
 const MAX_SHOTS_BYTES: usize = 100 * 1024 * 1024;

@@ -180,7 +180,7 @@ fn failure(message: &str) -> Error {
     Error::Conversion(format!("Native PDF rendering: {message}"))
 }
 
-const MAX_PIXELS: usize = 32_000_000;
+const MAX_PIXELS: usize = crate::images::MAX_PIXELS as usize;
 
 struct RasterSize {
     width: u32,

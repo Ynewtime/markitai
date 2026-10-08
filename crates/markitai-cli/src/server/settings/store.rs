@@ -56,20 +56,7 @@ impl Store {
             v.pointer("/llm/model_list").is_some() || v.pointer("/llm/providers").is_some()
         });
         let detected = if models.is_empty() {
-            if let Ok(model) = std::env::var("MODEL")
-                && !model.is_empty()
-            {
-                vec![json!({"model_name":"default","litellm_params":{"model":model}})]
-            } else {
-                markitai_core::provider_management::detected()
-                    .into_iter()
-                    .filter_map(|entry| {
-                        entry["model"].as_str().map(
-                            |name| json!({"model_name":"default","litellm_params":{"model":name}}),
-                        )
-                    })
-                    .collect()
-            }
+            markitai_core::provider_management::automatic_deployments()
         } else {
             Vec::new()
         };

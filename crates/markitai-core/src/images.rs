@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-const MAX_PIXELS: u64 = 32_000_000;
+/// The decoded-pixel limit of every image, rendered page and canvas.
+pub(crate) const MAX_PIXELS: u64 = 32_000_000;
 const MAX_DECODED: u64 = 256 * 1024 * 1024;
 
 pub(crate) struct VisionImage {

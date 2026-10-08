@@ -19,9 +19,11 @@ list on every request (never cached, because a stored login can change);
 non-authoritative. They reject an API key or base URL and report `unavailable`
 when the runtime or its login is missing. Markitai itself reads no browser or
 CLI authentication store; see [subscriptions](subscriptions.md).
-Quick-add `/api/settings/llm/detected` is an array derived from nonempty process
-environment keys. It does not contact providers; its candidates already have an
-environment credential, so `requires_api_key` is false.
+Quick-add `/api/settings/llm/detected` lists the default models whose API keys
+are set in the conversion environment (process variables plus `.env` files), in
+the pool order of [model selection](llm.md#model-selection). It does not contact
+providers; its candidates already have an environment credential, so
+`requires_api_key` is false.
 
 Each provider uses its model-list protocol, including Anthropic headers, the Gemini
 `x-goog-api-key` header (never a `?key=` query), Ollama tags and Azure versioned regional models. Discovery

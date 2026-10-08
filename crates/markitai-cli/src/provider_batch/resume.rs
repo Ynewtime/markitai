@@ -18,7 +18,7 @@ pub(super) fn match_session(store: &store::Store, session: &provider::Session) -
 fn verify_bases(store: &store::Store) -> CliResult<()> {
     for item in &store.state().items {
         let base = store.state().output_root.join(&item.base);
-        if digest(&member(&base)?) != item.base_sha256 {
+        if sha256_hex(&member(&base)?) != item.base_sha256 {
             return Err(runtime(
                 "Base Markdown changed; frozen Batch submission was not continued",
             ));

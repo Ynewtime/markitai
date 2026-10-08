@@ -42,6 +42,7 @@
 
 ### 修复
 
+- 工作台检测到的模型与转换使用同一张表和同一环境：`.env` 文件中的 API key 同样计入（与未设 `MODEL` 的转换一致），列表按模型池优先级（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter）排列，不再以 OpenAI 开头，`MODEL` 也从 `.env` 读取。只含空白的 key 不再让对应服务商进入转换的自动模型池。
 - `MARKITAI_NO_REMOTE_FETCH` 的读取方式与 `MARKITAI_NO_VLM_OCR` 及参考实现一致：除空值、`0`、`false`、`no`（去除首尾空白，不分大小写）外的任何值都会关闭远程抽取，` 1` 或 `Y` 不再让 Defuddle、Jina 和 Cloudflare 保持可用。`MARKITAI_PURE` 与 `MARKITAI_RECORD_HISTORY` 一样接受 `on` 且不分大小写。
 - `-p/--preset` 遇到配置 `presets` 中重新定义的内建名称（`minimal`、`standard`、`rich`）时使用配置中的定义，与工作台、其能力接口及参考实现一致，不再仍按内建定义处理。
 - 转换、`config set`/`config edit`/`init` 与工作台设置以同一方式读写配置文件。符号链接形式的配置（例如由 dotfiles 管理的 `config.json`）现在也能在工作台保存，与 `config set` 一致：保留链接，替换其指向的文件；Windows 报告文件被短暂占用时，与其他状态写入一样有限次重试。所有读取方对 FIFO、目录等非普通文件及超过 8 MiB 的文件报错，转换不再因名为 `markitai.json` 的 FIFO 无限等待，`config set` 也不再把这类文件替换成普通文件。为新配置文件创建的目录为私有权限。
@@ -56,7 +57,7 @@
 - Hacker News 与 X 读取器像其他 HTML 一样校验链接：`javascript:` 等不安全协议的帖子、评论、「More」或引用帖链接不再写入 Markdown。没有页面地址时读取的 HTML（本地文件、邮件正文）保留在第一个 `/`、`?` 或 `#` 之后含冒号的相对链接（如 `/wiki/Help:Contents`、`?t=10:30`），不再丢弃。
 - `POST /api/download-tickets` 最多读取 8 KiB 请求体，更大的请求体返回 413 `request_too_large`，不再沿用 5 GiB 的上传上限、缓冲客户端发来的任意数据。
 - PDF 内容检查对每页的同一问题（图案填充、内嵌图像、无法解析的 XObject）只报告一次，而不是每个操作符报告一次；重复这类操作符的页面不再产生数百万条相同警告，也不再生成罗列全部警告的错误消息。
-- PDF 扫描件中 OCR 文本层所覆盖的 JPEG 若在自身文件头中声明超过 32 Mi 像素，校验该文本层时不再解码它：先读尺寸再解码，且解码受内存上限约束，小文件不再能让每页校验分配数百 MiB 内存。该文本层照常读取但不做校验，并附警告说明图像超出像素上限。
+- PDF 扫描件中 OCR 文本层所覆盖的 JPEG 若在自身文件头中声明超过 3200 万像素，校验该文本层时不再解码它：先读尺寸再解码，且解码受内存上限约束，小文件不再能让每页校验分配数百 MiB 内存。该文本层照常读取但不做校验，并附警告说明图像超出像素上限。
 - HTML 文本中含大量未闭合的 TeX 起始符（`\(` 或 `\[`）时，转换按线性时间完成，不再卡住：每个起始符不再重新扫描其后的全部文本寻找闭合符。
 - Gemini 模型发现改为通过 `x-goog-api-key` 请求头发送 API 密钥，不再放在 `?key=` 查询参数中，避免被沿途的请求日志和代理记录。
 - `fetch.policy.local_only_patterns` 及继承的 `NO_PROXY` 条目改由代理例外的解析器读取，不再使用已经偏离的第二份实现：`bücher.de` 这类 Unicode 名称现在能匹配其 punycode 主机，标记为仅本地的 URL 不会再被发给 Defuddle、Jina 或 Cloudflare；代理例外也随之支持仅本地规则原本就接受的 IPv4 子网掩码写法（`192.168.1.0/255.255.255.0`）。
