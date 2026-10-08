@@ -274,10 +274,15 @@ usage merely because a task or output path exists.
 
 ## Limits and failures
 
-Default limits are 10 MiB per base, 64 MiB per journal, 1 MiB per event line and
-100,000 combined document/URL entries. Files are bounded before unrestricted
-reads; serialization uses a bounded writer. Journal capacity triggers compaction,
-and an oversized snapshot fails instead of becoming unreadable on the next run.
+Default limits are 64 MiB per base, 64 MiB per journal, 1 MiB per event line and
+100,000 combined document/URL entries; the base is written as compact JSON, so
+the entry limit is reachable with per-item usage diagnostics. Files are bounded
+before unrestricted reads; serialization uses a bounded writer. Journal capacity
+triggers compaction, and an oversized snapshot fails instead of becoming
+unreadable on the next run. Because entries grow as items finish, a batch begins
+only if its state still fits when every unfinished entry gains 512 bytes (its
+output path and usage); otherwise it stops before any conversion with `Recovery
+state projected base bytes limit exceeded`. Split such a batch.
 Diagnostics do not dump raw state lines, provider configuration or document data.
 
 New native base and journal files use private permissions on Unix (Windows

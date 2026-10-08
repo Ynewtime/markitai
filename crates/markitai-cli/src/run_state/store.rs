@@ -1,7 +1,8 @@
 #[path = "legacy_backup.rs"]
 mod legacy_backup;
 use super::{
-    Checkpoint, Error, Event, Fence, ItemKey, Limits, LoadOutcome, Result, Scope, Snapshot, codec,
+    Checkpoint, Error, Event, Fence, ItemKey, Limits, LoadOutcome, Result, Scope, Snapshot, Status,
+    codec,
 };
 use crate::output_claims::sync_group::SyncGroup;
 use markitai_core::platform::{self, FileId};
@@ -9,6 +10,10 @@ use serde_json::Value;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+
+/// Bytes an unfinished entry may still gain before the final compaction: its
+/// output path and the usage diagnostics of its attempt.
+const ENTRY_GROWTH: usize = 512;
 
 /// The open lock descriptor owns one checkpoint for the lifetime of this store.
 /// Buffered mutations require an explicit flush before work may rely on them.
@@ -314,6 +319,21 @@ impl StateStore {
         }
         let snapshot = codec::prepare_checkpoint(snapshot, &self.scope, self.allow_symlinks)?;
         let bytes = codec::encode(&snapshot, &self.scope, self.allow_symlinks, self.limits)?;
+        // Refuse a batch whose finished state could not be compacted now,
+        // before any paid work, instead of at its final compaction.
+        let unfinished = snapshot
+            .documents
+            .values()
+            .chain(snapshot.urls.values())
+            .filter(|entry| entry.status != Status::Completed)
+            .count();
+        if bytes
+            .len()
+            .saturating_add(unfinished.saturating_mul(ENTRY_GROWTH))
+            > self.limits.base_bytes
+        {
+            return Err(Error::Limit("projected base bytes"));
+        }
         if matches!(disk, DiskBase::Corrupt(_)) {
             self.quarantine()?;
         } else if matches!(&disk, DiskBase::Valid(previous) if previous.checkpoint.is_none()) {

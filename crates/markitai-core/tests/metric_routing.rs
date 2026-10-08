@@ -412,16 +412,19 @@ fn latency_timeout_penalty_changes_the_next_real_request_without_timing_assertio
             (&second, &first)
         };
         alternate.release();
-        let result = worker.join().unwrap().unwrap();
-        assert_eq!(result.usage.requests, 1);
+        // The provider may have billed a timed-out request, so it is not sent again.
+        assert!(worker.join().unwrap().is_err());
+        assert_eq!(alternate.requests().len(), 0);
+        let next = call(&path, cfg.clone(), &runtime).unwrap();
+        assert_eq!(next.usage.requests, 1);
         assert!(
-            result
-                .llm_markdown
+            next.llm_markdown
                 .unwrap()
                 .contains("Complete source text for timeout.")
         );
-        let next = call(&path, cfg.clone(), &runtime).unwrap();
-        assert_eq!(next.usage.requests, 1);
+        // Without the timeout penalty the held deployment, never measured,
+        // would beat the alternate's positive latency.
+        call(&path, cfg.clone(), &runtime).unwrap();
         assert_eq!(held.requests().len(), 1);
         assert_eq!(alternate.requests().len(), 2);
         held.release();
@@ -470,20 +473,21 @@ fn latency_body_timeout_after_flushed_headers_penalizes_the_stalled_deployment()
             (&second, &first)
         };
         alternate.release();
-        let result = worker.join().unwrap().unwrap();
-        assert_eq!(result.usage.requests, 1);
-        assert_eq!(result.usage.input_tokens, 7);
-        assert_eq!(result.usage.output_tokens, 5);
+        // A successful status means the provider billed it: no second request.
+        assert!(worker.join().unwrap().is_err());
+        assert_eq!(alternate.requests().len(), 0);
+        let next = call(&path, cfg.clone(), &runtime).unwrap();
+        assert_eq!(next.usage.requests, 1);
+        assert_eq!(next.usage.input_tokens, 7);
+        assert_eq!(next.usage.output_tokens, 5);
         assert!(
-            result
-                .llm_markdown
+            next.llm_markdown
                 .unwrap()
                 .contains("Complete source text for body-timeout.")
         );
-        let next = call(&path, cfg.clone(), &runtime).unwrap();
-        assert_eq!(next.usage.requests, 1);
         // Without the body-timeout penalty the stalled deployment remains cold
         // and is selected again ahead of the alternate's positive latency.
+        call(&path, cfg.clone(), &runtime).unwrap();
         assert_eq!(stalled.requests().len(), 1);
         assert_eq!(stalled.body_started(), 1);
         assert_eq!(alternate.requests().len(), 2);

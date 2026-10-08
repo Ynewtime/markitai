@@ -302,18 +302,21 @@ refusals the same way.
 ## Retries, budgets and usage
 
 `router_settings.num_retries` means additional attempts after the first attempt
-in a group. Connection failures, timeouts, interrupted response reads, temporary
-HTTP failures, rate limits, recognized unavailable-model responses and empty
-text responses may retry. Billing/payment/insufficient-quota failures stop the
-entire operation. A 429 is a rate limit, retried even when its message mentions
-billing or payment, unless it carries the `insufficient_quota` code; an HTTP 402
-always stops. Truncated output is rejected instead of being accepted as a
-complete document.
+in a group. Connection failures, temporary HTTP failures (408, 409, 5xx), rate
+limits and empty text responses may retry. A request that timed out, or whose
+successful response was cut off while being read, is not sent again: the
+provider may already have completed and billed it, and that usage cannot be
+recorded. A configured fallback group can still run.
+Billing/payment/insufficient-quota failures stop the entire operation. A 429 is
+a rate limit, retried even when its message mentions billing or payment, unless
+it carries the `insufficient_quota` code; an HTTP 402 always stops. Truncated
+output is rejected instead of being accepted as a complete document.
 
 An authentication or permission refusal excludes that deployment for the rest
 of the `LlmRuntime`, so later requests and documents of the run skip it. The
-refusals are HTTP 401/403 responses without a billing or quota marker, and a
-[subscription runtime](subscriptions.md) that is signed out, reports a
+refusals are HTTP 401/403 responses without a billing or quota marker, other
+non-temporary responses that name a missing, unavailable or regionally blocked
+model, and a [subscription runtime](subscriptions.md) that is signed out, reports a
 non-subscription account or reports an authentication failure. The request then
 moves at once to another eligible deployment of the same group under the group's
 routing strategy: there is no backoff and `num_retries` is not consumed, while
@@ -322,8 +325,10 @@ on the refused response is recorded as usual. Each excluded deployment produces
 one warning per run that names its configured model, never a credential or
 endpoint, for example `LLM deployment openai/gpt-5.6-luna failed authentication
 and is skipped for this run`; a deployment refused for a regional block is
-`… is not available in this region and is skipped for this run`. Only when every deployment of the group is excluded
-does the authentication error stand; configured fallback groups then run as
+`… is not available in this region and is skipped for this run`, and one
+refused for a missing or unavailable model is `… is unavailable and is skipped
+for this run`. Only when every deployment of the group is excluded does the
+authentication error stand; configured fallback groups then run as
 usual, and later requests fail that group without a network call. A group with a
 single deployment identity keeps the earlier rule: its authentication failure is
 not excluded, does not retry the same group, and a fallback group can still run.

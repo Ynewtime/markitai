@@ -109,8 +109,7 @@ pub(super) async fn retry(
         .await
         .map_err(|_| ApiError::new(413, "request_too_large", "retry body exceeds limit"))?;
     let body = RetryBody::parse(&bytes)?;
-    http::refresh(&state).await?;
-    let job = jobs::get(&state, &id)?;
+    let job = http::registered(&state, &id).await?;
     let admission_state = state.clone();
     let admission_job = job.clone();
     let (created,drain)=crate::task::blocking(move|| {
@@ -358,18 +357,21 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 .into_iter()
                 .map(|(name, path)| (format!("out/{name}"), path))
                 .collect::<Vec<_>>();
+            // File work runs under the job's access lock only. Admission,
+            // finalization and deletion take it too; conversions still running
+            // change only their own rows, so the data lock is taken briefly.
             let _access = worker.access.lock().unwrap();
-            let mut data = worker.data.lock().unwrap();
+            let snapshot = worker.data.lock().unwrap().clone();
             let _sidecar_locks = super::sidecar::prepare(&out, &worker.folder.join("out"))
                 .map_err(ApiError::internal)?;
             replacements.retain(|(name, _)| files::public_member(name));
             let mut shared = HashSet::new();
-            for sibling in data
+            for sibling in snapshot
                 .items
                 .iter()
                 .filter(|i| i.item_id != work.prior.item_id)
             {
-                shared.extend(files::owned_files(&worker.folder, &data, sibling)?);
+                shared.extend(files::owned_files(&worker.folder, &snapshot, sibling)?);
             }
             let mut retained = Vec::new();
             for (name, path) in replacements.drain(..) {
@@ -396,13 +398,15 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             } else {
                 Vec::new()
             };
-            let id = match transaction::publish(
+            let published = transaction::publish(
                 &worker.folder,
                 stage,
                 worker.sequence.fetch_add(1, Ordering::SeqCst),
                 retained,
                 removals,
-            ) {
+            );
+            let mut data = worker.data.lock().unwrap();
+            let id = match published {
                 Ok(id) => id,
                 Err(error) => {
                     if transaction::requires_recovery(&error) {
@@ -530,8 +534,7 @@ pub(super) async fn delete(
     ExtractState(state): ExtractState<Arc<State>>,
     Path((id, item_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    http::refresh(&state).await?;
-    let job = jobs::get(&state, &id)?;
+    let job = http::registered(&state, &id).await?;
     crate::task::blocking(move || {
         let _access = job.access.lock().unwrap();
         if !state
@@ -543,7 +546,9 @@ pub(super) async fn delete(
         {
             return Err(ApiError::new(404, "job_not_found", "job not found"));
         }
-        let mut data = job.data.lock().unwrap();
+        // An idle job changes only under its access lock, held here. Work on a
+        // copy so readers of the data lock are not stalled by the file work.
+        let mut data = job.data.lock().unwrap().clone();
         let index = data
             .items
             .iter()
@@ -563,7 +568,6 @@ pub(super) async fn delete(
         if data.items.len() == 1 {
             markitai_core::output::check_path(&job.folder, false).map_err(ApiError::internal)?;
             fs::remove_dir_all(&job.folder).map_err(ApiError::internal)?;
-            drop(data);
             state.jobs.lock().unwrap().remove(&id);
             return Ok(StatusCode::NO_CONTENT);
         }
@@ -621,17 +625,19 @@ pub(super) async fn delete(
                 data.status = "error".into();
                 data.persistence_error =
                     Some("item deletion rollback failed; restart to recover".into());
+                *job.data.lock().unwrap() = data;
                 state.persistence_failed.store(true, Ordering::SeqCst);
                 return Err(ApiError::internal(error));
             }
-            *data = prior;
             // persist may have renamed metadata before directory fsync failed.
             // Put the matching old row back along with its restored bytes.
-            store::persist(&job.folder, &data).map_err(ApiError::internal)?;
+            store::persist(&job.folder, &prior).map_err(ApiError::internal)?;
             return Err(ApiError::internal(error));
         }
         transaction::committed(&job.folder, &mut data);
-        let _ = job.events.send(("job", data.progress()));
+        let progress = data.progress();
+        *job.data.lock().unwrap() = data;
+        let _ = job.events.send(("job", progress));
         Ok(StatusCode::NO_CONTENT)
     })
     .await

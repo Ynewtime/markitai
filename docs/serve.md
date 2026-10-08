@@ -373,7 +373,11 @@ recover assets referenced in Markdown, including visible `assets/` profiles;
 assets without references and without a native item index are still downloadable
 by path and included in the ZIP, but are not guessed into an item artifact list.
 `GET /api/history` refreshes jobs added by other local processes and returns the
-existing summaries in reverse creation order. `GET /api/history/archive` streams
+existing summaries in reverse creation order. A job folder that cannot be read
+(for example, one with a damaged retry journal) is skipped with one
+`Serve: skipped unreadable history job …` line on standard error and left in
+place; startup, history and the other jobs are unaffected, and the folder is
+tried again on the next scan. `GET /api/history/archive` streams
 a ZIP of completed histories. `DELETE /api/history/{job_id}` removes a terminal
 job and its files; running jobs return 409. This implementation does not apply
 an automatic age-based deletion policy.

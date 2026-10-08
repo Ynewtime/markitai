@@ -1440,9 +1440,11 @@ fn run_mode(
                 if let Err(failure) = &response {
                     if shared && failure.kind == FailureKind::Authentication {
                         if runtime.routing().exclude(routing_keys[selected]) {
-                            let refusal = if failure.error.to_string().ends_with(REGION_UNAVAILABLE)
-                            {
+                            let error = failure.error.to_string();
+                            let refusal = if error.ends_with(REGION_UNAVAILABLE) {
                                 "is not available in this region"
+                            } else if error.ends_with(MODEL_UNAVAILABLE) {
+                                "is unavailable"
                             } else {
                                 "failed authentication"
                             };
@@ -1672,7 +1674,10 @@ fn request_with_mode(
                 }
                 .into(),
             ),
-            retryable: error.is_timeout() || error.is_connect() || error.is_body(),
+            // Only a request that never reached the provider is safe to send
+            // again. After a timeout the provider may have completed and billed
+            // it, and that usage is never reported.
+            retryable: error.is_connect(),
             fatal: false,
             document_fatal: false,
             retry_after: None,
@@ -1708,7 +1713,9 @@ fn request_with_mode(
             Failure {
                 kind: FailureKind::Transport,
                 error: Error::Conversion("Cannot read LLM response".into()),
-                retryable: true,
+                // A successful status means the provider completed and billed
+                // the request; sending it again would pay twice.
+                retryable: status >= 300,
                 fatal: false,
                 document_fatal: false,
                 retry_after: None,
@@ -1731,17 +1738,21 @@ fn request_with_mode(
         }
         let body = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
         let fatal = quota_refused(status, &body);
-        let model_unavailable = [
-            "model not found",
-            "model_not_found",
-            "model is not available",
-            "model_not_available",
-            "user location is not supported",
-            "not available in your region",
-            "failed_precondition",
-        ]
-        .iter()
-        .any(|pattern| body.contains(pattern));
+        let transient = matches!(status, 408 | 409 | 429 | 500..=599);
+        // A missing or regionally blocked model cannot succeed on retry. A
+        // temporary status keeps its retry even when its body names the model.
+        let model_unavailable = !transient
+            && [
+                "model not found",
+                "model_not_found",
+                "model is not available",
+                "model_not_available",
+                "user location is not supported",
+                "not available in your region",
+                "failed_precondition",
+            ]
+            .iter()
+            .any(|pattern| body.contains(pattern));
         let mode_rejected = !fatal && structured.is_some_and(|wire| wire.rejected(status, &bytes));
         let invalid_request = structured.is_some()
             && !mode_rejected
@@ -1752,7 +1763,8 @@ fn request_with_mode(
                 FailureKind::ModeRejected
             } else if invalid_request {
                 FailureKind::InvalidRequest
-            } else if !fatal && matches!(status, 401 | 403) {
+            } else if !fatal && (matches!(status, 401 | 403) || model_unavailable) {
+                // An unavailable model moves to a sibling like a refused credential.
                 FailureKind::Authentication
             } else {
                 FailureKind::Transport
@@ -1761,8 +1773,7 @@ fn request_with_mode(
                 Some(reason) => format!("LLM returned HTTP {status}: {reason}"),
                 None => format!("LLM returned HTTP {status}"),
             }),
-            retryable: !fatal
-                && (matches!(status, 408 | 409 | 429 | 500..=599) || model_unavailable),
+            retryable: !fatal && transient,
             fatal,
             document_fatal: fatal || matches!(status, 401 | 403) || invalid_request,
             retry_after,
@@ -1837,6 +1848,7 @@ fn request_with_mode(
 }
 
 const REGION_UNAVAILABLE: &str = "the model is not available in this region";
+const MODEL_UNAVAILABLE: &str = "the model is unavailable";
 
 /// A billing, payment or exhausted-quota refusal, which stops the operation.
 /// A 429 is a rate limit, retried, unless it carries the `insufficient_quota`
@@ -1880,7 +1892,7 @@ fn refusal_reason(status: u16, body: &str) -> Option<&'static str> {
         "model is not available",
         "model_not_available",
     ]) {
-        Some("the model is unavailable")
+        Some(MODEL_UNAVAILABLE)
     } else {
         None
     }
@@ -2810,6 +2822,52 @@ mod tests {
                 .to_ascii_lowercase()
                 .contains("authorization: bearer fake-test-key")
         );
+    }
+
+    #[test]
+    fn a_request_the_provider_may_have_billed_is_not_sent_again() {
+        // One answer stalls past the timeout; the other has a successful status
+        // but its connection closes partway through the body.
+        for (cut_off, message) in [
+            (false, "LLM request timed out"),
+            (true, "Cannot read LLM response"),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}/v1", listener.local_addr().unwrap());
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                read_request(&mut stream);
+                if cut_off {
+                    write!(stream, "HTTP/1.1 200 Mock\r\nContent-Type: application/json\r\nContent-Length: 500\r\nConnection: close\r\n\r\n{{\"choices\"").unwrap();
+                } else {
+                    thread::sleep(Duration::from_secs(2));
+                }
+            });
+            let mut cfg = cfg("openai/test", &base);
+            cfg["llm"]["router_settings"]["timeout"] = json!(1);
+            let mut pauses = Vec::new();
+            let error = run(&plain(), &cfg, &HashMap::new(), &mut |pause| {
+                pauses.push(pause)
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains(message), "{error}");
+            assert!(pauses.is_empty(), "{message}: {pauses:?}");
+            server.join().unwrap();
+        }
+        // A connection that was never established is still retried.
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/v1", closed.local_addr().unwrap());
+        drop(closed);
+        let mut pauses = Vec::new();
+        let error = run(
+            &plain(),
+            &cfg("openai/test", &base),
+            &HashMap::new(),
+            &mut |pause| pauses.push(pause),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("LLM request failed"), "{error}");
+        assert_eq!(pauses, [Duration::from_secs(1), Duration::from_secs(2)]);
     }
 
     #[test]

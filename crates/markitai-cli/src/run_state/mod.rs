@@ -130,8 +130,10 @@ pub(crate) struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
+        // The base holds what the journal holds once compacted, so both share
+        // one bound; 100,000 completed entries with diagnostics fit within it.
         Self {
-            base_bytes: 10 * 1024 * 1024,
+            base_bytes: 64 * 1024 * 1024,
             journal_bytes: 64 * 1024 * 1024,
             line_bytes: 1024 * 1024,
             entries: 100_000,
