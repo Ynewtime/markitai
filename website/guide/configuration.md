@@ -660,7 +660,7 @@ Every LLM task has a system prompt (role and rules) and a user prompt (the conte
 ├── image_caption_system.md      # alt text
 ├── image_description_system.md  # image descriptions
 ├── document_process_system.md   # document processing
-└── url_enhance_system.md        # URL enhancement
+└── screenshot_extract_system.md # --screenshot-only extraction
 ```
 
 ```json
@@ -672,4 +672,4 @@ Every LLM task has a system prompt (role and rules) and a user prompt (the conte
 }
 ```
 
-The keys are `cleaner`, `image_caption`, `image_description`, `image_analysis`, `document_process`, `document_vision` and `url_enhance`, each with a `_system` and a `_user` variant.
+The keys are `cleaner`, `image_caption`, `image_description`, `image_analysis`, `document_process` and `document_vision`, each with a `_system` and a `_user` variant.

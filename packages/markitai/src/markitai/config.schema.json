@@ -1423,30 +1423,6 @@
           ],
           "default": null,
           "title": "Document Vision User"
-        },
-        "url_enhance_system": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Url Enhance System"
-        },
-        "url_enhance_user": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Url Enhance User"
         }
       },
       "title": "PromptsConfig",

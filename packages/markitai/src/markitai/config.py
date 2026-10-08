@@ -511,9 +511,6 @@ class PromptsConfig(BaseModel):
     document_process_user: str | None = None
     document_vision_system: str | None = None
     document_vision_user: str | None = None
-    # URL prompts
-    url_enhance_system: str | None = None
-    url_enhance_user: str | None = None
 
 
 class BatchConfig(BaseModel):

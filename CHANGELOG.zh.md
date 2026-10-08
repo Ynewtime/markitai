@@ -11,7 +11,7 @@
 
 - PyYAML、beautifulsoup4、soupsieve、defusedxml、PyMuPDF、openpyxl、numpy 和 olefile 改为声明的依赖。markitai 直接导入它们，此前只是随其他包间接安装，上游某次发布去掉其中一个就可能让 `import markitai` 失败。
 - MCP Registry 条目运行它所标明的版本（`uvx --from "markitai[mcp]==1.2.1"`），不再运行 PyPI 上的最新版。
-- 移除未使用的 Python API：`LLMProcessor.clean_markdown`、`get_usage`、`get_total_cost` 和 `reset_call_counter`（按文档统计的用量仍由 `get_context_usage`/`get_context_cost` 提供）、`BatchProcessor.process_batch`、`ImageProcessor.process_and_save_async`、`OCRProcessor.is_scanned_pdf`、`BaseConverter.can_convert`、`PromptManager.list_prompts`、`collect_user_notices`、`markitai.llm.MarkitaiLLMLogger`（它被注册为全局 LiteLLM 回调），以及从未抛出过的 `QuotaError`、`ProviderTimeoutError` 和 `SDKNotAvailableError`。
+- 移除未使用的 Python API：`LLMProcessor.clean_markdown`、`get_usage`、`get_total_cost` 和 `reset_call_counter`（按文档统计的用量仍由 `get_context_usage`/`get_context_cost` 提供）、`BatchProcessor.process_batch`、`ImageProcessor.process_and_save_async`、`OCRProcessor.is_scanned_pdf`、`BaseConverter.can_convert`、`PromptManager.list_prompts`、`collect_user_notices`、`markitai.llm.MarkitaiLLMLogger`（它被注册为全局 LiteLLM 回调），以及从未抛出过的 `QuotaError`、`ProviderTimeoutError` 和 `SDKNotAvailableError`。`prompts.url_enhance_system`/`url_enhance_user` 设置及其提示词文件也已移除：没有任何代码路径会发送它们，仍设置了它们的配置照常加载。
 
 ### 修复
 

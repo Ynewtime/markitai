@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - PyYAML, beautifulsoup4, soupsieve, defusedxml, PyMuPDF, openpyxl, numpy and olefile are now declared dependencies. markitai imports them directly; they used to arrive only through other packages, so an upstream release dropping one could break `import markitai`.
 - The MCP Registry entry runs the release it names (`uvx --from "markitai[mcp]==1.2.1"`) instead of whatever is latest on PyPI.
-- Unused Python APIs were removed: `LLMProcessor.clean_markdown`, `get_usage`, `get_total_cost` and `reset_call_counter` (per-document usage stays in `get_context_usage`/`get_context_cost`), `BatchProcessor.process_batch`, `ImageProcessor.process_and_save_async`, `OCRProcessor.is_scanned_pdf`, `BaseConverter.can_convert`, `PromptManager.list_prompts`, `collect_user_notices`, `markitai.llm.MarkitaiLLMLogger` (it was registered as a global LiteLLM callback), and the never-raised `QuotaError`, `ProviderTimeoutError` and `SDKNotAvailableError`.
+- Unused Python APIs were removed: `LLMProcessor.clean_markdown`, `get_usage`, `get_total_cost` and `reset_call_counter` (per-document usage stays in `get_context_usage`/`get_context_cost`), `BatchProcessor.process_batch`, `ImageProcessor.process_and_save_async`, `OCRProcessor.is_scanned_pdf`, `BaseConverter.can_convert`, `PromptManager.list_prompts`, `collect_user_notices`, `markitai.llm.MarkitaiLLMLogger` (it was registered as a global LiteLLM callback), and the never-raised `QuotaError`, `ProviderTimeoutError` and `SDKNotAvailableError`. The `prompts.url_enhance_system`/`url_enhance_user` settings and prompt files are gone too: no code path ever sent them, and a config that still sets them loads as before.
 
 ### Fixed
 
