@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1]
+
+### Fixed
+
+- **`serve` LLM settings**: a settings caller can no longer send an arbitrary host environment variable (`env:NAME`) or a saved key to a server it picks. `env:` references from the web API are limited to the provider key variables (`env:OPENAI_API_KEY`, …) and references already in the config file, and a saved key is only sent to its own `api_base` (422 otherwise; send the key to use another endpoint).
+
 ## [1.2.0] - 2026-09-28
 
 ### Added
