@@ -10,6 +10,7 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
+from markitai.utils.charset import read_text_file
 
 
 class TextConverter(BaseConverter):
@@ -31,7 +32,7 @@ class TextConverter(BaseConverter):
         input_path = Path(input_path)
 
         # Read file content
-        content = input_path.read_text(encoding="utf-8")
+        content = read_text_file(input_path)
 
         metadata = {
             "source": str(input_path),

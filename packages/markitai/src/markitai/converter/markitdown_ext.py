@@ -20,6 +20,7 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.notices import user_notice
+from markitai.utils.charset import read_text_file
 
 if TYPE_CHECKING:
     from markitdown import MarkItDown
@@ -49,7 +50,7 @@ def _convert_html(input_path: Path) -> ConvertResult:
             is_native_extraction_acceptable,
         )
 
-        html = input_path.read_text(encoding="utf-8", errors="replace")
+        html = read_text_file(input_path, html=True)
         source_url = f"file://{input_path.resolve()}"
         extracted = extract_web_content(html, source_url)
         markdown = extracted.markdown

@@ -160,6 +160,18 @@ class TestStripFrontmatter:
         result = _strip_frontmatter(content)
         assert result == content
 
+    def test_rules_later_in_the_body_are_not_frontmatter(self) -> None:
+        """Two horizontal rules in the body enclose content, not YAML: it
+        stays for title extraction (the H1 between them is the title)."""
+        from markitai.utils.frontmatter import (
+            _strip_frontmatter,
+            extract_title_from_content,
+        )
+
+        content = "Intro.\n\n---\n\n# Real Title\n\nBody.\n\n---\n\nOutro.\n"
+        assert _strip_frontmatter(content) == content
+        assert extract_title_from_content(content) == "Real Title"
+
     def test_frontmatter_pattern_is_shared_constant(self) -> None:
         """FRONTMATTER_PATTERN should be a compiled regex constant."""
         from markitai.utils.frontmatter import FRONTMATTER_PATTERN

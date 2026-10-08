@@ -544,6 +544,45 @@ class TestAnalyzeImagesWithLLM:
         assert len(analysis_result.assets) == 1
         assert analysis_result.assets[0]["alt"] == "A test image"
 
+    async def test_alt_text_with_backslashes_is_written_verbatim(
+        self,
+        tmp_path: Path,
+        markitai_config: MarkitaiConfig,
+        mock_llm_processor,
+        sample_image_analysis,
+    ):
+        """The new reference is inserted literally: as a re.sub template its
+        escaped backslashes were halved again (C:\\\\temp -> C:\\temp)."""
+        from markitai.cli.processors.llm import analyze_images_with_llm
+        from markitai.constants import ASSETS_REL_PATH
+        from markitai.utils.text import markdown_image_reference
+
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(b"fake image data")
+        output_file = tmp_path / "output.md"
+        llm_output = output_file.with_suffix(".llm.md")
+        llm_output.write_text("# Content\n\n![](.markitai/assets/test.jpg)\n")
+        sample_image_analysis.caption = r"Folder C:\temp\data [v2]"
+        mock_llm_processor.analyze_images_batch = AsyncMock(
+            return_value=[sample_image_analysis]
+        )
+
+        markdown, *_ = await analyze_images_with_llm(
+            image_paths=[image_path],
+            markdown="# Test\n\n![](.markitai/assets/test.jpg)",
+            output_file=output_file,
+            cfg=markitai_config,
+            input_path=tmp_path / "source.pdf",
+            processor=mock_llm_processor,
+        )
+
+        expected = markdown_image_reference(
+            r"Folder C:\temp\data [v2]", f"{ASSETS_REL_PATH}/test.jpg"
+        )
+        assert expected in markdown
+        assert expected in llm_output.read_text()
+
     async def test_analyze_images_passes_document_context_to_batch_analysis(
         self,
         tmp_path: Path,

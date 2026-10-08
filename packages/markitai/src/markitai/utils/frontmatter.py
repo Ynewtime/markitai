@@ -19,10 +19,9 @@ _TITLE_HTML_TAG_RE = re.compile(r"</?(?:strong|em|b|i|code)>", re.IGNORECASE)
 
 # Robust frontmatter pattern: anchors closing --- to line start via negative lookahead.
 # Each line inside the block must NOT start with --- (the closing delimiter).
-FRONTMATTER_PATTERN = re.compile(
-    r"^\s*---\s*\n(?:(?!---\s*\n).*\n)*---\s*\n?",
-    re.MULTILINE,
-)
+# Only a block at the start of the document is frontmatter: two horizontal
+# rules later in the body enclose content, not YAML.
+FRONTMATTER_PATTERN = re.compile(r"\A\s*---\s*\n(?:(?!---\s*\n).*\n)*---\s*\n?")
 
 
 def _normalize_title_text(title: str) -> str:
@@ -187,8 +186,8 @@ def strip_frontmatter(content: str) -> str:
 
     Inline table separators cannot start a match. Skip their whole line after
     checking its first triple dash, avoiding quadratic scans of wide tables.
-    Keep the original regex for candidates, including its historical handling
-    of indented or later blocks; this filter must not redefine YAML boundaries.
+    Keep the original regex for candidates, including its handling of an
+    indented block; this filter must not redefine YAML boundaries.
     """
     position = 0
     while True:
