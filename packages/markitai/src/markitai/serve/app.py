@@ -1253,52 +1253,66 @@ def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
     return detail[:300]
 
 
-def _configured_env_refs(state: ServeState) -> frozenset[str]:
-    """Every ``env:`` reference already present in the saved configuration."""
-    values = [
-        value
-        for params in (m.litellm_params for m in state.configured_models)
-        for value in (params.api_key, params.api_base)
-    ] + [
-        value
-        for provider in state.configured_providers
-        for value in (provider.api_key, provider.api_base)
-    ]
-    return frozenset(v for v in values if v is not None and v.startswith("env:"))
+CredentialPair = tuple[str | None, str | None]
 
 
-def _reject_client_env_refs(
+def _configured_credential_pairs(state: ServeState) -> frozenset[CredentialPair]:
+    """Every ``(api_key, api_base)`` pair already present in the saved config."""
+    return frozenset(
+        [
+            (m.litellm_params.api_key, m.litellm_params.api_base)
+            for m in state.configured_models
+        ]
+        + [(p.api_key, p.api_base) for p in state.configured_providers]
+    )
+
+
+def _check_credential_target(
     api_key: str | None,
     api_base: str | None,
-    configured: frozenset[str] = frozenset(),
+    *,
+    client_key: str | None,
+    configured: frozenset[CredentialPair],
 ) -> None:
-    """Refuse ``env:`` references from HTTP clients that name arbitrary variables.
+    """Refuse to send a credential the caller does not hold to a base it picks.
 
     The server resolves ``env:NAME`` from its own environment (``.env``
-    included), so a free choice of NAME would let any settings caller send
-    any host secret to an endpoint it picks. Clients may name the provider
-    key variables the environment cards offer, plus references the saved
-    configuration already holds (the provider editor sends them back).
+    included) and holds saved keys, so a settings caller that could pair
+    either with any ``api_base`` could send host secrets to its own server.
+    A key/base pair is accepted when the saved config already has it (the
+    provider editor sends it back), when the caller sent the literal key
+    itself, or for a provider key variable (the environment cards'
+    ``env:OPENAI_API_KEY``, ...) used with the provider's default endpoint.
     """
-    for field_name, value, allowed in (
-        ("api_key", api_key, PROVIDER_API_KEY_ENV.values()),
-        ("api_base", api_base, ()),
-    ):
-        if (
-            value is None
-            or not value.startswith("env:")
-            or value in configured
-            or value[4:] in allowed
-        ):
-            continue
+    if (api_key, api_base) in configured:
+        return
+    if api_base is not None and api_base.startswith("env:"):
         raise HTTPException(
             status_code=422,
             detail=(
-                f"{field_name}: env: references from the web API are limited to "
-                f"{', '.join(PROVIDER_API_KEY_ENV.values())}; reference other "
-                "variables in the config file instead"
+                "api_base: env: references from the web API must already be "
+                "configured with this key; reference them in the config file instead"
             ),
         )
+    if not api_key:
+        return
+    if api_key.startswith("env:"):
+        if api_base is None and api_key[4:] in PROVIDER_API_KEY_ENV.values():
+            return
+        detail = (
+            "api_key: env: references from the web API are limited to "
+            f"{', '.join(PROVIDER_API_KEY_ENV.values())} with the provider's "
+            "default api_base; reference other variables or endpoints in the "
+            "config file instead"
+        )
+    elif api_key == client_key:
+        return
+    else:
+        detail = (
+            "stored credentials only work with their saved api_base; "
+            "send an api_key to use a different endpoint"
+        )
+    raise HTTPException(status_code=422, detail=detail)
 
 
 def _reject_rebound_credentials(
@@ -2152,7 +2166,6 @@ def create_app(
         from markitai.config import resolve_env_value
         from markitai.providers.discovery import discover_models
 
-        _reject_client_env_refs(body.api_key, body.api_base)
         state = _state(request)
         stored_provider = next(
             (
@@ -2204,6 +2217,12 @@ def create_app(
             _reject_rebound_credentials(fallback_key, fallback_base, body.api_base)
         raw_key = body.api_key if body.api_key is not None else fallback_key
         raw_base = body.api_base if body.api_base is not None else fallback_base
+        _check_credential_target(
+            raw_key,
+            raw_base,
+            client_key=body.api_key,
+            configured=_configured_credential_pairs(state),
+        )
         api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
         api_base = resolve_env_value(raw_base, strict=False) if raw_base else None
         return await discover_models(
@@ -2270,9 +2289,6 @@ def create_app(
         providers: list[Any],
         models: list[Any],
     ) -> dict[str, Any]:
-        _reject_client_env_refs(
-            body.api_key, body.api_base, _configured_env_refs(state)
-        )
         credential_source = (
             _configured_deployment_by_id(state, body.credential_deployment_id)
             if body.credential_deployment_id is not None
@@ -2327,6 +2343,12 @@ def create_app(
             _reject_rebound_credentials(fallback_key, fallback_base, body.api_base)
         api_key = body.api_key if body.api_key is not None else fallback_key
         api_base = body.api_base if body.api_base is not None else fallback_base
+        _check_credential_target(
+            api_key,
+            api_base,
+            client_key=body.api_key,
+            configured=_configured_credential_pairs(state),
+        )
         if provider_id is None:
             provider_id = _ensure_raw_provider(
                 providers,
@@ -2353,10 +2375,15 @@ def create_app(
             "model_info": info,
         }
 
-    def update_raw_deployment(entry: dict[str, Any], body: LLMModelUpdate) -> None:
+    def update_raw_deployment(
+        entry: dict[str, Any],
+        body: LLMModelUpdate,
+        configured: frozenset[CredentialPair],
+    ) -> None:
         params = entry.get("litellm_params")
         if not isinstance(params, dict):
             params = {}
+        old_pair = (params.get("api_key"), params.get("api_base"))
         if "model_name" in body.model_fields_set and body.model_name is not None:
             entry["model_name"] = body.model_name
         if "model" in body.model_fields_set and body.model is not None:
@@ -2374,6 +2401,12 @@ def create_app(
         if "weight" in body.model_fields_set and body.weight is not None:
             params["weight"] = body.weight
         _strip_ignored_local_params(params)
+        _check_credential_target(
+            params.get("api_key"),
+            params.get("api_base"),
+            client_key=body.api_key if "api_key" in body.model_fields_set else None,
+            configured=configured | {old_pair},
+        )
         entry["litellm_params"] = params
 
     @app.post("/api/settings/llm/models", response_model=LLMSettingsPayload)
@@ -2396,9 +2429,7 @@ def create_app(
     async def update_llm_model(
         request: Request, model_name: str, body: LLMModelUpdate
     ) -> dict[str, Any]:
-        _reject_client_env_refs(
-            body.api_key, body.api_base, _configured_env_refs(_state(request))
-        )
+        configured = _configured_credential_pairs(_state(request))
 
         def mutate(
             entries: list[Any], _providers: list[Any], _legacy_mapping: dict[str, str]
@@ -2416,7 +2447,7 @@ def create_app(
                         "model_name": model_name,
                     },
                 )
-            update_raw_deployment(matches[0], body)
+            update_raw_deployment(matches[0], body, configured)
             return entries
 
         payload = await _apply_model_list_mutation(
@@ -2482,9 +2513,7 @@ def create_app(
     ) -> dict[str, Any]:
         if body.expected_revision is None:
             raise HTTPException(status_code=422, detail="expected_revision is required")
-        _reject_client_env_refs(
-            body.api_key, body.api_base, _configured_env_refs(_state(request))
-        )
+        configured = _configured_credential_pairs(_state(request))
 
         def mutate(
             entries: list[Any], _providers: list[Any], legacy_mapping: dict[str, str]
@@ -2498,7 +2527,7 @@ def create_app(
                         "Refresh settings and try again."
                     ),
                 )
-            update_raw_deployment(entry, body)
+            update_raw_deployment(entry, body, configured)
             return entries
 
         return await _apply_model_list_mutation(
@@ -2559,9 +2588,7 @@ def create_app(
     async def update_llm_provider(
         request: Request, provider_id: str, body: LLMProviderUpdate
     ) -> dict[str, Any]:
-        _reject_client_env_refs(
-            body.api_key, body.api_base, _configured_env_refs(_state(request))
-        )
+        configured = _configured_credential_pairs(_state(request))
 
         def mutate(
             entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
@@ -2622,6 +2649,12 @@ def create_app(
                     target.pop("api_base", None)
                 else:
                     target["api_base"] = body.api_base
+            _check_credential_target(
+                target.get("api_key"),
+                target.get("api_base"),
+                client_key=body.api_key if "api_key" in body.model_fields_set else None,
+                configured=configured | {(old_key, old_base)},
+            )
 
             saved_id = str(target["id"])
             for entry in entries:
@@ -2772,7 +2805,12 @@ def create_app(
                 model_name=body.model_name,
             )
         else:
-            _reject_client_env_refs(body.api_key, body.api_base)
+            _check_credential_target(
+                body.api_key,
+                body.api_base,
+                client_key=body.api_key,
+                configured=_configured_credential_pairs(_state(request)),
+            )
             body = _fill_stored_credentials(_state(request), body)
         try:
             detail = await asyncio.wait_for(
