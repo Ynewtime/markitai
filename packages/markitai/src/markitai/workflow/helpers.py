@@ -693,4 +693,6 @@ def create_llm_processor(
         no_cache_patterns=config.cache.no_cache_patterns,
         cache_global_dir=config.cache.global_dir,
         extra_cleaning_rules=extra_cleaning_rules(config),
+        cache_enabled=config.cache.enabled,
+        cache_max_size_bytes=config.cache.max_size_bytes,
     )
