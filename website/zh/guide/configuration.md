@@ -397,7 +397,7 @@ Copilot 提供商的请求超时会随提示词长度、图片数量和预期输
 
 ### 提示缓存（Claude Agent）
 
-Claude Code 会自动缓存 4 KB 以上的系统提示词。无需配置，`markitai cache stats --verbose` 能看到数字。
+Claude Code 会自动缓存较长的系统提示词。无需配置，`markitai cache stats --verbose` 能看到数字。
 
 ## 图片配置
 

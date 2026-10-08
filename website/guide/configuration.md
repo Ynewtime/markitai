@@ -397,7 +397,7 @@ The Copilot provider scales the request timeout with prompt length, image count 
 
 ### Prompt Caching (Claude Agent)
 
-Claude Code caches system prompts of 4 KB or more automatically. Nothing to configure; `markitai cache stats --verbose` shows the numbers.
+Claude Code caches long system prompts automatically. Nothing to configure; `markitai cache stats --verbose` shows the numbers.
 
 ## Image Configuration
 

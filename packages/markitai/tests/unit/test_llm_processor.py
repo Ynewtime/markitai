@@ -683,7 +683,7 @@ class TestAnthropicCacheBreakpoint:
 
     @pytest.mark.asyncio
     async def test_local_handler_path_not_touched(self):
-        """claude-agent providers own their cache_control (provider-side)."""
+        """claude-agent entries go to the local handler untouched (the SDK caches)."""
         mock_handler = AsyncMock()
         mock_handler.acompletion.return_value = MagicMock()
         router = MarkitaiRouter([_local_entry("claude-agent/sonnet")])
