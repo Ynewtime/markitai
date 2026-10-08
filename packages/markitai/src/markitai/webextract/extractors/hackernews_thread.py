@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import parse_qs
+
 """Extractor for Hacker News thread pages.
 
 Implements the shared resolver pattern to prove the ConversationThread /
@@ -9,6 +11,7 @@ not just X/Twitter, GitHub, and Reddit.
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.extractors.base import site_url
 from markitai.webextract.render import render_semantic_content
 from markitai.webextract.resolver import ResolvedPage
 from markitai.webextract.semantics import ConversationItem, ConversationThread
@@ -42,7 +45,12 @@ class HackerNewsThreadExtractor:
         Returns:
             True when the URL is a news.ycombinator.com thread item page.
         """
-        return "news.ycombinator.com" in url and "item?id=" in url
+        parts = site_url(url, "news.ycombinator.com")
+        return (
+            parts is not None
+            and parts.path == "/item"
+            and "id" in parse_qs(parts.query)
+        )
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Return the main HN table as a minimal root (legacy path).

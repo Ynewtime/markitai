@@ -8,9 +8,11 @@ Comments are explicitly excluded from the thread model.
 from __future__ import annotations
 
 from html import escape
+from urllib.parse import parse_qs
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.extractors.base import site_url
 from markitai.webextract.resolver import ResolvedPage
 from markitai.webextract.types import ContentProfile
 
@@ -40,7 +42,11 @@ class YouTubePageExtractor:
         Returns:
             True when the URL is a YouTube watch or short URL.
         """
-        return ("youtube.com/watch" in url and "v=" in url) or "youtu.be/" in url
+        watch = site_url(url, "youtube.com")
+        if watch is not None:
+            return watch.path == "/watch" and "v" in parse_qs(watch.query)
+        short = site_url(url, "youtu.be")
+        return short is not None and short.path.strip("/") != ""
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Return the primary content area (legacy protocol compliance path).

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An explicit `-s jina`, `-s defuddle` or `-s cloudflare` is consent for that service only: when it refuses and markitai falls back to the auto chain, `fetch.remote_consent` decides whether the other remote services (defuddle.md, Cloudflare, FxTwitter) may receive the URL.
 - macOS system proxy auto-detection works again (`scutil --proxy` lists the port before the host, so no proxy was ever found), and a `NO_PROXY` or `local_only_patterns` entry such as `corp.example` now also covers its subdomains (`api.corp.example`), as in curl, urllib and Go.
 - Cloudflare challenges ("Just a moment...", "Ray ID"), CAPTCHA pages and pages that are merely short no longer teach the 30-day SPA cache, so one bot check no longer sends every later request for that site to the browser. Pages that say they need JavaScript, or show only a loading placeholder, still do.
+- Web extraction picks site extractors by hostname: pages such as `dropbox.com/status/…`, `linux.com/news/article/…` or `docs.github.com/…/issues/…` are no longer treated as X posts or GitHub threads and keep their content.
 
 ## [1.2.0] - 2026-09-28
 
