@@ -310,3 +310,31 @@ class TestLogUrlRedaction:
         assert "password" not in content
         assert "query-secret" not in content
         assert "fragment-secret" not in content
+
+    def test_access_log_redacts_serve_token_query(self, tmp_path, monkeypatch) -> None:
+        """The web app's SSE, file and archive URLs carry ``?token=``; Uvicorn
+        logs the bare request target, which has no scheme to match on."""
+        import logging
+
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        monkeypatch.delenv("MARKITAI_LOG_DIR", raising=False)
+        _handler_id, log_file = setup_logging(verbose=False, log_dir=str(tmp_path))
+        try:
+            logging.getLogger("uvicorn.access").info(
+                '%s - "%s %s HTTP/%s" %d',
+                "192.168.1.20:51234",
+                "GET",
+                "/api/jobs/abc/files/out.md?download=1&token=mk_SECRET123",
+                "1.1",
+                200,
+            )
+        finally:
+            logger.remove()
+
+        assert log_file is not None
+        content = log_file.read_text()
+        assert "/api/jobs/abc/files/out.md?download=1&token=" in content
+        assert "mk_SECRET123" not in content
