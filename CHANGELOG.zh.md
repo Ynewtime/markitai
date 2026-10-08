@@ -7,6 +7,12 @@
 
 ## [1.2.1]
 
+### 变更
+
+- PyYAML、beautifulsoup4、soupsieve、defusedxml、PyMuPDF、openpyxl、numpy 和 olefile 改为声明的依赖。markitai 直接导入它们，此前只是随其他包间接安装，上游某次发布去掉其中一个就可能让 `import markitai` 失败。
+- MCP Registry 条目运行它所标明的版本（`uvx --from "markitai[mcp]==1.2.1"`），不再运行 PyPI 上的最新版。
+- 移除未使用的 Python API：`LLMProcessor.clean_markdown`、`get_usage`、`get_total_cost` 和 `reset_call_counter`（按文档统计的用量仍由 `get_context_usage`/`get_context_cost` 提供）、`BatchProcessor.process_batch`、`ImageProcessor.process_and_save_async`、`OCRProcessor.is_scanned_pdf`、`BaseConverter.can_convert`、`PromptManager.list_prompts`、`collect_user_notices`、`markitai.llm.MarkitaiLLMLogger`（它被注册为全局 LiteLLM 回调），以及从未抛出过的 `QuotaError`、`ProviderTimeoutError` 和 `SDKNotAvailableError`。
+
 ### 修复
 
 - **Claude Agent 和 Copilot 提供方不再开放任何工具**：不再自动批准 Bash、写文件和网页抓取，被注入提示词的文档或网页无法以你的身份执行命令。
@@ -38,6 +44,9 @@
 - Cloudflare 验证页（"Just a moment..."、"Ray ID"）、验证码页面和仅仅是内容较短的页面不再写入 30 天的 SPA 缓存，一次人机验证不会再让该站点之后的所有请求都走浏览器。声明需要 JavaScript 或只显示加载占位的页面仍会写入。
 - 网页提取按主机名选择站点提取器：`dropbox.com/status/…`、`linux.com/news/article/…`、`docs.github.com/…/issues/…` 这类页面不再被当作 X 帖子或 GitHub 讨论处理，内容不再丢失。
 - `--record-history` 只复制本次记录的输出所用的图片和截图，不再把共享输出目录里历来生成的全部资源都复制一遍；`markitai serve` 运行期间也会按任务完成时间删除超过 7 天的历史（此前只在启动时按目录修改时间清理）。
+- `markitai -c FILE mcp` 现在使用 `FILE` 提供服务（此前读取的是默认配置），`markitai mcp` 搭配 `--config-json` 会报错而不是被悄悄忽略，错误信息里的 "Config file:" 提示也会给出本次运行实际使用的 `-c` 文件。
+- 批处理在每个文档结束后释放 LLM 图片缓存，不再把已完成文档的页面图片（最多 500 MB）一直留到运行（或 `markitai serve`）结束。
+- 文档与代码保持一致：命令行用法错误以 `2` 退出，在转换开始前被拒绝的输入（文件不存在或格式不支持、`--llm-batch` 未配 `--llm`）以 `1` 退出；配置文件的优先级高于环境变量，环境变量只作后备，`MARKITAI_RECORD_HISTORY`、`MARKITAI_PURE` 和 `MARKITAI_NO_REMOTE_FETCH` 除外；`batch.heavy_task_limit: 0` 按内存自动检测（不是"不限制"）；`batch.scan_max_files` 统计整个输入目录树；只有 Copilot 会自动伸缩请求超时。
 
 ## [1.2.0] - 2026-09-28
 

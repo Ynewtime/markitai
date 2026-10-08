@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.1]
 
+### Changed
+
+- PyYAML, beautifulsoup4, soupsieve, defusedxml, PyMuPDF, openpyxl, numpy and olefile are now declared dependencies. markitai imports them directly; they used to arrive only through other packages, so an upstream release dropping one could break `import markitai`.
+- The MCP Registry entry runs the release it names (`uvx --from "markitai[mcp]==1.2.1"`) instead of whatever is latest on PyPI.
+- Unused Python APIs were removed: `LLMProcessor.clean_markdown`, `get_usage`, `get_total_cost` and `reset_call_counter` (per-document usage stays in `get_context_usage`/`get_context_cost`), `BatchProcessor.process_batch`, `ImageProcessor.process_and_save_async`, `OCRProcessor.is_scanned_pdf`, `BaseConverter.can_convert`, `PromptManager.list_prompts`, `collect_user_notices`, `markitai.llm.MarkitaiLLMLogger` (it was registered as a global LiteLLM callback), and the never-raised `QuotaError`, `ProviderTimeoutError` and `SDKNotAvailableError`.
+
 ### Fixed
 
 - **Claude Agent and Copilot providers run with no tools**: the model no longer has Bash, file writes or web fetches auto-approved, so a prompt-injected document or web page cannot run commands as you.
@@ -38,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cloudflare challenges ("Just a moment...", "Ray ID"), CAPTCHA pages and pages that are merely short no longer teach the 30-day SPA cache, so one bot check no longer sends every later request for that site to the browser. Pages that say they need JavaScript, or show only a loading placeholder, still do.
 - Web extraction picks site extractors by hostname: pages such as `dropbox.com/status/…`, `linux.com/news/article/…` or `docs.github.com/…/issues/…` are no longer treated as X posts or GitHub threads and keep their content.
 - `--record-history` copies only the images and screenshots of the recorded outputs, not every asset ever written to a shared output directory, and `markitai serve` now expires history seven days after a job finished while it keeps running (it used to clean up only at startup, and by directory age).
+- `markitai -c FILE mcp` now serves with `FILE` (it read the default config), `--config-json` with `markitai mcp` is rejected instead of silently ignored, and the "Config file:" hint in error messages names the `-c` file a run actually used.
+- Batch runs free the LLM image cache after each document instead of holding up to 500 MB of finished documents' page images until the run (or `markitai serve`) ends.
+- The docs now match the code: usage errors from the command line exit `2`, inputs rejected before conversion (a missing or unsupported file, `--llm-batch` without `--llm`) exit `1`; the config file ranks above environment variables, which are fallbacks except `MARKITAI_RECORD_HISTORY`, `MARKITAI_PURE` and `MARKITAI_NO_REMOTE_FETCH`; `batch.heavy_task_limit: 0` auto-detects from memory (not "unlimited"); `batch.scan_max_files` counts the whole input tree; and only Copilot scales its request timeout.
 
 ## [1.2.0] - 2026-09-28
 
