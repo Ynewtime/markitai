@@ -275,7 +275,7 @@ fn metadata_only_observers_do_not_release_an_active_probe_lock() {
 }
 
 #[test]
-fn unreleased_sidecar_namespace_is_rejected_and_preserved() {
+fn unknown_writers_namespace_is_rejected_and_preserved() {
     let root = tempfile::tempdir().unwrap();
     let parent = parent(root.path());
     platform::private_directory()
@@ -283,7 +283,8 @@ fn unreleased_sidecar_namespace_is_rejected_and_preserved() {
         .unwrap();
     let unknown = parent.location("writers-v2/unknown");
     fs::write(&unknown, b"preserve").unwrap();
-    assert!(parent.validate().is_err());
+    let message = parent.validate().unwrap_err().to_string();
+    assert!(message.contains("writers-v2") && !message.contains("unreleased"));
     assert!(NamespaceBatch::new().prepare(root.path(), false).is_err());
     assert_eq!(fs::read(unknown).unwrap(), b"preserve");
 }

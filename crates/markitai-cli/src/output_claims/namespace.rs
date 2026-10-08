@@ -105,7 +105,7 @@ impl Namespace {
             directories.push(Directory::stable(members, device)?);
             directories.push(Directory::stable(path.join("epoch-v2"), device)?);
             if platform::status(&path.join("writers-v2")).is_ok() {
-                return Err(invalid("unsupported unreleased v2 sidecar namespace"));
+                return Err(invalid(super::v2::UNKNOWN_WRITERS));
             }
             {
                 let name = "names-v2";
