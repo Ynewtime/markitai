@@ -120,7 +120,6 @@ DEFAULT_CACHE_DB_FILENAME = "cache.db"  # SQLite database filename
 DEFAULT_FETCH_CACHE_DB_FILENAME = "fetch_cache.db"  # URL fetch cache database
 # Fetched pages without ETag/Last-Modified are reused this long, then refetched
 DEFAULT_FETCH_CACHE_TTL_SECONDS = 24 * 60 * 60
-DEFAULT_CACHE_CONTENT_TRUNCATE = 50000  # Truncate content for hash key (chars)
 
 # =============================================================================
 # Batch Processing

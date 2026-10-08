@@ -121,7 +121,7 @@ from markitai.utils.mime import get_mime_type
 from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from markitai.config import LLMConfig
     from markitai.llm.engine import LLMEngine
@@ -164,27 +164,26 @@ _HEADING_LINE_RE = re.compile(r"^#{1,6}\s+")
 def _compute_document_fingerprint(
     content: str,
     page_names: list[str],
+    images: Iterable[bytes] = (),
 ) -> str:
     """Compute a collision-resistant fingerprint for document caching.
 
-    Uses SHA256 over the full content (truncated at DEFAULT_CACHE_CONTENT_TRUNCATE
-    chars for performance) plus page structure info, rather than just the first
-    1000 chars which can collide for documents with identical prefixes.
+    Uses SHA256 over the full content plus page structure info and the bytes
+    of the images sent with it, so an edit anywhere in the text (or a changed
+    page image with an unchanged name) misses the cache.
 
     Args:
         content: Document text content
         page_names: List of page/section names
+        images: Bytes of the images sent with the content
 
     Returns:
         SHA256 hex digest string (64 chars)
     """
-    import hashlib
-
-    from markitai.constants import DEFAULT_CACHE_CONTENT_TRUNCATE
-
-    truncated = content[:DEFAULT_CACHE_CONTENT_TRUNCATE]
-    fingerprint_input = f"{truncated}|pages:{','.join(page_names[:50])}"
-    return hashlib.sha256(fingerprint_input.encode()).hexdigest()
+    digest = hashlib.sha256(f"{content}|pages:{','.join(page_names[:50])}".encode())
+    for image in images:
+        digest.update(b"|image:" + hashlib.sha256(image).digest())
+    return digest.hexdigest()
 
 
 def _document_result_to_cache_value(result: DocumentProcessResult) -> dict[str, Any]:
@@ -958,9 +957,9 @@ class DocumentEnhancer:
             extra=(SCREENSHOT_LABEL,),
             suffix=f":{context}",
         )
-        cache_content = (
-            f"{screenshot_path.name}|{_compute_document_fingerprint(content, [])}"
-        )
+        screenshot_bytes, _ = self._get_cached_image(screenshot_path)
+        fingerprint = _compute_document_fingerprint(content, [], [screenshot_bytes])
+        cache_content = f"{screenshot_path.name}|{fingerprint}"
 
         # Only protect image references, NOT slide/page markers (URLs don't have them)
         protected_text, img_mapping = self._protect_image_positions(content)
@@ -1125,7 +1124,11 @@ class DocumentEnhancer:
             extra=(PAGE_LABEL_TEMPLATE, VISION_TAIL_REMINDER),
             suffix=f":{context}:{len(page_images)}",
         )
-        cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
+        cache_content = _compute_document_fingerprint(
+            extracted_text,
+            page_name_list,
+            (self._get_cached_image(p)[0] for p in page_images),
+        )
         cached = self._engine.persistent_cache.get(
             cache_key,
             cache_content,
@@ -1501,7 +1504,11 @@ class DocumentEnhancer:
             extra=(VISION_METADATA_SECTION, PAGE_LABEL_TEMPLATE, VISION_TAIL_REMINDER),
             suffix=f":{source}:{len(page_images)}",
         )
-        cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
+        cache_content = _compute_document_fingerprint(
+            extracted_text,
+            page_name_list,
+            (self._get_cached_image(p)[0] for p in page_images),
+        )
 
         # Extract protected content for fallback restoration
         protected = content_utils.extract_protected_content(extracted_text)
