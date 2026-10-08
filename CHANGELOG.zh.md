@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [1.2.1]
+
+### 修复
+
+- **PDF 隐藏文字**：`security.pdf_sanitize = "remove"` 不再删除与隐藏片段相同的可见文字（以前一个隐藏的 `e` 会删掉整页所有的 `e`），深色背景上的白字不再被当作隐藏文字，`--ocr --llm` 也会像其他路径一样检查发给模型的文字。
+
 ## [1.2.0] - 2026-09-28
 
 ### 新增
