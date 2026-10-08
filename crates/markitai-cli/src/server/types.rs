@@ -85,26 +85,6 @@ fn quoted(name: &str) -> String {
     format!("'{shown}'")
 }
 
-/// A preset from the configuration, or one of the three built-in definitions.
-fn preset_definition(base: &Value, name: &str) -> Option<Value> {
-    let name = name.to_ascii_lowercase();
-    base["presets"]
-        .get(&name)
-        .cloned()
-        .or_else(|| match name.as_str() {
-            "minimal" => {
-                Some(json!({"llm":false,"ocr":false,"alt":false,"desc":false,"screenshot":false}))
-            }
-            "standard" => {
-                Some(json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":false}))
-            }
-            "rich" => {
-                Some(json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true}))
-            }
-            _ => None,
-        })
-}
-
 impl JobOptions {
     /// Read the `options` form field. Every failure names the offending option
     /// instead of passing a JSON parser's message through to the caller.
@@ -167,9 +147,8 @@ impl JobOptions {
     pub fn requests_llm(&self, base: &Value) -> bool {
         match (self.llm, &self.preset) {
             (Some(explicit), _) => explicit,
-            (None, Some(name)) => {
-                preset_definition(base, name).is_some_and(|preset| preset["llm"] == true)
-            }
+            (None, Some(name)) => markitai_core::config::preset(base, name)
+                .is_some_and(|preset| preset["llm"] == true),
             (None, None) => false,
         }
     }
@@ -279,8 +258,8 @@ impl JobOptions {
         }
         cfg["fetch"]["cloudflare"]["convert_enabled"] = json!(false);
         if let Some(name) = &self.preset {
-            let name = name.to_ascii_lowercase();
-            let preset = preset_definition(base, &name).ok_or_else(|| {
+            let name = name.to_lowercase();
+            let preset = markitai_core::config::preset(base, &name).ok_or_else(|| {
                 ApiError::new(422, "unknown_preset", format!("unknown preset '{name}'"))
             })?;
             for (key, path) in [

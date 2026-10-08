@@ -108,6 +108,25 @@ pub fn selected_path(explicit: Option<&Path>) -> Option<PathBuf> {
     choose_path(explicit, env_path, &cwd, &home()).map(|path| expand_home(&path))
 }
 
+/// The built-in presets, in the order they are offered.
+pub const BUILTIN_PRESETS: [&str; 3] = ["minimal", "standard", "rich"];
+
+/// The feature switches of preset `name` (case-insensitive): an entry of the
+/// configuration's `presets`, which may redefine a built-in name, else the
+/// built-in `minimal`, `standard` or `rich`. None of them enables OCR.
+pub fn preset(cfg: &Value, name: &str) -> Option<Value> {
+    let name = name.to_lowercase();
+    cfg["presets"].get(&name).cloned().or_else(|| {
+        let (llm, screenshot) = match name.as_str() {
+            "minimal" => (false, false),
+            "standard" => (true, false),
+            "rich" => (true, true),
+            _ => return None,
+        };
+        Some(json!({"llm":llm,"ocr":false,"alt":llm,"desc":llm,"screenshot":screenshot}))
+    })
+}
+
 /// Largest configuration file that is read or written.
 pub const FILE_LIMIT: usize = 8 * 1024 * 1024;
 
@@ -1077,6 +1096,25 @@ fn assign(target: &mut Value, parts: &[String], value: Value, path: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_presets_win_over_built_in_names_in_any_case() {
+        let cfg =
+            normalize(&json!({"presets":{"standard":{"desc":true},"team":{"ocr":true}}})).unwrap();
+        // The reference looks a name up in the configuration first; the CLI
+        // used to apply the built-in `standard` regardless.
+        assert_eq!(
+            preset(&cfg, "Standard").unwrap(),
+            json!({"llm":false,"ocr":false,"alt":false,"desc":true,"screenshot":false})
+        );
+        assert_eq!(preset(&cfg, "TEAM").unwrap()["ocr"], true);
+        assert_eq!(
+            preset(&cfg, "rich").unwrap(),
+            json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true})
+        );
+        assert_eq!(preset(&cfg, "minimal").unwrap()["llm"], false);
+        assert_eq!(preset(&cfg, "bogus"), None);
+    }
 
     #[test]
     fn config_files_are_bounded_regular_files_written_atomically() {

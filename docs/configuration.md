@@ -94,7 +94,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `log.dir` / `log.level` | `null` / `INFO` | 文件日志目录与级别，默认不写日志 |
 | `history.record` | `false` | 记录供 `serve` 查看的历史，同 `--record-history` |
 
-内建 preset：`minimal` 全部关闭；`standard` 开启 LLM、alt 和 desc；`rich` 再开启截图；都不开启 OCR。`markitai config list` 列出完整默认值。
+内建 preset：`minimal` 全部关闭；`standard` 开启 LLM、alt 和 desc；`rich` 再开启截图；都不开启 OCR。配置中的 `presets` 可以新增名称，也可以重新定义内建名称，CLI 与工作台都优先使用配置中的定义；名称不区分大小写。`markitai config list` 列出完整默认值。
 
 ### 配置键的运行状态
 

@@ -44,16 +44,13 @@ pub(super) async fn capabilities(
         json!({"configured":false,"available":false,"reason":"client_not_trusted",
             "browser_rendering":false,"file_conversion":false,"file_extensions":[]})
     };
-    let mut presets = json!({"minimal":{"llm":false,"ocr":false,"alt":false,"desc":false,"screenshot":false},"standard":{"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":false},"rich":{"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true}});
-    if let Some(overrides) = cfg["presets"].as_object() {
-        for (name, value) in overrides {
-            if presets.get(name).is_some() {
-                presets[name] = value.clone();
-            }
-        }
-    }
+    let presets = markitai_core::config::BUILTIN_PRESETS;
+    let options: serde_json::Map<_, _> = presets
+        .iter()
+        .filter_map(|name| Some((name.to_string(), markitai_core::config::preset(&cfg, name)?)))
+        .collect();
     Json(
-        json!({"version":markitai_core::VERSION,"llm":llm,"remote_services":{"cloudflare":cloudflare},"presets":["minimal","standard","rich"],"preset_options":presets,"extras":{"browser":markitai_core::browser_available(),"svg":true},"limits":{"max_job_items":MAX_ITEMS}}),
+        json!({"version":markitai_core::VERSION,"llm":llm,"remote_services":{"cloudflare":cloudflare},"presets":presets,"preset_options":options,"extras":{"browser":markitai_core::browser_available(),"svg":true},"limits":{"max_job_items":MAX_ITEMS}}),
     )
 }
 

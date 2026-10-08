@@ -836,30 +836,23 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
     // (file or --config-json) are.
     remote_consent::install(&raw, cli.quiet);
     if let Some(name) = &cli.preset {
-        let name = name.to_lowercase();
-        let preset = match name.as_str() {
-            "minimal" => {
-                json!({"llm":false,"alt":false,"desc":false,"ocr":false,"screenshot":false})
-            }
-            "standard" => json!({"llm":true,"alt":true,"desc":true,"ocr":false,"screenshot":false}),
-            "rich" => json!({"llm":true,"alt":true,"desc":true,"ocr":false,"screenshot":true}),
-            _ => cfg["presets"].get(&name).cloned().ok_or_else(|| {
-                let mut custom: Vec<_> = cfg["presets"]
-                    .as_object()
-                    .map(|presets| presets.keys().cloned().collect())
-                    .unwrap_or_default();
-                crate::sort::by(&mut custom, String::cmp);
-                let mut available = vec!["minimal".to_owned(), "rich".into(), "standard".into()];
-                available.extend(custom);
-                (
-                    1,
-                    format!(
-                        "Unknown preset '{name}'. Available: {}",
-                        available.join(", ")
-                    ),
-                )
-            })?,
-        };
+        let preset = config::preset(&cfg, name).ok_or_else(|| {
+            let mut custom: Vec<_> = cfg["presets"]
+                .as_object()
+                .map(|presets| presets.keys().cloned().collect())
+                .unwrap_or_default();
+            crate::sort::by(&mut custom, String::cmp);
+            let mut available = vec!["minimal".to_owned(), "rich".into(), "standard".into()];
+            available.extend(custom);
+            (
+                1,
+                format!(
+                    "Unknown preset '{}'. Available: {}",
+                    name.to_lowercase(),
+                    available.join(", ")
+                ),
+            )
+        })?;
         for (key, section, field) in [
             ("llm", "llm", "enabled"),
             ("ocr", "ocr", "enabled"),
