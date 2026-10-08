@@ -1148,8 +1148,7 @@ async def process_batch(
         # the moment the base file is missing — so without this line an
         # interrupted batch left a sidecar nothing could replay, and --resume
         # silently restarted from zero, re-paying for every LLM call already
-        # made. BatchProcessor.process_batch has always done this; the CLI
-        # path, which is the one people use, did not.
+        # made.
         batch.save_state(force=True)
 
     # Create URL processor function

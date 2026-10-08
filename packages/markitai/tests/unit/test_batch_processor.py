@@ -561,7 +561,6 @@ class TestCreateUrlProcessor:
         This tests that when fetch returns empty/whitespace-only content,
         the processor correctly reports it as a failure.
         """
-        from markitai.batch import ProcessResult
 
         # Verify that ProcessResult correctly reports failure for empty content
         # This tests the expected behavior without network calls
@@ -1340,110 +1339,6 @@ class TestErrorHandling:
 
 
 # =============================================================================
-# Concurrent Processing Tests
-# =============================================================================
-
-
-class TestConcurrentProcessing:
-    """Tests for concurrent processing in batch mode."""
-
-    @pytest.mark.asyncio
-    async def test_semaphore_limits_concurrency(
-        self,
-        batch_config: BatchConfig,
-        sample_output_dir: Path,
-        tmp_path: Path,
-    ) -> None:
-        """Test that semaphore correctly limits concurrency."""
-        processor = BatchProcessor(
-            config=batch_config,
-            output_dir=sample_output_dir,
-        )
-
-        concurrent_count = 0
-        max_concurrent = 0
-
-        async def mock_process(path: Path) -> ProcessResult:
-            nonlocal concurrent_count, max_concurrent
-            concurrent_count += 1
-            max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.01)
-            concurrent_count -= 1
-            return ProcessResult(success=True)
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [input_dir / f"file{i}.txt" for i in range(10)]
-        for f in files:
-            f.touch()
-
-        # Initialize state
-        processor.state = processor.init_state(
-            input_dir=input_dir,
-            files=files,
-            options={},
-        )
-
-        await processor.process_batch(
-            files=files,
-            process_func=mock_process,
-            resume=False,
-        )
-
-        # Max concurrent should not exceed configured concurrency
-        assert max_concurrent <= batch_config.concurrency
-
-    @pytest.mark.asyncio
-    async def test_process_batch_continues_on_individual_failure(
-        self,
-        batch_config: BatchConfig,
-        sample_output_dir: Path,
-        tmp_path: Path,
-    ) -> None:
-        """Test that batch processing continues when individual files fail."""
-        processor = BatchProcessor(
-            config=batch_config,
-            output_dir=sample_output_dir,
-        )
-
-        call_count = 0
-
-        async def mock_process(path: Path) -> ProcessResult:
-            nonlocal call_count
-            call_count += 1
-            if "bad" in str(path):
-                return ProcessResult(success=False, error="Simulated error")
-            return ProcessResult(success=True, output_path=f"{path}.md")
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [
-            input_dir / "good1.txt",
-            input_dir / "bad.txt",
-            input_dir / "good2.txt",
-        ]
-        for f in files:
-            f.touch()
-
-        processor.state = processor.init_state(
-            input_dir=input_dir,
-            files=files,
-            options={},
-        )
-
-        state = await processor.process_batch(
-            files=files,
-            process_func=mock_process,
-            resume=False,
-        )
-
-        # All files should be processed
-        assert call_count == 3
-        assert state.completed_count == 2
-        assert state.failed_count == 1
-
-
-# =============================================================================
 # State Serialization Tests
 # =============================================================================
 
@@ -1637,7 +1532,6 @@ class TestUrlProcessingIntegration:
         default_config: MarkitaiConfig,
     ) -> None:
         """Test that JinaRateLimitError produces the expected result format."""
-        from markitai.batch import ProcessResult
 
         # Verify that the expected error result format is correct
         # This tests the expected behavior pattern without network calls
@@ -1656,7 +1550,6 @@ class TestUrlProcessingIntegration:
         default_config: MarkitaiConfig,
     ) -> None:
         """Test that ProcessResult correctly tracks downloaded image count."""
-        from markitai.batch import ProcessResult
 
         # Test that ProcessResult can track image counts correctly
         result = ProcessResult(
@@ -2011,82 +1904,3 @@ class TestIncrementalStateSave:
         assert jsonl_size < 500, (
             f"Incremental write should be small, got {jsonl_size} bytes"
         )
-
-
-class TestQueueBasedProcessing:
-    """Tests for queue + worker concurrency model."""
-
-    @pytest.mark.asyncio
-    async def test_processes_all_files(
-        self, batch_config: BatchConfig, tmp_path: Path
-    ) -> None:
-        """All files should be processed exactly once."""
-        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        processed: list[str] = []
-
-        async def mock_process(path: Path) -> ProcessResult:
-            processed.append(path.name)
-            return ProcessResult(success=True)
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [input_dir / f"file{i}.txt" for i in range(20)]
-        for f in files:
-            f.touch()
-        await processor.process_batch(files=files, process_func=mock_process)
-
-        assert sorted(processed) == sorted(f.name for f in files)
-
-    @pytest.mark.asyncio
-    async def test_concurrency_bounded_by_config(
-        self, batch_config: BatchConfig, tmp_path: Path
-    ) -> None:
-        """Active workers should never exceed configured concurrency."""
-        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        concurrent_count = 0
-        max_concurrent = 0
-
-        async def mock_process(path: Path) -> ProcessResult:
-            nonlocal concurrent_count, max_concurrent
-            concurrent_count += 1
-            max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.01)
-            concurrent_count -= 1
-            return ProcessResult(success=True)
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [input_dir / f"file{i}.txt" for i in range(20)]
-        for f in files:
-            f.touch()
-        await processor.process_batch(files=files, process_func=mock_process)
-
-        assert max_concurrent <= batch_config.concurrency
-
-    @pytest.mark.asyncio
-    async def test_handles_exceptions_without_stopping(
-        self, batch_config: BatchConfig, tmp_path: Path
-    ) -> None:
-        """One file's failure should not prevent others from processing."""
-        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        processed: list[str] = []
-
-        async def mock_process(path: Path) -> ProcessResult:
-            processed.append(path.name)
-            if "fail" in path.name:
-                raise ValueError("test error")
-            return ProcessResult(success=True)
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [
-            input_dir / "good1.txt",
-            input_dir / "fail1.txt",
-            input_dir / "good2.txt",
-        ]
-        for f in files:
-            f.touch()
-        state = await processor.process_batch(files=files, process_func=mock_process)
-
-        assert len(processed) == 3
-        assert state.files[str(files[1])].status == FileStatus.FAILED
