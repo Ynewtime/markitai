@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- An SVG image embedded in a document (an HTML page, an e-book, a Word file) no longer adds the warning that an embedded image could not be decoded within native limits; the vector asset is kept unchanged as before.
 - A native panic during conversion reaches Python and Node.js as a `ConversionError` with the code `internal_error`, as it already did in Go and as the bindings guide states, instead of a Python `RuntimeError` or a Node.js `Error` without a code.
 - Workbook page capture no longer fails because of an optional repair step: an ODS, XLS or XLSB workbook whose right-edge overflow cannot be measured keeps LibreOffice's layout with a warning, and an XLSX/XLSM workbook whose styles the font-color policy cannot parse keeps LibreOffice's own font colors instead of aborting the export.
 - `--screenshot` and `--ocr` capture Office templates (`.dotx`, `.potx`, `.xltx`, `.ott` and the other template extensions) as the documents they make, instead of silently converting only their text.

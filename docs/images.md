@@ -138,7 +138,8 @@ animation, foreignObject, XML processing instructions/DTDs, external image/use
 references and nested SVG data images are rejected. Hyperlinks are preserved
 but never followed. Unsupported SVG features outside resvg's static support are
 not claimed to have browser fidelity. Embedded SVG assets inside other document
-formats retain the existing original-byte/warning path. Standalone SVG vision, local OCR and [image enrichment](image-enrichment.md)
+formats keep their original bytes, without size filtering or compression; only
+one that is not readable SVG gets the decoding warning. Standalone SVG vision, local OCR and [image enrichment](image-enrichment.md)
 use the separate bounded PNG.
 
 ## Descriptions in history archives

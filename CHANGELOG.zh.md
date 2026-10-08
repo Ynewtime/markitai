@@ -42,6 +42,7 @@
 
 ### 修复
 
+- 文档中嵌入的 SVG 图片（HTML 页面、电子书、Word 文件中）不再触发「嵌入图片无法在原生限制内解码」的警告；该矢量资源与以前一样原样保留。
 - 转换过程中的原生 panic 在 Python 与 Node.js 中现在表现为代码为 `internal_error` 的 `ConversionError`，与 Go 及绑定指南的说明一致，不再是 Python 的 `RuntimeError` 或没有代码的 Node.js `Error`。
 - 工作簿页面截取不再因可选的修复步骤而失败：无法测量右侧溢出的 ODS、XLS 或 XLSB 工作簿保留 LibreOffice 的版面并给出警告；字体颜色策略无法解析其样式的 XLSX/XLSM 工作簿保留 LibreOffice 自身的字体颜色，不再中止导出。
 - `--screenshot` 与 `--ocr` 现在会把 Office 模板（`.dotx`、`.potx`、`.xltx`、`.ott` 及其他模板扩展名）按其生成的文档类型截取页面，不再静默地只转换文字。
