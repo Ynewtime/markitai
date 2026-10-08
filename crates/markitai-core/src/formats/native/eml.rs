@@ -1,6 +1,7 @@
 //! MIME body selection and scoped Content-ID resolution without filesystem I/O.
 
-use crate::{Asset, Document, Error, Result, output_profiles};
+use crate::formats::mail::{self, ContentIds, header_id, link_text, safe_header};
+use crate::{Asset, Document, Error, Result};
 use mail_parser::{Message, MessagePart, MimeHeaders, PartType};
 use std::collections::{HashMap, HashSet};
 
@@ -13,66 +14,12 @@ fn error(message: &str) -> Error {
     Error::Conversion(format!("EML: {message}"))
 }
 
-fn safe_header(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| if ch.is_control() { ' ' } else { ch })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace('<', "\\<")
-        .replace('>', "\\>")
-}
-
 fn attachment_name(part: &MessagePart<'_>, index: usize) -> String {
     let original = part.attachment_name().unwrap_or("attachment.bin");
     // Filename headers are labels, never source paths. Both mail readers use
     // the same portable leaf policy and preserve readable Unicode.
     let name = crate::output_name::attachment(original);
     format!("email-{index}-{name}")
-}
-
-fn header_id(value: &str) -> Option<String> {
-    let value = value.trim();
-    let value = if let Some(value) = value.strip_prefix('<') {
-        value.strip_suffix('>')?
-    } else {
-        value
-    };
-    if value.is_empty()
-        || value.len() > 1024
-        || value
-            .chars()
-            .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '<' | '>'))
-    {
-        return None;
-    }
-    Some(value.to_owned())
-}
-
-fn uri_id(value: &str) -> Option<String> {
-    if !value
-        .get(..4)
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("cid:"))
-    {
-        return None;
-    }
-    let mut bytes = Vec::with_capacity(value.len() - 4);
-    let value = value.as_bytes();
-    let mut index = 4;
-    while index < value.len() {
-        if value[index] == b'%' {
-            let first = char::from(*value.get(index + 1)?).to_digit(16)?;
-            let second = char::from(*value.get(index + 2)?).to_digit(16)?;
-            bytes.push((first * 16 + second) as u8);
-            index += 3;
-        } else {
-            bytes.push(value[index]);
-            index += 1;
-        }
-    }
-    header_id(std::str::from_utf8(&bytes).ok()?)
 }
 
 fn attached(part: &MessagePart<'_>) -> bool {
@@ -211,42 +158,18 @@ fn related_scope(message: &Message<'_>, parents: &[Option<usize>], mut id: usize
     }
 }
 
-struct ContentIds {
-    exact: HashMap<String, Vec<usize>>,
-    folded: HashMap<String, Vec<usize>>,
-}
-impl ContentIds {
-    fn new(message: &Message<'_>, parents: &[Option<usize>], body: usize) -> Self {
-        let scope = related_scope(message, parents, body);
-        let mut result = Self {
-            exact: HashMap::new(),
-            folded: HashMap::new(),
-        };
-        for (id, part) in message.parts.iter().enumerate() {
-            if related_scope(message, parents, id) != scope {
-                continue;
-            }
-            if let Some(cid) = part.content_id().and_then(header_id) {
-                result
-                    .folded
-                    .entry(cid.to_ascii_lowercase())
-                    .or_default()
-                    .push(id);
-                result.exact.entry(cid).or_default().push(id);
-            }
-        }
-        result
-    }
-    fn lookup(&self, id: &str) -> Option<usize> {
-        let values = self
-            .exact
-            .get(id)
-            .or_else(|| self.folded.get(&id.to_ascii_lowercase()))?;
-        match values.as_slice() {
-            [value] => Some(*value),
-            _ => None,
+/// Content-IDs of the parts in the selected body's related scope.
+fn content_ids(message: &Message<'_>, parents: &[Option<usize>], body: usize) -> ContentIds {
+    let scope = related_scope(message, parents, body);
+    let mut ids = ContentIds::default();
+    for (id, part) in message.parts.iter().enumerate() {
+        if related_scope(message, parents, id) == scope
+            && let Some(cid) = part.content_id()
+        {
+            ids.insert(cid, id);
         }
     }
+    ids
 }
 
 fn image_part(part: &MessagePart<'_>) -> bool {
@@ -266,52 +189,38 @@ fn html_body(
     assets: &mut Vec<Asset>,
     warnings: &mut Vec<String>,
 ) -> Result<(String, HashSet<usize>)> {
-    let ids = ContentIds::new(message, parents, body);
+    let ids = content_ids(message, parents, body);
     // The image parts the body shows, which the attachment listing omits.
     let mut bound = HashSet::new();
-    let mut mapped = HashMap::new();
-    let mut unresolved = HashMap::new();
-    let references = output_profiles::html_image_references(html);
-    let mut nonce = 0usize;
-    let prefix = loop {
-        let prefix = format!(".markitai-eml-unresolved-{nonce}-");
-        if !html.contains(&prefix) && !references.iter().any(|uri| uri.contains(&prefix)) {
-            break prefix;
-        }
-        nonce += 1;
-    };
-    for target in references {
-        if !target
-            .get(..4)
-            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("cid:"))
-        {
-            continue;
-        }
-        let linked = uri_id(&target).and_then(|cid| ids.lookup(&cid));
-        if let Some(id) = linked.filter(|id| image_part(&message.parts[*id])) {
+    let markdown = mail::html_with_content_ids(
+        html,
+        |target| {
+            let id = ids
+                .lookup(target)
+                .filter(|id| image_part(&message.parts[*id]))?;
             bound.insert(id);
-            let name = names.entry(id).or_insert_with(|| {
-                let name = attachment_name(&message.parts[id], assets.len() + 1);
-                assets.push(Asset {
-                    name: name.clone(),
-                    bytes: message.parts[id].contents().to_vec(),
-                });
-                name
-            });
-            mapped.insert(target, format!(".markitai/assets/{name}"));
-        } else {
-            let placeholder = format!("{prefix}{}", unresolved.len());
-            unresolved.insert(placeholder.clone(), target.clone());
-            mapped.insert(target.clone(), placeholder);
-            warnings.push(format!("EML image reference {:?} has no unambiguous image Content-ID with valid transfer encoding in its MIME related scope; the reference was retained.", target.chars().take(180).collect::<String>()));
-        }
-    }
-    let html = output_profiles::rewrite_html_image_targets(html, &mapped);
-    let markdown = crate::formats::html::fragment(&html)?;
-    Ok((
-        output_profiles::rewrite_image_uri_targets(&markdown, &unresolved),
-        bound,
-    ))
+            Some(
+                names
+                    .entry(id)
+                    .or_insert_with(|| {
+                        let name = attachment_name(&message.parts[id], assets.len() + 1);
+                        assets.push(Asset {
+                            name: name.clone(),
+                            bytes: message.parts[id].contents().to_vec(),
+                        });
+                        name
+                    })
+                    .clone(),
+            )
+        },
+        |target| {
+            format!(
+                "EML image reference {target:?} has no unambiguous image Content-ID with valid transfer encoding in its MIME related scope; the reference was retained."
+            )
+        },
+        warnings,
+    )?;
+    Ok((markdown, bound))
 }
 
 /// The reference's header block, `## Content` and body; an empty body leaves
@@ -366,11 +275,6 @@ fn attachment_label(part: &MessagePart<'_>, position: usize) -> String {
         })
         .filter(|name| !name.is_empty());
     label.unwrap_or_else(|| format!("attachment_{position}"))
-}
-
-/// Safe inside `[...]` and `![...]`, as the reference sanitizes alt text.
-fn link_text(label: &str) -> String {
-    safe_header(label).replace(['[', ']', '(', ')'], "_")
 }
 
 /// The reference's human-readable attachment size.
@@ -584,6 +488,7 @@ pub(super) fn extract_with_attachments(bytes: &[u8]) -> Result<(Document, HashSe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output_profiles;
     use base64::Engine;
 
     fn image(color: [u8; 3]) -> Vec<u8> {
@@ -787,8 +692,6 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("Content-ID"))
         );
-        assert_eq!(uri_id("cid:part%252Fid").as_deref(), Some("part%2Fid"));
-        assert_eq!(header_id("<part%2Fid>").as_deref(), Some("part%2Fid"));
     }
 
     #[test]
@@ -1152,11 +1055,11 @@ mod tests {
 
     #[test]
     fn unresolved_cid_placeholders_cannot_capture_an_entity_encoded_original_target() {
-        let doc = extract(&message(part("Content-Type: text/html", b"<p>Body.</p><img src='.markitai&#45;eml-unresolved-0-0' alt='Original'><img src='cid:missing' alt='Missing'>"))).unwrap();
-        assert_eq!(refs(&doc), [".markitai-eml-unresolved-0-0", "cid:missing"]);
+        let doc = extract(&message(part("Content-Type: text/html", b"<p>Body.</p><img src='.markitai&#45;mail-unresolved-0-0' alt='Original'><img src='cid:missing' alt='Missing'>"))).unwrap();
+        assert_eq!(refs(&doc), [".markitai-mail-unresolved-0-0", "cid:missing"]);
         assert!(
             doc.markdown
-                .contains("![Original](.markitai-eml-unresolved-0-0)")
+                .contains("![Original](.markitai-mail-unresolved-0-0)")
         );
         assert!(doc.markdown.contains("![Missing](cid:missing)"));
     }

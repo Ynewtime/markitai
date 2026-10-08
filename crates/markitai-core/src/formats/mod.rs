@@ -1,6 +1,7 @@
 //! Local, deterministic format adapters. No adapter performs network requests.
 
 mod html;
+mod mail;
 mod markup;
 mod msg;
 mod native;

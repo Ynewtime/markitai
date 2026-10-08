@@ -745,7 +745,8 @@ fallback or browser CSS visibility. The precise implemented boundaries are in
 evidence that its full extraction contract matches.
 
 The [EML reader](eml.md) resolves Content-ID images within the selected MIME body
-scope and retains missing or ambiguous references with warnings. The email readers
+scope and retains missing or ambiguous references with warnings; the
+[MSG reader](msg.md) matches its attachments' Content-IDs the same way. The email readers
 preserve body and attachments, but complete header, attachment
 and layout parity is pending. XML now has structured prose and the sample fixture
 is exact; arbitrary dialect parity remains open.
