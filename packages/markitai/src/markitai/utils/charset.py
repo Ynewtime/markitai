@@ -26,6 +26,7 @@ decodes the way the browser shows it instead of as mojibake.
 from __future__ import annotations
 
 import codecs
+import os
 import re
 
 # WHATWG encoding labels whose Python codec differs from the label, or that
@@ -497,10 +498,25 @@ def decode_body(
     return _decode(data, "cp1252", strict=False), "cp1252"
 
 
+def read_text_file(path: str | os.PathLike[str], *, html: bool = False) -> str:
+    """Read a local text document, decoding it like a fetched body.
+
+    A local file has no ``Content-Type``, so this is the BOM, (for HTML) the
+    ``<meta>`` prescan, UTF-8 and detection of :func:`decode_body`: a
+    Latin-1 ``.txt`` or a GBK page with ``<meta charset>`` reads correctly
+    instead of raising or turning into replacement characters. Newlines are
+    translated as ``Path.read_text`` does.
+    """
+    with open(path, "rb") as handle:
+        text, _codec = decode_body(handle.read(), html=html)
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 __all__ = [
     "META_PRESCAN_BYTES",
     "charset_from_content_type",
     "decode_body",
+    "read_text_file",
     "resolve_charset_label",
     "sniff_meta_charset",
 ]

@@ -20,6 +20,7 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
+from markitai.utils.charset import read_text_file
 
 _COMMAND_NAME_RE = re.compile(r"[A-Za-z]+")
 _COMMENT_RE = re.compile(r"(?<!\\)%.*$")
@@ -139,6 +140,13 @@ def _convert_commands(text: str) -> str:
             while index < length and text[index] == " ":
                 index += 1
 
+        if name == "href" and arg is not None and text.startswith("{", index):
+            # \href{url}{text}: the only command here with two arguments
+            label, index = _braced(text, index)
+            url = _convert_commands(arg).strip()
+            out.append(f"[{_convert_commands(label).strip()}]({url})")
+            continue
+
         out.append(_render_command(name, arg))
 
     return "".join(out)
@@ -224,7 +232,7 @@ class TexConverter(BaseConverter):
         input_path = Path(input_path)
         logger.debug("[TexConverter] Converting: {}", input_path.name)
 
-        text = input_path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_file(input_path)
         markdown, title = _tex_to_markdown(text)
         metadata: dict = {
             "source": str(input_path),

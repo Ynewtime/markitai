@@ -354,6 +354,17 @@ class TestFieldsAndDestinations:
         assert result.metadata["title"] == "My Title"
         assert result.metadata["dropped_images"] == 1
 
+    def test_bin_data_is_skipped_by_its_byte_count(self, tmp_path: Path) -> None:
+        """``\\binN`` is followed by N raw bytes, which may hold braces and
+        backslashes; they are data, not RTF."""
+        markdown = _convert(
+            tmp_path,
+            rb"{\pard Before{\*\objdata\bin6 }}\{\x}after.\par}"
+            + rb"{\pard{\pict\pngblip\bin3 {{\}Caption.\par}",
+        )
+
+        assert markdown == "Beforeafter.\n\nCaption.\n"
+
     def test_unknown_starred_destinations_are_skipped(self, tmp_path: Path) -> None:
         markdown = _convert(
             tmp_path,
