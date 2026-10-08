@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- `POST /api/download-tickets` reads at most 8 KiB of request body and answers a larger one with 413 `request_too_large`, instead of inheriting the 5 GiB upload limit and buffering whatever a client sent.
 - PDF content inspection reports each problem once per page (a pattern fill, an inline image, an XObject that cannot be resolved) instead of once per operator, so a page repeating such an operator can no longer produce millions of identical warnings or an error message that lists them all.
 - A PDF scan whose OCR-layer JPEG claims more than 32 Mi pixels in its own header is no longer decoded to check the layer: the size is read before the pixels and decoding is bounded, so a small file can no longer make the check allocate hundreds of MiB per page. The layer is read unchecked, with a warning that its image is past the pixel limit.
 - HTML text with a long run of unclosed TeX openers (`\(` or `\[`) converts in linear time instead of hanging: each opener no longer searches the rest of the text again for its closer.

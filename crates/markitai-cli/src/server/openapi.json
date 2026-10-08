@@ -44,7 +44,7 @@
         "tags": ["service"],
         "operationId": "createDownloadTicket",
         "summary": "Issue a single-use, 60-second ticket for one download",
-        "description": "For clients that must let the browser open a download natively (a navigation cannot send `Authorization`). The returned `url` carries `?ticket=` instead of the token; it admits exactly one GET of exactly `path` within `expires_in` seconds. A ticket presented for another path or method, or a second time, is refused with 401 `ticket_invalid`. At most 64 tickets are outstanding (429 `too_many_tickets`).",
+        "description": "For clients that must let the browser open a download natively (a navigation cannot send `Authorization`). The returned `url` carries `?ticket=` instead of the token; it admits exactly one GET of exactly `path` within `expires_in` seconds. A ticket presented for another path or method, or a second time, is refused with 401 `ticket_invalid`. At most 64 tickets are outstanding (429 `too_many_tickets`); a body over 8 KiB is refused with 413 `request_too_large`.",
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TicketRequest" } } }
@@ -52,6 +52,7 @@
         "responses": {
           "201": { "description": "Ticket issued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ticket" } } } },
           "401": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
           "422": { "$ref": "#/components/responses/Error" },
           "429": { "$ref": "#/components/responses/Error" }
         }
