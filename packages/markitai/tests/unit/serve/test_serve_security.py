@@ -162,6 +162,35 @@ class TestOriginProtection:
         assert resp.status_code == 403
         assert "cross-site" in resp.json()["detail"]
 
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://localhost:8888",
+            "http://127.0.0.1:8888",
+            "http://[::1]:8888",
+            "http://127.0.0.1",
+        ],
+    )
+    async def test_other_local_port_origin_rejected(
+        self, tmp_path: Path, origin: str
+    ) -> None:
+        """Another port on this machine is a separate origin.
+
+        A page from Jupyter, a dev server or ``python -m http.server`` on
+        ``localhost:8888`` must not be able to start jobs on the serve port:
+        that is exactly the CSRF the Origin check exists to stop.
+        """
+        async with _serve_client(
+            _make_app(tmp_path), base_url="http://127.0.0.1:3611"
+        ) as client:
+            resp = await client.post(
+                "/api/jobs",
+                files=_multipart([("doc.txt", b"hello")]),
+                headers={"Origin": origin},
+            )
+        assert resp.status_code == 403
+        assert "cross-site" in resp.json()["detail"]
+
     async def test_same_host_ip_origin_accepted(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

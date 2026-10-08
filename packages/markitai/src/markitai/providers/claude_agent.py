@@ -90,8 +90,8 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
     # Self-described structured-output capability (see
     # markitai.llm.structured): the SDK enforces a JSON Schema natively via
     # ClaudeAgentOptions.output_format, so ``response_format`` passthrough
-    # is honored end to end. Tool calling is not exposed (allowed_tools is
-    # empty for these one-shot extraction calls).
+    # is honored end to end. Tool calling is not exposed (no tools are
+    # enabled for these one-shot extraction calls).
     STRUCTURED_OUTPUT_MODE = "json_schema"
 
     # Threshold for enabling prompt caching (~1024 tokens ≈ 4096 chars)
@@ -429,8 +429,14 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
             # Note: timeout is calculated but SDK v0.1.27+ doesn't support timeout param
             # The SDK handles timeouts internally
             options_kwargs: dict[str, Any] = {
+                # The prompt carries untrusted document/web text, so the
+                # agent gets no tools: an empty `allowed_tools` restricts
+                # nothing, `tools=[]` removes every built-in tool, and the
+                # default permission mode denies anything else (nobody is
+                # there to approve it).
+                "tools": [],
                 "allowed_tools": [],
-                "permission_mode": "bypassPermissions",
+                "permission_mode": "default",
                 "max_turns": 1,
                 "model": model_name,
                 # markitai's calls are one-shot extraction/cleaning tasks

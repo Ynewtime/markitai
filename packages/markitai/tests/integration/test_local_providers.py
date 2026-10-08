@@ -404,11 +404,13 @@ class TestClaudeAgentIntegration:
         assert parsed == expected_json
 
     @pytest.mark.asyncio
-    async def test_bypass_permissions_mode(self) -> None:
-        """Test that bypassPermissions is set in ClaudeAgentOptions.
+    async def test_no_tools_and_no_permission_bypass(self) -> None:
+        """The agent gets no tools and nothing is auto-approved.
 
-        Per the official Claude Agent SDK docs, permission_mode="bypassPermissions"
-        allows the agent to run without interactive permission prompts.
+        The prompt carries untrusted document/web text, so a prompt
+        injection must not be able to run Bash, write files or fetch URLs:
+        ``tools=[]`` removes the built-in tools (an empty ``allowed_tools``
+        restricts nothing) and permissions are never bypassed.
         """
         from markitai.providers.claude_agent import ClaudeAgentProvider
 
@@ -472,9 +474,9 @@ class TestClaudeAgentIntegration:
                 messages=[{"role": "user", "content": "Hello!"}],
             )
 
-        # Verify permission_mode="bypassPermissions" was passed
         options_call_kwargs = mock_options_class.call_args[1]
-        assert options_call_kwargs.get("permission_mode") == "bypassPermissions"
+        assert options_call_kwargs.get("tools") == []
+        assert options_call_kwargs.get("permission_mode") == "default"
         assert "allow_dangerously_skip_permissions" not in options_call_kwargs
 
     @pytest.mark.asyncio
