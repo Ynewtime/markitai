@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `markitai -c FILE mcp` now serves with `FILE` (it read the default config), `--config-json` with `markitai mcp` is rejected instead of silently ignored, and the "Config file:" hint in error messages names the `-c` file a run actually used.
 - File batches free the LLM image cache after each file instead of holding up to 500 MB of finished files' page images and screenshots until the batch ends.
 - The docs now match the code: usage errors from the command line exit `2`, inputs rejected before conversion (a missing or unsupported file, `--llm-batch` without `--llm`) exit `1`; the config file ranks above environment variables, which are fallbacks except `MARKITAI_RECORD_HISTORY`, `MARKITAI_PURE` and `MARKITAI_NO_REMOTE_FETCH`; `batch.heavy_task_limit: 0` auto-detects from memory (not "unlimited"); `batch.scan_max_files` counts the whole input tree; and only Copilot scales its request timeout.
+- **The Copilot provider works with the GitHub Copilot SDK again**: it passed `create_session` and `send_and_wait` a single dict, and the PATH-CLI fallback a `{"cli_path": ...}` dict, which every supported SDK version (0.2.0 and later) rejects, so every `copilot/` request failed. It now uses the keyword arguments the SDK defines, and passes the request timeout to `send_and_wait`, whose own default stopped requests after 60 seconds.
 
 ## [1.2.0] - 2026-09-28
 

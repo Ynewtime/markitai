@@ -121,6 +121,19 @@ def _deny_all_permissions(request: Any, invocation: Any) -> Any:
     return PermissionDecisionReject(feedback="markitai does not allow tool use")
 
 
+def _client_for_cli_path(client_cls: Any, cli_path: str) -> Any:
+    """Build a CopilotClient that runs the CLI at ``cli_path``."""
+    try:
+        # github-copilot-sdk >= 1.0
+        from copilot import RuntimeConnection  # type: ignore[import-not-found]
+    except ImportError:
+        # github-copilot-sdk 0.x
+        from copilot import SubprocessConfig  # type: ignore[import-not-found]
+
+        return client_cls(SubprocessConfig(cli_path=cli_path))  # type: ignore[operator]
+    return client_cls(connection=RuntimeConnection.for_stdio(path=cli_path))
+
+
 def _find_copilot_cli() -> str | None:
     """Find the Copilot CLI executable path.
 
@@ -528,7 +541,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                     "[Copilot] Bundled CLI unavailable, falling back to PATH CLI: "
                     f"{cli_path} ({e})"
                 )
-                client = CopilotClient({"cli_path": cli_path})  # type: ignore[reportArgumentType]
+                client = _client_for_cli_path(CopilotClient, cli_path)
 
             await client.start()
 
@@ -660,22 +673,18 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             # prompt carries untrusted text, so no tool is enabled and any
             # permission request is denied.
             session = await client.create_session(
-                {
-                    "model": model_name,
-                    "streaming": False,
-                    "available_tools": [],
-                    "on_permission_request": _deny_all_permissions,
-                }
+                model=model_name,
+                streaming=False,
+                available_tools=[],
+                on_permission_request=_deny_all_permissions,
             )
 
-            # Build request payload
-            request_payload: dict[str, Any] = {"prompt": prompt}
-            if attachments:
-                request_payload["attachments"] = attachments
-
-            # Send prompt and wait for response
+            # Send prompt and wait for response. The SDK waits 60 s by
+            # default, so pass our adaptive timeout through as well.
             response = await asyncio.wait_for(
-                session.send_and_wait(request_payload),
+                session.send_and_wait(
+                    prompt, attachments=attachments or None, timeout=timeout
+                ),
                 timeout=timeout,
             )
 
