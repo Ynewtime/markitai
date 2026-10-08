@@ -1061,8 +1061,8 @@ class TestCopilotAuthCheck:
         assert provider._client is None
 
 
-class TestClaudeAgentAdaptiveTimeout:
-    """Tests for adaptive timeout calculation used by ClaudeAgentProvider."""
+class TestAdaptiveTimeout:
+    """Tests for the adaptive timeout calculation (used by CopilotProvider)."""
 
     def test_calculate_timeout_from_messages_callable(self) -> None:
         """Test that calculate_timeout_from_messages is callable."""
