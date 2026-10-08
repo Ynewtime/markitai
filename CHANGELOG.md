@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`serve` LLM settings**: a settings caller can no longer send an arbitrary host environment variable (`env:NAME`) or a saved key to a server it picks. `env:` references from the web API are limited to the provider key variables (`env:OPENAI_API_KEY`, …) and references already in the config file, and a saved key is only sent to its own `api_base` (422 otherwise; send the key to use another endpoint).
+- **`serve` request log**: the access token the web workspace adds to event-stream, file and archive URLs (`?token=`) is masked in the console and log file.
 
 ## [1.2.0] - 2026-09-28
 
