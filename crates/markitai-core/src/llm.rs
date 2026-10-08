@@ -1818,16 +1818,23 @@ fn request_with_mode(
 const REGION_UNAVAILABLE: &str = "the model is not available in this region";
 
 /// A billing, payment or exhausted-quota refusal, which stops the operation.
+/// A 429 is a rate limit, retried, unless it carries the `insufficient_quota`
+/// code: a rate-limit message can point at the billing page ("add a payment
+/// method to increase your rate limit") or word a per-minute limit as an
+/// exceeded quota.
 fn quota_refused(status: u16, body: &str) -> bool {
-    status == 402
-        || [
+    match status {
+        402 => true,
+        429 => body.contains("insufficient_quota"),
+        _ => [
             "insufficient_quota",
             "exceeded your current quota",
             "billing",
             "payment",
         ]
         .iter()
-        .any(|pattern| body.contains(pattern))
+        .any(|pattern| body.contains(pattern)),
+    }
 }
 
 /// A fixed phrase for a refusal whose lowercased provider body names a
@@ -2833,6 +2840,40 @@ mod tests {
             }
             assert_eq!(server.finish().len(), 1);
         }
+    }
+
+    #[test]
+    fn a_rate_limit_that_points_at_the_billing_page_is_retried() {
+        // OpenAI's lower tiers say how to raise the limit; that is no
+        // exhausted quota, which carries the `insufficient_quota` code.
+        let limited = json!({"error":{
+            "message":"Rate limit reached for gpt-test on requests per min (RPM): Limit 3, Used 3, Requested 1. Please try again in 20s. You can increase your rate limit by adding a payment method to your account at https://platform.openai.com/account/billing.",
+            "type":"requests","code":"rate_limit_exceeded"}});
+        let server = Mock::new(vec![(429, limited), (200, success("after the wait"))]);
+        let (text, _) = run(
+            &plain(),
+            &cfg("openai/test", &server.base),
+            &HashMap::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(text, "after the wait");
+        assert_eq!(server.finish().len(), 2);
+        // An exhausted quota still stops at once, whatever its wording.
+        let exhausted = json!({"error":{
+            "message":"You exceeded your current quota, please check your plan and billing details.",
+            "type":"insufficient_quota","code":"insufficient_quota"}});
+        let server = Mock::new(vec![(429, exhausted)]);
+        let error = run(
+            &plain(),
+            &cfg("openai/test", &server.base),
+            &HashMap::new(),
+            &mut |_| panic!("must stop without sleeping"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("quota or billing"), "{error}");
+        assert_eq!(server.finish().len(), 1);
     }
 
     #[test]

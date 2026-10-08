@@ -493,39 +493,39 @@ fn normalize_title(title: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A URL as output metadata keeps it: no userinfo, and no value of a query
+/// or form-like fragment parameter that carries a secret (the fetch policy's
+/// judgement of a parameter name).
 pub fn redact_url(source: &str) -> String {
     let Ok(mut url) = url::Url::parse(source) else {
         return source.to_owned();
     };
     let _ = url.set_username("");
     let _ = url.set_password(None);
-    let pairs: Vec<_> = url
-        .query_pairs()
-        .map(|(key, value)| {
-            let sensitive = [
-                "token",
-                "key",
-                "secret",
-                "password",
-                "signature",
-                "credential",
-            ]
-            .iter()
-            .any(|part| key.to_lowercase().contains(part));
-            (
-                key.into_owned(),
-                if sensitive {
-                    "REDACTED".into()
-                } else {
-                    value.into_owned()
-                },
-            )
-        })
-        .collect();
-    if !pairs.is_empty() {
-        url.query_pairs_mut().clear().extend_pairs(pairs);
+    if let Some(query) = redacted_parameters(url.query()) {
+        url.set_query(Some(&query));
+    }
+    if let Some(fragment) = redacted_parameters(url.fragment()) {
+        url.set_fragment(Some(&fragment));
     }
     url.to_string()
+}
+
+/// `name=value` parameters with each secret value replaced, or `None` when
+/// none is secret and the text stays as written.
+fn redacted_parameters(text: Option<&str>) -> Option<String> {
+    let pairs: Vec<(String, String)> = url::form_urlencoded::parse(text?.as_bytes())
+        .into_owned()
+        .collect();
+    let secret = |key: &str| crate::fetch::secret_parameter(key);
+    if !pairs.iter().any(|(key, _)| secret(key)) {
+        return None;
+    }
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for (key, value) in &pairs {
+        serializer.append_pair(key, if secret(key) { "REDACTED" } else { value });
+    }
+    Some(serializer.finish())
 }
 
 pub fn url_name(source: &str, _meta: &Map<String, Value>) -> String {
@@ -1142,6 +1142,37 @@ fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn persisted_urls_lose_signatures_codes_and_fragment_tokens() {
+        for (source, persisted) in [
+            // An Azure SAS signature and an OAuth authorization code.
+            (
+                "https://acct.blob.core.windows.net/c/f.pdf?sv=2022-11-02&sig=abc%2Bdef&se=2026",
+                "https://acct.blob.core.windows.net/c/f.pdf?sv=2022-11-02&sig=REDACTED&se=2026",
+            ),
+            (
+                "https://app.test/callback?code=one-time&state=s1",
+                "https://app.test/callback?code=REDACTED&state=s1",
+            ),
+            // An implicit-flow token in the fragment; a plain anchor stays.
+            (
+                "https://app.test/#access_token=abc&expires_in=3600",
+                "https://app.test/#access_token=REDACTED&expires_in=3600",
+            ),
+            (
+                "https://user:pass@example.test/a?api_key=k#section-2",
+                "https://example.test/a?api_key=REDACTED#section-2",
+            ),
+            // Nothing secret: the query is kept as written, not re-encoded.
+            (
+                "https://example.test/a?flag&q=a%20b&x=~#top",
+                "https://example.test/a?flag&q=a%20b&x=~#top",
+            ),
+        ] {
+            assert_eq!(redact_url(source), persisted, "{source}");
+        }
+    }
+
     #[test]
     fn page_marker_output_preference_covers_base_enhanced_and_pure_results() {
         let source = "<!-- Slide number: 1 -->\n# First\n\n<!-- Page number: 2 -->\n\n<!-- Slide number: 3 -->\nLast\n";

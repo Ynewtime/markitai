@@ -366,7 +366,7 @@ fn secret_name(key: &str) -> bool {
 
 /// A query or fragment parameter that carries a secret: [`secret_name`], or
 /// one of the words this build has always screened anywhere in the name.
-fn secret_parameter(key: &str) -> bool {
+pub(crate) fn secret_parameter(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
     [
         "token",

@@ -129,7 +129,9 @@ The browser applies cookies, additional HTTP headers, custom user agent,
 and bounded automatic scrolling. Additional HTTP headers apply to page-context
 requests, including subresources, matching the reference context scope; they are
 not restricted to the initial navigation origin. Final source metadata redacts
-sensitive query values while link resolution uses the actual final URL.
+userinfo and the values of secret query and fragment parameters (`token`, `key`,
+`sig`, `code`, `auth`, `session`, `access_token` and similar names) while link
+resolution uses the actual final URL.
 Exact domain profile overrides support wait
 state, selector, extra wait, scroll suppression and resource rejection patterns.
 Built-in GitHub and X/Twitter waiting hints are available (X waits for an

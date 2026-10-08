@@ -47,6 +47,10 @@ pub(super) fn repaired(bytes: &[u8]) -> Option<Vec<u8>> {
         _ => return None,
     };
     let sectors = bytes.len() / sector;
+    // The header and at least one sector for the FAT.
+    if sectors < 2 {
+        return None;
+    }
     // Sector n starts after the header, which takes one sector.
     let offset = |n: u32| -> Option<usize> {
         let at = (n <= MAX_REGULAR_SECTOR)
@@ -70,7 +74,9 @@ pub(super) fn repaired(bytes: &[u8]) -> Option<Vec<u8>> {
         take(u32_at(0x4C + index * 4)?, &mut fat_sectors);
     }
     let mut difat = u32_at(0x44)?;
-    let mut difat_left = u32_at(0x48)? as usize;
+    // The chain cannot have more sectors than the file, however many the
+    // header claims (a sector can point back at itself).
+    let mut difat_left = (u32_at(0x48)? as usize).min(sectors);
     while fat_sectors.len() < fat_count && difat_left > 0 {
         let at = offset(difat)?;
         let per_sector = sector / 4 - 1;
@@ -322,5 +328,38 @@ mod tests {
         let mut truncated = TEXTEDIT_DOC.to_vec();
         truncated.truncate(1024);
         assert!(repaired(&truncated).is_none());
+    }
+
+    /// A header with the given version and every DIFAT entry free.
+    fn header(major: u16, shift: u16, len: usize) -> Vec<u8> {
+        let mut bytes = vec![0xFF; len];
+        bytes[..8].copy_from_slice(&SIGNATURE);
+        bytes[0x1A..0x1C].copy_from_slice(&major.to_le_bytes());
+        bytes[0x1E..0x20].copy_from_slice(&shift.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn a_difat_chain_that_loops_on_itself_ends_within_the_file() {
+        // The header claims 2^32 - 1 DIFAT sectors; the only one is free
+        // entries pointing back at itself, so no round finds a FAT sector.
+        let mut bytes = header(3, 9, 1024);
+        bytes[0x2C..0x30].copy_from_slice(&1u32.to_le_bytes());
+        bytes[0x44..0x48].copy_from_slice(&0u32.to_le_bytes());
+        bytes[0x48..0x4C].copy_from_slice(&u32::MAX.to_le_bytes());
+        bytes[1020..1024].copy_from_slice(&0u32.to_le_bytes());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || sender.send(repaired(&bytes)).unwrap());
+        let result = receiver
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the DIFAT walk is bounded by the file's sectors");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn a_version_4_file_shorter_than_one_sector_is_left_alone() {
+        let mut bytes = header(4, 12, 1024);
+        bytes[0x2C..0x30].copy_from_slice(&0u32.to_le_bytes());
+        assert!(repaired(&bytes).is_none());
     }
 }
