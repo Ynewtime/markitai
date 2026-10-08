@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- A page read by a site reader (WeChat, Zhihu, Bilibili, Douban, Jianshu, cnblogs and the other blogs, including a saved WeChat page known only by its markers) no longer crashes the process with a stack overflow when its markup or a code block nests tens of thousands of elements deep: as on every other page, content below 256 levels is kept as plain text with a warning.
 - Normal output no longer loses text after a stray `[`: the repair of a link whose text a line break splits starts at the link's own bracket, so prose such as `a[i` or `[sic` followed later by a link keeps every line and paragraph in between instead of being cut down to the first line.
 - A malformed legacy Office file (`.doc`, `.xls`, `.ppt`) whose header claims an endless DIFAT chain no longer keeps the compound-file repair busy for minutes or hours; the walk is bounded by the file's size, and a version-4 file shorter than one sector is left alone instead of panicking a debug build.
 - A shared incomplete-cost warning now adds up the rows it covers instead of repeating one row's count: the card names the models that have no reviewed price and how many requests each accounts for, in the page's language, and lists the rows under its details. A batch is named for what was submitted — a folder, even one that holds a `.urls` list; a batch that named nothing reads as its job id rather than as one file inside it. Every ledger row keeps its action slot, so status marks, spinners and download icons line up in one column.

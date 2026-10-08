@@ -482,7 +482,13 @@ fn formula(element: ElementRef<'_>) -> Option<String> {
 
 /// The code of a `pre`, one line per `br`, block or per-line `code` child.
 fn code_text(pre: ElementRef<'_>) -> String {
-    fn walk(element: ElementRef<'_>, out: &mut String) {
+    fn walk(element: ElementRef<'_>, out: &mut String, depth: usize) {
+        if depth > super::MAX_DEPTH {
+            // As the generic reader does: the rest keeps its text.
+            out.extend(element.text());
+            super::FLATTENED.with(|flattened| flattened.set(true));
+            return;
+        }
         for child in element.children() {
             match child.value() {
                 Node::Text(text) => out.push_str(text),
@@ -495,7 +501,7 @@ fn code_text(pre: ElementRef<'_>) -> String {
                         // A copy button or line-number gutter is not code.
                         _ if is_gutter(child) => {}
                         "script" | "style" | "button" => {}
-                        _ => walk(child, out),
+                        _ => walk(child, out, depth + 1),
                     }
                 }
                 _ => {}
@@ -514,10 +520,10 @@ fn code_text(pre: ElementRef<'_>) -> String {
             if index > 0 {
                 out.push('\n');
             }
-            walk(*line, &mut out);
+            walk(*line, &mut out, 0);
         }
     } else {
-        walk(pre, &mut out);
+        walk(pre, &mut out, 0);
     }
     out.trim_end_matches(['\n', '\r']).to_owned()
 }
@@ -563,6 +569,8 @@ fn code_language(pre: ElementRef<'_>) -> Option<String> {
 struct Cleaner {
     dialect: Dialect,
     out: String,
+    /// How many elements deep the cleaning is.
+    depth: usize,
 }
 
 impl Cleaner {
@@ -577,6 +585,13 @@ impl Cleaner {
     }
 
     fn children(&mut self, element: ElementRef<'_>) {
+        if self.depth > super::MAX_DEPTH {
+            // As the generic reader does: the rest keeps its words.
+            self.text(&super::flat_text(element));
+            super::FLATTENED.with(|flattened| flattened.set(true));
+            return;
+        }
+        self.depth += 1;
         for child in element.children() {
             match child.value() {
                 Node::Text(text) => self.text(text),
@@ -588,6 +603,7 @@ impl Cleaner {
                 _ => {}
             }
         }
+        self.depth -= 1;
     }
 
     /// A `noscript` that repeats an image its siblings show.
@@ -769,6 +785,7 @@ fn clean_children(element: ElementRef<'_>, dialect: Dialect) -> String {
     let mut cleaner = Cleaner {
         dialect,
         out: String::new(),
+        depth: 0,
     };
     cleaner.children(element);
     cleaner.out
@@ -990,6 +1007,73 @@ mod tests {
         assert!(markup.contains("card text") && !markup.contains("mp-common"));
         assert!(substantial(&markup));
         assert!(!substantial("<p> </p>"));
+    }
+
+    /// Runs `work` on a thread with a fixed 2 MiB stack, so the result does
+    /// not depend on the stack the test harness was given.
+    fn on_small_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(work)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_cleaner_keeps_nesting_past_the_limit_as_plain_text() {
+        let deep = format!(
+            "{}<b>deep</b> words{}",
+            "<div>".repeat(300),
+            "</div>".repeat(300)
+        );
+        let markup = clean_fragment(&deep, Dialect::WeChat);
+        assert!(
+            markup.matches("<div>").count() <= super::super::MAX_DEPTH + 1,
+            "{markup}"
+        );
+        assert!(markup.contains("deep words"), "{markup}");
+        assert!(!markup.contains("<b>"), "{markup}");
+        // A code block's walk is bounded the same way.
+        let code = on_small_stack(|| {
+            let pre = format!(
+                "<pre>{}x = 1{}</pre>",
+                "<span>".repeat(100_000),
+                "</span>".repeat(100_000)
+            );
+            clean_fragment(&pre, Dialect::Plain)
+        });
+        assert!(code.contains("x = 1"), "{code}");
+    }
+
+    #[test]
+    fn a_site_page_nested_far_too_deep_converts_with_a_warning() {
+        // A WeChat page known by its markers alone, as a saved copy is.
+        let document = on_small_stack(|| {
+            let page = format!(
+                "<html><body><h1 id=\"activity-name\">Deep page</h1><div id=\"js_content\"><p>Before</p>{}<p>Deep text</p>{}<p>After</p></div></body></html>",
+                "<div>".repeat(10_000),
+                "</div>".repeat(10_000)
+            );
+            super::super::extract_html(&page, None).unwrap()
+        });
+        assert!(
+            document.markdown.contains("Before"),
+            "{}",
+            document.markdown
+        );
+        assert!(
+            document.markdown.contains("Deep text"),
+            "{}",
+            document.markdown
+        );
+        assert!(document.markdown.contains("After"), "{}", document.markdown);
+        assert_eq!(
+            document.warnings,
+            [super::super::flattened_warning()],
+            "{:?}",
+            document.warnings
+        );
     }
 
     #[test]

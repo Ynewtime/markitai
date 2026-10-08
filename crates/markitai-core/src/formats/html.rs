@@ -2764,6 +2764,13 @@ thread_local! {
     static FLATTENED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The warning for a rendering that kept a subtree as plain text.
+fn flattened_warning() -> String {
+    format!(
+        "HTML is nested deeper than {MAX_DEPTH} elements; the content below that depth was kept as plain text without its formatting."
+    )
+}
+
 /// The text below an element without recursion, a space at block edges so
 /// the words of neighbouring blocks stay apart.
 fn flat_text(element: ElementRef<'_>) -> String {
@@ -5131,12 +5138,19 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     // A reading site's article, read from what the page serves (see `sites`).
     let mut site_metadata = Map::new();
     if let Some(reading) = sites::read(&document, base.as_ref()) {
+        // The reader flattens nesting past MAX_DEPTH too; converting the page
+        // it built starts the flag afresh, so its warning is carried over.
+        let flattened = FLATTENED.with(|flattened| flattened.replace(false));
         match reading.page {
             Some(page) => {
                 if let Ok(mut converted) = extract_html(&page, base_url)
                     && !converted.markdown.trim().is_empty()
                 {
                     converted.metadata.extend(reading.metadata);
+                    let warning = flattened_warning();
+                    if flattened && !converted.warnings.contains(&warning) {
+                        converted.warnings.push(warning);
+                    }
                     return Ok(converted);
                 }
             }
@@ -5244,7 +5258,7 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     metadata.extend(site_metadata);
     let mut warnings = Vec::new();
     if FLATTENED.with(|flattened| flattened.replace(false)) {
-        warnings.push(format!("HTML is nested deeper than {MAX_DEPTH} elements; the content below that depth was kept as plain text without its formatting."));
+        warnings.push(flattened_warning());
     }
     Ok(Document {
         markdown,
