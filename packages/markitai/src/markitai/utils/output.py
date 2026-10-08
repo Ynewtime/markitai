@@ -157,11 +157,6 @@ class OutputNameReservations:
         with self._lock:
             self._claimed.add(self._key(path))
 
-    def is_reserved(self, path: Path) -> bool:
-        """Whether *path*'s name is already held in this table."""
-        with self._lock:
-            return self._key(path) in self._claimed
-
     def claim(
         self,
         base_path: Path,
