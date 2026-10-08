@@ -17,7 +17,12 @@ pytest.importorskip("mcp")
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from markitai.api import ConversionError, ConversionOutput, FetchError
+from markitai.api import (
+    ConfigFileError,
+    ConversionError,
+    ConversionOutput,
+    FetchError,
+)
 from markitai.mcp import server as server_module
 from markitai.mcp.server import (
     MAX_INLINE_CHARS,
@@ -136,9 +141,25 @@ class TestConvertDocument:
         assert isinstance(excinfo.value.__cause__, FileNotFoundError)
         assert "MODEL" not in str(excinfo.value)
 
+    async def test_bad_config_file_keeps_its_reason(
+        self,
+        sample_md: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: a broken config surfaced as an opaque tool error."""
+        bad = tmp_path / "bad-config.json"
+        bad.write_text('{"llm": ', encoding="utf-8")
+        monkeypatch.setenv("MARKITAI_CONFIG", str(bad))
+
+        with pytest.raises(ToolError, match="Invalid JSON in") as excinfo:
+            await convert_document(str(sample_md))
+        assert str(bad) in str(excinfo.value)
+
     @pytest.mark.parametrize(
         "error",
         [
+            ConfigFileError("Invalid configuration in /tmp/config.json"),
             ConversionError("No content extracted from scan.pdf"),
             FetchError("HTTP 404 fetching https://example.com/x"),
             IsADirectoryError("/tmp/dir is a directory"),

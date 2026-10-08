@@ -28,6 +28,17 @@ class SelfExplanatoryError(Exception):
     """
 
 
+class ConfigFileError(Exception):
+    """Raised when a config file contains invalid values.
+
+    Carries an actionable message; the CLI layer (MarkitaiGroup.invoke)
+    translates it into a ClickException so users see the message instead
+    of a raw ValidationError traceback, and the MCP server returns it as the
+    tool error. Lives here, framework-free, so ``markitai.api`` can export
+    it without importing the configuration module.
+    """
+
+
 def extra_install_command(extra: str) -> str:
     """The one command that adds an extra to *this* markitai install.
 

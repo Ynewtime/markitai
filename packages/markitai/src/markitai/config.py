@@ -61,6 +61,7 @@ from markitai.constants import (
     PROVIDER_API_KEY_ENV,
     PROVIDER_DEFAULT_MODELS,
 )
+from markitai.utils.errors import ConfigFileError
 
 # Environment variable descriptions for user-friendly error messages. The
 # provider rows are derived so a new provider needs no second edit here, and
@@ -943,16 +944,6 @@ def _set_nested_value(data: dict[str, Any], key_path: str, value: Any) -> None:
                 if part not in current or not isinstance(current[part], dict):
                     current[part] = {}
                 current = current[part]
-
-
-class ConfigFileError(Exception):
-    """Raised when a config file contains invalid values.
-
-    Carries an actionable message; the CLI layer (MarkitaiGroup.invoke)
-    translates it into a ClickException so users see the message instead
-    of a raw ValidationError traceback. Kept framework-free so the
-    configuration foundation does not depend on the CLI stack.
-    """
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
