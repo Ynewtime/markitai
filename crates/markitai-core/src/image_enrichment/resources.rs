@@ -1,13 +1,13 @@
+use crate::fetch::is_private;
 use crate::{Asset, Document, Error, Result, config, output_profiles};
 use base64::Engine;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
-use std::net::{IpAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
-use url::Url;
+use url::{Host, Url};
 
 const MAX_IMAGE: usize = 64 * 1024 * 1024;
 const MAX_ADDED: usize = 100 * 1024 * 1024;
@@ -200,37 +200,15 @@ fn local_image(source: &str, target: &str, allow_symlinks: bool) -> Result<Vec<u
     }
     Ok(bytes)
 }
-fn private(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(ip) => {
-            ip.is_private()
-                || ip.is_loopback()
-                || ip.is_link_local()
-                || ip.is_unspecified()
-                || ip.is_broadcast()
-                || ip.is_multicast()
-                || ip.octets()[0] == 0
-                || ip.octets()[0] >= 240
-                || ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1])
-        }
-        IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or_else(
-            || {
-                ip.is_loopback()
-                    || ip.is_unspecified()
-                    || ip.is_unique_local()
-                    || ip.is_unicast_link_local()
-                    || ip.is_multicast()
-            },
-            |ip| private(IpAddr::V4(ip)),
-        ),
-    }
-}
 fn private_origin(url: &Url) -> bool {
-    url.host_str().is_some_and(|host| {
-        host.eq_ignore_ascii_case("localhost")
-            || host.ends_with(".localhost")
-            || host.parse::<IpAddr>().is_ok_and(private)
-    })
+    match url.host() {
+        Some(Host::Domain(host)) => {
+            host.eq_ignore_ascii_case("localhost") || host.ends_with(".localhost")
+        }
+        Some(Host::Ipv4(address)) => is_private(address.into()),
+        Some(Host::Ipv6(address)) => is_private(address.into()),
+        None => false,
+    }
 }
 fn download(mut url: Url, allow_private: bool) -> Result<Vec<u8>> {
     for _ in 0..=5 {
@@ -245,12 +223,11 @@ fn download(mut url: Url, allow_private: bool) -> Result<Vec<u8>> {
         let host = url
             .host_str()
             .ok_or_else(|| failure("image URL has no hostname"))?;
-        let addresses: Vec<_> = (host, url.port_or_known_default().unwrap_or(443))
-            .to_socket_addrs()
-            .map_err(|_| failure("image hostname resolution failed"))?
-            .collect();
+        let addresses = url
+            .socket_addrs(|| None)
+            .map_err(|_| failure("image hostname resolution failed"))?;
         if addresses.is_empty()
-            || !allow_private && addresses.iter().any(|address| private(address.ip()))
+            || !allow_private && addresses.iter().any(|address| is_private(address.ip()))
         {
             return Err(failure(
                 "public/local-file documents cannot fetch private image targets",
@@ -372,6 +349,26 @@ mod tests {
     }
 
     #[test]
+    fn ipv6_literal_hosts_are_classified_instead_of_failing_to_resolve() {
+        for (page, private) in [
+            ("http://[::1]:8080/page", true),
+            ("http://[fd00::1]/page", true),
+            ("http://[64:ff9b::7f00:1]/page", true),
+            ("http://[2606:4700:4700::1111]/page", false),
+            ("http://192.0.2.1/page", true),
+        ] {
+            assert_eq!(
+                private_origin(&Url::parse(page).unwrap()),
+                private,
+                "{page}"
+            );
+        }
+        let error = download(Url::parse("http://[::1]:9/image").unwrap(), false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("private image targets"), "{error}");
+    }
+    #[test]
     fn private_networks_and_embedded_credentials_cannot_bypass_download_policy() {
         for address in [
             "127.0.0.1",
@@ -381,7 +378,7 @@ mod tests {
             "::1",
             "::ffff:127.0.0.1",
         ] {
-            assert!(private(address.parse().unwrap()));
+            assert!(is_private(address.parse().unwrap()));
         }
         assert!(
             download(

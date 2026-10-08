@@ -102,8 +102,9 @@ original reference and emits a warning.
 HTTP image downloads use direct transport, five redirects, a 30-second request
 budget and a 10-second connection budget. Each redirect is validated separately;
 resolved addresses are pinned for the request. Public-origin and local-file
-conversions cannot fetch private image addresses. Explicit localhost/private-IP
-source pages may use private image targets. Browser cookies, authorization
+conversions cannot fetch private image addresses, classified as for
+[remote fetch services](fetch.md), IPv6 literals included. Explicit
+localhost/private-IP source pages may use private image targets. Browser cookies, authorization
 headers, ambient proxies and browser sessions are not forwarded to images.
 Consequently, authenticated/proxy-only image resources may remain external with
 a warning. System hostname resolution occurs before the HTTP request timeout;

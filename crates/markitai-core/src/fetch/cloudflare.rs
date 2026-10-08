@@ -220,7 +220,8 @@ pub(crate) fn render(
         .pointer("/fetch/cloudflare")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let payload = payload(source, &settings, &services.vars)?;
+    // Send what the policy checked, not the text it was parsed from.
+    let payload = payload(url.as_str(), &settings, &services.vars)?;
     let mut endpoint = credentials.endpoint(&services.cloudflare, "browser-rendering/content")?;
     if let Some(ttl) = settings
         .get("cache_ttl")

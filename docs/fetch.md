@@ -348,6 +348,11 @@ Remote services are tried only after the local steps could not read the page,
 unless a configured priority puts one first, and never for a 404 or 410, a
 configuration or input error, or a host that resolves to a non-public address
 (checked once, before the first remote request; the failure then says so).
+Non-public covers private, loopback, link-local, shared, benchmarking,
+documentation, reserved and multicast ranges, IPv6 unique-local and site-local
+addresses, and IPv6 forms that carry such an IPv4 address (mapped, compatible,
+NAT64 `64:ff9b::/96` and 6to4 `2002::/16`). The service receives the URL as
+parsed and checked, not the text as typed.
 Cloudflare is passed over when its credentials are not set. The first remote
 service that reads the page wins; its result names it in `fetch_strategy` and
 is not stored in the page cache. When every step fails, the local failure comes
