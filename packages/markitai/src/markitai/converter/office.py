@@ -10,11 +10,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.constants import DEFAULT_RENDER_DPI, SCREENSHOTS_REL_PATH
-from markitai.converter._patches import (
-    apply_all_patches,
-    apply_openpyxl_patches,
-    apply_pptx_patches,
-)
+from markitai.converter._patches import apply_all_patches, apply_openpyxl_patches
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -61,13 +57,11 @@ class OfficeConverter(BaseConverter):
     def __init__(self, config: MarkitaiConfig | None = None) -> None:
         super().__init__(config)
         self._markitdown: Any = None
-        # Rendering paths may use openpyxl/python-pptx directly. Plain DOCX
-        # uses neither; only its generic fallback needs those imports.
+        # Rendering paths may use openpyxl directly. PPTX and plain DOCX
+        # don't; only the generic fallback needs those imports.
         if FileFormat.XLSX in self.supported_formats:
             apply_openpyxl_patches()
-        elif FileFormat.PPTX in self.supported_formats:
-            apply_pptx_patches()
-        elif FileFormat.DOCX not in self.supported_formats:
+        elif not {FileFormat.PPTX, FileFormat.DOCX} & set(self.supported_formats):
             apply_all_patches()
 
     def convert(
