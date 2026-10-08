@@ -172,6 +172,8 @@ fn deleting_one_item_keeps_shared_assets_and_last_delete_removes_job() {
     data["native_assets"] =
         json!({"i1":["assets/shared.png","assets/only-a.png"],"i2":["assets/shared.png"]});
     std::fs::write(&meta, data.to_string()).unwrap();
+    // The reference caches a job archive that still holds the deleted item.
+    std::fs::write(folder.join("archive.zip"), b"reference-archive").unwrap();
     let server = Server::start(temp.path());
     assert_eq!(
         server
@@ -179,6 +181,7 @@ fn deleting_one_item_keeps_shared_assets_and_last_delete_removes_job() {
             .status,
         204
     );
+    assert!(!folder.join("archive.zip").exists());
     assert_eq!(
         std::fs::read(assets.join("shared.png")).unwrap(),
         b"shared-bytes"
