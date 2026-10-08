@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- A serve job snapshot's job-level `options` lists only the supported option keys, as each item's `options` already did, instead of echoing everything saved with the job: the stored `remote_processing` consent and CLI history metadata such as `origin` are no longer returned.
 - The workbench's detected models come from the same table and environment as conversions: API keys in `.env` files count, as they do for `MODEL`-less conversions, the list follows the pool's priority (Anthropic, OpenAI, Gemini, DeepSeek, OpenRouter) instead of starting with OpenAI, and `MODEL` is also read from `.env`. A key that is only whitespace no longer adds its provider to a conversion's automatic pool.
 - `MARKITAI_NO_REMOTE_FETCH` is read like `MARKITAI_NO_VLM_OCR` and the reference: any value other than an empty one, `0`, `false` or `no` (trimmed, in any case) turns remote extraction off, so ` 1` or `Y` no longer leaves Defuddle, Jina and Cloudflare enabled. `MARKITAI_PURE` accepts `on` and any case, like `MARKITAI_RECORD_HISTORY`.
 - `-p/--preset` uses a `presets` entry of the configuration that redefines a built-in name (`minimal`, `standard`, `rich`), as the workbench, its capabilities and the reference do, instead of applying the built-in definition anyway.

@@ -42,6 +42,7 @@
 
 ### 修复
 
+- serve 任务快照的任务级 `options` 只列出受支持的选项键，与各条目的 `options` 一致，不再原样返回任务保存的全部内容：已保存的 `remote_processing` 授权及 `origin` 等 CLI 历史元数据不再返回。
 - 工作台检测到的模型与转换使用同一张表和同一环境：`.env` 文件中的 API key 同样计入（与未设 `MODEL` 的转换一致），列表按模型池优先级（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter）排列，不再以 OpenAI 开头，`MODEL` 也从 `.env` 读取。只含空白的 key 不再让对应服务商进入转换的自动模型池。
 - `MARKITAI_NO_REMOTE_FETCH` 的读取方式与 `MARKITAI_NO_VLM_OCR` 及参考实现一致：除空值、`0`、`false`、`no`（去除首尾空白，不分大小写）外的任何值都会关闭远程抽取，` 1` 或 `Y` 不再让 Defuddle、Jina 和 Cloudflare 保持可用。`MARKITAI_PURE` 与 `MARKITAI_RECORD_HISTORY` 一样接受 `on` 且不分大小写。
 - `-p/--preset` 遇到配置 `presets` 中重新定义的内建名称（`minimal`、`standard`、`rich`）时使用配置中的定义，与工作台、其能力接口及参考实现一致，不再仍按内建定义处理。

@@ -241,7 +241,8 @@ previous overrides. Unknown fields and invalid options return 422.
 Each full item in a job snapshot or item SSE event includes an `options` object
 containing that item's saved repeat selections, with a job-level fallback for
 older history. Only supported option keys are exposed; `remote_processing` is
-omitted. This object is not authorization. Clients supporting older servers may
+omitted. The snapshot's job-level `options` is projected the same way. This
+object is not authorization. Clients supporting older servers may
 use `item.options ?? job.options`, remove any consent field and obtain fresh
 [Cloudflare confirmation](#cloudflare-request-authorization) before a rerun.
 The small queued-item response returned by creation or retry is unchanged.
