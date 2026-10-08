@@ -8,13 +8,12 @@ Design rules:
 - Enrichers only run when the ``EnrichmentPolicy`` explicitly permits them.
 - An enricher returns ``None`` to signal "not better than sync result";
   the resolver then keeps the sync result unchanged.
-- ``enricher_name`` is recorded in ``ResolvedPage.diagnostics`` so the
-  pipeline can propagate it to ``ExtractionInfo.enricher_name``.
+- ``enricher_name`` is recorded in ``ResolvedPage.diagnostics``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -30,13 +29,10 @@ class EnrichmentPolicy:
             requests.  Defaults to ``True``.
         allow_async: Whether async enrichers are permitted to run at all.
             Defaults to ``True``.
-        preferred_enrichers: Optional ordered list of enricher names to
-            prefer.  When non-empty, only named enrichers are considered.
     """
 
     allow_network: bool = True
     allow_async: bool = True
-    preferred_enrichers: list[str] = field(default_factory=list)
 
 
 @runtime_checkable

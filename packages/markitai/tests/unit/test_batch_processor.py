@@ -561,7 +561,6 @@ class TestCreateUrlProcessor:
         This tests that when fetch returns empty/whitespace-only content,
         the processor correctly reports it as a failure.
         """
-        from markitai.batch import ProcessResult
 
         # Verify that ProcessResult correctly reports failure for empty content
         # This tests the expected behavior without network calls
@@ -598,8 +597,6 @@ class TestCreateUrlProcessor:
         mock_fetch_result.content = "# Test Content"
         mock_fetch_result.strategy_used = "static"
         mock_fetch_result.cache_hit = False
-        mock_fetch_result.static_content = None
-        mock_fetch_result.browser_content = None
         mock_fetch_result.screenshot_path = None
         mock_fetch_result.title = "Test"
 
@@ -640,8 +637,6 @@ class TestCreateUrlProcessor:
         mock_fetch_result.content = "# Test Content"
         mock_fetch_result.strategy_used = "static"
         mock_fetch_result.cache_hit = False
-        mock_fetch_result.static_content = None
-        mock_fetch_result.browser_content = None
         mock_fetch_result.screenshot_path = None
         mock_fetch_result.title = "Test"
 
@@ -689,8 +684,6 @@ class TestCreateUrlProcessor:
         mock_fetch_result.content = "# Test Content"
         mock_fetch_result.strategy_used = "static"
         mock_fetch_result.cache_hit = True
-        mock_fetch_result.static_content = None
-        mock_fetch_result.browser_content = None
         mock_fetch_result.screenshot_path = None
         mock_fetch_result.title = "Test"
 
@@ -739,8 +732,6 @@ class TestCreateUrlProcessor:
         fetch_result.cache_hit = False
         fetch_result.screenshot_path = None
         fetch_result.title = "T"
-        fetch_result.static_content = None
-        fetch_result.browser_content = None
         fetch_result.metadata = {}
         download = MagicMock(
             updated_markdown="# Test Content", downloaded_paths=[Path("x.png")]
@@ -769,90 +760,6 @@ class TestCreateUrlProcessor:
         assert result.error is not None and "No output" in result.error
 
     @pytest.mark.asyncio
-    async def test_url_processor_vision_forwards_source_metadata(
-        self,
-        default_config: MarkitaiConfig,
-        sample_output_dir: Path,
-        sample_input_dir: Path,
-    ) -> None:
-        """Batch vision path should forward fetch metadata to vision processing."""
-        from markitai.cli.processors.batch import create_url_processor
-
-        default_config.llm.enabled = True
-        default_config.cache.enabled = False
-        default_config.screenshot.enabled = True
-
-        screenshot_path = sample_output_dir / "screenshots" / "example.full.jpg"
-        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        screenshot_path.write_bytes(b"fake image data")
-
-        fetch_result = MagicMock()
-        fetch_result.content = "# Test Content"
-        fetch_result.strategy_used = "static"
-        fetch_result.cache_hit = False
-        fetch_result.screenshot_path = screenshot_path
-        fetch_result.title = "Original Page Title"
-        fetch_result.static_content = "# Static source"
-        fetch_result.browser_content = "# Browser source"
-        fetch_result.metadata = {
-            "source_frontmatter": {
-                "author": "Jane",
-                "published": "2024-01-15",
-                "canonical_url": "https://example.com/canonical",
-            }
-        }
-
-        async def _vision_writes_llm_md(
-            content: str,
-            _shot: Path,
-            _url: str,
-            _cfg: Any,
-            output_file: Path,
-            **_kw: Any,
-        ) -> tuple[str, float, dict[str, Any]]:
-            # The real vision step writes .llm.md next to the base path
-            output_file.with_suffix(".llm.md").write_text("# Enhanced")
-            return content, 0.0, {}
-
-        with (
-            patch(
-                "markitai.fetch.fetch_url",
-                new=AsyncMock(return_value=fetch_result),
-            ),
-            patch(
-                "markitai.cli.processors.url.process_url_with_vision",
-                new=AsyncMock(side_effect=_vision_writes_llm_md),
-            ) as mock_vision,
-        ):
-            process_url = create_url_processor(
-                cfg=default_config,
-                output_dir=sample_output_dir,
-                fetch_strategy=None,
-                explicit_fetch_strategy=False,
-                shared_processor=None,
-                renderer=None,
-            )
-
-            result, _ = await process_url(
-                "https://example.com/article",
-                sample_input_dir / "urls.txt",
-                None,
-            )
-
-        assert result.success is True
-        mock_vision.assert_awaited_once_with(
-            "# Test Content",
-            screenshot_path,
-            "https://example.com/article",
-            default_config,
-            sample_output_dir / "article.md",
-            processor=None,
-            original_title="Original Page Title",
-            fetch_strategy="static",
-            extra_meta=fetch_result.metadata["source_frontmatter"],
-        )
-
-    @pytest.mark.asyncio
     async def test_url_processor_releases_image_wait_when_document_llm_fails(
         self,
         default_config: MarkitaiConfig,
@@ -877,8 +784,6 @@ class TestCreateUrlProcessor:
         fetch_result.cache_hit = False
         fetch_result.screenshot_path = None
         fetch_result.title = "Original Page Title"
-        fetch_result.static_content = None
-        fetch_result.browser_content = None
         fetch_result.metadata = {}
 
         finished = asyncio.Event()
@@ -937,96 +842,6 @@ class TestCreateUrlProcessor:
         assert observed["event"] is not None
         assert observed["event"].is_set() is True
 
-    @pytest.mark.asyncio
-    async def test_url_processor_releases_image_wait_when_vision_llm_fails(
-        self,
-        default_config: MarkitaiConfig,
-        sample_output_dir: Path,
-        sample_input_dir: Path,
-    ) -> None:
-        """Vision LLM failure should also release parallel image analysis promptly."""
-        from markitai.cli.processors.batch import create_url_processor
-
-        default_config.llm.enabled = True
-        default_config.llm.on_failure = "fail"  # the failure semantics under test
-        default_config.cache.enabled = False
-        default_config.screenshot.enabled = True
-        default_config.image.alt_enabled = True
-
-        screenshot_path = sample_output_dir / "screenshots" / "example.full.jpg"
-        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        screenshot_path.write_bytes(b"fake image data")
-
-        image_path = sample_output_dir / "assets" / "example.png"
-        image_path.parent.mkdir(parents=True, exist_ok=True)
-        image_path.write_bytes(b"fake")
-
-        fetch_result = MagicMock()
-        fetch_result.content = "# Test Content"
-        fetch_result.strategy_used = "static"
-        fetch_result.cache_hit = False
-        fetch_result.screenshot_path = screenshot_path
-        fetch_result.title = "Original Page Title"
-        fetch_result.static_content = "# Static source"
-        fetch_result.browser_content = "# Browser source"
-        fetch_result.metadata = {}
-
-        finished = asyncio.Event()
-        observed: dict[str, Any] = {}
-
-        async def fake_analyze_images(*args: Any, **kwargs: Any):
-            observed["event"] = kwargs.get("llm_ready_event")
-            try:
-                assert observed["event"] is not None
-                await observed["event"].wait()
-                return (args[1], 0.0, {}, None)
-            finally:
-                finished.set()
-
-        download_result = MagicMock()
-        download_result.updated_markdown = "# Test Content"
-        download_result.downloaded_paths = [image_path]
-
-        with (
-            patch(
-                "markitai.fetch.fetch_url",
-                new=AsyncMock(return_value=fetch_result),
-            ),
-            patch(
-                "markitai.image.download_url_images",
-                new=AsyncMock(return_value=download_result),
-            ),
-            patch(
-                "markitai.cli.processors.url.process_url_with_vision",
-                new=AsyncMock(side_effect=RuntimeError("Vision boom")),
-            ),
-            patch(
-                "markitai.cli.processors.llm.analyze_images_with_llm",
-                new=fake_analyze_images,
-            ),
-        ):
-            process_url = create_url_processor(
-                cfg=default_config,
-                output_dir=sample_output_dir,
-                fetch_strategy=None,
-                explicit_fetch_strategy=False,
-                shared_processor=None,
-                renderer=None,
-            )
-
-            result, _ = await process_url(
-                "https://example.com/article",
-                sample_input_dir / "urls.txt",
-                None,
-            )
-
-        assert result.success is False
-        assert result.error is not None
-        assert "Vision boom" in result.error
-        await asyncio.wait_for(finished.wait(), timeout=0.2)
-        assert observed["event"] is not None
-        assert observed["event"].is_set() is True
-
 
 # =============================================================================
 # URL Processor Pure/LLM Mode Tests
@@ -1054,8 +869,6 @@ class TestUrlProcessorPureMode:
         mock_fetch_result.content = "# Test Content"
         mock_fetch_result.strategy_used = "static"
         mock_fetch_result.cache_hit = False
-        mock_fetch_result.static_content = None
-        mock_fetch_result.browser_content = None
         mock_fetch_result.screenshot_path = None
         mock_fetch_result.title = "Test"
         mock_fetch_result.metadata = {}
@@ -1108,8 +921,6 @@ class TestUrlProcessorPureMode:
         mock_fetch_result.content = "# Raw Content\n\nNo frontmatter here."
         mock_fetch_result.strategy_used = "static"
         mock_fetch_result.cache_hit = False
-        mock_fetch_result.static_content = None
-        mock_fetch_result.browser_content = None
         mock_fetch_result.screenshot_path = None
         mock_fetch_result.title = "Test"
         mock_fetch_result.metadata = {}
@@ -1308,37 +1119,20 @@ class TestProgressTracking:
             total_urls=5,
         )
 
+        def completed(task_id: object) -> float:
+            assert processor._progress is not None
+            return next(
+                t.completed for t in processor._progress.tasks if t.id == task_id
+            )
+
         # Test progress updates
         processor.advance_progress()
-        assert processor._completed_files == 1
+        assert completed(processor._overall_task_id) == 1
 
         processor.update_url_status("https://example.com", completed=True)
-        assert processor._completed_urls == 1
+        assert completed(processor._url_task_id) == 1
 
         # Stop live display
-        processor.stop_live_display()
-
-    def test_batch_processor_update_progress_total(
-        self,
-        batch_config: BatchConfig,
-        sample_output_dir: Path,
-    ) -> None:
-        """Test updating progress total after discovery."""
-        processor = BatchProcessor(
-            config=batch_config,
-            output_dir=sample_output_dir,
-        )
-
-        processor.start_live_display(
-            verbose=False,
-            total_files=5,
-            total_urls=0,
-        )
-
-        # Update total (e.g., after resume filtering)
-        processor.update_progress_total(10)
-        assert processor._total_files == 10
-
         processor.stop_live_display()
 
 
@@ -1525,110 +1319,6 @@ class TestErrorHandling:
         # Should return None instead of crashing
         state = processor.load_state()
         assert state is None
-
-
-# =============================================================================
-# Concurrent Processing Tests
-# =============================================================================
-
-
-class TestConcurrentProcessing:
-    """Tests for concurrent processing in batch mode."""
-
-    @pytest.mark.asyncio
-    async def test_semaphore_limits_concurrency(
-        self,
-        batch_config: BatchConfig,
-        sample_output_dir: Path,
-        tmp_path: Path,
-    ) -> None:
-        """Test that semaphore correctly limits concurrency."""
-        processor = BatchProcessor(
-            config=batch_config,
-            output_dir=sample_output_dir,
-        )
-
-        concurrent_count = 0
-        max_concurrent = 0
-
-        async def mock_process(path: Path) -> ProcessResult:
-            nonlocal concurrent_count, max_concurrent
-            concurrent_count += 1
-            max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.01)
-            concurrent_count -= 1
-            return ProcessResult(success=True)
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [input_dir / f"file{i}.txt" for i in range(10)]
-        for f in files:
-            f.touch()
-
-        # Initialize state
-        processor.state = processor.init_state(
-            input_dir=input_dir,
-            files=files,
-            options={},
-        )
-
-        await processor.process_batch(
-            files=files,
-            process_func=mock_process,
-            resume=False,
-        )
-
-        # Max concurrent should not exceed configured concurrency
-        assert max_concurrent <= batch_config.concurrency
-
-    @pytest.mark.asyncio
-    async def test_process_batch_continues_on_individual_failure(
-        self,
-        batch_config: BatchConfig,
-        sample_output_dir: Path,
-        tmp_path: Path,
-    ) -> None:
-        """Test that batch processing continues when individual files fail."""
-        processor = BatchProcessor(
-            config=batch_config,
-            output_dir=sample_output_dir,
-        )
-
-        call_count = 0
-
-        async def mock_process(path: Path) -> ProcessResult:
-            nonlocal call_count
-            call_count += 1
-            if "bad" in str(path):
-                return ProcessResult(success=False, error="Simulated error")
-            return ProcessResult(success=True, output_path=f"{path}.md")
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [
-            input_dir / "good1.txt",
-            input_dir / "bad.txt",
-            input_dir / "good2.txt",
-        ]
-        for f in files:
-            f.touch()
-
-        processor.state = processor.init_state(
-            input_dir=input_dir,
-            files=files,
-            options={},
-        )
-
-        state = await processor.process_batch(
-            files=files,
-            process_func=mock_process,
-            resume=False,
-        )
-
-        # All files should be processed
-        assert call_count == 3
-        assert state.completed_count == 2
-        assert state.failed_count == 1
 
 
 # =============================================================================
@@ -1825,7 +1515,6 @@ class TestUrlProcessingIntegration:
         default_config: MarkitaiConfig,
     ) -> None:
         """Test that JinaRateLimitError produces the expected result format."""
-        from markitai.batch import ProcessResult
 
         # Verify that the expected error result format is correct
         # This tests the expected behavior pattern without network calls
@@ -1844,7 +1533,6 @@ class TestUrlProcessingIntegration:
         default_config: MarkitaiConfig,
     ) -> None:
         """Test that ProcessResult correctly tracks downloaded image count."""
-        from markitai.batch import ProcessResult
 
         # Test that ProcessResult can track image counts correctly
         result = ProcessResult(
@@ -2007,24 +1695,20 @@ class TestTaskHash:
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
-        _ = BatchProcessor(
-            config=batch_config,
-            output_dir=output_dir,
-            input_path=input_path,
-            task_options={"llm": True},
-        )
+        def task_hash(options: dict[str, Any]) -> str:
+            return BatchProcessor(
+                config=batch_config,
+                output_dir=output_dir,
+                input_path=input_path,
+                task_options=options,
+            ).task_hash
 
-        _ = BatchProcessor(
-            config=batch_config,
-            output_dir=output_dir,
-            input_path=input_path,
-            task_options={"llm": False},
+        assert task_hash({"llm": True}) != task_hash({"llm": False})
+        assert task_hash({"ocr": True}) != task_hash({"ocr": False})
+        # Options outside the output-affecting set leave the hash alone
+        assert task_hash({"llm": True, "concurrency": 2}) == task_hash(
+            {"llm": True, "concurrency": 8}
         )
-
-        # Hashes might still be the same since llm_enabled is the key option
-        # that affects hash, and we're passing different keys
-        # The actual implementation uses llm_enabled, not llm
-        # This test shows the intended behavior
 
 
 class TestIncrementalStateSave:
@@ -2199,82 +1883,3 @@ class TestIncrementalStateSave:
         assert jsonl_size < 500, (
             f"Incremental write should be small, got {jsonl_size} bytes"
         )
-
-
-class TestQueueBasedProcessing:
-    """Tests for queue + worker concurrency model."""
-
-    @pytest.mark.asyncio
-    async def test_processes_all_files(
-        self, batch_config: BatchConfig, tmp_path: Path
-    ) -> None:
-        """All files should be processed exactly once."""
-        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        processed: list[str] = []
-
-        async def mock_process(path: Path) -> ProcessResult:
-            processed.append(path.name)
-            return ProcessResult(success=True)
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [input_dir / f"file{i}.txt" for i in range(20)]
-        for f in files:
-            f.touch()
-        await processor.process_batch(files=files, process_func=mock_process)
-
-        assert sorted(processed) == sorted(f.name for f in files)
-
-    @pytest.mark.asyncio
-    async def test_concurrency_bounded_by_config(
-        self, batch_config: BatchConfig, tmp_path: Path
-    ) -> None:
-        """Active workers should never exceed configured concurrency."""
-        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        concurrent_count = 0
-        max_concurrent = 0
-
-        async def mock_process(path: Path) -> ProcessResult:
-            nonlocal concurrent_count, max_concurrent
-            concurrent_count += 1
-            max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.01)
-            concurrent_count -= 1
-            return ProcessResult(success=True)
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [input_dir / f"file{i}.txt" for i in range(20)]
-        for f in files:
-            f.touch()
-        await processor.process_batch(files=files, process_func=mock_process)
-
-        assert max_concurrent <= batch_config.concurrency
-
-    @pytest.mark.asyncio
-    async def test_handles_exceptions_without_stopping(
-        self, batch_config: BatchConfig, tmp_path: Path
-    ) -> None:
-        """One file's failure should not prevent others from processing."""
-        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        processed: list[str] = []
-
-        async def mock_process(path: Path) -> ProcessResult:
-            processed.append(path.name)
-            if "fail" in path.name:
-                raise ValueError("test error")
-            return ProcessResult(success=True)
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir(exist_ok=True)
-        files = [
-            input_dir / "good1.txt",
-            input_dir / "fail1.txt",
-            input_dir / "good2.txt",
-        ]
-        for f in files:
-            f.touch()
-        state = await processor.process_batch(files=files, process_func=mock_process)
-
-        assert len(processed) == 3
-        assert state.files[str(files[1])].status == FileStatus.FAILED

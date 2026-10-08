@@ -358,12 +358,11 @@ class FetchSession:
         self.fetch_cache_skip_patterns: list[str] = []
 
         # Shared MarkItDown instance (reused for static fetching).
-        # Note: MarkItDown's requests.Session is NOT thread-safe. However,
-        # since fetch_with_static runs in the asyncio event loop (not in a
-        # thread pool), only one md.convert() call executes at a time,
-        # avoiding thread safety issues. If fetch_with_static is ever moved
-        # to run_in_executor with threads, this should be changed to use
-        # threading.local() for thread-local instances.
+        # md.convert() runs in executor threads (run_in_executor), several
+        # at once on this one instance. It only converts local temp files,
+        # so MarkItDown's requests.Session, which is NOT thread-safe, is
+        # never used; converting URLs through it would need a per-thread
+        # instance (threading.local()).
         self.markitdown_instance: Any = None
 
         # Shared HTTP clients (+ config fingerprints for rebuild-on-change).

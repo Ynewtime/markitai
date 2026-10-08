@@ -57,7 +57,6 @@ def get_converter_executor() -> ThreadPoolExecutor:
 
 # Global heavy task semaphore to prevent OOM from LibreOffice/Playwright/etc.
 _HEAVY_TASK_SEMAPHORE: asyncio.Semaphore | None = None
-_HEAVY_TASK_CONFIGURED_LIMIT: int = 0  # 0 = auto-detect
 
 
 def _get_total_ram_bytes() -> int | None:
@@ -151,10 +150,9 @@ def get_heavy_task_semaphore(limit: int = 0) -> asyncio.Semaphore:
     Returns:
         Shared asyncio.Semaphore instance.
     """
-    global _HEAVY_TASK_SEMAPHORE, _HEAVY_TASK_CONFIGURED_LIMIT
+    global _HEAVY_TASK_SEMAPHORE
     if _HEAVY_TASK_SEMAPHORE is None:
         effective_limit = limit if limit > 0 else _detect_heavy_task_limit()
-        _HEAVY_TASK_CONFIGURED_LIMIT = effective_limit
         _HEAVY_TASK_SEMAPHORE = asyncio.Semaphore(effective_limit)
     return _HEAVY_TASK_SEMAPHORE
 

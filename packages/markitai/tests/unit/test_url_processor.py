@@ -12,11 +12,9 @@ from loguru import logger
 
 from markitai.cli.logging_config import setup_logging
 from markitai.cli.processors.url import (
-    build_multi_source_content,
     process_url,
     process_url_batch,
     process_url_screenshot_only,
-    process_url_with_vision,
 )
 from markitai.config import MarkitaiConfig
 
@@ -35,48 +33,6 @@ def _writes_llm_md(result: tuple) -> object:
         return result
 
     return _process
-
-
-class TestBuildMultiSourceContent:
-    """Tests for build_multi_source_content function."""
-
-    def test_returns_fallback_when_no_sources(self) -> None:
-        """Test that fallback content is returned when no other sources."""
-        result = build_multi_source_content(None, None, "fallback content")
-        assert result == "fallback content"
-
-    def test_returns_fallback_with_static_content(self) -> None:
-        """Test that fallback is still returned even with static content."""
-        # With single-source strategy, fallback is always the best source
-        result = build_multi_source_content("static content", None, "fallback content")
-        assert result == "fallback content"
-
-    def test_returns_fallback_with_browser_content(self) -> None:
-        """Test that fallback is still returned even with browser content."""
-        result = build_multi_source_content(None, "browser content", "fallback content")
-        assert result == "fallback content"
-
-    def test_returns_fallback_with_all_sources(self) -> None:
-        """Test that fallback is returned when all sources present."""
-        result = build_multi_source_content(
-            "static content", "browser content", "fallback content"
-        )
-        assert result == "fallback content"
-
-    def test_strips_whitespace(self) -> None:
-        """Test that whitespace is stripped from result."""
-        result = build_multi_source_content(None, None, "  content with spaces  ")
-        assert result == "content with spaces"
-
-    def test_empty_fallback_returns_empty(self) -> None:
-        """Test that empty fallback returns empty string."""
-        result = build_multi_source_content("static", "browser", "")
-        assert result == ""
-
-    def test_whitespace_only_fallback(self) -> None:
-        """Test that whitespace-only fallback returns empty string."""
-        result = build_multi_source_content(None, None, "   \n\t   ")
-        assert result == ""
 
 
 class TestProcessUrlDryRun:
@@ -473,148 +429,6 @@ class TestProcessUrlFetchErrors:
         assert exc_info.value.code == 1
 
 
-class TestProcessUrlWithVision:
-    """Tests for process_url_with_vision function."""
-
-    @pytest.mark.asyncio
-    async def test_vision_processing_success(self, tmp_path: Path) -> None:
-        """Test successful vision processing."""
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = True
-
-        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
-        screenshot_path.parent.mkdir(parents=True)
-        screenshot_path.write_bytes(b"fake image data")
-
-        output_file = tmp_path / "output.md"
-        output_file.write_text("# Original content")
-
-        mock_processor = MagicMock()
-        mock_processor.enhance_url_with_vision = AsyncMock(
-            return_value=("Cleaned content", {"title": "Test Page"})
-        )
-        mock_processor.format_llm_output = MagicMock(
-            return_value="---\ntitle: Test Page\n---\n\nCleaned content"
-        )
-        mock_processor.get_context_cost = MagicMock(return_value=0.001)
-        mock_processor.get_context_usage = MagicMock(
-            return_value={"gpt-4": {"input_tokens": 100, "output_tokens": 50}}
-        )
-
-        content, cost, usage = await process_url_with_vision(
-            content="# Original content",
-            screenshot_path=screenshot_path,
-            url="https://example.com",
-            cfg=cfg,
-            output_file=output_file,
-            processor=mock_processor,
-        )
-
-        assert content == "# Original content"
-        assert cost == 0.001
-        assert "gpt-4" in usage
-
-        # Verify LLM output file was created
-        llm_output = output_file.with_suffix(".llm.md")
-        assert llm_output.exists()
-        llm_content = llm_output.read_text()
-        assert "Screenshot for reference" in llm_content
-
-    @pytest.mark.asyncio
-    async def test_vision_processing_success_forwards_source_metadata(
-        self, tmp_path: Path
-    ) -> None:
-        """Successful vision processing should forward fetch metadata."""
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = True
-
-        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
-        screenshot_path.parent.mkdir(parents=True)
-        screenshot_path.write_bytes(b"fake image data")
-
-        output_file = tmp_path / "output.md"
-        output_file.write_text("# Original content")
-
-        mock_processor = MagicMock()
-        mock_processor.enhance_url_with_vision = AsyncMock(
-            return_value=("Cleaned content", {"title": "Test Page"})
-        )
-        mock_processor.format_llm_output = MagicMock(return_value="formatted")
-        mock_processor.get_context_cost = MagicMock(return_value=0.0)
-        mock_processor.get_context_usage = MagicMock(return_value={})
-
-        extra_meta = {"author": "Jane", "published": "2024-01-15"}
-
-        await process_url_with_vision(
-            content="# Original content",
-            screenshot_path=screenshot_path,
-            url="https://example.com",
-            cfg=cfg,
-            output_file=output_file,
-            processor=mock_processor,
-            fetch_strategy="defuddle",
-            extra_meta=extra_meta,
-        )
-
-        mock_processor.enhance_url_with_vision.assert_awaited_once_with(
-            "# Original content",
-            screenshot_path,
-            context="https://example.com",
-            original_title=None,
-            fetch_strategy="defuddle",
-            extra_meta=extra_meta,
-        )
-
-    @pytest.mark.asyncio
-    async def test_vision_processing_fallback_on_error(
-        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
-    ) -> None:
-        """Fallback diagnostics must not expose a signed source URL."""
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = True
-
-        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
-        screenshot_path.parent.mkdir(parents=True)
-        screenshot_path.write_bytes(b"fake image data")
-
-        output_file = tmp_path / "output.md"
-        output_file.write_text("# Original content")
-
-        url = (
-            "https://alice:password@example.com/private/report"
-            "?token=query-secret#access_token=fragment-secret"
-        )
-        mock_processor = MagicMock()
-        mock_processor.enhance_url_with_vision = AsyncMock(
-            side_effect=Exception(f"Vision API error while fetching {url}")
-        )
-
-        # Mock the fallback process_with_llm
-        with patch(
-            "markitai.cli.processors.llm.process_with_llm",
-            new_callable=AsyncMock,
-            return_value=("fallback content", 0.002, {"model": {"requests": 1}}),
-        ):
-            result = await process_url_with_vision(
-                content="# Original content",
-                screenshot_path=screenshot_path,
-                url=url,
-                cfg=cfg,
-                output_file=output_file,
-                processor=mock_processor,
-            )
-
-            assert result[0] == "fallback content"
-            assert result[1] == 0.002
-
-        captured = capfd.readouterr()
-        assert "https://example.com/private/report" in captured.err
-        assert "alice" not in captured.err
-        assert "password" not in captured.err
-        assert "query-secret" not in captured.err
-        assert "fragment-secret" not in captured.err
-
-
 class TestProcessUrlScreenshotOnly:
     """Tests for process_url_screenshot_only function."""
 
@@ -785,8 +599,6 @@ class TestProcessUrlSuccessPath:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
 
         with patch(
             "markitai.fetch.fetch_url",
@@ -830,8 +642,6 @@ class TestProcessUrlSuccessPath:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         with (
@@ -874,8 +684,6 @@ class TestProcessUrlSuccessPath:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         llm_usage = {
@@ -929,8 +737,6 @@ class TestProcessUrlSuccessPath:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Cached"
-        mock_result.static_content = None
-        mock_result.browser_content = None
 
         mock_cache = MagicMock()
 
@@ -977,8 +783,6 @@ class TestProcessUrlSuccessPath:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         download_result = MagicMock()
@@ -1048,24 +852,22 @@ class TestProcessUrlSuccessPath:
 class TestImageAnalysisBranchCoverage:
     """Every LLM branch that downloads images must also analyze them.
 
-    Regression: X posts fetched via site extractors (fxtwitter) return final
-    content only — static_content/browser_content are both None — so the
-    single-URL LLM branch fell through to text-only processing and never
+    Regression: X posts fetched via site extractors (fxtwitter) come with a
+    screenshot, and the single-URL LLM branch fell through to text-only
+    processing and never
     called analyze_images_with_llm; downloaded images silently kept empty
     alt text in rich mode. The URL-batch path skipped analysis entirely.
     """
 
     @staticmethod
     def _make_extractor_fetch_result(url: str, screenshot_path: Path) -> MagicMock:
-        """Fetch result shaped like a site-extractor hit: screenshot, no multi-source."""
+        """Fetch result shaped like a site-extractor hit, with a screenshot."""
         result = MagicMock()
         result.content = f"# Post from {url}\n\n![](https://pbs.example.com/a.jpg)"
         result.cache_hit = False
         result.strategy_used = "playwright(fxtwitter)"
         result.screenshot_path = screenshot_path
         result.title = "Post"
-        result.static_content = None
-        result.browser_content = None
         result.metadata = {}
         return result
 
@@ -1081,10 +883,8 @@ class TestImageAnalysisBranchCoverage:
         return download_result
 
     @pytest.mark.asyncio
-    async def test_screenshot_without_multi_source_analyzes_images(
-        self, tmp_path: Path
-    ) -> None:
-        """The screenshot-but-no-vision fall-through must still analyze images."""
+    async def test_screenshot_analyzes_images(self, tmp_path: Path) -> None:
+        """The screenshot branch must still analyze images."""
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
         cfg.cache.enabled = False
@@ -1154,8 +954,6 @@ class TestImageAnalysisBranchCoverage:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         download_result = self._make_download_result(tmp_path)
@@ -1787,8 +1585,6 @@ class TestProcessUrlOcrWarning:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test"
-        mock_result.static_content = None
-        mock_result.browser_content = None
 
         with (
             patch(
@@ -1839,8 +1635,6 @@ class TestProcessUrlOutputConflict:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test"
-        mock_result.static_content = None
-        mock_result.browser_content = None
 
         with patch(
             "markitai.fetch.fetch_url",
@@ -1872,8 +1666,6 @@ class TestProcessUrlPureMode:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
         return mock_result
 
@@ -1956,14 +1748,13 @@ class TestProcessUrlPureMode:
 
 
 class TestProcessUrlPureModeBypassesVision:
-    """Tests that --pure mode skips screenshot-only and vision paths."""
+    """Tests that --pure mode skips the screenshot-only path."""
 
     def _make_mock_fetch_result(
         self,
         tmp_path: Path,
         *,
         with_screenshot: bool = False,
-        with_multi_source: bool = False,
     ) -> MagicMock:
         mock_result = MagicMock()
         mock_result.content = "# Test Page\n\nSome content here."
@@ -1977,8 +1768,6 @@ class TestProcessUrlPureModeBypassesVision:
         else:
             mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = "static html" if with_multi_source else None
-        mock_result.browser_content = "browser html" if with_multi_source else None
         mock_result.metadata = {}
         return mock_result
 
@@ -2020,50 +1809,6 @@ class TestProcessUrlPureModeBypassesVision:
             )
 
         mock_screenshot_only.assert_not_called()
-        mock_process_llm.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_pure_mode_skips_vision_enhancement_path(
-        self, tmp_path: Path
-    ) -> None:
-        """With --pure + screenshot + multi-source, should NOT call process_url_with_vision."""
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = True
-        cfg.llm.pure = True
-        cfg.screenshot.enabled = True
-        cfg.screenshot.screenshot_only = False
-        cfg.cache.enabled = False
-
-        mock_result = self._make_mock_fetch_result(
-            tmp_path, with_screenshot=True, with_multi_source=True
-        )
-
-        with (
-            patch(
-                "markitai.fetch.fetch_url",
-                new_callable=AsyncMock,
-                return_value=mock_result,
-            ),
-            patch(
-                "markitai.cli.processors.url.process_url_with_vision",
-                new_callable=AsyncMock,
-                return_value=("# Vision", 0.03, {}),
-            ) as mock_vision,
-            patch(
-                "markitai.cli.processors.llm.process_with_llm",
-                new_callable=AsyncMock,
-                return_value=("# Cleaned", 0.01, {}),
-            ) as mock_process_llm,
-        ):
-            await process_url(
-                url="https://example.com/test",
-                output_dir=tmp_path,
-                cfg=cfg,
-                dry_run=False,
-                verbose=False,
-            )
-
-        mock_vision.assert_not_called()
         mock_process_llm.assert_called_once()
 
     @pytest.mark.asyncio
@@ -2132,8 +1877,6 @@ class TestProcessUrlBatchPureMode:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         class MockUrlEntry:
@@ -2182,8 +1925,6 @@ class TestProcessUrlBatchPureMode:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         class MockUrlEntry:
@@ -2231,8 +1972,6 @@ class TestProcessUrlStdoutMode:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Quiet URL"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         with patch(
@@ -2274,8 +2013,6 @@ class TestProcessUrlStdoutMode:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         with patch(
@@ -2315,8 +2052,6 @@ class TestProcessUrlStdoutMode:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         # Track temp dirs created during the call
@@ -2371,8 +2106,6 @@ class TestProcessUrlFileMode:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         with patch(
@@ -2409,8 +2142,6 @@ class TestProcessUrlFileMode:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test Page"
-        mock_result.static_content = None
-        mock_result.browser_content = None
         mock_result.metadata = {}
 
         with patch(

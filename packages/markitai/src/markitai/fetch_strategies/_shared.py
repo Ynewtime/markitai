@@ -22,17 +22,11 @@ from loguru import logger
 
 from markitai.fetch_session import get_default_session
 from markitai.fetch_types import FetchResult
-
-try:
-    from markitai.webextract import (
-        coerce_source_frontmatter,
-        extract_web_content,
-        is_native_extraction_acceptable,
-    )
-except ImportError:  # pragma: no cover - optional during staged implementation
-    extract_web_content = None  # type: ignore[assignment]
-    coerce_source_frontmatter = None  # type: ignore[assignment]
-    is_native_extraction_acceptable = None  # type: ignore[assignment]
+from markitai.webextract import (
+    coerce_source_frontmatter,
+    extract_web_content,
+    is_native_extraction_acceptable,
+)
 
 
 def _get_markitdown() -> Any:
@@ -58,12 +52,6 @@ async def _build_native_fetch_result(
     redirects, which is what the page's own links are relative to) and fall
     back to ``url`` when there was no redirect information.
     """
-    if extract_web_content is None:
-        return None
-    # If extract_web_content is available, the other webextract functions are too
-    assert is_native_extraction_acceptable is not None
-    assert coerce_source_frontmatter is not None
-
     try:
         # CPU-bound (BeautifulSoup parsing + deepcopies); run in a thread
         # to avoid blocking the event loop

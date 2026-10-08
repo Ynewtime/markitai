@@ -42,9 +42,6 @@ class PromptManager:
         "document_process_user",
         "document_vision_system",
         "document_vision_user",
-        # URL prompts
-        "url_enhance_system",
-        "url_enhance_user",
         # Screenshot-only extraction prompts
         "screenshot_extract_system",
         "screenshot_extract_user",
@@ -191,35 +188,3 @@ class PromptManager:
         """Clear the prompt and template-digest caches."""
         self._cache.clear()
         self._digest_cache.clear()
-
-    def list_prompts(self) -> dict[str, str]:
-        """
-        List all available prompts with their sources.
-
-        Returns:
-            Dict mapping prompt names to their source paths
-        """
-        result = {}
-
-        for name in self.PROMPT_NAMES:
-            source = "built-in"
-
-            # Check config-specified path
-            if self.config:
-                config_path = getattr(self.config, name, None)
-                if config_path:
-                    path = Path(config_path).expanduser()
-                    if path.exists():
-                        source = str(path)
-                        result[name] = source
-                        continue
-
-                # Check custom directory
-                custom_dir = Path(self.config.dir).expanduser()
-                custom_path = custom_dir / f"{name}.md"
-                if custom_path.exists():
-                    source = str(custom_path)
-
-            result[name] = source
-
-        return result

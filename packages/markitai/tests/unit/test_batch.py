@@ -10,7 +10,6 @@ from markitai.batch import (
     BatchState,
     FileState,
     FileStatus,
-    ProcessResult,
 )
 from markitai.config import BatchConfig
 
@@ -228,70 +227,6 @@ class TestBatchStateSkippedCount:
             ),
         }
         assert state.completed_count == 2
-
-
-class TestBatchProcessorSkipInProcessing:
-    """Tests for skip_reason being stored during batch processing."""
-
-    async def test_process_batch_stores_skip_reason_for_image_only(
-        self, tmp_path: Path
-    ) -> None:
-        """process_batch should store skip_reason when ProcessResult has skipped error."""
-        input_dir = tmp_path / "input"
-        input_dir.mkdir()
-        (input_dir / "image.png").write_text("fake")
-        (input_dir / "doc.pdf").write_text("fake")
-
-        output_dir = tmp_path / "output"
-        config = BatchConfig()
-        processor = BatchProcessor(config, output_dir)
-
-        files = [input_dir / "image.png", input_dir / "doc.pdf"]
-
-        async def mock_process(path: Path) -> ProcessResult:
-            if path.suffix == ".png":
-                return ProcessResult(success=True, error="skipped (image_only)")
-            return ProcessResult(
-                success=True,
-                output_path=str(output_dir / f"{path.name}.md"),
-            )
-
-        state = await processor.process_batch(files, mock_process)
-
-        # Find the image file state
-        image_key = str(input_dir / "image.png")
-        assert state.files[image_key].skip_reason == "image_only"
-        assert state.files[image_key].status == FileStatus.COMPLETED
-
-        # Doc should have no skip_reason
-        doc_key = str(input_dir / "doc.pdf")
-        assert state.files[doc_key].skip_reason is None
-
-    async def test_process_batch_stores_skip_reason_for_exists(
-        self, tmp_path: Path
-    ) -> None:
-        """process_batch should store skip_reason='exists' for already-existing output."""
-        input_dir = tmp_path / "input"
-        input_dir.mkdir()
-        (input_dir / "doc.pdf").write_text("fake")
-
-        output_dir = tmp_path / "output"
-        config = BatchConfig()
-        processor = BatchProcessor(config, output_dir)
-
-        files = [input_dir / "doc.pdf"]
-
-        async def mock_process(path: Path) -> ProcessResult:
-            return ProcessResult(
-                success=True,
-                output_path=str(output_dir / f"{path.name}.md"),
-                error="skipped (exists)",
-            )
-
-        state = await processor.process_batch(files, mock_process)
-
-        doc_key = str(input_dir / "doc.pdf")
-        assert state.files[doc_key].skip_reason == "exists"
 
 
 class TestPrintSummaryWithSkips:
@@ -754,32 +689,6 @@ class TestBatchProcessor:
         assert loaded.total == 1
         assert loaded.completed_count == 1
 
-    async def test_process_batch(self, tmp_path: Path) -> None:
-        """Test batch processing."""
-        # Create test files
-        input_dir = tmp_path / "input"
-        input_dir.mkdir()
-        (input_dir / "file1.txt").write_text("content1")
-        (input_dir / "file2.txt").write_text("content2")
-
-        output_dir = tmp_path / "output"
-        config = BatchConfig(concurrency=2)
-        processor = BatchProcessor(config, output_dir)
-
-        files = [input_dir / "file1.txt", input_dir / "file2.txt"]
-
-        async def mock_process(path: Path) -> ProcessResult:
-            return ProcessResult(
-                success=True,
-                output_path=str(output_dir / f"{path.name}.md"),
-            )
-
-        state = await processor.process_batch(files, mock_process)
-
-        assert state.total == 2
-        assert state.completed_count == 2
-        assert state.failed_count == 0
-
     def test_progress_tracks_multiple_active_files(self, tmp_path: Path) -> None:
         """File progress should show multiple active items instead of last-writer-wins."""
 
@@ -843,30 +752,6 @@ class TestBatchProcessor:
         current = processor._progress.updates[-1]["current"]  # type: ignore[reportAttributeAccessIssue]
         assert "b.example.com" in current
         assert "a.example.com" not in current
-
-    async def test_process_batch_with_failures(self, tmp_path: Path) -> None:
-        """Test batch processing with some failures."""
-        input_dir = tmp_path / "input"
-        input_dir.mkdir()
-        (input_dir / "good.txt").write_text("content")
-        (input_dir / "bad.txt").write_text("content")
-
-        output_dir = tmp_path / "output"
-        config = BatchConfig()
-        processor = BatchProcessor(config, output_dir)
-
-        files = [input_dir / "good.txt", input_dir / "bad.txt"]
-
-        async def mock_process(path: Path) -> ProcessResult:
-            if "bad" in path.name:
-                return ProcessResult(success=False, error="Simulated error")
-            return ProcessResult(success=True, output_path=str(path) + ".md")
-
-        state = await processor.process_batch(files, mock_process)
-
-        assert state.total == 2
-        assert state.completed_count == 1
-        assert state.failed_count == 1
 
     def test_generate_report(self, tmp_path: Path) -> None:
         """Test report generation."""

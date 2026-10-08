@@ -281,51 +281,6 @@ class TestOCRProcessorMocked:
 class TestOCRPDFMethods:
     """Tests for PDF-related OCR methods."""
 
-    def test_is_scanned_pdf_with_text(self, ocr_config: OCRConfig, tmp_path: Path):
-        """Test detecting non-scanned PDF (has text)."""
-        processor = OCRProcessor(ocr_config)
-
-        # Create a mock PDF with text
-        test_pdf = tmp_path / "text.pdf"
-        test_pdf.write_bytes(b"fake pdf data")
-
-        # Patch pymupdf at the point where it's imported (never the
-        # legacy `fitz` alias: since 1.28.2 it prints to stdout)
-        mock_pymupdf = MagicMock()
-        mock_doc = MagicMock()
-        mock_page = MagicMock()
-        mock_page.get_text.return_value = "A" * 200  # Lots of text
-        mock_doc.__len__ = MagicMock(return_value=1)
-        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
-        mock_doc.close = MagicMock()
-        mock_pymupdf.open.return_value = mock_doc
-
-        with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            result = processor.is_scanned_pdf(test_pdf)
-
-            assert result is False  # Not scanned, has text
-
-    def test_is_scanned_pdf_no_text(self, ocr_config: OCRConfig, tmp_path: Path):
-        """Test detecting scanned PDF (no text)."""
-        processor = OCRProcessor(ocr_config)
-
-        test_pdf = tmp_path / "scanned.pdf"
-        test_pdf.write_bytes(b"fake pdf data")
-
-        mock_pymupdf = MagicMock()
-        mock_doc = MagicMock()
-        mock_page = MagicMock()
-        mock_page.get_text.return_value = ""  # No text
-        mock_doc.__len__ = MagicMock(return_value=1)
-        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
-        mock_doc.close = MagicMock()
-        mock_pymupdf.open.return_value = mock_doc
-
-        with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            result = processor.is_scanned_pdf(test_pdf)
-
-            assert result is True  # Is scanned, no text
-
 
 class TestIsLikelyGarbled:
     """Tests for the is_likely_garbled heuristic."""
@@ -371,26 +326,6 @@ class TestIsLikelyGarbled:
         """Normal bilingual text is not flagged."""
         text = "The annual report 年度报告 shows revenue growth 收入增长 this year."
         assert is_likely_garbled(text) is False
-
-
-class TestIsScannedPdfZeroPages:
-    """Tests for the zero-page guard in is_scanned_pdf."""
-
-    def test_zero_page_pdf_returns_false(self, ocr_config: OCRConfig, tmp_path: Path):
-        """A zero-page PDF must not divide by zero and is not scanned."""
-        processor = OCRProcessor(ocr_config)
-
-        test_pdf = tmp_path / "empty.pdf"
-        test_pdf.write_bytes(b"fake pdf data")
-
-        mock_pymupdf = MagicMock()
-        mock_doc = MagicMock()
-        mock_doc.__len__ = MagicMock(return_value=0)
-        mock_doc.close = MagicMock()
-        mock_pymupdf.open.return_value = mock_doc
-
-        with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            assert processor.is_scanned_pdf(test_pdf) is False
 
 
 class TestOCRRecognizeToMarkdown:

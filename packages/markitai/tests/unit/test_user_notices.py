@@ -18,7 +18,7 @@ from loguru import logger
 
 from markitai.batch import BatchProcessor, BatchState, FileState, FileStatus
 from markitai.config import BatchConfig
-from markitai.notices import collect_user_notices, is_user_notice, user_notice
+from markitai.notices import UserNoticeCollector, is_user_notice, user_notice
 
 
 class TestUserNotice:
@@ -41,7 +41,9 @@ class TestUserNotice:
         assert records[0]["function"] == "test_notice_is_a_tagged_warning"
 
     def test_collector_dedupes_notices_from_many_threads(self) -> None:
-        with collect_user_notices() as notices:
+        collector = UserNoticeCollector()
+        collector.start()
+        try:
             threads = [
                 threading.Thread(target=user_notice, args=(f"notice {i % 3}",))
                 for i in range(12)
@@ -51,9 +53,11 @@ class TestUserNotice:
             for thread in threads:
                 thread.join()
             logger.warning("not a notice")
+        finally:
+            collector.stop()
         user_notice("after the block")
 
-        assert sorted(notices) == ["notice 0", "notice 1", "notice 2"]
+        assert sorted(collector.notices) == ["notice 0", "notice 1", "notice 2"]
 
 
 class TestCaptureTaskNotices:
@@ -100,9 +104,14 @@ class TestCaptureTaskNotices:
     def test_the_global_collector_still_sees_captured_notices(self) -> None:
         from markitai.notices import capture_task_notices
 
-        with collect_user_notices() as everything, capture_task_notices() as mine:
-            user_notice("scanned pages in {}", "a.pdf")
-        assert everything == mine == ["scanned pages in a.pdf"]
+        collector = UserNoticeCollector()
+        collector.start()
+        try:
+            with capture_task_notices() as mine:
+                user_notice("scanned pages in {}", "a.pdf")
+        finally:
+            collector.stop()
+        assert collector.notices == mine == ["scanned pages in a.pdf"]
 
 
 class TestQuietConsoleShowsNotices:

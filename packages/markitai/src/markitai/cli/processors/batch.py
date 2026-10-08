@@ -215,7 +215,6 @@ def create_process_file(
                 config=cfg,
                 shared_processor=shared_processor,
                 use_multiprocess_images=True,
-                input_base_dir=input_dir,
             )
 
             # Run core conversion pipeline
@@ -273,10 +272,9 @@ async def _run_url_llm_branches(
     markdown_for_llm: str,
     downloaded_images: list[Path],
     screenshot_only: bool,
-    vision: bool,
     processor: LLMProcessor | None,
 ) -> tuple[float, dict[str, dict[str, Any]], Any]:
-    """Run the batch URL's CLI LLM branch (screenshot-only, vision, images).
+    """Run the batch URL's CLI LLM branch (screenshot-only, images).
 
     Writes ``<output>.llm.md``; any LLM failure propagates so the caller can
     write the base .md fallback and fail the URL.
@@ -285,8 +283,6 @@ async def _run_url_llm_branches(
         Tuple of (cost, usage stats, image analysis result or None).
     """
     from markitai.cli.processors.url import (
-        build_multi_source_content,
-        process_url_with_vision,
         run_url_document_llm,
         run_url_llm_with_images,
         run_url_screenshot_only_llm,
@@ -312,45 +308,6 @@ async def _run_url_llm_branches(
             screenshot_tiles=screenshot_tiles or None,
             downloaded_images=downloaded_images,
             image_context=markdown_for_llm,
-            processor=processor,
-        )
-
-    if vision:
-        # Multi-source URL with screenshot: vision LLM for better extraction
-        assert screenshot_path is not None  # guaranteed by the caller
-        multi_source_content = build_multi_source_content(
-            fetch_result.static_content,
-            fetch_result.browser_content,
-            markdown_for_llm,  # Fallback primary content
-        )
-        logger.debug(
-            f"[URL] Using vision enhancement for multi-source URL: {redact_url(url)}"
-        )
-
-        async def _vision_task() -> tuple[str, float, dict[str, dict[str, Any]]]:
-            return await process_url_with_vision(
-                multi_source_content,
-                screenshot_path,
-                url,
-                cfg,
-                output_file,
-                processor=processor,
-                original_title=fetch_result.title,
-                fetch_strategy=fetch_result.strategy_used,
-                extra_meta=source_extra_meta,
-            )
-
-        if not should_analyze_images:
-            _, cost, usage = await _vision_task()
-            return cost, usage, None
-        # Run vision enhancement and image analysis in parallel
-        return await run_url_llm_with_images(
-            _vision_task,
-            downloaded_images=downloaded_images,
-            image_context=multi_source_content,
-            output_file=output_file,
-            cfg=cfg,
-            url=url,
             processor=processor,
         )
 
@@ -603,18 +560,7 @@ def create_url_processor(
 
             markdown_for_llm = original_markdown
 
-            # Check for multi-source content (static + browser + screenshot)
-            has_multi_source = (
-                fetch_result.static_content is not None
-                or fetch_result.browser_content is not None
-            )
             has_screenshot = screenshot_path and screenshot_path.exists()
-
-            logger.debug(
-                f"[URL] Multi-source check: static={fetch_result.static_content is not None}, "
-                f"browser={fetch_result.browser_content is not None}, "
-                f"has_multi_source={has_multi_source}, has_screenshot={has_screenshot}"
-            )
 
             # Download images only when their LLM analysis can run. Presets
             # may leave image flags set after an explicit --no-llm override.
@@ -696,8 +642,7 @@ def create_url_processor(
                 downloaded_images = download_result.downloaded_paths
                 images_count = len(downloaded_images)
 
-            # Standard path — no screenshot-only, no vision enhancement,
-            # no image analysis, no raw pure base: delegate base+LLM to the
+            # Standard path — no screenshot-only, no image analysis, no raw pure base: delegate base+LLM to the
             # shared workflow cascade (the same code serve/api/CLI run).
             url_llm_usage: dict[str, dict[str, Any]] = {}
             llm_cost = 0.0
@@ -707,18 +652,13 @@ def create_url_processor(
             should_analyze_images = bool(
                 (cfg.image.alt_enabled or cfg.image.desc_enabled) and downloaded_images
             )
-            use_vision_enhancement = bool(
-                has_multi_source and has_screenshot and screenshot_path
-            )
             use_screenshot_only_llm = bool(
                 _reads_screenshot_only(cfg)
                 and has_screenshot
                 and screenshot_path is not None
             )
             use_cli_llm_branches = cfg.llm.enabled and (
-                use_screenshot_only_llm
-                or use_vision_enhancement
-                or should_analyze_images
+                use_screenshot_only_llm or should_analyze_images
             )
             use_raw_pure_base = cfg.llm.pure and not cfg.llm.enabled
 
@@ -805,7 +745,6 @@ def create_url_processor(
                             markdown_for_llm=markdown_for_llm,
                             downloaded_images=downloaded_images,
                             screenshot_only=use_screenshot_only_llm,
-                            vision=use_vision_enhancement,
                             processor=shared_processor,
                         )
                         # Images whose analysis failed kept their alt text
@@ -1208,8 +1147,7 @@ async def process_batch(
         # the moment the base file is missing — so without this line an
         # interrupted batch left a sidecar nothing could replay, and --resume
         # silently restarted from zero, re-paying for every LLM call already
-        # made. BatchProcessor.process_batch has always done this; the CLI
-        # path, which is the one people use, did not.
+        # made.
         batch.save_state(force=True)
 
     # Create URL processor function

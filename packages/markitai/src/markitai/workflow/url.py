@@ -111,7 +111,7 @@ async def convert_url_cascade(
             base file is on disk. None (the default) follows
             ``llm.on_failure``.
         fetch_result: Pre-fetched result (callers that branch on fetch
-            metadata — the CLI's vision/screenshot-only paths — fetch
+            metadata — the CLI's screenshot-only path — fetch
             themselves); skips the fetch stage when given.
         markdown_override: Caller-localized markdown; skips the image
             download stage and becomes the LLM input when given.
@@ -248,15 +248,6 @@ async def convert_url_cascade(
                     llm_usage,
                     llm_error,
                 ) = await _screenshot_only_llm_stage(
-                    markdown, url, cfg, output_file, fetch_result, proc
-                )
-            elif uses_vision_enhancement(cfg, fetch_result):
-                (
-                    llm_output_path,
-                    cost_usd,
-                    llm_usage,
-                    llm_error,
-                ) = await _vision_llm_stage(
                     markdown, url, cfg, output_file, fetch_result, proc
                 )
             else:
@@ -408,23 +399,6 @@ def _apply_profile(md_file: Path, workdir: Path, cfg: MarkitaiConfig) -> None:
         apply_profile_to_file(md_file, workdir, cfg)
 
 
-def uses_vision_enhancement(cfg: MarkitaiConfig, fetch_result: FetchResult) -> bool:
-    """Multi-source vision enhancement: screenshot plus static/browser text.
-
-    Shared by the cascade and by callers (the CLI) that pre-check which
-    branch a fetch result will take.
-    """
-    return bool(
-        cfg.llm.enabled
-        and not cfg.llm.pure
-        and fetch_result.screenshot_path
-        and (
-            fetch_result.static_content is not None
-            or fetch_result.browser_content is not None
-        )
-    )
-
-
 def uses_screenshot_only(cfg: MarkitaiConfig, fetch_result: FetchResult) -> bool:
     """Screenshot-only extraction: the vision model reads the page image(s).
 
@@ -467,61 +441,6 @@ async def _default_document_stage(
             title=title,
         )
         content = proc.format_llm_output(cleaned, llm_frontmatter)
-    target = output_file.with_suffix(".llm.md")
-    atomic_write_text(target, content)
-    return (
-        target,
-        proc.get_context_cost(url),
-        proc.get_context_usage(url),
-        None,
-    )
-
-
-async def _vision_llm_stage(
-    markdown: str,
-    url: str,
-    cfg: MarkitaiConfig,
-    output_file: Path,
-    fetch_result: FetchResult,
-    proc: LLMProcessor,
-) -> _StageResult:
-    """Vision enhancement: screenshot as visual reference for the text.
-
-    Falls back to the standard document stage when the vision call fails.
-    """
-    from markitai.security import atomic_write_text
-
-    screenshot_path = fetch_result.screenshot_path
-    assert screenshot_path is not None  # guaranteed by uses_vision_enhancement
-    try:
-        cleaned, frontmatter = await proc.enhance_url_with_vision(
-            markdown,
-            screenshot_path,
-            context=url,
-            original_title=fetch_result.title,
-            fetch_strategy=fetch_result.strategy_used,
-            extra_meta=fetch_result.metadata.get("source_frontmatter"),
-        )
-    except Exception as e:
-        from markitai.utils.text import format_error_message
-
-        logger.warning(
-            f"[URL] Vision enhancement failed ({format_error_message(e)}); "
-            "falling back to standard processing"
-        )
-        return await _default_document_stage(
-            markdown,
-            url,
-            cfg,
-            output_file,
-            fetch_result,
-            proc,
-            extra_meta=fetch_result.metadata.get("source_frontmatter"),
-            title=fetch_result.title,
-        )
-
-    content = proc.format_llm_output(cleaned, frontmatter)
-    content += screenshot_reference_comment([screenshot_path])
     target = output_file.with_suffix(".llm.md")
     atomic_write_text(target, content)
     return (

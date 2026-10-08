@@ -14,7 +14,6 @@ from typing import Any
 
 import litellm
 from litellm import completion_cost
-from litellm.integrations.custom_logger import CustomLogger
 from loguru import logger
 
 from markitai.constants import DEFAULT_MAX_OUTPUT_TOKENS
@@ -181,61 +180,3 @@ def context_display_name(context: str) -> str:
             return f"{name}:{suffix}"
     # Handle both Unix and Windows separators for cross-platform support
     return context.replace("\\", "/").strip("/").rsplit("/", 1)[-1]
-
-
-class MarkitaiLLMLogger(CustomLogger):
-    """Custom LiteLLM callback logger for capturing additional call details."""
-
-    def __init__(self) -> None:
-        self.last_call_details: dict[str, Any] = {}
-
-    def log_success_event(
-        self,
-        kwargs: dict,
-        response_obj: Any,
-        start_time: Any,
-        end_time: Any,
-    ) -> None:
-        """Capture details from successful LLM calls."""
-        slo = kwargs.get("standard_logging_object", {})
-        self.last_call_details = {
-            "api_base": slo.get("api_base"),
-            "response_time": slo.get("response_time"),
-            "cache_hit": kwargs.get("cache_hit", False),
-            "model_id": slo.get("model_id"),
-        }
-
-    async def async_log_success_event(
-        self,
-        kwargs: dict,
-        response_obj: Any,
-        start_time: Any,
-        end_time: Any,
-    ) -> None:
-        """Async version of success event logging."""
-        self.log_success_event(kwargs, response_obj, start_time, end_time)
-
-    def log_failure_event(
-        self,
-        kwargs: dict,
-        response_obj: Any,
-        start_time: Any,
-        end_time: Any,
-    ) -> None:
-        """Capture details from failed LLM calls."""
-        slo = kwargs.get("standard_logging_object", {})
-        self.last_call_details = {
-            "api_base": slo.get("api_base"),
-            "error_code": slo.get("error_code"),
-            "error_class": slo.get("error_class"),
-        }
-
-    async def async_log_failure_event(
-        self,
-        kwargs: dict,
-        response_obj: Any,
-        start_time: Any,
-        end_time: Any,
-    ) -> None:
-        """Async version of failure event logging."""
-        self.log_failure_event(kwargs, response_obj, start_time, end_time)

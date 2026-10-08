@@ -73,42 +73,17 @@ class SingleFileWorkflow:
     including document processing, image analysis, and vision enhancement.
     """
 
-    def __init__(
-        self,
-        config: MarkitaiConfig,
-        processor: LLMProcessor | None = None,
-        no_cache: bool = False,
-        no_cache_patterns: list[str] | None = None,
-    ) -> None:
+    def __init__(self, config: MarkitaiConfig, processor: LLMProcessor) -> None:
         """Initialize workflow.
 
         Args:
             config: Markitai configuration
-            processor: Optional shared LLMProcessor (created if not provided)
-            no_cache: If True, skip reading from cache but still write results
-            no_cache_patterns: List of glob patterns to skip cache for specific files
+            processor: Shared LLMProcessor
         """
         self.config = config
-        self._processor = processor
-        self._no_cache = no_cache
-        self._no_cache_patterns = no_cache_patterns
+        self.processor = processor
         self._llm_cost = 0.0
         self._llm_usage: dict[str, dict[str, Any]] = {}
-
-    @property
-    def processor(self) -> LLMProcessor:
-        """Get or create LLM processor."""
-        if self._processor is None:
-            from markitai.workflow.helpers import create_llm_processor
-
-            # Create a temporary config with the no_cache settings
-            # This is needed because SingleFileWorkflow stores these separately
-            temp_config = self.config.model_copy()
-            temp_config.cache.no_cache = self._no_cache
-            temp_config.cache.no_cache_patterns = self._no_cache_patterns or []
-
-            self._processor = create_llm_processor(temp_config)
-        return self._processor
 
     def _merge_usage(self, usage: dict[str, dict[str, Any]]) -> None:
         """Merge usage statistics into workflow totals."""

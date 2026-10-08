@@ -10,7 +10,6 @@ import pytest
 import yaml
 
 from markitai.llm.document import (
-    STANDARD_MODE_RULES,
     DocumentEnhancer,
 )
 from markitai.llm.engine import LLMEnhancementDegradedError
@@ -870,112 +869,10 @@ class TestFallbackFrontmatterDegradation:
         )
 
 
-class TestCleanMarkdownAsync:
-    """Async tests for clean_markdown method."""
-
-    @pytest.mark.asyncio
-    async def test_clean_markdown_cache_hit_memory(
-        self, llm_config: LLMConfig, prompts_config: PromptsConfig
-    ) -> None:
-        """Test clean_markdown returns cached result from memory cache."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        # Pre-populate the in-memory cache (key is scoped by the prompt digest)
-        content = "# Test Content\n\nSome text."
-        cached_result = "# Cleaned Content\n\nCleaned text."
-        cache_key = processor.documents._prompt_scoped_key(
-            "cleaner",
-            "cleaner_system",
-            "cleaner_user",
-            extra=(STANDARD_MODE_RULES,),
-        )
-        processor._cache.set(cache_key, content, cached_result)
-
-        result = await processor.clean_markdown(content, "test.md")
-
-        assert result == cached_result
-        assert processor.engine._cache_hits == 1
-
-    @pytest.mark.asyncio
-    async def test_clean_markdown_cache_hit_persistent(
-        self, llm_config: LLMConfig, prompts_config: PromptsConfig
-    ) -> None:
-        """Test clean_markdown returns cached result from persistent cache."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        content = "# Test Content\n\nSome text."
-        cached_result = "# Cleaned from persistent\n\nCleaned."
-
-        # Mock the persistent cache to return a hit
-        processor._persistent_cache.get = MagicMock(return_value=cached_result)
-
-        result = await processor.clean_markdown(content, "test.md")
-
-        assert result == cached_result
-        assert processor.engine._cache_hits == 1
-
-    @pytest.mark.asyncio
-    async def test_clean_markdown_cache_miss_calls_llm(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        mock_llm_response_factory,
-    ) -> None:
-        """Test clean_markdown calls LLM on cache miss."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        content = "# Raw Content\n\nUncleaned text."
-        cleaned_content = "# Clean Content\n\nCleaned text."
-
-        # Setup mock router
-        mock_response = mock_llm_response_factory(content=cleaned_content)
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(return_value=mock_response)
-        processor._router = mock_router
-
-        result = await processor.clean_markdown(content, "test.md")
-
-        assert result == cleaned_content
-        assert processor.engine._cache_misses == 1
-        mock_router.acompletion.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_clean_markdown_preserves_protected_content(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        mock_llm_response_factory,
-    ) -> None:
-        """Test that clean_markdown preserves page number markers."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        content = "<!-- Page number: 1 -->\n# Title\n\nContent"
-        # LLM returns content with placeholder
-        llm_output = "__MARKITAI_PAGENUM_0__\n# Cleaned Title\n\nCleaned Content"
-
-        mock_response = mock_llm_response_factory(content=llm_output)
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(return_value=mock_response)
-        processor._router = mock_router
-
-        result = await processor.clean_markdown(content, "test.md")
-
-        # Page marker should be restored
-        assert "<!-- Page number: 1 -->" in result
-
-
 class TestRefusalIsNotACleanup:
     """A refusal must neither replace the document nor reach the cache.
 
-    Regression: after the structured call failed, clean_markdown accepted
+    Regression: after the structured call failed, the text cleaner accepted
     any non-empty answer for a document without placeholders, so "I'm
     sorry, but I can't help with that request." replaced the whole body
     (and the title derived from it) and was written to the TTL-less
@@ -991,29 +888,6 @@ class TestRefusalIsNotACleanup:
         )
         * 12
     )
-
-    @pytest.mark.asyncio
-    async def test_clean_markdown_keeps_input_and_caches_nothing(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        mock_llm_response_factory,
-        tmp_path: Path,
-    ) -> None:
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, cache_global_dir=tmp_path)
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(
-            return_value=mock_llm_response_factory(content=self.REFUSAL)
-        )
-        processor._router = mock_router
-
-        result = await processor.clean_markdown(self.DOCUMENT, "notes.md")
-
-        assert result == self.DOCUMENT
-        assert processor._cache.size == 0
-        assert processor._persistent_cache.stats()["cache"]["count"] == 0
 
     @pytest.mark.asyncio
     async def test_structured_refusal_fails_the_document_uncached(
@@ -1262,9 +1136,6 @@ Original second page.
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-        processor.clean_markdown = AsyncMock(
-            side_effect=AssertionError("cleaner should not run")
-        )
 
         original_content = """<!-- Page number: 1 -->
 
@@ -2058,224 +1929,6 @@ Tail.
         assert "source: test.pdf" in frontmatter
 
 
-class TestEnhanceUrlWithVisionAsync:
-    """Async tests for enhance_url_with_vision method."""
-
-    @pytest.mark.asyncio
-    async def test_enhance_url_with_vision_cache_hit(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        sample_test_image: Path,
-    ) -> None:
-        """Test enhance_url_with_vision returns cached result."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        cached_result = {
-            "cleaned_markdown": "# Cached URL Content",
-            "description": "A cached URL",
-            "tags": ["web"],
-        }
-        processor._persistent_cache.get = MagicMock(return_value=cached_result)
-
-        cleaned, frontmatter = await processor.enhance_url_with_vision(
-            "# Original Content",
-            sample_test_image,
-            "https://example.com",
-        )
-
-        assert cleaned == "# Cached URL Content"
-        assert "Cached URL Content" in frontmatter
-        assert "markitai_processed" in frontmatter
-
-    @pytest.mark.asyncio
-    async def test_enhance_url_with_vision_cache_hit_preserves_source_metadata(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        sample_test_image: Path,
-    ) -> None:
-        """Cache-hit frontmatter should include threaded fetch metadata."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        cached_result = {
-            "cleaned_markdown": "# Cached URL Content",
-            "description": "A cached URL",
-            "tags": ["web"],
-        }
-        processor._persistent_cache.get = MagicMock(return_value=cached_result)
-
-        _, frontmatter = await processor.enhance_url_with_vision(
-            "# Original Content",
-            sample_test_image,
-            "https://example.com",
-            fetch_strategy="defuddle",
-            extra_meta={"author": "Jane", "published": "2024-01-15"},
-        )
-
-        parsed = yaml.safe_load(frontmatter)
-        assert parsed["fetch_strategy"] == "defuddle"
-        assert parsed["author"] == "Jane"
-        assert parsed["published"] == "2024-01-15"
-
-    @pytest.mark.asyncio
-    async def test_enhance_url_with_vision_calls_vision_llm(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        sample_test_image: Path,
-        mock_enhanced_result_factory,
-    ) -> None:
-        """Test enhance_url_with_vision calls vision LLM."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        result, raw = mock_enhanced_result_factory(
-            cleaned_markdown="# Enhanced URL\n\nContent from vision.",
-            description="URL content description",
-        )
-
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock()
-        processor._vision_router = mock_router
-
-        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create_with_completion = AsyncMock(
-                return_value=(result, raw)
-            )
-            mock_instructor.return_value = mock_client
-
-            cleaned, frontmatter = await processor.enhance_url_with_vision(
-                "# Original\n\nContent",
-                sample_test_image,
-                "https://example.com/page",
-            )
-
-        assert "Enhanced URL" in cleaned
-        assert "description:" in frontmatter
-
-    @pytest.mark.asyncio
-    async def test_enhance_url_with_vision_includes_source_metadata(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        sample_test_image: Path,
-        mock_enhanced_result_factory,
-    ) -> None:
-        """Fresh vision frontmatter should include fetch metadata."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        result, raw = mock_enhanced_result_factory(
-            cleaned_markdown="# Enhanced URL\n\nContent from vision.",
-            description="URL content description",
-        )
-
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock()
-        processor._vision_router = mock_router
-
-        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create_with_completion = AsyncMock(
-                return_value=(result, raw)
-            )
-            mock_instructor.return_value = mock_client
-
-            _, frontmatter = await processor.enhance_url_with_vision(
-                "# Original\n\nContent",
-                sample_test_image,
-                "https://example.com/page",
-                fetch_strategy="static",
-                extra_meta={"author": "Jane", "published": "2024-01-15"},
-            )
-
-        parsed = yaml.safe_load(frontmatter)
-        assert parsed["fetch_strategy"] == "static"
-        assert parsed["author"] == "Jane"
-        assert parsed["published"] == "2024-01-15"
-
-    @pytest.mark.asyncio
-    async def test_enhance_url_with_vision_removes_hallucinated_markers(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        sample_test_image: Path,
-        mock_enhanced_result_factory,
-    ) -> None:
-        """Test that hallucinated slide/page markers are removed from URL content."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        # LLM hallucinates slide markers which shouldn't be in URL content
-        result, raw = mock_enhanced_result_factory(
-            cleaned_markdown="# Title\n<!-- Slide number: 1 -->\nContent",
-        )
-
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock()
-        processor._vision_router = mock_router
-
-        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create_with_completion = AsyncMock(
-                return_value=(result, raw)
-            )
-            mock_instructor.return_value = mock_client
-
-            cleaned, _ = await processor.enhance_url_with_vision(
-                "# Original",
-                sample_test_image,
-                "https://example.com",
-            )
-
-        # Hallucinated slide marker should be removed
-        assert "<!-- Slide number:" not in cleaned
-
-    @pytest.mark.asyncio
-    async def test_enhance_url_with_vision_preserves_original_title(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        sample_test_image: Path,
-        mock_enhanced_result_factory,
-    ) -> None:
-        """Test that provided original_title is preserved in frontmatter."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        result, raw = mock_enhanced_result_factory()
-
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock()
-        processor._vision_router = mock_router
-
-        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create_with_completion = AsyncMock(
-                return_value=(result, raw)
-            )
-            mock_instructor.return_value = mock_client
-
-            _, frontmatter = await processor.enhance_url_with_vision(
-                "# Content",
-                sample_test_image,
-                "https://example.com",
-                original_title="My Custom Page Title",
-            )
-
-        assert "My Custom Page Title" in frontmatter
-
-
 class TestExtractFromScreenshotAsync:
     """Async tests for extract_from_screenshot method."""
 
@@ -2649,89 +2302,8 @@ class TestEnhanceWithFrontmatterAsync:
         assert "title: Canonical Input Title" in frontmatter
 
 
-class TestCacheInteractionPatterns:
-    """Tests for cache interaction patterns."""
-
-    @pytest.mark.asyncio
-    async def test_cache_miss_populates_both_caches(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        mock_llm_response_factory,
-    ) -> None:
-        """Test that cache miss populates both memory and persistent caches."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        content = "# Test\n\nContent"
-        cleaned = "# Cleaned\n\nContent"
-
-        mock_response = mock_llm_response_factory(content=cleaned)
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(return_value=mock_response)
-        processor._router = mock_router
-
-        # Track cache.set calls
-        memory_cache_set = MagicMock()
-        persistent_cache_set = MagicMock()
-        processor._cache.set = memory_cache_set
-        processor._persistent_cache.set = persistent_cache_set
-
-        await processor.clean_markdown(content, "test.md")
-
-        # Both caches should have been populated
-        memory_cache_set.assert_called_once()
-        persistent_cache_set.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_persistent_cache_hit_populates_memory_cache(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-    ) -> None:
-        """Test that persistent cache hit populates memory cache."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        content = "# Test\n\nContent"
-        cached_result = "# Cached\n\nContent"
-
-        # Memory cache miss, persistent cache hit
-        processor._cache.get = MagicMock(return_value=None)
-        processor._persistent_cache.get = MagicMock(return_value=cached_result)
-
-        memory_cache_set = MagicMock()
-        processor._cache.set = memory_cache_set
-
-        await processor.clean_markdown(content, "test.md")
-
-        # Memory cache should be populated from persistent cache
-        memory_cache_set.assert_called_once()
-
-
 class TestErrorHandlingAsync:
     """Async tests for error handling in document processing."""
-
-    @pytest.mark.asyncio
-    async def test_clean_markdown_fallback_on_error(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-    ) -> None:
-        """Test that clean_markdown handles LLM errors gracefully."""
-        from markitai.llm import LLMProcessor
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(side_effect=Exception("LLM Error"))
-        processor._router = mock_router
-
-        # Should raise the exception (clean_markdown doesn't have fallback)
-        with pytest.raises(Exception, match="LLM Error"):
-            await processor.clean_markdown("# Test", "test.md")
 
     @pytest.mark.asyncio
     async def test_process_document_fallback_when_clean_fails(
@@ -3008,7 +2580,6 @@ class TestFallbackFrontmatterTitle:
         mixin._run_document_call = AsyncMock(
             side_effect=Exception("structured processing failed")
         )
-        mixin.clean_markdown = AsyncMock(return_value="# Other\n\nx")
 
         with pytest.raises(LLMEnhancementDegradedError) as exc_info:
             await mixin.process_document(
@@ -3017,6 +2588,5 @@ class TestFallbackFrontmatterTitle:
                 title="Original Title",
             )
 
-        mixin.clean_markdown.assert_not_called()
         assert exc_info.value.cleaned_markdown == original_markdown
         assert "Original Title" in exc_info.value.frontmatter

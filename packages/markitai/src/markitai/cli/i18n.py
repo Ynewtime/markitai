@@ -102,8 +102,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "Pages without ETag/Last-Modified are refetched after {hours}h",
         "zh": "无 ETag/Last-Modified 的页面 {hours} 小时后重新抓取",
     },
-    "cache.spa": {"en": "SPA domains", "zh": "SPA 域名"},
-    "cache.proxy": {"en": "Proxy detection", "zh": "代理检测"},
     "cache.entries": {"en": "entries", "zh": "条"},
     "cache.cleared": {
         "en": "Cleared {count} cache entries",
@@ -118,13 +116,10 @@ TEXTS: dict[str, dict[str, str]] = {
     "config.title": {"en": "Configuration Sources", "zh": "配置来源"},
     "config.cli_args": {"en": "CLI arguments", "zh": "命令行参数"},
     "config.env_vars": {"en": "Environment variables", "zh": "环境变量"},
-    "config.local_file": {"en": "Local config file", "zh": "本地配置文件"},
-    "config.user_file": {"en": "User config file", "zh": "用户配置文件"},
     "config.defaults": {"en": "Default values", "zh": "默认值"},
     "config.highest": {"en": "highest priority", "zh": "最高优先级"},
     "config.lowest": {"en": "lowest priority", "zh": "最低优先级"},
     "config.loaded": {"en": "loaded", "zh": "已加载"},
-    "config.created": {"en": "Configuration file created", "zh": "配置文件已创建"},
     "config.valid": {"en": "Configuration is valid", "zh": "配置有效"},
 }
 

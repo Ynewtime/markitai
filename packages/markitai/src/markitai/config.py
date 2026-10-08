@@ -511,9 +511,6 @@ class PromptsConfig(BaseModel):
     document_process_user: str | None = None
     document_vision_system: str | None = None
     document_vision_user: str | None = None
-    # URL prompts
-    url_enhance_system: str | None = None
-    url_enhance_user: str | None = None
 
 
 class BatchConfig(BaseModel):
@@ -539,12 +536,12 @@ class BatchConfig(BaseModel):
     scan_max_files: int = Field(
         default=DEFAULT_SCAN_MAX_FILES,
         ge=1,
-        description="Max files to scan per directory",
+        description="Max files to scan across the whole input tree",
     )
     heavy_task_limit: int = Field(
         default=DEFAULT_HEAVY_TASK_LIMIT,
         ge=0,
-        description="Max heavy tasks (0=unlimited)",
+        description="Max heavy tasks (0=auto-detect from system memory)",
     )
 
 
@@ -1298,16 +1295,9 @@ class ConfigManager:
         elif isinstance(parent, dict):
             parent[final_key] = value
 
-    def merge_cli_args(self, **kwargs: Any) -> None:
-        """Merge CLI arguments into configuration."""
-        for key, value in kwargs.items():
-            if value is not None:
-                # Convert CLI arg names (e.g., output_dir) to config paths (e.g., output.dir)
-                config_key = key.replace("_", ".")
-                self.set(config_key, value)
 
-
-# Global config manager instance
+# Process-wide config manager: the CLI replaces it with the manager that
+# loaded the current run's config (config_location_hint reads it)
 config_manager = ConfigManager()
 
 

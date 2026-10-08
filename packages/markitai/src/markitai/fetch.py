@@ -183,9 +183,6 @@ from markitai.fetch_support import (
     _url_to_session_key as _url_to_session_key,
 )
 from markitai.fetch_types import (
-    CRITICAL_INVALID_REASONS as CRITICAL_INVALID_REASONS,
-)
-from markitai.fetch_types import (
     ConditionalFetchResult as ConditionalFetchResult,
 )
 from markitai.fetch_types import FetchError as FetchError
@@ -457,8 +454,6 @@ def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult
         cache_hit=result.cache_hit,
         screenshot_path=getattr(pw_result, "screenshot_path", None),
         screenshot_tiles=list(getattr(pw_result, "screenshot_tiles", []) or []),
-        static_content=result.static_content,
-        browser_content=result.browser_content,
     )
 
 
@@ -1431,7 +1426,6 @@ async def _fetch_with_fallback(
 
     domain = urlparse(url).netloc.lower()
     engine = FetchPolicyEngine()
-    jina_key = config.jina.get_resolved_api_key()
     profile = config.domain_profiles.get(domain)
     domain_prefer = profile.prefer_strategy if profile else None
     domain_priority = profile.strategy_priority if profile else None
@@ -1445,7 +1439,6 @@ async def _fetch_with_fallback(
         explicit_strategy=config.strategy if config.strategy != "auto" else None,
         fallback_patterns=config.fallback_patterns,
         policy_enabled=config.policy.enabled,
-        has_jina_key=bool(jina_key),
         domain_prefer_strategy=domain_prefer,
         global_strategy_priority=config.policy.strategy_priority,
         domain_strategy_priority=domain_priority,
@@ -1467,8 +1460,7 @@ async def _fetch_with_fallback(
     # CLI-explicit remote choices never reach this chain (they dispatch
     # directly); the chain they fall back to after a refusal is governed by
     # remote_consent like any other.
-    _consent_gated = True
-    if _consent_gated and any(s in EXTERNAL_STRATEGIES for s in strategies):
+    if any(s in EXTERNAL_STRATEGIES for s in strategies):
         _peeked = peek_remote_consent(config)
         if _peeked is False:
             strategies = [s for s in strategies if s not in EXTERNAL_STRATEGIES]
@@ -1513,7 +1505,7 @@ async def _fetch_with_fallback(
             # Lazy consent: only when the chain actually reaches a remote
             # strategy (local ones failed) do we resolve — and possibly
             # prompt for — remote-fetch consent
-            if _consent_gated and not resolve_remote_consent(
+            if not resolve_remote_consent(
                 config,
                 services=[s for s in strategies if s in EXTERNAL_STRATEGIES],
             ):

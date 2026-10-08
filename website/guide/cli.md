@@ -366,8 +366,8 @@ markitai https://example.com -o ./output --no-remote-fetch
 | Code | Meaning |
 |------|---------|
 | `0` | Success, including `--dry-run` |
-| `1` | A single item failed, or a runtime error |
-| `2` | Usage error, or a Batch API wait timed out (or lost contact) and needs `--llm-batch-collect`. This wins over `10`: items that failed alongside it are reported in `--json` and on stderr |
+| `1` | A single item failed, a runtime error, or an input rejected before conversion (missing or unsupported file, `--llm-batch` without `--llm`, …) |
+| `2` | Command-line usage error (unknown option, conflicting flags), or a Batch API wait timed out (or lost contact) and needs `--llm-batch-collect`. This wins over `10`: items that failed alongside it are reported in `--json` and on stderr |
 | `10` | Batch finished with partial failures; successful items are kept |
 
 ## Setup Commands

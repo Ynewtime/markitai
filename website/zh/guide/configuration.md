@@ -5,9 +5,11 @@
 从高到低：
 
 1. 命令行参数
-2. 环境变量
-3. 配置文件
+2. 配置文件
+3. 环境变量
 4. 内置默认值
+
+凭据和模型变量（`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`、`MODEL`）只作后备：配置文件没设这个值时才读（`MODEL` 只在 `llm.model_list` 为空时生效）。有三个开关位于配置文件之上：`MARKITAI_RECORD_HISTORY`（`1` 或 `0`）覆盖 `history.record`，`MARKITAI_PURE=1` 打开纯净模式（仅 CLI），`MARKITAI_NO_REMOTE_FETCH=1` 禁止所有远程抓取服务。前两个仍以命令行参数为准。
 
 ## 配置文件
 
@@ -391,7 +393,7 @@ markitai 会从 LiteLLM 检测模型的视觉能力。要手动指定，在模�
 
 ### 自适应超时
 
-订阅制提供商的请求超时会随提示词长度、图片数量和预期输出自动伸缩，在 60 到 600 秒之间，大文档不会超时，短请求也不会干等。
+Copilot 提供商的请求超时会随提示词长度、图片数量和预期输出自动伸缩，在 60 到 600 秒之间，大文档不会超时，短请求也不会干等。Claude Agent SDK 自行管理超时。
 
 ### 提示缓存（Claude Agent）
 
@@ -658,7 +660,7 @@ PDF 里可能藏着看不见的文字（白底白字、零字号、页面之外�
 ├── image_caption_system.md      # alt 文本
 ├── image_description_system.md  # 图片描述
 ├── document_process_system.md   # 文档处理
-└── url_enhance_system.md        # URL 增强
+└── screenshot_extract_system.md # --screenshot-only 截图抽取
 ```
 
 ```json
@@ -670,7 +672,7 @@ PDF 里可能藏着看不见的文字（白底白字、零字号、页面之外�
 }
 ```
 
-可用的键有 `cleaner`、`image_caption`、`image_description`、`image_analysis`、`document_process`、`document_vision` 和 `url_enhance`，各带 `_system` 和 `_user` 两个变体。
+可用的键有 `cleaner`、`image_caption`、`image_description`、`image_analysis`、`document_process` 和 `document_vision`，各带 `_system` 和 `_user` 两个变体。
 
 ## 中国大陆用户指南
 

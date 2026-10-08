@@ -97,7 +97,10 @@ async def test_only_successful_selector_wait_gets_stabilization(
     if not selector_found:
         page.wait_for_selector.side_effect = TimeoutError("selector missing")
     with (
-        patch("markitai.fetch_playwright.extract_web_content", None),
+        patch(
+            "markitai.fetch_playwright.extract_web_content",
+            side_effect=RuntimeError("no native extraction"),
+        ),
         patch(
             "markitai.fetch_playwright._html_to_markdown",
             return_value="Real content " * 20,

@@ -8,6 +8,8 @@ second executable name.
 
 from __future__ import annotations
 
+import os
+
 import rich_click as click
 from rich.markup import escape
 
@@ -26,6 +28,19 @@ def mcp() -> None:
         markitai mcp                              # stdio server for the host
         uvx --from "markitai[mcp]" markitai mcp   # registry-style launch
     """
+    from markitai.cli.framework import root_config_options
+
+    config_path, overrides = root_config_options()
+    if overrides:
+        # Each tool call loads the config file afresh; there is no channel
+        # for per-run overrides, and ignoring them silently misleads.
+        raise click.UsageError(
+            "--config-json is not supported with 'markitai mcp'; "
+            "put the settings in a config file and pass it with -c."
+        )
+    if config_path is not None:
+        # The server loads config like the API: MARKITAI_CONFIG first
+        os.environ["MARKITAI_CONFIG"] = str(config_path)
     try:
         from markitai.mcp.server import main
     except ImportError:

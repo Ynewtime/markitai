@@ -14,10 +14,11 @@ from click.testing import CliRunner
 class TestServeAvailability:
     """is_serve_available() probes optional deps without importing them."""
 
-    def test_available_in_dev_env(self) -> None:
-        from markitai.serve import is_serve_available
+    def test_available_when_deps_installed(self) -> None:
+        import markitai.serve as serve_mod
 
-        assert is_serve_available() is True
+        with patch.object(serve_mod, "find_spec", return_value=MagicMock()):
+            assert serve_mod.is_serve_available() is True
 
     def test_unavailable_when_fastapi_missing(self) -> None:
         import markitai.serve as serve_mod

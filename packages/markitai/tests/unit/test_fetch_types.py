@@ -49,8 +49,6 @@ class TestFetchTypesImport:
         assert result.title is None
         assert result.cache_hit is False
         assert result.screenshot_path is None
-        assert result.static_content is None
-        assert result.browser_content is None
 
     def test_conditional_fetch_result_dataclass(self):
         from markitai.fetch_types import ConditionalFetchResult, FetchResult
@@ -61,13 +59,6 @@ class TestFetchTypesImport:
         assert cfr.not_modified is False
         assert cfr.etag == "abc"
         assert cfr.last_modified is None
-
-    def test_critical_invalid_reasons_constant(self):
-        from markitai.fetch_types import CRITICAL_INVALID_REASONS
-
-        assert isinstance(CRITICAL_INVALID_REASONS, set)
-        assert "javascript_required" in CRITICAL_INVALID_REASONS
-        assert "login_required" in CRITICAL_INVALID_REASONS
 
 
 class TestBackwardCompatibility:
@@ -95,8 +86,3 @@ class TestBackwardCompatibility:
 
         cfr = ConditionalFetchResult(result=None, not_modified=True)
         assert cfr.not_modified is True
-
-    def test_critical_invalid_reasons_from_fetch(self):
-        from markitai.fetch import CRITICAL_INVALID_REASONS
-
-        assert "login_required" in CRITICAL_INVALID_REASONS

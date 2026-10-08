@@ -45,15 +45,11 @@ class ExtractionInfo:
         content_profile: Semantic classification of the page content.
         extractor_name: Name of the site extractor used (e.g. "x_tweet", "generic").
         word_count: Number of words in the extracted markdown.
-        enricher_name: Name of the async enricher used, if any.
-        source_kind: Kind of source that produced the content (default "html").
     """
 
     content_profile: ContentProfile
     extractor_name: str
     word_count: int
-    enricher_name: str | None = None
-    source_kind: str = "html"
 
 
 @dataclass(slots=True)

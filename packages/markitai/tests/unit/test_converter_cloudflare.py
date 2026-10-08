@@ -219,9 +219,9 @@ class TestCloudflareConverterIntegration:
 
         converter = CloudflareConverter(api_token="test", account_id="test")
         # Formats with no local converter
-        assert converter.can_convert("data.csv")
-        assert converter.can_convert("feed.xml")
-        assert converter.can_convert("sheet.ods")
-        assert converter.can_convert("doc.odt")
-        assert converter.can_convert("budget.numbers")
-        assert converter.can_convert("icon.svg")
+        assert detect_format("data.csv") in converter.supported_formats
+        assert detect_format("feed.xml") in converter.supported_formats
+        assert detect_format("sheet.ods") in converter.supported_formats
+        assert detect_format("doc.odt") in converter.supported_formats
+        assert detect_format("budget.numbers") in converter.supported_formats
+        assert detect_format("icon.svg") in converter.supported_formats
