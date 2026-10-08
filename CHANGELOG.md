@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Claude Agent and Copilot providers run with no tools**: the model no longer has Bash, file writes or web fetches auto-approved, so a prompt-injected document or web page cannot run commands as you.
+- **`--resume` on a relative input directory**: a retried file from a subdirectory (`docs/sub/a.pdf`) is written back to `out/sub/` instead of the output root, where it could collide with other files and its image links broke.
 
 ## [1.2.0] - 2026-09-28
 
