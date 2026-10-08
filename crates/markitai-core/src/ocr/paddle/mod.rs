@@ -166,7 +166,7 @@ impl Detector {
         Ok(plan)
     }
 
-    fn regions(&self, image: &RgbImage) -> Result<Vec<detect::Region>> {
+    fn regions(&self, image: &RgbImage) -> Result<(Vec<detect::Region>, bool)> {
         // Bound cold optimization and input planes as well as the inference itself.
         let _turn = DetectionTurn::take();
         let layout = detect::Layout::of(image.width(), image.height());
@@ -309,16 +309,86 @@ fn engine() -> Result<Arc<Engine>> {
     Ok(engine)
 }
 
+/// Values loaded once per process, by name. Each name loads under its own
+/// lock, so a slow load (a first download) holds up only the threads that
+/// need the same value, not those reading with one already loaded.
+struct Loads<T> {
+    slots: Mutex<Vec<(&'static str, Slot<T>)>>,
+}
+
+type Slot<T> = Arc<Mutex<Load<T>>>;
+
+enum Load<T> {
+    Pending,
+    Ready(Arc<T>),
+    /// An optional load failed: it is not tried again in this process.
+    Failed,
+}
+
+impl<T> Loads<T> {
+    const fn new() -> Self {
+        Loads {
+            slots: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn slot(&self, name: &'static str) -> Slot<T> {
+        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, slot)) = slots.iter().find(|(n, _)| *n == name) {
+            return slot.clone();
+        }
+        let slot = Arc::new(Mutex::new(Load::Pending));
+        slots.push((name, slot.clone()));
+        slot
+    }
+
+    /// The value `name`, loaded by `load` unless it was loaded before. A
+    /// failure is returned and tried again on the next call.
+    fn get(&self, name: &'static str, load: impl FnOnce() -> Result<T>) -> Result<Arc<T>> {
+        let slot = self.slot(name);
+        let mut state = slot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Load::Ready(value) = &*state {
+            return Ok(value.clone());
+        }
+        let value = Arc::new(load()?);
+        *state = Load::Ready(value.clone());
+        Ok(value)
+    }
+
+    /// The value `name` when it can be loaded; a failure is kept, so a
+    /// model that cannot be downloaded (offline, say) is tried once.
+    fn optional(&self, name: &'static str, load: impl FnOnce() -> Result<T>) -> Option<Arc<T>> {
+        let slot = self.slot(name);
+        let mut state = slot.lock().unwrap_or_else(|e| e.into_inner());
+        match &*state {
+            Load::Ready(value) => return Some(value.clone()),
+            Load::Failed => return None,
+            Load::Pending => {}
+        }
+        match load() {
+            Ok(value) => {
+                let value = Arc::new(value);
+                *state = Load::Ready(value.clone());
+                Some(value)
+            }
+            Err(_) => {
+                *state = Load::Failed;
+                None
+            }
+        }
+    }
+}
+
+static RECOGNIZERS: Loads<Recognizer> = Loads::new();
+
 /// The recognizer `name`, loaded once per process.
 fn recognizer(name: &'static str) -> Result<Arc<Recognizer>> {
-    static LOADED: Mutex<Vec<Arc<Recognizer>>> = Mutex::new(Vec::new());
-    let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(found) = loaded.iter().find(|r| r.name == name) {
-        return Ok(found.clone());
-    }
-    let recognizer = Arc::new(Recognizer::load(name)?);
-    loaded.push(recognizer.clone());
-    Ok(recognizer)
+    RECOGNIZERS.get(name, || Recognizer::load(name))
+}
+
+/// The recognizer `name` when it can be loaded, tried once per process.
+fn optional_recognizer(name: &'static str) -> Option<Arc<Recognizer>> {
+    RECOGNIZERS.optional(name, || Recognizer::load(name))
 }
 
 /// A detected line, cut out upright.
@@ -335,9 +405,10 @@ struct Cut {
     flagged: bool,
 }
 
-/// The text lines of `image`, cut out upright.
-fn cuts(engine: &Engine, image: &RgbImage) -> Result<Vec<Cut>> {
-    let regions = engine.detector.regions(image)?;
+/// The text lines of `image`, cut out upright, and whether it had more than
+/// [`detect::MAX_REGIONS`].
+fn cuts(engine: &Engine, image: &RgbImage) -> Result<(Vec<Cut>, bool)> {
+    let (regions, capped) = engine.detector.regions(image)?;
     let mut cuts = Vec::with_capacity(regions.len());
     for region in &regions {
         let [tl, tr, _, bl] = region.corners;
@@ -382,7 +453,7 @@ fn cuts(engine: &Engine, image: &RgbImage) -> Result<Vec<Cut>> {
             cut.flagged = over;
         }
     }
-    Ok(cuts)
+    Ok((cuts, capped))
 }
 
 /// Threads reading lines in this process, beyond the callers' own.
@@ -610,7 +681,7 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
     let choice = choice(spelling)?;
     models::preflight(&needed(spelling)?)?;
     let engine = engine()?;
-    let cuts = cuts(&engine, image)?;
+    let (cuts, capped) = cuts(&engine, image)?;
     let (lines, language, unread) = match choice {
         Choice::Model(name) => {
             let all: Vec<&Cut> = cuts.iter().collect();
@@ -618,7 +689,9 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
         }
         Choice::Default => read_default(&cuts)?,
     };
-    finish(lines, image, language, unread)
+    let mut result = finish(lines, image, language, unread)?;
+    result.capped = capped;
+    Ok(result)
 }
 
 /// The default language. The multilingual recognizer reads Latin script,
@@ -628,7 +701,8 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
 /// Korean recognizer, from the same cut-out, and that reading replaces it
 /// when it is Hangul read with more confidence, or the first reading covers
 /// little of the line (two Hanja of a Korean line). A Korean recognizer that
-/// cannot be loaded (offline, say) leaves the first reading. When half of
+/// cannot be loaded (offline, say) leaves the first reading, and is not
+/// tried again in this process. When half of
 /// the lines or more stay doubtful, the image holds text of a script neither
 /// reads: only the sure lines are kept, and the result is marked unread.
 fn read_default(cuts: &[Cut]) -> Result<(Vec<Line>, &'static str, bool)> {
@@ -641,7 +715,7 @@ fn read_default(cuts: &[Cut]) -> Result<(Vec<Line>, &'static str, bool)> {
     // Lines read with confidence by either recognizer.
     let mut read: Vec<bool> = lines.iter().map(sure).collect();
     let mut korean_lines = 0;
-    if let Ok(korean) = recognizer(KOREAN) {
+    if let Some(korean) = optional_recognizer(KOREAN) {
         let again: Vec<&Cut> = doubtful.iter().map(|&i| &cuts[i]).collect();
         if let Ok(readings) = read_lines(&korean, &again) {
             for (&i, reading) in doubtful.iter().zip(readings) {
@@ -956,5 +1030,51 @@ mod tests {
         assert!(first < cores);
         HELPERS.fetch_sub(first, Ordering::AcqRel);
         assert_eq!(take_helpers(0), 0);
+    }
+
+    #[test]
+    fn a_failed_optional_load_is_kept_and_a_required_one_tried_again() {
+        let loads: Loads<u32> = Loads::new();
+        let calls = AtomicUsize::new(0);
+        let fail = || -> Result<u32> {
+            calls.fetch_add(1, Ordering::Relaxed);
+            Err(failure("offline"))
+        };
+        assert!(loads.optional("korean", fail).is_none());
+        assert!(loads.optional("korean", fail).is_none());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(loads.get("multilingual", fail).is_err());
+        assert!(loads.get("multilingual", fail).is_err());
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+        // Asked for by name, a model whose optional load failed is tried again.
+        assert_eq!(*loads.get("korean", || Ok(7)).unwrap(), 7);
+        assert_eq!(*loads.optional("korean", fail).unwrap(), 7);
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn a_slow_load_does_not_hold_up_a_loaded_value() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let loads: Loads<u32> = Loads::new();
+        assert_eq!(*loads.get("multilingual", || Ok(1)).unwrap(), 1);
+        let (started, began) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let (answer, answered) = mpsc::channel();
+        let loads = &loads;
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                loads.optional("korean", || {
+                    started.send(()).unwrap();
+                    released.recv().unwrap();
+                    Err(failure("offline"))
+                })
+            });
+            began.recv().unwrap();
+            scope.spawn(move || answer.send(*loads.get("multilingual", || Ok(2)).unwrap()));
+            let found = answered.recv_timeout(Duration::from_secs(60));
+            release.send(()).unwrap();
+            assert_eq!(found, Ok(1), "a loaded value waited for another's load");
+        });
     }
 }

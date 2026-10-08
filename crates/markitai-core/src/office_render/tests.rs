@@ -33,6 +33,16 @@ fn all_existing_office_aliases_include_workbooks() {
         assert_eq!(kind(extension), Some(OfficeKind::Spreadsheet));
     }
     assert_eq!(kind("pdf"), None);
+    // Templates render as the documents they make.
+    for extension in ["potx", "potm", "otp"] {
+        assert_eq!(kind(extension), Some(OfficeKind::Presentation));
+    }
+    for extension in ["dot", "dotx", "DOTM", "ott"] {
+        assert_eq!(kind(extension), Some(OfficeKind::WordProcessing));
+    }
+    for extension in ["xlt", "xltx", "xltm", "ots"] {
+        assert_eq!(kind(extension), Some(OfficeKind::Spreadsheet));
+    }
     assert!(matches!(
         export_pdf(Path::new("source.numbers"), OfficeKind::Spreadsheet),
         Err(Error::Unsupported(_))
@@ -234,6 +244,66 @@ fn installed_libreoffice_keeps_hidden_blank_slides_and_full_frame_pixels() {
     assert!(pdf.extract_text(&[2]).unwrap().contains("HIDDEN SECOND"));
 }
 
+#[cfg(unix)]
+#[test]
+fn a_finished_launcher_takes_what_it_left_running_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.docx");
+    fs::write(&input, WORD).unwrap();
+    let pidfile = dir.path().join("child.pid");
+    let fixture = dir.path().join("golden.pdf");
+    fs::write(&fixture, pdf(3)).unwrap();
+    // The launcher exits at once, leaving a process of its tree behind.
+    let program = mock(
+        dir.path(),
+        &format!(
+            "sleep 30 &\necho $! > {}\ncp {} \"$out/document.pdf\"",
+            quote(&pidfile),
+            quote(&fixture)
+        ),
+    );
+    let profile = dir.path().join("profile");
+    let output = dir.path().join("output");
+    fs::create_dir(&profile).unwrap();
+    fs::create_dir(&output).unwrap();
+    // A test thread forking while the mock was written can hold it open for
+    // writing a moment longer, so its first start may fail (ETXTBSY).
+    for attempt in 1.. {
+        match process::convert(
+            &program,
+            &input,
+            &output,
+            &profile,
+            "pdf",
+            Instant::now() + Duration::from_secs(10),
+            MAX_BYTES,
+        ) {
+            Err(error) if attempt < 5 && error.to_string().contains("could not be started") => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            result => {
+                result.unwrap();
+                break;
+            }
+        }
+    }
+    let pid = fs::read_to_string(&pidfile)
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    // kill(pid,0) can briefly see a reparented zombie.
+    let stop = Instant::now() + Duration::from_secs(2);
+    while unsafe { libc::kill(pid, 0) } == 0 && Instant::now() < stop {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let survived = unsafe { libc::kill(pid, 0) } == 0;
+    if survived {
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    assert!(!survived, "a process the launcher left behind survived it");
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "Requires installed LibreOffice; run explicitly for real renderer acceptance"]
@@ -315,6 +385,100 @@ fn workbook_export_selects_whole_sheet_mode_and_rejects_lost_sheets() {
     .err()
     .unwrap();
     assert!(error.to_string().contains("every workbook sheet"));
+}
+
+/// A `count`-page PDF whose first page has text far beyond its right edge.
+#[cfg(unix)]
+fn distant_text_pdf(count: usize) -> Vec<u8> {
+    let mut pdf = lopdf::Document::load_mem(&self::pdf(count)).unwrap();
+    let font =
+        pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica"});
+    let text = pdf.add_object(Stream::new(
+        dictionary! {},
+        b"BT /F1 12 Tf 1500 20 Td (FAR) Tj ET".to_vec(),
+    ));
+    let first = *pdf.get_pages().get(&1).unwrap();
+    let page = pdf.get_dictionary_mut(first).unwrap();
+    page.set("Contents", text);
+    page.set("Resources", dictionary! {"Font"=>dictionary!{"F1"=>font}});
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+#[cfg(unix)]
+#[test]
+fn unrepaired_workbooks_keep_their_layout_when_overflow_cannot_be_planned() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = directory.path().join("pages.pdf");
+    fs::write(&fixture, distant_text_pdf(4)).unwrap();
+    let program = mock(
+        directory.path(),
+        &format!("cp {} \"$out/document.pdf\"", quote(&fixture)),
+    );
+    let export = |name: &str, bytes: &[u8]| {
+        let input = directory.path().join(name);
+        fs::write(&input, bytes).unwrap();
+        export_with(
+            &program,
+            &input,
+            OfficeKind::Spreadsheet,
+            Duration::from_secs(5),
+            MAX_BYTES,
+        )
+    };
+    // ODS is never repaired: overflow too distant to repair is a warning.
+    let result = export("source.ods", include_bytes!("fixtures/whole-workbook.ods")).unwrap();
+    assert_eq!(result.pages, 4);
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("could not be measured")),
+        "{:?}",
+        result.warnings
+    );
+    // XLSX repair still refuses to guess.
+    let error = export(
+        "source.xlsx",
+        include_bytes!("fixtures/whole-workbook.xlsx"),
+    )
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("too distant"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn templates_export_as_the_documents_they_make_from_a_copy_under_their_own_name() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, bytes, kind, pages) in [
+        ("deck.potx", PRESENTATION, OfficeKind::Presentation, 3),
+        (
+            "book.xltx",
+            include_bytes!("fixtures/whole-workbook.xlsx").as_slice(),
+            OfficeKind::Spreadsheet,
+            4,
+        ),
+    ] {
+        let input = directory.path().join(name);
+        fs::write(&input, bytes).unwrap();
+        let fixture = directory.path().join("pages.pdf");
+        fs::write(&fixture, pdf(pages)).unwrap();
+        let extension = name.rsplit('.').next().unwrap();
+        // The private copy keeps the template's extension; only one export
+        // runs, so the page count came from the package itself.
+        let program = mock(
+            directory.path(),
+            &format!(
+                "for value in \"$@\"; do last=\"$value\"; done\ncase \"$last\" in */document.{extension}) ;; *) exit 7;; esac\n[ ! -e \"$out/../ran\" ]\ntouch \"$out/../ran\"\ncp {} \"$out/document.pdf\"",
+                quote(&fixture)
+            ),
+        );
+        let result =
+            export_with(&program, &input, kind, Duration::from_secs(5), MAX_BYTES).unwrap();
+        assert_eq!(result.pages, pages, "{name}");
+    }
 }
 
 #[cfg(target_os = "macos")]

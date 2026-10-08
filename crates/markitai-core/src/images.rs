@@ -418,6 +418,16 @@ pub(crate) fn prepare_assets(doc: &mut Document, cfg: &Value) {
                 }
             }
         }
+        // A vector image has no pixels to filter or compress; it is kept as is.
+        if image::guess_format(&asset.bytes).is_err()
+            && !heif::signature(&asset.bytes)
+            && svg::is_svg(&asset.bytes)
+        {
+            replacements.entry(from.clone()).or_insert(from.clone());
+            seen.entry(digest).or_insert(from);
+            prepared.push(asset);
+            continue;
+        }
         let (image, format) = match decode(&asset.bytes) {
             Ok(value) => value,
             Err(_) => {
@@ -543,6 +553,9 @@ pub(crate) fn extract(
         }
         if recognized.unread {
             doc.warnings.push(crate::ocr::unread_warning("this image"));
+        }
+        if recognized.capped {
+            doc.warnings.push(crate::ocr::capped_warning("this image"));
         }
         ocr_metadata(&mut doc, cfg);
         Ok((doc, Vec::new()))
@@ -678,6 +691,9 @@ fn extract_heif(
         if recognized.unread {
             doc.warnings.push(crate::ocr::unread_warning("this image"));
         }
+        if recognized.capped {
+            doc.warnings.push(crate::ocr::capped_warning("this image"));
+        }
         ocr_metadata(&mut doc, cfg);
         Ok((doc, Vec::new()))
     } else {
@@ -758,6 +774,12 @@ fn extract_tiff(
             let recognized = crate::ocr::recognize_rgb(rgb_on_white(&image), cfg)?;
             if recognized.unread {
                 doc.warnings.push(crate::ocr::unread_warning(&format!(
+                    "TIFF page {}",
+                    index + 1
+                )));
+            }
+            if recognized.capped {
+                doc.warnings.push(crate::ocr::capped_warning(&format!(
                     "TIFF page {}",
                     index + 1
                 )));
@@ -992,6 +1014,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn vector_assets_are_kept_without_a_decoding_warning() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>"#.to_vec();
+        let markdown = "![Vector](.markitai/assets/vector.svg)\n";
+        let mut doc = Document {
+            markdown: markdown.into(),
+            assets: vec![Asset {
+                name: "vector.svg".into(),
+                bytes: svg.clone(),
+            }],
+            ..Default::default()
+        };
+        let cfg = config::normalize(&json!({})).unwrap();
+        prepare_assets(&mut doc, &cfg);
+        assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+        assert_eq!(doc.assets.len(), 1);
+        assert_eq!(doc.assets[0].name, "vector.svg");
+        assert_eq!(doc.assets[0].bytes, svg);
+        assert_eq!(doc.markdown, markdown);
     }
 
     #[test]

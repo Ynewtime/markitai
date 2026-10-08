@@ -67,7 +67,7 @@ pub unsafe extern "C" fn markitai_convert_json(request: *const u8, len: usize) -
             Err(_) => error("invalid_input", "JSON request is not valid UTF-8"),
         }
     }))
-    .unwrap_or_else(|_| error("internal_error", "Native conversion failed unexpectedly"));
+    .unwrap_or_else(|_| markitai_core::internal_error_json());
     MarkitaiBuffer::from_string(response)
 }
 

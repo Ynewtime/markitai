@@ -130,7 +130,10 @@ OS versions and installed language support can change the result.
 Encoded image input is limited to 64 MiB, decoded images to 32 million pixels,
 and decoder allocations to 256 MiB. The normalized PNG passed to Vision is
 limited to 128 MiB. Recognition output is limited to 10,000 lines and an 8 MiB
-text budget, including line separators. EXIF orientation is applied and transparency
+text budget, including line separators. The portable engine reads at most 1,000
+text regions per image or page, from the top, after discarding specks and faint
+regions; when there are more, a warning names the image or page whose lower text
+is missing. EXIF orientation is applied and transparency
 is composited on white. OCR uses the original image, independently of output
 preview compression or size settings. PDF, TIFF and Office workflows also have
 their own page and document budgets.
@@ -224,7 +227,9 @@ verify each file against the bundled size and SHA-256 before publication. Repair
 does not overwrite an unsafe path. A failed download leaves the existing model;
 if an error occurs after publication, run `doctor` again to inspect its state.
 The optional Korean reading may retain the first reading if its model cannot
-load or infer; ordinary OCR never repairs a corrupt model implicitly.
+load or infer. A Korean model that cannot load is tried once per process, so a
+long-running `markitai serve` or MCP process uses a model installed later only
+after a restart. Ordinary OCR never repairs a corrupt model implicitly.
 
 ### Languages
 

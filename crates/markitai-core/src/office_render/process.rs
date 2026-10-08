@@ -190,6 +190,12 @@ fn wait(mut command: Command, output: Option<(&Path, u64)>, deadline: Instant) -
         if let Some((directory, limit)) = output {
             check_output(directory, limit, ScanPhase::Running)?;
         }
+        // A launcher that has exited takes what it left running in its tree
+        // with it, before its workspace is read and removed. Its unreaped
+        // leader still holds the group id, so only that tree is signalled.
+        if running.group.exited(&running.child) {
+            running.group.kill_tree(&running.child);
+        }
         if let Some(status) = running
             .group
             .try_reap(&mut running.child)

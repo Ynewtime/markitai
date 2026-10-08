@@ -39,6 +39,18 @@ pub(crate) struct OcrResult {
     /// Set only under the default language: its readings found text lines
     /// and none could read them. [`unread_warning`] says so.
     pub unread: bool,
+    /// The portable engine found more text regions than it reads and kept
+    /// the first ones from the top. [`capped_warning`] says so.
+    pub capped: bool,
+}
+
+/// The warning for an image or page with more text regions than the portable
+/// engine reads (`paddle::detect::MAX_REGIONS`); `subject` names it.
+pub(crate) fn capped_warning(subject: &str) -> String {
+    format!(
+        "Local OCR read only the first 1,000 text regions of {subject}, from the top; the text \
+         below them is missing."
+    )
 }
 
 /// The warning for an image or page that the default language policy could
@@ -625,6 +637,7 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
         scale: 1.0,
         language: String::new(),
         unread: false,
+        capped: false,
     };
     // Keep diagnostics private to the native API, while validating the engine's
     // blank-image distinction before exposing text to the conversion pipeline.

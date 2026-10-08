@@ -28,7 +28,9 @@ are available.
 The adapter accepts existing presentation aliases `ppt`, `pps`, `pot`, `pptx`,
 `pptm`, `ppsx`, `ppsm`, `odp`, and word-processing aliases `doc`, `docx`, `docm`,
 `odt`, `rtf`. Workbook capture accepts `xls`, `xlsx`, `xlsm`, `xlsb` and `ods`
-through Calc's complete-sheet export. XLSX, XLS and ODS have dedicated authored
+through Calc's complete-sheet export. Templates (`dot`, `dotx`, `dotm`, `ott`,
+`potx`, `potm`, `otp`, `xlt`, `xltx`, `xltm`, `ots`) are captured as the documents
+they make. XLSX, XLS and ODS have dedicated authored
 fixtures; XLSM/XLSB import fidelity has not been independently established.
 Numbers screenshots remain explicitly unsupported: the installed LibreOffice
 could not import the retained Numbers sample. Native Numbers table reading is
@@ -88,10 +90,14 @@ black for fonts that declare no color. This is a rendering compatibility policy;
 explicit RGB, indexed, theme and automatic color declarations are preserved,
 and the original file is unchanged. The adjustment is skipped when conditional
 formatting, rich text, unknown XML parts or ambiguous inheritance prevent a safe
-decision, or when an inspected part uses an unsupported encoding such as UTF-16.
-Those workbooks retain LibreOffice's original color handling. Native table text
+decision, when an inspected part uses an unsupported encoding such as UTF-16,
+or when a part cannot be parsed or the rewritten copy would exceed the export
+budget. Those workbooks retain LibreOffice's original color handling. Native table text
 is unaffected. Any later right-edge geometry repair preserves the styles in its
-input copy; it does not override explicit colors to make text visible.
+input copy; it does not override explicit colors to make text visible. Only
+XLSX/XLSM text that overflows the right page edge is repaired; ODS and imported
+XLS/XLSB workbooks keep LibreOffice's layout with a warning, also when their
+overflow cannot be measured.
 
 XLSX/XLSM sheet lists and ODS tables are counted from bounded source XML, including
 hidden and empty sheets. Binary XLS/XLSB is first imported into a private ODS copy,
@@ -146,7 +152,8 @@ covers admission, private input preparation and export subprocesses. A timeout
 kills and waits for the child. Launcher descendants are included: Unix uses a
 dedicated process group; Windows starts LibreOffice suspended in a Job Object
 that ends its whole tree, also when Markitai itself ends, and is emptied before
-the private directory is removed. The adapter has run in an actual Windows
+the private directory is removed. When the launcher exits, on success or failure,
+any process it left running in its tree is killed before the output is read. The adapter has run in an actual Windows
 ARM64 guest, beyond cross-target compilation. Output growth is polled every 25 ms.
 A temporary child file that disappears between directory enumeration and its
 metadata read is tolerated only while the export is running; it still counts

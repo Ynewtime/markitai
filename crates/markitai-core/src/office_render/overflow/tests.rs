@@ -61,6 +61,19 @@ fn text_pdf(x: f32, width: f32, text: &str) -> Vec<u8> {
     b
 }
 #[test]
+fn a_workbook_the_font_policy_cannot_read_keeps_its_fonts_until_the_deadline() {
+    let mut malformed = parts(fixture());
+    malformed.insert("xl/styles.xml".into(), b"<!DOCTYPE a><a/>".to_vec());
+    for bytes in [archive(&malformed), b"not a zip".to_vec()] {
+        assert!(
+            normalize_default_font(&bytes, deadline(), 100_000_000)
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert!(normalize_default_font(fixture(), Instant::now(), 100_000_000).is_err());
+}
+#[test]
 fn no_overflow_is_exact_no_op() {
     let pdf = text_pdf(10., 100., "HELLO");
     assert!(inspect(&pdf, 1, deadline()).unwrap().extensions.is_empty());

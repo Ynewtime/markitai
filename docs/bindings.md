@@ -178,8 +178,9 @@ Rust callers can use `convert_detailed` and the detailed context/publication
 entrypoints to receive `ConversionFailure { error, usage }`, including final
 publication errors. Existing `convert` variants still return the original
 `Error` variants. Scope accounting remains document-local even with a shared
-runtime. Native panics retain their existing generic boundary handling and do
-not promise detailed usage. CLI/report, REST and MCP also expose their own terminal diagnostics; their
+runtime. A native panic during conversion fails with the code `internal_error`
+in every binding (Python and Node.js `ConversionError`, Go `*ConversionError`)
+and carries no usage. CLI/report, REST and MCP also expose their own terminal diagnostics; their
 public envelopes differ and are documented in the corresponding interface
 guides. This section defines only the binding error contract.
 
@@ -246,8 +247,8 @@ serialization selectors remain a compatibility testing target. JSON
 dictionaries and external objects exposing
 `model_dump(mode="json")` also work. The wrapper never mutates supplied config.
 Native `fetch_error` maps to `FetchError`; input/configuration errors map to
-`ValueError`; conversion/unsupported errors map to `ConversionError` with a
-`code` attribute. Specific filesystem and missing-model codes map to the
+`ValueError`; conversion/unsupported errors and a native panic
+(`internal_error`) map to `ConversionError` with a `code` attribute. Specific filesystem and missing-model codes map to the
 existing named exception types when supplied by the core.
 
 The wheel contains the extension and small typed Python wrapper; see

@@ -15,7 +15,8 @@ const BOX_THRESHOLD: f32 = 0.5;
 const UNCLIP_RATIO: f32 = 1.6;
 /// Regions with a shorter side than this (in map pixels) are specks.
 const MIN_SIDE: f32 = 3.0;
-/// Regions considered per image, at most.
+/// Text regions read per image, at most; specks and faint regions do not
+/// count. [`crate::ocr::capped_warning`] names this number.
 pub(super) const MAX_REGIONS: usize = 1000;
 /// The model reads sides that are multiples of this.
 pub(super) const STRIDE: u32 = 32;
@@ -172,8 +173,9 @@ pub(super) struct Region {
 }
 
 /// The text regions of a probability map (`width` by `height`, row-major)
-/// for an image laid out as `layout`.
-pub(super) fn regions(map: &[f32], layout: &Layout) -> Result<Vec<Region>> {
+/// for an image laid out as `layout`: the first [`MAX_REGIONS`] from the top,
+/// and whether there were more.
+pub(super) fn regions(map: &[f32], layout: &Layout) -> Result<(Vec<Region>, bool)> {
     let (width, height) = (layout.width as usize, layout.height as usize);
     if map.len() != width * height {
         return Err(failure("detection model returned a map of the wrong size"));
@@ -183,10 +185,7 @@ pub(super) fn regions(map: &[f32], layout: &Layout) -> Result<Vec<Region>> {
     }
     let mask = dilate(&threshold(map), width, height);
     let mut found = Vec::new();
-    for points in components(&mask, width, height)
-        .into_iter()
-        .take(MAX_REGIONS)
-    {
+    for points in components(&mask, width, height) {
         let Some(rect) = Rect::enclosing(&points) else {
             continue;
         };
@@ -216,9 +215,12 @@ pub(super) fn regions(map: &[f32], layout: &Layout) -> Result<Vec<Region>> {
         if side(corners[0], corners[1]) <= 3.0 || side(corners[0], corners[3]) <= 3.0 {
             continue;
         }
+        if found.len() == MAX_REGIONS {
+            return Ok((found, true));
+        }
         found.push(Region { corners, score });
     }
-    Ok(found)
+    Ok((found, false))
 }
 
 fn threshold(map: &[f32]) -> Vec<bool> {
@@ -586,7 +588,9 @@ mod tests {
 
     #[test]
     fn a_region_of_text_becomes_a_grown_rectangle_in_reading_order() {
-        let found = regions(&map(128, 64, &[([10, 20, 90, 30], 0.9)]), &layout(128, 64)).unwrap();
+        let found = regions(&map(128, 64, &[([10, 20, 90, 30], 0.9)]), &layout(128, 64))
+            .unwrap()
+            .0;
         assert_eq!(found.len(), 1);
         let [tl, tr, br, bl] = found[0].corners;
         // The mask spans x 10..=90 and y 20..=30 after dilation; the
@@ -596,6 +600,42 @@ mod tests {
         assert!(tr[0] > tl[0] && bl[1] > tl[1]);
         // Its mean includes the dilated edge: 720 / 891.
         assert!((found[0].score - 0.808).abs() < 0.01, "{}", found[0].score);
+    }
+
+    #[test]
+    fn specks_do_not_count_toward_the_region_limit() {
+        // More specks above a line of text than regions are read: one-pixel
+        // dots four pixels apart, in rows down to y = 68.
+        let mut boxes = Vec::new();
+        for y in (0..=68).step_by(4) {
+            for x in (0..256).step_by(4) {
+                boxes.push(([x, y, x + 1, y + 1], 0.95));
+            }
+        }
+        assert!(boxes.len() > MAX_REGIONS);
+        boxes.push(([10, 90, 200, 102], 0.9));
+        let (found, capped) = regions(&map(256, 128, &boxes), &layout(256, 128)).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].corners[0][1] > 80.0);
+        assert!(!capped);
+    }
+
+    #[test]
+    fn regions_beyond_the_limit_are_reported() {
+        // 32 by 32 blocks of text, more than are read.
+        let mut boxes = Vec::new();
+        for y in (0..256).step_by(8) {
+            for x in (0..256).step_by(8) {
+                boxes.push(([x, y, x + 5, y + 5], 0.9));
+            }
+        }
+        let (found, capped) = regions(&map(256, 256, &boxes), &layout(256, 256)).unwrap();
+        assert_eq!(found.len(), MAX_REGIONS);
+        assert!(capped);
+        let (found, capped) =
+            regions(&map(256, 256, &boxes[..MAX_REGIONS]), &layout(256, 256)).unwrap();
+        assert_eq!(found.len(), MAX_REGIONS);
+        assert!(!capped);
     }
 
     #[test]
@@ -613,7 +653,8 @@ mod tests {
             ),
             &layout(128, 64),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert!(found.is_empty(), "{found:?}");
         assert!(regions(&[0.0; 10], &layout(128, 64)).is_err());
         let mut nan = map(32, 32, &[]);
@@ -635,7 +676,8 @@ mod tests {
             ),
             &layout(256, 96),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert_eq!(found.len(), 3);
         // Diagonal neighbours belong to one region.
         let mut mask = vec![false; 16];
@@ -659,7 +701,7 @@ mod tests {
                 }
             }
         }
-        let found = regions(&probability, &layout(200, 200)).unwrap();
+        let found = regions(&probability, &layout(200, 200)).unwrap().0;
         assert_eq!(found.len(), 1);
         let [tl, tr, _, _] = found[0].corners;
         let slope = (tr[1] - tl[1]) / (tr[0] - tl[0]);

@@ -555,9 +555,16 @@ fn recognize_native_pictures(
                     continue;
                 }
                 budget.pixels(width, height)?;
+                let result = ocr::recognize(&asset.bytes, cfg);
+                if result.as_ref().is_ok_and(|result| result.capped) {
+                    pages
+                        .document
+                        .warnings
+                        .push(ocr::capped_warning(&format!("PDF embedded image {name}")));
+                }
                 let text = picture_result(
                     name,
-                    ocr::recognize(&asset.bytes, cfg).map(|result| result.text),
+                    result.map(|result| result.text),
                     ocr::available(),
                     &mut counts,
                     &mut pages.document.warnings,
@@ -660,6 +667,11 @@ pub(crate) fn capture_external_pdf(
                     .warnings
                     .push(ocr::unread_warning(&format!("Office page {page}")));
             }
+            if recognized.capped {
+                captured
+                    .warnings
+                    .push(ocr::capped_warning(&format!("Office page {page}")));
+            }
             let text = recognized.text;
             if text.trim().is_empty() {
                 captured.warnings.push(format!(
@@ -756,6 +768,12 @@ pub(crate) fn prepare(
                     .document
                     .warnings
                     .push(ocr::unread_warning(&format!("PDF page {}", page.number)));
+            }
+            if result.capped {
+                pages
+                    .document
+                    .warnings
+                    .push(ocr::capped_warning(&format!("PDF page {}", page.number)));
             }
             page.markdown = result.text;
             page.needs_ocr = false;
