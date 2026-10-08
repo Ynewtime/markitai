@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An empty image caption or an empty screenshot extraction from the model is no longer cached for good (it counts as a failed analysis, so the original alt text is kept and the next run asks again), and images re-encoded to JPEG before sending are no longer labelled as PNG.
 - `.urls` batches share one LLM processor, so `--llm-concurrency` now limits the whole list instead of each URL; and same-named files in one batch (`a/report.pdf`, `b/report.pdf`) no longer share or wipe each other's LLM cost, usage and `max_requests_per_document` budget.
 - `--resume` no longer skips items finished under other output settings: `--pure`, `--keep-base`, `--screenshot-only`, `output.profile` and `-s` now get their own batch state. `--llm-batch` with a URL or a `.urls` file is rejected instead of running every request at full price.
+- MCP `batch_convert` with LLM enabled shares one LLM processor across the job, so `llm.concurrency` limits the whole batch instead of each item (a 10-item batch could have about 100 requests in flight).
 
 ## [1.2.0] - 2026-09-28
 
