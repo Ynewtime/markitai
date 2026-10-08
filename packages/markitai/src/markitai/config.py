@@ -1298,14 +1298,6 @@ class ConfigManager:
         elif isinstance(parent, dict):
             parent[final_key] = value
 
-    def merge_cli_args(self, **kwargs: Any) -> None:
-        """Merge CLI arguments into configuration."""
-        for key, value in kwargs.items():
-            if value is not None:
-                # Convert CLI arg names (e.g., output_dir) to config paths (e.g., output.dir)
-                config_key = key.replace("_", ".")
-                self.set(config_key, value)
-
 
 # Global config manager instance
 config_manager = ConfigManager()
