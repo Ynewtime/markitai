@@ -250,9 +250,22 @@ fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
 /// Missing optional comments are normal. A present but unreadable comments
 /// part must not silently look like a document with no review comments.
 fn read_docx(bytes: &[u8]) -> Metadata {
-    let Ok(mut archive) = opc::Zip::open(bytes, opc::MAX_ENTRIES) else {
-        // The document reader reports an invalid package itself.
-        return Metadata::default();
+    let mut archive = match opc::Zip::open(bytes, opc::MAX_ENTRIES) {
+        Ok(archive) => archive,
+        // The document reader reports a package that is not a ZIP itself, but
+        // it converts some that `opc::Zip` refuses (a repeated name, more
+        // entries): their comments are present but unread, not absent.
+        Err(message) => {
+            return match zip::ZipArchive::new(Cursor::new(bytes)) {
+                Ok(raw) if raw.file_names().any(|name| name == "word/comments.xml") => Metadata {
+                    warnings: vec![format!(
+                        "Word review comments could not be recovered: {message}"
+                    )],
+                    ..Metadata::default()
+                },
+                _ => Metadata::default(),
+            };
+        }
     };
     if !archive
         .archive
@@ -283,9 +296,21 @@ fn read_docx(bytes: &[u8]) -> Metadata {
 /// anyway. As for Word, comments that cannot be counted are reported rather
 /// than taken for none.
 fn read_odt(bytes: &[u8]) -> Metadata {
-    let Ok(mut archive) = opc::Zip::open(bytes, opc::MAX_ENTRIES) else {
+    let mut archive = match opc::Zip::open(bytes, opc::MAX_ENTRIES) {
+        Ok(archive) => archive,
         // The document reader reports an invalid package itself.
-        return Metadata::default();
+        Err(_) if zip::ZipArchive::new(Cursor::new(bytes)).is_err() => {
+            return Metadata::default();
+        }
+        // It converts some packages that `opc::Zip` refuses, as for Word.
+        Err(message) => {
+            return Metadata {
+                warnings: vec![format!(
+                    "OpenDocument comments could not be recovered: {message}"
+                )],
+                ..Metadata::default()
+            };
+        }
     };
     let count = zip_text(&mut archive, "content.xml").and_then(|xml| {
         let mut reader = quick_xml::Reader::from_str(&xml);
@@ -661,6 +686,51 @@ mod tests {
             assert!(metadata.warnings[0].contains("Word review comments could not be recovered"));
             assert!(metadata.warnings[0].contains(reason));
         }
+    }
+
+    #[test]
+    fn comments_in_a_package_only_the_document_reader_accepts_are_reported() {
+        let repeat = |bytes: Vec<u8>, from: &[u8], to: &[u8]| {
+            let mut bytes = bytes;
+            for at in 0..=bytes.len() - from.len() {
+                if bytes[at..].starts_with(from) {
+                    bytes[at..at + to.len()].copy_from_slice(to);
+                }
+            }
+            bytes
+        };
+        let docx = repeat(
+            archive(&[
+                ("word/comments.xml", "<comments><comment/></comments>"),
+                ("word/document.xml", "<document/>"),
+                ("word/commentz.xml", "<comments/>"),
+            ]),
+            b"word/commentz.xml",
+            b"word/comments.xml",
+        );
+        let metadata = read(&docx, "docx");
+        assert_eq!(metadata.warnings.len(), 1, "{:?}", metadata.warnings);
+        assert!(metadata.warnings[0].contains("Word review comments could not be recovered"));
+        assert!(metadata.warnings[0].contains("repeats an entry name"));
+        let plain = repeat(
+            archive(&[
+                ("word/document.xml", "<document/>"),
+                ("word/documenz.xml", ""),
+            ]),
+            b"word/documenz.xml",
+            b"word/document.xml",
+        );
+        assert!(read(&plain, "docx").warnings.is_empty());
+        let odt = repeat(
+            archive(&[("content.xml", "<x/>"), ("contenz.xml", "<x/>")]),
+            b"contenz.xml",
+            b"content.xml",
+        );
+        let metadata = read(&odt, "odt");
+        assert_eq!(metadata.warnings.len(), 1, "{:?}", metadata.warnings);
+        assert!(metadata.warnings[0].contains("OpenDocument comments could not be recovered"));
+        assert!(read(b"not a zip", "docx").warnings.is_empty());
+        assert!(read(b"not a zip", "odt").warnings.is_empty());
     }
 
     #[test]
