@@ -709,7 +709,8 @@ Numbers table decoding accepts modern single-file ZIP and directory packages wit
 Office presentations and word-processing files can opt into complete page capture
 and local OCR supplements through [isolated LibreOffice export](office-rendering.md);
 this optional installed program is separate from the CLI binary. Native text
-extraction does not launch it. XLS, XLSX, XLSM, XLSB and ODS screenshots use
+extraction does not launch it. Templates are captured as the documents they
+make. XLS, XLSX, XLSM, XLSB and ODS screenshots use
 complete-sheet export, including hidden and empty sheets; this is not printed-page
 pagination. Numbers screenshots and OCR remain unsupported. See the Office guide
 for import fidelity, font handling and resource limits.

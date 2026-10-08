@@ -28,7 +28,9 @@ are available.
 The adapter accepts existing presentation aliases `ppt`, `pps`, `pot`, `pptx`,
 `pptm`, `ppsx`, `ppsm`, `odp`, and word-processing aliases `doc`, `docx`, `docm`,
 `odt`, `rtf`. Workbook capture accepts `xls`, `xlsx`, `xlsm`, `xlsb` and `ods`
-through Calc's complete-sheet export. XLSX, XLS and ODS have dedicated authored
+through Calc's complete-sheet export. Templates (`dot`, `dotx`, `dotm`, `ott`,
+`potx`, `potm`, `otp`, `xlt`, `xltx`, `xltm`, `ots`) are captured as the documents
+they make. XLSX, XLS and ODS have dedicated authored
 fixtures; XLSM/XLSB import fidelity has not been independently established.
 Numbers screenshots remain explicitly unsupported: the installed LibreOffice
 could not import the retained Numbers sample. Native Numbers table reading is

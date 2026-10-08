@@ -37,12 +37,11 @@ pub(crate) struct OfficePdf {
     _workspace: TempDir,
 }
 
+/// The kind of an Office extension; a template is the kind of the document
+/// it makes.
 pub(crate) fn kind(extension: &str) -> Option<OfficeKind> {
-    match extension
-        .trim_start_matches('.')
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    let extension = extension.trim_start_matches('.').to_ascii_lowercase();
+    match crate::formats::document_extension(&extension) {
         "ppt" | "pps" | "pot" | "pptx" | "pptm" | "ppsx" | "ppsm" | "odp" => {
             Some(OfficeKind::Presentation)
         }
@@ -212,11 +211,14 @@ fn export_with(
     timeout: Duration,
     byte_limit: u64,
 ) -> Result<OfficePdf> {
-    let extension = input
+    let name_extension = input
         .extension()
         .and_then(|v| v.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    // A template is counted and repaired as the document it makes; its
+    // private copy keeps its own extension, so LibreOffice opens it as one.
+    let extension = crate::formats::document_extension(&name_extension).to_owned();
     if kind(&extension) != Some(requested_kind) {
         return Err(failure("unsupported or mismatched Office document type"));
     }
@@ -240,7 +242,7 @@ fn export_with(
     fs::create_dir(profile.join("user"))?;
     // Isolated configuration disables document macros and automatic linked-document updates.
     fs::write(profile.join("user/registrymodifications.xcu"), br#"<?xml version="1.0"?><oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item><item oor:path="/org.openoffice.Office.Common/Load"><prop oor:name="UpdateLink" oor:op="fuse"><value>2</value></prop></item></oor:items>"#)?;
-    let source = source_dir.join(format!("document.{extension}"));
+    let source = source_dir.join(format!("document.{name_extension}"));
     fs::write(&source, &bytes)?;
     let mut expected = match requested_kind {
         OfficeKind::Presentation if extension == "odp" => Some(slides::odp(&bytes)?),
@@ -361,7 +363,7 @@ fn export_with(
                 let repaired_output = workspace.path().join("overflow-output");
                 fs::create_dir(&repaired_dir)?;
                 fs::create_dir(&repaired_output)?;
-                let repaired_source = repaired_dir.join(format!("document.{extension}"));
+                let repaired_source = repaired_dir.join(format!("document.{name_extension}"));
                 fs::write(&repaired_source, repaired)?;
                 process::convert(
                     program,

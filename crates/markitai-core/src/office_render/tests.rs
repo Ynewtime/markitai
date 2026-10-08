@@ -33,6 +33,16 @@ fn all_existing_office_aliases_include_workbooks() {
         assert_eq!(kind(extension), Some(OfficeKind::Spreadsheet));
     }
     assert_eq!(kind("pdf"), None);
+    // Templates render as the documents they make.
+    for extension in ["potx", "potm", "otp"] {
+        assert_eq!(kind(extension), Some(OfficeKind::Presentation));
+    }
+    for extension in ["dot", "dotx", "DOTM", "ott"] {
+        assert_eq!(kind(extension), Some(OfficeKind::WordProcessing));
+    }
+    for extension in ["xlt", "xltx", "xltm", "ots"] {
+        assert_eq!(kind(extension), Some(OfficeKind::Spreadsheet));
+    }
     assert!(matches!(
         export_pdf(Path::new("source.numbers"), OfficeKind::Spreadsheet),
         Err(Error::Unsupported(_))
@@ -315,6 +325,39 @@ fn workbook_export_selects_whole_sheet_mode_and_rejects_lost_sheets() {
     .err()
     .unwrap();
     assert!(error.to_string().contains("every workbook sheet"));
+}
+
+#[cfg(unix)]
+#[test]
+fn templates_export_as_the_documents_they_make_from_a_copy_under_their_own_name() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, bytes, kind, pages) in [
+        ("deck.potx", PRESENTATION, OfficeKind::Presentation, 3),
+        (
+            "book.xltx",
+            include_bytes!("fixtures/whole-workbook.xlsx").as_slice(),
+            OfficeKind::Spreadsheet,
+            4,
+        ),
+    ] {
+        let input = directory.path().join(name);
+        fs::write(&input, bytes).unwrap();
+        let fixture = directory.path().join("pages.pdf");
+        fs::write(&fixture, pdf(pages)).unwrap();
+        let extension = name.rsplit('.').next().unwrap();
+        // The private copy keeps the template's extension; only one export
+        // runs, so the page count came from the package itself.
+        let program = mock(
+            directory.path(),
+            &format!(
+                "for value in \"$@\"; do last=\"$value\"; done\ncase \"$last\" in */document.{extension}) ;; *) exit 7;; esac\n[ ! -e \"$out/../ran\" ]\ntouch \"$out/../ran\"\ncp {} \"$out/document.pdf\"",
+                quote(&fixture)
+            ),
+        );
+        let result =
+            export_with(&program, &input, kind, Duration::from_secs(5), MAX_BYTES).unwrap();
+        assert_eq!(result.pages, pages, "{name}");
+    }
 }
 
 #[cfg(target_os = "macos")]

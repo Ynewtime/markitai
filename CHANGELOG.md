@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- `--screenshot` and `--ocr` capture Office templates (`.dotx`, `.potx`, `.xltx`, `.ott` and the other template extensions) as the documents they make, instead of silently converting only their text.
 - Portable OCR no longer loses the text lower on a dense or noisy scan: specks and faint marks are discarded before the 1,000-region limit is applied, and an image or page that still has more text regions than that gets a warning naming it instead of silently missing its lower text.
 - Portable OCR tries an optional Korean model that cannot load (offline, say) once per process instead of for every image with uncertain lines, and loading one model no longer holds up OCR threads that read with a model already loaded. A long-running `serve` or MCP process uses a Korean model installed later after a restart.
 - A shared incomplete-cost warning now adds up the rows it covers instead of repeating one row's count: the card names the models that have no reviewed price and how many requests each accounts for, in the page's language, and lists the rows under its details. A batch is named for what was submitted — a folder, even one that holds a `.urls` list; a batch that named nothing reads as its job id rather than as one file inside it. Every ledger row keeps its action slot, so status marks, spinners and download icons line up in one column.
