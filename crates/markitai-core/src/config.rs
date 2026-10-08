@@ -18,15 +18,21 @@ fn user_home() -> Option<std::ffi::OsString> {
     variable("HOME").or_else(|| variable("USERPROFILE"))
 }
 
+/// A relative `MARKITAI_HOME` is resolved against the working directory the
+/// process had when the home was first needed, so every later use names the
+/// same absolute folder.
 pub fn home() -> PathBuf {
-    variable("MARKITAI_HOME")
-        .map(|path| expand_home(Path::new(&path)))
-        .unwrap_or_else(|| {
-            user_home()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".markitai")
-        })
+    static START: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let Some(path) = variable("MARKITAI_HOME").map(|path| expand_home(Path::new(&path))) else {
+        return user_home()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".markitai");
+    };
+    match START.get_or_init(|| std::env::current_dir().ok()) {
+        Some(start) if path.is_relative() => start.join(path),
+        _ => path,
+    }
 }
 
 pub fn expand_home(path: &Path) -> PathBuf {

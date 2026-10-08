@@ -50,3 +50,39 @@ fn an_empty_home_variable_is_unset_rather_than_the_current_directory() {
         std::fs::remove_dir_all(user.join(".markitai")).unwrap();
     }
 }
+
+#[test]
+fn a_relative_markitai_home_is_resolved_to_an_absolute_path() {
+    let root = tempfile::tempdir().unwrap();
+    let user = root.path().join("user");
+    let work = root.path().join("work");
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    let output = init(
+        &work,
+        &[
+            ("MARKITAI_HOME", Path::new("relative-home")),
+            ("HOME", user.as_path()),
+            ("USERPROFILE", user.as_path()),
+        ],
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let created = text
+        .lines()
+        .find_map(|line| line.strip_prefix("Configuration created: "))
+        .unwrap_or_else(|| panic!("{text}"));
+    // Before: `relative-home/config.json`, a path that changes meaning with
+    // the working directory and fails every "inside the home" check.
+    assert!(Path::new(created).is_absolute(), "{created}");
+    assert_eq!(
+        Path::new(created).canonicalize().unwrap(),
+        work.join("relative-home/config.json")
+            .canonicalize()
+            .unwrap()
+    );
+}
