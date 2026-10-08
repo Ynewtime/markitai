@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1]
+
+### Fixed
+
+- **PDF hidden text**: `security.pdf_sanitize = "remove"` no longer deletes visible text that a hidden span repeats (a hidden `e` used to remove every `e` on the page), white text on a dark background is no longer reported as hidden, and `--ocr --llm` checks the text it sends to the model like the other paths.
+
 ## [1.2.0] - 2026-09-28
 
 ### Added

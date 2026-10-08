@@ -1756,6 +1756,30 @@ class TestHiddenTextDetection:
 
         assert hidden == {}
 
+    @pytest.mark.parametrize("rotation", [0, 90])
+    def test_white_text_on_dark_background_not_flagged(self, rotation: int) -> None:
+        """White text on a dark banner is visible; white-on-white is not."""
+        import pymupdf
+
+        from markitai.converter.pdf import collect_hidden_text
+
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.draw_rect(
+            pymupdf.Rect(60, 80, 400, 120), color=(0.1, 0.1, 0.3), fill=(0.1, 0.1, 0.3)
+        )
+        page.insert_text((72, 105), "Quarterly Report", fontsize=14, color=(1, 1, 1))
+        page.insert_text((72, 200), "white on white", fontsize=11, color=(1, 1, 1))
+        page.set_rotation(rotation)
+        data = doc.tobytes()
+        doc.close()
+
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        hidden = collect_hidden_text(doc)
+        doc.close()
+
+        assert hidden == {1: ["white on white"]}
+
 
 class TestPdfSanitizeModes:
     """Tests for security.pdf_sanitize behavior in convert()."""
@@ -1823,6 +1847,57 @@ class TestPdfSanitizeModes:
 
         assert not any("hidden text span(s)" in m for m in messages)
         assert self._HIDDEN in result.markdown
+
+    def test_sanitize_remove_keeps_text_that_is_also_visible(
+        self, tmp_path: Path
+    ) -> None:
+        """remove mode: a hidden span that is also visible text (here one
+        letter) is not deleted everywhere it occurs on the page."""
+        import pymupdf
+
+        from markitai.config import SecurityConfig
+
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 100), self._VISIBLE, fontsize=11)
+        page.insert_text((72, 140), "e", fontsize=11, color=(1, 1, 1))
+        page.insert_text((72, 180), self._HIDDEN, fontsize=11, color=(1, 1, 1))
+        pdf_file = tmp_path / "letter.pdf"
+        doc.save(pdf_file)
+        doc.close()
+        config = MarkitaiConfig(security=SecurityConfig(pdf_sanitize="remove"))
+
+        texts = PdfConverter(config)._sanitize_hidden_text(
+            pdf_file, [1], [f"{self._VISIBLE}\n\ne\n\n{self._HIDDEN}"]
+        )
+
+        assert self._VISIBLE in texts[0]
+        assert self._HIDDEN not in texts[0]
+
+    def test_vlm_path_sanitizes_text_sent_to_llm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--ocr --llm: the extracted text handed to the LLM is checked too."""
+        from markitai.config import SecurityConfig
+
+        monkeypatch.delenv("MARKITAI_NO_VLM_OCR", raising=False)
+        pdf_file = self._build_pdf(tmp_path)
+        config = MarkitaiConfig(
+            ocr=OCRConfig(enabled=True),
+            llm=LLMConfig(enabled=True),
+            security=SecurityConfig(pdf_sanitize="remove"),
+        )
+        with (
+            patch(
+                "markitai.converter.pdf.pymupdf4llm.to_markdown",
+                return_value=[{"text": f"{self._VISIBLE} {self._HIDDEN}"}],
+            ),
+            patch("markitai.vision_consent.get_interaction"),
+        ):
+            result = PdfConverter(config)._render_pages_for_llm(pdf_file)
+
+        assert self._HIDDEN not in result.markdown
+        assert self._VISIBLE in result.markdown
 
     def test_sanitize_default_is_warn(self) -> None:
         """SecurityConfig defaults to warn mode."""
