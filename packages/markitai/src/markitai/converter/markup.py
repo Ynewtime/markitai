@@ -19,6 +19,7 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
+from markitai.utils.charset import read_text_file
 
 _MAX_HEADING_LEVEL = 6
 
@@ -211,7 +212,7 @@ class RstConverter(BaseConverter):
         input_path = Path(input_path)
         logger.debug("[RstConverter] Converting: {}", input_path.name)
 
-        text = input_path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_file(input_path)
         metadata: dict = {
             "source": str(input_path),
             "format": "RST",
@@ -234,7 +235,7 @@ class OrgConverter(BaseConverter):
         input_path = Path(input_path)
         logger.debug("[OrgConverter] Converting: {}", input_path.name)
 
-        text = input_path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_file(input_path)
         markdown, title = _org_to_markdown(text)
         metadata: dict = {
             "source": str(input_path),

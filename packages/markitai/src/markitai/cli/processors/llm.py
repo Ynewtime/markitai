@@ -315,7 +315,9 @@ async def analyze_images_with_llm(
                 new_ref = markdown_image_reference(
                     analysis.caption, f"{ASSETS_REL_PATH}/{image_path.name}"
                 )
-                markdown = re.sub(old_pattern, new_ref, markdown)
+                # A function, not a template: a template reads the caption's
+                # backslashes as escapes (C:\\temp became C:\temp)
+                markdown = re.sub(old_pattern, lambda _m, ref=new_ref: ref, markdown)
 
         # Update .llm.md file
         llm_output = output_file.with_suffix(".llm.md")
@@ -366,7 +368,11 @@ async def analyze_images_with_llm(
                     new_ref = markdown_image_reference(
                         analysis.caption, f"{ASSETS_REL_PATH}/{image_path.name}"
                     )
-                    llm_content = re.sub(old_pattern, new_ref, llm_content)
+                    # A function, not a template: a template reads the caption's
+                    # backslashes as escapes (C:\\temp became C:\temp)
+                    llm_content = re.sub(
+                        old_pattern, lambda _m, ref=new_ref: ref, llm_content
+                    )
                 atomic_write_text(llm_output, llm_content)
             else:
                 logger.warning(

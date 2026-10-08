@@ -352,7 +352,11 @@ class SingleFileWorkflow:
                     new_ref = markdown_image_reference(
                         analysis_caption, f"{ASSETS_REL_PATH}/{image_path.name}"
                     )
-                    markdown = re.sub(old_pattern, new_ref, markdown)
+                    # A function, not a template: a template reads the caption's
+                    # backslashes as escapes (C:\\temp became C:\temp)
+                    markdown = re.sub(
+                        old_pattern, lambda _m, ref=new_ref: ref, markdown
+                    )
 
             # Update/create .llm.md file
             llm_output = output_file.with_suffix(".llm.md")

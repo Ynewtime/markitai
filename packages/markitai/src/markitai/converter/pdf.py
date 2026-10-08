@@ -266,10 +266,12 @@ def _metadata_title(doc: Any) -> str:
 
 # Spans below this font size (pt) are effectively invisible when rendered.
 _HIDDEN_MAX_FONT_SIZE = 2.0
-# Fill luminance above this is a white-on-white candidate. Background
-# sampling is deliberately not performed: the page background is assumed
-# to be the default white.
+# Fill luminance above this is a white-on-white candidate, when what the
+# page shows under the span (sampled from a low-resolution render) is that
+# light too: white text on a dark banner is visible.
 _HIDDEN_MIN_LUMINANCE = 0.95
+# Scale of the page render the background is sampled from (36 dpi).
+_BACKGROUND_SAMPLE_SCALE = 0.5
 # Max characters of hidden text quoted in the consolidated warning.
 _HIDDEN_EXCERPT_MAX_CHARS = 80
 
@@ -292,15 +294,58 @@ def _bbox_fully_outside(
     return x1 <= px0 or x0 >= px1 or y1 <= py0 or y0 >= py1
 
 
+def _background_sampler(
+    page: Any,
+) -> Callable[[tuple[float, float, float, float]], float | None]:
+    """Mean luminance, in [0, 1], of what *page* shows under a bbox.
+
+    The page is rendered once, in gray at low resolution, and only when a
+    span asks for it. None when the render failed or the bbox is off the
+    page, so the caller falls back to assuming a white page.
+    """
+    pix: Any = None
+
+    def sample(bbox: tuple[float, float, float, float]) -> float | None:
+        nonlocal pix
+        try:
+            import pymupdf
+
+            matrix = pymupdf.Matrix(_BACKGROUND_SAMPLE_SCALE, _BACKGROUND_SAMPLE_SCALE)
+            if pix is None:
+                pix = page.get_pixmap(
+                    matrix=matrix, colorspace=pymupdf.csGRAY, alpha=False
+                )
+            # Span bboxes are unrotated; the render is of the rotated page
+            area = (pymupdf.Rect(bbox) * page.rotation_matrix * matrix).irect
+            area &= pix.irect
+            if area.is_empty:
+                return None
+            samples = pix.samples
+            total = 0
+            for y in range(area.y0, area.y1):
+                row = (y - pix.y) * pix.stride - pix.x
+                total += sum(samples[row + area.x0 : row + area.x1])
+            return total / (area.width * area.height * 255)
+        except Exception as e:
+            logger.debug("[PDF] Background sampling failed: {}", e)
+            return None
+
+    return sample
+
+
 def _is_hidden_span(
-    span: dict[str, Any], page_rect: tuple[float, float, float, float]
+    span: dict[str, Any],
+    page_rect: tuple[float, float, float, float],
+    background: Callable[[tuple[float, float, float, float]], float | None]
+    | None = None,
 ) -> bool:
     """Classify a pymupdf text span as hidden (invisible to a human reader).
 
     A span is hidden when it is drawn at zero opacity (pymupdf maps text
     render mode 3 to ``alpha == 0``), its font size is below 2pt, its
-    fill color is near-white on the assumed-white page background, or
-    its bbox lies fully outside the page CropBox.
+    fill color is near-white on a near-white background (sampled with
+    *background*; assumed white without one), or its bbox lies fully
+    outside the page CropBox.
     """
     text = span.get("text", "")
     if not isinstance(text, str) or not text.strip():
@@ -311,9 +356,17 @@ def _is_hidden_span(
     if isinstance(size, (int, float)) and size < _HIDDEN_MAX_FONT_SIZE:
         return True
     color = span.get("color")
-    if isinstance(color, int) and _color_luminance(color) > _HIDDEN_MIN_LUMINANCE:
-        return True
     bbox = span.get("bbox")
+    if isinstance(color, int) and _color_luminance(color) > _HIDDEN_MIN_LUMINANCE:
+        under = (
+            background(tuple(bbox))
+            if background is not None
+            and isinstance(bbox, (tuple, list))
+            and len(bbox) == 4
+            else None
+        )
+        if under is None or under > _HIDDEN_MIN_LUMINANCE:
+            return True
     if (
         isinstance(bbox, (tuple, list))
         and len(bbox) == 4
@@ -349,15 +402,55 @@ def collect_hidden_text(
         except Exception as e:
             logger.debug("[PDF] Hidden-text scan failed for page {}: {}", i + 1, e)
             continue
+        background = _background_sampler(page)
         texts: list[str] = []
         for block in data.get("blocks", []):
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
-                    if _is_hidden_span(span, page_rect):
+                    if _is_hidden_span(span, page_rect, background):
                         texts.append(span["text"].strip())
         if texts:
             hidden[i + 1] = texts
     return hidden
+
+
+def _scan_visible_text(
+    input_path: Path | str, pages: Iterable[int]
+) -> dict[int, str] | None:
+    """The text a reader sees on each of *pages* (0-based); None on failure.
+
+    The complement of :func:`collect_hidden_text`, keyed by 1-based page:
+    the "remove" mode checks a hidden span against it so a hidden copy of
+    text that is also visible on the page does not delete the visible one.
+    """
+    try:
+        import pymupdf
+
+        visible: dict[int, str] = {}
+        with pymupdf.open(Path(input_path)) as doc:
+            for i in pages:
+                page = doc[i]
+                page_rect = tuple(page.rect)
+                data = cast(
+                    dict[str, Any],
+                    page.get_text(
+                        "dict", textpage=page.get_textpage(clip=page.mediabox)
+                    ),
+                )
+                background = _background_sampler(page)
+                visible[i + 1] = "\n".join(
+                    "".join(
+                        span.get("text", "")
+                        for span in line.get("spans", [])
+                        if not _is_hidden_span(span, page_rect, background)
+                    )
+                    for block in data.get("blocks", [])
+                    for line in block.get("lines", [])
+                )
+        return visible
+    except Exception as e:
+        logger.debug("[PDF] Visible-text scan failed for {}: {}", input_path, e)
+        return None
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -1063,6 +1156,7 @@ class PdfConverter(BaseConverter):
           style the text (bold markers, hyphenation, line wrapping), so
           only *verbatim* occurrences of a hidden span are removed; text
           outside the CropBox never appears in the output to begin with.
+          A hidden span whose text is also visible on its page is kept.
 
         Detection failures are debug-logged and never break a conversion.
 
@@ -1110,12 +1204,29 @@ class PdfConverter(BaseConverter):
             return page_texts
 
         index_by_page = {page_num: i for i, page_num in enumerate(page_numbers)}
+        # A page's output mixes its hidden and visible text, so a hidden span
+        # that is also part of the visible text ("e", a repeated word) cannot
+        # be told apart in it: it is kept rather than deleted page-wide.
+        visible = _scan_visible_text(
+            input_path,
+            [page_num - 1 for page_num in hidden if page_num in index_by_page],
+        )
         result = list(page_texts)
         for page_num, texts in hidden.items():
             idx = index_by_page.get(page_num)
             if idx is None:
                 continue
+            page_visible = (visible or {}).get(page_num, "")
             for text in texts:
+                if text in page_visible:
+                    logger.debug(
+                        "[PDF] {}: hidden text {!r} on page {} is also visible "
+                        "there; kept",
+                        input_path.name,
+                        text,
+                        page_num,
+                    )
+                    continue
                 result[idx] = result[idx].replace(text, "")
         return result
 
@@ -1953,9 +2064,17 @@ class PdfConverter(BaseConverter):
             # Iterating a bare string here would mark up every character as its
             # own page rather than fail, so the shape is checked, not assumed.
             chunks = page_chunks if isinstance(page_chunks, list) else [page_chunks]
+            page_numbers = [
+                _chunk_page_number(chunk, index) for index, chunk in enumerate(chunks)
+            ]
+            # This text goes to the LLM: hidden-text sanitization (warn or
+            # remove) as on the other paths.
+            page_texts = self._sanitize_hidden_text(
+                input_path, page_numbers, [_chunk_text(chunk) for chunk in chunks]
+            )
             extracted_text = "\n\n".join(
-                f"{page_marker(_chunk_page_number(chunk, index))}\n\n{_chunk_text(chunk)}"
-                for index, chunk in enumerate(chunks)
+                f"{page_marker(page_num)}\n\n{page_text}"
+                for page_num, page_text in zip(page_numbers, page_texts)
             )
             extracted_text = self._fix_image_paths(extracted_text, staging_dir)
             extracted_text, _adopted = self._adopt_staged_images(

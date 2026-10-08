@@ -584,36 +584,25 @@ def clean_ppt_headers_footers(content: str) -> str:
     if not common_lines:
         return content
 
-    # Remove common footer lines from content
-    # Also remove adjacent page numbers (single digit or 2-digit numbers)
-    result_lines = []
-    lines = content.split("\n")
-
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        # Check if this line and nearby lines form a footer pattern
-        if line in common_lines:
-            # Skip this line and check for adjacent page number
-            if i + 1 < len(lines) and lines[i + 1].strip().isdigit():
-                i += 2  # Skip both
-            else:
-                i += 1
-        elif line.isdigit() and i > 0:
-            # Check if previous line was a common footer line
-            prev_line = lines[i - 1].strip() if i > 0 else ""
-            if prev_line in common_lines or (
-                i >= 2 and lines[i - 2].strip() in common_lines
+    # Remove common footer lines, and the page number that follows one, from
+    # the ending of each page block only (the lines they were detected in):
+    # the same short line in a page's body is content, not a footer.
+    for i, part in enumerate(parts):
+        if i == 0 or not re.match(r"<!-- (?:Page|Slide)", parts[i - 1]):
+            continue
+        lines = part.split("\n")
+        ending = [j for j, ln in enumerate(lines) if ln.strip()][-4:]
+        drop: set[int] = set()
+        for j in ending:
+            line = lines[j].strip()
+            if line in common_lines or (
+                line.isdigit() and (j - 1 in drop or j - 2 in drop)
             ):
-                i += 1  # Skip page number
-            else:
-                result_lines.append(lines[i])
-                i += 1
-        else:
-            result_lines.append(lines[i])
-            i += 1
+                drop.add(j)
+        if drop:
+            parts[i] = "\n".join(ln for j, ln in enumerate(lines) if j not in drop)
 
-    return "\n".join(result_lines)
+    return "".join(parts)
 
 
 def dedupe_paragraphs(content: str, min_length: int = 100) -> str:
