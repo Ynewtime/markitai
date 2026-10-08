@@ -436,6 +436,16 @@ struct PageInspection {
     inspected_streams: usize,
 }
 
+impl PageInspection {
+    /// Notes a warning once: a content stream may repeat the operator that
+    /// raised it any number of times.
+    fn warn(&mut self, warning: String) {
+        if !self.warnings.contains(&warning) {
+            self.warnings.push(warning);
+        }
+    }
+}
+
 fn named_resource<'a>(
     pdf: &'a lopdf::Document,
     resources: &[&'a Dictionary],
@@ -459,24 +469,21 @@ fn inspect_content(
     if out.inspected_streams >= 256
         || bytes.len() > MAX_STREAM_BYTES.saturating_sub(out.inspected_bytes)
     {
-        out.warnings
-            .push("Expanded page/Form content exceeds the inspection budget.".into());
+        out.warn("Expanded page/Form content exceeds the inspection budget.".into());
         out.incomplete = true;
         return None;
     }
     out.inspected_bytes += bytes.len();
     out.inspected_streams += 1;
     if depth > 32 {
-        out.warnings
-            .push("Form nesting exceeds the inspection limit.".into());
+        out.warn("Form nesting exceeds the inspection limit.".into());
         out.incomplete = true;
         return None;
     }
     let content = match Content::decode(bytes) {
         Ok(content) => content,
         Err(error) => {
-            out.warnings
-                .push(format!("Content stream inspection failed: {error}"));
+            out.warn(format!("Content stream inspection failed: {error}"));
             out.incomplete = true;
             return None;
         }
@@ -501,8 +508,7 @@ fn inspect_operations(
         match operation.operator.as_str() {
             "q" => {
                 if states.len() >= 1024 {
-                    out.warnings
-                        .push("Graphics-state nesting exceeds the inspection limit.".into());
+                    out.warn("Graphics-state nesting exceeds the inspection limit.".into());
                     out.incomplete = true;
                     return;
                 }
@@ -515,7 +521,7 @@ fn inspect_operations(
             }
             "scn" | "SCN" if name.is_some() => {
                 state.apply_paint(pdf, resources, operation);
-                out.warnings.push(
+                out.warn(
                     "Pattern paint may contain raster content; pattern streams are not inspected."
                         .into(),
                 );
@@ -529,28 +535,24 @@ fn inspect_operations(
                 }
             }
             "BI" | "ID" => {
-                out.warnings
-                    .push("Inline PDF images are not extracted.".into());
+                out.warn("Inline PDF images are not extracted.".into());
             }
             "Do" => {
                 let Some(obj) =
                     name.and_then(|name| named_resource(pdf, resources, b"XObject", name))
                 else {
                     out.incomplete = true;
-                    out.warnings
-                        .push("An invoked XObject resource could not be resolved.".into());
+                    out.warn("An invoked XObject resource could not be resolved.".into());
                     continue;
                 };
                 let Ok(id) = obj.as_reference() else {
                     out.incomplete = true;
-                    out.warnings
-                        .push("A direct XObject cannot be extracted.".into());
+                    out.warn("A direct XObject cannot be extracted.".into());
                     continue;
                 };
                 let Ok(stream) = pdf.get_object(id).and_then(Object::as_stream) else {
                     out.incomplete = true;
-                    out.warnings
-                        .push("An invoked XObject stream could not be resolved.".into());
+                    out.warn("An invoked XObject stream could not be resolved.".into());
                     continue;
                 };
                 match stream.dict.get(b"Subtype").and_then(Object::as_name).ok() {
@@ -565,7 +567,7 @@ fn inspect_operations(
                                 Ok(local) => vec![local],
                                 Err(_) => {
                                     out.incomplete = true;
-                                    out.warnings.push("Form resource inspection failed: Resources is not a dictionary.".into());
+                                    out.warn("Form resource inspection failed: Resources is not a dictionary.".into());
                                     seen_forms.remove(&id);
                                     continue;
                                 }
@@ -596,8 +598,7 @@ fn inspect_operations(
                                 );
                             }
                             Err(error) => {
-                                out.warnings
-                                    .push(format!("Form stream inspection failed: {error}"));
+                                out.warn(format!("Form stream inspection failed: {error}"));
                                 out.incomplete = true;
                             }
                         }
@@ -605,8 +606,7 @@ fn inspect_operations(
                     }
                     Some(b"Form") => {
                         out.incomplete = true;
-                        out.warnings
-                            .push("Recursive Form invocation exceeds complete inspection.".into());
+                        out.warn("Recursive Form invocation exceeds complete inspection.".into());
                     }
                     _ => {}
                 }
@@ -641,8 +641,7 @@ fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<
     let resource = match sanitize::page_resources(pdf, id) {
         Ok(resources) => resources,
         Err(error) => {
-            out.warnings
-                .push(format!("Page resource inspection failed: {error}"));
+            out.warn(format!("Page resource inspection failed: {error}"));
             out.incomplete = true;
             return (out, None);
         }
@@ -665,8 +664,7 @@ fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<
             operations,
         }),
         Err(error) => {
-            out.warnings
-                .push(format!("Page content inspection failed: {error}"));
+            out.warn(format!("Page content inspection failed: {error}"));
             out.incomplete = true;
             None
         }
@@ -1760,6 +1758,34 @@ mod tests {
                 .is_empty()
             );
         }
+    }
+
+    #[test]
+    fn repeated_problem_operators_warn_once_each() {
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let pages = pdf.new_object_id();
+        let operators = "/P0 scn BI /W 1 /H 1 /BPC 8 /CS /G ID \x00 EI /Missing Do ";
+        let contents = pdf.add_object(Stream::new(
+            Dictionary::new(),
+            operators.repeat(10_000).into_bytes(),
+        ));
+        let id = pdf.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages, "Contents" => contents,
+            "Resources" => dictionary! {}
+        });
+        pdf.objects.insert(pages, dictionary! { "Type" => "Pages", "Kids" => vec![id.into()], "Count" => 1, "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()] }.into());
+        let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        pdf.trailer.set("Root", catalog);
+        let (inspection, _) = inspect_page(&pdf, id);
+        assert!(inspection.incomplete);
+        assert_eq!(
+            inspection.warnings,
+            [
+                "Pattern paint may contain raster content; pattern streams are not inspected.",
+                "Inline PDF images are not extracted.",
+                "An invoked XObject resource could not be resolved.",
+            ]
+        );
     }
 
     #[test]
