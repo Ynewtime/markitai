@@ -332,152 +332,21 @@ pub(super) fn rehydrate(
             continue;
         }
         let folder = entry.path();
-        if !entry.file_type()?.is_dir()
-            || markitai_core::output::check_path(&folder, false).is_err()
-        {
-            continue;
-        }
-        super::transaction::recover(&folder)?;
-        let Ok(path) = safe_file(&folder, "meta.json") else {
-            continue;
-        };
-        if fs::metadata(&path)?.len() > 16 * 1024 * 1024 {
-            continue;
-        }
-        let value: Value = match fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        {
-            Some(value) => value,
-            None => continue,
-        };
-        let interrupted = value["status"] == "running";
-        if value["status"] != "done" && !interrupted {
-            continue;
-        }
-        if interrupted && (value["job_id"] != id || value["version"] != 2) {
-            continue;
-        }
-        let Some(raw_items) = value["items"].as_array() else {
-            continue;
-        };
-        if raw_items.len() > 100_000 {
-            continue;
-        }
-        let bases: HashMap<String, String> =
-            serde_json::from_value(value["native_bases"].clone()).unwrap_or_default();
-        let mut items = Vec::new();
-        for (index, raw) in raw_items.iter().enumerate() {
-            let mut object =
-                serde_json::to_value(Item::new(index + 1, String::new(), "file", None)).unwrap();
-            if let (Some(target), Some(source)) = (object.as_object_mut(), raw.as_object()) {
-                target.extend(source.clone());
+        // One damaged job folder must not hide every other job or stop the
+        // server. It stays in place and is tried again on the next scan.
+        let data = match load(&folder, &id) {
+            Ok(Some(data)) => data,
+            Ok(None) => continue,
+            Err(error) => {
+                static REPORTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+                let mut reported = REPORTED.lock().unwrap();
+                if !reported.contains(&id) {
+                    eprintln!("Serve: skipped unreadable history job {id}: {error}");
+                    reported.push(id);
+                }
+                continue;
             }
-            if let Some(diagnostics) = object.get("diagnostics")
-                && !diagnostics.is_null()
-                && crate::diagnostics::AttemptDiagnostics::from_value(diagnostics).is_err()
-            {
-                // An invalid optional observation does not erase the retained output row.
-                object.as_object_mut().unwrap().remove("diagnostics");
-                eprintln!("Serve: ignored invalid stored attempt diagnostics");
-            }
-            if let Some(failure) = object.get("rerun_failure")
-                && !failure.is_null()
-                && (super::types::RerunFailure::from_value(failure).is_err()
-                    || object["status"] != "done"
-                    || object["skipped"] == true
-                    || !object["output"].is_string())
-            {
-                // A damaged optional outcome must not hide valid retained output.
-                object.as_object_mut().unwrap().remove("rerun_failure");
-                eprintln!("Serve: ignored invalid stored rerun failure");
-            }
-            if let Ok(mut item) = serde_json::from_value::<Item>(object) {
-                // Older history writers saved the actual enhanced name in both
-                // fields. Adapt the public base name without renaming any file.
-                // Native indexes disambiguate a literal source named notes.llm.
-                if !bases.contains_key(&item.item_id)
-                    && let Some(stem) = item
-                        .output_name
-                        .as_deref()
-                        .and_then(|name| name.strip_suffix(".llm.md"))
-                {
-                    item.output_name = Some(format!("{stem}.md"));
-                }
-                if raw.get("llm_enhanced").is_none() {
-                    item.llm_enhanced = item.output.as_deref().is_some_and(|output| {
-                        bases.get(&item.item_id).map_or_else(
-                            || output.ends_with(".llm.md"),
-                            |base| output == format!("{base}.llm.md"),
-                        )
-                    });
-                }
-                if raw.get("retryable").is_none()
-                    && value["options"]["origin"] == "cli"
-                    && item.kind == "file"
-                {
-                    item.retryable = false;
-                }
-                if item.finished_at.is_none() {
-                    item.finished_at = value["finished_at"].as_str().map(str::to_owned);
-                }
-                if interrupted && matches!(item.status.as_str(), "queued" | "running") {
-                    item.status = "error".into();
-                    item.error_code = Some("interrupted".into());
-                    item.error = Some(
-                        "conversion interrupted when the server stopped; retry this item".into(),
-                    );
-                    item.finished_at = Some(now());
-                }
-                items.push(item);
-            }
-        }
-        if interrupted && items.len() != raw_items.len() {
-            // Do not rewrite malformed history while silently dropping rows.
-            continue;
-        }
-        let mut options = serde_json::to_value(JobOptions::default()).unwrap();
-        if let (Some(target), Some(source)) =
-            (options.as_object_mut(), value["options"].as_object())
-        {
-            target.extend(source.clone());
-        }
-        let size = value["dir_size_bytes"].as_u64().unwrap_or_else(|| {
-            files(&folder.join("out"))
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|(_, p)| fs::metadata(p).ok().map(|m| m.len()))
-                .sum()
-        });
-        let mut data = JobData {
-            id: id.clone(),
-            created_at: value["created_at"].as_str().unwrap_or("").into(),
-            finished_at: value["finished_at"].as_str().map(str::to_owned),
-            status: "done".into(),
-            persistence_error: None,
-            options,
-            items,
-            size,
-            bases,
-            assets: serde_json::from_value(value["native_assets"].clone()).unwrap_or_default(),
-            item_options: raw_items
-                .iter()
-                .filter_map(|item| {
-                    Some((
-                        item["item_id"].as_str()?.to_owned(),
-                        item.get("options")?
-                            .as_object()
-                            .map(|value| Value::Object(value.clone()))?,
-                    ))
-                })
-                .collect(),
-            transactions: Vec::new(),
         };
-        if interrupted {
-            data.finished_at = Some(now());
-            data.size = measure(&folder)?;
-            persist(&folder, &data)?;
-        }
         known
             .lock()
             .unwrap()
@@ -485,6 +354,154 @@ pub(super) fn rehydrate(
             .or_insert_with(|| Arc::new(Job::new(folder, data)));
     }
     Ok(())
+}
+
+/// Reads one job folder; `None` for folders that are not saved jobs.
+fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
+    if !fs::symlink_metadata(folder)?.is_dir()
+        || markitai_core::output::check_path(folder, false).is_err()
+    {
+        return Ok(None);
+    }
+    super::transaction::recover(folder)?;
+    let Ok(path) = safe_file(folder, "meta.json") else {
+        return Ok(None);
+    };
+    if fs::metadata(&path)?.len() > 16 * 1024 * 1024 {
+        return Ok(None);
+    }
+    let value: Value = match fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let interrupted = value["status"] == "running";
+    if value["status"] != "done" && !interrupted {
+        return Ok(None);
+    }
+    if interrupted && (value["job_id"] != id || value["version"] != 2) {
+        return Ok(None);
+    }
+    let Some(raw_items) = value["items"].as_array() else {
+        return Ok(None);
+    };
+    if raw_items.len() > 100_000 {
+        return Ok(None);
+    }
+    let bases: HashMap<String, String> =
+        serde_json::from_value(value["native_bases"].clone()).unwrap_or_default();
+    let mut items = Vec::new();
+    for (index, raw) in raw_items.iter().enumerate() {
+        let mut object =
+            serde_json::to_value(Item::new(index + 1, String::new(), "file", None)).unwrap();
+        if let (Some(target), Some(source)) = (object.as_object_mut(), raw.as_object()) {
+            target.extend(source.clone());
+        }
+        if let Some(diagnostics) = object.get("diagnostics")
+            && !diagnostics.is_null()
+            && crate::diagnostics::AttemptDiagnostics::from_value(diagnostics).is_err()
+        {
+            // An invalid optional observation does not erase the retained output row.
+            object.as_object_mut().unwrap().remove("diagnostics");
+            eprintln!("Serve: ignored invalid stored attempt diagnostics");
+        }
+        if let Some(failure) = object.get("rerun_failure")
+            && !failure.is_null()
+            && (super::types::RerunFailure::from_value(failure).is_err()
+                || object["status"] != "done"
+                || object["skipped"] == true
+                || !object["output"].is_string())
+        {
+            // A damaged optional outcome must not hide valid retained output.
+            object.as_object_mut().unwrap().remove("rerun_failure");
+            eprintln!("Serve: ignored invalid stored rerun failure");
+        }
+        if let Ok(mut item) = serde_json::from_value::<Item>(object) {
+            // Older history writers saved the actual enhanced name in both
+            // fields. Adapt the public base name without renaming any file.
+            // Native indexes disambiguate a literal source named notes.llm.
+            if !bases.contains_key(&item.item_id)
+                && let Some(stem) = item
+                    .output_name
+                    .as_deref()
+                    .and_then(|name| name.strip_suffix(".llm.md"))
+            {
+                item.output_name = Some(format!("{stem}.md"));
+            }
+            if raw.get("llm_enhanced").is_none() {
+                item.llm_enhanced = item.output.as_deref().is_some_and(|output| {
+                    bases.get(&item.item_id).map_or_else(
+                        || output.ends_with(".llm.md"),
+                        |base| output == format!("{base}.llm.md"),
+                    )
+                });
+            }
+            if raw.get("retryable").is_none()
+                && value["options"]["origin"] == "cli"
+                && item.kind == "file"
+            {
+                item.retryable = false;
+            }
+            if item.finished_at.is_none() {
+                item.finished_at = value["finished_at"].as_str().map(str::to_owned);
+            }
+            if interrupted && matches!(item.status.as_str(), "queued" | "running") {
+                item.status = "error".into();
+                item.error_code = Some("interrupted".into());
+                item.error =
+                    Some("conversion interrupted when the server stopped; retry this item".into());
+                item.finished_at = Some(now());
+            }
+            items.push(item);
+        }
+    }
+    if interrupted && items.len() != raw_items.len() {
+        // Do not rewrite malformed history while silently dropping rows.
+        return Ok(None);
+    }
+    let mut options = serde_json::to_value(JobOptions::default()).unwrap();
+    if let (Some(target), Some(source)) = (options.as_object_mut(), value["options"].as_object()) {
+        target.extend(source.clone());
+    }
+    let size = value["dir_size_bytes"].as_u64().unwrap_or_else(|| {
+        files(&folder.join("out"))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|(_, p)| fs::metadata(p).ok().map(|m| m.len()))
+            .sum()
+    });
+    let mut data = JobData {
+        id: id.to_owned(),
+        created_at: value["created_at"].as_str().unwrap_or("").into(),
+        finished_at: value["finished_at"].as_str().map(str::to_owned),
+        status: "done".into(),
+        persistence_error: None,
+        options,
+        items,
+        size,
+        bases,
+        assets: serde_json::from_value(value["native_assets"].clone()).unwrap_or_default(),
+        item_options: raw_items
+            .iter()
+            .filter_map(|item| {
+                Some((
+                    item["item_id"].as_str()?.to_owned(),
+                    item.get("options")?
+                        .as_object()
+                        .map(|value| Value::Object(value.clone()))?,
+                ))
+            })
+            .collect(),
+        transactions: Vec::new(),
+    };
+    if interrupted {
+        data.finished_at = Some(now());
+        data.size = measure(folder)?;
+        persist(folder, &data)?;
+    }
+    Ok(Some(data))
 }
 
 pub(super) fn measure(folder: &Path) -> std::io::Result<u64> {
@@ -660,6 +677,55 @@ mod recovery_tests {
         let before = fs::read(folder.join("meta.json")).unwrap();
         rehydrate(&root, &Mutex::new(HashMap::new())).unwrap();
         assert_eq!(fs::read(folder.join("meta.json")).unwrap(), before);
+    }
+
+    #[test]
+    fn a_damaged_job_folder_is_skipped_without_hiding_the_others() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("jobs");
+        let _owner = service_lock(&root).unwrap();
+        let saved = |id: &str| {
+            let folder = root.join(id);
+            private_dir(&folder.join("out")).unwrap();
+            let mut item = Item::new(1, "kept.txt".into(), "file", Some("kept.md".into()));
+            item.status = "done".into();
+            let data = JobData {
+                id: id.into(),
+                created_at: now(),
+                finished_at: Some(now()),
+                status: "done".into(),
+                persistence_error: None,
+                options: json!({}),
+                items: vec![item],
+                size: 0,
+                bases: HashMap::new(),
+                assets: HashMap::new(),
+                item_options: HashMap::new(),
+                transactions: Vec::new(),
+            };
+            persist(&folder, &data).unwrap();
+            folder
+        };
+        saved("0123456789ab");
+        // An interrupted retry left a journal that cannot be read.
+        let damaged = saved("ba9876543210");
+        private_dir(&damaged.join(".retry-stage")).unwrap();
+        fs::write(damaged.join(".retry-stage/journal.json"), "{").unwrap();
+        saved("cccccccccccc");
+        let known = Mutex::new(HashMap::new());
+        for _ in 0..2 {
+            rehydrate(&root, &known).unwrap();
+            let registry = known.lock().unwrap();
+            let mut ids: Vec<_> = registry.keys().cloned().collect();
+            ids.sort();
+            assert_eq!(ids, ["0123456789ab", "cccccccccccc"]);
+        }
+        // The damaged folder is left for inspection, not removed.
+        assert_eq!(
+            fs::read_to_string(damaged.join(".retry-stage/journal.json")).unwrap(),
+            "{"
+        );
+        assert!(damaged.join("meta.json").exists());
     }
 
     #[test]

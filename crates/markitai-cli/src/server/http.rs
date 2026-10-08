@@ -559,6 +559,15 @@ pub(super) async fn refresh(state: &Arc<State>) -> ApiResult<()> {
         .map_err(ApiError::internal)?
         .map_err(ApiError::internal)
 }
+/// A registered job, else one another local process saved since the last
+/// scan; a known job needs no scan of every job folder.
+pub(super) async fn registered(state: &Arc<State>, id: &str) -> ApiResult<Arc<Job>> {
+    if let Ok(job) = jobs::get(state, id) {
+        return Ok(job);
+    }
+    refresh(state).await?;
+    jobs::get(state, id)
+}
 pub(super) async fn history(
     ExtractState(state): ExtractState<Arc<State>>,
 ) -> ApiResult<Json<Value>> {

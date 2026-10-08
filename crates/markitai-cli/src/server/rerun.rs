@@ -109,8 +109,7 @@ pub(super) async fn retry(
         .await
         .map_err(|_| ApiError::new(413, "request_too_large", "retry body exceeds limit"))?;
     let body = RetryBody::parse(&bytes)?;
-    http::refresh(&state).await?;
-    let job = jobs::get(&state, &id)?;
+    let job = http::registered(&state, &id).await?;
     let admission_state = state.clone();
     let admission_job = job.clone();
     let (created,drain)=crate::task::blocking(move|| {
@@ -530,8 +529,7 @@ pub(super) async fn delete(
     ExtractState(state): ExtractState<Arc<State>>,
     Path((id, item_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    http::refresh(&state).await?;
-    let job = jobs::get(&state, &id)?;
+    let job = http::registered(&state, &id).await?;
     crate::task::blocking(move || {
         let _access = job.access.lock().unwrap();
         if !state
