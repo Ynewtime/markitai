@@ -818,6 +818,10 @@ class TestCaseSensitivityWarning:
         yield messages
         logger.remove(sink_id)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="fnmatch ignores case on Windows, so there is no mismatch",
+    )
     def test_warn_case_sensitivity_mismatches_detects_mismatch(
         self, tmp_path: Path, warnings_logged: list[str]
     ):
@@ -854,6 +858,10 @@ class TestCaseSensitivityWarning:
 
         assert warnings_logged == []
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="fnmatch ignores case on Windows, so there is no mismatch",
+    )
     def test_warn_case_sensitivity_with_glob_patterns(
         self, tmp_path: Path, warnings_logged: list[str]
     ):
