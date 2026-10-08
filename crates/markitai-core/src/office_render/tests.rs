@@ -244,6 +244,66 @@ fn installed_libreoffice_keeps_hidden_blank_slides_and_full_frame_pixels() {
     assert!(pdf.extract_text(&[2]).unwrap().contains("HIDDEN SECOND"));
 }
 
+#[cfg(unix)]
+#[test]
+fn a_finished_launcher_takes_what_it_left_running_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.docx");
+    fs::write(&input, WORD).unwrap();
+    let pidfile = dir.path().join("child.pid");
+    let fixture = dir.path().join("golden.pdf");
+    fs::write(&fixture, pdf(3)).unwrap();
+    // The launcher exits at once, leaving a process of its tree behind.
+    let program = mock(
+        dir.path(),
+        &format!(
+            "sleep 30 &\necho $! > {}\ncp {} \"$out/document.pdf\"",
+            quote(&pidfile),
+            quote(&fixture)
+        ),
+    );
+    let profile = dir.path().join("profile");
+    let output = dir.path().join("output");
+    fs::create_dir(&profile).unwrap();
+    fs::create_dir(&output).unwrap();
+    // A test thread forking while the mock was written can hold it open for
+    // writing a moment longer, so its first start may fail (ETXTBSY).
+    for attempt in 1.. {
+        match process::convert(
+            &program,
+            &input,
+            &output,
+            &profile,
+            "pdf",
+            Instant::now() + Duration::from_secs(10),
+            MAX_BYTES,
+        ) {
+            Err(error) if attempt < 5 && error.to_string().contains("could not be started") => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            result => {
+                result.unwrap();
+                break;
+            }
+        }
+    }
+    let pid = fs::read_to_string(&pidfile)
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    // kill(pid,0) can briefly see a reparented zombie.
+    let stop = Instant::now() + Duration::from_secs(2);
+    while unsafe { libc::kill(pid, 0) } == 0 && Instant::now() < stop {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let survived = unsafe { libc::kill(pid, 0) } == 0;
+    if survived {
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    assert!(!survived, "a process the launcher left behind survived it");
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "Requires installed LibreOffice; run explicitly for real renderer acceptance"]

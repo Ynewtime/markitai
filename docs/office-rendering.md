@@ -152,7 +152,8 @@ covers admission, private input preparation and export subprocesses. A timeout
 kills and waits for the child. Launcher descendants are included: Unix uses a
 dedicated process group; Windows starts LibreOffice suspended in a Job Object
 that ends its whole tree, also when Markitai itself ends, and is emptied before
-the private directory is removed. The adapter has run in an actual Windows
+the private directory is removed. When the launcher exits, on success or failure,
+any process it left running in its tree is killed before the output is read. The adapter has run in an actual Windows
 ARM64 guest, beyond cross-target compilation. Output growth is polled every 25 ms.
 A temporary child file that disappears between directory enumeration and its
 metadata read is tolerated only while the export is running; it still counts

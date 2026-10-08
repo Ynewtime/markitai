@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- A LibreOffice export no longer leaves processes running on Linux and macOS: when the launcher exits, whatever it left behind in its process group is killed before the output is read and the private workspace is removed, as Windows already did.
 - XLSB workbooks convert like XLSX and XLS: a single sheet is headed by its name, each sheet's table follows its heading directly, and a hidden sheet left out of the Markdown gets the same warning instead of disappearing silently.
 - An ODT whose comments cannot be counted (for example a `content.xml` over the 16 MiB metadata limit) gets a warning that its comments could not be recovered, as a Word document does, instead of being reported as having no comments.
 - An SVG image embedded in a document (an HTML page, an e-book, a Word file) no longer adds the warning that an embedded image could not be decoded within native limits; the vector asset is kept unchanged as before.
