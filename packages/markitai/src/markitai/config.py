@@ -539,12 +539,12 @@ class BatchConfig(BaseModel):
     scan_max_files: int = Field(
         default=DEFAULT_SCAN_MAX_FILES,
         ge=1,
-        description="Max files to scan per directory",
+        description="Max files to scan across the whole input tree",
     )
     heavy_task_limit: int = Field(
         default=DEFAULT_HEAVY_TASK_LIMIT,
         ge=0,
-        description="Max heavy tasks (0=unlimited)",
+        description="Max heavy tasks (0=auto-detect from system memory)",
     )
 
 

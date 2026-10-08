@@ -5,9 +5,11 @@
 从高到低：
 
 1. 命令行参数
-2. 环境变量
-3. 配置文件
+2. 配置文件
+3. 环境变量
 4. 内置默认值
+
+凭据和模型变量（`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`、`MODEL`）只作后备：配置文件没设这个值时才读（`MODEL` 只在 `llm.model_list` 为空时生效）。有三个开关位于配置文件之上：`MARKITAI_RECORD_HISTORY`（`1` 或 `0`）覆盖 `history.record`，`MARKITAI_PURE=1` 打开纯净模式（仅 CLI），`MARKITAI_NO_REMOTE_FETCH=1` 禁止所有远程抓取服务。前两个仍以命令行参数为准。
 
 ## 配置文件
 
