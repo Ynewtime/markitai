@@ -161,3 +161,29 @@ def get_llm_effective_mime(extension: str) -> str:
     if ext == ".svg" and _has_cairosvg():
         return "image/png"
     return get_mime_type(extension)
+
+
+def get_llm_image_mime(data: bytes, extension: str) -> str:
+    """Get the MIME type of the image bytes actually sent to the LLM.
+
+    The LLM image loader re-encodes oversized PNG/WEBP/GIF images as JPEG,
+    so the file extension can name a different format than the bytes.
+    The bytes' signature wins; unrecognised data falls back to
+    ``get_llm_effective_mime(extension)``.
+
+    Args:
+        data: Image bytes as sent to the API
+        extension: File extension (with or without leading dot)
+
+    Returns:
+        MIME type string for the LLM API
+    """
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return get_llm_effective_mime(extension)
