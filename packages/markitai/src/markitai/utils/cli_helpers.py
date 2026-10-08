@@ -182,8 +182,10 @@ def get_report_file_path(
 ) -> Path:
     """Generate report file path based on task hash.
 
-    Format: reports/markitai.<hash>.report.json
-    Respects on_conflict strategy for rename.
+    Format: reports/markitai.<hash>.report.json. Under
+    on_conflict="rename" an existing report gets a ``.v<N>`` sibling;
+    "skip" and "overwrite" both return the base path, so the report is
+    replaced (skip applies to converted files, not to the run's report).
 
     Args:
         output_dir: Output directory
@@ -201,7 +203,6 @@ def get_report_file_path(
     def _rename(seq: int) -> Path:
         return reports_dir / f"markitai.{task_hash}.v{seq}.report.json"
 
-    # resolve_name_conflict returns None for "skip", but callers of
-    # get_report_file_path expect the base path back (they handle
-    # skip themselves), so fall back to base_path.
+    # resolve_name_conflict returns None for "skip"; a report is still
+    # written, over the old one
     return resolve_name_conflict(base_path, on_conflict, _rename) or base_path

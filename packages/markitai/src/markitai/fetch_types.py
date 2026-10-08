@@ -18,7 +18,7 @@ class FetchStrategy(Enum):
     STATIC = "static"
     DEFUDDLE = "defuddle"  # Defuddle content extraction API
     PLAYWRIGHT = "playwright"  # Playwright Python (recommended)
-    CLOUDFLARE = "cloudflare"  # CF Browser Rendering /markdown API
+    CLOUDFLARE = "cloudflare"  # CF Browser Rendering /content API
     JINA = "jina"
 
 

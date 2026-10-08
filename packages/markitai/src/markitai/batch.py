@@ -30,7 +30,6 @@ from rich.progress import (
 
 from markitai.constants import (
     MARKITAI_META_DIR,
-    REPORTS_REL_PATH,
     STATES_REL_PATH,
     VISIBLE_ASSETS_REL_PATH,
 )
@@ -672,34 +671,10 @@ class BatchProcessor:
         return states_dir / f"markitai.{self.task_hash}.state.json"
 
     def _get_report_file_path(self) -> Path:
-        """Generate report file path based on task hash.
+        """Report file path for this task (see ``get_report_file_path``)."""
+        from markitai.utils.cli_helpers import get_report_file_path
 
-        Format: reports/markitai.<hash>.report.json
-        Respects on_conflict strategy for rename.
-        """
-        reports_dir = self.output_dir / REPORTS_REL_PATH
-        base_path = reports_dir / f"markitai.{self.task_hash}.report.json"
-
-        if not base_path.exists():
-            return base_path
-
-        if self.on_conflict == "skip":
-            return base_path  # Will be handled by caller
-        elif self.on_conflict == "overwrite":
-            return base_path
-        else:  # rename
-            seq = 2
-            max_seq = 9999  # Safety limit to prevent infinite loop
-            while seq <= max_seq:
-                new_path = reports_dir / f"markitai.{self.task_hash}.v{seq}.report.json"
-                if not new_path.exists():
-                    return new_path
-                seq += 1
-            # Fallback: use timestamp if too many versions exist
-            import time
-
-            ts = int(time.time())
-            return reports_dir / f"markitai.{self.task_hash}.{ts}.report.json"
+        return get_report_file_path(self.output_dir, self.task_hash, self.on_conflict)
 
     def start_live_display(
         self,
@@ -1410,7 +1385,7 @@ class BatchProcessor:
         """Finalize and save report to file.
 
         Report file is saved to: reports/markitai.<hash>.report.json
-        Respects on_conflict strategy (skip/overwrite/rename).
+        (``.v<N>`` added under on_conflict="rename"; otherwise replaced).
 
         Returns:
             Path to the report file

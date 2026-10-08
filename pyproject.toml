@@ -100,7 +100,7 @@ skips = [
     "B607",  # partial path - system commands (powershell, scutil)
 ]
 
-# Architecture layering contracts (docs/redesign/02-execution-plan.md Phase 1).
+# Architecture layering contracts (enforced by lint-imports).
 # ignore_imports entries are a shrink-only allowlist of pre-existing violations:
 # never add to them — fix the dependency direction instead.
 [tool.importlinter]

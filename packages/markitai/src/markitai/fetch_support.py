@@ -23,12 +23,11 @@ if TYPE_CHECKING:
 
 
 def _detect_proxy(force_recheck: bool = False) -> str:
-    """Detect proxy settings from environment, system config, or common local ports.
+    """Detect proxy settings from the environment or system config.
 
-    Detection order:
+    Detection order (see ``FetchSession.detect_proxy``):
     1. Environment variables: HTTPS_PROXY, HTTP_PROXY, ALL_PROXY
-    2. System proxy settings (Windows registry / macOS scutil)
-    3. Probe common proxy ports on localhost
+    2. System proxy settings (Windows registry / macOS scutil / Linux desktop)
 
     Args:
         force_recheck: Force re-detection even if cached
