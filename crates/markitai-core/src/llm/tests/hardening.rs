@@ -311,28 +311,30 @@ fn document_answer(markdown: &str) -> Value {
 }
 
 #[test]
-fn a_looping_plain_answer_is_cut_warned_and_asked_again_next_time() {
+fn a_looping_pure_answer_is_cut_warned_and_asked_again_next_time() {
     let root = tempfile::tempdir().unwrap();
     let looping = format!("# Title\n\nShort body.\n\n{}", LOOP_LINE.repeat(30));
     let server = Mock::new(vec![(200, success(&looping)), (200, success(&looping))]);
-    let cfg = cached_cfg(root.path(), "openai/test", &server.base);
+    let mut cfg = cached_cfg(root.path(), "openai/test", &server.base);
+    cfg["llm"]["pure"] = json!(true);
     for _ in 0..2 {
-        let answer = cached_call("# Title\n\nShort body.", "doc.md", "doc.md", &cfg).unwrap();
-        assert!(!answer.cache_hit);
+        let scope = DocumentScope::new(&cfg);
+        let (markdown, _) =
+            enhance_with_source_and_runtime("# Title\n\nShort body.", "doc.md", &cfg, None)
+                .unwrap();
         assert_eq!(
-            answer.markdown,
+            markdown,
             "# Title\n\nShort body.\n\nThank you for reading this report."
         );
+        let warnings = scope.take_warnings();
         assert!(
-            answer
-                .warnings
+            warnings
                 .iter()
                 .any(|warning| warning.contains("repeating one passage 30 times")),
-            "{:?}",
-            answer.warnings
+            "{warnings:?}"
         );
     }
-    // Both runs asked the model: the salvaged answer was never cached.
+    // Both runs asked the model: pure answers are never cached.
     assert_eq!(server.finish().len(), 2);
 }
 

@@ -76,7 +76,6 @@ pub struct UsageEvidence {
 pub struct Completion {
     pub text: String,
     pub usage: UsageEvidence,
-    pub warnings: Vec<String>,
 }
 #[derive(Debug)]
 pub struct Failure {
@@ -821,24 +820,10 @@ pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Fai
         terminal.ok_or_else(protocol)
     })();
     match result {
-        Ok(text) => {
-            let mut warnings = vec!["Claude subscription dollar cost is unknown; runtime dollar estimates are not treated as paid subscription charges".into()];
-            if evidence.usage.calls.is_empty() {
-                warnings.push(
-                    if evidence.usage.aggregate.is_some() {
-                        "Claude reported aggregate tokens without an observed API request count"
-                    } else {
-                        "Claude did not report token usage; missing usage is unknown, not zero"
-                    }
-                    .into(),
-                );
-            }
-            Ok(Completion {
-                text,
-                usage: evidence.usage,
-                warnings,
-            })
-        }
+        Ok(text) => Ok(Completion {
+            text,
+            usage: evidence.usage,
+        }),
         Err(mut error) => {
             error.usage = Box::new(evidence.usage);
             Err(error)

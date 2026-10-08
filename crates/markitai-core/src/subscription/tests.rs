@@ -324,7 +324,6 @@ mod runtime {
         let fixture = Fixture::new("no_usage");
         let result = complete(&fixture.cfg, fixture.request("text", None)).unwrap();
         assert!(result.usage.calls.is_empty());
-        assert!(result.warnings[0].contains("unknown"));
         let fixture = Fixture::new("paid_error");
         let failure = complete(&fixture.cfg, fixture.request("text", None)).unwrap_err();
         assert_eq!(failure.kind, FailureKind::Authentication);

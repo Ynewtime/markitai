@@ -608,6 +608,7 @@ fn convert_inner(
         } else {
             &result.markdown
         };
+        // Pure answers are never cached; their warnings reach the document scope.
         let without_cache = |(markdown, usage)| llm::Enhancement {
             markdown,
             usage,

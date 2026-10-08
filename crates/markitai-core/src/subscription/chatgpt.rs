@@ -64,7 +64,6 @@ pub struct UsageEvidence {
 pub struct Completion {
     pub text: String,
     pub usage: UsageEvidence,
-    pub warnings: Vec<String>,
 }
 #[derive(Debug)]
 pub struct Failure {
@@ -352,7 +351,10 @@ pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Fai
     })();
     let usage = events.usage;
     match outcome {
-        Ok(text) => Ok(Completion { text, usage, warnings: vec!["Codex reports aggregate turn tokens, not a verified request count or subscription dollar cost. Failed turns may omit usage; all-zero totals may mean unavailable usage.".into()] }),
-        Err(mut error) => { error.usage = usage; Err(error) }
+        Ok(text) => Ok(Completion { text, usage }),
+        Err(mut error) => {
+            error.usage = usage;
+            Err(error)
+        }
     }
 }

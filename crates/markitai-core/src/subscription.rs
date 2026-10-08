@@ -258,7 +258,6 @@ impl Failure {
 pub struct Completion {
     pub text: String,
     pub usage: UsageEvidence,
-    pub warnings: Vec<String>,
 }
 pub struct Request<'a> {
     pub model: &'a str,

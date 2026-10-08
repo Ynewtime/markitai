@@ -19,12 +19,6 @@ pub(super) fn pool_has_copilot(entries: &[Value]) -> bool {
                 .is_some_and(|model| model.starts_with("copilot/"))
     })
 }
-pub(super) fn configured(cfg: &Value) -> Option<bool> {
-    cfg.pointer("/llm/model_list")
-        .and_then(Value::as_array)
-        .filter(|entries| !entries.is_empty())
-        .map(|entries| pool_has_copilot(entries))
-}
 pub(super) fn deployment(
     entry: &Value,
     env: &HashMap<String, String>,

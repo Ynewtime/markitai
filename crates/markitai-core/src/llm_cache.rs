@@ -64,13 +64,8 @@ fn now() -> i64 {
 }
 
 /// Cache keys do not persist raw prompts, input paths, endpoints or credentials.
-pub(crate) fn key(content: &str, prompt_scope: &str, model_scope: &str) -> String {
-    let content_hash = crate::hex(Sha256::digest(content.as_bytes()));
-    let combined = format!("native-markdown-v1:{prompt_scope}|{model_scope}|{content_hash}");
-    crate::hex(Sha256::digest(combined.as_bytes()))[..32].to_owned()
-}
-
-/// Typed document rows cannot collide with legacy Markdown-only answers.
+/// Typed document rows cannot collide with Markdown-only answers that older
+/// releases stored under `native-markdown-v1` keys.
 pub(crate) fn document_key(content: &str, prompt_scope: &str, model_scope: &str) -> String {
     let content_hash = crate::hex(Sha256::digest(content.as_bytes()));
     let combined = format!("native-document-v1:{prompt_scope}|{model_scope}|{content_hash}");
@@ -217,14 +212,6 @@ impl Cache {
         })
     }
 
-    pub(crate) fn get(&self, key: &str) -> Result<Option<String>> {
-        match self.get_json(key)? {
-            Some(Value::String(text)) if !text.trim().is_empty() => Ok(Some(text)),
-            Some(Value::String(_)) | None => Ok(None),
-            Some(_) => Err(unavailable()),
-        }
-    }
-
     pub(crate) fn get_json(&self, key: &str) -> Result<Option<Value>> {
         if self.skip_read {
             return Ok(None);
@@ -256,13 +243,6 @@ impl Cache {
             .map_err(|_| unavailable())?;
         transaction.commit().map_err(|_| unavailable())?;
         Ok(Some(answer))
-    }
-
-    pub(crate) fn set(&self, key: &str, model: &str, answer: &str) -> Result<()> {
-        if answer.trim().is_empty() {
-            return Ok(());
-        }
-        self.set_json(key, model, &Value::String(answer.to_owned()))
     }
 
     pub(crate) fn set_json(&self, key: &str, model: &str, answer: &Value) -> Result<()> {
@@ -539,6 +519,21 @@ mod tests {
         json!({"cache":{"enabled":true,"global_dir":directory,"max_size_bytes":size}})
     }
 
+    // Text rows exercise the storage layer without a typed answer schema.
+    impl Cache {
+        fn get(&self, key: &str) -> Result<Option<String>> {
+            match self.get_json(key)? {
+                Some(Value::String(text)) => Ok(Some(text)),
+                None => Ok(None),
+                Some(_) => Err(unavailable()),
+            }
+        }
+
+        fn set(&self, key: &str, model: &str, answer: &str) -> Result<()> {
+            self.set_json(key, model, &Value::String(answer.to_owned()))
+        }
+    }
+
     #[test]
     fn rollback_lock_during_wal_initialization_is_retried_after_release() {
         let root = tempfile::tempdir().unwrap();
@@ -723,17 +718,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = configuration(dir.path(), 10_000);
         let cache = Cache::configured(&cfg, "https://example.test/article.md?q=1").unwrap();
-        let legacy = key("body", "prompt", "pool");
         let typed = document_key("body", "prompt", "pool");
-        assert_ne!(legacy, typed);
-        cache.set(&legacy, "pool", "legacy Markdown").unwrap();
         let value = json!({"cleaned_markdown":"body","description":"summary","tags":["topic"]});
         cache.set_json(&typed, "pool", &value).unwrap();
         assert_eq!(cache.get_json(&typed).unwrap(), Some(value));
-        assert_eq!(
-            cache.get(&legacy).unwrap().as_deref(),
-            Some("legacy Markdown")
-        );
         assert!(cache.get(&typed).is_err());
         let bypass = json!({"cache":{"no_cache_patterns":["article.md"]}});
         assert!(bypasses(&bypass, "https://example.test/article.md?q=1"));
@@ -765,11 +753,17 @@ mod tests {
     fn namespaced_keys_hash_middle_changes_prompts_and_model_sets() {
         let body = format!("{}original{}", "a".repeat(30_000), "z".repeat(30_000));
         assert_ne!(
-            key(&body, "p", "pool:a"),
-            key(&body.replace("original", "changed"), "p", "pool:a")
+            document_key(&body, "p", "pool:a"),
+            document_key(&body.replace("original", "changed"), "p", "pool:a")
         );
-        assert_ne!(key(&body, "p", "pool:a"), key(&body, "p2", "pool:a"));
-        assert_ne!(key(&body, "p", "pool:a"), key(&body, "p", "pool:b"));
+        assert_ne!(
+            document_key(&body, "p", "pool:a"),
+            document_key(&body, "p2", "pool:a")
+        );
+        assert_ne!(
+            document_key(&body, "p", "pool:a"),
+            document_key(&body, "p", "pool:b")
+        );
         assert_eq!(model_scope(["b", "a", "b"]), model_scope(["a", "b"]));
         assert_eq!(model_scope([]), "pool:none");
         assert_ne!(prompt_scope(&["ab", "c"]), prompt_scope(&["a", "bc"]));
@@ -841,7 +835,6 @@ mod tests {
         cache.set("a", "pool", "does not fit").unwrap();
         assert!(cache.get("a").unwrap().is_none());
         assert_eq!(cache.get("c").unwrap().as_deref(), Some("ccc"));
-        cache.set("blank", "pool", " \n ").unwrap();
         assert_eq!(stats(&cfg, false, 20).unwrap()["cache"]["count"], 1);
     }
 

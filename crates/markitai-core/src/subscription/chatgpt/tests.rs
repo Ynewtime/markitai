@@ -220,7 +220,6 @@ fn observed_aggregate_survives_post_terminal_protocol_or_exit_failure() {
     let f = Fixture::new("zero");
     let out = complete(&f.config, f.request("gpt-5.5", &[])).unwrap();
     assert_eq!(out.usage.aggregate, Some(TokenTotals::default()));
-    assert!(out.warnings.iter().any(|s| s.contains("unavailable")));
 }
 #[test]
 fn cancellation_and_deadline_stop_private_process_tree_without_stale_files() {
