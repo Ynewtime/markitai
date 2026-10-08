@@ -328,6 +328,46 @@ class TestTransportRetry:
         assert raw is not None
         assert len(harness.router.calls) == 2
 
+    @pytest.mark.usefixtures("no_retry_delay")
+    async def test_rate_limit_mentioning_402_in_counts_is_retried(self) -> None:
+        # Regression: "402" was a substring pattern, so an OpenAI 429 whose
+        # token counts contain "402" was read as a billing error.
+        harness = Harness(
+            FakeRouter(
+                [
+                    RateLimitError(
+                        message=(
+                            "Rate limit reached for gpt-test on tokens per min: "
+                            "Limit 30000, Used 29402, Requested 900."
+                        ),
+                        llm_provider="openai",
+                        model="gpt-test",
+                    ),
+                    make_model_response('{"text": "ok"}'),
+                ]
+            )
+        )
+
+        result, _raw = await harness.engine.complete_structured(make_call())
+
+        assert result.text == "ok"
+        assert len(harness.router.calls) == 2
+
+    @pytest.mark.usefixtures("no_retry_delay")
+    async def test_payment_required_status_short_circuits(self) -> None:
+        error = APIConnectionError(
+            message="provider rejected the request",
+            llm_provider="openai",
+            model="gpt-test",
+        )
+        error.status_code = 402
+        harness = Harness(FakeRouter([error]))
+
+        with pytest.raises(Exception, match="provider rejected"):
+            await harness.engine.complete_structured(make_call())
+
+        assert len(harness.router.calls) == 1
+
     async def test_quota_error_short_circuits_without_retry(self) -> None:
         harness = Harness(
             FakeRouter(

@@ -1137,12 +1137,13 @@ class LLMEngine:
                     # in provider text (e.g. "quota will reset after 30s") but ARE
                     # retryable: the router cooldown recorded for the failing
                     # model routes the retry to another model.
+                    # HTTP 402 is matched on the status code, not as text: a
+                    # 429 saying "Used 29402" tokens is still a rate limit.
                     error_msg_lower = str(e).lower()
                     if isinstance(e, RateLimitError):
                         non_retryable_patterns = (
                             "billing",
                             "payment",
-                            "402",
                             "insufficient_quota",
                             "exceeded your current quota",
                         )
@@ -1152,11 +1153,10 @@ class LLMEngine:
                             "billing",
                             "payment",
                             "subscription",
-                            "402",
                             "insufficient_quota",
                             "exceeded your current quota",
                         )
-                    if any(
+                    if getattr(e, "status_code", None) == 402 or any(
                         pattern in error_msg_lower for pattern in non_retryable_patterns
                     ):
                         status_code = getattr(e, "status_code", "N/A")

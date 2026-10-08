@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1]
+
+### Fixed
+
+- LLM rate limits are retried even when the message contains "402" (for example "Used 29402" tokens), and wait times such as `1.204s`, `750ms` or `6m0s` are read correctly; only an HTTP 402 counts as a billing error.
+
 ## [1.2.0] - 2026-09-28
 
 ### Added
