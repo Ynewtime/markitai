@@ -688,7 +688,10 @@ fn resolved_url(value: &str, base: Option<&Url>) -> Option<String> {
             .filter(|url| matches!(url.scheme(), "http" | "https"))
             .map(|url| url.to_string());
     }
-    (!value.contains(':')).then(|| destination(value))
+    // Without a base, a colon before the first `/`, `?` or `#` could be read
+    // as a scheme; one after it is part of a relative path or query.
+    let head = value.split(['/', '?', '#']).next().unwrap_or_default();
+    (!head.contains(':')).then(|| destination(value))
 }
 
 /// A saved page's own address for its relative links: an absolute
@@ -1151,14 +1154,17 @@ fn inert_math_node(name: &str) -> bool {
     )
 }
 
+/// MathML nesting read at most; a deeper formula is kept as plain text.
+const MAX_MATH_DEPTH: usize = 64;
+
 fn math_text(element: ElementRef<'_>, depth: usize) -> Result<String> {
     if inert_math_node(element.value().name()) {
         return Ok(String::new());
     }
-    if depth > 64 {
-        return Err(Error::Conversion(
-            "MathML nesting exceeds 64 elements".into(),
-        ));
+    if depth > MAX_MATH_DEPTH {
+        return Err(Error::Conversion(format!(
+            "MathML nesting exceeds {MAX_MATH_DEPTH} elements"
+        )));
     }
     let mut result = String::new();
     for child in element.children() {
@@ -1175,10 +1181,10 @@ fn mathml(element: ElementRef<'_>, depth: usize) -> Result<String> {
     if inert_math_node(element.value().name()) {
         return Ok(String::new());
     }
-    if depth > 64 {
-        return Err(Error::Conversion(
-            "MathML nesting exceeds 64 elements".into(),
-        ));
+    if depth > MAX_MATH_DEPTH {
+        return Err(Error::Conversion(format!(
+            "MathML nesting exceeds {MAX_MATH_DEPTH} elements"
+        )));
     }
     let name = element.value().name();
     let children = element.child_elements().collect::<Vec<_>>();
@@ -2767,7 +2773,7 @@ thread_local! {
 /// The warning for a rendering that kept a subtree as plain text.
 fn flattened_warning() -> String {
     format!(
-        "HTML is nested deeper than {MAX_DEPTH} elements; the content below that depth was kept as plain text without its formatting."
+        "HTML is nested deeper than {MAX_DEPTH} elements ({MAX_MATH_DEPTH} in a formula); the content below that depth was kept as plain text without its formatting."
     )
 }
 
@@ -2890,8 +2896,16 @@ fn serialize_clean(
         output.end("blockquote");
         return Ok(());
     }
-    if code::render(element, output, depth)? {
-        return Ok(());
+    // Code below the depth limit, read before anything is written, is kept
+    // as plain text like any other content that deep.
+    match code::render(element, output, depth) {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(_) => {
+            escaped_text(&flat_text(element), output);
+            FLATTENED.with(|flattened| flattened.set(true));
+            return Ok(());
+        }
     }
     let value = element.value();
     let name = value.name();
@@ -2906,9 +2920,20 @@ fn serialize_clean(
         .ancestors()
         .filter_map(ElementRef::wrap)
         .any(|ancestor| matches!(ancestor.value().name(), "pre" | "code"));
-    if !in_code && let Some((latex, block)) = math_expression(element)? {
-        emit_math(&latex, block, output);
-        return Ok(());
+    if !in_code {
+        match math_expression(element) {
+            Ok(Some((latex, block))) => {
+                emit_math(&latex, block, output);
+                return Ok(());
+            }
+            Ok(None) => {}
+            // A formula nested past the MathML limit keeps its text.
+            Err(_) => {
+                escaped_text(&flat_text(element), output);
+                FLATTENED.with(|flattened| flattened.set(true));
+                return Ok(());
+            }
+        }
     }
     // A task list's checkbox is its item's `[x]` or `[ ]`.
     if let Some(checked) = boxes::task_checkbox(element) {
@@ -5374,6 +5399,28 @@ mod tests {
     }
 
     #[test]
+    fn deep_code_keeps_its_words_with_a_warning() {
+        // A code block whose lines reach past the limit below its page depth.
+        let html = format!(
+            "<p>Before</p>{}<pre>{}let deep = 1;{}</pre>{}<p>After</p>",
+            "<div>".repeat(250),
+            "<span>".repeat(20),
+            "</span>".repeat(20),
+            "</div>".repeat(250)
+        );
+        let document = extract_html(&html, None).unwrap();
+        assert!(document.markdown.starts_with("Before"));
+        assert!(
+            document.markdown.contains("let deep = 1;"),
+            "{}",
+            document.markdown
+        );
+        assert!(document.markdown.ends_with("After"));
+        assert_eq!(document.warnings.len(), 1);
+        assert!(document.warnings[0].starts_with("HTML is nested deeper than 256"));
+    }
+
+    #[test]
     fn attribute_lookup_answers_as_scraper_does() {
         let document = Html::parse_document(
             r#"<html xml:lang="en"><body data-x="1" CLASS="a b" id="i">
@@ -6073,6 +6120,16 @@ map(callbackFn, thisArg)
             "https://exam\tple.test/",
         ] {
             assert!(safe_url(value, Some(&base)).is_none());
+        }
+    }
+
+    #[test]
+    fn relative_links_may_hold_a_colon_after_their_first_segment() {
+        for value in ["/wiki/Help:Contents", "?t=10:30", "#note:1", "docs/a:b.md"] {
+            assert_eq!(safe_url(value, None).as_deref(), Some(value));
+        }
+        for value in ["javascript:alert(1)", "1x:payload", "x y:z"] {
+            assert!(safe_url(value, None).is_none(), "{value}");
         }
     }
 
@@ -6823,15 +6880,16 @@ map(callbackFn, thisArg)
     }
 
     #[test]
-    fn deep_mathml_fails_explicitly_instead_of_overflowing() {
+    fn deep_mathml_is_kept_as_text_instead_of_overflowing() {
         let html = format!(
-            "<math>{}<mi>x</mi>{}</math>",
+            "<p>Before</p><math>{}<mi>x</mi>{}</math><p>After</p>",
             "<mrow>".repeat(66),
             "</mrow>".repeat(66)
         );
-        assert!(
-            matches!(extract_html(&html, None), Err(Error::Conversion(message)) if message.contains("MathML nesting"))
-        );
+        let document = extract_html(&html, None).unwrap();
+        assert_eq!(document.markdown, "Before\n\nx\n\nAfter");
+        assert_eq!(document.warnings.len(), 1);
+        assert!(document.warnings[0].contains("(64 in a formula)"));
     }
 
     #[test]

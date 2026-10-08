@@ -152,7 +152,8 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   `<base href>`, else its canonical link (only root-relative links when that is
   the home page, whose directory is unknown); images keep their relative paths,
   which a page saved with its files points at those files. Without such an
-  address, and in fragments, relative destinations stay as written. A
+  address, and in fragments, relative destinations stay as written, a colon
+  after their first `/`, `?` or `#` included (`/wiki/Help:Contents`). A
   scheme-relative address (`//host/path`) takes `https:` when no page URL is
   given, since Markdown would read it as a local path.
 - An image is its largest `srcset` candidate (`data-srcset` first): the widest
@@ -192,8 +193,8 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   and navigation content, controls, entry-box forms and the page's own footer
   are excluded (see forms and footers above). A hidden ancestor also disqualifies
   an article candidate. Content nested deeper than 256 levels (unclosed legacy
-  tags such as `<font>` reach that depth) is kept as plain text without its
-  formatting, with a warning.
+  tags such as `<font>` reach that depth), a code block among it included, is
+  kept as plain text without its formatting, with a warning.
 
 Inline visibility uses parsed CSS declarations rather than substring matching.
 Only the actual `display` and `visibility` property names affect this check;
@@ -385,7 +386,8 @@ under/overscripts, common accents and Greek/operators, fenced expressions and
 tables. Display math uses `$$…$$`, inline math `$…$`; TeX source is preserved
 without Markdown backslash escaping. Literal angle brackets in a math source
 become TeX comparison commands so annotations cannot emit raw HTML. MathML depth
-is bounded at 64 elements, with an explicit conversion error beyond that limit.
+is bounded at 64 elements; a deeper formula is kept as plain text without its
+formatting, with a warning, and the rest of the page converts.
 
 Images rendered by TeX image services become math as in the reference: LaTeX is
 read from a `latex`, `chl`, `tex`, `eq` or `math` query parameter, else the whole

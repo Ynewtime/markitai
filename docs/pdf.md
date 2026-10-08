@@ -164,9 +164,10 @@ border). At least 90% of the cells the layer's text surely covers must lie
 within a cell of print, and at least 60% of the print cells within a cell of
 where the text may reach. A layer that fails is not used, with a warning that
 says how much of it lies on print; the page then reads as before. JBIG2, CCITT
-fax, JPEG 2000 and inline images, a page drawing several images, and an image
-too dark to tell paper from ink leave the layer unchecked: it is read, and the
-warning says why it could not be checked.
+fax, JPEG 2000 and inline images, an image over 32 Mi pixels (a JPEG's own
+header is checked before its pixels are decoded), a page drawing several
+images, and an image too dark to tell paper from ink leave the layer unchecked:
+it is read, and the warning says why it could not be checked.
 
 The thresholds were measured on 59 Tesseract 5.5 layers over 200–300 dpi gray,
 RGB JPEG, bitonal and OCRmyPDF-style (layer in a Form XObject) renderings of

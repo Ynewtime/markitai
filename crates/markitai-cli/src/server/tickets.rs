@@ -9,7 +9,11 @@ use super::{
     State,
     types::{ApiError, ApiResult},
 };
-use axum::{Json, extract::State as ExtractState, http::StatusCode};
+use axum::{
+    Json,
+    extract::{FromRequest, Request, State as ExtractState},
+    http::StatusCode,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -23,6 +27,8 @@ pub(super) const LIFETIME: Duration = Duration::from_secs(60);
 /// Outstanding tickets at most; expired ones are dropped before counting.
 const CAPACITY: usize = 64;
 const MAX_PATH: usize = 4096;
+/// A request body at most: one path of `MAX_PATH` bytes, with room for JSON.
+const MAX_BODY: usize = 2 * MAX_PATH;
 
 #[derive(Default)]
 pub(super) struct Tickets(Mutex<HashMap<[u8; 32], (String, Instant)>>);
@@ -102,7 +108,7 @@ impl Tickets {
 /// `POST /api/download-tickets` with `{"path": "/api/jobs/…/archive"}`.
 pub(super) async fn issue(
     ExtractState(state): ExtractState<Arc<State>>,
-    body: Result<Json<Value>, axum::extract::rejection::JsonRejection>,
+    request: Request,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let invalid = || {
         ApiError::new(
@@ -111,7 +117,18 @@ pub(super) async fn issue(
             "a download ticket needs a JSON body {\"path\": …} naming a job file, a job archive or the history archive",
         )
     };
-    let Json(body) = body.map_err(|_| invalid())?;
+    // The service's body limit admits uploads; this body names one path.
+    let (parts, body) = request.into_parts();
+    let bytes = axum::body::to_bytes(body, MAX_BODY).await.map_err(|_| {
+        ApiError::new(
+            413,
+            "request_too_large",
+            "a download ticket request exceeds 8 KiB",
+        )
+    })?;
+    let Json(body) = Json::<Value>::from_request(Request::from_parts(parts, bytes.into()), &())
+        .await
+        .map_err(|_| invalid())?;
     let object = body.as_object().ok_or_else(invalid)?;
     if object.keys().any(|key| key != "path") {
         return Err(invalid());

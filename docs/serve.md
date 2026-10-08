@@ -427,8 +427,9 @@ For a download that a browser must open itself (a navigation cannot send
 it will be requested) and receives 201 `{"ticket", "url", "expires_in": 60}`.
 `url` is that path with `?ticket=…`: 64 random hexadecimal characters that admit
 one GET of that path within 60 seconds. Only the ticket's SHA-256 is held, at most
-64 tickets are outstanding (429 `too_many_tickets`), and a path outside those three
-download routes is 422 `invalid_ticket_path`. A ticket presented a second time,
+64 tickets are outstanding (429 `too_many_tickets`), a path outside those three
+download routes is 422 `invalid_ticket_path`, and a request body over 8 KiB is 413
+`request_too_large`. A ticket presented a second time,
 after it expired, for another path or with another method is spent and refused
 with 401 `ticket_invalid`; loopback clients also redeem tickets exactly once. A ticket never grants
 settings access and never lets the startup token into a URL. The event stream

@@ -463,17 +463,31 @@ impl Luma {
     }
 
     fn jpeg(bytes: &[u8]) -> Result<Self, &'static str> {
-        let image = image::ImageReader::with_format(
+        use image::ImageDecoder;
+        let mut reader = image::ImageReader::with_format(
             crate::images::ImageBytes::new(bytes),
             image::ImageFormat::Jpeg,
-        )
-        .decode()
-        .map_err(|_| "its JPEG image could not be decoded")?
-        .into_luma8();
-        let (width, height) = (image.width() as usize, image.height() as usize);
-        if width == 0 || height == 0 || width * height > MAX_IMAGE_PIXELS {
+        );
+        // At most four bytes a pixel (CMYK) within the pixel limit.
+        let mut limits = image::Limits::default();
+        limits.max_alloc = Some(4 * MAX_IMAGE_PIXELS as u64);
+        reader.limits(limits);
+        let decoder = reader
+            .into_decoder()
+            .map_err(|_| "its JPEG image could not be decoded")?;
+        // The size in the JPEG's own header, which the dictionary's may not
+        // match, is checked before the pixels are decoded.
+        let (width, height) = decoder.dimensions();
+        let (width, height) = (width as usize, height as usize);
+        if width == 0 || height == 0 {
             return Err("its JPEG image has no valid size");
         }
+        if width * height > MAX_IMAGE_PIXELS {
+            return Err("its image is past the pixel limit");
+        }
+        let image = image::DynamicImage::from_decoder(decoder)
+            .map_err(|_| "its JPEG image could not be decoded")?
+            .into_luma8();
         let step = sample_step(width, height);
         let full = image.into_raw();
         let pixels = if step == 1 {
@@ -866,6 +880,29 @@ mod tests {
             );
             assert_eq!(decoded_levels(&stream), Err(why));
         }
+        // A JPEG's own header gives its size, whatever the dictionary says:
+        // one past the pixel limit is refused before it is decoded.
+        let mut large = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut large, 95)
+            .encode(&[255u8; 16 * 8], 16, 8, image::ExtendedColorType::L8)
+            .unwrap();
+        let frame = large
+            .windows(2)
+            .position(|marker| marker == [0xFF, 0xC0])
+            .unwrap();
+        // Frame header: marker, length, precision, then height and width.
+        large[frame + 5..frame + 9].copy_from_slice(&[0x1F, 0x40, 0x1F, 0x40]);
+        let stream = image(
+            dictionary! {
+                "Width" => 16, "Height" => 8, "BitsPerComponent" => 8,
+                "ColorSpace" => "DeviceGray", "Filter" => "DCTDecode"
+            },
+            large,
+        );
+        assert_eq!(
+            decoded_levels(&stream),
+            Err("its image is past the pixel limit")
+        );
         let lab = image(
             dictionary! {
                 "Width" => 1, "Height" => 1, "BitsPerComponent" => 8,

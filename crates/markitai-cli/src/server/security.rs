@@ -737,6 +737,18 @@ mod router_tests {
             )
             .await;
         }
+        // A path needs a few bytes: a body far past one is refused unread.
+        let large = format!(
+            r#"{{"path":"/api/history/archive","x":"{}"}}"#,
+            "a".repeat(1 << 20)
+        );
+        let refused = checked(
+            router.clone(),
+            request("POST", "/api/download-tickets", peer, &bearer, &large),
+            413,
+        )
+        .await;
+        assert_eq!(refused["reason"], "request_too_large");
     }
 
     #[tokio::test]
