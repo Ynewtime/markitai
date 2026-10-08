@@ -1,9 +1,11 @@
+use super::supervisor::{Admission, Permit, Stderr, TICK};
 use super::{CopilotConfig, Failure, FailureKind};
 use serde_json::{Value, json};
 use std::io::{BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+    atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, SyncSender},
 };
 use std::thread::JoinHandle;
@@ -13,44 +15,9 @@ pub(super) const MAX_FRAME: usize = 100 * 1024 * 1024;
 const MAX_STREAM: usize = 128 * 1024 * 1024;
 const MAX_EVENTS: usize = 4096;
 const HEADER_LIMIT: usize = 8192;
-const TICK: Duration = Duration::from_millis(20);
 
 type FrameResult = Result<Value, FailureKind>;
-static ACTIVE_PROCESSES: AtomicUsize = AtomicUsize::new(0);
-struct Permit;
-impl Permit {
-    fn acquire(deadline: Instant, cancel: Option<&AtomicBool>) -> Result<Self, Failure> {
-        loop {
-            if cancel.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-                return Err(Failure::new(
-                    FailureKind::Cancelled,
-                    "Copilot request was cancelled",
-                ));
-            }
-            if Instant::now() >= deadline {
-                return Err(Failure::new(
-                    FailureKind::Timeout,
-                    "Copilot process admission deadline exceeded",
-                ));
-            }
-            // Rust 1.99 renames this `try_update`; the minimum supported Rust predates the new name.
-            #[allow(deprecated)]
-            let admitted =
-                ACTIVE_PROCESSES.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                    (count < 8).then_some(count + 1)
-                });
-            if admitted.is_ok() {
-                return Ok(Self);
-            }
-            std::thread::sleep(TICK);
-        }
-    }
-}
-impl Drop for Permit {
-    fn drop(&mut self) {
-        ACTIVE_PROCESSES.fetch_sub(1, Ordering::AcqRel);
-    }
-}
+static ADMISSION: Admission = Admission::new();
 
 pub(super) struct Process {
     child: Child,
@@ -59,6 +26,7 @@ pub(super) struct Process {
     incoming: Option<Receiver<FrameResult>>,
     outgoing: Option<SyncSender<Vec<u8>>>,
     workers: Vec<JoinHandle<()>>,
+    stderr: Arc<Stderr>,
     pub(super) workspace: tempfile::TempDir,
     deadline: Instant,
     sequence: u64,
@@ -83,7 +51,21 @@ impl Process {
             ));
         }
         let deadline = Instant::now().checked_add(timeout).ok_or_else(limit)?;
-        let permit = Permit::acquire(deadline, cancel)?;
+        let permit = ADMISSION.acquire(|| {
+            if cancel.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+                return Err(Failure::new(
+                    FailureKind::Cancelled,
+                    "Copilot request was cancelled",
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(Failure::new(
+                    FailureKind::Timeout,
+                    "Copilot process admission deadline exceeded",
+                ));
+            }
+            Ok(())
+        })?;
         let group = crate::process_groups::Slot::reserve().ok_or_else(limit)?;
         let mut directory = tempfile::Builder::new();
         directory.prefix("markitai-copilot-");
@@ -129,6 +111,7 @@ impl Process {
                 "Cannot start the official Copilot runtime",
             )
         })?;
+        let drain = Stderr::new(0);
         let mut process = Self {
             child,
             _permit: permit,
@@ -136,6 +119,7 @@ impl Process {
             incoming: None,
             outgoing: None,
             workers: Vec::new(),
+            stderr: drain.clone(),
             workspace,
             deadline,
             sequence: 0,
@@ -143,7 +127,7 @@ impl Process {
         };
         let stdout = process.child.stdout.take().ok_or_else(protocol)?;
         let mut stdin = process.child.stdin.take().ok_or_else(protocol)?;
-        let mut stderr = process.child.stderr.take().ok_or_else(protocol)?;
+        let stderr = process.child.stderr.take().ok_or_else(protocol)?;
         let (incoming_tx, incoming_rx) = mpsc::sync_channel(2);
         let (outgoing_tx, outgoing_rx) = mpsc::sync_channel::<Vec<u8>>(1);
         process.incoming = Some(incoming_rx);
@@ -179,18 +163,7 @@ impl Process {
         process.workers.push(writer);
         let errors = std::thread::Builder::new()
             .name("copilot-stderr".into())
-            .spawn(move || {
-                // Drain instead of forwarding diagnostics which may contain credentials.
-                let mut buffer = [0u8; 8192];
-                loop {
-                    match stderr.read(&mut buffer) {
-                        Ok(0) => break,
-                        Ok(_) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                        Err(_) => break,
-                    }
-                }
-            })
+            .spawn(move || drain.drain(stderr))
             .map_err(|_| transport())?;
         process.workers.push(errors);
         Ok(process)
@@ -207,6 +180,9 @@ impl Process {
                 FailureKind::Timeout,
                 "Copilot request deadline exceeded; completion is unknown",
             ));
+        }
+        if self.stderr.overflowed() {
+            return Err(limit());
         }
         Ok(())
     }
@@ -260,6 +236,11 @@ impl Process {
                     return Ok(message);
                 }
                 Ok(Err(kind)) => {
+                    // A runtime whose stderr the drain closed may end its
+                    // stdout too; the overflow is the cause to report.
+                    if self.stderr.overflowed() {
+                        return Err(limit());
+                    }
                     return Err(Failure::new(
                         kind,
                         "Copilot protocol stream ended or exceeded its limits",

@@ -74,8 +74,8 @@ discovery likewise asks the runtime each time. HTTP-only pools retain existing
 cache behavior.
 
 Headless process execution has bounded concurrency, frame/event/input sizes and
-an overall deadline. Stderr is drained without forwarding; it has no cumulative
-byte-limit claim. Process-tree cleanup ends children before temporary workspaces
+an overall deadline. Stderr is drained without forwarding; more than 1 MiB fails
+the request. Process-tree cleanup ends children before temporary workspaces
 are removed (see [Runtime processes](#runtime-processes)).
 
 ## Runtime processes
@@ -104,6 +104,10 @@ standard system variables that command shims and Node.js need (PATHEXT,
 ComSpec, SystemRoot, the profile and program folders, and similar); none holds
 a credential. On Windows Claude Code also receives `CLAUDE_CODE_GIT_BASH_PATH`
 when it is set.
+
+Each runtime runs at most eight processes at once, counted separately for
+Copilot, Claude and Codex; a further request waits for a slot within its own
+deadline. Stderr is never forwarded, and more than 1 MiB of it fails the request.
 
 ## Claude
 

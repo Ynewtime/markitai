@@ -1,9 +1,9 @@
 //! Bounded document requests through a pinned, installed official Codex runtime.
 mod events;
-mod process;
 #[cfg(test)]
 mod tests;
 
+use super::supervisor::{Admission, Messages, ProcessFailure, Runtime};
 use super::{AuthStatus, FailureKind, Model, Request};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -80,6 +80,27 @@ impl Failure {
         }
     }
 }
+impl From<ProcessFailure> for Failure {
+    fn from(failure: ProcessFailure) -> Self {
+        Self::new(failure.kind, failure.message)
+    }
+}
+
+/// Login status is read from stderr, so its first 64 KiB are kept.
+static RUNTIME: Runtime = Runtime {
+    name: "chatgpt",
+    environment: &[],
+    stderr_kept: 64 * 1024,
+    messages: Messages {
+        unsupported: "Bounded ChatGPT process-tree cleanup is unavailable on this platform",
+        cancelled: "ChatGPT request was cancelled",
+        timeout: "ChatGPT runtime deadline exceeded; completion is unknown",
+        malformed: "ChatGPT output is malformed or exceeds its limits",
+        limit: "ChatGPT runtime resource limit exceeded",
+        transport: "ChatGPT runtime process communication failed",
+    },
+    admission: Admission::new(),
+};
 fn protocol() -> Failure {
     Failure::new(
         FailureKind::Protocol,
@@ -117,7 +138,14 @@ fn small_command(
     deadline: Instant,
     cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<u8>, Vec<u8>, std::process::ExitStatus), Failure> {
-    let mut child = process::Process::spawn(config, args, process::workspace()?, deadline, cancel)?;
+    let mut child = RUNTIME.spawn(
+        &config.executable,
+        &config.environment,
+        args,
+        RUNTIME.workspace()?,
+        deadline,
+        cancel,
+    )?;
     child.send(None, cancel)?;
     let mut output = Vec::new();
     while let Some(line) = child.next(cancel)? {
@@ -167,7 +195,7 @@ fn signed_in(
     ))
 }
 pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure> {
-    let deadline = process::deadline(timeout)?;
+    let deadline = RUNTIME.deadline(timeout)?;
     version(config, deadline, None)?;
     let authenticated = signed_in(config, deadline, None)?;
     Ok(AuthStatus {
@@ -301,7 +329,7 @@ fn exec_args(
     Ok(args)
 }
 pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Failure> {
-    let deadline = process::deadline(request.timeout)?;
+    let deadline = RUNTIME.deadline(request.timeout)?;
     if request
         .model
         .strip_prefix("chatgpt/")
@@ -335,9 +363,16 @@ pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Fai
             "Codex CLI is not signed in with a ChatGPT subscription",
         ));
     }
-    let workspace = process::workspace()?;
+    let workspace = RUNTIME.workspace()?;
     let args = exec_args(workspace.path(), request.system, request.images)?;
-    let mut child = process::Process::spawn(config, &args, workspace, deadline, request.cancel)?;
+    let mut child = RUNTIME.spawn(
+        &config.executable,
+        &config.environment,
+        &args,
+        workspace,
+        deadline,
+        request.cancel,
+    )?;
     let mut events = events::Events::default();
     let outcome = (|| {
         child.send(Some(request.user.as_bytes().to_vec()), request.cancel)?;

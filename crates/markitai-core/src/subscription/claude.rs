@@ -1,8 +1,8 @@
 //! The installed official Claude runtime owns subscription authentication.
-mod process;
 #[cfg(test)]
 mod tests;
 
+use super::supervisor::{self, Admission, Messages, ProcessFailure, Runtime};
 use super::{AuthStatus, FailureKind, Model, ObservedCall, Request};
 use base64::Engine;
 use serde::Serialize;
@@ -92,6 +92,32 @@ impl Failure {
         }
     }
 }
+impl From<ProcessFailure> for Failure {
+    fn from(failure: ProcessFailure) -> Self {
+        Self::new(failure.kind, failure.message)
+    }
+}
+
+static RUNTIME: Runtime = Runtime {
+    name: "claude",
+    environment: &[
+        ("DISABLE_AUTOUPDATER", "1"),
+        ("DISABLE_TELEMETRY", "1"),
+        ("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "1"),
+        ("CLAUDE_CODE_SKIP_PROMPT_HISTORY", "1"),
+        ("CLAUDE_CODE_STARTUP_FAILURE_RESULTS", "1"),
+    ],
+    stderr_kept: 0,
+    messages: Messages {
+        unsupported: "Bounded Claude process-tree cleanup is unavailable on this platform",
+        cancelled: "Claude request was cancelled",
+        timeout: "Claude runtime deadline exceeded; completion is unknown",
+        malformed: "Claude output is malformed or exceeds its limits",
+        limit: "Claude runtime resource limit exceeded",
+        transport: "Claude runtime process communication failed",
+    },
+    admission: Admission::new(),
+};
 
 fn protocol() -> Failure {
     Failure::new(
@@ -135,8 +161,14 @@ fn small_command(
     cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<u8>, std::process::ExitStatus), Failure> {
     let args: Vec<OsString> = args.iter().map(OsString::from).collect();
-    let mut process =
-        process::Process::spawn(config, &args, process::workspace()?, deadline, cancel)?;
+    let mut process = RUNTIME.spawn(
+        &config.executable,
+        &config.environment,
+        &args,
+        RUNTIME.workspace()?,
+        deadline,
+        cancel,
+    )?;
     process.send(None, cancel)?;
     let mut output = Vec::new();
     while let Some(line) = process.next(cancel)? {
@@ -197,7 +229,7 @@ fn version(
         .to_owned())
 }
 pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure> {
-    let deadline = process::deadline(timeout)?;
+    let deadline = RUNTIME.deadline(timeout)?;
     let installed = version(config, deadline, None)?;
     let (bytes, exit) = small_command(config, &["auth", "status"], deadline, None)?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| protocol())?;
@@ -255,8 +287,8 @@ fn start(
     system: &str,
     deadline: Instant,
     cancel: Option<&AtomicBool>,
-) -> Result<process::Process, Failure> {
-    let workspace = process::workspace()?;
+) -> Result<supervisor::Process, Failure> {
+    let workspace = RUNTIME.workspace()?;
     let prompt = private_file(workspace.path(), "system.txt", system.as_bytes())?;
     let settings = private_file(
         workspace.path(),
@@ -302,10 +334,17 @@ fn start(
         args.push("--model".into());
         args.push(model.into());
     }
-    process::Process::spawn(config, &args, workspace, deadline, cancel)
+    Ok(RUNTIME.spawn(
+        &config.executable,
+        &config.environment,
+        &args,
+        workspace,
+        deadline,
+        cancel,
+    )?)
 }
 fn initialize(
-    process: &mut process::Process,
+    process: &mut supervisor::Process,
     cancel: Option<&AtomicBool>,
 ) -> Result<Value, Failure> {
     process.send(Some(json_line(&json!({"type":"control_request","request_id":"markitai-initialize","request":{"subtype":"initialize","hooks":null,"agents":{},"skills":[]}}))?), cancel)?;
@@ -388,7 +427,7 @@ fn catalog(value: &Value) -> Result<Vec<(Model, Option<String>)>, Failure> {
     Ok(models)
 }
 pub fn models(config: &Config, timeout: Duration) -> Result<Vec<Model>, Failure> {
-    let deadline = process::deadline(timeout)?;
+    let deadline = RUNTIME.deadline(timeout)?;
     version(config, deadline, None)?;
     let mut process = start(config, None, "", deadline, None)?;
     let result = catalog(&initialize(&mut process, None)?)?;
@@ -691,7 +730,7 @@ pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Fai
             "Claude model identifier is invalid",
         ));
     }
-    let deadline = process::deadline(request.timeout)?;
+    let deadline = RUNTIME.deadline(request.timeout)?;
     version(config, deadline, request.cancel)?;
     let mut process = start(
         config,

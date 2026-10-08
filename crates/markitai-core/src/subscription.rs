@@ -4,6 +4,7 @@ mod copilot;
 pub(crate) mod fake_runtime;
 mod line;
 mod process;
+mod supervisor;
 #[cfg(test)]
 mod tests;
 

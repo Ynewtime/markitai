@@ -405,6 +405,15 @@ mod runtime {
         }
     }
     #[test]
+    fn a_stderr_flood_fails_the_request_before_its_deadline() {
+        // Stderr used to be drained without a bound, so this ran to the timeout.
+        let fixture = Fixture::new("stderr-flood");
+        let failure = complete(&fixture.cfg, fixture.request("text", None)).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::ResourceLimit);
+        assert!(!failure.error.to_string().contains("secret"));
+        fixture.assert_private_cwd_removed();
+    }
+    #[test]
     fn timeout_and_cancellation_terminate_descendant_pipe_holders() {
         for cancelled in [false, true] {
             let fixture = Fixture::new("hang");
