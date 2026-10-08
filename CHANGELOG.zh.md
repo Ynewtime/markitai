@@ -13,6 +13,7 @@
 - **`serve` 请求日志**：网页工作台加在事件流、文件和归档 URL 上的访问令牌（`?token=`）在终端和日志文件里会被遮蔽。
 - **URL 抓取**：超过 500 MB（与本地文件相同的上限）的响应会让抓取失败，不再无上限地读进内存；`Content-Length` 已超限时在读取正文前就失败。
 - **URL 中的凭据**：带 `user:password@` 的 URL 不会再把这部分写进截图文件名或 `~/.markitai/learned_spa_domains.json`。
+- **网页提取的清理**：内联 SVG 里的 `javascript:` 链接（`xlink:href`）、`srcset`/`poster`/`data` 中的此类链接，以及被制表符、换行或控制字符拆开的写法（`java&#9;script:`）都会被移除，不再进入 Markdown。
 
 ## [1.2.0] - 2026-09-28
 
