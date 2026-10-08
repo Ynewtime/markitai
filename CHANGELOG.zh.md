@@ -42,6 +42,7 @@
 
 ### 修复
 
+- `MARKITAI_NO_REMOTE_FETCH` 的读取方式与 `MARKITAI_NO_VLM_OCR` 及参考实现一致：除空值、`0`、`false`、`no`（去除首尾空白，不分大小写）外的任何值都会关闭远程抽取，` 1` 或 `Y` 不再让 Defuddle、Jina 和 Cloudflare 保持可用。`MARKITAI_PURE` 与 `MARKITAI_RECORD_HISTORY` 一样接受 `on` 且不分大小写。
 - `-p/--preset` 遇到配置 `presets` 中重新定义的内建名称（`minimal`、`standard`、`rich`）时使用配置中的定义，与工作台、其能力接口及参考实现一致，不再仍按内建定义处理。
 - 转换、`config set`/`config edit`/`init` 与工作台设置以同一方式读写配置文件。符号链接形式的配置（例如由 dotfiles 管理的 `config.json`）现在也能在工作台保存，与 `config set` 一致：保留链接，替换其指向的文件；Windows 报告文件被短暂占用时，与其他状态写入一样有限次重试。所有读取方对 FIFO、目录等非普通文件及超过 8 MiB 的文件报错，转换不再因名为 `markitai.json` 的 FIFO 无限等待，`config set` 也不再把这类文件替换成普通文件。为新配置文件创建的目录为私有权限。
 - 若 SVG 文本使用的通用 serif、sans-serif 或 monospace 字体族在主机上没有 fontdb 默认名称的字体，现在改用第一个覆盖基本拉丁字母的字体，而不是最先加载的任意字体，因此图标字体（FontAwesome、Weather Icons、Material Icons）不再成为文本排版的主字体。只装有图标字体的主机仍会报告文本所需字体不可用。

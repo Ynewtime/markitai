@@ -435,8 +435,9 @@ before defaults are filled in:
 | `ask` | asks once per run on a terminal before the first remote fallback; otherwise skipped with one note | runs (choosing it is the answer) | asks like the fallback; refused without a terminal |
 | `never`, or `--no-remote-fetch` | never | refused | refused |
 
-`MARKITAI_NO_REMOTE_FETCH=1` (also `true`, `yes`, `on`) refuses everything, as
-`never` does. The question names the page and the services the run may try and
+`MARKITAI_NO_REMOTE_FETCH=1` (any nonempty value other than `0`, `false` or
+`no`, ignoring case and surrounding whitespace) refuses everything, as `never`
+does. The question names the page and the services the run may try and
 defaults to no; one answer serves the whole run, other conversions of a batch
 wait for it, and the status line pauses while it is on screen. It needs a
 terminal on stdin and stderr and a run without `--quiet`. Without one, `ask`

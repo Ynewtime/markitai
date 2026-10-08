@@ -387,7 +387,7 @@ fn convert_inner(
     let mut pdf_has_reliable_text = true;
     let vlm_disabled = config::environment()
         .get("MARKITAI_NO_VLM_OCR")
-        .is_some_and(|value| vlm_ocr_disabled(value));
+        .is_some_and(|value| config::env_opt_out(value));
     let local_ocr = image_input
         && config::enabled(&cfg, "/ocr/enabled")
         && (!config::enabled(&cfg, "/llm/enabled") || vlm_disabled);
@@ -1108,13 +1108,6 @@ mod json_output_tests {
     }
 }
 
-fn vlm_ocr_disabled(value: &str) -> bool {
-    !matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "" | "0" | "false" | "no"
-    )
-}
-
 fn screenshot_mime(bytes: &[u8]) -> Result<&'static str> {
     match image::guess_format(bytes) {
         Ok(image::ImageFormat::Jpeg) => Ok("image/jpeg"),
@@ -1123,19 +1116,6 @@ fn screenshot_mime(bytes: &[u8]) -> Result<&'static str> {
         _ => Err(Error::Conversion(
             "Captured page has an unsupported image encoding".into(),
         )),
-    }
-}
-
-#[cfg(test)]
-mod routing_tests {
-    #[test]
-    fn vlm_ocr_optout_honors_whitespace_and_all_nonfalse_values() {
-        for value in ["1", " 1 ", "true", "enabled", "yes", "off", "arbitrary"] {
-            assert!(super::vlm_ocr_disabled(value), "{value}");
-        }
-        for value in ["", " ", "0", " false ", "No"] {
-            assert!(!super::vlm_ocr_disabled(value), "{value}");
-        }
     }
 }
 

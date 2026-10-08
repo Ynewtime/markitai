@@ -895,7 +895,8 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
         && !cli.no_pure
         && env
             .get("MARKITAI_PURE")
-            .is_some_and(|v| ["1", "true", "yes"].contains(&v.trim()))
+            .and_then(|value| config::env_opt_in(value))
+            == Some(true)
     {
         cfg["llm"]["pure"] = json!(true);
     }
@@ -905,12 +906,11 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
     if cli.screenshot_only {
         cfg["screenshot"]["enabled"] = json!(true);
     }
-    if let Some(value) = env
+    if let Some(record) = env
         .get("MARKITAI_RECORD_HISTORY")
-        .filter(|v| !v.trim().is_empty())
+        .and_then(|value| config::env_opt_in(value))
     {
-        cfg["history"]["record"] =
-            json!(["1", "true", "yes", "on"].contains(&value.trim().to_lowercase().as_str()));
+        cfg["history"]["record"] = json!(record);
     }
     if let Some(enabled) = tri(cli.record_history, cli.no_record_history) {
         cfg["history"]["record"] = json!(enabled);

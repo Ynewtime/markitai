@@ -108,6 +108,24 @@ pub fn selected_path(explicit: Option<&Path>) -> Option<PathBuf> {
     choose_path(explicit, env_path, &cwd, &home()).map(|path| expand_home(&path))
 }
 
+/// An opt-in environment switch such as `MARKITAI_PURE`: `1`, `true`, `yes`
+/// or `on`, trimmed and in any case, turn it on; any other value turns it off.
+/// `None` when the value is blank.
+pub fn env_opt_in(value: &str) -> Option<bool> {
+    let value = value.trim().to_ascii_lowercase();
+    (!value.is_empty()).then_some(matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// An opt-out environment switch such as `MARKITAI_NO_REMOTE_FETCH`: set by
+/// any value except a blank one, `0`, `false` or `no` (trimmed, any case), as
+/// the reference reads it, so an unrecognized value fails safe.
+pub fn env_opt_out(value: &str) -> bool {
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "no"
+    )
+}
+
 /// The built-in presets, in the order they are offered.
 pub const BUILTIN_PRESETS: [&str; 3] = ["minimal", "standard", "rich"];
 
@@ -1096,6 +1114,27 @@ fn assign(target: &mut Value, parts: &[String], value: Value, path: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environment_switches_trim_ignore_case_and_opt_outs_fail_safe() {
+        // MARKITAI_NO_REMOTE_FETCH used to need an exact lowercase match, so
+        // " 1" or "Y" left remote services enabled; it reads like
+        // MARKITAI_NO_VLM_OCR now.
+        for value in ["1", " 1 ", "true", "enabled", "Yes", "off", "arbitrary"] {
+            assert!(env_opt_out(value), "{value}");
+        }
+        for value in ["", " ", "0", " false ", "No"] {
+            assert!(!env_opt_out(value), "{value}");
+        }
+        // MARKITAI_PURE was case-sensitive and ignored `on`.
+        for value in ["1", " TRUE ", "Yes", "on"] {
+            assert_eq!(env_opt_in(value), Some(true), "{value}");
+        }
+        for value in ["0", "off", "no", "anything"] {
+            assert_eq!(env_opt_in(value), Some(false), "{value}");
+        }
+        assert_eq!(env_opt_in(" "), None);
+    }
 
     #[test]
     fn configured_presets_win_over_built_in_names_in_any_case() {

@@ -599,7 +599,7 @@ fn checks(
     result.insert("vision-model", vision);
     let opt_out = env
         .get("MARKITAI_NO_VLM_OCR")
-        .is_some_and(|v| !["", "0", "false", "no"].contains(&v.trim().to_lowercase().as_str()));
+        .is_some_and(|value| config::env_opt_out(value));
     let mut vlm = Check::new(
         "VLM OCR",
         "Vision OCR for scanned documents (--ocr --llm)",
