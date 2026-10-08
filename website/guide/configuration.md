@@ -391,7 +391,7 @@ Each entry in `model_list` accepts `weight` inside `litellm_params`. `1` is norm
 
 ### Adaptive Timeout
 
-The subscription providers scale the request timeout with prompt length, image count and expected output, between 60 and 600 seconds, so large documents do not time out and short requests stay responsive.
+The Copilot provider scales the request timeout with prompt length, image count and expected output, between 60 and 600 seconds, so large documents do not time out and short requests stay responsive. The Claude Agent SDK manages its own timeouts.
 
 ### Prompt Caching (Claude Agent)
 

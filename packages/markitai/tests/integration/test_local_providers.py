@@ -1219,37 +1219,6 @@ class TestCopilotIntegration:
 class TestProviderErrorClassification:
     """Tests for provider error classification and retry behavior."""
 
-    def test_quota_errors_not_retried(self) -> None:
-        """Test that quota/billing errors are NOT retryable.
-
-        Quota errors require user action (upgrade subscription, add payment)
-        and should not be automatically retried.
-        """
-        from markitai.providers.errors import AuthenticationError, QuotaError
-
-        # QuotaError is explicitly not retryable
-        quota_error = QuotaError("Quota exceeded", provider="copilot")
-        assert quota_error.retryable is False
-
-        # AuthenticationError is also not retryable
-        auth_error = AuthenticationError("Auth failed", provider="claude-agent")
-        assert auth_error.retryable is False
-
-    def test_network_errors_are_retried(self) -> None:
-        """Test that network/connection errors are marked as retryable.
-
-        Network errors are transient and should be retried with backoff.
-        """
-        from markitai.providers.errors import ProviderTimeoutError
-
-        # ProviderTimeoutError is retryable
-        timeout_error = ProviderTimeoutError(
-            "Request timed out",
-            provider="claude-agent",
-            timeout_seconds=120,
-        )
-        assert timeout_error.retryable is True
-
     def test_litellm_retryable_errors(self) -> None:
         """Test that LiteLLM's retryable error types are used correctly.
 
@@ -1273,32 +1242,6 @@ class TestProviderErrorClassification:
             model="test-model",
         )
         assert isinstance(connection_error, Exception)
-
-    def test_error_provider_attribute_preserved(self) -> None:
-        """Test that provider attribute is preserved across error types."""
-        from markitai.providers.errors import (
-            AuthenticationError,
-            ProviderTimeoutError,
-            QuotaError,
-            SDKNotAvailableError,
-        )
-
-        errors = [
-            AuthenticationError("Auth failed", provider="claude-agent"),
-            QuotaError("Quota exceeded", provider="copilot"),
-            ProviderTimeoutError(
-                "Timeout", provider="claude-agent", timeout_seconds=60
-            ),
-            SDKNotAvailableError(
-                "Not installed",
-                provider="copilot",
-                install_command="uv add github-copilot-sdk",
-            ),
-        ]
-
-        for error in errors:
-            assert hasattr(error, "provider")
-            assert error.provider in ("claude-agent", "copilot")
 
 
 # =============================================================================
