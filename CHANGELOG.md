@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- Local-browser fetching no longer fails when the page navigates while Markitai waits on it — above all the reload an interstitial (Cloudflare's "Just a moment", a 403/429/503 script check) performs, which the fetch exists to await. Waits now happen in Markitai while it keeps reading the browser's events, instead of as a timer inside the page that the navigation destroyed.
 - In `markitai serve`, a slow item retry, item delete or result read no longer freezes the job's snapshot, event stream and history while it works on files: file work runs under the job's own access lock and the shared job state is held only briefly. History reads and job creation no longer hold the job registry while locking each job or flushing a new job to disk.
 - One damaged job folder under `MARKITAI_HOME/serve/jobs` no longer stops `markitai serve` from starting or makes history, item retry and item delete fail: the folder is skipped with one warning on standard error and left in place. Retrying or deleting an item of a known job no longer rescans every saved job.
 - `markitai serve` lists history newest first by the actual time, not by comparing timestamp text: CLI histories record local time with an offset (`+08:00`) and server jobs UTC (`Z`), so outside UTC the two interleaved out of order. The history ZIP likewise takes jobs oldest first, so its `(2)` folder suffixes follow creation order.

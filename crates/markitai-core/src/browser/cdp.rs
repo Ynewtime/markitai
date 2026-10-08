@@ -736,12 +736,46 @@ impl Browser {
         self.in_flight.is_empty()
             && self.last_network_change.elapsed() >= Duration::from_millis(500)
     }
+    /// Waits here while handling protocol events. A promise awaited in the
+    /// page would fail when the page navigates during the wait, which is what
+    /// an interstitial's own reload does.
     pub fn pause(&mut self, duration: Duration) -> Result<()> {
-        let millis = duration.as_millis().min(u64::MAX as u128) as u64;
-        self.evaluate(&format!(
-            "new Promise(resolve => setTimeout(() => resolve(true), {millis}))"
-        ))?;
-        Ok(())
+        let result = self.pause_inner(Instant::now() + duration);
+        if result.is_err() {
+            self.healthy = false;
+        }
+        result
+    }
+    fn pause_inner(&mut self, until: Instant) -> Result<()> {
+        loop {
+            let now = Instant::now();
+            if now >= until {
+                return Ok(());
+            }
+            if now >= self.deadline {
+                return Err(failure("Browser operation timed out"));
+            }
+            self.socket
+                .get_mut()
+                .set_read_timeout(Some(until.min(self.deadline) - now))?;
+            match self.socket.read() {
+                Ok(Message::Text(text)) => {
+                    let value = decode(&text)?;
+                    self.event(&value)?;
+                }
+                Ok(Message::Ping(_) | Message::Pong(_)) => {}
+                Ok(Message::Close(_)) => return Err(failure("Chromium closed its page")),
+                Ok(_) => return Err(failure("Unexpected Chromium protocol frame")),
+                Err(tungstenite::Error::Io(error))
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => {
+                    return Err(failure("Browser operation timed out or connection closed"));
+                }
+            }
+        }
     }
 }
 
@@ -956,6 +990,37 @@ mod tests {
         browser.call("Page.getFrameTree", json!({})).unwrap();
         assert_eq!(browser.status, Some(201));
         assert!(!browser.idle());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn a_pause_survives_the_page_navigating_and_records_its_new_status() {
+        let (mut browser, worker) = mock(4096, |mut socket| {
+            // The interstitial's reload lands during the wait.
+            send(
+                &mut socket,
+                json!({"sessionId":"test-session","method":"Network.responseReceived","params":{"type":"Document","frameId":"main","response":{"status":200}}}),
+            );
+            loop {
+                let command = receive(&mut socket);
+                if command["method"] == "Browser.close" {
+                    break;
+                }
+                // What Chromium answers a promise the navigation interrupted.
+                send(
+                    &mut socket,
+                    json!({"id":command["id"],"error":{"code":-32000,"message":"Execution context was destroyed."}}),
+                );
+            }
+        });
+        browser.status = Some(503);
+        browser.pause(Duration::from_millis(150)).unwrap();
+        assert_eq!(browser.status, Some(200));
+        assert!(browser.healthy);
+        // Past the operation deadline a pause still fails.
+        browser.deadline = Instant::now() + Duration::from_millis(20);
+        assert!(browser.pause(Duration::from_millis(200)).is_err());
+        drop(browser);
         worker.join().unwrap();
     }
 
