@@ -34,6 +34,7 @@ except (ImportError, OSError):
     cairosvg = None
 
 from markitai.constants import (
+    DEFAULT_CACHE_SIZE_LIMIT,
     DEFAULT_IO_CONCURRENCY,
     DEFAULT_MAX_IMAGES_PER_BATCH,
     DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP,
@@ -106,6 +107,8 @@ class LLMProcessor:
         no_cache_patterns: list[str] | None = None,
         cache_global_dir: Path | str | None = None,
         extra_cleaning_rules: str = "",
+        cache_enabled: bool = True,
+        cache_max_size_bytes: int = DEFAULT_CACHE_SIZE_LIMIT,
     ) -> None:
         """
         Initialize LLM processor.
@@ -126,6 +129,10 @@ class LLMProcessor:
                               prompts (e.g. the rag profile's table-consistency
                               constraint). Empty keeps prompts and cache keys
                               byte-identical to the default.
+            cache_enabled: False disables the persistent cache entirely (no
+                              reads, no writes), from config.cache.enabled.
+            cache_max_size_bytes: Size limit of the persistent cache file,
+                              from config.cache.max_size_bytes.
         """
         self.config = config
         self._runtime = runtime
@@ -191,6 +198,8 @@ class LLMProcessor:
             resolved_cache_dir = Path(cache_global_dir).expanduser()
         self._persistent_cache = PersistentCache(
             global_dir=resolved_cache_dir,
+            max_size_bytes=cache_max_size_bytes,
+            enabled=cache_enabled,
             skip_read=no_cache,
             no_cache_patterns=no_cache_patterns,
         )
