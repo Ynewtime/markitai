@@ -112,19 +112,34 @@ def _cell_text(cell: ElementTree.Element) -> str:
 
 def _table_rows(table: ElementTree.Element) -> list[list[str]]:
     """Read a table into a rectangular matrix, trailing blanks trimmed."""
+    # Runs of blank cells/rows keep their full width, but are only emitted
+    # once a value follows: the trailing filler runs spreadsheets write
+    # (thousands wide) never get expanded.
     rows: list[list[str]] = []
+    blank_rows = 0
     for element in table.iter():
         if _local(element.tag) != "table-row":
             continue
         cells: list[str] = []
+        blank_cells = 0
         for cell in element:
             if _local(cell.tag) not in {"table-cell", "covered-table-cell"}:
                 continue
             text = _cell_text(cell)
             repeat = _repeat_count(cell, "number-columns-repeated")
-            cells.extend([text] * (1 if not text else repeat))
+            if not text:
+                blank_cells += repeat
+                continue
+            cells.extend([""] * blank_cells)
+            blank_cells = 0
+            cells.extend([text] * repeat)
         repeat_rows = _repeat_count(element, "number-rows-repeated")
-        rows.extend([cells] * (1 if not any(cells) else repeat_rows))
+        if not any(cells):
+            blank_rows += repeat_rows
+            continue
+        rows.extend([[] for _ in range(blank_rows)])
+        blank_rows = 0
+        rows.extend([cells] * repeat_rows)
 
     while rows and not any(cell.strip() for cell in rows[-1]):
         rows.pop()
