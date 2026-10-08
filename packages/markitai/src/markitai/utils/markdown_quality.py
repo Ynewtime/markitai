@@ -12,15 +12,15 @@ def normalize_markdown(content: str) -> str:
     Returns:
         Cleaned markdown content with normalized trailing newline
     """
+    from markitai.utils.page_chrome import strip_repeated_marker_lines
     from markitai.utils.text import (
-        clean_ppt_headers_footers,
         clean_residual_placeholders,
         fix_broken_markdown_links,
         normalize_markdown_whitespace,
     )
 
     content = fix_broken_markdown_links(content)
-    content = clean_ppt_headers_footers(content)
+    content = strip_repeated_marker_lines(content)
     content = clean_residual_placeholders(content)
     content = normalize_markdown_whitespace(content)
     return content.rstrip() + "\n"

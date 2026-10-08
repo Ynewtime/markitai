@@ -347,47 +347,23 @@ class TestPostProcessingCleanup:
         fixed = fix_broken_markdown_links(broken)
         assert "\n" not in fixed.split("](")[0]  # No newline in link text
 
-    def test_clean_ppt_headers_footers(self) -> None:
-        """Test that PPT headers/footers are cleaned with page markers."""
-        from markitai.utils.text import clean_ppt_headers_footers
+    def test_strip_repeated_slide_footers(self) -> None:
+        """A footer repeated at the end of every slide is removed."""
+        from markitai.utils.page_chrome import strip_repeated_marker_lines
 
-        # Content with page markers (realistic PPTX output)
-        test_content = """<!-- Slide 1 -->
+        test_content = "".join(
+            f"<!-- Slide number: {i} -->\n\n## Slide {i}\n\n{body}\n\n"
+            f"FREE TEST DATA\n{i}\n\n"
+            for i, body in enumerate(
+                ["Content here", "More content", "Real content", "Last content"], 1
+            )
+        )
+        cleaned = strip_repeated_marker_lines(test_content)
 
-# Slide 1
-
-Content here
-
-FTD
-FREE TEST DATA
-1
-
-<!-- Slide 2 -->
-
-## Slide 2
-
-More content
-
-FTD
-FREE TEST DATA
-2
-
-<!-- Slide 3 -->
-
-## Slide 3
-
-Real content
-
-FTD
-FREE TEST DATA
-3
-"""
-        cleaned = clean_ppt_headers_footers(test_content)
-
-        # Common footer lines should be removed
-        # Note: "FTD" and "FREE TEST DATA" appear 3 times, so they should be detected
-        assert "FREE TEST DATA" not in cleaned or cleaned.count("FREE TEST DATA") < 3
+        assert "FREE TEST DATA" not in cleaned
         assert "Real content" in cleaned
+        assert "## Slide 4" in cleaned
+        assert "<!-- Slide number: 4 -->" in cleaned
 
     def test_clean_residual_placeholders(self) -> None:
         """Test that residual placeholders are cleaned."""

@@ -1387,14 +1387,14 @@ class TestNormalizeBoundaryLine:
 
     def test_lowercases_and_collapses_whitespace(self) -> None:
         """Case and whitespace runs are normalized."""
-        from markitai.converter.pdf import normalize_boundary_line
+        from markitai.utils.page_chrome import normalize_boundary_line
 
         assert normalize_boundary_line("  Acme   Corp  ") == "acme corp"
         assert normalize_boundary_line("CONFIDENTIAL") == "confidential"
 
     def test_digit_runs_collapse_to_hash(self) -> None:
         """Digit runs collapse so page counters compare equal."""
-        from markitai.converter.pdf import normalize_boundary_line
+        from markitai.utils.page_chrome import normalize_boundary_line
 
         assert normalize_boundary_line("Page 1 of 6") == "page # of #"
         assert normalize_boundary_line("Page 12 of 6") == "page # of #"
@@ -1421,7 +1421,7 @@ class TestStripRepeatedPageLines:
 
     def test_strips_running_header_and_footer(self) -> None:
         """Header and digit-normalized footer are removed from every page."""
-        from markitai.converter.pdf import strip_repeated_page_lines
+        from markitai.utils.page_chrome import strip_repeated_page_lines
 
         result, stripped = strip_repeated_page_lines(self._pages(5))
 
@@ -1434,7 +1434,7 @@ class TestStripRepeatedPageLines:
 
     def test_documents_under_four_pages_exempt(self) -> None:
         """Documents with fewer than 4 pages are returned unchanged."""
-        from markitai.converter.pdf import strip_repeated_page_lines
+        from markitai.utils.page_chrome import strip_repeated_page_lines
 
         pages = self._pages(3)
         result, stripped = strip_repeated_page_lines(pages)
@@ -1444,7 +1444,7 @@ class TestStripRepeatedPageLines:
 
     def test_markdown_headings_never_stripped(self) -> None:
         """Lines starting with # are protected even when repeated."""
-        from markitai.converter.pdf import strip_repeated_page_lines
+        from markitai.utils.page_chrome import strip_repeated_page_lines
 
         pages = [
             f"# Chapter Overview\n\nBody about {self._WORDS[i - 1]}.\n\n"
@@ -1459,7 +1459,7 @@ class TestStripRepeatedPageLines:
 
     def test_table_rows_never_stripped(self) -> None:
         """Lines starting with | are protected even when repeated."""
-        from markitai.converter.pdf import strip_repeated_page_lines
+        from markitai.utils.page_chrome import strip_repeated_page_lines
 
         pages = [
             f"Body about {self._WORDS[i - 1]}.\n\n|Metric|Value|\n|---|---|"
@@ -1473,7 +1473,7 @@ class TestStripRepeatedPageLines:
 
     def test_infrequent_lines_kept(self) -> None:
         """A line on only 2 of 5 pages is below threshold and kept."""
-        from markitai.converter.pdf import strip_repeated_page_lines
+        from markitai.utils.page_chrome import strip_repeated_page_lines
 
         pages = [
             f"DRAFT\n\nBody {self._WORDS[i - 1]}."
@@ -1488,7 +1488,7 @@ class TestStripRepeatedPageLines:
 
     def test_body_occurrences_survive(self) -> None:
         """Only boundary occurrences are removed; mid-page copies stay."""
-        from markitai.converter.pdf import strip_repeated_page_lines
+        from markitai.utils.page_chrome import strip_repeated_page_lines
 
         page_with_body_copy = (
             "Confidential\nIntro line one.\nIntro line two.\n"
