@@ -1602,9 +1602,7 @@ async def process_url_with_vision(
             f"{_redact_urls_in_message(format_error_message(e))}, "
             "falling back to standard processing"
         )
-        from rich.console import Console
-
-        Console(stderr=True).print(
+        get_stderr_console().print(
             "[yellow]Warning: Vision enhancement failed for "
             f"{_safe_url_for_display(url)}, falling back to standard processing[/yellow]"
         )

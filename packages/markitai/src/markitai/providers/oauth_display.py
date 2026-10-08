@@ -23,9 +23,9 @@ _PROVIDER_LABELS: dict[str, str] = {
 
 def _get_stderr_console() -> Console:
     """Lazy import and create stderr console."""
-    from rich.console import Console
+    from markitai.utils.term import make_stderr_console
 
-    return Console(stderr=True)
+    return make_stderr_console()
 
 
 def show_login_start(provider: str, *, console: Console | None = None) -> None:

@@ -10,6 +10,35 @@ from __future__ import annotations
 
 from rich.console import Console
 
+
+class _StderrConsole(Console):
+    """Console for stderr diagnostics that only hard-wraps on a real terminal.
+
+    Off a TTY (pipes, log files, CI) Rich falls back to 80 columns and would
+    break long messages mid-sentence, so ``print`` soft-wraps there instead.
+    Checked per print because ``sys.stderr`` can be swapped after creation.
+    """
+
+    @property
+    def soft_wrap(self) -> bool:
+        if self._soft_wrap:
+            return True
+        isatty = getattr(self.file, "isatty", None)
+        try:
+            return not (isatty is not None and isatty())
+        except ValueError:  # closed stream
+            return True
+
+    @soft_wrap.setter
+    def soft_wrap(self, value: bool) -> None:
+        self._soft_wrap = value
+
+
+def make_stderr_console() -> Console:
+    """Create a stderr Console that does not hard-wrap when piped."""
+    return _StderrConsole(stderr=True)
+
+
 # Singleton instances
 _console: Console | None = None
 _stderr_console: Console | None = None
@@ -27,7 +56,7 @@ def get_stderr_console() -> Console:
     """Get the shared stderr Console instance."""
     global _stderr_console
     if _stderr_console is None:
-        _stderr_console = Console(stderr=True)
+        _stderr_console = make_stderr_console()
     return _stderr_console
 
 
