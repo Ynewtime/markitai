@@ -423,3 +423,56 @@ class TestNestedBatchAssetCollisions:
         assert job_dir is not None
         assets = job_dir / "out" / ".markitai" / "assets"
         assert [p.name for p in assets.iterdir()] == ["report.pdf-0001-01.jpg"]
+
+
+class TestOnlyTheRunsAssetsAreCopied:
+    """Regression: every file in the output dir's asset folders was copied
+    into each recorded job, so a shared ``-o out/`` duplicated the assets of
+    every document ever converted there into every history job and zip."""
+
+    def test_unrelated_documents_assets_stay_behind(self, tmp_path: Path) -> None:
+        work = tmp_path / "out"
+        assets = work / ".markitai" / "assets"
+        shots = work / ".markitai" / "screenshots"
+        assets.mkdir(parents=True)
+        shots.mkdir(parents=True)
+        # This run's document: its own image, plus a URL-named screenshot
+        # that only a reference ties to it
+        (assets / "report.pdf-0001-01.jpg").write_bytes(b"own image")
+        (shots / "example.com_page.full.jpg").write_bytes(b"own shot")
+        (work / "report.pdf.md").write_text(
+            "![](.markitai/assets/report.pdf-0001-01.jpg)\n"
+            "<!-- ![Page](.markitai/screenshots/example.com_page.full.jpg) -->\n",
+            encoding="utf-8",
+        )
+        # An earlier run's document in the same output dir
+        (assets / "old.docx.0001.png").write_bytes(b"old image")
+        (shots / "old.docx.page0001.jpg").write_bytes(b"old shot")
+        (work / "old.docx.md").write_text(
+            "![](.markitai/assets/old.docx.0001.png)\n", encoding="utf-8"
+        )
+
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="file",
+                    source="report.pdf",
+                    status="completed",
+                    output_path=work / "report.pdf.md",
+                )
+            ],
+            options=OPTIONS,
+            jobs_root=tmp_path / "jobs",
+        )
+
+        assert job_dir is not None
+        copied = {
+            p.relative_to(job_dir / "out").as_posix()
+            for p in (job_dir / "out").rglob("*")
+            if p.is_file()
+        }
+        assert copied == {
+            "report.pdf.md",
+            ".markitai/assets/report.pdf-0001-01.jpg",
+            ".markitai/screenshots/example.com_page.full.jpg",
+        }

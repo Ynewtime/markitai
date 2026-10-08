@@ -122,10 +122,30 @@ def _unique_asset_name(name: str, taken: set[str]) -> str:
     return f"{stem}-{counter}{suffix}"
 
 
+def _belongs_to_outputs(rel: str, name: str, bases: set[str], texts: list[str]) -> bool:
+    """Whether asset ``rel/name`` belongs to one of the recorded outputs.
+
+    The same two rules ``serve.artifacts.item_asset_files`` applies, read
+    loosely so they only ever err on the side of copying: the name starts
+    with an output's base name (``report.pdf-0001-01.jpg``,
+    ``report.pdf.page0001.jpg``), or an output mentions ``rel/name`` (URL
+    screenshots are named after the URL, and only a reference ties them to
+    their output). A shared ``-o`` dir holds the assets of every document
+    ever converted there; the rest are not this run's.
+    """
+    if any(name.startswith((f"{base}.", f"{base}-")) for base in bases):
+        return True
+    spellings = {f"{rel}/{name}", quote(f"{rel}/{name}", safe="/._~-")}
+    return any(spelling in text for text in texts for spelling in spellings)
+
+
 def _merge_asset_root(
-    asset_root: Path, out_dir: Path, taken: dict[str, set[str]]
+    asset_root: Path,
+    out_dir: Path,
+    taken: dict[str, set[str]],
+    sources: list[Path],
 ) -> dict[tuple[str, str], str]:
-    """Copy one asset root's asset dirs into the job's flat out dir.
+    """Copy one asset root's assets used by *sources* into the job's out dir.
 
     Nested directory batches keep one asset root per output subdirectory,
     and the job flattens them into a single ``out/`` — so two roots can hold
@@ -135,9 +155,23 @@ def _merge_asset_root(
     first, and the rename is returned so the outputs of that root can have
     their references rewritten.
 
+    Args:
+        asset_root: Directory holding the asset dirs.
+        out_dir: The job's out dir.
+        taken: Asset names already copied, per asset dir.
+        sources: The recorded output files that use this root; only their
+            assets are copied (see :func:`_belongs_to_outputs`).
+
     Returns:
         ``{(asset rel dir, original name): new name}`` for renamed files.
     """
+    bases = {_split_markdown_suffix(source.name)[0] for source in sources}
+    texts: list[str] = []
+    for source in sources:
+        try:
+            texts.append(source.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
     renames: dict[tuple[str, str], str] = {}
     for rel in (ASSETS_REL_PATH, SCREENSHOTS_REL_PATH, VISIBLE_ASSETS_REL_PATH):
         src_dir = asset_root / rel
@@ -149,6 +183,8 @@ def _merge_asset_root(
             if not src.is_file():
                 continue
             rel_name = src.relative_to(src_dir).as_posix()
+            if not _belongs_to_outputs(rel, rel_name, bases, texts):
+                continue
             dst = dst_dir / rel_name
             if dst.is_file():
                 if filecmp.cmp(src, dst, shallow=False):
@@ -328,14 +364,15 @@ def _record_cli_job(
         for item in items:
             outputs.append(_copy_item_output(item, out_dir, used_names))
 
-        # Preserve referenced image/screenshot assets so history downloads
-        # and archives keep working links. Only the asset subdirs are
-        # copied — reports/ and states/ are batch bookkeeping, not output.
+        # Preserve the recorded outputs' image/screenshot assets so history
+        # downloads and archives keep working links. Only the asset subdirs
+        # are copied — reports/ and states/ are batch bookkeeping, not output.
         # The source relpath depth bounds how far above the output a nested
         # batch's asset root may sit; URL outputs are always flat. Roots are
         # merged into the one out dir with clashing names made unique, and
         # each copied output's references follow its own root's renames.
         root_outputs: dict[Path, list[str]] = {}
+        root_sources: dict[Path, list[Path]] = {}
         for item, output in zip(items, outputs, strict=True):
             if item.output_path is None:
                 continue
@@ -344,11 +381,15 @@ def _record_cli_job(
             if asset_root is None:
                 continue
             copied = root_outputs.setdefault(asset_root, [])
+            sources = root_sources.setdefault(asset_root, [])
             if output is not None:
                 copied.append(output)
+                sources.append(item.output_path)
         taken_assets: dict[str, set[str]] = {}
         for asset_root, copied_outputs in root_outputs.items():
-            renames = _merge_asset_root(asset_root, out_dir, taken_assets)
+            renames = _merge_asset_root(
+                asset_root, out_dir, taken_assets, root_sources[asset_root]
+            )
             if renames:
                 for output in copied_outputs:
                     _rewrite_asset_refs(out_dir / output, renames)
