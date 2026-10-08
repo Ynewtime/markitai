@@ -137,6 +137,17 @@ pub fn open_no_follow(options: &OpenOptions, path: &Path) -> io::Result<File> {
     imp::open_no_follow(options, path)
 }
 
+/// Everything `reader` holds, or `None` when that is more than `limit` bytes.
+/// At most `limit + 1` bytes are read, so a growing source cannot exceed it.
+pub fn read_limited(reader: impl io::Read, limit: u64) -> io::Result<Option<Vec<u8>>> {
+    use io::Read;
+    let mut bytes = Vec::new();
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    Ok((bytes.len() as u64 <= limit).then_some(bytes))
+}
+
 /// Open an existing file for reading without blocking on a FIFO; a final link
 /// is followed only when `follow` is set.
 pub fn open_read(path: &Path, follow: bool) -> io::Result<File> {

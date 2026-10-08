@@ -2,7 +2,7 @@ use super::checked_url;
 use crate::{Error, Result};
 use reqwest::{blocking::Client, redirect::Policy};
 use serde_json::{Value, json};
-use std::{collections::HashSet, io::Read, time::Duration};
+use std::{collections::HashSet, time::Duration};
 const MAX_RESPONSE: u64 = 2 * 1024 * 1024;
 const MAX_MODELS: usize = 1000;
 fn failure(message: &str) -> Error {
@@ -67,14 +67,9 @@ pub(super) fn load(provider: &str, base: &str, key: Option<&str>) -> Result<Valu
     {
         return Err(failure("Model discovery response exceeds 2 MiB"));
     }
-    let mut bytes = Vec::new();
-    response
-        .take(MAX_RESPONSE + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| failure("Cannot read model discovery response"))?;
-    if bytes.len() as u64 > MAX_RESPONSE {
-        return Err(failure("Model discovery response exceeds 2 MiB"));
-    }
+    let bytes = crate::platform::read_limited(response, MAX_RESPONSE)
+        .map_err(|_| failure("Cannot read model discovery response"))?
+        .ok_or_else(|| failure("Model discovery response exceeds 2 MiB"))?;
     let data: Value = serde_json::from_slice(&bytes)
         .map_err(|_| failure("Model discovery response is not JSON"))?;
     parse(provider, &data)

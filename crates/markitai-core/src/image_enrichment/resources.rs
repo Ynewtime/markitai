@@ -191,14 +191,8 @@ fn local_image(source: &str, target: &str, allow_symlinks: bool) -> Result<Vec<u
     if !meta.is_file() || meta.len() > MAX_IMAGE as u64 {
         return Err(failure("local image is not a file within the 64 MiB limit"));
     }
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(MAX_IMAGE as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_IMAGE {
-        return Err(failure("local image grew beyond 64 MiB"));
-    }
-    Ok(bytes)
+    crate::platform::read_limited(std::fs::File::open(path)?, MAX_IMAGE as u64)?
+        .ok_or_else(|| failure("local image grew beyond 64 MiB"))
 }
 fn private_origin(url: &Url) -> bool {
     match url.host() {

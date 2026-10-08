@@ -153,7 +153,7 @@ pub const FILE_LIMIT: usize = 8 * 1024 * 1024;
 /// must be regular (`InvalidInput` otherwise) and at most [`FILE_LIMIT`] bytes
 /// (`FileTooLarge`); opening never blocks on a FIFO.
 pub fn read_file(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
-    use std::io::{ErrorKind, Read};
+    use std::io::ErrorKind;
     let regular = |metadata: std::fs::Metadata| {
         if metadata.is_file() {
             Ok(())
@@ -174,15 +174,13 @@ pub fn read_file(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
     };
     // The name may have changed since the check above.
     regular(file.metadata()?)?;
-    let mut bytes = Vec::new();
-    file.take(FILE_LIMIT as u64 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > FILE_LIMIT {
-        return Err(std::io::Error::new(
+    match crate::platform::read_limited(file, FILE_LIMIT as u64)? {
+        Some(bytes) => Ok(Some(bytes)),
+        None => Err(std::io::Error::new(
             ErrorKind::FileTooLarge,
             "configuration exceeds 8 MiB",
-        ));
+        )),
     }
-    Ok(Some(bytes))
 }
 
 /// A replacement configuration, staged beside the file it replaces.

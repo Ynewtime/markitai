@@ -4,7 +4,7 @@ use reqwest::blocking::{Client as HttpClient, Response, multipart};
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::io::{BufReader, Read};
+use std::io::BufReader;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use url::Url;
@@ -496,16 +496,11 @@ impl Client {
                 "Batch control response exceeds its byte limit",
             ));
         }
-        let mut bytes = Vec::new();
-        response
-            .take(limit as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| Error::Transport)?;
-        if bytes.len() > limit {
-            return Err(Error::Limit(
+        let bytes = crate::platform::read_limited(response, limit as u64)
+            .map_err(|_| Error::Transport)?
+            .ok_or(Error::Limit(
                 "Batch control response exceeds its byte limit",
-            ));
-        }
+            ))?;
         let value = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
         Ok((value, bytes.len()))
     }

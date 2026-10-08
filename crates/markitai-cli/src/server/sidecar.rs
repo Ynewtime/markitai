@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions, TryLockError},
-    io::{self, Read, Write},
+    io::{self, Write},
     path::Path,
     time::{Duration, Instant},
 };
@@ -30,11 +30,8 @@ fn read(path: &Path) -> io::Result<Value> {
     if !file.metadata()?.is_file() || file.metadata()?.len() > LIMIT {
         return Err(io::Error::other("invalid image metadata size"));
     }
-    let mut bytes = Vec::new();
-    file.take(LIMIT + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > LIMIT {
-        return Err(io::Error::other("image metadata exceeds limit"));
-    }
+    let bytes = platform::read_limited(file, LIMIT)?
+        .ok_or_else(|| io::Error::other("image metadata exceeds limit"))?;
     let value: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     if !value.is_object()
         || ["images", "assets"]

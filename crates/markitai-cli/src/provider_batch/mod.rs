@@ -11,7 +11,6 @@ use markitai_core::provider_batch as provider;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::time::Duration;
 
 const MEMBER_LIMIT: u64 = 100 * 1024 * 1024;
@@ -29,16 +28,9 @@ fn member(path: &Path) -> CliResult<Vec<u8>> {
             "Provider Batch output member is not a bounded regular file",
         ));
     }
-    let mut bytes = Vec::new();
-    file.take(MEMBER_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(runtime)?;
-    if bytes.len() as u64 > MEMBER_LIMIT {
-        return Err(runtime(
-            "Provider Batch output member exceeds its byte limit",
-        ));
-    }
-    Ok(bytes)
+    markitai_core::platform::read_limited(file, MEMBER_LIMIT)
+        .map_err(runtime)?
+        .ok_or_else(|| runtime("Provider Batch output member exceeds its byte limit"))
 }
 
 pub(super) fn reject_pending(input: &Path, output: &Path, cfg: &Value) -> CliResult<()> {

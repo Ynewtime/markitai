@@ -2,6 +2,20 @@ use super::*;
 use std::io::Write;
 
 #[test]
+fn limited_reads_return_everything_up_to_the_limit_and_nothing_above_it() {
+    assert_eq!(read_limited(&b""[..], 0).unwrap(), Some(Vec::new()));
+    assert_eq!(
+        read_limited(&b"abc"[..], 3).unwrap().as_deref(),
+        Some(&b"abc"[..])
+    );
+    assert_eq!(read_limited(&b"abcd"[..], 3).unwrap(), None);
+    assert_eq!(
+        read_limited(&b"a"[..], u64::MAX).unwrap().as_deref(),
+        Some(&b"a"[..])
+    );
+}
+
+#[test]
 fn verbatim_drive_and_unc_paths_lose_the_prefix_only_when_spelled_alike() {
     for (verbatim, plain) in [
         (r"\\?\C:\", Some(r"C:\")),

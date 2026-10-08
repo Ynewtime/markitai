@@ -296,15 +296,9 @@ fn read_body(response: Response, service: Option<&str>) -> Result<Vec<u8>> {
     if response.content_length().is_some_and(|n| n > MAX_RESPONSE) {
         return Err(Error::Fetch("Response exceeds 100 MiB".into()));
     }
-    let mut bytes = Vec::new();
-    response
-        .take(MAX_RESPONSE + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| Error::Fetch(format!("Cannot read HTTP response: {e}")))?;
-    if bytes.len() as u64 > MAX_RESPONSE {
-        return Err(Error::Fetch("Response exceeds 100 MiB".into()));
-    }
-    Ok(bytes)
+    crate::platform::read_limited(response, MAX_RESPONSE)
+        .map_err(|e| Error::Fetch(format!("Cannot read HTTP response: {e}")))?
+        .ok_or_else(|| Error::Fetch("Response exceeds 100 MiB".into()))
 }
 
 /// Whether an address is outside the public internet. IPv6 forms that carry

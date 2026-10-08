@@ -4,7 +4,6 @@
 use super::*;
 use crate::platform;
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io::Read;
 use std::time::{Duration, Instant};
 
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
@@ -73,11 +72,8 @@ fn read(path: &Path, allow_symlinks: bool) -> Result<Option<Value>> {
             "Existing image metadata is not a regular file within the 16 MiB limit",
         ));
     }
-    let mut bytes = Vec::new();
-    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_BYTES {
-        return Err(invalid("Image metadata exceeds 16 MiB"));
-    }
+    let bytes = crate::platform::read_limited(file, MAX_BYTES)?
+        .ok_or_else(|| invalid("Image metadata exceeds 16 MiB"))?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|_| invalid("Existing image metadata is invalid JSON; its bytes were retained"))?;
     if !value.is_object() {

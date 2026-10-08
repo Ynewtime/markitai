@@ -191,7 +191,6 @@ fn extract_as_inner(
         numbers::extract_directory(path)?
     } else {
         let bytes = if extension == "numbers" {
-            use std::io::Read;
             const LIMIT: u64 = 128 * 1024 * 1024;
             let file = std::fs::File::open(path)?;
             if file.metadata()?.len() > LIMIT {
@@ -199,14 +198,9 @@ fn extract_as_inner(
                     "Numbers package exceeds the 128 MiB limit".into(),
                 ));
             }
-            let mut bytes = Vec::new();
-            file.take(LIMIT + 1).read_to_end(&mut bytes)?;
-            if bytes.len() as u64 > LIMIT {
-                return Err(Error::Conversion(
-                    "Numbers package exceeds the 128 MiB limit".into(),
-                ));
-            }
-            bytes
+            crate::platform::read_limited(file, LIMIT)?.ok_or_else(|| {
+                Error::Conversion("Numbers package exceeds the 128 MiB limit".into())
+            })?
         } else {
             std::fs::read(path)?
         };

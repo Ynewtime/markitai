@@ -500,15 +500,10 @@ pub(crate) fn extract(
     cfg: &Value,
     local_ocr: bool,
 ) -> Result<(Document, Vec<VisionImage>)> {
-    let mut bytes = Vec::new();
     // The shared input policy bounds ordinary files. A growing input cannot
     // bypass that ceiling while being read.
-    std::fs::File::open(path)?
-        .take(500 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > 500 * 1024 * 1024 {
-        return Err(error("image input exceeds 500 MiB"));
-    }
+    let bytes = crate::platform::read_limited(std::fs::File::open(path)?, 500 * 1024 * 1024)?
+        .ok_or_else(|| error("image input exceeds 500 MiB"))?;
     if tiff::signature(&bytes) && tiff::multiple(&bytes)? {
         return extract_tiff(path, bytes, cfg, local_ocr);
     }
