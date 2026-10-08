@@ -308,7 +308,8 @@ does. The first rule that applies wins:
    of `NO_PROXY` (or `no_proxy`) count as local-only patterns too. Patterns use
    the `NO_PROXY` grammar: `*`, `.name` and `*.name` (subdomains only), CIDR
    blocks (`10.0.0.0/8`, `192.168.1.0/255.255.255.0`, `fd00::/8`), and exact
-   hosts or addresses.
+   hosts or addresses. A Unicode name such as `bücher.de` matches its punycode
+   host.
 2. `fetch.domain_profiles."<host[:port]>".strategy_priority` (the exact
    authority, as the browser profile is looked up) replaces the order.
 3. That profile's `prefer_strategy` goes first, followed by the default order
@@ -348,6 +349,11 @@ Remote services are tried only after the local steps could not read the page,
 unless a configured priority puts one first, and never for a 404 or 410, a
 configuration or input error, or a host that resolves to a non-public address
 (checked once, before the first remote request; the failure then says so).
+Non-public covers private, loopback, link-local, shared, benchmarking,
+documentation, reserved and multicast ranges, IPv6 unique-local and site-local
+addresses, and IPv6 forms that carry such an IPv4 address (mapped, compatible,
+NAT64 `64:ff9b::/96` and 6to4 `2002::/16`). The service receives the URL as
+parsed and checked, not the text as typed.
 Cloudflare is passed over when its credentials are not set. The first remote
 service that reads the page wins; its result names it in `fetch_strategy` and
 is not stored in the page cache. When every step fails, the local failure comes
@@ -686,7 +692,10 @@ a cache miss and fetching continues over the network.
 
 The database is plaintext. It stores original/final URLs and metadata as well
 as Markdown; URL credentials and query tokens can therefore be stored. A
-hashed key does not make its contents secret-free. Direct local fetching keeps
+hashed key does not make its contents secret-free. On Unix a directory created
+for the store is `0700` and the database `0600`; a store an earlier version left
+readable by others is narrowed, with its SQLite side files, when it is next
+opened for writing. A store that is a link is refused. Direct local fetching keeps
 its existing trusted-session behavior; this cache is not suitable for reuse
 across anonymous service authority boundaries without additional policy.
 
@@ -731,7 +740,8 @@ all setting subprocesses, whose output is limited and process group reaped.
 `NO_PROXY` (or `no_proxy` when it is unset or empty) always applies; a system
 exception list applies only with its system proxy. `*` matches everything,
 `.name`/`*.name` match subdomains only, other names and addresses match exactly,
-and CIDR blocks match addresses. Each unsupported entry, such as `<local>`, a
+and CIDR blocks (a prefix length or an IPv4 netmask) match addresses; this is
+the grammar of `fetch.policy.local_only_patterns` too. Each unsupported entry, such as `<local>`, a
 port-qualified host, another wildcard or malformed CIDR, is ignored on its own,
 as the reference ignores it. Loopback hosts are always direct. Proxy settings
 above 64 KiB are rejected. Static fetch accepts credentials in an environment

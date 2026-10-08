@@ -54,7 +54,7 @@ enum Protocol {
     Azure,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct Deployment {
     id: String,
     explicit_id: Option<String>,
@@ -67,6 +67,27 @@ struct Deployment {
     protocol: Protocol,
     max_tokens: Option<u64>,
     supports_vision: Option<bool>,
+}
+
+/// Debug output names whether a key is set, never the key, and shows the
+/// endpoint through the persisted-URL redactor.
+impl std::fmt::Debug for Deployment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Deployment")
+            .field("id", &self.id)
+            .field("explicit_id", &self.explicit_id)
+            .field("group", &self.group)
+            .field("model", &self.model)
+            .field("provider", &self.provider)
+            .field("weight", &self.weight)
+            .field("key", &self.key.as_ref().map(|_| "[REDACTED]"))
+            .field("endpoint", &crate::output::redact_url(&self.endpoint))
+            .field("protocol", &self.protocol)
+            .field("max_tokens", &self.max_tokens)
+            .field("supports_vision", &self.supports_vision)
+            .finish()
+    }
 }
 
 struct Prompts {

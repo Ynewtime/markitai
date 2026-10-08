@@ -338,7 +338,7 @@ pub(crate) fn fetch(
     services: &Services<'_>,
 ) -> Result<Document> {
     let mut document = match service {
-        Service::Defuddle => defuddle(source, url, cfg, services)?,
+        Service::Defuddle => defuddle(url, cfg, services)?,
         Service::Jina => jina(source, url, cfg, services)?,
         Service::Cloudflare => super::cloudflare::render(source, url, cfg, services)?,
     };
@@ -424,14 +424,14 @@ pub(crate) fn read_at(said: Option<&str>, url: &Url) -> Url {
         .unwrap_or_else(|| url.clone())
 }
 
-fn defuddle(source: &str, url: &Url, cfg: &Value, services: &Services<'_>) -> Result<Document> {
+fn defuddle(url: &Url, cfg: &Value, services: &Services<'_>) -> Result<Document> {
     services
         .limits
         .acquire("defuddle", per_minute(cfg, "/fetch/defuddle/rpm"));
     let endpoint = format!(
         "{}/{}",
         services.defuddle.trim_end_matches('/'),
-        url::form_urlencoded::byte_serialize(source.as_bytes()).collect::<String>()
+        url::form_urlencoded::byte_serialize(url.as_str().as_bytes()).collect::<String>()
     );
     let client = client(seconds(cfg, "/fetch/defuddle/timeout"))?;
     // defuddle.md documents no cache opt-out; its answers carry
@@ -600,7 +600,7 @@ fn jina(source: &str, url: &Url, cfg: &Value, services: &Services<'_>) -> Result
         .acquire("jina", per_minute(cfg, "/fetch/jina/rpm"));
     let client = client(seconds(cfg, "/fetch/jina/timeout"))?;
     let mut request = client
-        .get(format!("{}/{source}", services.jina.trim_end_matches('/')))
+        .get(format!("{}/{url}", services.jina.trim_end_matches('/')))
         .header(reqwest::header::ACCEPT, "application/json");
     if let Some(key) = &key {
         request = request.bearer_auth(key);

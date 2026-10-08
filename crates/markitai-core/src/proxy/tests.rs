@@ -166,6 +166,11 @@ fn bypass_rules_follow_reference_matching_and_ignore_unsupported_entries() {
             .unwrap()
             .matches(&url("https://anything.test/"))
     );
+    // The local-only grammar shares this parser: an IPv4 netmask is a prefix.
+    let masked = Bypass::parse("192.168.1.0/255.255.255.0, fd00::/255.0.0.0").unwrap();
+    assert!(masked.matches(&url("http://192.168.1.77/")));
+    assert!(!masked.matches(&url("http://192.168.2.77/")));
+    assert!(!masked.matches(&url("http://[fd00::1]/")));
     assert!(Bypass::parse(&"a".repeat(MAX_SETTING + 1)).is_err());
     // Many rules are accepted and de-duplicated without quadratic work.
     let many = (0..2500)

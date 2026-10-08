@@ -196,18 +196,20 @@ pub(crate) fn order(url: &Url, cfg: &Value, facts: &Facts<'_>) -> Vec<Step> {
 // ---- local-only patterns --------------------------------------------------
 
 /// `fetch.policy.local_only_patterns`, with `NO_PROXY` (or `no_proxy`) when
-/// `inherit_no_proxy`, in the `NO_PROXY` grammar: `*` matches everything,
-/// `.name` and `*.name` match subdomains only, CIDR blocks match addresses and
-/// anything else matches the host exactly.
+/// `inherit_no_proxy`, in the proxy exceptions' `NO_PROXY` grammar: `*`
+/// matches everything, `.name` and `*.name` match subdomains only, CIDR blocks
+/// match addresses and anything else matches the host exactly.
 pub(crate) fn local_only(url: &Url, cfg: &Value, vars: &HashMap<String, String>) -> bool {
-    let mut patterns: Vec<String> = cfg
+    let mut patterns = crate::proxy::Bypass::default();
+    for pattern in cfg
         .pointer("/fetch/policy/local_only_patterns")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect();
+    {
+        patterns.add(pattern);
+    }
     if cfg
         .pointer("/fetch/policy/inherit_no_proxy")
         .and_then(Value::as_bool)
@@ -217,64 +219,11 @@ pub(crate) fn local_only(url: &Url, cfg: &Value, vars: &HashMap<String, String>)
             .filter_map(|name| vars.get(*name))
             .find(|value| !value.trim().is_empty())
     {
-        patterns.extend(inherited.split(',').map(str::to_owned));
-    }
-    let host = host(url);
-    let address = host.parse::<IpAddr>().ok();
-    patterns
-        .iter()
-        .map(|pattern| pattern.trim().to_ascii_lowercase())
-        .filter(|pattern| !pattern.is_empty())
-        .any(|pattern| pattern_matches(&pattern, &host, address))
-}
-
-fn pattern_matches(pattern: &str, host: &str, address: Option<IpAddr>) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    if let Some(suffix) = pattern
-        .strip_prefix("*.")
-        .or_else(|| pattern.strip_prefix('.'))
-    {
-        return host
-            .strip_suffix(suffix.trim_end_matches('.'))
-            .is_some_and(|prefix| prefix.ends_with('.'));
-    }
-    if let Some((network, prefix)) = pattern.split_once('/') {
-        let network = network.split('%').next().unwrap_or(network);
-        let (Some(address), Ok(network)) = (address, network.parse::<IpAddr>()) else {
-            return false;
-        };
-        let bits = match (prefix.parse::<u8>(), prefix.parse::<std::net::Ipv4Addr>()) {
-            (Ok(bits), _) => bits,
-            (_, Ok(mask)) => u32::from(mask).leading_ones() as u8,
-            _ => return false,
-        };
-        return within(address, network, bits);
-    }
-    let pattern = pattern
-        .strip_prefix('[')
-        .and_then(|pattern| pattern.strip_suffix(']'))
-        .unwrap_or(pattern)
-        .trim_end_matches('.');
-    match (address, pattern.parse::<IpAddr>()) {
-        (Some(address), Ok(literal)) => address == literal,
-        _ => host == pattern,
-    }
-}
-
-fn within(address: IpAddr, network: IpAddr, bits: u8) -> bool {
-    match (address, network) {
-        (IpAddr::V4(address), IpAddr::V4(network)) if bits <= 32 => {
-            let mask = u32::MAX.checked_shl(32 - u32::from(bits)).unwrap_or(0);
-            u32::from(address) & mask == u32::from(network) & mask
+        for pattern in inherited.split(',') {
+            patterns.add(pattern);
         }
-        (IpAddr::V6(address), IpAddr::V6(network)) if bits <= 128 => {
-            let mask = u128::MAX.checked_shl(128 - u32::from(bits)).unwrap_or(0);
-            u128::from(address) & mask == u128::from(network) & mask
-        }
-        _ => false,
     }
+    patterns.listed(url)
 }
 
 // ---- hosts and credential material ---------------------------------------
@@ -747,6 +696,18 @@ mod tests {
             assert_eq!(local_only(&url(address), &cfg, &vars), local, "{address}");
             let steps = order(&url(address), &cfg, &facts(&vars));
             assert_eq!(steps.iter().any(|step| step.remote().is_some()), !local);
+        }
+        // Names are compared as the URL parser spells them, so a pattern
+        // written in Unicode matches its punycode host.
+        cfg["fetch"]["policy"]["local_only_patterns"] =
+            json!(["bücher.example", ".straße.example"]);
+        for (address, local) in [
+            ("https://bücher.example/a", true),
+            ("https://xn--bcher-kva.example/a", true),
+            ("https://www.straße.example/a", true),
+            ("https://buecher.example/a", false),
+        ] {
+            assert_eq!(local_only(&url(address), &cfg, &vars), local, "{address}");
         }
         cfg["fetch"]["policy"]["inherit_no_proxy"] = json!(false);
         assert!(!local_only(&url("https://docs.example/x"), &cfg, &vars));

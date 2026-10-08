@@ -4,7 +4,7 @@ use crate::{
 use reqwest::blocking::{Client, Response};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::time::Duration;
 use url::Url;
 
@@ -307,9 +307,12 @@ fn read_body(response: Response, service: Option<&str>) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn is_private(ip: IpAddr) -> bool {
+/// Whether an address is outside the public internet. IPv6 forms that carry
+/// an IPv4 address (mapped, compatible, NAT64 and 6to4) are judged by it.
+pub(crate) fn is_private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v) => {
+            let [a, b, c, _] = v.octets();
             v.is_private()
                 || v.is_loopback()
                 || v.is_link_local()
@@ -317,19 +320,39 @@ fn is_private(ip: IpAddr) -> bool {
                 || v.is_broadcast()
                 || v.is_documentation()
                 || v.is_multicast()
-                || v.octets()[0] == 0
-                || v.octets()[0] >= 240
-                || (v.octets()[0] == 100 && (64..=127).contains(&v.octets()[1]))
+                || a == 0
+                || a >= 240
+                || (a == 100 && (64..=127).contains(&b))
+                // Benchmarking 198.18.0.0/15 and IETF protocol assignments 192.0.0.0/24.
+                || (a == 198 && b & 0xfe == 18)
+                || (a == 192 && b == 0 && c == 0)
         }
         IpAddr::V6(v) => {
+            let [first, second, third, ..] = v.segments();
             v.is_loopback()
                 || v.is_unspecified()
                 || v.is_unique_local()
                 || v.is_unicast_link_local()
                 || v.is_multicast()
-                || v.to_ipv4_mapped()
-                    .is_some_and(|v| is_private(IpAddr::V4(v)))
+                // Site-local fec0::/10, documentation 2001:db8::/32 and
+                // local-use NAT64 64:ff9b:1::/48.
+                || first & 0xffc0 == 0xfec0
+                || (first == 0x2001 && second == 0xdb8)
+                || (first == 0x64 && second == 0xff9b && third == 1)
+                || embedded_ipv4(v).is_some_and(|v| is_private(IpAddr::V4(v)))
         }
+    }
+}
+
+fn embedded_ipv4(v: Ipv6Addr) -> Option<Ipv4Addr> {
+    let [first, second, third, fourth, fifth, sixth, ..] = v.segments();
+    let low = |octets: &[u8]| Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+    if first == 0x2002 {
+        Some(low(&v.octets()[2..6]))
+    } else if [first, second, third, fourth, fifth, sixth] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        Some(low(&v.octets()[12..]))
+    } else {
+        v.to_ipv4()
     }
 }
 
@@ -1618,6 +1641,36 @@ mod tests {
             !message.contains("secret") && !message.contains("/private/path"),
             "{message}"
         );
+    }
+    #[test]
+    fn special_ranges_and_embedded_ipv4_addresses_are_private() {
+        for address in [
+            "198.18.0.1",
+            "198.19.255.255",
+            "192.0.0.8",
+            "192.0.2.1",
+            "64:ff9b::7f00:1",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b:1::1",
+            "2002:7f00:1::",
+            "2002:c0a8:101::1",
+            "::7f00:1",
+            "::a00:1",
+            "fec0::1",
+            "2001:db8::1",
+        ] {
+            assert!(is_private(address.parse().unwrap()), "{address}");
+        }
+        for address in [
+            "8.8.8.8",
+            "198.20.0.1",
+            "192.0.1.1",
+            "2606:4700:4700::1111",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+        ] {
+            assert!(!is_private(address.parse().unwrap()), "{address}");
+        }
     }
     #[test]
     fn private_and_credentialed_remote_targets_are_rejected() {

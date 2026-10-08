@@ -15,7 +15,7 @@ mod system;
 mod tests;
 
 use crate::{Error, Result};
-use bypass::Bypass;
+pub(crate) use bypass::Bypass;
 use reqwest::blocking::ClientBuilder;
 use std::collections::HashMap;
 use std::sync::OnceLock;

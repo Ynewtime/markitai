@@ -120,7 +120,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 
 | 变量 | 作用 |
 |---|---|
-| `MARKITAI_HOME` | 替代 `~/.markitai`：用户配置、`.env`、缓存、浏览器安装、历史与 stdout 图片库（`assets/`）都放在这里 |
+| `MARKITAI_HOME` | 替代 `~/.markitai`：用户配置、`.env`、缓存、浏览器安装、历史与 stdout 图片库（`assets/`）都放在这里；空值等同未设置（`HOME`、`USERPROFILE` 同理），不会落到当前目录 |
 | `MARKITAI_CONFIG` | 配置文件路径（优先级低于 `-c`） |
 | `MARKITAI_PURE` | `1`/`true`/`yes` 时等同 `--pure` |
 | `MARKITAI_RECORD_HISTORY` | `1`/`true`/`yes`/`on`（不分大小写）开启历史，其他非空值关闭；命令行开关优先 |

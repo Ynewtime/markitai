@@ -8,12 +8,21 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+/// An empty variable counts as unset: as a path it would name the current
+/// directory, and every path starts with it.
+fn variable(name: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(name).filter(|value| !value.is_empty())
+}
+
+fn user_home() -> Option<std::ffi::OsString> {
+    variable("HOME").or_else(|| variable("USERPROFILE"))
+}
+
 pub fn home() -> PathBuf {
-    std::env::var_os("MARKITAI_HOME")
+    variable("MARKITAI_HOME")
         .map(|path| expand_home(Path::new(&path)))
         .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
+            user_home()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".markitai")
@@ -22,7 +31,7 @@ pub fn home() -> PathBuf {
 
 pub fn expand_home(path: &Path) -> PathBuf {
     if let Ok(rest) = path.strip_prefix("~")
-        && let Some(user) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+        && let Some(user) = user_home()
     {
         PathBuf::from(user).join(rest)
     } else {
@@ -33,7 +42,7 @@ pub fn expand_home(path: &Path) -> PathBuf {
 /// Resolve legacy default state paths into the explicitly isolated Rust home.
 /// Custom paths retain their meaning; the serialized default remains compatible.
 pub fn state_path(path: &Path) -> PathBuf {
-    if std::env::var_os("MARKITAI_HOME").is_some()
+    if variable("MARKITAI_HOME").is_some()
         && let Ok(rest) = path.strip_prefix("~/.markitai")
     {
         home().join(rest)

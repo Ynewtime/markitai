@@ -25,11 +25,7 @@ pub(super) fn load(provider: &str, base: &str, key: Option<&str>) -> Result<Valu
             url.query_pairs_mut().append_pair("limit", "1000");
         }
         "gemini" => {
-            let mut params = url.query_pairs_mut();
-            params.append_pair("pageSize", "1000");
-            if let Some(key) = key {
-                params.append_pair("key", key);
-            }
+            url.query_pairs_mut().append_pair("pageSize", "1000");
         }
         "azure" if !path.ends_with("/v1") => {
             url.query_pairs_mut()
@@ -48,7 +44,9 @@ pub(super) fn load(provider: &str, base: &str, key: Option<&str>) -> Result<Valu
         request = match provider {
             "anthropic" => request.header("x-api-key", key),
             "azure" => request.header("api-key", key),
-            "gemini" | "ollama" => request,
+            // A header rather than `?key=`, which request logs and proxies record.
+            "gemini" => request.header("x-goog-api-key", key),
+            "ollama" => request,
             _ => request.bearer_auth(key),
         };
     }

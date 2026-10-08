@@ -801,6 +801,50 @@ fn defuddle_requests_are_paced_by_their_rpm() {
 }
 
 #[test]
+fn services_receive_the_url_that_was_checked_not_the_typed_text() {
+    let source = "https://Example.COM/a b?q=1";
+    let checked = Url::parse(source).unwrap();
+    assert_ne!(checked.as_str(), source);
+    let html = "<html><head><title>Page</title></head><body><article><h1>Page</h1><p>Text that the remote service rendered for the extraction.</p></article></body></html>";
+    for strategy in ["defuddle", "jina", "cloudflare"] {
+        let (answer, mut cfg) = match strategy {
+            "defuddle" => (Answer::text(200, "# Page\n\nText."), settings().1),
+            "jina" => (jina_page("# Page\n\nText."), settings().1),
+            _ => (
+                Answer::json(200, json!({"success": true, "result": html})),
+                cloudflare_cfg(),
+            ),
+        };
+        cfg["fetch"]["strategy"] = json!(strategy);
+        let service = Mock::new(vec![answer]);
+        let terminal = Arc::new(Terminal::default());
+        let fixture = Fixture::new(gate(&terminal, false, None, None));
+        let mut services = fixture.services(&service.origin);
+        services.vars = vars(&[
+            ("TEST_CF_TOKEN", "cf-test-token-0123"),
+            ("TEST_SITE_PASSWORD", "site-password"),
+        ]);
+        fetch_with_services(source, &cfg, Some(strategy), true, None, &services).unwrap();
+        let request = &service.requests()[0];
+        match strategy {
+            "defuddle" => assert_eq!(
+                request.target,
+                format!(
+                    "/defuddle/{}",
+                    url::form_urlencoded::byte_serialize(checked.as_str().as_bytes())
+                        .collect::<String>()
+                )
+            ),
+            "jina" => assert_eq!(request.target, format!("/jina/{checked}")),
+            _ => {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                assert_eq!(body["url"], checked.as_str());
+            }
+        }
+    }
+}
+
+#[test]
 fn the_limiter_admits_a_window_of_requests_and_then_waits() {
     let limits = Limits::new(Duration::from_millis(300));
     let started = std::time::Instant::now();
