@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **PDF hidden text**: `security.pdf_sanitize = "remove"` no longer deletes visible text that a hidden span repeats (a hidden `e` used to remove every `e` on the page), white text on a dark background is no longer reported as hidden, and `--ocr --llm` checks the text it sends to the model like the other paths.
+- **Header/footer cleanup**: a short line repeated at the end of pages or slides (and the page number after it) is removed only there, no longer from the body wherever the same line appears.
 
 ## [1.2.0] - 2026-09-28
 
