@@ -33,7 +33,9 @@ mod sanitize_tests;
 
 const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ASSET_BYTES: usize = 128 * 1024 * 1024;
-const MAX_IMAGE_PIXELS: usize = crate::images::MAX_PIXELS as usize;
+// PDF images keep their own 32 Mi limit: one between it and `images::MAX_PIXELS`
+// is still extracted, and asset preparation keeps it unchanged with a notice.
+const MAX_IMAGE_PIXELS: usize = 32 * 1024 * 1024;
 /// The visibility signal of text in render mode 3 or 7.
 const INVISIBLE_RENDERING: &str = "invisible text rendering mode";
 
