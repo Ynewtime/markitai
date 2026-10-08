@@ -424,7 +424,7 @@ def create_url_processor(
         Async function that processes a single URL and returns ProcessResult
     """
     from markitai import fetch as fetch_module
-    from markitai.batch import ProcessResult
+    from markitai.batch import ProcessResult, url_state_key
     from markitai.fetch import (
         FetchError,
         FetchStrategy,
@@ -468,10 +468,15 @@ def create_url_processor(
         if not cfg.llm.enabled:
             return await _process_url(url, custom_name, None)
 
-        from markitai.llm.engine import track_cache_hits
+        from markitai.llm.engine import llm_usage_scope, track_cache_hits
 
-        # This URL's own cache lookups: the processor is shared by the batch
-        with track_cache_hits() as cache_tally:
+        # This URL's own cache lookups, usage and request budget: the
+        # processor is shared by the batch, and the same URL may be listed
+        # under two output names
+        with (
+            track_cache_hits() as cache_tally,
+            llm_usage_scope(url_state_key(url, custom_name)),
+        ):
             return await _process_url(url, custom_name, cache_tally)
 
     async def _process_url(

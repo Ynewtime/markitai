@@ -150,6 +150,39 @@ def track_cache_hits() -> Iterator[CacheTally]:
         _cache_tally.reset(token)
 
 
+# The work item whose usage and request budget a tracking context belongs to.
+# Same reasoning as _cache_tally: a batch shares one processor, and the
+# tracking context is a display name (a file's basename, a URL), so two items
+# with the same name would otherwise pool their usage and budget, and the
+# first to finish would clear the other's.
+_usage_scope: ContextVar[str] = ContextVar("markitai_llm_usage_scope", default="")
+
+
+@contextmanager
+def llm_usage_scope(scope: str) -> Iterator[None]:
+    """Keep the usage and request budget of one work item apart.
+
+    Args:
+        scope: Unique id of the item (e.g. its resolved input path).
+    """
+    token = _usage_scope.set(scope)
+    try:
+        yield
+    finally:
+        _usage_scope.reset(token)
+
+
+def scoped_usage_key(context: str) -> str:
+    """The key a tracking context is accounted under in the current scope."""
+    scope = _usage_scope.get()
+    return f"{scope}\x00{context}" if scope and context else context
+
+
+def _display_context(key: str) -> str:
+    """The tracking context of a scoped key, for messages."""
+    return key.rpartition("\x00")[2]
+
+
 class RequestBudget:
     """Per-context LLM request circuit breaker.
 
@@ -197,8 +230,8 @@ class RequestBudget:
                 self._tripped.add(context)
         if first:
             logger.warning(
-                f"[LLM:{context}] {reason}: skipping further LLM enhancement "
-                f"for this document, keeping unenhanced output."
+                f"[LLM:{_display_context(context)}] {reason}: skipping further "
+                f"LLM enhancement for this document, keeping unenhanced output."
             )
             if self._on_exceeded is not None:
                 self._on_exceeded(context)
@@ -212,6 +245,7 @@ class RequestBudget:
         """
         if not context or self._cost_limit <= 0:
             return
+        context = scoped_usage_key(context)
         with self._lock:
             spent = self._spent.get(context, 0.0) + cost
             self._spent[context] = spent
@@ -234,6 +268,7 @@ class RequestBudget:
         """
         if not context:
             return
+        context = scoped_usage_key(context)
         with self._lock:
             if context in self._tripped:
                 already_tripped = True
@@ -252,10 +287,13 @@ class RequestBudget:
                 f"llm.max_requests_per_document (0 disables) if this document "
                 f"legitimately needs more requests",
             )
-        raise LLMRequestBudgetExceededError(f"[LLM:{context}] budget exhausted")
+        raise LLMRequestBudgetExceededError(
+            f"[LLM:{_display_context(context)}] budget exhausted"
+        )
 
     def exceeded(self, context: str) -> bool:
         """Whether the context has tripped the breaker."""
+        context = scoped_usage_key(context)
         with self._lock:
             return context in self._tripped
 
@@ -273,6 +311,7 @@ class RequestBudget:
         """
         if not context or self._limit <= 0:
             return None
+        context = scoped_usage_key(context)
         with self._lock:
             if context in self._tripped:
                 return 0
@@ -280,6 +319,7 @@ class RequestBudget:
 
     def clear(self, context: str) -> None:
         """Reset the budget for a context (called between documents)."""
+        context = scoped_usage_key(context)
         with self._lock:
             self._counts.pop(context, None)
             self._spent.pop(context, None)
