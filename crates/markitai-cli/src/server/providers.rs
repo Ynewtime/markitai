@@ -1,7 +1,7 @@
 //! Trusted provider actions are transient and never persist request credentials.
+//! `security::guard` admits only trusted connections to these routes.
 use super::{
     State,
-    security::Trusted,
     types::{ApiError, ApiResult},
 };
 use axum::{
@@ -25,21 +25,6 @@ api_routes! {
 pub(super) fn routes() -> Router<Arc<State>> {
     api_routes()
 }
-fn trusted(request: &Request) -> ApiResult<()> {
-    if request
-        .extensions()
-        .get::<Trusted>()
-        .is_some_and(|value| value.0)
-    {
-        Ok(())
-    } else {
-        Err(ApiError::new(
-            403,
-            "settings_forbidden",
-            "Provider settings require a trusted connection",
-        ))
-    }
-}
 fn response(value: ApiResult<Value>) -> Response {
     let mut response = match value {
         Ok(value) => Json(value).into_response(),
@@ -51,7 +36,6 @@ fn response(value: ApiResult<Value>) -> Response {
     response
 }
 async fn body(request: Request) -> ApiResult<Value> {
-    trusted(&request)?;
     let content_type = request
         .headers()
         .get("content-type")
@@ -74,11 +58,10 @@ async fn body(request: Request) -> ApiResult<Value> {
     serde_json::from_slice(&bytes)
         .map_err(|_| ApiError::new(422, "invalid_json", "Provider request is not valid JSON"))
 }
-async fn detected(request: Request) -> Response {
-    response(
-        trusted(&request)
-            .map(|()| serde_json::json!(markitai_core::provider_management::detected())),
-    )
+async fn detected() -> Response {
+    response(Ok(serde_json::json!(
+        markitai_core::provider_management::detected()
+    )))
 }
 async fn discover(ExtractState(state): ExtractState<Arc<State>>, request: Request) -> Response {
     let request = match body(request)

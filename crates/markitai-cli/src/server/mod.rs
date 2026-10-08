@@ -131,8 +131,9 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         .iter()
         .map(|s| security::allowed_host(s).map_err(|e| e.detail))
         .collect::<Result<HashSet<_>, _>>()?;
-    let file_count = cfg["batch"]["concurrency"].as_u64().unwrap_or(4).max(1) as usize;
-    let url_count = cfg["batch"]["url_concurrency"].as_u64().unwrap_or(4).max(1) as usize;
+    // Normalized settings always carry both limits (defaults 10 and 5, minimum 1).
+    let file_count = cfg["batch"]["concurrency"].as_u64().unwrap_or(10) as usize;
+    let url_count = cfg["batch"]["url_concurrency"].as_u64().unwrap_or(5) as usize;
     let state = Arc::new(State {
         settings: settings::Store::new(cfg, source).map_err(|error| error.detail)?,
         root,

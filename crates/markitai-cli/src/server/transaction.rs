@@ -42,7 +42,7 @@ fn valid(path: &str) -> bool {
         && Path::new(path)
             .components()
             .all(|p| matches!(p, Component::Normal(_)))
-        && (path.starts_with("out/") || path.starts_with("uploads/") || path == "archive.zip")
+        && (path.starts_with("out/") || path.starts_with("uploads/"))
 }
 fn copy(source: &Path, target: &Path, total: &mut u64) -> io::Result<()> {
     markitai_core::output::check_path(source, false).map_err(io::Error::other)?;

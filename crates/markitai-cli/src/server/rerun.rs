@@ -588,9 +588,6 @@ pub(super) async fn delete(
         {
             removals.push(format!("uploads/{}", selected.name));
         }
-        if store::safe_file(&job.folder, "archive.zip").is_ok() {
-            removals.push("archive.zip".into());
-        }
         let prior = data.clone();
         let stage = transaction::stage(&job.folder).map_err(ApiError::internal)?;
         let staged = stage.path().join("out");
