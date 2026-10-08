@@ -686,7 +686,10 @@ a cache miss and fetching continues over the network.
 
 The database is plaintext. It stores original/final URLs and metadata as well
 as Markdown; URL credentials and query tokens can therefore be stored. A
-hashed key does not make its contents secret-free. Direct local fetching keeps
+hashed key does not make its contents secret-free. On Unix a directory created
+for the store is `0700` and the database `0600`; a store an earlier version left
+readable by others is narrowed, with its SQLite side files, when it is next
+opened for writing. A store that is a link is refused. Direct local fetching keeps
 its existing trusted-session behavior; this cache is not suitable for reuse
 across anonymous service authority boundaries without additional policy.
 

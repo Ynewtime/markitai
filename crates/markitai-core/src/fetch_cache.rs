@@ -353,8 +353,23 @@ impl Cache {
         }
         let metadata = metadata_json(&entry.metadata)?;
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| unavailable())?;
+            crate::platform::private_directory()
+                .recursive(true)
+                .create(parent)
+                .map_err(|_| unavailable())?;
         }
+        // Create the file before SQLite does, so it and the side files SQLite
+        // copies its mode to are private from the start.
+        match crate::platform::private_file(
+            std::fs::OpenOptions::new().write(true).create_new(true),
+        )
+        .open(&self.path)
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err(unavailable()),
+        }
+        private(&self.path)?;
         let mut connection = open(
             &self.path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
@@ -510,11 +525,47 @@ fn configure_wal(connection: &Connection) -> Result<()> {
     }
 }
 
+/// The store holds URLs with their query tokens and credential-fetched pages.
+/// Writers narrow a store, and the SQLite side files present, to their owner,
+/// since earlier versions created them with the default mode. Links are refused.
+fn private(path: &Path) -> Result<()> {
+    for suffix in ["", "-journal", "-wal", "-shm"] {
+        let mut name = path.as_os_str().to_owned();
+        name.push(suffix);
+        let file = PathBuf::from(name);
+        match std::fs::symlink_metadata(&file) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(metadata) if metadata.is_file() => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = metadata.permissions().mode();
+                    if mode & 0o077 != 0 {
+                        crate::platform::open_no_follow(
+                            std::fs::OpenOptions::new().read(true),
+                            &file,
+                        )
+                        .and_then(|opened| {
+                            opened.set_permissions(std::fs::Permissions::from_mode(mode & 0o700))
+                        })
+                        .map_err(|_| unavailable())?;
+                    }
+                }
+            }
+            _ => return Err(unavailable()),
+        }
+    }
+    Ok(())
+}
+
 fn existing(path: &Path, readonly: bool) -> Result<Option<Connection>> {
-    match std::fs::metadata(path) {
+    match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         _ => return Err(unavailable()),
+    }
+    if !readonly {
+        private(path)?;
     }
     open(
         path,
@@ -698,6 +749,56 @@ mod tests {
         assert!(!directory.exists());
         cfg["cache"]["enabled"] = json!(false);
         assert!(Cache::from_config(&cfg).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_is_private_and_narrows_shared_files_from_earlier_versions() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("state");
+        let cache = Cache::from_config(&cfg(&directory, 1024, 60)).unwrap();
+        let url = "https://example.com/a?token=secret";
+        cache.set(url, None, &entry("page")).unwrap();
+        assert_eq!(mode(&directory), 0o700);
+        assert_eq!(mode(&cache.path), 0o600);
+
+        // A store left shared by an earlier version is narrowed, with the
+        // side files SQLite created from its mode, before the next write.
+        let shared = |path: &Path| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap()
+        };
+        shared(&cache.path);
+        let reader = Connection::open(&cache.path).unwrap();
+        reader
+            .query_row("SELECT COUNT(*) FROM fetch_cache", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let side = |suffix: &str| directory.join(format!("fetch_cache.db{suffix}"));
+        assert_eq!(mode(&side("-wal")), 0o644);
+        cache.set(url, None, &entry("newer")).unwrap();
+        for path in [cache.path.clone(), side("-wal"), side("-shm")] {
+            assert_eq!(mode(&path), 0o600, "{}", path.display());
+        }
+        drop(reader);
+        shared(&cache.path);
+        assert!(cache.get(url, None).unwrap().is_some());
+        assert_eq!(mode(&cache.path), 0o600);
+
+        // A linked store is refused rather than written through.
+        let linked = root.path().join("linked");
+        std::fs::create_dir(&linked).unwrap();
+        let target = root.path().join("elsewhere.db");
+        std::fs::write(&target, b"").unwrap();
+        std::os::unix::fs::symlink(&target, linked.join("fetch_cache.db")).unwrap();
+        let cfg = cfg(&linked, 1024, 60);
+        let cache = Cache::from_config(&cfg).unwrap();
+        assert!(cache.set(url, None, &entry("page")).is_err());
+        assert!(cache.get(url, None).is_err());
+        assert!(stats(&cfg).is_err());
+        assert_eq!(std::fs::metadata(&target).unwrap().len(), 0);
     }
 
     #[test]
