@@ -69,6 +69,12 @@ litellm.modify_params = True
 # under the document's llm_usage models.
 REQUEST_BUDGET_EXCEEDED_MARKER = "markitai:request-budget-exceeded"
 
+# Largest raw image sent to a vision model: base64 adds ~33%, so 3.5 MB raw
+# stays under the 5 MB API limit once encoded.
+_MAX_LLM_IMAGE_BYTES = int(3.5 * 1024 * 1024)
+# Oversized images are scaled down to at most this before giving up.
+_MIN_LLM_IMAGE_DIMENSION = 512
+
 
 class LLMProcessor:
     """LLM processor using MarkitaiRouter for load balancing.
@@ -1128,9 +1134,7 @@ class LLMProcessor:
                 )
 
         # Check size limit (5MB API limit after base64 encoding)
-        # Base64 encoding increases size by ~33%, so 5MB / 1.33 ≈ 3.76MB
-        # Using 3.5MB raw bytes to ensure base64 encoded size stays under 5MB
-        MAX_IMAGE_SIZE = 3.5 * 1024 * 1024
+        MAX_IMAGE_SIZE = _MAX_LLM_IMAGE_BYTES
         if len(image_data) > MAX_IMAGE_SIZE:
             try:
                 import io
@@ -1180,13 +1184,21 @@ class LLMProcessor:
                         # If still too big, reduce quality/size
                         if quality > 50 and fmt == "JPEG":
                             quality -= 15
+                        elif max_dim > _MIN_LLM_IMAGE_DIMENSION:
+                            max_dim = max(int(max_dim * 0.75), _MIN_LLM_IMAGE_DIMENSION)
                         else:
-                            max_dim = int(max_dim * 0.75)
-                            if max_dim < 512:  # Safety floor
-                                logger.warning(
-                                    f"Could not compress {image_path.name} below 5MB even at 512px"
-                                )
-                                break
+                            # Safety floor: send the floor-size version, which
+                            # beats the original even if still over the limit.
+                            if len(new_data) < len(image_data):
+                                image_data = new_data
+                            logger.warning(
+                                "Could not compress {} below 5MB even at {}px; "
+                                "sending {:.2f}MB",
+                                image_path.name,
+                                _MIN_LLM_IMAGE_DIMENSION,
+                                len(image_data) / 1024 / 1024,
+                            )
+                            break
 
             except Exception as e:
                 logger.warning(f"Failed to resize large image {image_path.name}: {e}")

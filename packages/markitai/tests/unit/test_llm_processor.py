@@ -1619,6 +1619,39 @@ class TestLLMProcessorImageCache:
         assert str(tmp_path / "test_0.png") not in processor._image_cache
 
 
+class TestGetCachedImageSizeFloor:
+    """An image still over the size limit at the 512 px floor."""
+
+    def test_sends_the_floor_size_version_not_the_original(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        import io
+        import os
+
+        from PIL import Image
+
+        # Noise does not compress: 1200 px is ~4.3 MB as PNG, 512 px ~0.8 MB.
+        noise = Image.frombytes("RGB", (1200, 1200), os.urandom(1200 * 1200 * 3))
+        img_path = tmp_path / "noise.png"
+        noise.save(img_path, format="PNG")
+        original = img_path.read_bytes()
+        monkeypatch.setattr(
+            "markitai.llm.processor._MAX_LLM_IMAGE_BYTES", 100_000, raising=False
+        )
+
+        processor = LLMProcessor(llm_config, prompts_config)
+        image_bytes, base64_image = processor._get_cached_image(img_path)
+
+        assert len(image_bytes) < len(original)
+        with Image.open(io.BytesIO(image_bytes)) as sent:
+            assert max(sent.size) == 512
+        assert base64_image == base64.b64encode(image_bytes).decode()
+
+
 class TestGetCachedImageSVG:
     """Tests for SVG rasterization in _get_cached_image."""
 

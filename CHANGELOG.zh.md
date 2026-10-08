@@ -51,6 +51,7 @@
 - **Copilot 提供方重新可以配合 GitHub Copilot SDK 使用**：此前 `create_session` 和 `send_and_wait` 收到的是单个字典，回退到 PATH 中 CLI 时传的是 `{"cli_path": ...}` 字典，所有受支持的 SDK 版本（0.2.0 及以上）都不接受，因此每个 `copilot/` 请求都会失败。现在按 SDK 定义的关键字参数调用，并把请求超时传给 `send_and_wait`（其默认超时会在 60 秒时中断请求）。
 - `markitai serve` 不再返回已保存的 API key：`GET /api/settings/llm/providers/{id}/credentials` 返回打码后的 `api_key_masked`（`sk…7890`；`env:` 引用原样返回），不再返回原始 `api_key`。提供商编辑器显示这个打码值，只有你改动 key 时才发送，所以保存时不动该字段就保留已保存的 key；清空字段仍会删除 key。
 - `markitai serve` 设置中 key 与非保存时地址配对被拒时，错误信息现在会说明可行的做法：直接输入 key 本身，或在配置文件里配置这一对。serve 和配置指南也解释了这条规则和两种做法。
+- 缩小到 512 px 后仍超过 5 MB 视觉输入上限的图片，现在按 512 px 的版本发送，不再发送原始的更大图片。缩放也会恰好停在 512 px，而不是停在高于它的上一档。
 
 ## [1.2.0] - 2026-09-28
 
