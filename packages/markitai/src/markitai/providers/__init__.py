@@ -61,9 +61,6 @@ from markitai.providers.auth import (
 from markitai.providers.errors import (
     AuthenticationError,
     ProviderError,
-    ProviderTimeoutError,
-    QuotaError,
-    SDKNotAvailableError,
 )
 
 # Import timeout module for public API
@@ -856,9 +853,6 @@ __all__ = [
     # Error classes
     "ProviderError",
     "AuthenticationError",
-    "QuotaError",
-    "ProviderTimeoutError",
-    "SDKNotAvailableError",
     # Auth module
     "AuthManager",
     "AuthStatus",
