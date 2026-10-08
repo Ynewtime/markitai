@@ -665,19 +665,27 @@ fn percent_decoded(segment: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
+/// The stem of the written Markdown: `output.filename` without `.md`, else
+/// `output.reserved_stem`, else `name`. It must be one plain file name, so
+/// `/`, `..` or `a/` can never place output outside `dir`.
+pub fn resolved_stem<'a>(name: &'a str, cfg: &'a Value) -> Result<&'a str> {
+    let stem = cfg
+        .pointer("/output/filename")
+        .and_then(Value::as_str)
+        .map(|name| name.strip_suffix(".md").unwrap_or(name))
+        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
+        .unwrap_or(name);
+    if Path::new(stem).file_name() != Some(std::ffi::OsStr::new(stem)) {
+        return Err(Error::InvalidInput("Output name must be a filename".into()));
+    }
+    Ok(stem)
+}
+
 pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {
     if cfg.pointer("/output/on_conflict").and_then(Value::as_str) != Some("skip") {
         return Ok(false);
     }
-    let name = cfg
-        .pointer("/output/filename")
-        .and_then(Value::as_str)
-        .map(|s| s.strip_suffix(".md").unwrap_or(s))
-        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
-        .unwrap_or(name);
-    if Path::new(name).components().count() != 1 {
-        return Err(Error::InvalidInput("Output name must be a filename".into()));
-    }
+    let name = resolved_stem(name, cfg)?;
     let base = dir.join(format!("{name}.md"));
     let llm = dir.join(format!("{name}.llm.md"));
     check_user_paths(
@@ -794,18 +802,7 @@ pub(crate) fn write_document_mode(
     let allow_symlinks = config::enabled(cfg, "/output/allow_symlinks");
     check_user_directory(dir, allow_symlinks)?;
     let explicit_name = cfg.pointer("/output/filename").and_then(Value::as_str);
-    let name = explicit_name
-        .map(|name| name.strip_suffix(".md").unwrap_or(name))
-        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
-        .unwrap_or(name);
-    if Path::new(name).components().count() != 1
-        || !matches!(
-            Path::new(name).components().next(),
-            Some(Component::Normal(_))
-        )
-    {
-        return Err(Error::InvalidInput("Output name must be a filename".into()));
-    }
+    let name = resolved_stem(name, cfg)?;
     std::fs::create_dir_all(dir)?;
     // User aliases end at this boundary. Asset and image-index metadata below
     // the physical parent retains its strict no-follow path policy.
@@ -1683,6 +1680,28 @@ mod tests {
             std::fs::read_to_string(pure.output_path.unwrap()).unwrap(),
             input
         );
+    }
+
+    #[test]
+    fn output_stems_are_single_file_names_for_every_writer_and_skip_probe() {
+        let named = |filename: &str| json!({"output":{"filename":filename,"on_conflict":"skip"}});
+        assert_eq!(
+            resolved_stem("source.pdf", &json!({})).unwrap(),
+            "source.pdf"
+        );
+        assert_eq!(resolved_stem("x", &named("report.md")).unwrap(), "report");
+        let reserved = json!({"output":{"reserved_stem":"report.v2"}});
+        assert_eq!(resolved_stem("x", &reserved).unwrap(), "report.v2");
+        let dir = tempfile::tempdir().unwrap();
+        // `/.md` used to pass the skip probe as `/`, which then checked `/.md`
+        // outside the output directory; `a/` passed both checks as `a`.
+        for filename in ["/.md", "a/.md", "../x.md", "a/b.md", ".md", "..", "."] {
+            assert!(resolved_stem("x", &named(filename)).is_err(), "{filename}");
+            assert!(
+                should_skip(dir.path(), "x", &named(filename)).is_err(),
+                "{filename}"
+            );
+        }
     }
 
     #[test]

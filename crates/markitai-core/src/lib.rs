@@ -512,7 +512,7 @@ fn convert_inner(
             &mut doc,
             &input_path,
             office_kind.expect("Office media requires a known format"),
-            screenshot_prefix(&name, &cfg),
+            output::resolved_stem(&name, &cfg)?,
             output_dir.as_deref(),
             &cfg,
             vlm_disabled,
@@ -912,14 +912,6 @@ fn convert_inner(
     Ok(result)
 }
 
-fn screenshot_prefix<'a>(name: &'a str, cfg: &'a Value) -> &'a str {
-    cfg.pointer("/output/filename")
-        .and_then(Value::as_str)
-        .map(|name| name.strip_suffix(".md").unwrap_or(name))
-        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
-        .unwrap_or(name)
-}
-
 fn prepare_pdf_media(
     bytes: &[u8],
     name: &str,
@@ -927,7 +919,7 @@ fn prepare_pdf_media(
     cfg: &Value,
     vlm_disabled: bool,
 ) -> Result<(Document, Vec<Asset>, bool)> {
-    let prefix = screenshot_prefix(name, cfg);
+    let prefix = output::resolved_stem(name, cfg)?;
     let mut prepared = pdf_media::prepare(bytes, prefix, cfg, vlm_disabled)?;
     let reliable = prepared.has_reliable_text;
     // Freeze capture names before page references or model inputs are assembled.
