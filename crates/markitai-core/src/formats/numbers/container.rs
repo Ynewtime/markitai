@@ -6,7 +6,6 @@ mod directory;
 use super::{Result, error};
 use iwork::pb::{Message, Reader, Value};
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, Read};
 
 const MAX_ENTRIES: usize = 4096;
 const MAX_PART: usize = 32 * 1024 * 1024;
@@ -34,59 +33,20 @@ pub(super) fn open(bytes: &[u8]) -> Result<(iwork::Document, usize)> {
     if bytes.len() > MAX_PACKAGE {
         return Err(error("package exceeds the 128 MiB limit"));
     }
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|_| error("invalid or unsupported ZIP package"))?;
-    if zip.len() > MAX_ENTRIES {
-        return Err(error("package exceeds the entry limit"));
+    let mut zip = crate::opc::Zip::open(bytes, MAX_ENTRIES).map_err(error)?;
+    let names = zip.names(MAX_PACKAGE as u64).map_err(error)?;
+    if names.iter().any(|name| name == ".iwpv2") {
+        return Err(crate::Error::Unsupported(
+            "Encrypted Numbers documents are not supported".into(),
+        ));
     }
     let mut entries = Vec::new();
-    let mut names = HashSet::new();
-    let mut total = 0usize;
     let mut budget = Budget::default();
-    for index in 0..zip.len() {
-        let mut file = zip
-            .by_index(index)
-            .map_err(|_| error("unreadable ZIP entry"))?;
-        let name = std::str::from_utf8(file.name_raw())
-            .map_err(|_| error("package entry name is not UTF-8"))?
-            .to_owned();
-        if name.len() > 4096
-            || name.starts_with('/')
-            || name.contains('\\')
-            || name.contains('\0')
-            || name.split('/').any(|part| part == "..")
-            || !names.insert(name.clone())
-        {
-            return Err(error("invalid or duplicate package entry name"));
-        }
-        if file.unix_mode().is_some_and(|mode| {
-            let kind = mode & 0o170000;
-            kind != 0 && kind != 0o100000 && kind != 0o040000
-        }) {
-            return Err(error("non-regular package entry"));
-        }
-        if name == ".iwpv2" {
-            return Err(crate::Error::Unsupported(
-                "Encrypted Numbers documents are not supported".into(),
-            ));
-        }
-        if file.is_dir() {
-            continue;
-        }
-        if file.size() > MAX_PART as u64 || file.size() > (MAX_PACKAGE - total) as u64 {
-            return Err(error("expanded ZIP data exceeds the size limit"));
-        }
-        let mut data = Vec::with_capacity((file.size() as usize).min(bytes.len()));
-        (&mut file)
-            .take(MAX_PART as u64 + 1)
-            .read_to_end(&mut data)
-            .map_err(|_| error("invalid ZIP entry data or checksum"))?;
-        total = total
-            .checked_add(data.len())
-            .ok_or_else(|| error("package size overflow"))?;
-        if data.len() > MAX_PART || total > MAX_PACKAGE {
-            return Err(error("expanded ZIP data exceeds the size limit"));
-        }
+    for name in names.into_iter().filter(|name| !name.ends_with('/')) {
+        let data = zip
+            .read(&name, MAX_PART as u64)
+            .map_err(error)?
+            .ok_or_else(|| error("unreadable ZIP entry"))?;
         if name.ends_with(".iwa") {
             validate_iwa(&data, &mut budget)?;
         }
@@ -316,7 +276,7 @@ fn validate_dimensions(rows: u64, columns: u64, budget: &mut Budget) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Cursor, Write};
 
     fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -403,6 +363,12 @@ mod tests {
             writer.write_all(&block).unwrap();
         }
         let bytes = writer.finish().unwrap().into_inner();
-        assert!(open(&bytes).err().unwrap().to_string().contains("ZIP data"));
+        assert!(
+            open(&bytes)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("exceeds its size limit")
+        );
     }
 }

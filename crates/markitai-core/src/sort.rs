@@ -13,8 +13,10 @@
 
 use std::cmp::Ordering;
 
-/// `v.sort_by(compare)`, for a `compare` that is a total order.
-pub(crate) fn by<T>(v: &mut [T], mut compare: impl FnMut(&T, &T) -> Ordering) {
+/// `v.sort_by(compare)`, for a `compare` that is a total order. The command
+/// line sorts through it too.
+#[doc(hidden)]
+pub fn by<T>(v: &mut [T], mut compare: impl FnMut(&T, &T) -> Ordering) {
     if v.len() < 2 {
         return;
     }
@@ -24,15 +26,14 @@ pub(crate) fn by<T>(v: &mut [T], mut compare: impl FnMut(&T, &T) -> Ordering) {
 
 /// `v.sort_by_key(key)`; like `sort_by_key`, the key is computed for each
 /// comparison.
-pub(crate) fn by_key<T, K: Ord>(v: &mut [T], mut key: impl FnMut(&T) -> K) {
+#[doc(hidden)]
+pub fn by_key<T, K: Ord>(v: &mut [T], mut key: impl FnMut(&T) -> K) {
     by(v, |a, b| key(a).cmp(&key(b)));
 }
 
-/// The stable order of the positions `0..len` under `compare`. The command
-/// line's own sorts go through it too, so the program holds one copy.
-#[doc(hidden)]
+/// The stable order of the positions `0..len` under `compare`, compiled once.
 #[inline(never)]
-pub fn stable_order(len: usize, compare: &mut dyn FnMut(usize, usize) -> Ordering) -> Vec<usize> {
+fn stable_order(len: usize, compare: &mut dyn FnMut(usize, usize) -> Ordering) -> Vec<usize> {
     let mut order: Vec<usize> = (0..len).collect();
     order.sort_by(|&a, &b| compare(a, b));
     order

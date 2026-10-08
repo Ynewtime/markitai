@@ -11,12 +11,12 @@ use markitai_core::provider_batch as provider;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::time::Duration;
 
 const MEMBER_LIMIT: u64 = 100 * 1024 * 1024;
 
-fn digest(bytes: &[u8]) -> String {
+/// The lowercase hex SHA-256 of `bytes`.
+fn sha256_hex(bytes: &[u8]) -> String {
     markitai_core::hex(Sha256::digest(bytes))
 }
 
@@ -28,16 +28,9 @@ fn member(path: &Path) -> CliResult<Vec<u8>> {
             "Provider Batch output member is not a bounded regular file",
         ));
     }
-    let mut bytes = Vec::new();
-    file.take(MEMBER_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(runtime)?;
-    if bytes.len() as u64 > MEMBER_LIMIT {
-        return Err(runtime(
-            "Provider Batch output member exceeds its byte limit",
-        ));
-    }
-    Ok(bytes)
+    markitai_core::platform::read_limited(file, MEMBER_LIMIT)
+        .map_err(runtime)?
+        .ok_or_else(|| runtime("Provider Batch output member exceeds its byte limit"))
 }
 
 pub(super) fn reject_pending(input: &Path, output: &Path, cfg: &Value) -> CliResult<()> {
@@ -272,7 +265,7 @@ pub(super) fn submit(
                                 key: task.report_key,
                                 base: base.strip_prefix(&output).map_err(runtime)?.into(),
                                 enhanced: enhanced.strip_prefix(&output).map_err(runtime)?.into(),
-                                base_sha256: digest(&member(&base)?),
+                                base_sha256: sha256_hex(&member(&base)?),
                                 owner,
                                 plan: serde_json::to_value(&*plan).map_err(runtime)?,
                             });
@@ -676,7 +669,7 @@ fn collect_ready_inner(
                 let bytes = decoded.content().map_err(runtime)?.into_bytes();
                 let base = output.join(&item.base);
                 let enhanced = output.join(&item.enhanced);
-                if digest(&member(&base)?) != item.base_sha256 {
+                if sha256_hex(&member(&base)?) != item.base_sha256 {
                     return Err(runtime(
                         "Base Markdown changed after Batch submission; outputs were preserved",
                     ));
@@ -713,7 +706,7 @@ fn collect_ready_inner(
                         store::Published {
                             path: item.enhanced.clone(),
                             bytes: bytes.len() as u64,
-                            sha256: digest(&bytes),
+                            sha256: sha256_hex(&bytes),
                             receipt_sha256: receipt,
                         },
                     )
@@ -741,7 +734,7 @@ fn collect_ready_inner(
                 let base = output.join(&item.base);
                 let enhanced = output.join(&item.enhanced);
                 let bytes = member(&base)?;
-                if digest(&bytes) != item.base_sha256 {
+                if sha256_hex(&bytes) != item.base_sha256 {
                     return Err(runtime(
                         "Base Markdown changed after Batch submission; fallback cannot claim it",
                     ));
@@ -771,7 +764,7 @@ fn collect_ready_inner(
                         store::Published {
                             path: item.base.clone(),
                             bytes: bytes.len() as u64,
-                            sha256: digest(&bytes),
+                            sha256: sha256_hex(&bytes),
                             receipt_sha256: claim.evidence_digest().map_err(runtime)?,
                         },
                     )

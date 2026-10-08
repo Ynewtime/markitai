@@ -54,13 +54,9 @@ macro_rules! say {
         }
     };
 }
-// Every platform publishes batches with native ownership. The ordinary runner
-// remains only as a test reference for reports without recovery state.
+// Every platform publishes batches with native ownership.
 #[path = "batch_run.rs"]
 mod batch_run;
-#[cfg(test)]
-#[path = "batch_run_portable.rs"]
-mod batch_run_portable_tests;
 #[path = "provider_batch/mod.rs"]
 mod provider_batch;
 use crate::report::{
@@ -840,30 +836,23 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
     // (file or --config-json) are.
     remote_consent::install(&raw, cli.quiet);
     if let Some(name) = &cli.preset {
-        let name = name.to_lowercase();
-        let preset = match name.as_str() {
-            "minimal" => {
-                json!({"llm":false,"alt":false,"desc":false,"ocr":false,"screenshot":false})
-            }
-            "standard" => json!({"llm":true,"alt":true,"desc":true,"ocr":false,"screenshot":false}),
-            "rich" => json!({"llm":true,"alt":true,"desc":true,"ocr":false,"screenshot":true}),
-            _ => cfg["presets"].get(&name).cloned().ok_or_else(|| {
-                let mut custom: Vec<_> = cfg["presets"]
-                    .as_object()
-                    .map(|presets| presets.keys().cloned().collect())
-                    .unwrap_or_default();
-                crate::sort::by(&mut custom, String::cmp);
-                let mut available = vec!["minimal".to_owned(), "rich".into(), "standard".into()];
-                available.extend(custom);
-                (
-                    1,
-                    format!(
-                        "Unknown preset '{name}'. Available: {}",
-                        available.join(", ")
-                    ),
-                )
-            })?,
-        };
+        let preset = config::preset(&cfg, name).ok_or_else(|| {
+            let mut custom: Vec<_> = cfg["presets"]
+                .as_object()
+                .map(|presets| presets.keys().cloned().collect())
+                .unwrap_or_default();
+            crate::sort::by(&mut custom, String::cmp);
+            let mut available = vec!["minimal".to_owned(), "rich".into(), "standard".into()];
+            available.extend(custom);
+            (
+                1,
+                format!(
+                    "Unknown preset '{}'. Available: {}",
+                    name.to_lowercase(),
+                    available.join(", ")
+                ),
+            )
+        })?;
         for (key, section, field) in [
             ("llm", "llm", "enabled"),
             ("ocr", "ocr", "enabled"),
@@ -906,7 +895,8 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
         && !cli.no_pure
         && env
             .get("MARKITAI_PURE")
-            .is_some_and(|v| ["1", "true", "yes"].contains(&v.trim()))
+            .and_then(|value| config::env_opt_in(value))
+            == Some(true)
     {
         cfg["llm"]["pure"] = json!(true);
     }
@@ -916,12 +906,11 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
     if cli.screenshot_only {
         cfg["screenshot"]["enabled"] = json!(true);
     }
-    if let Some(value) = env
+    if let Some(record) = env
         .get("MARKITAI_RECORD_HISTORY")
-        .filter(|v| !v.trim().is_empty())
+        .and_then(|value| config::env_opt_in(value))
     {
-        cfg["history"]["record"] =
-            json!(["1", "true", "yes", "on"].contains(&value.trim().to_lowercase().as_str()));
+        cfg["history"]["record"] = json!(record);
     }
     if let Some(enabled) = tri(cli.record_history, cli.no_record_history) {
         cfg["history"]["record"] = json!(enabled);
@@ -1368,7 +1357,6 @@ fn execute_conversion(
     )
 }
 
-#[cfg_attr(not(unix), allow(dead_code))] // Read by the Unix batch path.
 struct BatchDestination<'a> {
     mode: RunMode,
     output: &'a Path,
@@ -1429,7 +1417,7 @@ fn reserve_batch_names(tasks: &mut [Task], cfg: &Value) -> CliResult<()> {
         let stem = if let Some(name) = &task.filename {
             name.strip_suffix(".md").unwrap_or(name).to_owned()
         } else if is_url(&task.source) {
-            markitai_core::output::url_name(&task.source, &serde_json::Map::new())
+            markitai_core::output::url_name(&task.source)
         } else {
             Path::new(&task.source)
                 .file_name()
@@ -1649,7 +1637,7 @@ fn complete_item(
     if progress.history_enabled && record.skip_reason.as_deref() == Some("exists") {
         record.history_output = task.output.as_ref().map(|directory| {
             let fallback = if is_url(&task.source) {
-                markitai_core::output::url_name(&task.source, &Default::default())
+                markitai_core::output::url_name(&task.source)
             } else {
                 Path::new(&task.source)
                     .file_name()
@@ -2601,11 +2589,9 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 }
                 let path =
                     selected_config(cli).unwrap_or_else(|| config::home().join("config.json"));
-                let mut raw = if path.is_file() {
-                    serde_json::from_slice::<Value>(&std::fs::read(&path).map_err(runtime)?)
-                        .map_err(runtime)?
-                } else {
-                    json!({})
+                let mut raw = match config::read_file(&path).map_err(runtime)? {
+                    Some(bytes) => serde_json::from_slice::<Value>(&bytes).map_err(runtime)?,
+                    None => json!({}),
                 };
                 if !raw.is_object() {
                     return Err((1, "Configuration must be a JSON object".into()));
@@ -2903,30 +2889,11 @@ fn print_table(prefix: &str, value: &Value) {
     }
 }
 fn write_config(path: &Path, value: &Value) -> CliResult<()> {
-    // Configuration paths are user-selected; preserve an existing symlink and
-    // atomically update its target, as the Python configuration manager did.
-    let resolved;
-    let path = if path.is_symlink() {
-        resolved = std::fs::canonicalize(path).map_err(runtime)?;
-        &resolved
-    } else {
-        path
-    };
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent).map_err(runtime)?;
-    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(runtime)?;
-    serde_json::to_writer_pretty(&mut file, value).map_err(runtime)?;
-    writeln!(file).map_err(runtime)?;
-    file.as_file().sync_all().map_err(runtime)?;
-    file.persist(path).map_err(runtime)?;
-    #[cfg(unix)]
-    std::fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(runtime)?;
-    Ok(())
+    // Configuration paths are user-selected; an existing symlink is preserved
+    // and its target atomically updated, as the Python configuration manager did.
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(runtime)?;
+    bytes.push(b'\n');
+    config::write_file(path, &bytes).map_err(runtime)
 }
 
 #[cfg(test)]

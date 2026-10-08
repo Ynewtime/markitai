@@ -44,6 +44,8 @@ async fn providers(
     ExtractState(state): ExtractState<Arc<State>>,
     Query(query): Query<Refresh>,
 ) -> Json<Value> {
+    // `refresh` is still validated for compatibility; the list is computed on
+    // every request, so its value is not used.
     let _ = query.refresh;
     Json(state.settings.providers())
 }

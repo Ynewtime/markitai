@@ -3,7 +3,6 @@
 use crate::{Error, Result};
 use std::{
     fs,
-    io::Read,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -196,12 +195,8 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
     if !file.metadata()?.is_file() {
         return Err(failure("file is not regular"));
     }
-    let mut bytes = Vec::new();
-    file.take(limit + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
-        return Err(failure("file exceeds its byte limit"));
-    }
-    Ok(bytes)
+    crate::platform::read_limited(file, limit)?
+        .ok_or_else(|| failure("file exceeds its byte limit"))
 }
 
 fn export_with(

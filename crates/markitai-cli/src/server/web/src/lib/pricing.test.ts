@@ -1,4 +1,4 @@
-// Cost labels; scripts/test_ui_pricing.cjs runs this file for the repository gate.
+// Cost labels; scripts/test_web_dist.py runs every src/**/*.test.ts suite for the repository gate.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { actionNotification, attemptNotice, attemptPricing, itemNotification, parseCostWarning, publishNotice, quietRestored, terminalNotices, widenNotice, PRICE_WORDS, priceText } from "./pricing.ts";

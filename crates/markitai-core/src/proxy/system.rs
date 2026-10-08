@@ -333,15 +333,6 @@ fn read_registry() -> Option<WindowsValues> {
 /// the fixed Internet Settings key; no environment override exposes others.
 #[cfg(windows)]
 pub(super) fn read_registry_at(path: &str) -> Option<WindowsValues> {
-    read_registry_at_with(path, || {
-        tracing::warn!(
-            "Windows automatic proxy (PAC) settings are not supported; set HTTPS_PROXY or HTTP_PROXY for network access"
-        );
-    })
-}
-
-#[cfg(windows)]
-fn read_registry_at_with(path: &str, automatic: impl FnOnce()) -> Option<WindowsValues> {
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, REG_DWORD, REG_SZ, RegCloseKey, RegOpenKeyExW,
@@ -421,14 +412,6 @@ fn read_registry_at_with(path: &str, automatic: impl FnOnce()) -> Option<Windows
         return None;
     }
     let key = Key(handle);
-    // Diagnose a configured automatic proxy without executing PAC or exposing
-    // its URL, which can carry identity information. Manual settings stay intact.
-    if value(&key, "AutoConfigURL", REG_SZ)
-        .and_then(text)
-        .is_some_and(|url| !url.trim().is_empty())
-    {
-        automatic();
-    }
     let enabled = value(&key, "ProxyEnable", REG_DWORD)?;
     let enabled = u32::from_le_bytes(enabled.try_into().ok()?) != 0;
     if !enabled {
@@ -696,20 +679,9 @@ mod registry_tests {
         assert_eq!(found.endpoint.as_str(), "http://proxy.example.test:8080/");
         assert_eq!(found.bypass, "<local>,*.example.test");
         fixture.value("ProxyEnable", REG_DWORD, &0u32.to_le_bytes());
+        // An automatic (PAC) configuration never enables a proxy.
         fixture.text("AutoConfigURL", "https://pac.example.test/proxy.pac");
-        let mut warned = false;
-        assert!(read_registry_at_with(&fixture.path, || warned = true).is_none());
-        assert!(warned);
-        for value in ["", " "] {
-            fixture.text("AutoConfigURL", value);
-            warned = false;
-            assert!(read_registry_at_with(&fixture.path, || warned = true).is_none());
-            assert!(!warned);
-        }
-        fixture.value("AutoConfigURL", REG_SZ, &[b'x', 0, b'y']);
-        warned = false;
-        assert!(read_registry_at_with(&fixture.path, || warned = true).is_none());
-        assert!(!warned);
+        assert!(read_registry_at(&fixture.path).is_none());
         fixture.value("ProxyEnable", REG_DWORD, &1u32.to_le_bytes());
         fixture.value("ProxyServer", REG_SZ, &[b'x', 0, b'y']);
         assert!(read_registry_at(&fixture.path).is_none());

@@ -1,8 +1,9 @@
 //! Preserve source bytes/relationships while adding an inert viewport carrier.
 use super::{Extension, Result, anchor, check_deadline, failure, xml};
+use crate::opc::{self, Relationship};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{Cursor, Read, Write},
+    io::{Cursor, Write},
     time::Instant,
 };
 const SHEET: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -13,7 +14,7 @@ const CONTENT: &str = "http://schemas.openxmlformats.org/package/2006/content-ty
 const MAX_UNPACKED: u64 = 256 * 1024 * 1024;
 
 pub(super) struct Package<'a> {
-    archive: zip::ZipArchive<Cursor<&'a [u8]>>,
+    zip: opc::Zip<'a>,
     pub(super) names: BTreeSet<String>,
     changed: BTreeMap<String, Vec<u8>>,
 }
@@ -22,41 +23,12 @@ impl<'a> Package<'a> {
         if bytes.len() as u64 > limit {
             return Err(failure("workbook repair input exceeds byte budget"));
         }
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-            .map_err(|_| failure("invalid workbook ZIP package"))?;
-        if archive.len() > 16_384 {
-            return Err(failure("workbook ZIP exceeds entry limit"));
-        }
-        let mut names = BTreeSet::new();
-        let mut total = 0u64;
-        for i in 0..archive.len() {
-            check_deadline(deadline)?;
-            let file = archive
-                .by_index(i)
-                .map_err(|_| failure("invalid workbook ZIP entry"))?;
-            let name = file.name();
-            if name.is_empty()
-                || name.starts_with('/')
-                || name.contains(['\\', '\0', ':'])
-                || name.split('/').any(|p| p == ".." || p == ".")
-                || !names.insert(name.into())
-            {
-                return Err(failure("ambiguous or invalid workbook ZIP part name"));
-            }
-            if file
-                .unix_mode()
-                .is_some_and(|mode| !matches!(mode & 0o170000, 0 | 0o100000 | 0o040000))
-            {
-                return Err(failure("workbook ZIP contains a special file"));
-            }
-            total = total
-                .checked_add(file.size())
-                .filter(|v| *v <= MAX_UNPACKED)
-                .ok_or_else(|| failure("workbook ZIP exceeds unpacked byte budget"))?;
-        }
+        let mut zip = opc::Zip::open(bytes, opc::MAX_ENTRIES).map_err(package_failure)?;
+        check_deadline(deadline)?;
+        let names = zip.names(MAX_UNPACKED).map_err(package_failure)?;
         Ok(Self {
-            archive,
-            names,
+            zip,
+            names: names.into_iter().collect(),
             changed: BTreeMap::new(),
         })
     }
@@ -64,20 +36,10 @@ impl<'a> Package<'a> {
         if let Some(bytes) = self.changed.get(name) {
             return Ok(bytes.clone());
         }
-        let file = self
-            .archive
-            .by_name(name)
-            .map_err(|_| failure("required workbook XML part is missing"))?;
-        if file.is_dir() || file.size() > xml::LIMIT as u64 {
-            return Err(failure("workbook XML part exceeds limit"));
-        }
-        let size = file.size();
-        let mut bytes = Vec::new();
-        file.take(xml::LIMIT as u64 + 1).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 != size || bytes.len() > xml::LIMIT {
-            return Err(failure("workbook XML part size mismatch"));
-        }
-        Ok(bytes)
+        self.zip
+            .read(name, xml::LIMIT as u64)
+            .map_err(package_failure)?
+            .ok_or_else(|| failure("required workbook XML part is missing"))
     }
     pub(super) fn store(&mut self, name: String, bytes: Vec<u8>) {
         self.names.insert(name.clone());
@@ -85,9 +47,10 @@ impl<'a> Package<'a> {
     }
     pub(super) fn finish(mut self, deadline: Instant, limit: u64) -> Result<Vec<u8>> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        for i in 0..self.archive.len() {
+        for i in 0..self.zip.archive.len() {
             check_deadline(deadline)?;
             let file = self
+                .zip
                 .archive
                 .by_index(i)
                 .map_err(|_| failure("workbook ZIP entry cannot be copied"))?;
@@ -118,10 +81,8 @@ impl<'a> Package<'a> {
         Ok(bytes)
     }
 }
-struct Relationship {
-    target: String,
-    kind: String,
-    external: bool,
+fn package_failure(message: String) -> crate::Error {
+    failure(&format!("workbook package: {message}"))
 }
 fn relationships(bytes: &[u8], deadline: Instant) -> Result<BTreeMap<String, Relationship>> {
     let nodes = xml::index(bytes, deadline)?;
@@ -137,17 +98,13 @@ fn relationships(bytes: &[u8], deadline: Instant) -> Result<BTreeMap<String, Rel
             .attr("Id")
             .filter(|id| !id.is_empty())
             .ok_or_else(|| failure("workbook relationship has no id"))?;
-        let relation = Relationship {
-            target: n
-                .attr("Target")
-                .ok_or_else(|| failure("workbook relationship has no target"))?
-                .into(),
-            kind: n
-                .attr("Type")
-                .ok_or_else(|| failure("workbook relationship has no type"))?
-                .into(),
-            external: n.attr("TargetMode").is_some_and(|mode| mode != "Internal"),
-        };
+        let target = n
+            .attr("Target")
+            .ok_or_else(|| failure("workbook relationship has no target"))?;
+        let kind = n
+            .attr("Type")
+            .ok_or_else(|| failure("workbook relationship has no type"))?;
+        let relation = Relationship::new(kind, target, n.attr("TargetMode"));
         if map.insert(id.into(), relation).is_some() {
             return Err(failure("duplicate workbook relationship id"));
         }
@@ -160,54 +117,8 @@ fn target(source: &str, relation: &Relationship, kind: &str) -> Result<String> {
             "unsupported or external workbook layout relationship",
         ));
     }
-    let mut decoded = Vec::new();
-    let bytes = relation.target.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let pair = bytes
-                .get(i + 1..i + 3)
-                .ok_or_else(|| failure("invalid encoded workbook relationship"))?;
-            let value = std::str::from_utf8(pair)
-                .ok()
-                .and_then(|s| u8::from_str_radix(s, 16).ok())
-                .ok_or_else(|| failure("invalid encoded workbook relationship"))?;
-            decoded.push(value);
-            i += 3;
-        } else {
-            decoded.push(bytes[i]);
-            i += 1;
-        }
-    }
-    let value = std::str::from_utf8(&decoded)
-        .map_err(|_| failure("invalid workbook relationship target"))?;
-    if value.is_empty() || value.contains(['\\', '\0', ':', '?', '#']) {
-        return Err(failure("invalid workbook relationship target"));
-    }
-    let mut path = if value.starts_with('/') {
-        Vec::new()
-    } else {
-        source
-            .rsplit_once('/')
-            .map_or(Vec::new(), |(dir, _)| dir.split('/').collect::<Vec<_>>())
-    };
-    for component in value.trim_start_matches('/').split('/') {
-        match component {
-            "" | "." => return Err(failure("ambiguous workbook relationship target")),
-            ".." => {
-                path.pop()
-                    .ok_or_else(|| failure("workbook relationship leaves package"))?;
-            }
-            _ => path.push(component),
-        }
-    }
-    Ok(path.join("/"))
-}
-fn rel_name(part: &str) -> String {
-    part.rsplit_once('/').map_or_else(
-        || format!("_rels/{part}.rels"),
-        |(dir, name)| format!("{dir}/_rels/{name}.rels"),
-    )
+    opc::resolve(source, &relation.target)
+        .map_err(|e| failure(&format!("workbook relationship: {e}")))
 }
 fn unique(prefix: &str, suffix: &str, used: &BTreeSet<String>) -> Result<String> {
     (1..=16_384)
@@ -295,7 +206,8 @@ pub(super) fn rewrite(
             let id = drawing
                 .attribute(REL, "id")
                 .ok_or_else(|| failure("worksheet drawing relationship is missing"))?;
-            let relations = relationships(&package.read(&rel_name(&part))?, deadline)?;
+            let relations =
+                relationships(&package.read(&opc::relationships_part(&part))?, deadline)?;
             let drawing_part = target(
                 &part,
                 relations
@@ -362,7 +274,7 @@ pub(super) fn rewrite(
         if drawings.len() > 1 {
             return Err(failure("worksheet has multiple drawing references"));
         }
-        let relation_part = rel_name(&part);
+        let relation_part = opc::relationships_part(&part);
         if let Some(drawing) = drawings.first() {
             let id = drawing
                 .attribute(REL, "id")

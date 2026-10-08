@@ -174,7 +174,7 @@ pub(super) fn cut(image: &RgbImage, corners: &[[f32; 2]; 4]) -> Result<RgbImage>
     let width = distance(corners[0], corners[1]).max(distance(corners[2], corners[3])) as u32;
     let height = distance(corners[0], corners[3]).max(distance(corners[1], corners[2])) as u32;
     let (width, height) = (width.max(1), height.max(1));
-    if u64::from(width) * u64::from(height) > 32_000_000 {
+    if u64::from(width) * u64::from(height) > crate::images::MAX_PIXELS {
         return Err(failure("a text region exceeds the pixel limit"));
     }
     let target = [

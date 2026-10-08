@@ -17,6 +17,8 @@ import subprocess
 import sys
 from collections import Counter
 
+from isolation import isolated_env
+
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -31,9 +33,7 @@ def worker(request: dict, engine: str) -> dict:
     case = Path(request["case_dir"])
     output = case / engine
     output.mkdir(parents=True, exist_ok=True)
-    isolation = case / "state" / engine
-    isolation.mkdir(parents=True, exist_ok=True)
-    os.environ["MARKITAI_HOME"] = str(isolation)
+    isolation = Path(os.environ["MARKITAI_HOME"])
     os.environ["MARKITAI_LOG_DIR"] = str(isolation / "logs")
     os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     if engine == "reference":
@@ -81,9 +81,11 @@ def run_worker(executable: str, engine: str, request_path: Path, timeout: int) -
     response_path = request_path.with_name(f"{engine}-response.json")
     log_path = request_path.with_name(f"{engine}.log")
     # Credentials are not forwarded. Explicit configuration disables all model,
-    # browser and remote conversion paths. HOME is not reassigned.
-    environment = {key: value for key, value in os.environ.items()
-                   if key in {"PATH", "SYSTEMROOT", "LANG", "LC_ALL", "TMPDIR"}}
+    # browser and remote conversion paths; `~` names a private home per engine.
+    isolation = request_path.parent / "state" / engine
+    environment = isolated_env(isolation / "home", isolation, {
+        key: value for key, value in os.environ.items()
+        if key in {"PATH", "SYSTEMROOT", "LANG", "LC_ALL", "TMPDIR"}})
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     command = [executable, str(Path(__file__).resolve()), "--worker", engine,
                "--request", str(request_path), "--response", str(response_path)]

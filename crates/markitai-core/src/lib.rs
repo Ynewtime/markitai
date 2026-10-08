@@ -16,6 +16,7 @@ mod markdown;
 mod ocr;
 mod office_media;
 mod office_render;
+mod opc;
 pub mod output;
 #[doc(hidden)]
 pub mod output_name;
@@ -79,12 +80,6 @@ pub fn local_ocr_available() -> bool {
 
 pub use ocr::{LocalOcrModel, LocalOcrModelState};
 
-/// The local OCR engine this process reads with: `vision` (macOS), `paddle`
-/// (the portable PaddleOCR engine) or `unavailable`.
-pub fn local_ocr_backend() -> &'static str {
-    ocr::backend()
-}
-
 /// The model files the portable OCR engine needs for the configuration's
 /// `ocr.lang`, each with whether it is installed; `None` when this process
 /// reads with another engine. Probing never downloads or creates files.
@@ -108,12 +103,10 @@ pub fn rosetta_translated() -> bool {
     false
 }
 
-pub fn pdf_raster_available() -> bool {
-    pdf_raster::available()
-}
-
+/// Every build has a PDF page renderer (CoreGraphics on macOS, hayro
+/// elsewhere), so Office rendering needs only LibreOffice.
 pub fn office_render_available() -> bool {
-    office_render::available() && pdf_raster::available()
+    office_render::available()
 }
 
 /// Launch and close an isolated browser session; no document or provider request is made.
@@ -367,7 +360,7 @@ fn convert_inner(
         )));
     }
     let name = if is_url {
-        output::url_name(source, &Default::default())
+        output::url_name(source)
     } else {
         input_path
             .file_name()
@@ -395,7 +388,7 @@ fn convert_inner(
     let mut pdf_has_reliable_text = true;
     let vlm_disabled = config::environment()
         .get("MARKITAI_NO_VLM_OCR")
-        .is_some_and(|value| vlm_ocr_disabled(value));
+        .is_some_and(|value| config::env_opt_out(value));
     let local_ocr = image_input
         && config::enabled(&cfg, "/ocr/enabled")
         && (!config::enabled(&cfg, "/llm/enabled") || vlm_disabled);
@@ -520,7 +513,7 @@ fn convert_inner(
             &mut doc,
             &input_path,
             office_kind.expect("Office media requires a known format"),
-            screenshot_prefix(&name, &cfg),
+            output::resolved_stem(&name, &cfg)?,
             output_dir.as_deref(),
             &cfg,
             vlm_disabled,
@@ -616,6 +609,7 @@ fn convert_inner(
         } else {
             &result.markdown
         };
+        // Pure answers are never cached; their warnings reach the document scope.
         let without_cache = |(markdown, usage)| llm::Enhancement {
             markdown,
             usage,
@@ -919,14 +913,6 @@ fn convert_inner(
     Ok(result)
 }
 
-fn screenshot_prefix<'a>(name: &'a str, cfg: &'a Value) -> &'a str {
-    cfg.pointer("/output/filename")
-        .and_then(Value::as_str)
-        .map(|name| name.strip_suffix(".md").unwrap_or(name))
-        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
-        .unwrap_or(name)
-}
-
 fn prepare_pdf_media(
     bytes: &[u8],
     name: &str,
@@ -934,7 +920,7 @@ fn prepare_pdf_media(
     cfg: &Value,
     vlm_disabled: bool,
 ) -> Result<(Document, Vec<Asset>, bool)> {
-    let prefix = screenshot_prefix(name, cfg);
+    let prefix = output::resolved_stem(name, cfg)?;
     let mut prepared = pdf_media::prepare(bytes, prefix, cfg, vlm_disabled)?;
     let reliable = prepared.has_reliable_text;
     // Freeze capture names before page references or model inputs are assembled.
@@ -1123,13 +1109,6 @@ mod json_output_tests {
     }
 }
 
-fn vlm_ocr_disabled(value: &str) -> bool {
-    !matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "" | "0" | "false" | "no"
-    )
-}
-
 fn screenshot_mime(bytes: &[u8]) -> Result<&'static str> {
     match image::guess_format(bytes) {
         Ok(image::ImageFormat::Jpeg) => Ok("image/jpeg"),
@@ -1138,19 +1117,6 @@ fn screenshot_mime(bytes: &[u8]) -> Result<&'static str> {
         _ => Err(Error::Conversion(
             "Captured page has an unsupported image encoding".into(),
         )),
-    }
-}
-
-#[cfg(test)]
-mod routing_tests {
-    #[test]
-    fn vlm_ocr_optout_honors_whitespace_and_all_nonfalse_values() {
-        for value in ["1", " 1 ", "true", "enabled", "yes", "off", "arbitrary"] {
-            assert!(super::vlm_ocr_disabled(value), "{value}");
-        }
-        for value in ["", " ", "0", " false ", "No"] {
-            assert!(!super::vlm_ocr_disabled(value), "{value}");
-        }
     }
 }
 

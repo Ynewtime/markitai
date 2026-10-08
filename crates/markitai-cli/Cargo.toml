@@ -9,9 +9,11 @@ license.workspace = true
 name = "markitai"
 path = "src/main.rs"
 
+# mkai includes main.rs, so its unit tests are markitai's; run them once.
 [[bin]]
 name = "mkai"
 path = "src/mkai.rs"
+test = false
 
 [features]
 portable-media = ["markitai-core/portable-media"]
@@ -34,7 +36,6 @@ caseless = "0.2.2"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "multipart", "query", "tokio"] }
 rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "signal", "time", "fs", "io-util", "macros"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 url = "2"
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }

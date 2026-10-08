@@ -15,26 +15,6 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 
 const MAX_FIELD: usize = 8192;
-const DETECTED: [(&str, &str, &str); 5] = [
-    ("openai", "OPENAI_API_KEY", "openai/gpt-5.6-luna"),
-    (
-        "anthropic",
-        "ANTHROPIC_API_KEY",
-        "anthropic/claude-haiku-4-5",
-    ),
-    (
-        "gemini",
-        "GEMINI_API_KEY",
-        "gemini/gemini-flash-lite-latest",
-    ),
-    ("deepseek", "DEEPSEEK_API_KEY", "deepseek/deepseek-v4-flash"),
-    (
-        "openrouter",
-        "OPENROUTER_API_KEY",
-        "openrouter/google/gemini-3.1-flash-lite",
-    ),
-];
-
 /// Conventional labels, without credential or account information.
 pub fn provider_label(provider: &str) -> String {
     match provider {
@@ -154,10 +134,18 @@ pub fn provider_default_base(provider: &str) -> Option<&'static str> {
     }
 }
 
-/// Quick-add candidates from nonempty process environment keys, without I/O.
+/// Quick-add candidates: the default models whose API keys the conversion
+/// environment sets, in routing priority.
 pub fn detected() -> Vec<Value> {
-    DETECTED.iter().filter(|(_, key, _)| std::env::var(key).is_ok_and(|v| !v.trim().is_empty()))
-        .map(|(provider, _, model)| json!({"provider":provider,"model":model,"label":provider_label(provider),"requires_api_key":false})).collect()
+    crate::llm::keyed_defaults(&crate::config::environment())
+        .map(|(provider, model)| json!({"provider":provider,"model":model,"label":provider_label(provider),"requires_api_key":false}))
+        .collect()
+}
+
+/// The deployments conversions use while `llm.model_list` is empty: `MODEL`,
+/// else [`detected`]'s models.
+pub fn automatic_deployments() -> Vec<Value> {
+    crate::llm::automatic_entries(&crate::config::environment())
 }
 
 pub(super) fn field<'a>(request: &'a Value, key: &str) -> Result<Option<&'a str>> {
@@ -400,12 +388,6 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         .or_else(|| provider_default_base(&provider).map(str::to_owned));
     if let Some(base) = &base {
         checked_url(base)?;
-    }
-    if provider == "chatgpt" {
-        return Ok(discovery::unavailable(
-            &provider,
-            "This provider requires an unavailable OAuth or local runtime integration",
-        ));
     }
     let Some(base) = base.filter(|value| !value.trim().is_empty()) else {
         return Ok(discovery::unavailable(

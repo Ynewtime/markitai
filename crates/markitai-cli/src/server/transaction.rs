@@ -4,6 +4,7 @@
 //! directory: each published file is flushed after its rename instead, which
 //! commits the NTFS log records of every earlier rename and removal too.
 use super::{jobs::JobData, store};
+use markitai_core::output::create_private_dir;
 use markitai_core::platform;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -42,7 +43,7 @@ fn valid(path: &str) -> bool {
         && Path::new(path)
             .components()
             .all(|p| matches!(p, Component::Normal(_)))
-        && (path.starts_with("out/") || path.starts_with("uploads/") || path == "archive.zip")
+        && (path.starts_with("out/") || path.starts_with("uploads/"))
 }
 fn copy(source: &Path, target: &Path, total: &mut u64) -> io::Result<()> {
     markitai_core::output::check_path(source, false).map_err(io::Error::other)?;
@@ -58,7 +59,7 @@ fn copy(source: &Path, target: &Path, total: &mut u64) -> io::Result<()> {
     let parent = target
         .parent()
         .ok_or_else(|| io::Error::other("invalid transaction path"))?;
-    store::private_dir(parent)?;
+    create_private_dir(parent)?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
     let count = io::copy(&mut input.take(size + 1), &mut temporary)?;
     if count != size {
@@ -170,7 +171,7 @@ pub(super) fn publish(
         for (name, source) in replacements {
             let target = folder.join(name);
             let parent = target.parent().unwrap();
-            store::private_dir(parent)?;
+            create_private_dir(parent)?;
             platform::sync_file(&source)?;
             platform::rename(&source, &target)?;
             platform::sync_renamed_path(&target)?;
@@ -197,7 +198,7 @@ pub(super) fn stage(folder: &Path) -> io::Result<tempfile::TempDir> {
     let stage = tempfile::Builder::new()
         .prefix(".retry-")
         .tempdir_in(folder)?;
-    store::private_dir(stage.path())?;
+    create_private_dir(stage.path())?;
     Ok(stage)
 }
 
@@ -293,7 +294,7 @@ mod tests {
     use super::*;
     fn fixture() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
-        store::private_dir(&root.path().join("out")).unwrap();
+        create_private_dir(&root.path().join("out")).unwrap();
         fs::write(root.path().join("out/document.md"), b"old body").unwrap();
         root
     }
@@ -345,7 +346,7 @@ mod tests {
     #[test]
     fn delete_recovery_restores_upload_and_shared_output_bytes() {
         let root = fixture();
-        store::private_dir(&root.path().join("uploads")).unwrap();
+        create_private_dir(&root.path().join("uploads")).unwrap();
         fs::write(root.path().join("uploads/source.txt"), b"source").unwrap();
         publish(
             root.path(),

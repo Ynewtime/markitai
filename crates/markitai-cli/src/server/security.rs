@@ -244,6 +244,7 @@ mod router_tests {
         middleware,
         routing::{get, post},
     };
+    use markitai_core::output::create_private_dir;
     use serde_json::{Value, json};
     use std::{
         collections::{HashMap, HashSet},
@@ -253,7 +254,7 @@ mod router_tests {
     use tower::ServiceExt;
 
     fn app(root: &std::path::Path, token: Option<&str>) -> Router {
-        super::super::store::private_dir(root).unwrap();
+        create_private_dir(root).unwrap();
         let (shutdown, _) = watch::channel(false);
         let state = Arc::new(State {
             settings: super::super::settings::Store::new(

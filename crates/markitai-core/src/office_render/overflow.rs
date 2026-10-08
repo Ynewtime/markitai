@@ -50,7 +50,7 @@ fn dimensions(width: f64, height: f64) -> Result<()> {
         || h < 1.
         || w > 65535.
         || h > 65535.
-        || w * h > 32_000_000.
+        || w * h > crate::images::MAX_PIXELS as f64
     {
         return Err(failure(
             "workbook page exceeds native 150 DPI page-pixel limits",

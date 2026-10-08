@@ -47,7 +47,8 @@ The attachment section lists, in MIME order and joined by blank lines:
 
 The label is the decoded filename, or `attachment_N` counted from zero when there
 is none. Brackets and parentheses in labels become `_`, as the reference does for
-image alt text.
+image alt text, and backslashes are escaped so a trailing one cannot end the link
+text early.
 
 An explicit `Content-Disposition: attachment`, or an unknown declared disposition,
 keeps its original download even

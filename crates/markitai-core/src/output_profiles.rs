@@ -2864,7 +2864,7 @@ mod tests {
             ..Default::default()
         };
         crate::output::apply_profiles(&mut result, &cfg);
-        crate::output::write(
+        crate::output::write_document_mode(
             dir.path(),
             "scan.png",
             &mut result,
@@ -2872,7 +2872,12 @@ mod tests {
                 name: "image.png".into(),
                 bytes: b"fixture-image-bytes".to_vec(),
             }],
+            crate::output::Screenshots::New(&[]),
             &cfg,
+            crate::output::WritePolicy {
+                publication: None,
+                prepared: None,
+            },
         )
         .unwrap();
         let filename = result.assets[0].file_name().unwrap().to_str().unwrap();

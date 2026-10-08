@@ -15,7 +15,8 @@ import shutil
 import subprocess
 import sys
 import threading
-import uuid
+
+from isolation import install_state_guard
 
 
 def sha(path):
@@ -27,51 +28,15 @@ def write(path, value):
 
 
 def guards(port):
-    protected = Path.home() / '.markitai'
-    roots = {os.path.abspath(protected), os.path.realpath(protected)}
-    state = {'scope': 'Python path/network audit events; not an OS sandbox or native syscall monitor',
-             'self_tests': {}, 'blocked_state_events': [], 'blocked_network_events': []}
-    testing = True
-    events = {'open': (0,), 'os.listdir': (0,), 'os.scandir': (0,), 'os.chdir': (0,),
-              'os.mkdir': (0,), 'os.remove': (0,), 'os.rmdir': (0,), 'os.chmod': (0,),
-              'os.rename': (0, 1), 'os.link': (0, 1), 'os.symlink': (0, 1)}
-    def guard(event, args):
-        allowed = True
+    def loopback(event, args):
         if event == 'socket.getaddrinfo':
-            allowed = args[0] == '127.0.0.1' and args[1] == port
-        elif event == 'socket.connect':
+            return args[0] == '127.0.0.1' and args[1] == port
+        if event == 'socket.connect':
             address = args[1]
-            allowed = isinstance(address, tuple) and address[:2] == ('127.0.0.1', port)
-        elif event == 'socket.sendto':
-            allowed = False
-        if not allowed:
-            state['blocked_network_events'].append(event)
-            raise PermissionError('Only the scheduled loopback fixture endpoint is allowed')
-        for index in events.get(event, ()):
-            path = args[index]
-            if isinstance(path, int):
-                continue
-            spelling = os.path.abspath(os.fsdecode(path) if path is not None else '.')
-            if any(candidate == root or candidate.startswith(root + os.sep)
-                   for candidate in (spelling, os.path.realpath(spelling)) for root in roots):
-                if not testing:
-                    state['blocked_state_events'].append({'event': event, 'path': spelling})
-                raise PermissionError('Real Markitai user state is protected')
-    sys.addaudithook(guard)
-    probe = protected / ('__report_guard_' + uuid.uuid4().hex) / 'missing'
-    for name, operation in {
-        'read': lambda: open(probe, 'rb'), 'write': lambda: open(probe, 'wb'),
-        'listdir': lambda: os.listdir(probe), 'scandir': lambda: os.scandir(probe),
-    }.items():
-        try:
-            result = operation()
-        except PermissionError:
-            state['self_tests'][name] = 'blocked'
-        else:
-            if hasattr(result, 'close'): result.close()
-            raise RuntimeError('Protected-state guard probe failed')
-    testing = False
-    return state
+            return isinstance(address, tuple) and address[:2] == ('127.0.0.1', port)
+        return False
+    return install_state_guard('Python path/network audit events; not an OS sandbox or native syscall monitor',
+                               loopback)
 
 
 def reference_worker(request_path):

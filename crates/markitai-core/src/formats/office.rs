@@ -1,9 +1,9 @@
 //! Bounded OOXML presentation reader. Slide identity comes from package relationships.
 
+use crate::opc::{self, Relationship};
 use crate::{Asset, Document, Error, Result};
 use quick_xml::{events::Event, name::ResolveResult};
 use std::collections::{BTreeMap, HashMap};
-use std::io::{Cursor, Read};
 use std::rc::Rc;
 
 const MAX_PART: u64 = 16 * 1024 * 1024;
@@ -190,42 +190,26 @@ fn xml(bytes: &[u8]) -> Result<Node> {
 }
 
 struct Package<'a> {
-    archive: zip::ZipArchive<Cursor<&'a [u8]>>,
+    zip: opc::Zip<'a>,
     remaining: u64,
 }
 
 impl<'a> Package<'a> {
     fn new(bytes: &'a [u8]) -> Result<Self> {
-        let archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(error)?;
-        if archive.len() > 16_384 {
-            return Err(error("package has more than 16,384 entries"));
-        }
         Ok(Self {
-            archive,
+            zip: opc::Zip::open(bytes, opc::MAX_ENTRIES).map_err(error)?,
             remaining: MAX_TOTAL,
         })
     }
 
+    /// A part within `limit` and the package's remaining decompression budget.
     fn read(&mut self, path: &str, limit: u64) -> Result<Option<Vec<u8>>> {
-        let file = match self.archive.by_name(path) {
-            Ok(file) => file,
-            Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-            Err(e) => return Err(error(e)),
-        };
-        if file.size() > limit || file.size() > self.remaining {
-            return Err(error(format!(
-                "part {path} exceeds its decompression budget"
-            )));
-        }
-        let mut bytes = Vec::new();
-        file.take(limit.min(self.remaining) + 1)
-            .read_to_end(&mut bytes)
+        let bytes = self
+            .zip
+            .read(path, limit.min(self.remaining))
             .map_err(error)?;
-        if bytes.len() as u64 > limit.min(self.remaining) {
-            return Err(error(format!("part {path} exceeds its read budget")));
-        }
-        self.remaining -= bytes.len() as u64;
-        Ok(Some(bytes))
+        self.remaining -= bytes.as_ref().map_or(0, |bytes| bytes.len() as u64);
+        Ok(bytes)
     }
 
     fn tree(&mut self, path: &str) -> Result<Node> {
@@ -235,14 +219,7 @@ impl<'a> Package<'a> {
     }
 
     fn relationships(&mut self, part: &str) -> Result<BTreeMap<String, Relationship>> {
-        let path = if part.is_empty() {
-            "_rels/.rels".into()
-        } else {
-            let (directory, filename) = part.rsplit_once('/').unwrap_or(("", part));
-            format!("{directory}/_rels/{filename}.rels")
-                .trim_start_matches('/')
-                .to_owned()
-        };
+        let path = opc::relationships_part(part);
         let Some(bytes) = self.read(&path, MAX_PART)? else {
             return Ok(BTreeMap::new());
         };
@@ -256,11 +233,11 @@ impl<'a> Package<'a> {
             let id = node
                 .attr("Id")
                 .ok_or_else(|| error("relationship has no ID"))?;
-            let relationship = Relationship {
-                kind: node.attr("Type").unwrap_or("").to_owned(),
-                target: node.attr("Target").unwrap_or("").to_owned(),
-                external: node.attr("TargetMode") == Some("External"),
-            };
+            let relationship = Relationship::new(
+                node.attr("Type").unwrap_or(""),
+                node.attr("Target").unwrap_or(""),
+                node.attr("TargetMode"),
+            );
             if relationships.insert(id.to_owned(), relationship).is_some() {
                 return Err(error(format!("duplicate relationship {id} in {path}")));
             }
@@ -269,59 +246,8 @@ impl<'a> Package<'a> {
     }
 }
 
-#[derive(Clone)]
-struct Relationship {
-    kind: String,
-    target: String,
-    external: bool,
-}
-
 fn resolve(base: &str, target: &str) -> Result<String> {
-    if target.is_empty() || target.starts_with("//") || target.contains(['\\', '\0', ':', '?', '#'])
-    {
-        return Err(error("invalid internal relationship target"));
-    }
-    let mut decoded = Vec::new();
-    let bytes = target.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let pair = bytes
-                .get(i + 1..i + 3)
-                .ok_or_else(|| error("invalid escaped part name"))?;
-            let pair = std::str::from_utf8(pair).map_err(error)?;
-            decoded.push(u8::from_str_radix(pair, 16).map_err(error)?);
-            i += 3;
-        } else {
-            decoded.push(bytes[i]);
-            i += 1;
-        }
-    }
-    let decoded = String::from_utf8(decoded).map_err(error)?;
-    if decoded.contains(['\\', '\0', ':', '?', '#']) {
-        return Err(error("unsafe escaped part name"));
-    }
-    let mut components = if decoded.starts_with('/') {
-        Vec::new()
-    } else {
-        base.rsplit_once('/')
-            .map_or(Vec::new(), |(parent, _)| parent.split('/').collect())
-    };
-    for component in decoded.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                if components.pop().is_none() {
-                    return Err(error("relationship escapes package root"));
-                }
-            }
-            value => components.push(value),
-        }
-    }
-    if components.is_empty() {
-        return Err(error("relationship has no part name"));
-    }
-    Ok(components.join("/"))
+    opc::resolve(base, target).map_err(error)
 }
 
 fn related(
@@ -1530,7 +1456,7 @@ mod tests {
     }
 
     use super::*;
-    use std::io::Write;
+    use std::io::{Cursor, Write};
 
     const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
     const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";

@@ -7,6 +7,7 @@ PE architecture and runtime imports before exercising the installed CLI and MCP
 protocol.
 Every package carries complete portable-engine attribution. Executed probes
 use isolated HOME/state and report dependency readiness without installing it.
+A Unix target this host cannot execute ends with status `built-not-executed`.
 
 Apple builds default to macOS 11.0 and read the minimum back from load commands.
 The record is not signing, publishing or evidence from another target's hardware.
@@ -26,6 +27,7 @@ import tempfile
 from ci_packages import (cli_attribution, doctor_probe, extract_cli_zip, extract_single_binary_tar,
                          identity, mcp_probe, package_attribution, source_snapshot, write_cli_zip,
                          write_single_binary_tar, windows_cli_build)
+from ci_process import run_logged
 from cli_documentation import cli_documentation
 from executable_identity import (MACHO, ELF, WINDOWS_TARGETS, executable_arch,
                                  verify_target_executable, verify_windows_cli_runtime)
@@ -142,9 +144,15 @@ def main(argv=None):
     def run(name, command, cwd=root, env=None):
         command = [str(value) for value in command]
         log = output / "logs" / f"{len(record['steps']):02}-{name}.log"
-        with log.open("wb") as stream:
-            result = subprocess.run(command, cwd=cwd, env=environment if env is None else env,
-                                    stdout=stream, stderr=subprocess.STDOUT)
+
+        def progress(event, **fields):
+            # Content-free liveness on stderr; stdout stays the final summary.
+            print(json.dumps({"stage": name, "event": event, **fields}), file=sys.stderr, flush=True)
+
+        # A hung step fails with its process tree stopped instead of blocking forever;
+        # link-time optimization can legitimately stay silent for minutes.
+        result = run_logged(command, cwd=cwd, env=environment if env is None else env, log=log,
+                            timeout=75 * 60 if name == "build" else 15 * 60, progress=progress)
         record["steps"].append({"name": name, "command": command, "cwd": str(cwd),
                                 "exit_code": result.returncode, "log": str(log.relative_to(output)),
                                 "log_identity": identity(log)})
@@ -182,7 +190,8 @@ def main(argv=None):
             if record["executable"]["minimum_macos"] != record["deployment_target"]:
                 raise RuntimeError(f"Executable records macOS {record['executable']['minimum_macos']}, "
                                    f"not the deployment target {record['deployment_target']}")
-            signature = subprocess.run(["codesign", "-dv", str(binary)], capture_output=True, text=True)
+            signature = subprocess.run(["codesign", "-dv", str(binary)], capture_output=True, text=True,
+                                       timeout=60)
             record["executable"]["code_signature"] = (
                 "none" if "not signed" in signature.stderr else signature.stderr.strip().splitlines()[-1:])
         cli_licenses = cli_attribution(root, package_attribution(root))
@@ -243,7 +252,8 @@ def main(argv=None):
         record["source_after"] = snapshot()
         if record["source_before"] != record["source_after"]:
             raise RuntimeError("Source bytes changed during packaging")
-        record["status"] = "passed"
+        # A target this host cannot execute is built and verified, not tested.
+        record["status"] = "passed" if record["executed"]["ran"] else "built-not-executed"
     except Exception as error:
         record["status"] = "failed"
         record["error"] = f"{type(error).__name__}: {error}"

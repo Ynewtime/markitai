@@ -14,6 +14,8 @@ Markitai 的配置是一个 UTF-8 JSON 对象，只需写出与默认值不同�
 4. 用户配置 `MARKITAI_HOME/config.json`，未设置 `MARKITAI_HOME` 时为 `~/.markitai/config.json`
 5. 都不存在时使用内建默认值
 
+配置文件必须是不超过 8 MiB 的普通文件。符号链接（例如由 dotfiles 管理的配置）会被跟随；`config set/edit`、`init` 和工作台保存时保留链接，原子替换其指向的文件。
+
 `--config-json '{...}'` 在选中的文件之上深度合并，仅对本次运行有效；`-p/--preset` 再覆盖功能开关，命令行显式参数最后生效。根级 `-c` 与 `--config-json` 对子命令同样有效。`markitai config path` 显示当前选中的文件。
 
 ### 常用命令
@@ -92,7 +94,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `log.dir` / `log.level` | `null` / `INFO` | 文件日志目录与级别，默认不写日志 |
 | `history.record` | `false` | 记录供 `serve` 查看的历史，同 `--record-history` |
 
-内建 preset：`minimal` 全部关闭；`standard` 开启 LLM、alt 和 desc；`rich` 再开启截图；都不开启 OCR。`markitai config list` 列出完整默认值。
+内建 preset：`minimal` 全部关闭；`standard` 开启 LLM、alt 和 desc；`rich` 再开启截图；都不开启 OCR。配置中的 `presets` 可以新增名称，也可以重新定义内建名称，CLI 与工作台都优先使用配置中的定义；名称不区分大小写。`markitai config list` 列出完整默认值。
 
 ### 配置键的运行状态
 
@@ -122,9 +124,9 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 |---|---|
 | `MARKITAI_HOME` | 替代 `~/.markitai`：用户配置、`.env`、缓存、浏览器安装、历史与 stdout 图片库（`assets/`）都放在这里；空值等同未设置（`HOME`、`USERPROFILE` 同理），不会落到当前目录 |
 | `MARKITAI_CONFIG` | 配置文件路径（优先级低于 `-c`） |
-| `MARKITAI_PURE` | `1`/`true`/`yes` 时等同 `--pure` |
+| `MARKITAI_PURE` | `1`/`true`/`yes`/`on`（不分大小写）时等同 `--pure` |
 | `MARKITAI_RECORD_HISTORY` | `1`/`true`/`yes`/`on`（不分大小写）开启历史，其他非空值关闭；命令行开关优先 |
-| `MARKITAI_NO_REMOTE_FETCH` | `1`/`true`/`yes`/`on` 时禁止远程抽取服务（包括显式选择的远程策略和 `-b cloudflare`） |
+| `MARKITAI_NO_REMOTE_FETCH` | 非空且不是 `0`/`false`/`no`（不分大小写）时禁止远程抽取服务（包括显式选择的远程策略和 `-b cloudflare`） |
 | `MARKITAI_NO_VLM_OCR` | 非空且不是 `0`/`false`/`no` 时，LLM 开启的 OCR 先本地识别再只发送文字 |
 | `MARKITAI_LOG_DIR` / `MARKITAI_LOG_FORMAT` | 覆盖 `log.dir` 与 `log.format`（`text`/`json`） |
 | `MARKITAI_SERVE_TOKEN` | `serve` 的进程环境访问令牌（不从 `.env` 读取；含回环地址请求；未设置或空白时自动生成），见 [REST 服务](serve.md) |

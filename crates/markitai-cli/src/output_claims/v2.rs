@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const CLEANUP_BLOCK: usize = 256;
+/// No release writes `writers-v2`; it is unknown metadata, preserved and reported.
+pub(super) const UNKNOWN_WRITERS: &str =
+    "unknown ownership metadata .markitai/ownership/writers-v2 is preserved, not used";
 
 fn invalid(message: &str) -> Error {
     Error::Invalid(message.into())
@@ -118,7 +121,7 @@ impl Parent {
         match platform::status(&self.location("writers-v2")) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
             Err(error) => return Err(error.into()),
-            Ok(_) => return Err(invalid("unsupported unreleased v2 sidecar namespace")),
+            Ok(_) => return Err(invalid(UNKNOWN_WRITERS)),
         }
         let status = platform::status(&self.path)?;
         if !status.metadata().is_dir() || status.id() != self.identity {

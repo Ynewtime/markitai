@@ -1,4 +1,5 @@
 //! Private supplier-job evidence. This store never publishes document outputs.
+use super::sha256_hex;
 use crate::output_claims::Owner;
 use markitai_core::{
     ConversionUsage,
@@ -747,7 +748,7 @@ impl Store {
             return Err(Error::Conflict);
         }
         let index = self.index(id)?;
-        let hash = hex(raw);
+        let hash = sha256_hex(raw);
         if let Some(prior) = &self.state.items[index].result {
             if prior.blob.sha256 != hash || prior.blob.bytes != raw.len() as u64 {
                 return Err(Error::Conflict);
@@ -923,7 +924,7 @@ impl Store {
         let path = self.path.join(&blob.path);
         Directory::read(path.parent().ok_or(Error::Conflict)?, true)?;
         let bytes = read_private(&path, limit)?;
-        if bytes.len() as u64 != blob.bytes || hex(&bytes) != blob.sha256 {
+        if bytes.len() as u64 != blob.bytes || sha256_hex(&bytes) != blob.sha256 {
             return Err(Error::Conflict);
         }
         Ok(bytes)
@@ -1388,9 +1389,6 @@ fn scan(root: &Root, limits: Limits) -> Result<Vec<Job>> {
 
 fn uuid(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|parsed| parsed.hyphenated().to_string() == value)
-}
-fn hex(bytes: &[u8]) -> String {
-    markitai_core::hex(Sha256::digest(bytes))
 }
 fn hash(value: &str) -> bool {
     value.len() == 64

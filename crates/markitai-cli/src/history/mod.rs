@@ -1,4 +1,5 @@
 //! Optional, self-contained CLI archives. Conversion never depends on this store.
+use markitai_core::output::create_private_dir;
 mod assets;
 mod image_metadata;
 
@@ -93,7 +94,7 @@ impl Plan {
         }
         let finished_at = now();
         // History metadata is always private, independent of output symlink policy.
-        private_directory(&self.jobs_root)?;
+        create_private_dir(&self.jobs_root)?;
         let boundary = crate::report_store::resolve_path(&self.output_root)?;
         let mut stage_builder = tempfile::Builder::new();
         stage_builder.prefix(".tmp-");
@@ -104,7 +105,7 @@ impl Plan {
         }
         let stage = stage_builder.tempdir_in(&self.jobs_root)?;
         let out = stage.path().join("out");
-        private_directory(&out)?;
+        create_private_dir(&out)?;
         let mut budget = assets::Budget::default();
         let mut image_indexes = image_metadata::Indexes::default();
         let mut names = OutputNames::default();
@@ -473,16 +474,6 @@ fn now() -> String {
 }
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
-}
-
-fn private_directory(path: &Path) -> io::Result<()> {
-    markitai_core::output::check_path(path, false).map_err(io::Error::other)?;
-    platform::private_directory().recursive(true).create(path)?;
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(invalid("History directory is not a regular directory"));
-    }
-    Ok(())
 }
 
 fn private_file(path: &Path, exclusive: bool) -> io::Result<File> {

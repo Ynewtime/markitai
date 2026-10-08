@@ -273,6 +273,12 @@ fn copilot(home: &Path, scenario: &Value) -> i32 {
     std::fs::write(home.join("pid"), std::process::id().to_string()).unwrap();
     std::fs::write(home.join("cwd"), cwd.to_string_lossy().as_bytes()).unwrap();
     stderr(&"credential-must-never-appear-in-error\n".repeat(256));
+    if mode == "stderr-flood" {
+        // More than the 1 MiB stderr bound, then silence until killed.
+        stderr(&"secret".repeat(200_000));
+        std::thread::sleep(Duration::from_secs(60));
+        return 0;
+    }
 
     let send = |value: Value| {
         let data = serde_json::to_vec(&value).unwrap();

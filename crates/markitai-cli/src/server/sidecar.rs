@@ -1,13 +1,13 @@
 //! Rebase staged image metadata and preserve sibling entries under the core lock.
 //! Writers hold the sidecar `.images.lock`, never `images.json`, so a Windows
 //! (mandatory) lock never refuses a reader of the index.
-use super::store;
+use markitai_core::output::create_private_dir;
 use markitai_core::platform;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions, TryLockError},
-    io::{self, Read, Write},
+    io::{self, Write},
     path::Path,
     time::{Duration, Instant},
 };
@@ -30,11 +30,8 @@ fn read(path: &Path) -> io::Result<Value> {
     if !file.metadata()?.is_file() || file.metadata()?.len() > LIMIT {
         return Err(io::Error::other("invalid image metadata size"));
     }
-    let mut bytes = Vec::new();
-    file.take(LIMIT + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > LIMIT {
-        return Err(io::Error::other("image metadata exceeds limit"));
-    }
+    let bytes = platform::read_limited(file, LIMIT)?
+        .ok_or_else(|| io::Error::other("image metadata exceeds limit"))?;
     let value: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     if !value.is_object()
         || ["images", "assets"]
@@ -53,7 +50,7 @@ impl Drop for ImageMetadataLock {
 }
 
 fn lock(directory: &Path) -> io::Result<ImageMetadataLock> {
-    store::private_dir(directory)?;
+    create_private_dir(directory)?;
     let path = directory.join(".images.lock");
     markitai_core::output::check_path(&path, false).map_err(io::Error::other)?;
     let mut options = OpenOptions::new();
@@ -208,7 +205,7 @@ pub(super) fn prune(
         }
         if changed {
             let target = staged.join(prefix).join("images.json");
-            store::private_dir(target.parent().unwrap())?;
+            create_private_dir(target.parent().unwrap())?;
             let bytes = serde_json::to_vec_pretty(&value).map_err(io::Error::other)?;
             if bytes.len() as u64 > LIMIT {
                 return Err(io::Error::other("image metadata exceeds limit"));

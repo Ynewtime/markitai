@@ -108,6 +108,154 @@ pub fn selected_path(explicit: Option<&Path>) -> Option<PathBuf> {
     choose_path(explicit, env_path, &cwd, &home()).map(|path| expand_home(&path))
 }
 
+/// An opt-in environment switch such as `MARKITAI_PURE`: `1`, `true`, `yes`
+/// or `on`, trimmed and in any case, turn it on; any other value turns it off.
+/// `None` when the value is blank.
+pub fn env_opt_in(value: &str) -> Option<bool> {
+    let value = value.trim().to_ascii_lowercase();
+    (!value.is_empty()).then_some(matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// An opt-out environment switch such as `MARKITAI_NO_REMOTE_FETCH`: set by
+/// any value except a blank one, `0`, `false` or `no` (trimmed, any case), as
+/// the reference reads it, so an unrecognized value fails safe.
+pub fn env_opt_out(value: &str) -> bool {
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "no"
+    )
+}
+
+/// The built-in presets, in the order they are offered.
+pub const BUILTIN_PRESETS: [&str; 3] = ["minimal", "standard", "rich"];
+
+/// The feature switches of preset `name` (case-insensitive): an entry of the
+/// configuration's `presets`, which may redefine a built-in name, else the
+/// built-in `minimal`, `standard` or `rich`. None of them enables OCR.
+pub fn preset(cfg: &Value, name: &str) -> Option<Value> {
+    let name = name.to_lowercase();
+    cfg["presets"].get(&name).cloned().or_else(|| {
+        let (llm, screenshot) = match name.as_str() {
+            "minimal" => (false, false),
+            "standard" => (true, false),
+            "rich" => (true, true),
+            _ => return None,
+        };
+        Some(json!({"llm":llm,"ocr":false,"alt":llm,"desc":llm,"screenshot":screenshot}))
+    })
+}
+
+/// Largest configuration file that is read or written.
+pub const FILE_LIMIT: usize = 8 * 1024 * 1024;
+
+/// Read the configuration file at `path`; `None` when nothing is there. A
+/// final symbolic link (a dotfile-managed configuration) is followed. The file
+/// must be regular (`InvalidInput` otherwise) and at most [`FILE_LIMIT`] bytes
+/// (`FileTooLarge`); opening never blocks on a FIFO.
+pub fn read_file(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::ErrorKind;
+    let regular = |metadata: std::fs::Metadata| {
+        if metadata.is_file() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "configuration must be a regular file",
+            ))
+        }
+    };
+    match std::fs::metadata(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        metadata => regular(metadata?)?,
+    }
+    let file = match crate::platform::open_read(path, true) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        file => file?,
+    };
+    // The name may have changed since the check above.
+    regular(file.metadata()?)?;
+    match crate::platform::read_limited(file, FILE_LIMIT as u64)? {
+        Some(bytes) => Ok(Some(bytes)),
+        None => Err(std::io::Error::new(
+            ErrorKind::FileTooLarge,
+            "configuration exceeds 8 MiB",
+        )),
+    }
+}
+
+/// A replacement configuration, staged beside the file it replaces.
+pub struct StagedFile {
+    temporary: tempfile::NamedTempFile,
+    destination: PathBuf,
+}
+
+/// Stage `bytes` to replace the configuration at `path`. A final symbolic link
+/// is kept and the file it names is replaced, as [`read_file`] reads through
+/// it. An existing destination must be a regular file and `bytes` at most
+/// [`FILE_LIMIT`]. A missing parent directory is created private; the staged
+/// file is owner-only.
+pub fn stage_file(path: &Path, bytes: &[u8]) -> std::io::Result<StagedFile> {
+    use std::io::{ErrorKind, Write};
+    if bytes.len() > FILE_LIMIT {
+        return Err(std::io::Error::new(
+            ErrorKind::FileTooLarge,
+            "configuration exceeds 8 MiB",
+        ));
+    }
+    let destination = match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_symlink() => crate::platform::canonicalize(path)?,
+        Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
+        _ => path.to_owned(),
+    };
+    match std::fs::symlink_metadata(&destination) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "configuration must be a regular file",
+            ));
+        }
+        Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    crate::platform::private_directory()
+        .recursive(true)
+        .create(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(bytes)?;
+    temporary.as_file().sync_all()?;
+    Ok(StagedFile {
+        temporary,
+        destination,
+    })
+}
+
+impl StagedFile {
+    /// The directory whose entry [`StagedFile::publish`] replaces.
+    pub fn directory(&self) -> &Path {
+        self.temporary.path().parent().unwrap_or(Path::new("."))
+    }
+
+    /// Atomically replace the destination. Durability needs a later
+    /// [`crate::platform::sync_directory`] of [`StagedFile::directory`].
+    pub fn publish(self) -> std::io::Result<()> {
+        crate::platform::persist(self.temporary, &self.destination)
+            .map(drop)
+            .map_err(|error| error.error)
+    }
+}
+
+/// Durably replace the configuration at `path` with `bytes` ([`stage_file`]).
+pub fn write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let staged = stage_file(path, bytes)?;
+    let directory = staged.directory().to_owned();
+    staged.publish()?;
+    crate::platform::sync_directory(&directory)
+}
+
 pub fn load(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
     normalize(&raw(explicit, overrides)?)
 }
@@ -120,8 +268,8 @@ pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
     let selected = selected_path(explicit);
     let mut value = json!({});
     if let Some(path) = selected {
-        match std::fs::read(&path) {
-            Ok(bytes) => {
+        match read_file(&path) {
+            Ok(Some(bytes)) => {
                 value = serde_json::from_slice(&bytes).map_err(|error| {
                     Error::Config(format!("Invalid JSON in {}: {error}", path.display()))
                 })?;
@@ -129,7 +277,7 @@ pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
                     return Err(invalid("", "must be a JSON object"));
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(None) => {
                 // The CLI separately rejects a missing explicit -c. The library
                 // loader historically warns and falls back without selecting another file.
                 eprintln!(
@@ -964,6 +1112,104 @@ fn assign(target: &mut Value, parts: &[String], value: Value, path: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environment_switches_trim_ignore_case_and_opt_outs_fail_safe() {
+        // MARKITAI_NO_REMOTE_FETCH used to need an exact lowercase match, so
+        // " 1" or "Y" left remote services enabled; it reads like
+        // MARKITAI_NO_VLM_OCR now.
+        for value in ["1", " 1 ", "true", "enabled", "Yes", "off", "arbitrary"] {
+            assert!(env_opt_out(value), "{value}");
+        }
+        for value in ["", " ", "0", " false ", "No"] {
+            assert!(!env_opt_out(value), "{value}");
+        }
+        // MARKITAI_PURE was case-sensitive and ignored `on`.
+        for value in ["1", " TRUE ", "Yes", "on"] {
+            assert_eq!(env_opt_in(value), Some(true), "{value}");
+        }
+        for value in ["0", "off", "no", "anything"] {
+            assert_eq!(env_opt_in(value), Some(false), "{value}");
+        }
+        assert_eq!(env_opt_in(" "), None);
+    }
+
+    #[test]
+    fn configured_presets_win_over_built_in_names_in_any_case() {
+        let cfg =
+            normalize(&json!({"presets":{"standard":{"desc":true},"team":{"ocr":true}}})).unwrap();
+        // The reference looks a name up in the configuration first; the CLI
+        // used to apply the built-in `standard` regardless.
+        assert_eq!(
+            preset(&cfg, "Standard").unwrap(),
+            json!({"llm":false,"ocr":false,"alt":false,"desc":true,"screenshot":false})
+        );
+        assert_eq!(preset(&cfg, "TEAM").unwrap()["ocr"], true);
+        assert_eq!(
+            preset(&cfg, "rich").unwrap(),
+            json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true})
+        );
+        assert_eq!(preset(&cfg, "minimal").unwrap()["llm"], false);
+        assert_eq!(preset(&cfg, "bogus"), None);
+    }
+
+    #[test]
+    fn config_files_are_bounded_regular_files_written_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new/config.json");
+        assert_eq!(read_file(&path).unwrap(), None);
+        write_file(&path, b"{}\n").unwrap();
+        assert_eq!(read_file(&path).unwrap().as_deref(), Some(&b"{}\n"[..]));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&path), 0o600);
+            assert_eq!(mode(path.parent().unwrap()), 0o700);
+        }
+        let large = vec![b' '; FILE_LIMIT + 1];
+        let error = write_file(&path, &large).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::FileTooLarge);
+        std::fs::write(&path, &large).unwrap();
+        let error = read_file(&path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::FileTooLarge);
+        let error = read_file(dir.path()).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        let error = write_file(dir.path().join("new").as_path(), b"{}").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_config_symlink_is_kept_and_a_fifo_never_blocks() {
+        use std::os::unix::fs::FileTypeExt;
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles/markitai.json");
+        std::fs::create_dir(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, b"{\"old\":true}").unwrap();
+        let link = dir.path().join("config.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(
+            read_file(&link).unwrap().as_deref(),
+            Some(&b"{\"old\":true}"[..])
+        );
+        write_file(&link, b"{}").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"{}");
+        let fifo = dir.path().join("fifo.json");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let error = read_file(&fifo).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        let error = write_file(&fifo, b"{}").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            std::fs::symlink_metadata(&fifo)
+                .unwrap()
+                .file_type()
+                .is_fifo()
+        );
+    }
 
     #[test]
     fn inactive_key_warnings_only_inspect_explicit_raw_fields() {

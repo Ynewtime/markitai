@@ -172,14 +172,9 @@ fn perform(entry: &Deployment) -> Result<()> {
     {
         return Err(failure("Model connection response exceeds 1 MiB"));
     }
-    let mut bytes = Vec::new();
-    response
-        .take(MAX_RESPONSE + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| failure("Cannot read model connection response"))?;
-    if bytes.len() as u64 > MAX_RESPONSE {
-        return Err(failure("Model connection response exceeds 1 MiB"));
-    }
+    let bytes = crate::platform::read_limited(response, MAX_RESPONSE)
+        .map_err(|_| failure("Cannot read model connection response"))?
+        .ok_or_else(|| failure("Model connection response exceeds 1 MiB"))?;
     let data: Value = serde_json::from_slice(&bytes)
         .map_err(|_| failure("Model connection response is not valid JSON"))?;
     let complete = if entry.protocol == Protocol::Anthropic {

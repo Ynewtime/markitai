@@ -231,19 +231,15 @@ fn existing_paths(source: &str, directory: &Path, cfg: &Value) -> Option<(PathBu
         return None;
     }
     let source_name = if is_url(source) {
-        markitai_core::output::url_name(source, &Map::new())
+        markitai_core::output::url_name(source)
     } else {
         Path::new(source)
             .file_name()?
             .to_string_lossy()
             .into_owned()
     };
-    let name = cfg
-        .pointer("/output/filename")
-        .and_then(Value::as_str)
-        .map(|name| name.strip_suffix(".md").unwrap_or(name))
-        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
-        .unwrap_or(&source_name);
+    // An invalid name reads nothing; the conversion reports it.
+    let name = markitai_core::output::resolved_stem(&source_name, cfg).ok()?;
     Some((
         directory.join(format!("{name}.md")),
         directory.join(format!("{name}.llm.md")),

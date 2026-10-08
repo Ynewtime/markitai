@@ -1,5 +1,6 @@
 //! Local Outlook compound-message reader. Attachment paths are data, never files to open.
 
+use super::mail;
 use crate::{Asset, Document, Error, Result};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
@@ -314,12 +315,8 @@ fn decode_ansi(bytes: &[u8], codepage: Option<u32>, warnings: &mut Vec<String>) 
     if let Ok(text) = std::str::from_utf8(bytes) {
         return Ok(text.trim().to_owned());
     }
-    let (text, malformed) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);
-    if malformed {
-        return Err(error(
-            "text cannot be decoded without replacement characters",
-        ));
-    }
+    // Windows-1252 maps every byte, so this fallback cannot fail.
+    let (text, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);
     Ok(text.trim().to_owned())
 }
 
@@ -368,47 +365,6 @@ struct Attachment {
     inline_candidate: bool,
 }
 
-fn resolve_content_ids(
-    html: &str,
-    attachments: &[Attachment],
-    warnings: &mut Vec<String>,
-) -> String {
-    static ATTRIBUTES: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let pattern = ATTRIBUTES.get_or_init(|| {
-        regex::Regex::new(r#"(?i)(\b(?:src|href)\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#)
-            .expect("static HTML attribute pattern")
-    });
-    pattern
-        .replace_all(html, |captures: &regex::Captures<'_>| {
-            let value = captures
-                .get(2)
-                .or_else(|| captures.get(3))
-                .or_else(|| captures.get(4))
-                .unwrap()
-                .as_str();
-            if !value
-                .get(..4)
-                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("cid:"))
-            {
-                return captures[0].to_owned();
-            }
-            let id = &value[4..];
-            if let Some(attachment) = attachments
-                .iter()
-                .find(|attachment| !attachment.cid.is_empty() && attachment.cid == id)
-            {
-                format!(
-                    "{}\".markitai/assets/{}\"",
-                    &captures[1], attachment.asset.name
-                )
-            } else {
-                warnings.push(format!("MSG HTML refers to missing content ID {id:?}."));
-                captures[0].to_owned()
-            }
-        })
-        .into_owned()
-}
-
 fn safe_name(name: &str, index: usize) -> String {
     format!("msg-{}-{}", index + 1, crate::output_name::attachment(name))
 }
@@ -439,10 +395,7 @@ fn attachments(
             if label.is_empty() {
                 label = format!("Attachment {}", index + 1);
             }
-            let cid = reader
-                .string(&path, 0x3712, codepage, warnings)?
-                .trim_matches(['<', '>'])
-                .to_owned();
+            let cid = reader.string(&path, 0x3712, codepage, warnings)?;
             let bytes = reader
                 .binary(&path, 0x3701, MAX_ATTACHMENT)?
                 .ok_or_else(|| error("attachment has no by-value data stream"))?;
@@ -470,23 +423,6 @@ fn attachments(
         }
     }
     Ok(attachments)
-}
-
-fn header(value: &str) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace('<', "\\<")
-        .replace('>', "\\>")
-}
-
-fn attachment_label(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .replace(['\r', '\n'], " ")
 }
 
 fn filetime(value: u64) -> Option<String> {
@@ -564,27 +500,33 @@ pub(super) fn extract_with_attachments(bytes: &[u8]) -> Result<(Document, HashSe
     let body = if !plain.is_empty() {
         plain
     } else if !html.is_empty() {
-        let requested: HashSet<_> = crate::output_profiles::html_image_references(&html)
-            .into_iter()
-            .filter_map(|target| {
-                target
-                    .get(..4)
-                    .filter(|scheme| scheme.eq_ignore_ascii_case("cid:"))
-                    .map(|_| target[4..].to_owned())
-            })
-            .collect();
-        let html = resolve_content_ids(&html, &attachments, &mut document.warnings);
-        let body = super::html::fragment(&html)?;
+        let mut ids = mail::ContentIds::default();
+        for (index, attachment) in attachments.iter().enumerate() {
+            ids.insert(&attachment.cid, index);
+        }
+        let mut bound = HashSet::new();
+        let body = mail::html_with_content_ids(
+            &html,
+            |target| {
+                let index = ids.lookup(target)?;
+                bound.insert(index);
+                Some(attachments[index].asset.name.clone())
+            },
+            |target| {
+                format!(
+                    "MSG HTML image reference {target:?} has no unambiguous attachment Content-ID; the reference was retained."
+                )
+            },
+            &mut document.warnings,
+        )?;
         let images: HashSet<_> = crate::output_profiles::image_references(&body)
             .iter()
             .filter_map(|target| crate::image_enrichment::asset_name(target))
             .collect();
-        for attachment in &attachments {
-            if !attachment.cid.is_empty()
-                && requested.contains(&attachment.cid)
-                && images.contains(&attachment.asset.name)
-            {
-                shown.insert(attachment.asset.name.clone());
+        for index in bound {
+            let name = &attachments[index].asset.name;
+            if images.contains(name) {
+                shown.insert(name.clone());
             }
         }
         body
@@ -600,7 +542,7 @@ pub(super) fn extract_with_attachments(bytes: &[u8]) -> Result<(Document, HashSe
     let headers = [("From", &from), ("To", &display[0]), ("Subject", &subject)]
         .into_iter()
         .filter(|(_, value)| !value.is_empty())
-        .map(|(name, value)| format!("**{name}:** {}", header(value)))
+        .map(|(name, value)| format!("**{name}:** {}", mail::safe_header(value)))
         .collect::<Vec<_>>();
     document.markdown = "# Email Message".into();
     if !headers.is_empty() {
@@ -618,7 +560,7 @@ pub(super) fn extract_with_attachments(bytes: &[u8]) -> Result<(Document, HashSe
             originals.insert(attachment.asset.name.clone());
             document.markdown.push_str(&format!(
                 "\n\n[{}]({destination})",
-                attachment_label(&attachment.label)
+                mail::link_text(&attachment.label)
             ));
         }
         document.assets.push(attachment.asset);
@@ -859,38 +801,118 @@ mod tests {
         assert_eq!(reader.total_read, 0);
     }
 
-    #[test]
-    fn content_ids_match_whole_attributes_and_report_missing_parts() {
-        let attachments = vec![
-            Attachment {
-                asset: Asset {
-                    name: "first.png".into(),
-                    bytes: vec![],
-                },
-                label: "First".into(),
-                cid: "logo".into(),
-                inline_candidate: false,
-            },
-            Attachment {
-                asset: Asset {
-                    name: "second.png".into(),
-                    bytes: vec![],
-                },
-                label: "Second".into(),
-                cid: "logo2".into(),
-                inline_candidate: false,
-            },
+    fn attachment(
+        index: usize,
+        label: &str,
+        cid: &str,
+        inline: bool,
+        bytes: &[u8],
+    ) -> Vec<(String, Vec<u8>)> {
+        let storage = format!("/__attach_version1.0_#{index:08X}");
+        let mut properties = vec![(0x37050003, 1)];
+        if inline {
+            properties.extend([(0x7ffe000b, 1), (0x37140003, 4)]);
+        }
+        let mut streams = vec![
+            (
+                format!("{storage}/__properties_version1.0"),
+                property_stream(8, &properties),
+            ),
+            (format!("{storage}/__substg1.0_3707001F"), utf16(label)),
+            (format!("{storage}/__substg1.0_37010102"), bytes.to_vec()),
         ];
-        let mut warnings = Vec::new();
-        let html = resolve_content_ids(
-            "<p>cid:logo stays text</p><img src='cid:logo2'><img src=\"CID:logo\"><img src=cid:missing>",
-            &attachments,
-            &mut warnings,
+        if !cid.is_empty() {
+            streams.push((format!("{storage}/__substg1.0_3712001F"), utf16(cid)));
+        }
+        streams
+    }
+
+    fn html_message(html: &str, attachments: Vec<Vec<(String, Vec<u8>)>>) -> Vec<u8> {
+        let mut streams = vec![
+            (
+                "/__properties_version1.0".to_owned(),
+                property_stream(32, &[(0x3fde0003, 65001)]),
+            ),
+            ("/__substg1.0_10130102".to_owned(), html.as_bytes().to_vec()),
+        ];
+        streams.extend(attachments.into_iter().flatten());
+        owned_message(streams)
+    }
+
+    fn owned_message(streams: Vec<(String, Vec<u8>)>) -> Vec<u8> {
+        message(
+            streams
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.clone()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn content_ids_use_the_shared_image_reference_and_case_folding_rules() {
+        let bytes = html_message(
+            "<p>cid:logo stays text</p><img alt='Folded' src='CID:%3Clogo%40Example%3E'><img alt='Lazy' data-src='cid:lazy@example'><a href='cid:lazy@example'>link</a><img alt='Missing' src='cid:missing'><img alt='Ambiguous' src='cid:DUP'>",
+            vec![
+                attachment(0, "logo.png", "<Logo@example>", true, b"logo"),
+                attachment(1, "lazy.png", "<lazy@example>", true, b"lazy"),
+                attachment(2, "one.png", "<dup>", false, b"one"),
+                attachment(3, "two.png", "<Dup>", false, b"two"),
+            ],
         );
-        assert!(html.contains("<p>cid:logo stays text</p>"));
-        assert!(html.contains("src=\".markitai/assets/second.png\""));
-        assert!(html.contains("src=\".markitai/assets/first.png\""));
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("missing"));
+        let (document, originals) = extract_with_attachments(&bytes).unwrap();
+        let markdown = &document.markdown;
+        assert!(markdown.contains("cid:logo stays text"), "{markdown}");
+        // The percent-encoded, differently cased reference binds the inline
+        // image, which then needs no separate download.
+        assert!(markdown.contains("![Folded](.markitai/assets/msg-1-logo.png)"));
+        assert!(!originals.contains("msg-1-logo.png"));
+        // `data-src` and link `href` are not image sources: nothing binds and
+        // the hidden attachment keeps its download.
+        assert_eq!(markdown.matches("msg-2-lazy.png").count(), 1, "{markdown}");
+        assert!(!markdown.contains("cid:lazy"), "{markdown}");
+        assert!(markdown.ends_with("[lazy.png](.markitai/assets/msg-2-lazy.png)\n\n[one.png](.markitai/assets/msg-3-one.png)\n\n[two.png](.markitai/assets/msg-4-two.png)"), "{markdown}");
+        assert!(originals.contains("msg-2-lazy.png"));
+        // Missing and case-folded ambiguous IDs stay CID references.
+        assert!(markdown.contains("![Missing](cid:missing)"), "{markdown}");
+        assert!(markdown.contains("![Ambiguous](cid:DUP)"), "{markdown}");
+        assert_eq!(document.warnings.len(), 2, "{:?}", document.warnings);
+        assert!(document.warnings[0].contains("\"cid:missing\""));
+        assert!(document.warnings[1].contains("\"cid:DUP\""));
+    }
+
+    #[test]
+    fn headers_and_attachment_labels_use_the_shared_mail_escaping() {
+        let mut streams = vec![
+            (
+                "/__properties_version1.0".to_owned(),
+                property_stream(32, &[]),
+            ),
+            ("/__substg1.0_1000001F".to_owned(), utf16("Body")),
+            (
+                "/__substg1.0_0037001F".to_owned(),
+                utf16("Hi\u{0}\u{1b}there <b>"),
+            ),
+        ];
+        streams.extend(attachment(0, "a\\", "", false, b"a"));
+        streams.extend(attachment(1, "[x] <y>\u{7}\r\nz (1)", "", false, b"b"));
+        let document = extract(&owned_message(streams)).unwrap();
+        assert!(
+            document.markdown.contains("**Subject:** Hi there \\<b\\>"),
+            "{}",
+            document.markdown
+        );
+        // A trailing backslash cannot escape the closing bracket.
+        assert!(
+            document
+                .markdown
+                .contains("\n\n[a\\\\](.markitai/assets/msg-1-a")
+        );
+        assert!(
+            document
+                .markdown
+                .contains("\n\n[_x_ \\<y\\> z _1_](.markitai/assets/msg-2-"),
+            "{}",
+            document.markdown
+        );
     }
 }

@@ -2,7 +2,6 @@
 
 use super::{Result, failure};
 use quick_xml::{events::Event, name::ResolveResult};
-use std::io::{Cursor, Read};
 
 const MAX_XML: u64 = 32 * 1024 * 1024;
 const ODF_OFFICE: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:office:1.0";
@@ -11,29 +10,10 @@ const OOXML: &[u8] = b"http://schemas.openxmlformats.org/spreadsheetml/2006/main
 const STRICT_OOXML: &[u8] = b"http://purl.oclc.org/ooxml/spreadsheetml/main";
 
 fn part(bytes: &[u8], name: &str) -> Result<Vec<u8>> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|_| failure("invalid workbook ZIP package"))?;
-    if archive.len() > 16_384 {
-        return Err(failure("workbook ZIP exceeds 16,384 entries"));
-    }
-    // Duplicate part names are ambiguous even if a ZIP reader chooses one.
-    if archive.file_names().filter(|value| *value == name).count() != 1 {
-        return Err(failure(
-            "workbook sheet-index part is missing or duplicated",
-        ));
-    }
-    let file = archive
-        .by_name(name)
-        .map_err(|_| failure("workbook sheet-index part cannot be read"))?;
-    if file.size() > MAX_XML {
-        return Err(failure("workbook sheet-index XML exceeds 32 MiB"));
-    }
-    let mut xml = Vec::new();
-    file.take(MAX_XML + 1).read_to_end(&mut xml)?;
-    if xml.len() as u64 > MAX_XML {
-        return Err(failure("workbook sheet-index XML exceeds 32 MiB"));
-    }
-    Ok(xml)
+    crate::opc::Zip::open(bytes, crate::opc::MAX_ENTRIES)
+        .and_then(|mut zip| zip.read(name, MAX_XML))
+        .map_err(|e| failure(&format!("workbook package: {e}")))?
+        .ok_or_else(|| failure("workbook sheet-index part is missing"))
 }
 
 pub(super) fn xlsx(bytes: &[u8]) -> Result<usize> {

@@ -117,7 +117,7 @@ pub(crate) fn configured(cfg: &Value) -> Consent {
 /// remote strategy.
 pub(crate) fn hard_off(vars: &HashMap<String, String>) -> bool {
     vars.get("MARKITAI_NO_REMOTE_FETCH")
-        .is_some_and(|value| ["1", "true", "yes", "on"].contains(&value.to_lowercase().as_str()))
+        .is_some_and(|value| crate::config::env_opt_out(value))
 }
 
 /// The refusal every consent failure starts with; the web interface

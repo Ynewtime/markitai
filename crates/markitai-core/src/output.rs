@@ -528,7 +528,7 @@ fn redacted_parameters(text: Option<&str>) -> Option<String> {
     Some(serializer.finish())
 }
 
-pub fn url_name(source: &str, _meta: &Map<String, Value>) -> String {
+pub fn url_name(source: &str) -> String {
     let parsed = url::Url::parse(source).ok();
     let host = parsed
         .as_ref()
@@ -665,19 +665,27 @@ fn percent_decoded(segment: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
+/// The stem of the written Markdown: `output.filename` without `.md`, else
+/// `output.reserved_stem`, else `name`. It must be one plain file name, so
+/// `/`, `..` or `a/` can never place output outside `dir`.
+pub fn resolved_stem<'a>(name: &'a str, cfg: &'a Value) -> Result<&'a str> {
+    let stem = cfg
+        .pointer("/output/filename")
+        .and_then(Value::as_str)
+        .map(|name| name.strip_suffix(".md").unwrap_or(name))
+        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
+        .unwrap_or(name);
+    if Path::new(stem).file_name() != Some(std::ffi::OsStr::new(stem)) {
+        return Err(Error::InvalidInput("Output name must be a filename".into()));
+    }
+    Ok(stem)
+}
+
 pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {
     if cfg.pointer("/output/on_conflict").and_then(Value::as_str) != Some("skip") {
         return Ok(false);
     }
-    let name = cfg
-        .pointer("/output/filename")
-        .and_then(Value::as_str)
-        .map(|s| s.strip_suffix(".md").unwrap_or(s))
-        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
-        .unwrap_or(name);
-    if Path::new(name).components().count() != 1 {
-        return Err(Error::InvalidInput("Output name must be a filename".into()));
-    }
+    let name = resolved_stem(name, cfg)?;
     let base = dir.join(format!("{name}.md"));
     let llm = dir.join(format!("{name}.llm.md"));
     check_user_paths(
@@ -686,6 +694,24 @@ pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {
         false,
     )?;
     Ok(base.exists() || llm.exists())
+}
+
+/// Create the private state directory `path`, and any missing parent, owner-only
+/// (0700 on Unix), refusing symbolic links anywhere in it. An existing directory
+/// is used as it is.
+pub fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    check_path(path, false).map_err(std::io::Error::other)?;
+    crate::platform::private_directory()
+        .recursive(true)
+        .create(path)?;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Private directory is not a regular directory",
+        ));
+    }
+    Ok(())
 }
 
 /// Staging for user-facing outputs: documents, assets, sidecars and reports.
@@ -764,63 +790,10 @@ impl PreparedOutput {
     }
 }
 
-pub fn write(
-    dir: &Path,
-    name: &str,
-    result: &mut ConversionOutput,
-    assets: &[Asset],
-    cfg: &Value,
-) -> Result<()> {
-    write_with_publication(dir, name, result, assets, cfg, None)
-}
-
-#[doc(hidden)]
-pub fn write_with_publication(
-    dir: &Path,
-    name: &str,
-    result: &mut ConversionOutput,
-    assets: &[Asset],
-    cfg: &Value,
-    publication: Option<&dyn Publication>,
-) -> Result<()> {
-    write_document(
-        dir,
-        name,
-        result,
-        assets,
-        Screenshots::New(&[]),
-        cfg,
-        publication,
-    )
-}
-
 pub(crate) enum Screenshots<'a> {
     New(&'a [Asset]),
     /// Document captures have frozen names and retain their native Markdown.
     PublishedPages(&'a [Asset]),
-}
-
-pub(crate) fn write_document(
-    dir: &Path,
-    name: &str,
-    result: &mut ConversionOutput,
-    assets: &[Asset],
-    screenshots: Screenshots<'_>,
-    cfg: &Value,
-    publication: Option<&dyn Publication>,
-) -> Result<()> {
-    write_document_mode(
-        dir,
-        name,
-        result,
-        assets,
-        screenshots,
-        cfg,
-        WritePolicy {
-            publication,
-            prepared: None,
-        },
-    )
 }
 
 pub(crate) struct WritePolicy<'a, 'b> {
@@ -847,18 +820,7 @@ pub(crate) fn write_document_mode(
     let allow_symlinks = config::enabled(cfg, "/output/allow_symlinks");
     check_user_directory(dir, allow_symlinks)?;
     let explicit_name = cfg.pointer("/output/filename").and_then(Value::as_str);
-    let name = explicit_name
-        .map(|name| name.strip_suffix(".md").unwrap_or(name))
-        .or_else(|| cfg.pointer("/output/reserved_stem").and_then(Value::as_str))
-        .unwrap_or(name);
-    if Path::new(name).components().count() != 1
-        || !matches!(
-            Path::new(name).components().next(),
-            Some(Component::Normal(_))
-        )
-    {
-        return Err(Error::InvalidInput("Output name must be a filename".into()));
-    }
+    let name = resolved_stem(name, cfg)?;
     std::fs::create_dir_all(dir)?;
     // User aliases end at this boundary. Asset and image-index metadata below
     // the physical parent retains its strict no-follow path policy.
@@ -1096,9 +1058,7 @@ fn publish_screenshot(
         crate::asset_store::insert_or_verify(&path, &screenshot.bytes)?;
         return Ok(path);
     }
-    Err(Error::Conversion(
-        "Screenshot version counter exhausted".into(),
-    ))
+    unreachable!("the revision range is unbounded")
 }
 
 fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
@@ -1142,6 +1102,124 @@ fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    fn write(
+        dir: &Path,
+        name: &str,
+        result: &mut ConversionOutput,
+        assets: &[Asset],
+        cfg: &Value,
+    ) -> Result<()> {
+        write_document(dir, name, result, assets, Screenshots::New(&[]), cfg, None)
+    }
+
+    fn write_document(
+        dir: &Path,
+        name: &str,
+        result: &mut ConversionOutput,
+        assets: &[Asset],
+        screenshots: Screenshots<'_>,
+        cfg: &Value,
+        publication: Option<&dyn Publication>,
+    ) -> Result<()> {
+        let policy = WritePolicy {
+            publication,
+            prepared: None,
+        };
+        write_document_mode(dir, name, result, assets, screenshots, cfg, policy)
+    }
+
+    struct FailAt {
+        fail_at: usize,
+        calls: Mutex<Vec<(PathBuf, Vec<u8>)>>,
+    }
+    impl Publication for FailAt {
+        fn skip_existing(&self) -> bool {
+            false
+        }
+        fn publish(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+            let count = {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push((path.to_owned(), bytes.to_vec()));
+                calls.len()
+            };
+            if count == self.fail_at {
+                return Err(Error::Conversion("fixture publication denied".into()));
+            }
+            std::fs::write(path, bytes)?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn paired_publication_failure_preserves_successful_member_and_never_falls_back_or_renames() {
+        for fail_at in [1, 2] {
+            let root = tempfile::tempdir().unwrap();
+            let base = root.path().join("fixed.md");
+            let enhanced = root.path().join("fixed.llm.md");
+            std::fs::write(&base, "old base bytes").unwrap();
+            std::fs::write(&enhanced, "old enhanced bytes").unwrap();
+            let base_bytes = "Base 世界 with two spaces  \n\n";
+            let enhanced_bytes = "Enhanced body\n```text\n  literal  \n```\n";
+            let mut result = ConversionOutput {
+                markdown: base_bytes.into(),
+                llm_markdown: Some(enhanced_bytes.into()),
+                ..Default::default()
+            };
+            let publication = FailAt {
+                fail_at,
+                calls: Mutex::new(Vec::new()),
+            };
+            let cfg = json!({
+                "llm":{"enabled":false,"pure":true,"keep_base":true},
+                "output":{"on_conflict":"rename","reserved_stem":"fixed"}
+            });
+            let error = write_document(
+                root.path(),
+                "source.txt",
+                &mut result,
+                &[],
+                Screenshots::New(&[]),
+                &cfg,
+                Some(&publication),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, Error::Conversion(ref message) if message == "fixture publication denied")
+            );
+            let calls = publication.calls.lock().unwrap();
+            assert_eq!(calls.len(), fail_at);
+            assert_eq!(calls[0], (base.clone(), base_bytes.as_bytes().to_vec()));
+            if fail_at == 1 {
+                assert_eq!(std::fs::read(&base).unwrap(), b"old base bytes");
+                assert!(result.output_path.is_none());
+            } else {
+                assert_eq!(
+                    calls[1],
+                    (enhanced.clone(), enhanced_bytes.as_bytes().to_vec())
+                );
+                assert_eq!(std::fs::read(&base).unwrap(), base_bytes.as_bytes());
+                assert_eq!(result.output_path.as_ref(), Some(&base));
+            }
+            assert_eq!(std::fs::read(&enhanced).unwrap(), b"old enhanced bytes");
+            assert!(result.llm_output_path.is_none());
+            let mut names: Vec<_> = std::fs::read_dir(root.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            names.sort();
+            assert_eq!(
+                names,
+                vec![
+                    std::ffi::OsString::from("fixed.llm.md"),
+                    std::ffi::OsString::from("fixed.md")
+                ]
+            );
+        }
+    }
+
     #[test]
     fn persisted_urls_lose_signatures_codes_and_fragment_tokens() {
         for (source, persisted) in [
@@ -1623,19 +1701,34 @@ mod tests {
     }
 
     #[test]
-    fn url_names_are_portable_components_with_unicode_and_encoded_separators_kept() {
-        let meta = Map::new();
-        assert_eq!(url_name("https://example.test/CON.txt", &meta), "_CON.txt");
-        assert_eq!(url_name("https://example.test/报告.pdf", &meta), "报告.pdf");
+    fn output_stems_are_single_file_names_for_every_writer_and_skip_probe() {
+        let named = |filename: &str| json!({"output":{"filename":filename,"on_conflict":"skip"}});
         assert_eq!(
-            url_name("https://example.test/two%2Fnames", &meta),
-            "two_names"
+            resolved_stem("source.pdf", &json!({})).unwrap(),
+            "source.pdf"
         );
-        assert_eq!(url_name("https://example.test/end%20.%20", &meta), "end");
-        let name = url_name(
-            &format!("https://example.test/{}.pdf", "报告".repeat(100)),
-            &meta,
-        );
+        assert_eq!(resolved_stem("x", &named("report.md")).unwrap(), "report");
+        let reserved = json!({"output":{"reserved_stem":"report.v2"}});
+        assert_eq!(resolved_stem("x", &reserved).unwrap(), "report.v2");
+        let dir = tempfile::tempdir().unwrap();
+        // `/.md` used to pass the skip probe as `/`, which then checked `/.md`
+        // outside the output directory; `a/` passed both checks as `a`.
+        for filename in ["/.md", "a/.md", "../x.md", "a/b.md", ".md", "..", "."] {
+            assert!(resolved_stem("x", &named(filename)).is_err(), "{filename}");
+            assert!(
+                should_skip(dir.path(), "x", &named(filename)).is_err(),
+                "{filename}"
+            );
+        }
+    }
+
+    #[test]
+    fn url_names_are_portable_components_with_unicode_and_encoded_separators_kept() {
+        assert_eq!(url_name("https://example.test/CON.txt"), "_CON.txt");
+        assert_eq!(url_name("https://example.test/报告.pdf"), "报告.pdf");
+        assert_eq!(url_name("https://example.test/two%2Fnames"), "two_names");
+        assert_eq!(url_name("https://example.test/end%20.%20"), "end");
+        let name = url_name(&format!("https://example.test/{}.pdf", "报告".repeat(100)));
         assert!(name.len() <= 180 && name.ends_with(".pdf"), "{name}");
     }
 
@@ -1861,6 +1954,31 @@ mod path_check_tests {
 
     fn outcome(result: Result<()>) -> std::result::Result<(), String> {
         result.map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn private_state_directories_are_owner_only_and_never_links() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        use std::fs;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let nested = root.path().join("a/b/c");
+        create_private_dir(&nested).unwrap();
+        for path in [
+            root.path().join("a"),
+            root.path().join("a/b"),
+            nested.clone(),
+        ] {
+            assert_eq!(mode(&path), 0o700, "{}", path.display());
+        }
+        create_private_dir(&nested).unwrap();
+        let link = root.path().join("link");
+        symlink(&nested, &link).unwrap();
+        assert!(create_private_dir(&link).is_err());
+        assert!(create_private_dir(&link.join("below")).is_err());
+        let file = root.path().join("file");
+        fs::write(&file, b"x").unwrap();
+        assert!(create_private_dir(&file).is_err());
     }
 
     #[test]

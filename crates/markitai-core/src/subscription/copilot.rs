@@ -216,11 +216,6 @@ pub fn complete(config: &CopilotConfig, request: Request<'_>) -> Result<Completi
     match result {
         Ok(text) => Ok(Completion {
             text,
-            warnings: if state.usage.calls.is_empty() {
-                vec!["Copilot returned no observed usage; subscription cost and token counts are unknown".into()]
-            } else {
-                vec!["Copilot subscription usage has no verified dollar tariff".into()]
-            },
             usage: state.usage,
         }),
         Err(mut error) => {

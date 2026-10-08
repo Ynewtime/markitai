@@ -2,6 +2,7 @@ use super::{
     jobs::{Job, JobData},
     types::{ApiError, ApiResult, Item, JobOptions, now},
 };
+use markitai_core::output::create_private_dir;
 use markitai_core::platform;
 use serde_json::{Value, json};
 use std::{
@@ -12,16 +13,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub(super) fn private_dir(path: &Path) -> std::io::Result<()> {
-    markitai_core::output::check_path(path, false).map_err(std::io::Error::other)?;
-    fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
-}
 /// One service owns recovery and temporary uploads for the lifetime of this handle.
 /// Do not unlink the lock: another process must observe the same locked inode.
 pub(super) struct ServiceLock(File);
@@ -33,7 +24,7 @@ impl Drop for ServiceLock {
 pub(super) fn service_lock(root: &Path) -> std::io::Result<ServiceLock> {
     markitai_core::output::check_path(root, false).map_err(std::io::Error::other)?;
     if !root.try_exists()? {
-        private_dir(root)?;
+        create_private_dir(root)?;
     }
     let directory = platform::status(root)?;
     if !directory.metadata().is_dir() || !directory.owned_by_current_user() {
@@ -75,8 +66,13 @@ pub(super) fn service_lock(root: &Path) -> std::io::Result<ServiceLock> {
     {
         return Err(std::io::Error::other("serve lock path changed"));
     }
-    // Tighten a legacy directory only after exclusion has been obtained.
-    private_dir(root)?;
+    // Tighten a legacy directory only after exclusion has been obtained. Every
+    // job directory lives below this root, so the root keeps them private.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
+    }
     Ok(held)
 }
 
@@ -618,8 +614,8 @@ mod recovery_tests {
         let root = tmp.path().join("jobs");
         let _owner = service_lock(&root).unwrap();
         let folder = root.join("012345abcdef");
-        private_dir(&folder.join("out")).unwrap();
-        private_dir(&folder.join("uploads")).unwrap();
+        create_private_dir(&folder.join("out")).unwrap();
+        create_private_dir(&folder.join("uploads")).unwrap();
         fs::write(folder.join("out/kept.md"), "retained output").unwrap();
         fs::write(folder.join("uploads/pending.txt"), "retry input").unwrap();
         let mut kept = Item::new(1, "kept.txt".into(), "file", Some("kept.md".into()));
@@ -686,7 +682,7 @@ mod recovery_tests {
         let _owner = service_lock(&root).unwrap();
         let saved = |id: &str| {
             let folder = root.join(id);
-            private_dir(&folder.join("out")).unwrap();
+            create_private_dir(&folder.join("out")).unwrap();
             let mut item = Item::new(1, "kept.txt".into(), "file", Some("kept.md".into()));
             item.status = "done".into();
             let data = JobData {
@@ -709,7 +705,7 @@ mod recovery_tests {
         saved("0123456789ab");
         // An interrupted retry left a journal that cannot be read.
         let damaged = saved("ba9876543210");
-        private_dir(&damaged.join(".retry-stage")).unwrap();
+        create_private_dir(&damaged.join(".retry-stage")).unwrap();
         fs::write(damaged.join(".retry-stage/journal.json"), "{").unwrap();
         saved("cccccccccccc");
         let known = Mutex::new(HashMap::new());
@@ -736,7 +732,7 @@ mod recovery_tests {
         let marked = root.join(".upload-owned");
         let legacy = root.join(".upload-legacy");
         for stage in [&marked, &legacy] {
-            private_dir(stage).unwrap();
+            create_private_dir(stage).unwrap();
         }
         mark_upload(&marked).unwrap();
         let now = std::time::SystemTime::now();
@@ -754,7 +750,7 @@ mod recovery_tests {
         let root = tmp.path().join("jobs");
         let _owner = service_lock(&root).unwrap();
         let stage = root.join(".upload-linked");
-        private_dir(&stage).unwrap();
+        create_private_dir(&stage).unwrap();
         mark_upload(&stage).unwrap();
         let outside = tmp.path().join("outside.txt");
         fs::write(&outside, "untouched").unwrap();

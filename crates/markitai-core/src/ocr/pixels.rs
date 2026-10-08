@@ -8,7 +8,7 @@ use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, 
 use std::io::Write;
 
 const MAX_INPUT: usize = 64 * 1024 * 1024;
-pub(super) const MAX_PIXELS: u64 = 32_000_000;
+pub(super) use crate::images::MAX_PIXELS;
 const MAX_DECODED: u64 = 256 * 1024 * 1024;
 const MAX_ENCODED: usize = 128 * 1024 * 1024;
 

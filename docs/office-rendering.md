@@ -163,8 +163,9 @@ limited to 100 MiB; normalized or repaired Office copies and exported PDFs share
 a 100 MiB output budget.
 Presentations, workbooks and resulting PDFs have a 1,000-slide/sheet/page limit.
 Workbook ZIP packages allow at most 16,384 entries and the sheet-index XML at
-most 32 MiB, with nesting capped at 128. Missing/ambiguous sheet-index parts,
-document types, incomplete XML and empty sheet lists are rejected. These bounds
+most 32 MiB, with nesting capped at 128. Missing sheet-index parts, repeated ZIP
+entry names, parts whose data differs from their declared size, document types,
+incomplete XML and empty sheet lists are rejected. These bounds
 apply before requesting PDF export; the optional LibreOffice importer still has
 its own internal allocations.
 

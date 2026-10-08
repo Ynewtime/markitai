@@ -96,8 +96,10 @@ systems nothing was tested on). The minimum the executable records and whether
 it carries a code signature are read back into the record. When the host can
 execute the target (x86-64 macOS under Rosetta 2), the extracted CLI/aliases run
 version/help, Unicode Markdown, MCP protocol and doctor probes; otherwise the
-record says `executed.ran=false`. Running under Rosetta is not evidence from
-Intel hardware.
+record says `executed.ran=false` and its status is `built-not-executed`, not
+`passed`. Running under Rosetta is not evidence from Intel hardware. Each step
+is stopped with its process tree after 75 minutes (build) or 15 minutes
+(other steps) and the run fails.
 
 ### Native Windows CLI
 

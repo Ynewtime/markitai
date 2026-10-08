@@ -1,5 +1,7 @@
 """Counterexamples for cross-target CLI packaging; nothing is built."""
 from pathlib import Path
+import contextlib
+import io
 import json
 import os
 import struct
@@ -103,15 +105,14 @@ class TargetPackagingTests(unittest.TestCase):
 
         def run(command, **kwargs):
             calls.append((command, kwargs["env"].copy()))
-            if command[0] == "rustc":
-                kwargs["stdout"].write(f"host: {host}\n".encode())
+            kwargs["log"].write_text(f"host: {host}\n" if command[0] == "rustc" else "")
             return subprocess.CompletedProcess(command, 0)
 
         with (patch("package_cli_target.sys.platform", "win32"),
               patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root), "CARGO_TARGET_DIR": "target with spaces",
                                       "CARGO_ENCODED_RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
               patch("package_cli_target.subprocess.check_output", side_effect=check_output),
-              patch("package_cli_target.subprocess.run", side_effect=run),
+              patch("package_cli_target.run_logged", side_effect=run),
               patch("package_cli_target.identity", return_value={}),
               patch("package_cli_target.verify_target_executable", side_effect=RuntimeError("stop before execution")) as verify):
             with self.assertRaisesRegex(RuntimeError, "stop before execution"):
@@ -129,6 +130,52 @@ class TargetPackagingTests(unittest.TestCase):
         record = json.loads((output / "record.json").read_text())
         self.assertEqual(record["cli_build"]["release_directory"], str(release))
         self.assertEqual(record["status"], "failed")
+
+    def test_a_target_this_host_cannot_execute_is_not_reported_as_passed(self):
+        host, target = "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"
+        output = self.root / "cross-output"
+        steps = []
+
+        def check_output(command, **kwargs):
+            if command[0] == "rustc":
+                return f"host: {host}\n"
+            if command[1] == "ls-files":
+                return b""
+            return "" if command[1] == "status" else "authored-source-revision"
+
+        def run_logged(command, **kwargs):
+            steps.append((command[0], kwargs["timeout"]))
+            kwargs["log"].write_text("")
+            return subprocess.CompletedProcess(command, 0)
+
+        def work(**kwargs):
+            (self.root / "work").mkdir()
+            return str(self.root / "work")
+
+        printed = io.StringIO()
+        with (patch("package_cli_target.sys.platform", "linux"),
+              patch.dict(os.environ, {"HOME": str(self.root)}, clear=True),
+              patch("package_cli_target.tempfile.mkdtemp", side_effect=work),
+              patch("package_cli_target.subprocess.check_output", side_effect=check_output),
+              patch("package_cli_target.run_logged", side_effect=run_logged),
+              patch("package_cli_target.subprocess.run", side_effect=OSError(8, "Exec format error")),
+              patch("package_cli_target.identity", return_value={}),
+              patch("package_cli_target.source_snapshot", return_value={}),
+              patch("package_cli_target.verify_target_executable", return_value={}),
+              patch("package_cli_target.package_attribution", return_value={}),
+              patch("package_cli_target.cli_attribution", return_value={}),
+              patch("package_cli_target.cli_documentation", return_value={}),
+              patch("package_cli_target.write_single_binary_tar"),
+              patch("package_cli_target.extract_single_binary_tar", return_value={}),
+              contextlib.redirect_stdout(printed)):
+            self.assertEqual(main(["--target", target, "--output", str(output)]), 0)
+        record = json.loads((output / "record.json").read_text())
+        self.assertEqual(record["status"], "built-not-executed")
+        self.assertEqual(json.loads(printed.getvalue())["status"], "built-not-executed")
+        self.assertFalse(record["executed"]["ran"])
+        self.assertIn("Exec format error", record["executed"]["reason"])
+        # Every logged step has a deadline; the build gets the longest one.
+        self.assertEqual(steps, [("rustc", 15 * 60), ("cargo", 75 * 60)])
 
 
 if __name__ == "__main__":

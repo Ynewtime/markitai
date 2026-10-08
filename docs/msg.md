@@ -9,8 +9,10 @@ mail configuration, network requests or writes to the source file.
 The Markdown header preserves the existing MSG layout: `# Email Message`,
 available From/To/Subject fields, then `## Content`. The subject is also the
 document title. Date, From, To, Cc and Bcc are retained in the adapter's metadata;
-they do not introduce new Markdown header rows. The output layer applies its
-ordinary local-file frontmatter policy.
+they do not introduce new Markdown header rows. Header values follow the
+[EML](eml.md#layout) rules: controls become spaces, whitespace collapses and angle
+brackets are escaped. The output layer applies its ordinary local-file
+frontmatter policy.
 
 Display recipient properties take precedence. If a display property is absent,
 the adapter reads recipient objects and groups their addresses by recipient type.
@@ -39,14 +41,20 @@ artifact; passing authored tests alone does not establish corpus parity.
 
 By-value attachment data is extracted byte-for-byte and returned as assets.
 Names are reduced to safe basenames with an ordinal prefix; embedded directory
-names never become output paths. HTML `cid:` references in quoted or unquoted
-`src`/`href` attributes resolve to matching attachment content IDs. Original
+names never become output paths. HTML `cid:` image references resolve to
+attachment content IDs with the [EML matching rules](eml.md#content-id-binding):
+only real image sources are inspected (not links or attributes such as
+`data-src`), the URI is percent-decoded once, the exact ID wins, and an ASCII
+case-insensitive match must name exactly one attachment. MSG has no MIME related
+scope, and an attachment needs no declared image type to bind. Original
 attachments receive a Markdown download link, even when the body also shows their
 image. Their downloaded bytes bypass preview compression, filtering and image
 deduplication. The body can use a separate prepared preview; removing that preview
 does not remove the original. Filename labels remain visible while normal
-content-addressed publication may use different physical names.
-Missing content IDs produce a warning.
+content-addressed publication may use different physical names. Link labels
+follow the EML label rules: controls collapse, backslashes and angle brackets are
+escaped, and brackets and parentheses become `_`. A missing or ambiguous content
+ID produces a warning and stays a `cid:` image reference.
 
 Only an unambiguous, correctly typed `PidTagAttachmentHidden=true` (0x7FFE,
 Boolean), a correctly typed `PidTagAttachFlags` (0x3714, Integer32) containing

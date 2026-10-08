@@ -1,3 +1,4 @@
+use crate::opc;
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
@@ -48,23 +49,13 @@ impl Metadata {
     }
 }
 
-fn zip_text(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<String, String> {
+fn zip_text(zip: &mut opc::Zip, name: &str) -> Result<String, String> {
     String::from_utf8(zip_bytes(zip, name)?).map_err(|e| e.to_string())
 }
 
-fn zip_bytes(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>, String> {
-    let file = zip.by_name(name).map_err(|e| e.to_string())?;
-    if file.size() > MAX_METADATA_BYTES {
-        return Err(format!("metadata part {name} exceeds the size limit"));
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_METADATA_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > MAX_METADATA_BYTES {
-        return Err(format!("metadata part {name} exceeds the size limit"));
-    }
-    Ok(bytes)
+fn zip_bytes(zip: &mut opc::Zip, name: &str) -> Result<Vec<u8>, String> {
+    zip.read(name, MAX_METADATA_BYTES)?
+        .ok_or_else(|| format!("metadata part {name} is missing"))
 }
 
 #[derive(Default)]
@@ -173,7 +164,7 @@ fn elements_with_limits(
 }
 
 fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let mut archive = opc::Zip::open(bytes, opc::MAX_ENTRIES)?;
     let mut result = Metadata::default();
     if extension == "epub" {
         let container = elements(&zip_text(&mut archive, "META-INF/container.xml")?)?;
@@ -215,6 +206,8 @@ fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
                     })
                     .and_then(|el| el.attributes.get("Target").cloned())
             })
+            .map(|target| opc::resolve("", &target))
+            .transpose()?
             .unwrap_or_else(|| {
                 if extension == "xlsb" {
                     "xl/workbook.bin".into()
@@ -223,9 +216,9 @@ fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
                 }
             });
         if extension == "xlsb" {
-            return xlsb_sheet_names(&zip_bytes(&mut archive, path.trim_start_matches('/'))?);
+            return xlsb_sheet_names(&zip_bytes(&mut archive, &path)?);
         }
-        for sheet in elements(&zip_text(&mut archive, path.trim_start_matches('/'))?)?
+        for sheet in elements(&zip_text(&mut archive, &path)?)?
             .into_iter()
             .filter(|el| el.name == "sheet")
         {
@@ -257,11 +250,15 @@ fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
 /// Missing optional comments are normal. A present but unreadable comments
 /// part must not silently look like a document with no review comments.
 fn read_docx(bytes: &[u8]) -> Metadata {
-    let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+    let Ok(mut archive) = opc::Zip::open(bytes, opc::MAX_ENTRIES) else {
         // The document reader reports an invalid package itself.
         return Metadata::default();
     };
-    if !archive.file_names().any(|name| name == "word/comments.xml") {
+    if !archive
+        .archive
+        .file_names()
+        .any(|name| name == "word/comments.xml")
+    {
         return Metadata::default();
     }
     match zip_text(&mut archive, "word/comments.xml").and_then(|xml| elements(&xml)) {
@@ -286,7 +283,7 @@ fn read_docx(bytes: &[u8]) -> Metadata {
 /// anyway. As for Word, comments that cannot be counted are reported rather
 /// than taken for none.
 fn read_odt(bytes: &[u8]) -> Metadata {
-    let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+    let Ok(mut archive) = opc::Zip::open(bytes, opc::MAX_ENTRIES) else {
         // The document reader reports an invalid package itself.
         return Metadata::default();
     };
@@ -537,6 +534,24 @@ mod tests {
         assert_eq!(metadata.sheets, ["A & B"]);
         assert_eq!(metadata.warnings.len(), 1);
         assert!(metadata.warnings[0].contains("Hidden"));
+    }
+
+    #[test]
+    fn the_workbook_target_is_resolved_as_a_relationship_reference() {
+        let rels = |target: &str| {
+            format!(
+                "<Relationships><Relationship Type='urn:test/officeDocument' Target='{target}'/></Relationships>"
+            )
+        };
+        let book = "<workbook><sheets><sheet name='One'/></sheets></workbook>";
+        let escaped = rels("./custom/my%20book.xml");
+        let bytes = archive(&[("_rels/.rels", &escaped), ("custom/my book.xml", book)]);
+        assert_eq!(read(&bytes, "xlsx").sheets, ["One"]);
+        let outside = rels("../custom/book.xml");
+        let bytes = archive(&[("_rels/.rels", &outside), ("custom/book.xml", book)]);
+        let metadata = read(&bytes, "xlsx");
+        assert!(metadata.sheets.is_empty());
+        assert!(metadata.warnings[0].contains("escapes package root"));
     }
 
     #[test]

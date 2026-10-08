@@ -4,6 +4,7 @@ mod copilot;
 pub(crate) mod fake_runtime;
 mod line;
 mod process;
+mod supervisor;
 #[cfg(test)]
 mod tests;
 
@@ -15,7 +16,6 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 pub const COPILOT_PROTOCOL: u64 = 3;
-pub const COPILOT_SCHEMA_REVISION: &str = "f5d9685f55286061e12763ed15a73c4469609881";
 pub const COPILOT_CLI_VERSION: &str = "1.0.90-2";
 
 /// Credentials are deliberately excluded from Debug and serialization.
@@ -259,7 +259,6 @@ impl Failure {
 pub struct Completion {
     pub text: String,
     pub usage: UsageEvidence,
-    pub warnings: Vec<String>,
 }
 pub struct Request<'a> {
     pub model: &'a str,

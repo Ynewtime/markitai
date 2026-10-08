@@ -109,7 +109,7 @@ headers, ambient proxies and browser sessions are not forwarded to images.
 Consequently, authenticated/proxy-only image resources may remain external with
 a warning. System hostname resolution occurs before the HTTP request timeout;
 this implementation does not claim a separate bounded DNS deadline. The
-[EML reader](eml.md) resolves MIME-scoped CID images before enrichment; unresolved
+[EML](eml.md) and [MSG](msg.md) readers resolve CID images before enrichment; unresolved
 CID URIs are preserved with warnings and never guessed from local filenames. Native
 persistent image-analysis caching and reference provider-specific image options
 are not implemented by this module.

@@ -37,24 +37,12 @@ impl JobData {
             "failed":self.items.iter().filter(|i|i.status=="error").count(),"total":self.items.len()})
     }
     /// The persisted repeat selections, never permission for a new request.
-    /// CLI/older histories may carry extra metadata; expose only option keys.
     pub fn with_item_options(&self, mut item: Value) -> Value {
         let saved = item["item_id"]
             .as_str()
             .and_then(|id| self.item_options.get(id))
             .unwrap_or(&self.options);
-        let mut options =
-            serde_json::to_value(JobOptions::default()).expect("job options serialize");
-        let fields = options.as_object_mut().expect("job options are an object");
-        fields.remove("remote_processing");
-        if let Some(saved) = saved.as_object() {
-            for (key, value) in saved {
-                if let Some(target) = fields.get_mut(key) {
-                    *target = value.clone();
-                }
-            }
-        }
-        item["options"] = options;
+        item["options"] = public_options(saved);
         item
     }
 
@@ -63,7 +51,7 @@ impl JobData {
         value["job_id"] = json!(self.id);
         value["created_at"] = json!(self.created_at);
         value["finished_at"] = json!(self.finished_at);
-        value["options"] = self.options.clone();
+        value["options"] = public_options(&self.options);
         value["items"] = self
             .items
             .iter()
@@ -237,7 +225,7 @@ pub(super) fn reserve_outputs(items: &[Item]) -> HashMap<String, String> {
             // name has already been checked to be a plain filename.
             item.output_name
                 .clone()
-                .unwrap_or_else(|| markitai_core::output::url_name(&item.name, &Default::default()))
+                .unwrap_or_else(|| markitai_core::output::url_name(&item.name))
         } else {
             item.name.clone()
         };
@@ -462,6 +450,23 @@ pub(super) async fn complete(state: &Arc<State>, job: Arc<Job>) {
     }
 }
 
+/// Saved options as clients see them: only JobOptions keys, without the
+/// remote_processing consent. CLI and older histories carry other metadata
+/// (such as `origin`) that is not part of the API.
+fn public_options(saved: &Value) -> Value {
+    let mut options = serde_json::to_value(JobOptions::default()).expect("job options serialize");
+    let fields = options.as_object_mut().expect("job options are an object");
+    fields.remove("remote_processing");
+    if let Some(saved) = saved.as_object() {
+        for (key, value) in saved {
+            if let Some(target) = fields.get_mut(key) {
+                *target = value.clone();
+            }
+        }
+    }
+    options
+}
+
 #[cfg(test)]
 mod pricing_tests {
     use super::*;
@@ -542,6 +547,11 @@ mod pricing_tests {
             json!({"backend":"cloudflare","profile":"rag","remote_processing":"cloudflare"}),
         );
         let snapshot = data.snapshot();
+        // The job's own options are projected the same way as each item's.
+        assert_eq!(snapshot["options"]["backend"], "native");
+        for hidden in ["remote_processing", "origin", "api_key"] {
+            assert!(snapshot["options"].get(hidden).is_none(), "{hidden}");
+        }
         for (index, backend) in [(0, "cloudflare"), (1, "native")] {
             let options = &snapshot["items"][index]["options"];
             assert_eq!(options["backend"], backend);

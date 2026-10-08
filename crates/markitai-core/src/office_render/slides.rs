@@ -1,25 +1,11 @@
 use super::{Result, failure};
 use quick_xml::{events::Event, name::ResolveResult};
-use std::io::{Cursor, Read};
 
 pub(super) fn odp(bytes: &[u8]) -> Result<usize> {
-    let mut archive =
-        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| failure("invalid ODP package"))?;
-    if archive.len() > 16_384 {
-        return Err(failure("ODP package has too many entries"));
-    }
-    let file = archive
-        .by_name("content.xml")
-        .map_err(|_| failure("ODP has no content.xml"))?;
-    const LIMIT: u64 = 16 * 1024 * 1024;
-    if file.size() > LIMIT {
-        return Err(failure("ODP content exceeds 16 MiB"));
-    }
-    let mut xml = Vec::new();
-    file.take(LIMIT + 1).read_to_end(&mut xml)?;
-    if xml.len() as u64 > LIMIT {
-        return Err(failure("ODP content exceeds 16 MiB"));
-    }
+    let xml = crate::opc::Zip::open(bytes, crate::opc::MAX_ENTRIES)
+        .and_then(|mut zip| zip.read("content.xml", 16 * 1024 * 1024))
+        .map_err(|e| failure(&format!("ODP package: {e}")))?
+        .ok_or_else(|| failure("ODP has no content.xml"))?;
     let mut reader = quick_xml::NsReader::from_reader(xml.as_slice());
     let mut depth = 0usize;
     let mut presentation = None;

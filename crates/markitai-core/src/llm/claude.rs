@@ -21,35 +21,6 @@ pub(super) fn subscription_pool(entries: &[Value]) -> bool {
                     })
         })
 }
-pub(super) fn warning(cfg: &Value) -> &'static str {
-    if copilot::configured(cfg) == Some(true)
-        && !cfg
-            .pointer("/llm/model_list")
-            .and_then(Value::as_array)
-            .is_some_and(|entries| {
-                entries.iter().any(|entry| {
-                    entry
-                        .pointer("/litellm_params/model")
-                        .and_then(Value::as_str)
-                        .is_some_and(|model| {
-                            model.starts_with("claude-agent/") || model.starts_with("chatgpt/")
-                        })
-                })
-            })
-    {
-        copilot::WARNING
-    } else {
-        WARNING
-    }
-}
-pub(super) fn subscription_configured(cfg: &Value) -> Option<bool> {
-    // Reuse the existing Copilot check, also preserving its standalone API.
-    let copilot = copilot::configured(cfg);
-    cfg.pointer("/llm/model_list")
-        .and_then(Value::as_array)
-        .filter(|entries| !entries.is_empty())
-        .map(|entries| copilot.unwrap_or(false) || subscription_pool(entries))
-}
 pub(super) fn deployment(
     entry: &Value,
     env: &HashMap<String, String>,

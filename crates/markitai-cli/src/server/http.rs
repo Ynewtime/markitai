@@ -15,6 +15,7 @@ use axum::{
     },
 };
 use futures_util::stream;
+use markitai_core::output::create_private_dir;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -44,16 +45,13 @@ pub(super) async fn capabilities(
         json!({"configured":false,"available":false,"reason":"client_not_trusted",
             "browser_rendering":false,"file_conversion":false,"file_extensions":[]})
     };
-    let mut presets = json!({"minimal":{"llm":false,"ocr":false,"alt":false,"desc":false,"screenshot":false},"standard":{"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":false},"rich":{"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true}});
-    if let Some(overrides) = cfg["presets"].as_object() {
-        for (name, value) in overrides {
-            if presets.get(name).is_some() {
-                presets[name] = value.clone();
-            }
-        }
-    }
+    let presets = markitai_core::config::BUILTIN_PRESETS;
+    let options: serde_json::Map<_, _> = presets
+        .iter()
+        .filter_map(|name| Some((name.to_string(), markitai_core::config::preset(&cfg, name)?)))
+        .collect();
     Json(
-        json!({"version":markitai_core::VERSION,"llm":llm,"remote_services":{"cloudflare":cloudflare},"presets":["minimal","standard","rich"],"preset_options":presets,"extras":{"browser":markitai_core::browser_available(),"svg":true},"limits":{"max_job_items":MAX_ITEMS}}),
+        json!({"version":markitai_core::VERSION,"llm":llm,"remote_services":{"cloudflare":cloudflare},"presets":presets,"preset_options":options,"extras":{"browser":markitai_core::browser_available(),"svg":true},"limits":{"max_job_items":MAX_ITEMS}}),
     )
 }
 
@@ -149,10 +147,10 @@ pub(super) async fn create(
         .prefix(".upload-")
         .tempdir_in(&state.root)
         .map_err(ApiError::internal)?;
-    store::private_dir(stage.path()).map_err(ApiError::internal)?;
+    create_private_dir(stage.path()).map_err(ApiError::internal)?;
     store::mark_upload(stage.path()).map_err(ApiError::internal)?;
-    store::private_dir(&stage.path().join("uploads")).map_err(ApiError::internal)?;
-    store::private_dir(&stage.path().join("out")).map_err(ApiError::internal)?;
+    create_private_dir(&stage.path().join("uploads")).map_err(ApiError::internal)?;
+    create_private_dir(&stage.path().join("out")).map_err(ApiError::internal)?;
     let mut items = Vec::new();
     let mut names = HashSet::new();
     // URL entries from either the `urls` field or an uploaded `.urls` list.
@@ -711,7 +709,7 @@ mod error_code_tests {
     use tower::ServiceExt;
 
     fn service(root: &std::path::Path) -> (Arc<State>, Router) {
-        store::private_dir(root).unwrap();
+        create_private_dir(root).unwrap();
         let (shutdown, _) = watch::channel(false);
         let cfg = markitai_core::config::normalize(
             &json!({"llm":{"enabled":false},"cache":{"enabled":false},"log":{"dir":null}}),
@@ -1076,7 +1074,7 @@ mod error_code_tests {
             ("00000000000c", "2026-10-08T23:00:00.000-05:00"),
         ] {
             let folder = temp.path().join(id);
-            store::private_dir(&folder.join("out")).unwrap();
+            create_private_dir(&folder.join("out")).unwrap();
             std::fs::write(folder.join("out/notes.md"), id).unwrap();
             let item = json!({"item_id":"1","name":"notes.txt","kind":"url","status":"done",
                 "output":"notes.md","output_name":"notes.md"});
@@ -1136,7 +1134,7 @@ mod error_code_tests {
         let (state, router) = service(temp.path());
         let id = "0123456789ab";
         let folder = temp.path().join(id);
-        store::private_dir(&folder.join("out/assets")).unwrap();
+        create_private_dir(&folder.join("out/assets")).unwrap();
         for name in ["a", "b"] {
             std::fs::write(folder.join(format!("out/{name}.md")), name).unwrap();
         }
