@@ -34,6 +34,7 @@ except (ImportError, OSError):
     cairosvg = None
 
 from markitai.constants import (
+    DEFAULT_CACHE_SIZE_LIMIT,
     DEFAULT_IO_CONCURRENCY,
     DEFAULT_MAX_IMAGES_PER_BATCH,
     DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP,
@@ -43,7 +44,7 @@ from markitai.constants import (
 from markitai.llm import content
 from markitai.llm.cache import ContentCache, PersistentCache
 from markitai.llm.document import DocumentEnhancer
-from markitai.llm.engine import LLMEngine, RequestBudget
+from markitai.llm.engine import LLMEngine, RequestBudget, scoped_usage_key
 from markitai.llm.models import (
     MarkitaiLLMLogger,
     get_model_info_cached,
@@ -106,6 +107,8 @@ class LLMProcessor:
         no_cache_patterns: list[str] | None = None,
         cache_global_dir: Path | str | None = None,
         extra_cleaning_rules: str = "",
+        cache_enabled: bool = True,
+        cache_max_size_bytes: int = DEFAULT_CACHE_SIZE_LIMIT,
     ) -> None:
         """
         Initialize LLM processor.
@@ -126,6 +129,10 @@ class LLMProcessor:
                               prompts (e.g. the rag profile's table-consistency
                               constraint). Empty keeps prompts and cache keys
                               byte-identical to the default.
+            cache_enabled: False disables the persistent cache entirely (no
+                              reads, no writes), from config.cache.enabled.
+            cache_max_size_bytes: Size limit of the persistent cache file,
+                              from config.cache.max_size_bytes.
         """
         self.config = config
         self._runtime = runtime
@@ -191,6 +198,8 @@ class LLMProcessor:
             resolved_cache_dir = Path(cache_global_dir).expanduser()
         self._persistent_cache = PersistentCache(
             global_dir=resolved_cache_dir,
+            max_size_bytes=cache_max_size_bytes,
+            enabled=cache_enabled,
             skip_read=no_cache,
             no_cache_patterns=no_cache_patterns,
         )
@@ -990,7 +999,7 @@ class LLMProcessor:
 
             # Track per-context usage if context provided
             if context:
-                ctx = self._context_usage[context][model]
+                ctx = self._context_usage[scoped_usage_key(context)][model]
                 ctx["requests"] += 1
                 ctx["input_tokens"] += input_tokens
                 ctx["output_tokens"] += output_tokens
@@ -1034,7 +1043,7 @@ class LLMProcessor:
         """
 
         with self._usage_lock:
-            return copy.deepcopy(self._context_usage.get(context, {}))
+            return copy.deepcopy(self._context_usage.get(scoped_usage_key(context), {}))
 
     def get_context_cost(self, context: str) -> float:
         """Get total cost for a specific context.
@@ -1048,7 +1057,7 @@ class LLMProcessor:
             Total cost for that context
         """
         with self._usage_lock:
-            context_usage = self._context_usage.get(context, {})
+            context_usage = self._context_usage.get(scoped_usage_key(context), {})
             return sum(u["cost_usd"] for u in context_usage.values())
 
     def clear_context_usage(self, context: str) -> None:
@@ -1060,7 +1069,7 @@ class LLMProcessor:
             context: Context identifier to clear
         """
         with self._usage_lock:
-            self._context_usage.pop(context, None)
+            self._context_usage.pop(scoped_usage_key(context), None)
             self._call_counter.pop(context, None)
         self._request_budget.clear(context)
 
@@ -1069,6 +1078,7 @@ class LLMProcessor:
 
         Creates an all-zero pseudo-model entry so the per-file
         ``llm_usage.models`` shows the trip without touching any totals.
+        ``context`` is the budget's key, already scoped (scoped_usage_key).
         """
         with self._usage_lock:
             # Touching the defaultdict creates the all-zero entry

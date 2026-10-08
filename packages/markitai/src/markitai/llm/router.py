@@ -108,7 +108,11 @@ POOL_EXHAUSTED_PATTERN = "no deployments available"
 MODEL_LEVEL_COOLDOWN_SECONDS = 3600.0
 RATE_LIMIT_COOLDOWN_SECONDS = 60.0
 
-_RETRY_AFTER_RE = re.compile(r"(\d+)\s*s")
+# "30s", "1.204s", "750ms", "6m0s", "20 seconds" (OpenAI writes fractions and
+# minutes; a bare "(\d+)\s*s" read "1.204s" as 204 and "6m0s" as 0).
+_RETRY_AFTER_RE = re.compile(
+    r"(?:(\d+)\s*m(?=\d))?(\d+(?:\.\d+)?)\s*(ms|s|secs?|seconds?)\b"
+)
 
 
 def parse_retry_after_seconds(error_message: str) -> float | None:
@@ -120,8 +124,12 @@ def parse_retry_after_seconds(error_message: str) -> float | None:
     Returns:
         Seconds to wait, or None if the message carries no hint.
     """
-    match = _RETRY_AFTER_RE.search(error_message)
-    return float(match.group(1)) if match else None
+    match = _RETRY_AFTER_RE.search(error_message.lower())
+    if not match:
+        return None
+    minutes, amount, unit = match.groups()
+    seconds = float(amount) / 1000 if unit == "ms" else float(amount)
+    return seconds + 60 * int(minutes or 0)
 
 
 def cooldown_seconds_for_error(error_message: str) -> float | None:

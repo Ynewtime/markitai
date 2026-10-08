@@ -208,6 +208,47 @@ def _get_linux_system_proxy() -> tuple[str, str]:
     return "", ""
 
 
+def _parse_scutil_proxy(output: str) -> tuple[str, str]:
+    """Parse ``scutil --proxy`` output into (proxy URL, bypass list).
+
+    scutil prints the keys alphabetically, so ``HTTPSPort`` comes before
+    ``HTTPSProxy``: read every top-level ``Key : value`` line first, then
+    pick the HTTPS proxy, else the HTTP one.
+
+    Returns:
+        ("http://host:port" or "", comma-separated ExceptionsList)
+    """
+    values: dict[str, str] = {}
+    exceptions: list[str] = []
+    in_exceptions = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        if in_exceptions:
+            if stripped.startswith("}"):
+                in_exceptions = False
+            elif " : " in stripped:
+                # "0 : localhost"
+                exception = stripped.split(" : ", 1)[1].strip()
+                if exception:
+                    exceptions.append(exception)
+            continue
+        if stripped.startswith("ExceptionsList"):
+            in_exceptions = True
+            continue
+        if " : " in stripped:
+            key, value = stripped.split(" : ", 1)
+            values[key.strip()] = value.strip()
+
+    proxy_addr = ""
+    for scheme in ("HTTPS", "HTTP"):
+        host = values.get(f"{scheme}Proxy", "")
+        port = values.get(f"{scheme}Port", "")
+        if values.get(f"{scheme}Enable") == "1" and host:
+            proxy_addr = f"http://{host}:{port}" if port else f"http://{host}"
+            break
+    return proxy_addr, ",".join(exceptions)
+
+
 def _get_system_proxy() -> tuple[str, str]:
     """Get system proxy settings from OS configuration.
 
@@ -277,54 +318,7 @@ def _get_system_proxy() -> tuple[str, str]:
                 timeout=5,
             )
             if result.returncode == 0:
-                output = result.stdout
-                # Parse scutil output
-                https_enable = "HTTPSEnable : 1" in output
-                http_enable = "HTTPEnable : 1" in output
-
-                proxy_addr = ""
-                if https_enable:
-                    # Extract HTTPS proxy
-                    host = ""
-                    for line in output.split("\n"):
-                        if "HTTPSProxy :" in line:
-                            host = line.split(":")[1].strip()
-                        elif "HTTPSPort :" in line:
-                            port = line.split(":")[1].strip()
-                            if host:
-                                proxy_addr = f"http://{host}:{port}"
-                            break
-                elif http_enable:
-                    # Extract HTTP proxy
-                    host = ""
-                    for line in output.split("\n"):
-                        if "HTTPProxy :" in line:
-                            host = line.split(":")[1].strip()
-                        elif "HTTPPort :" in line:
-                            port = line.split(":")[1].strip()
-                            if host:
-                                proxy_addr = f"http://{host}:{port}"
-                            break
-
-                # Get exceptions list
-                bypass = ""
-                if "ExceptionsList" in output:
-                    # Parse exception list from scutil output
-                    in_exceptions = False
-                    exceptions = []
-                    for line in output.split("\n"):
-                        if "ExceptionsList" in line:
-                            in_exceptions = True
-                        elif in_exceptions:
-                            if "}" in line:
-                                break
-                            # Extract host from "0 : localhost" format
-                            if ":" in line:
-                                host = line.split(":", 1)[1].strip()
-                                if host:
-                                    exceptions.append(host)
-                    bypass = ",".join(exceptions)
-
+                proxy_addr, bypass = _parse_scutil_proxy(result.stdout)
                 if proxy_addr:
                     # Silent - system proxy detection is routine
                     return proxy_addr, bypass  # Return raw, normalize at usage

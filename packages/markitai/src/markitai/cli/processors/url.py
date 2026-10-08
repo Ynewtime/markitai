@@ -1089,6 +1089,7 @@ async def process_url_batch(
         batch_item_claim_scope,
         create_url_processor,
         drop_duplicate_url_entries,
+        output_affecting_options,
     )
     from markitai.fetch import FetchStrategy
     from markitai.security import check_symlink_safety
@@ -1136,6 +1137,16 @@ async def process_url_batch(
     check_symlink_safety(output_dir, allow_symlinks=cfg.output.allow_symlinks)
     ensure_dir(output_dir)
 
+    # One LLM processor for the whole list, as in the directory batch: a
+    # processor per URL gave each URL its own semaphore, so
+    # --llm-concurrency bounded every URL separately instead of the batch
+    shared_processor = None
+    if cfg.llm.enabled:
+        from markitai.llm import LLMRuntime
+
+        runtime = LLMRuntime(concurrency=cfg.llm.concurrency)
+        shared_processor = create_llm_processor(cfg, runtime=runtime)
+
     # Single-URL processing cascade shared with the directory batch
     # (fetch -> images -> base .md -> LLM -> ProcessResult). The factory
     # also initializes the fetch cache and the screenshots directory.
@@ -1147,6 +1158,7 @@ async def process_url_batch(
         output_dir=output_dir,
         fetch_strategy=fetch_strategy,
         explicit_fetch_strategy=explicit_fetch_strategy,
+        shared_processor=shared_processor,
         localized_base_md=True,
         fetch_error_max_length=800,
     )
@@ -1168,6 +1180,7 @@ async def process_url_batch(
         "screenshot": cfg.screenshot.enabled,
         "alt": cfg.image.alt_enabled,
         "desc": cfg.image.desc_enabled,
+        **output_affecting_options(cfg, fetch_strategy, explicit_fetch_strategy),
     }
     batch = BatchProcessor(
         cfg.batch,

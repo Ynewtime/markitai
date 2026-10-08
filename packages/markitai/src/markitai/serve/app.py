@@ -17,7 +17,7 @@ import secrets
 import sys
 import uuid
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
@@ -54,6 +54,7 @@ from markitai.serve.jobs import (
     job_cached_dir_size,
     job_duration_ms,
     rehydrate_jobs,
+    run_history_expiry,
     run_job,
     run_retry_queue,
     write_job_meta,
@@ -1787,6 +1788,8 @@ def create_app(
         restored = rehydrate_jobs(state.registry, cfg)
         if restored:
             logger.info("[Serve] Rehydrated {} archived job(s)", restored)
+        # Startup cleanup alone never expires history on a long-running server
+        expiry_task = asyncio.create_task(run_history_expiry(state.registry))
         logger.info("[Serve] markitai {} ready (jobs root: {})", __version__, root)
         if cfg.llm.model_list or detected_models:
             # LiteLLM loads in the background, not on the loop when the first
@@ -1797,6 +1800,9 @@ def create_app(
         try:
             yield
         finally:
+            expiry_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await expiry_task
             await app.state.markitai.registry.shutdown()
 
             from markitai.converter.pdf_parallel import shutdown_pool

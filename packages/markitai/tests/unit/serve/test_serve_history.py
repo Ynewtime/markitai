@@ -13,6 +13,7 @@ import json
 import time
 import zipfile
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -38,6 +39,12 @@ def _all_job_options(**set_values: object) -> dict[str, object]:
 
 from markitai.config import MarkitaiConfig
 from markitai.serve import create_app
+
+# Legacy metas are written with recent timestamps: the server expires history
+# whose finished_at is older than seven days, whatever the directory mtime.
+_RECENT = datetime.now(UTC) - timedelta(hours=1)
+RECENT_CREATED_AT = _RECENT.isoformat(timespec="seconds")
+RECENT_FINISHED_AT = (_RECENT + timedelta(minutes=1)).isoformat(timespec="seconds")
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -234,12 +241,12 @@ class TestRehydrate:
     ) -> None:
         job_dir = tmp_path / "jobs" / "legacy-job"
         job_dir.mkdir(parents=True)
-        finished_at = "2026-07-12T10:01:00+00:00"
+        finished_at = RECENT_FINISHED_AT
         (job_dir / "meta.json").write_text(
             json.dumps(
                 {
                     "job_id": "legacy-job",
-                    "created_at": "2026-07-12T10:00:00+00:00",
+                    "created_at": RECENT_CREATED_AT,
                     "finished_at": finished_at,
                     "status": "done",
                     "items": [
@@ -453,8 +460,8 @@ class TestHistorySizeCache:
             json.dumps(
                 {
                     "job_id": "legacy-job",
-                    "created_at": "2026-07-12T10:00:00+00:00",
-                    "finished_at": "2026-07-12T10:01:00+00:00",
+                    "created_at": RECENT_CREATED_AT,
+                    "finished_at": RECENT_FINISHED_AT,
                     "status": "done",
                     "items": [{"item_id": "i1", "name": "legacy.txt", "kind": "file"}],
                 }
@@ -727,8 +734,8 @@ class TestCliRecordedRetry:
             json.dumps(
                 {
                     "job_id": job_dir.name,
-                    "created_at": "2026-07-01T00:00:00+00:00",
-                    "finished_at": "2026-07-01T00:00:01+00:00",
+                    "created_at": RECENT_CREATED_AT,
+                    "finished_at": RECENT_FINISHED_AT,
                     "status": "done",
                     "options": {"origin": "cli"},
                     "items": [
@@ -968,3 +975,89 @@ async def test_retry_preserves_profile_options_after_restart(
         assert response.status_code == 202, response.text
         retried = await _wait_job_done(client, job_id)
         assert retried["options"] == _all_job_options(**options)
+
+
+class TestHistoryExpiry:
+    """Regression: history expired only at server start, aged by the job dir
+    mtime (reset whenever meta.json is rewritten), so a long-running server
+    kept every job, and every CLI run recorded into it, forever."""
+
+    @staticmethod
+    def _job_dir(root: Path, name: str, finished_at: datetime) -> Path:
+        job_dir = root / name
+        (job_dir / "out").mkdir(parents=True)
+        (job_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "job_id": name,
+                    "created_at": finished_at.isoformat(),
+                    "finished_at": finished_at.isoformat(),
+                    "status": "done",
+                    "items": [{"item_id": "i1", "name": "a.txt", "kind": "file"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return job_dir
+
+    def test_age_is_finished_at_not_mtime(self, tmp_path: Path) -> None:
+        import os
+
+        from markitai.serve.jobs import cleanup_stale_jobs
+
+        root = tmp_path / "jobs"
+        now = datetime.now(UTC)
+        # Finished long ago, but meta.json was just rewritten (fresh mtime)
+        expired = self._job_dir(root, "expired", now - timedelta(days=8))
+        # Finished recently, but the directory mtime is old
+        recent = self._job_dir(root, "recent", now - timedelta(hours=1))
+        old = time.time() - 30 * 24 * 3600
+        os.utime(recent, (old, old))
+        kept = self._job_dir(root, "registered", now - timedelta(days=8))
+
+        assert cleanup_stale_jobs(root, keep=frozenset({"registered"})) == 1
+        assert not expired.exists()
+        assert recent.exists()
+        assert kept.exists()
+
+    async def test_expire_jobs_drops_old_registered_history(
+        self, tmp_path: Path
+    ) -> None:
+        from markitai.serve.jobs import JobRegistry, expire_jobs, rehydrate_jobs
+
+        root = tmp_path / "jobs"
+        now = datetime.now(UTC)
+        registry = JobRegistry(root)
+        self._job_dir(root, "old", now - timedelta(days=8))
+        self._job_dir(root, "new", now - timedelta(days=1))
+        assert rehydrate_jobs(registry, MarkitaiConfig()) == 2
+        running = registry.create_job({}, MarkitaiConfig())
+        running.finished_at = (now - timedelta(days=30)).isoformat()
+        # A CLI run recorded after the last history refresh
+        self._job_dir(root, "cli-unregistered", now - timedelta(days=9))
+
+        assert await expire_jobs(registry) == 2
+
+        assert set(registry.jobs) == {"new", running.job_id}
+        assert sorted(p.name for p in root.iterdir()) == sorted(["new", running.job_id])
+
+    async def test_running_server_expires_periodically(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.serve import jobs
+        from markitai.serve.jobs import JobRegistry, run_history_expiry
+
+        sweeps = asyncio.Event()
+
+        async def fake_expire(registry: JobRegistry) -> int:
+            sweeps.set()
+            return 0
+
+        monkeypatch.setattr(jobs, "expire_jobs", fake_expire)
+        task = asyncio.create_task(run_history_expiry(JobRegistry(tmp_path), 0.01))
+        try:
+            await asyncio.wait_for(sweeps.wait(), timeout=5)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task

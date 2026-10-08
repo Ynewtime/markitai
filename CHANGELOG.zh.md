@@ -25,6 +25,19 @@
 - **页眉页脚清理**：在页面或幻灯片末尾重复出现的短行（及其后的页码）只在页末删除，正文中出现的同一行不再被删掉。
 - **`.numbers`**：不加 `-b cloudflare` 时，Apple Numbers 文件现在会转换失败并说明原因（导出为 `.xlsx`/`.csv`，或使用 `-b cloudflare`），不再报告为转换成功、内容却只有包内的元数据。
 - **转换器**：旧编码（Latin-1、GBK、带 `<meta charset>` 的网页）的 `.txt`/`.md`、HTML、XML、reStructuredText、Org 和 LaTeX 文件能正确读取，不再报错或变成替换字符；检测不出编码的 CSV 保留原有行，不再变成 `None`；带嵌入二进制数据（`\bin`）的 RTF 可以转换；LaTeX 的 `\href{url}{text}` 转成链接；选取标题时，正文里的两条水平分隔线之间的内容不再被当作 frontmatter；含反斜杠的图片描述（`C:\temp`）按原样写入。
+- LLM 限流报错里出现 "402"（例如 token 数 "Used 29402"）时仍会重试，`1.204s`、`750ms`、`6m0s` 这类等待时间也能正确识别；只有 HTTP 402 才算计费错误。
+- LLM 缓存不再给前 50,000 个字符之后被改过的长文档、或图片内容变了但文件名没变的页面和截图返回旧结果：缓存键现在覆盖全文和图片字节。
+- `cache.enabled: false` 现在会关闭 LLM 结果缓存（不再读写 `cache.db`），`cache.max_size_bytes` 也会对它生效。
+- 模型返回的空图片说明或空截图提取结果不再被永久缓存（视为分析失败：保留原 alt 文本，下次运行重新请求）；发送前被重新编码为 JPEG 的图片也不再被标成 PNG。
+- `.urls` 批量处理共用一个 LLM 处理器，`--llm-concurrency` 现在限制整个列表而不是每个 URL；同一批量中的同名文件（`a/report.pdf`、`b/report.pdf`）也不再共用或互相清掉 LLM 费用、用量和 `max_requests_per_document` 预算。
+- `--resume` 不再跳过在其他输出设置下完成的条目：`--pure`、`--keep-base`、`--screenshot-only`、`output.profile` 和 `-s` 现在各自使用独立的批量状态。`--llm-batch` 遇到 URL 或 `.urls` 文件时直接报错，不再按全价逐个请求。
+- MCP `batch_convert` 启用 LLM 时整个任务共用一个 LLM 处理器，`llm.concurrency` 现在限制整个批量而不是每个条目（此前 10 个条目的批量可能同时发出约 100 个请求）。
+- 批量抓取同时包含走代理和 NO_PROXY/本机地址的 URL 时不再随机失败：静态 HTTP 客户端为每个代理各保留一个连接池，不再在其他请求仍在使用时关闭共用的那个。
+- 显式的 `-s jina`、`-s defuddle` 或 `-s cloudflare` 只代表对该服务的同意：它拒绝请求、markitai 回退到自动链时，由 `fetch.remote_consent` 决定其他远程服务（defuddle.md、Cloudflare、FxTwitter）能否收到该 URL。
+- macOS 系统代理自动检测恢复正常（`scutil --proxy` 先列端口后列主机，此前总是检测不到代理）；`NO_PROXY` 或 `local_only_patterns` 中的 `corp.example` 这类条目现在也覆盖其子域名（`api.corp.example`），与 curl、urllib 和 Go 一致。
+- Cloudflare 验证页（"Just a moment..."、"Ray ID"）、验证码页面和仅仅是内容较短的页面不再写入 30 天的 SPA 缓存，一次人机验证不会再让该站点之后的所有请求都走浏览器。声明需要 JavaScript 或只显示加载占位的页面仍会写入。
+- 网页提取按主机名选择站点提取器：`dropbox.com/status/…`、`linux.com/news/article/…`、`docs.github.com/…/issues/…` 这类页面不再被当作 X 帖子或 GitHub 讨论处理，内容不再丢失。
+- `--record-history` 只复制本次记录的输出所用的图片和截图，不再把共享输出目录里历来生成的全部资源都复制一遍；`markitai serve` 运行期间也会按任务完成时间删除超过 7 天的历史（此前只在启动时按目录修改时间清理）。
 
 ## [1.2.0] - 2026-09-28
 

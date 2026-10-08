@@ -998,10 +998,7 @@ def app(
 
     # Determine fetch strategy
     from markitai.cli.ui import ConsoleInteraction
-    from markitai.fetch_consent import (
-        set_remote_consent,
-        set_remote_consent_prompt_allowed,
-    )
+    from markitai.fetch_consent import set_remote_consent_prompt_allowed
 
     # Register session-owned consent before using its setters, without loading
     # the webpage strategies and extraction pipeline for a local text file.
@@ -1047,9 +1044,10 @@ def app(
         if fetch_strategy == FetchStrategy.CLOUDFLARE:
             # Also enable CF Workers AI toMarkdown for file conversion
             cfg.fetch.cloudflare.convert_enabled = True
-        if fetch_strategy_name in ("defuddle", "jina", "cloudflare"):
-            # Explicitly choosing a remote service counts as consent this run
-            set_remote_consent(True)
+        # An explicit remote strategy is consent for that service only: the
+        # explicit dispatch opts in on its own, and seeding the process-wide
+        # decision would also hand the URL to every service of the fallback
+        # chain (defuddle.md, Cloudflare, FxTwitter) the user never chose.
     else:
         # Use config default or auto
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)
@@ -1182,6 +1180,19 @@ def app(
 
         # ── Phase 3: Dispatch to appropriate processor ──
 
+        if llm_batch and (
+            is_url_list_mode
+            or is_url_input
+            or input_path is None
+            or not input_path.is_dir()
+        ):
+            # The flag is documented as directory-only; silently running a
+            # URL, a URL list or a single file at full price would contradict
+            # the help text.
+            message = "--llm-batch applies to directory batches only."
+            stderr_console.print(f"[red]Error: {message}[/red]")
+            raise CliInputRejection(message)
+
         # URL list batch mode
         if is_url_list_mode:
             assert effective_output is not None  # Validated in Phase 1
@@ -1228,13 +1239,6 @@ def app(
 
         # File/directory mode
         assert input_path is not None  # Already validated above
-
-        if llm_batch and not input_path.is_dir():
-            # The flag is documented as directory-only; silently running a
-            # single file at full price would contradict the help text.
-            message = "--llm-batch applies to directory batches only."
-            stderr_console.print(f"[red]Error: {message}[/red]")
-            raise CliInputRejection(message)
 
         # Directory batch mode
         if input_path.is_dir():

@@ -17,11 +17,13 @@ import re
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.extractors.base import site_url
+
 # Match x.com article URLs: /user/article/ID (singular — confirmed against
 # defuddle's reference XArticleExtractor, which uses the same
 # `/(article|status)/` pattern with no plural form) or the older /i/articles/ID
 # system-path form (plural; predates this extractor, left as originally found).
-_ARTICLE_URL_RE = re.compile(r"x\.com/[^/]+/article/\d+|x\.com/i/articles?/\d+")
+_ARTICLE_PATH_RE = re.compile(r"/[^/]+/article/\d+(?:/.*)?|/i/articles?/\d+(?:/.*)?")
 
 
 class XArticleExtractor:
@@ -31,7 +33,8 @@ class XArticleExtractor:
 
     def matches_url(self, url: str) -> bool:
         """Match ``/article/`` URLs on x.com (including ``/i/article/``)."""
-        return bool(_ARTICLE_URL_RE.search(url))
+        parts = site_url(url, "x.com")
+        return parts is not None and bool(_ARTICLE_PATH_RE.fullmatch(parts.path))
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Return the ``<article>`` tag or the ``id="target"`` element.

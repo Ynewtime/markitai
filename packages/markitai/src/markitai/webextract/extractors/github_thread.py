@@ -7,8 +7,11 @@ X/Twitter-specific.
 
 from __future__ import annotations
 
+import re
+
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.extractors.base import site_url
 from markitai.webextract.render import render_semantic_content
 from markitai.webextract.resolver import ResolvedPage
 from markitai.webextract.semantics import ConversationItem, ConversationThread
@@ -42,7 +45,13 @@ class GitHubThreadExtractor:
         Returns:
             True when the URL is a github.com issue or PR page.
         """
-        return "github.com" in url and ("/issues/" in url or "/pull/" in url)
+        parts = site_url(url, "github.com")
+        # github.com itself: docs.github.com and gist.github.com are other sites
+        return (
+            parts is not None
+            and parts.hostname in {"github.com", "www.github.com"}
+            and re.match(r"/[^/]+/[^/]+/(?:issues|pull)/\d+", parts.path) is not None
+        )
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Return the first comment-body as a minimal root (legacy path).

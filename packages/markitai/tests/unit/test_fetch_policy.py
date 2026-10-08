@@ -288,6 +288,16 @@ class TestMatchLocalOnly:
     def test_exact_domain_match(self) -> None:
         assert match_local_only("internal.corp.com", ["internal.corp.com"]) is True
 
+    def test_bare_domain_matches_its_subdomains(self) -> None:
+        """Regression: NO_PROXY=corp.example did not cover api.corp.example,
+        unlike curl, urllib and Go, so intranet subdomains were proxied and
+        sent to remote services despite the local-only list."""
+        assert match_local_only("api.corp.example", ["corp.example"]) is True
+        assert match_local_only("a.b.corp.example", ["corp.example"]) is True
+
+    def test_bare_domain_does_not_match_a_longer_name(self) -> None:
+        assert match_local_only("notcorp.example", ["corp.example"]) is False
+
     def test_exact_domain_match_ignores_dns_terminal_dot(self) -> None:
         assert match_local_only("internal.corp.com.", ["internal.corp.com"]) is True
 

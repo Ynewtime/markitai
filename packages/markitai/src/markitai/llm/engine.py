@@ -150,6 +150,43 @@ def track_cache_hits() -> Iterator[CacheTally]:
         _cache_tally.reset(token)
 
 
+# The work item whose usage and request budget a tracking context belongs to.
+# Same reasoning as _cache_tally: a batch shares one processor, and the
+# tracking context is a display name (a file's basename, a URL), so two items
+# with the same name would otherwise pool their usage and budget, and the
+# first to finish would clear the other's.
+_usage_scope: ContextVar[str] = ContextVar("markitai_llm_usage_scope", default="")
+
+
+@contextmanager
+def llm_usage_scope(scope: str) -> Iterator[None]:
+    """Keep the usage and request budget of one work item apart.
+
+    Scopes nest: an inner scope refines the enclosing one instead of
+    replacing it.
+
+    Args:
+        scope: Unique id of the item (e.g. its resolved input path).
+    """
+    outer = _usage_scope.get()
+    token = _usage_scope.set(f"{outer}\x00{scope}" if outer else scope)
+    try:
+        yield
+    finally:
+        _usage_scope.reset(token)
+
+
+def scoped_usage_key(context: str) -> str:
+    """The key a tracking context is accounted under in the current scope."""
+    scope = _usage_scope.get()
+    return f"{scope}\x00{context}" if scope and context else context
+
+
+def _display_context(key: str) -> str:
+    """The tracking context of a scoped key, for messages."""
+    return key.rpartition("\x00")[2]
+
+
 class RequestBudget:
     """Per-context LLM request circuit breaker.
 
@@ -197,8 +234,8 @@ class RequestBudget:
                 self._tripped.add(context)
         if first:
             logger.warning(
-                f"[LLM:{context}] {reason}: skipping further LLM enhancement "
-                f"for this document, keeping unenhanced output."
+                f"[LLM:{_display_context(context)}] {reason}: skipping further "
+                f"LLM enhancement for this document, keeping unenhanced output."
             )
             if self._on_exceeded is not None:
                 self._on_exceeded(context)
@@ -212,6 +249,7 @@ class RequestBudget:
         """
         if not context or self._cost_limit <= 0:
             return
+        context = scoped_usage_key(context)
         with self._lock:
             spent = self._spent.get(context, 0.0) + cost
             self._spent[context] = spent
@@ -234,6 +272,7 @@ class RequestBudget:
         """
         if not context:
             return
+        context = scoped_usage_key(context)
         with self._lock:
             if context in self._tripped:
                 already_tripped = True
@@ -252,10 +291,13 @@ class RequestBudget:
                 f"llm.max_requests_per_document (0 disables) if this document "
                 f"legitimately needs more requests",
             )
-        raise LLMRequestBudgetExceededError(f"[LLM:{context}] budget exhausted")
+        raise LLMRequestBudgetExceededError(
+            f"[LLM:{_display_context(context)}] budget exhausted"
+        )
 
     def exceeded(self, context: str) -> bool:
         """Whether the context has tripped the breaker."""
+        context = scoped_usage_key(context)
         with self._lock:
             return context in self._tripped
 
@@ -273,6 +315,7 @@ class RequestBudget:
         """
         if not context or self._limit <= 0:
             return None
+        context = scoped_usage_key(context)
         with self._lock:
             if context in self._tripped:
                 return 0
@@ -280,6 +323,7 @@ class RequestBudget:
 
     def clear(self, context: str) -> None:
         """Reset the budget for a context (called between documents)."""
+        context = scoped_usage_key(context)
         with self._lock:
             self._counts.pop(context, None)
             self._spent.pop(context, None)
@@ -1137,12 +1181,13 @@ class LLMEngine:
                     # in provider text (e.g. "quota will reset after 30s") but ARE
                     # retryable: the router cooldown recorded for the failing
                     # model routes the retry to another model.
+                    # HTTP 402 is matched on the status code, not as text: a
+                    # 429 saying "Used 29402" tokens is still a rate limit.
                     error_msg_lower = str(e).lower()
                     if isinstance(e, RateLimitError):
                         non_retryable_patterns = (
                             "billing",
                             "payment",
-                            "402",
                             "insufficient_quota",
                             "exceeded your current quota",
                         )
@@ -1152,11 +1197,10 @@ class LLMEngine:
                             "billing",
                             "payment",
                             "subscription",
-                            "402",
                             "insufficient_quota",
                             "exceeded your current quota",
                         )
-                    if any(
+                    if getattr(e, "status_code", None) == 402 or any(
                         pattern in error_msg_lower for pattern in non_retryable_patterns
                     ):
                         status_code = getattr(e, "status_code", "N/A")
