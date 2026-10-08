@@ -850,3 +850,60 @@ class TestBatchRendererFollowsEachUrlsProxy:
 
         assert seen["https://example.com/a"] is seen["https://example.com/b"]
         assert seen["https://example.com/a"].proxy is None
+
+
+class TestStaticClientsPerProxy:
+    """Regression: one client slot was shared by every proxy, and switching
+    proxy closed the old client while other coroutines were still awaiting
+    it, so a batch mixing proxied and NO_PROXY hosts failed at random."""
+
+    async def test_httpx_keeps_a_client_per_proxy_open(self) -> None:
+        import asyncio
+
+        from markitai.fetch_http import HttpxClient
+
+        client = HttpxClient()
+        proxied = client._get_or_create_client(5.0, "http://10.0.0.2:3128")
+        direct = client._get_or_create_client(5.0, None)
+        await asyncio.sleep(0)  # let any scheduled close run
+
+        assert not proxied.is_closed
+        assert client._get_or_create_client(5.0, "http://10.0.0.2:3128") is proxied
+        assert client._get_or_create_client(5.0, None) is direct
+
+        await client.close()
+        assert proxied.is_closed and direct.is_closed
+
+    async def test_curl_keeps_a_session_per_proxy_open(self) -> None:
+        import asyncio
+        import sys
+        import types
+
+        from markitai.fetch_http import CurlCffiClient
+
+        closed: list[Any] = []
+
+        class _Session:
+            def __init__(self, **kwargs: Any) -> None:
+                self.proxies = kwargs["proxies"]
+
+            async def close(self) -> None:
+                closed.append(self)
+
+        requests_module = types.ModuleType("curl_cffi.requests")
+        requests_module.AsyncSession = _Session  # type: ignore[attr-defined]
+        package = types.ModuleType("curl_cffi")
+        package.requests = requests_module  # type: ignore[attr-defined]
+        client = CurlCffiClient()
+        with patch.dict(
+            sys.modules, {"curl_cffi": package, "curl_cffi.requests": requests_module}
+        ):
+            proxied = client._get_or_create_session("http://10.0.0.2:3128")
+            direct = client._get_or_create_session(None)
+            await asyncio.sleep(0)
+
+            assert closed == []
+            assert client._get_or_create_session("http://10.0.0.2:3128") is proxied
+
+        await client.close()
+        assert set(closed) == {proxied, direct}
