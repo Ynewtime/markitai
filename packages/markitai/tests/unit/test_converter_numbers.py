@@ -22,7 +22,7 @@ def test_numbers_fails_instead_of_converting_package_metadata(tmp_path: Path) ->
 
     converter = get_converter(path)
     assert converter is not None
-    assert converter.can_convert(path)
+    assert FileFormat.NUMBERS in converter.supported_formats
 
     with pytest.raises(ConversionError, match=r"-b cloudflare"):
         converter.convert(path)

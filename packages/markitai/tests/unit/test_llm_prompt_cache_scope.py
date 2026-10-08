@@ -214,59 +214,6 @@ class TestTemplateDigest:
         assert manager.template_digest("cleaner_system") != before
 
 
-class TestCleanerCacheScope:
-    """clean_markdown (text path, both cache layers)."""
-
-    @pytest.mark.asyncio
-    async def test_template_edit_invalidates_both_cache_layers(
-        self, tmp_path: Path, prompts_dir: Path
-    ) -> None:
-        (prompts_dir / "cleaner_system.md").write_text(
-            "V1 cleaner rules {mode_rules}", encoding="utf-8"
-        )
-        memory = ContentCache()
-        persistent = PersistentCache(global_dir=tmp_path / "cache", enabled=True)
-        content = "# Doc\n\nSome body text."
-
-        first = _make_enhancer(
-            prompts_dir, memory, persistent, text_content="CLEANED-V1"
-        )
-        assert await first.clean_markdown(content, "doc.md") == "CLEANED-V1"
-        assert len(first._engine.text_calls) == 1  # type: ignore[attr-defined]
-
-        # Unchanged templates: fully cached, no second LLM call
-        second = _make_enhancer(
-            prompts_dir, memory, persistent, text_content="CLEANED-V2"
-        )
-        assert await second.clean_markdown(content, "doc.md") == "CLEANED-V1"
-        assert second._engine.text_calls == []  # type: ignore[attr-defined]
-
-        # Edited template: both the memory and the SQLite entry must miss
-        (prompts_dir / "cleaner_system.md").write_text(
-            "V2 cleaner rules {mode_rules}", encoding="utf-8"
-        )
-        third = _make_enhancer(
-            prompts_dir, memory, persistent, text_content="CLEANED-V2"
-        )
-        assert await third.clean_markdown(content, "doc.md") == "CLEANED-V2"
-        assert len(third._engine.text_calls) == 1  # type: ignore[attr-defined]
-
-    @pytest.mark.asyncio
-    async def test_cache_key_carries_digest(
-        self, tmp_path: Path, prompts_dir: Path
-    ) -> None:
-        memory = ContentCache()
-        persistent = MagicMock()
-        persistent.get.return_value = None
-        enhancer = _make_enhancer(prompts_dir, memory, persistent)
-
-        await enhancer.clean_markdown("# Doc\n\nBody.", "doc.md")
-
-        key = persistent.set.call_args[0][0]
-        assert key.startswith("cleaner@")
-        assert len(key) > len("cleaner@")
-
-
 class TestDocumentProcessCacheScope:
     """_run_document_call (structured path)."""
 

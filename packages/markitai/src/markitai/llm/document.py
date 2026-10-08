@@ -25,14 +25,7 @@ from markitai.constants import (
     SCREENSHOTS_REL_PATH,
 )
 
-# Mode-specific rules injected into cleaner_system prompt via {mode_rules}
-STANDARD_MODE_RULES = """\
-## Image Placeholder Preservation — CRITICAL
-- The document may contain `__MARKITAI_IMG_N__` placeholders (where N is a number). These represent actual images.
-- You MUST preserve **every** placeholder in its **exact original position**. Do not move, reorder, merge, or remove any placeholder.
-- If a placeholder appears between two paragraphs, it must remain between those same paragraphs in your output.
-- Failure to preserve all placeholders will cause your output to be rejected entirely."""
-
+# Pure-mode rules injected into cleaner_system prompt via {mode_rules}
 PURE_MODE_RULES = """\
 ## YAML Frontmatter Preservation — CRITICAL
 - The document may start with a YAML frontmatter block delimited by `---` lines (e.g., `---\\ntitle: ...\\n---`).
@@ -397,133 +390,6 @@ class DocumentEnhancer:
             router=router,
             require_content=require_content,
         )
-
-    async def clean_markdown(self, content: str, context: str = "") -> str:
-        """
-        Clean and optimize markdown content.
-
-        Uses placeholder-based protection to preserve images, slides, and
-        page comments in their original positions during LLM processing.
-
-        Cache lookup order:
-        1. In-memory cache (session-level, fast)
-        2. Persistent cache (cross-session, SQLite)
-        3. LLM API call
-
-        The cache_key parameter identifies the cache category plus the digest
-        of the prompts that produced the result (e.g. "cleaner@1a2b3c4d");
-        PersistentCache internally combines it with a content hash for lookups.
-
-        Args:
-            content: Raw markdown content
-            context: Context identifier for logging (e.g., filename)
-
-        Returns:
-            Cleaned markdown content
-        """
-        mode_rules = STANDARD_MODE_RULES + self._extra_cleaning_rules
-        cache_key = self._prompt_scoped_key(
-            "cleaner",
-            "cleaner_system",
-            "cleaner_user",
-            extra=(mode_rules,),
-        )
-
-        # 1. Check in-memory cache first (fastest)
-        cached = self._engine.memory_cache.get(cache_key, content)
-        if cached is not None:
-            self._engine.record_cache_hit()
-            return cached
-
-        # 2. Check persistent cache (cross-session)
-        cached = self._engine.persistent_cache.get(
-            cache_key, content, context=context, model=self._cache_model_scope
-        )
-        if cached is not None:
-            self._engine.record_cache_hit()
-            # Also populate in-memory cache for faster subsequent access
-            self._engine.memory_cache.set(cache_key, content, cached)
-            return cached
-
-        self._engine.record_cache_miss()
-
-        # 3. Protect image positions before any LLM processing
-        image_protected, image_mapping = self._protect_image_positions(content)
-
-        # 4. Extract and protect content before LLM processing
-        protected = content_utils.extract_protected_content(image_protected)
-        protected_content, mapping = content_utils.protect_content(image_protected)
-
-        # Use separated system/user prompts to prevent prompt leakage
-        system_prompt = self._prompt_manager.get_prompt(
-            "cleaner_system", mode_rules=mode_rules
-        )
-        user_prompt = self._prompt_manager.get_prompt(
-            "cleaner_user", content=protected_content
-        )
-
-        try:
-            response = await self._call_llm(
-                model="default",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                context=context,
-                require_content=True,
-            )
-        except EmptyLLMResponseError as exc:
-            # Nothing is cached: an empty answer would otherwise be replayed
-            # from the TTL-less persistent cache on every later run.
-            logger.error(
-                f"[{context or 'cleaner'}] clean_markdown got an empty LLM "
-                f"response, keeping the original content: {exc}"
-            )
-            return content
-
-        fallback = self._fallback_if_boundary_placeholders_missing(
-            response.content,
-            content,
-            mapping,
-            context or "cleaner",
-            "clean_markdown",
-        )
-        if fallback is not None:
-            result = fallback
-        else:
-            # Restore protected content from placeholders, with fallback for removed items
-            # Disable "append missing images at end" — image positions are
-            # managed by image_mapping, not by unprotect_content fallback
-            result = content_utils.unprotect_content(
-                response.content,
-                mapping,
-                protected,
-                restore_missing_images_at_end=False,
-            )
-        result = self._stabilize_paged_markdown(content, result, context)
-        # Restore image positions (or fall back to original if placeholders were lost)
-        result = self._restore_images_or_fallback(
-            result, content, image_mapping, context or "cleaner", "clean_markdown"
-        )
-
-        # A refusal or an unrelated reply is not a cleanup: keep the input and
-        # cache nothing, like an empty answer (the persistent cache has no
-        # TTL, so a cached refusal would come back on every later run).
-        rejection = content_utils.implausible_cleaning_reason(content, result)
-        if rejection is not None:
-            logger.error(
-                f"[{context or 'cleaner'}] clean_markdown answer rejected "
-                f"({rejection}), keeping the original content"
-            )
-            return content
-
-        # Cache the result in both layers
-        self._engine.memory_cache.set(cache_key, content, result)
-        self._engine.persistent_cache.set(
-            cache_key, content, result, model=self._cache_model_scope
-        )
-
-        return result
 
     @staticmethod
     def _protect_image_positions(text: str) -> tuple[str, dict[str, str]]:
@@ -1035,7 +901,8 @@ class DocumentEnhancer:
                 require_content=True,
             )
         except EmptyLLMResponseError as exc:
-            # Cache nothing (see clean_markdown). Returning the extracted
+            # Cache nothing: an empty answer would be replayed from the
+            # TTL-less persistent cache. Returning the extracted
             # text would pass unenhanced pages off as enhanced ones.
             raise LLMEnhancementDegradedError(
                 format_error_message(exc), cleaned_markdown=extracted_text

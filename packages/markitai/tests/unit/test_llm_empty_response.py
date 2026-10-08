@@ -186,52 +186,6 @@ def _make_enhancer(memory_cache: Any, persistent_cache: Any) -> DocumentEnhancer
     )
 
 
-class TestCleanMarkdownEmptyResponse:
-    """Document text path: an empty answer must not poison the cache."""
-
-    @pytest.mark.asyncio
-    async def test_empty_response_is_not_cached_and_retries_next_run(
-        self, tmp_path: Path
-    ) -> None:
-        memory = ContentCache()
-        persistent = PersistentCache(global_dir=tmp_path / "cache", enabled=True)
-        enhancer = _make_enhancer(memory, persistent)
-        content = "# Doc\n\nOriginal body."
-
-        # Empty LLM answer: the original content survives untouched...
-        first = await enhancer.clean_markdown(content, "doc.md")
-        assert first == content
-
-        # ...and neither layer holds an entry for it
-        assert memory.size == 0
-        assert persistent.stats()["cache"]["count"] == 0
-
-        # The next run therefore issues a fresh request and caches its result
-        second = await enhancer.clean_markdown(content, "doc.md")
-        assert second == "# Cleaned\n\nReal output."
-        assert enhancer._engine.calls == 2  # type: ignore[attr-defined]
-        assert persistent.stats()["cache"]["count"] == 1
-
-    @pytest.mark.asyncio
-    async def test_enhance_document_with_vision_fails_on_empty(
-        self, tmp_path: Path
-    ) -> None:
-        """An empty answer fails the batch (the extracted text rides on the
-        error) instead of passing unenhanced pages off as enhanced."""
-        memory = ContentCache()
-        persistent = PersistentCache(global_dir=tmp_path / "cache", enabled=True)
-        enhancer = _make_enhancer(memory, persistent)
-        page = tmp_path / "page-1.png"
-        page.write_bytes(b"png")
-        extracted = "# Doc\n\nExtracted body."
-
-        with pytest.raises(LLMEnhancementDegradedError) as exc_info:
-            await enhancer.enhance_document_with_vision(extracted, [page], "doc.pdf")
-
-        assert exc_info.value.cleaned_markdown == extracted
-        assert persistent.stats()["cache"]["count"] == 0
-
-
 class TestCleanDocumentPureEmptyResponse:
     """Pure mode writes the answer straight to disk — never a blank file.
 

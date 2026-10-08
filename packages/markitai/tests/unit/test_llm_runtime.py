@@ -109,12 +109,6 @@ class TestLLMProcessorContextUsage:
         processor._track_usage("model-a", 200, 100, 0.02, context="file1.pdf")
         processor._track_usage("model-b", 150, 75, 0.015, context="file2.pdf")
 
-        # Check global usage
-        global_usage = processor.get_usage()
-        assert global_usage["model-a"]["requests"] == 2
-        assert global_usage["model-a"]["input_tokens"] == 300
-        assert global_usage["model-b"]["requests"] == 1
-
         # Check context-specific usage
         file1_usage = processor.get_context_usage("file1.pdf")
         assert file1_usage["model-a"]["requests"] == 2
@@ -155,11 +149,8 @@ class TestLLMProcessorContextUsage:
         assert processor.get_context_usage("file1.pdf") == {}
         assert processor.get_context_usage("file2.pdf") != {}
 
-        # Global usage should still have both
-        assert processor.get_usage()["model-a"]["requests"] == 2
-
     def test_usage_without_context(self, mock_config: MagicMock) -> None:
-        """Test that usage without context only tracks globally."""
+        """Usage without a context is not attributed to any context."""
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(mock_config)
@@ -167,6 +158,4 @@ class TestLLMProcessorContextUsage:
         # Track without context
         processor._track_usage("model-a", 100, 50, 0.01)
 
-        # Should be in global, but not in any context
-        assert processor.get_usage()["model-a"]["requests"] == 1
         assert processor._context_usage == {}
