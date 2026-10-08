@@ -89,3 +89,38 @@ def test_sanitize_empties_an_unsafe_root() -> None:
     assert isinstance(root, Tag)
     sanitize_tag_tree(root)
     assert str(root) == "<template></template>"
+
+
+def test_sanitize_checks_svg_xlink_href() -> None:
+    """Inline SVG is emitted raw into the Markdown, so its links must be safe."""
+    out = _sanitize_fragment(
+        '<svg><a xlink:href="javascript:alert(1)"><text>x</text></a>'
+        '<a xlink:href="#ok"><text>y</text></a></svg>'
+    )
+    assert "javascript" not in out
+    assert 'xlink:href="#ok"' in out
+
+
+def test_sanitize_ignores_whitespace_and_controls_inside_scheme() -> None:
+    """Browsers drop tabs/newlines anywhere and C0 controls at the ends."""
+    for href in (
+        "java&#9;script:alert(1)",
+        "java&#10;script:alert(1)",
+        "&#1;javascript:alert(1)",
+        "\x00 javascript:alert(1)",
+        "jav%09ascript:alert(1)",
+    ):
+        out = _sanitize_fragment(f'<svg><a href="{href}"><text>x</text></a></svg>')
+        assert "script" not in out, href
+
+
+def test_sanitize_checks_srcset_poster_and_data() -> None:
+    out = _sanitize_fragment(
+        '<video poster="javascript:alert(1)" src="a.mp4"></video>'
+        '<img srcset="a.png 1x, javascript:alert(2) 2x" src="a.png">'
+        '<img srcset="b.png 1x, b@2x.png 2x">'
+        '<svg><image data="javascript:alert(3)"/></svg>'
+    )
+    assert "javascript" not in out
+    assert 'srcset="b.png 1x, b@2x.png 2x"' in out
+    assert 'src="a.mp4"' in out

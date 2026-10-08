@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`serve` request log**: the access token the web workspace adds to event-stream, file and archive URLs (`?token=`) is masked in the console and log file.
 - **URL fetching**: a response larger than 500 MB (the local-file limit) fails the fetch instead of being read into memory without bound; an over-limit `Content-Length` fails before the body is read.
 - **Credentials in URLs**: a URL with a `user:password@` part no longer writes it into screenshot filenames or into `~/.markitai/learned_spa_domains.json`.
+- **Web extraction sanitizer**: `javascript:` links in inline SVG (`xlink:href`), in `srcset`, `poster` and `data`, or split by tabs, newlines and control characters (`java&#9;script:`) are removed instead of reaching the Markdown.
 
 ## [1.2.0] - 2026-09-28
 
