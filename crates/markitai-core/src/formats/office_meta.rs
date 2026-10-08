@@ -49,6 +49,10 @@ impl Metadata {
 }
 
 fn zip_text(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<String, String> {
+    String::from_utf8(zip_bytes(zip, name)?).map_err(|e| e.to_string())
+}
+
+fn zip_bytes(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>, String> {
     let file = zip.by_name(name).map_err(|e| e.to_string())?;
     if file.size() > MAX_METADATA_BYTES {
         return Err(format!("metadata part {name} exceeds the size limit"));
@@ -60,7 +64,7 @@ fn zip_text(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Stri
     if bytes.len() as u64 > MAX_METADATA_BYTES {
         return Err(format!("metadata part {name} exceeds the size limit"));
     }
-    String::from_utf8(bytes).map_err(|e| e.to_string())
+    Ok(bytes)
 }
 
 #[derive(Default)]
@@ -211,7 +215,16 @@ fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
                     })
                     .and_then(|el| el.attributes.get("Target").cloned())
             })
-            .unwrap_or_else(|| "xl/workbook.xml".into());
+            .unwrap_or_else(|| {
+                if extension == "xlsb" {
+                    "xl/workbook.bin".into()
+                } else {
+                    "xl/workbook.xml".into()
+                }
+            });
+        if extension == "xlsb" {
+            return xlsb_sheet_names(&zip_bytes(&mut archive, path.trim_start_matches('/'))?);
+        }
         for sheet in elements(&zip_text(&mut archive, path.trim_start_matches('/'))?)?
             .into_iter()
             .filter(|el| el.name == "sheet")
@@ -382,11 +395,88 @@ fn biff_sheet_names(bytes: &[u8]) -> Result<Metadata, String> {
     Ok(result)
 }
 
+/// Sheet names from an XLSB `workbook.bin`, a stream of records (MS-XLSB
+/// 2.1.4) whose type and size are little-endian groups of seven bits. Each
+/// BrtBundleSh names a sheet: its state (1 hidden, 2 very hidden, which the
+/// spreadsheet reader omits), tab id, relationship id and name.
+fn xlsb_sheet_names(bytes: &[u8]) -> Result<Metadata, String> {
+    const BRT_BUNDLE_SH: usize = 156;
+    fn number(bytes: &[u8], position: &mut usize, groups: usize) -> Result<usize, String> {
+        let mut value = 0;
+        for group in 0..groups {
+            let byte = *bytes.get(*position).ok_or("truncated workbook record")?;
+            *position += 1;
+            value |= usize::from(byte & 0x7f) << (7 * group);
+            if byte & 0x80 == 0 {
+                return Ok(value);
+            }
+        }
+        Err("invalid workbook record header".into())
+    }
+    fn u32_at(data: &[u8], position: &mut usize) -> Result<u32, String> {
+        let value = data
+            .get(*position..*position + 4)
+            .ok_or("truncated worksheet record")?;
+        *position += 4;
+        Ok(u32::from_le_bytes([value[0], value[1], value[2], value[3]]))
+    }
+    /// An XLWideString, or none for the null XLNullableWideString.
+    fn wide(data: &[u8], position: &mut usize) -> Result<Option<String>, String> {
+        let units = u32_at(data, position)?;
+        if units == u32::MAX {
+            return Ok(None);
+        }
+        let end = usize::try_from(units)
+            .ok()
+            .and_then(|units| units.checked_mul(2))
+            .and_then(|length| position.checked_add(length))
+            .ok_or("truncated worksheet name")?;
+        let encoded = data.get(*position..end).ok_or("truncated worksheet name")?;
+        *position = end;
+        let units: Vec<u16> = encoded
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_le_bytes(*unit))
+            .collect();
+        String::from_utf16(&units)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    }
+    let mut result = Metadata::default();
+    let mut position = 0;
+    while position < bytes.len() {
+        let id = number(bytes, &mut position, 2)?;
+        let size = number(bytes, &mut position, 4)?;
+        let data = position
+            .checked_add(size)
+            .and_then(|end| bytes.get(position..end))
+            .ok_or("truncated workbook record")?;
+        position += size;
+        if id != BRT_BUNDLE_SH {
+            continue;
+        }
+        let mut field = 0;
+        let state = u32_at(data, &mut field)?;
+        u32_at(data, &mut field)?;
+        wide(data, &mut field)?;
+        let name = wide(data, &mut field)?.ok_or("worksheet has no name")?;
+        if matches!(state, 1 | 2) {
+            result.warnings.push(format!(
+                "Hidden worksheet {name:?} is omitted by the native spreadsheet reader."
+            ));
+        } else {
+            result.sheets.push(name);
+        }
+    }
+    Ok(result)
+}
+
 pub(super) fn read(bytes: &[u8], extension: &str) -> Metadata {
     let parsed = match extension {
         "docx" | "docm" => return read_docx(bytes),
         "odt" => return read_odt(bytes),
-        "xlsx" | "xlsm" | "epub" => read_zip(bytes, extension),
+        "xlsx" | "xlsm" | "xlsb" | "epub" => read_zip(bytes, extension),
         "xls" => (|| {
             let mut compound =
                 cfb::CompoundFile::open(Cursor::new(bytes)).map_err(|e| e.to_string())?;
@@ -580,6 +670,16 @@ mod tests {
         let metadata = read(&malformed, "odt");
         assert_eq!(metadata.warnings.len(), 1, "{:?}", metadata.warnings);
         assert!(metadata.warnings[0].contains("OpenDocument comments could not be recovered"));
+    }
+
+    #[test]
+    fn a_truncated_xlsb_workbook_record_is_reported() {
+        // Record type 0 declares five bytes and holds two.
+        let bytes = archive(&[("xl/workbook.bin", "\u{0}\u{5}ab")]);
+        let metadata = read(&bytes, "xlsb");
+        assert!(metadata.sheets.is_empty());
+        assert_eq!(metadata.warnings.len(), 1);
+        assert!(metadata.warnings[0].contains("truncated workbook record"));
     }
 
     #[test]

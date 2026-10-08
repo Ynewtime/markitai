@@ -42,6 +42,7 @@
 
 ### 修复
 
+- XLSB 工作簿的转换结果与 XLSX、XLS 一致：单个工作表以其名称作标题，各工作表的表格紧跟标题；Markdown 中省略的隐藏工作表会给出同样的警告，不再静默消失。
 - 无法统计批注的 ODT（例如 `content.xml` 超过 16 MiB 元数据上限）现在会像 Word 文档一样给出「批注无法恢复」的警告，不再被当作没有批注。
 - 文档中嵌入的 SVG 图片（HTML 页面、电子书、Word 文件中）不再触发「嵌入图片无法在原生限制内解码」的警告；该矢量资源与以前一样原样保留。
 - 转换过程中的原生 panic 在 Python 与 Node.js 中现在表现为代码为 `internal_error` 的 `ConversionError`，与 Go 及绑定指南的说明一致，不再是 Python 的 `RuntimeError` 或没有代码的 Node.js `Error`。

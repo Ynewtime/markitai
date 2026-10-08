@@ -892,7 +892,7 @@ impl Renderer<'_> {
     fn blocks(&mut self, blocks: &[Block]) -> String {
         // The reference spreadsheet converters write each sheet as a heading
         // line immediately followed by its table.
-        let sheet_layout = matches!(self.extension, "xlsx" | "xlsm" | "xls");
+        let sheet_layout = matches!(self.extension, "xlsx" | "xlsm" | "xls" | "xlsb");
         let mut joined = String::new();
         let mut previous_heading = false;
         // The last heading's text, which a sheet's merged title may repeat.
@@ -1431,6 +1431,103 @@ mod tests {
         }
     }
     use anydoc::model::{AssetId, Cell, Style, Table, TableKind};
+
+    /// An XLSB package whose `sheets` are (name, hsState, one row of numbers).
+    fn xlsb(sheets: &[(&str, u32, &[f64])]) -> Vec<u8> {
+        use std::io::Write;
+        fn record(id: u16, payload: &[u8]) -> Vec<u8> {
+            let mut out = if id < 0x80 {
+                vec![id as u8]
+            } else {
+                vec![(id & 0x7f) as u8 | 0x80, (id >> 7) as u8]
+            };
+            let mut size = payload.len();
+            loop {
+                let low = (size & 0x7f) as u8;
+                size >>= 7;
+                if size == 0 {
+                    out.push(low);
+                    break;
+                }
+                out.push(low | 0x80);
+            }
+            out.extend_from_slice(payload);
+            out
+        }
+        fn wide(text: &str) -> Vec<u8> {
+            let units: Vec<u16> = text.encode_utf16().collect();
+            let mut out = (units.len() as u32).to_le_bytes().to_vec();
+            units
+                .iter()
+                .for_each(|unit| out.extend_from_slice(&unit.to_le_bytes()));
+            out
+        }
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let mut add = |name: &str, body: &[u8]| {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(body).unwrap();
+        };
+        let (mut workbook, mut relationships) = (Vec::new(), String::new());
+        for (index, (name, state, values)) in sheets.iter().enumerate() {
+            let id = index + 1;
+            // BrtBundleSh: hsState, iTabID, strRelID, strName.
+            let mut bundle = state.to_le_bytes().to_vec();
+            bundle.extend_from_slice(&(id as u32).to_le_bytes());
+            bundle.extend(wide(&format!("rId{id}")));
+            bundle.extend(wide(name));
+            workbook.extend(record(156, &bundle));
+            relationships.push_str(&format!(
+                r#"<Relationship Id="rId{id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{id}.bin"/>"#
+            ));
+            // BrtRowHdr for row 0, then a BrtCellReal per value.
+            let mut row = vec![0u8; 13];
+            row.extend_from_slice(&0u32.to_le_bytes());
+            let mut sheet = record(0, &row);
+            for (column, value) in values.iter().enumerate() {
+                let mut cell = (column as u32).to_le_bytes().to_vec();
+                cell.extend_from_slice(&0u32.to_le_bytes());
+                cell.extend_from_slice(&value.to_le_bytes());
+                sheet.extend(record(5, &cell));
+            }
+            add(&format!("xl/worksheets/sheet{id}.bin"), &sheet);
+        }
+        add("xl/workbook.bin", &workbook);
+        add(
+            "xl/_rels/workbook.bin.rels",
+            format!(r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{relationships}</Relationships>"#).as_bytes(),
+        );
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn xlsb_sheets_read_like_xlsx_sheets() {
+        // A single visible sheet is headed by its name, and a hidden one is
+        // reported, as in XLSX and XLS.
+        let single = extract(
+            &xlsb(&[("Shown", 0, &[1.0, 2.0]), ("Secret", 1, &[9.0])]),
+            "xlsb",
+        )
+        .unwrap();
+        assert!(
+            single.markdown.starts_with("## Shown\n| 1 | 2 |"),
+            "{:?}",
+            single.markdown
+        );
+        assert!(!single.markdown.contains('9'));
+        assert!(
+            single
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(r#"Hidden worksheet "Secret" is omitted"#)),
+            "{:?}",
+            single.warnings
+        );
+        // Each sheet's table follows its heading directly.
+        let two = extract(&xlsb(&[("A", 0, &[1.0]), ("B", 0, &[2.0])]), "xlsb").unwrap();
+        assert!(two.markdown.contains("## A\n| 1 |"), "{:?}", two.markdown);
+        assert!(two.markdown.contains("## B\n| 2 |"), "{:?}", two.markdown);
+    }
 
     #[test]
     fn xlsx_node_limit_preserves_the_error_and_offers_content_export_remedies() {

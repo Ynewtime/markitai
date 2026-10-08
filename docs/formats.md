@@ -22,7 +22,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | DOC, DOCX, DOCM; templates DOT, DOTX, DOTM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets; a manual line break is a hard break (two trailing spaces), two end the paragraph, and text is escaped only where Markdown would read it as syntax ([below](#document-line-breaks-and-escaping)) |
 | PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, with optional numbered slide markers; embedded charts and worksheets read as their data tables |
 | PPTX, PPTM, PPSX, PPSM; templates POTX, POTM | bounded ZIP + PresentationML reader | Optional ordered slide markers, hidden-slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data, SmartArt text as lists, speaker notes and review comments |
-| XLS, XLSX, XLSM, XLSB; templates XLT, XLTX, XLTM | anydoc document model | Native sheet content with number formats, cell links, cell notes and the text of uncalculated formulas (see [spreadsheets](#spreadsheets)); XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
+| XLS, XLSX, XLSM, XLSB; templates XLT, XLTX, XLTM | anydoc document model | Native sheet content with number formats, cell links, cell notes and the text of uncalculated formulas (see [spreadsheets](#spreadsheets)); XLS/XLSX/XLSM/XLSB single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
 | ODT, ODS, ODP, RTF; templates OTT, OTS, OTP | anydoc document model | Native structured documents through the same Markdown renderer (line breaks and escaping as for Word); ODP slides carry optional numbered slide markers |
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
 | EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble; ruby as base text then reading (`漢字(kanji)`), definition terms as bold paragraphs, and footnote marks the author wrote as Markdown (`[^5]`, `[^5]: …`) kept unescaped; `<br>` and text escaping as for Word (`[!tip]` stays as written) |
@@ -802,8 +802,8 @@ columns above three columns of data gives three, as the reference renders the
 ODS fixture); empty columns between filled ones stay. A merged title row above
 the real header is text above the table, as in XLSX (see
 [spreadsheets](#spreadsheets)); the reference makes it the header. RTF heading bold markers are omitted while other emphasis is
-retained. Hidden XLS/XLSX worksheets, rows and columns are omitted by the upstream parser
-and reported explicitly. XLSB sheet metadata, older XLS code pages other than
+retained. Hidden XLS/XLSX/XLSB worksheets, rows and columns are omitted by the upstream parser
+and reported explicitly. Older XLS code pages other than
 Windows-1252, exact presentation image encoding, PDF table
 layout and PDF image placement require further compatibility work.
 
