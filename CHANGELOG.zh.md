@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [1.2.1]
+
+### 修复
+
+- stderr 不是终端时（管道、日志文件、CI），错误和警告不再按 80 列硬换行，每条消息保持在一行，便于 grep。终端里的输出不变。
+
 ## [1.2.0] - 2026-09-28
 
 ### 新增
