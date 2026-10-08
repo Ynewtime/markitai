@@ -39,23 +39,18 @@ from markitai.constants import (
     DEFAULT_SCREENSHOT_TILE_HEIGHT,
 )
 from markitai.fetch_types import FetchError
+from markitai.webextract import (
+    coerce_source_frontmatter,
+    is_native_extraction_acceptable,
+)
 
-try:
-    from markitai.webextract import (
-        coerce_source_frontmatter,
-        is_native_extraction_acceptable,
-    )
 
-    def extract_web_content(html: str, url: str) -> Any:
-        """Load the full DOM extraction pipeline only when a page needs it."""
-        from markitai.webextract import extract_web_content as extract
+def extract_web_content(html: str, url: str) -> Any:
+    """Load the full DOM extraction pipeline only when a page needs it."""
+    from markitai.webextract import extract_web_content as extract
 
-        return extract(html, url)
+    return extract(html, url)
 
-except ImportError:  # pragma: no cover - optional during staged implementation
-    extract_web_content = None  # type: ignore[assignment]
-    coerce_source_frontmatter = None  # type: ignore[assignment]
-    is_native_extraction_acceptable = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from markitai.config import ScreenshotConfig
@@ -951,49 +946,45 @@ class PlaywrightRenderer:
 
             # Try native webextract FIRST to avoid redundant HTML→Markdown
             # conversion. Only fall back to _html_to_markdown if webextract
-            # is unavailable or produces insufficient quality.
+            # fails or produces insufficient quality.
             extraction_started = time.perf_counter()
             markdown_content = ""
             used_native_webextract = False
-            if extract_web_content is not None:
-                # If extract_web_content is available, the other webextract functions are too
-                assert is_native_extraction_acceptable is not None
-                assert coerce_source_frontmatter is not None
-                try:
-                    # CPU-bound (BeautifulSoup parsing + deepcopies); run in a
-                    # thread to avoid blocking the event loop. Relative links
-                    # and images resolve against where the browser ended up
-                    # after redirects, not the URL that was requested.
-                    extracted = await asyncio.to_thread(
-                        extract_web_content, html_content, final_url or url
-                    )
-                except Exception as e:
-                    logger.debug(f"Native webextract failed, using fallback: {e}")
-                else:
-                    native_markdown = getattr(extracted, "markdown", "")
-                    if is_native_extraction_acceptable(extracted):
-                        markdown_content = native_markdown
-                        used_native_webextract = True
-                        # Prefer typed frontmatter builder when info is available
-                        if (
-                            hasattr(extracted, "info")
-                            and getattr(extracted, "info", None) is not None
-                        ):
-                            from markitai.webextract.frontmatter import (
-                                build_source_frontmatter,
-                            )
-
-                            source_frontmatter = build_source_frontmatter(extracted)
-                        else:
-                            source_frontmatter = coerce_source_frontmatter(
-                                getattr(extracted, "metadata", None)
-                            )
-                        if source_frontmatter:
-                            metadata["source_frontmatter"] = source_frontmatter
-                            title = source_frontmatter.get("title") or title
-                        metadata["webextract_diagnostics"] = dict(
-                            getattr(extracted, "diagnostics", {}) or {}
+            try:
+                # CPU-bound (BeautifulSoup parsing + deepcopies); run in a
+                # thread to avoid blocking the event loop. Relative links
+                # and images resolve against where the browser ended up
+                # after redirects, not the URL that was requested.
+                extracted = await asyncio.to_thread(
+                    extract_web_content, html_content, final_url or url
+                )
+            except Exception as e:
+                logger.debug(f"Native webextract failed, using fallback: {e}")
+            else:
+                native_markdown = getattr(extracted, "markdown", "")
+                if is_native_extraction_acceptable(extracted):
+                    markdown_content = native_markdown
+                    used_native_webextract = True
+                    # Prefer typed frontmatter builder when info is available
+                    if (
+                        hasattr(extracted, "info")
+                        and getattr(extracted, "info", None) is not None
+                    ):
+                        from markitai.webextract.frontmatter import (
+                            build_source_frontmatter,
                         )
+
+                        source_frontmatter = build_source_frontmatter(extracted)
+                    else:
+                        source_frontmatter = coerce_source_frontmatter(
+                            getattr(extracted, "metadata", None)
+                        )
+                    if source_frontmatter:
+                        metadata["source_frontmatter"] = source_frontmatter
+                        title = source_frontmatter.get("title") or title
+                    metadata["webextract_diagnostics"] = dict(
+                        getattr(extracted, "diagnostics", {}) or {}
+                    )
 
             # Fallback chain:
             # 1. For X/Twitter URLs with very short native content (<50 words),
