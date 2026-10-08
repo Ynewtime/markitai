@@ -11,9 +11,10 @@ fn pattern(source: &str) -> Regex {
 
 /// A link whose text a line break splits, with the `!` of an image when there
 /// is one (the first group): image syntax is never repaired, since the repair
-/// keeps only the first line of the text.
+/// keeps only the first line of the text. The text holds no bracket, so the
+/// match opens at the link's own `[`, not at a stray one before it.
 static BROKEN_LINK: LazyLock<Regex> =
-    LazyLock::new(|| pattern(r"(!?)\[([^\]]*?)\n+([^\]]*?)\]\(([^)]+)\)"));
+    LazyLock::new(|| pattern(r"(!?)\[([^\[\]]*?)\n+([^\[\]]*?)\]\(([^)]+)\)"));
 static PLACEHOLDER_LINE: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"(?m)^__MARKITAI_[A-Z_]+_?\d*__\s*$"));
 static PLACEHOLDER_IMAGE: LazyLock<Regex> =
@@ -505,6 +506,18 @@ mod tests {
         let once = normalize("Poem:  \nRoses are red,  \nViolets are blue.  \n");
         assert_eq!(once, "Poem:  \nRoses are red,  \nViolets are blue.\n");
         assert_eq!(normalize(&once), once);
+    }
+
+    #[test]
+    fn a_stray_bracket_before_a_link_keeps_the_text_between_them() {
+        // An unmatched `[` is text: the repair starts at the bracket that
+        // opens the link, so nothing between the two is dropped.
+        let source = "Index a[i is out of range\nand this whole sentence matters.\n\nSecond paragraph keeps going.\n\nSee [docs](https://x.test).\n";
+        assert_eq!(normalize(source), source);
+        assert_eq!(
+            normalize("Use a[0 here.\n\n[Title\n\nDescription](/url)\n"),
+            "Use a[0 here.\n\n[Title](/url)\n"
+        );
     }
 
     #[test]
