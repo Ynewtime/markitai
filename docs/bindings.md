@@ -305,7 +305,8 @@ HOME="$PWD/.local/test-user-home" MARKITAI_HOME="$PWD/.local/test-home" npm --pr
 ```
 
 `MARKITAI_BUILD_PROFILE=debug` or `dist` selects another Cargo profile. The
-build script copies the compiled dynamic library to `markitai.node`; it is a
+build script runs `cargo build --locked` and copies the compiled dynamic
+library to `markitai.node`; it is a
 build-time tool, never a runtime fallback. A packed package contains a native
 addon for the build machine's OS and architecture. Publish platform-specific
 artifacts before promising a universal npm install. Node-API compatibility
@@ -370,6 +371,27 @@ and system-only dynamic dependencies. It does not build Rust or download a
 toolchain. See `python scripts/package_go_static.py --help` for required inputs.
 Use a verified archive and its original build records together; a renamed
 archive from another target is not interchangeable.
+
+The inputs come from the release build of `markitai-ffi` on the same host:
+`--archive` is its `libmarkitai_ffi.a`, `--native-static-libs` the compiler
+output that contains the `native-static-libs:` note (rustc
+`--print native-static-libs`), and `--metadata` the full resolved
+`cargo metadata --format-version 1 --locked` JSON. No script in this repository
+writes the `--build-record`; whoever runs that build writes it as a JSON object
+with these keys (others are ignored):
+
+- `status`: `"passed"`.
+- `source_unchanged`: `true`, after the builder checked that no source changed
+  during the build.
+- `source_revision`: the full 40-character commit, equal to `--source-revision`
+  and to the checkout's `HEAD`, which must be clean.
+- `source_files`: every `git ls-files` path mapped to
+  `{"bytes": <size>, "sha256": "<hex>"}` of its built bytes; it must equal the
+  current checkout exactly.
+- `archive`, `native_static_libs`, `metadata`: `{"bytes", "sha256"}` of the
+  files given as `--archive`, `--native-static-libs` and `--metadata`.
+
+The package record stores the build record's path and hash.
 
 An unpacked module currently uses the development name `markitai.local/go`:
 

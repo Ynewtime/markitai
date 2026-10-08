@@ -9,7 +9,7 @@ const profile = process.env.MARKITAI_BUILD_PROFILE || 'release';
 if (!['debug', 'release', 'dist'].includes(profile)) {
   throw new Error('MARKITAI_BUILD_PROFILE must be debug, release, or dist');
 }
-const args = ['build', '-p', 'markitai-node'];
+const args = ['build', '--locked', '-p', 'markitai-node'];
 if (profile !== 'debug') args.push('--profile', profile);
 const build = spawnSync('cargo', args, { cwd: root, stdio: 'inherit' });
 if (build.error) throw build.error;

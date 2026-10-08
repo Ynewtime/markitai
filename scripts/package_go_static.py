@@ -439,6 +439,7 @@ def unpack_verified(archive, destination, expected):
 
 
 def verify_build(root, source_revision, record, inputs):
+    """Check the supplied build record; docs/bindings.md lists its keys."""
     if record.get("status") != "passed" or record.get("source_unchanged") is not True:
         raise RuntimeError("The native build record must report a successful unchanged-source build")
     if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
