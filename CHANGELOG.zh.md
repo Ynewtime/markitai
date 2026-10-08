@@ -14,6 +14,7 @@
 - `cache.enabled: false` 现在会关闭 LLM 结果缓存（不再读写 `cache.db`），`cache.max_size_bytes` 也会对它生效。
 - 模型返回的空图片说明或空截图提取结果不再被永久缓存（视为分析失败：保留原 alt 文本，下次运行重新请求）；发送前被重新编码为 JPEG 的图片也不再被标成 PNG。
 - `.urls` 批量处理共用一个 LLM 处理器，`--llm-concurrency` 现在限制整个列表而不是每个 URL；同一批量中的同名文件（`a/report.pdf`、`b/report.pdf`）也不再共用或互相清掉 LLM 费用、用量和 `max_requests_per_document` 预算。
+- `--resume` 不再跳过在其他输出设置下完成的条目：`--pure`、`--keep-base`、`--screenshot-only`、`output.profile` 和 `-s` 现在各自使用独立的批量状态。`--llm-batch` 遇到 URL 或 `.urls` 文件时直接报错，不再按全价逐个请求。
 
 ## [1.2.0] - 2026-09-28
 
