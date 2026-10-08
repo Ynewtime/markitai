@@ -1404,9 +1404,9 @@ async def _fetch_with_fallback(
     # DEFER it — the chain is local-first, so most fetches succeed via
     # static/playwright and the user is never asked (lazy consent).
     # A strategy selected in config is still governed by remote_consent.
-    # CLI-explicit remote choices seed the process decision to True before
-    # reaching this chain, so they remain deliberate opt-ins without creating
-    # a second bypass seam here.
+    # CLI-explicit remote choices never reach this chain (they dispatch
+    # directly); the chain they fall back to after a refusal is governed by
+    # remote_consent like any other.
     _consent_gated = True
     if _consent_gated and any(s in EXTERNAL_STRATEGIES for s in strategies):
         _peeked = peek_remote_consent(config)

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--resume` no longer skips items finished under other output settings: `--pure`, `--keep-base`, `--screenshot-only`, `output.profile` and `-s` now get their own batch state. `--llm-batch` with a URL or a `.urls` file is rejected instead of running every request at full price.
 - MCP `batch_convert` with LLM enabled shares one LLM processor across the job, so `llm.concurrency` limits the whole batch instead of each item (a 10-item batch could have about 100 requests in flight).
 - Fetching a batch that mixes proxied and NO_PROXY or loopback hosts no longer fails at random: the static HTTP client keeps one connection pool per proxy instead of closing the shared one while other requests still use it.
+- An explicit `-s jina`, `-s defuddle` or `-s cloudflare` is consent for that service only: when it refuses and markitai falls back to the auto chain, `fetch.remote_consent` decides whether the other remote services (defuddle.md, Cloudflare, FxTwitter) may receive the URL.
 
 ## [1.2.0] - 2026-09-28
 

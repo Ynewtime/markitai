@@ -116,9 +116,9 @@ def reset_remote_consent() -> None:
 def set_remote_consent(allowed: bool) -> None:
     """Seed the process-wide remote-fetch consent decision.
 
-    Used when the user explicitly selects a remote strategy
-    (e.g. ``-s jina``), which counts as consent for the run unless the
-    process-wide ``MARKITAI_NO_REMOTE_FETCH`` hard opt-out is active.
+    The decision covers every remote service, so an explicit ``-s jina``
+    must not seed it (that is consent for Jina only, handled by the explicit
+    dispatch). The ``MARKITAI_NO_REMOTE_FETCH`` hard opt-out always wins.
     """
     _get_state().decision = False if _env_no_remote_fetch() else allowed
 
