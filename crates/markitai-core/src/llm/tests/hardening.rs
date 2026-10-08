@@ -24,6 +24,25 @@ fn resolved(params: Value, env: &[(&str, &str)]) -> Result<Deployment> {
 }
 
 #[test]
+fn a_deployment_debug_view_never_shows_its_key() {
+    let mut entry = resolved(
+        json!({"model":"openai/debug-test","api_key":"sk-debug-view-secret"}),
+        &[],
+    )
+    .unwrap();
+    entry.endpoint = "https://llm.example/v1/chat/completions?api_key=endpoint-secret".into();
+    let shown = format!("{entry:?}");
+    assert!(
+        !shown.contains("sk-debug-view-secret") && !shown.contains("endpoint-secret"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("debug-test") && shown.contains("llm.example"),
+        "{shown}"
+    );
+}
+
+#[test]
 fn openai_compatible_prefixes_use_their_documented_endpoints_and_key_variables() {
     let groq = resolved(
         json!({"model":"groq/llama-test"}),
