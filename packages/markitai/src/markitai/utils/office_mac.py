@@ -1,9 +1,7 @@
-"""MS Office automation fallback for macOS (AppleScript via osascript).
+"""PowerPoint PDF export for macOS (AppleScript via osascript).
 
-Used only when LibreOffice is not installed. Mirrors the Windows COM
-fallback in converter/legacy.py architecturally: shell out to the OS
-automation layer (osascript here, PowerShell there), so no Python
-dependency is added.
+Used only when LibreOffice is not installed, to render PPTX slides: shell
+out to the OS automation layer, so no Python dependency is added.
 
 Sandbox note: Office apps are sandboxed; making them read/write arbitrary
 paths (e.g. /tmp) triggers a per-folder "Grant File Access" dialog. All
@@ -21,13 +19,9 @@ Cold-start note (verified live 2026-07-12, Office 16.110): on an app's
 first scripted launch after an Office update, the app answers Apple
 Events normally but silently drops ``open`` requests that carry labeled
 parameters, while sitting hidden at its startup gallery with an idle
-main thread. A parameterless ``open`` goes through instantly and heals
-the instance for the rest of its lifetime. Word's script therefore
-retries with a plain ``open`` when the existence poll stalls; PowerPoint
-fails that state differently (its ``open`` raises -9074 outright), so
-its script has no in-poll fallback and the error message carries the
-recovery steps instead. Quitting and retrying does NOT clear the state —
-opening the app manually once does.
+main thread. PowerPoint's ``open`` then raises -9074 outright, so the
+error message carries the recovery steps. Quitting and retrying does NOT
+clear the state — opening the app manually once does.
 """
 
 from __future__ import annotations
@@ -48,8 +42,7 @@ from pathlib import Path
 
 from loguru import logger
 
-# Timeouts aligned with the LibreOffice paths they substitute for
-# (legacy.py: 120s per file; office.py PDF export: 600s).
+# Aligned with the LibreOffice PDF export it substitutes for (office.py)
 PDF_TIMEOUT = 600
 
 _OFFICE_GROUP_CONTAINER = (
@@ -63,19 +56,13 @@ _STALE_STAGING_AGE_SECONDS = 24 * 60 * 60
 # osascript error code for a denied/unanswered TCC automation prompt
 _ERR_NOT_AUTHORIZED = "-1743"
 
-# Script result marking that the mid-poll plain-open fallback ran
-# (see _wrap_office_script); surfaced on stdout for logging only.
-_FALLBACK_MARKER = "markitai:fallback-open-used"
-
 # Office apps are single-instance and expose process-global automation
 # settings. Serialize per app within this process; _office_app_lock adds the
 # cross-process half before any setting is changed or document is opened.
 _APP_LOCKS: dict[str, threading.Lock] = {
-    "Microsoft Word": threading.Lock(),
     "Microsoft PowerPoint": threading.Lock(),
 }
 _APP_LOCK_NAMES: dict[str, str] = {
-    "Microsoft Word": "word.lock",
     "Microsoft PowerPoint": "powerpoint.lock",
 }
 
@@ -182,7 +169,6 @@ def _as_quote(path: Path) -> str:
 
 # AppleScript container class for "the document we opened", per app.
 _CONTAINER_BY_APP: dict[str, str] = {
-    "Microsoft Word": "document",
     "Microsoft PowerPoint": "presentation",
 }
 
@@ -207,8 +193,8 @@ def _restore_security_lines(indent: str = "") -> list[str]:
 def _close_by_name_lines(app: str, in_name: str, out_name: str) -> list[str]:
     """Best-effort close of the staged document under either of its names.
 
-    Save-as renames the open document to the output file name (verified live
-    for Word and PowerPoint), so the staged document may be known by its
+    Save-as renames the open document to the output file name (verified live),
+    so the staged document may be known by its
     input or its output name at close time. Both closes are individually
     try-wrapped: whichever name no longer resolves is a silent no-op. The
     staged names are unique per conversion (uuid hex), so no user document
@@ -234,8 +220,6 @@ def _wrap_office_script(
     action_lines: list[str],
     in_name: str,
     out_name: str,
-    extra_setting: tuple[str, str] | None = None,
-    fallback_open_line: str | None = None,
 ) -> str:
     """Wrap one conversion in safe Office automation state handling.
 
@@ -243,43 +227,22 @@ def _wrap_office_script(
     restored immediately after the staged file opens and again on every error
     path.
 
-    The opened document is never taken from ``open``'s return value: Word's
-    and PowerPoint's AppleScript ``open`` returns nothing (verified live), so
+    The opened document is never taken from ``open``'s return value:
+    PowerPoint's AppleScript ``open`` returns nothing (verified live), so
     ``set openedItem to open ...`` leaves the variable undefined and every
     later reference dies with -2753 — with the real error masked by the
     handler's own reference to the same variable. Instead the document is
     bound by its staged file name (unique uuid hex per conversion, so user
     documents are never referenced), and cleanup closes by name with no
     variable dependency, so the original error always propagates.
-
-    ``fallback_open_line`` is a parameterless ``open`` retried mid-poll when
-    the document has not registered after 5s: an app's first scripted launch
-    after an Office update silently drops parametered opens but accepts plain
-    ones (see the module cold-start note). The fallback trades the primary
-    open's side-effect guards for getting the document open at all — the
-    staged copy stays safe (chmod 0400), but it may land in the app's recent
-    files. When the fallback ran, the script returns a marker string so the
-    caller can log the recovery.
     """
     container = _CONTAINER_BY_APP[app]
     lines = [
         f'tell application "{app}"',
         "    set previousAutomationSecurity to automation security",
-        "    set usedFallbackOpen to false",
+        "    try",
+        "        set automation security to msoAutomationSecurityForceDisable",
     ]
-    if extra_setting is not None:
-        setting, _disabled_value = extra_setting
-        lines.append(f"    set previousExtraSetting to {setting}")
-
-    lines.extend(
-        [
-            "    try",
-            "        set automation security to msoAutomationSecurityForceDisable",
-        ]
-    )
-    if extra_setting is not None:
-        setting, disabled_value = extra_setting
-        lines.append(f"        set {setting} to {disabled_value}")
     lines.extend(f"        {line}" for line in open_lines)
     # Bind by name, not by open's (absent) return value. The no-result
     # open is asynchronous in practice: poll until the document registers
@@ -290,23 +253,6 @@ def _wrap_office_script(
             f'        repeat until (exists {container} "{in_name}") or waitCount ≥ 150',
             "            delay 0.2",
             "            set waitCount to waitCount + 1",
-        ]
-    )
-    if fallback_open_line is not None:
-        # 25 * 0.2s = 5s of silence; healthy opens register in well under
-        # 2s even across a cold app launch (measured).
-        lines.extend(
-            [
-                "            if waitCount = 25 then",
-                "                set usedFallbackOpen to true",
-                "                try",
-                f"                    {fallback_open_line}",
-                "                end try",
-                "            end if",
-            ]
-        )
-    lines.extend(
-        [
             "        end repeat",
             # Surface the stall explicitly: without this the bind grabs
             # missing value and dies later at save with an inscrutable -1708.
@@ -320,15 +266,10 @@ def _wrap_office_script(
         ]
     )
     lines.extend(f"        {line}" for line in _restore_security_lines())
-    if extra_setting is not None:
-        setting, _disabled_value = extra_setting
-        lines.append(f"        set {setting} to previousExtraSetting")
     lines.extend(f"        {line}" for line in action_lines)
     lines.extend(
         f"        {line}" for line in _close_by_name_lines(app, in_name, out_name)
     )
-    if fallback_open_line is not None:
-        lines.append(f'        if usedFallbackOpen then return "{_FALLBACK_MARKER}"')
     lines.extend(
         [
             "    on error errorMessage number errorNumber",
@@ -337,15 +278,6 @@ def _wrap_office_script(
             "        end try",
         ]
     )
-    if extra_setting is not None:
-        setting, _disabled_value = extra_setting
-        lines.extend(
-            [
-                "        try",
-                f"            set {setting} to previousExtraSetting",
-                "        end try",
-            ]
-        )
     lines.extend(
         f"        {line}" for line in _close_by_name_lines(app, in_name, out_name)
     )
@@ -359,11 +291,6 @@ def _wrap_office_script(
     return "\n".join(lines)
 
 
-# Save-as enums verified against each app's sdef dictionary; they map 1:1
-# to the Windows COM format codes used in converter/legacy.py:
-#   Word  "format document default"        == wdFormatDocumentDefault (16)
-#   PPT   "save as Open XML presentation"  == ppSaveAsOpenXMLPresentation (24)
-# Word takes a text path ("POSIX file ... as string" -> HFS text);
 # PowerPoint takes the file object directly (verified live).
 def _build_pdf_script(staged_in: Path, staged_out: Path) -> str:
     inp = _as_quote(staged_in)
@@ -413,13 +340,6 @@ def _run_applescript(script: str, *, timeout: int, app: str) -> None:
                 "setup, then retry."
             )
         raise RuntimeError(f"{app} automation failed: {stderr[:300]}")
-
-    if _FALLBACK_MARKER in result.stdout:
-        logger.info(
-            f"[OfficeMac] {app} dropped the parametered open request "
-            "(post-update first-launch state); recovered via the plain "
-            "open fallback."
-        )
 
 
 def _staging_base() -> Path:

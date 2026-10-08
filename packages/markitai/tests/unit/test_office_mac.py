@@ -51,16 +51,14 @@ class TestDetection:
 
 
 class TestScriptBuilding:
-    def test_pdf_script_has_no_fallback_open(self) -> None:
-        # PowerPoint's open is already parameterless and fails the
-        # first-launch state with -9074 instead of a silent drop; a retry
-        # cannot help (state persists), so its scripts stay fallback-free.
+    def test_pdf_script_opens_once(self) -> None:
+        # PowerPoint fails the first-launch state with -9074 instead of a
+        # silent drop; a retry cannot help (state persists), so the script
+        # opens the document exactly once.
         script = office_mac._build_pdf_script(
             Path("/tmp/in.pptx"), Path("/tmp/out.pdf")
         )
         assert script.count("open (POSIX file") == 1
-        assert "usedFallbackOpen to true" not in script
-        assert office_mac._FALLBACK_MARKER not in script
 
     def test_security_is_restored_before_save(self) -> None:
         script = office_mac._build_pdf_script(
@@ -133,26 +131,6 @@ class TestRunAppleScript:
         ):
             office_mac._run_applescript("s", timeout=10, app="Microsoft PowerPoint")
         assert "bad state" not in str(excinfo.value)
-
-    def test_fallback_marker_logs_recovery(self) -> None:
-        used = MagicMock(
-            returncode=0, stdout=f"{office_mac._FALLBACK_MARKER}\n", stderr=""
-        )
-        with (
-            patch("markitai.utils.office_mac.subprocess.run", return_value=used),
-            patch("markitai.utils.office_mac.logger.info") as info_mock,
-        ):
-            office_mac._run_applescript("s", timeout=10, app="Microsoft Word")
-        assert "fallback" in info_mock.call_args.args[0]
-
-    def test_no_marker_logs_nothing(self) -> None:
-        clean = MagicMock(returncode=0, stdout="", stderr="")
-        with (
-            patch("markitai.utils.office_mac.subprocess.run", return_value=clean),
-            patch("markitai.utils.office_mac.logger.info") as info_mock,
-        ):
-            office_mac._run_applescript("s", timeout=10, app="Microsoft Word")
-        info_mock.assert_not_called()
 
 
 class TestPptxToPdf:
@@ -288,7 +266,7 @@ class TestOfficeAppLock:
     def test_uses_cross_process_flock(self, tmp_path: Path) -> None:
         with (
             patch("fcntl.flock") as flock_mock,
-            office_mac._office_app_lock("Microsoft Word", root=tmp_path),
+            office_mac._office_app_lock("Microsoft PowerPoint", root=tmp_path),
         ):
             pass
 
@@ -296,7 +274,8 @@ class TestOfficeAppLock:
 
         assert flock_mock.call_args_list[0].args[1] == fcntl.LOCK_EX
         assert flock_mock.call_args_list[-1].args[1] == fcntl.LOCK_UN
-        assert (tmp_path / ".locks" / "word.lock").stat().st_mode & 0o777 == 0o600
+        lock_file = tmp_path / ".locks" / "powerpoint.lock"
+        assert lock_file.stat().st_mode & 0o777 == 0o600
 
 
 class TestPptxRenderWiring:
