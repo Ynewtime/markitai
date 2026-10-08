@@ -16,7 +16,8 @@ import statistics
 import subprocess
 import sys
 import time
-import uuid
+
+from isolation import install_state_guard
 
 
 def sha256(data: bytes) -> str:
@@ -43,66 +44,9 @@ def configuration(state: Path) -> dict:
     }
 
 
-class ProtectedStateAccess(PermissionError):
-    """A Python operation attempted to access real user state."""
-
-
-def install_python_guards() -> dict:
-    # Capture both spellings before registering the hook; do not change HOME.
-    protected = Path.home() / ".markitai"
-    roots = {os.path.abspath(protected), os.path.realpath(protected)}
-    path_events = {
-        "open": (0,), "os.listdir": (0,), "os.scandir": (0,), "os.chdir": (0,),
-        "os.mkdir": (0,), "os.remove": (0,), "os.rmdir": (0,),
-        "os.chmod": (0,), "os.chown": (0,), "os.utime": (0,),
-        "os.rename": (0, 1), "os.link": (0, 1), "os.symlink": (0, 1),
-    }
-    state = {"protected_paths": sorted(roots), "self_tests": {},
-             "blocked_state_events": [], "blocked_network_events": [],
-             "scope": "Python path audit events only; not metadata/descriptor syscalls, native FFI or an OS sandbox"}
-    testing = True
-
-    def guard(event, args):
-        if event in {"socket.connect", "socket.getaddrinfo", "socket.sendto"}:
-            state["blocked_network_events"].append(event)
-            raise RuntimeError("Network access is disabled in this benchmark")
-        for index in path_events.get(event, ()):
-            path = args[index]
-            if isinstance(path, int):
-                continue  # Descriptor-only operations are outside this path guard.
-            absolute = os.path.abspath(os.fsdecode(path) if path is not None else ".")
-            candidates = (absolute, os.path.realpath(absolute))
-            if any(candidate == root or candidate.startswith(root + os.sep)
-                   for candidate in candidates for root in roots):
-                if not testing:
-                    state["blocked_state_events"].append({"event": event, "path": absolute})
-                raise ProtectedStateAccess(f"Benchmark blocked {event} on protected user state: {absolute}")
-
-    sys.addaudithook(guard)
-    # No directory is created. The random missing parent also makes accidental
-    # fall-through fail without writing a probe into the user's existing state.
-    probe = protected / ("__benchmark_guard_probe_" + uuid.uuid4().hex) / "blocked"
-    operations = {
-        "read": lambda: open(probe, "rb"),
-        "write": lambda: open(probe, "wb"),
-        "listdir": lambda: os.listdir(probe),
-        "scandir": lambda: os.scandir(probe),
-    }
-    for name, operation in operations.items():
-        try:
-            result = operation()
-        except ProtectedStateAccess:
-            state["self_tests"][name] = "blocked"
-        else:
-            if hasattr(result, "close"):
-                result.close()
-            raise RuntimeError(f"Protected-state guard did not block {name}")
-    testing = False
-    return state
-
-
 def worker(request: dict) -> dict:
-    isolation = install_python_guards()
+    isolation = install_state_guard("Python path audit events only; not metadata/descriptor syscalls, "
+                                    "native FFI or an OS sandbox")
     cfg = request["config"]
     options = dict(llm=False, ocr=False, screenshot=False, alt=False, desc=False)
     if request["engine"] == "reference":

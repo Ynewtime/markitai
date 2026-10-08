@@ -1,7 +1,9 @@
 """Helper-run tests and audits never resolve `~` to the developer's real home."""
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -52,6 +54,59 @@ class IsolatedEnvironment(unittest.TestCase):
         self.assertEqual(seen["USERPROFILE"], str(state / "home"))
         self.assertEqual(seen["MARKITAI_HOME"], str(state))
         self.assertNotIn("OPENAI_API_KEY", seen)
+
+
+class StateGuard(unittest.TestCase):
+    """Audit hooks cannot be removed, so each case runs in its own interpreter."""
+
+    def guarded(self, code):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            (home / ".markitai").mkdir(parents=True)
+            (home / ".markitai" / "config.json").write_text("{}", encoding="utf-8")
+            (home / "elsewhere.txt").write_text("ok", encoding="utf-8")
+            script = "\n".join([
+                "import json, os, socket, sys", f"sys.path.insert(0, {str(Path(__file__).parent)!r})",
+                "from isolation import ProtectedStateAccess, install_state_guard", code])
+            return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60,
+                                  env=isolated_env(home, Path(directory) / "state"), cwd=directory)
+
+    def test_real_state_and_network_are_blocked_and_recorded(self):
+        result = self.guarded("""
+state = install_state_guard("test")
+assert set(state["self_tests"].values()) == {"blocked"}, state
+assert open(os.path.expanduser("~/elsewhere.txt")).read() == "ok"
+try:
+    open(os.path.expanduser("~/.markitai/config.json"))
+except ProtectedStateAccess:
+    pass
+try:
+    socket.getaddrinfo("127.0.0.1", 9)
+except PermissionError:
+    pass
+print(json.dumps(state))
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(result.stdout)
+        self.assertEqual([event["event"] for event in state["blocked_state_events"]], ["open"])
+        self.assertEqual(state["blocked_network_events"], ["socket.getaddrinfo"])
+
+    def test_an_ordinary_permission_error_does_not_pass_the_self_test(self):
+        # An earlier hook stands in for a real EACCES on the probe path.
+        result = self.guarded("""
+def denied(event, args):
+    if event == "open" and "__markitai_guard_probe_" in os.fsdecode(args[0]):
+        raise PermissionError("operating-system denial")
+sys.addaudithook(denied)
+try:
+    install_state_guard("test")
+except ProtectedStateAccess:
+    sys.exit(2)
+except PermissionError:
+    sys.exit(0)
+sys.exit(1)
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 @unittest.skipIf(os.name == "nt", "the fixture tools are POSIX shell scripts")
