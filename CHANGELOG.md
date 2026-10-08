@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - LLM rate limits are retried even when the message contains "402" (for example "Used 29402" tokens), and wait times such as `1.204s`, `750ms` or `6m0s` are read correctly; only an HTTP 402 counts as a billing error.
+- The LLM cache no longer returns stale output for a long document edited after its first 50,000 characters, or for pages and screenshots whose images changed but whose names did not: the cache key now covers the full text and the image bytes.
 
 ## [1.2.0] - 2026-09-28
 
