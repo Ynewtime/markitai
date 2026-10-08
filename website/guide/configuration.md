@@ -5,9 +5,11 @@
 Highest to lowest:
 
 1. Command-line flags
-2. Environment variables
-3. Configuration file
+2. Configuration file
+3. Environment variables
 4. Built-in defaults
+
+Credential and model variables (`JINA_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `MODEL`) are fallbacks: they are read only when the config file does not set the value (`MODEL` only when `llm.model_list` is empty). Three switches sit above the config file: `MARKITAI_RECORD_HISTORY` (`1` or `0`) overrides `history.record`, `MARKITAI_PURE=1` turns on pure mode (CLI only), and `MARKITAI_NO_REMOTE_FETCH=1` blocks every remote fetch service. A command-line flag still wins over the first two.
 
 ## Configuration File
 
