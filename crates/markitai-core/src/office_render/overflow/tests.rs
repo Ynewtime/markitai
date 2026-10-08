@@ -176,6 +176,8 @@ fn external_duplicate_and_escaping_relationships_are_rejected() {
     for mutation in [
         "TargetMode=\"External\" Target=\"https://invalid.example/a\"",
         "Target=\"../../../escape.xml\"",
+        // A network-path reference, not the absolute part name it resembles.
+        "Target=\"//xl/worksheets/sheet1.xml\"",
     ] {
         let mut b = parts(fixture());
         let rel = String::from_utf8(b["xl/_rels/workbook.xml.rels"].clone())
@@ -190,6 +192,24 @@ fn external_duplicate_and_escaping_relationships_are_rejected() {
         .replace("Id=\"rId2\"", "Id=\"rId1\"");
     b.insert("xl/_rels/workbook.xml.rels".into(), rel.into_bytes());
     assert!(rewrite(&archive(&b), &[extension()], deadline(), 10_000_000).is_err());
+}
+#[test]
+fn dot_segment_targets_and_colon_part_names_are_valid_opc() {
+    let mut b = parts(fixture());
+    let rel = String::from_utf8(b["xl/_rels/workbook.xml.rels"].clone())
+        .unwrap()
+        .replace(
+            "Target=\"worksheets/sheet1.xml\"",
+            "Target=\"./worksheets/sheet1.xml\"",
+        );
+    b.insert("xl/_rels/workbook.xml.rels".into(), rel.into_bytes());
+    b.insert("customXml/a:b.bin".into(), vec![1]);
+    let changed = parts(&rewrite(&archive(&b), &[extension()], deadline(), 10_000_000).unwrap());
+    assert_ne!(
+        b["xl/worksheets/sheet1.xml"],
+        changed["xl/worksheets/sheet1.xml"]
+    );
+    assert_eq!(changed["customXml/a:b.bin"], [1]);
 }
 #[test]
 fn invalid_zip_xml_and_ambiguous_pages_are_rejected() {

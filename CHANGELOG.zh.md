@@ -45,6 +45,7 @@
 - 工作台检测到的模型与转换使用同一张表和同一环境：`.env` 文件中的 API key 同样计入（与未设 `MODEL` 的转换一致），列表按模型池优先级（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter）排列，不再以 OpenAI 开头，`MODEL` 也从 `.env` 读取。只含空白的 key 不再让对应服务商进入转换的自动模型池。
 - `MARKITAI_NO_REMOTE_FETCH` 的读取方式与 `MARKITAI_NO_VLM_OCR` 及参考实现一致：除空值、`0`、`false`、`no`（去除首尾空白，不分大小写）外的任何值都会关闭远程抽取，` 1` 或 `Y` 不再让 Defuddle、Jina 和 Cloudflare 保持可用。`MARKITAI_PURE` 与 `MARKITAI_RECORD_HISTORY` 一样接受 `on` 且不分大小写。
 - `-p/--preset` 遇到配置 `presets` 中重新定义的内建名称（`minimal`、`standard`、`rich`）时使用配置中的定义，与工作台、其能力接口及参考实现一致，不再仍按内建定义处理。
+- Office 包（演示文稿、工作簿页面渲染与版式修复、Office 元数据）与 Numbers ZIP 文件改由同一个有界 ZIP 读取器读取，OOXML 关系目标改由同一个解析器解析，不再使用已经偏离的六份实现。重复条目名的 ZIP 现在会被拒绝：ZIP 库会静默只保留其中一个条目，原有的重复检查从未生效。数据与声明大小不符的部件会被拒绝，Office 元数据也加上 16,384 个条目的上限。各处按 ECMA-376 相对引用解析目标：工作簿版式修复现在接受 `./` 路径段和含 `:` 的部件名，并拒绝此前被当作部件读取的 `//` 网络路径；演示文稿读取器对空路径段报错而不是跳过，`TargetMode` 既非缺省也非 `Internal` 的目标一律不从包内读取；`%` 转义必须恰好是两位十六进制数字，且不能编码 `/`；XLSX/XLSB 工作表名称可沿百分号编码或带 `./` 的工作簿目标读取。
 - 转换、`config set`/`config edit`/`init` 与工作台设置以同一方式读写配置文件。符号链接形式的配置（例如由 dotfiles 管理的 `config.json`）现在也能在工作台保存，与 `config set` 一致：保留链接，替换其指向的文件；Windows 报告文件被短暂占用时，与其他状态写入一样有限次重试。所有读取方对 FIFO、目录等非普通文件及超过 8 MiB 的文件报错，转换不再因名为 `markitai.json` 的 FIFO 无限等待，`config set` 也不再把这类文件替换成普通文件。为新配置文件创建的目录为私有权限。
 - 若 SVG 文本使用的通用 serif、sans-serif 或 monospace 字体族在主机上没有 fontdb 默认名称的字体，现在改用第一个覆盖基本拉丁字母的字体，而不是最先加载的任意字体，因此图标字体（FontAwesome、Weather Icons、Material Icons）不再成为文本排版的主字体。只装有图标字体的主机仍会报告文本所需字体不可用。
 - 消息中指向账单页面的 LLM 限流响应（HTTP 429；OpenAI 低等级账户会建议添加付款方式以提高限额）现在按限流重试，不再被当作配额或账单拒绝而终止整个文档及其同批请求。带有 `insufficient_quota` 代码的 429 以及任何 HTTP 402 仍会立即停止。

@@ -16,6 +16,7 @@ mod markdown;
 mod ocr;
 mod office_media;
 mod office_render;
+mod opc;
 pub mod output;
 #[doc(hidden)]
 pub mod output_name;

@@ -497,9 +497,13 @@ each XML part to 16 MiB, each asset to 64 MiB and total decompressed parts to
 The layout/master cache retains at most 8 MiB of source XML and 50,000 parsed
 nodes; larger individual parts can be read within the part limits without being
 cached. This avoids accumulating expanded layout trees across large decks.
-Document types, escaping package paths, duplicate relationship IDs and malformed
-XML are rejected. Internal targets are resolved inside the archive; external
-image HTTP(S) URLs may remain references but are not fetched. Failed optional
+Document types, repeated ZIP entry names, parts whose data differs from their
+declared size, escaping package paths, duplicate relationship IDs and malformed
+XML are rejected. Internal targets are resolved inside the archive as relative
+references (`%XX` escapes need two hex digits; an escaped `/`, an empty segment
+or a `//` network path is rejected); a `TargetMode` other than `Internal` is
+never read from the package. External image HTTP(S) URLs may remain references
+but are not fetched. Failed optional
 notes, layouts, charts or images are named in warnings without discarding the
 remaining slide content. These limits cover this reader's explicit passes, not
 every allocation inside ZIP/XML libraries.
