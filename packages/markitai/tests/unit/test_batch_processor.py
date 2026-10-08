@@ -1712,24 +1712,20 @@ class TestTaskHash:
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
-        _ = BatchProcessor(
-            config=batch_config,
-            output_dir=output_dir,
-            input_path=input_path,
-            task_options={"llm": True},
-        )
+        def task_hash(options: dict[str, Any]) -> str:
+            return BatchProcessor(
+                config=batch_config,
+                output_dir=output_dir,
+                input_path=input_path,
+                task_options=options,
+            ).task_hash
 
-        _ = BatchProcessor(
-            config=batch_config,
-            output_dir=output_dir,
-            input_path=input_path,
-            task_options={"llm": False},
+        assert task_hash({"llm": True}) != task_hash({"llm": False})
+        assert task_hash({"ocr": True}) != task_hash({"ocr": False})
+        # Options outside the output-affecting set leave the hash alone
+        assert task_hash({"llm": True, "concurrency": 2}) == task_hash(
+            {"llm": True, "concurrency": 8}
         )
-
-        # Hashes might still be the same since llm_enabled is the key option
-        # that affects hash, and we're passing different keys
-        # The actual implementation uses llm_enabled, not llm
-        # This test shows the intended behavior
 
 
 class TestIncrementalStateSave:

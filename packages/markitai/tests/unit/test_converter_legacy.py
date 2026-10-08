@@ -8,6 +8,7 @@ fixture conversions, and the error mapping.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -18,6 +19,11 @@ from markitai.converter import get_converter
 from markitai.converter.legacy import DocConverter, PptConverter, _load_anydoc
 from markitai.utils.errors import ConversionError, MissingDependencyError
 
+requires_anydoc = pytest.mark.skipif(
+    importlib.util.find_spec("anydoc") is None,
+    reason="legacy extra (firecrawl-anydoc) not installed",
+)
+
 
 class TestLegacyRouting:
     def test_doc_routes_to_anydoc_converter(self) -> None:
@@ -27,6 +33,7 @@ class TestLegacyRouting:
         assert type(get_converter("deck.ppt")) is PptConverter
 
 
+@requires_anydoc
 class TestAnyDocConversion:
     """Real fixture conversions through the anydoc Rust backend."""
 
@@ -65,6 +72,7 @@ class TestAnyDocErrors:
         ):
             DocConverter().convert(doc)
 
+    @requires_anydoc
     def test_encrypted_maps_to_clear_message(self, tmp_path: Path) -> None:
         import anydoc
 
@@ -80,6 +88,7 @@ class TestAnyDocErrors:
         ):
             DocConverter().convert(doc)
 
+    @requires_anydoc
     def test_malformed_maps_to_conversion_error(self, tmp_path: Path) -> None:
         import anydoc
 

@@ -135,6 +135,28 @@ class TestDetectAllProviders:
             providers = [r.provider for r in results]
             assert providers == ["anthropic", "openai"]
 
+    @pytest.mark.parametrize(
+        ("env_var", "provider"),
+        [
+            ("GEMINI_API_KEY", "gemini"),
+            ("DEEPSEEK_API_KEY", "deepseek"),
+            ("OPENROUTER_API_KEY", "openrouter"),
+        ],
+    )
+    def test_detect_single_env_provider(self, env_var: str, provider: str) -> None:
+        """Each provider key variable is detected on its own."""
+        with (
+            patch("markitai.providers.detect.shutil.which", return_value=None),
+            patch(
+                "markitai.providers.detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch.dict("os.environ", {env_var: "sk-test"}, clear=True),
+        ):
+            results = detect_all_providers()
+            assert [r.provider for r in results] == [provider]
+            assert results[0].model == PROVIDER_DEFAULT_MODELS[provider]
+
     def test_detect_all_returns_multiple(self) -> None:
         """Should return all available providers ordered by priority."""
         with (

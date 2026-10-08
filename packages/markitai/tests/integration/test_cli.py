@@ -806,7 +806,21 @@ class TestCLIWithSubprocess:
 class TestCaseSensitivityWarning:
     """Tests for case-sensitivity warning in --no-cache-for patterns."""
 
-    def test_warn_case_sensitivity_mismatches_detects_mismatch(self, tmp_path: Path):
+    @pytest.fixture
+    def warnings_logged(self):
+        """Messages logged at WARNING or above while the test runs."""
+        from loguru import logger
+
+        messages: list[str] = []
+        sink_id = logger.add(
+            lambda m: messages.append(m.record["message"]), level="WARNING"
+        )
+        yield messages
+        logger.remove(sink_id)
+
+    def test_warn_case_sensitivity_mismatches_detects_mismatch(
+        self, tmp_path: Path, warnings_logged: list[str]
+    ):
         """Test that case mismatches are detected."""
         from markitai.cli import _warn_case_sensitivity_mismatches
 
@@ -818,11 +832,14 @@ class TestCaseSensitivityWarning:
         files = list(tmp_path.glob("*"))
         patterns = ["*.jpg", "*.pdf"]  # lowercase patterns
 
-        # Should not raise, just log warnings
-        # We can't easily test the console output, but we can verify no exceptions
         _warn_case_sensitivity_mismatches(files, tmp_path, patterns)
 
-    def test_warn_case_sensitivity_no_mismatch(self, tmp_path: Path):
+        assert len(warnings_logged) == 1
+        assert "2 file(s) would match" in warnings_logged[0]
+
+    def test_warn_case_sensitivity_no_mismatch(
+        self, tmp_path: Path, warnings_logged: list[str]
+    ):
         """Test that matching cases don't trigger warnings."""
         from markitai.cli import _warn_case_sensitivity_mismatches
 
@@ -833,10 +850,13 @@ class TestCaseSensitivityWarning:
         files = list(tmp_path.glob("*"))
         patterns = ["*.jpg", "*.pdf"]
 
-        # Should not trigger warnings
         _warn_case_sensitivity_mismatches(files, tmp_path, patterns)
 
-    def test_warn_case_sensitivity_with_glob_patterns(self, tmp_path: Path):
+        assert warnings_logged == []
+
+    def test_warn_case_sensitivity_with_glob_patterns(
+        self, tmp_path: Path, warnings_logged: list[str]
+    ):
         """Test case sensitivity with ** patterns."""
         from markitai.cli import _warn_case_sensitivity_mismatches
 
@@ -849,18 +869,23 @@ class TestCaseSensitivityWarning:
         files = [f for f in files if f.is_file()]
         patterns = ["**/*.jpg"]
 
-        # Should detect mismatch
         _warn_case_sensitivity_mismatches(files, tmp_path, patterns)
 
-    def test_warn_case_sensitivity_empty_patterns(self, tmp_path: Path):
+        assert len(warnings_logged) == 1
+        assert "1 file(s) would match" in warnings_logged[0]
+
+    def test_warn_case_sensitivity_empty_patterns(
+        self, tmp_path: Path, warnings_logged: list[str]
+    ):
         """Test with empty patterns list."""
         from markitai.cli import _warn_case_sensitivity_mismatches
 
         (tmp_path / "image.JPG").touch()
         files = list(tmp_path.glob("*"))
 
-        # Should not raise with empty patterns
         _warn_case_sensitivity_mismatches(files, tmp_path, [])
+
+        assert warnings_logged == []
 
 
 class TestWorkflowCoreV2:

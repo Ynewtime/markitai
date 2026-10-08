@@ -9,6 +9,7 @@ Use `pytest -m "not slow"` to skip slow tests.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -18,6 +19,9 @@ from click.testing import CliRunner
 
 from markitai.cli import app
 from markitai.converter.base import get_converter
+
+# .doc/.ppt fixtures (fixtures/legacy) need the legacy extra (firecrawl-anydoc)
+ANYDOC_INSTALLED = importlib.util.find_spec("anydoc") is not None
 
 # =============================================================================
 # Fixtures
@@ -56,6 +60,8 @@ def converted_fixtures(tmp_path_factory) -> dict:
     input_dir = tmp_path_factory.mktemp("fixtures_no_urls")
     for item in fixtures_dir.iterdir():
         if item.suffix == ".urls":
+            continue
+        if item.name == "legacy" and not ANYDOC_INSTALLED:
             continue
         if item.is_dir():
             # Only copy subdirectories containing convertible files
@@ -130,6 +136,7 @@ class TestBatchConversionResults:
         jpg_output = output_dir / "sample.jpg.md"
         assert not jpg_output.exists(), "JPG should be skipped without LLM/OCR"
 
+    @pytest.mark.skipif(not ANYDOC_INSTALLED, reason="legacy extra not installed")
     def test_subdirectory_preserved(self, converted_fixtures: dict):
         """Test subdirectory structure is preserved."""
         output_dir = converted_fixtures["output_dir"]

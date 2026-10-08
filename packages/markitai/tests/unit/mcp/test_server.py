@@ -12,6 +12,9 @@ import asyncio
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("mcp")
+
 from mcp.server.mcpserver.exceptions import ToolError
 
 from markitai.api import ConversionError, ConversionOutput, FetchError
