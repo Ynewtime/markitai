@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- HTML with a code block whose lines reach past 256 levels of nesting, or a MathML formula nested deeper than 64 levels, converts instead of failing the whole document: that block or formula is kept as plain text without its formatting, with the nesting warning (which now also names the formula limit).
 - The Hacker News and X readers validate their links like the rest of HTML: a `javascript:` or other unsafe-scheme story, comment, "More" or quoted-post link is no longer written into the Markdown. HTML read without a page address (local files, email bodies) keeps relative links that contain a colon after their first `/`, `?` or `#` (`/wiki/Help:Contents`, `?t=10:30`) instead of dropping them.
 - `POST /api/download-tickets` reads at most 8 KiB of request body and answers a larger one with 413 `request_too_large`, instead of inheriting the 5 GiB upload limit and buffering whatever a client sent.
 - PDF content inspection reports each problem once per page (a pattern fill, an inline image, an XObject that cannot be resolved) instead of once per operator, so a page repeating such an operator can no longer produce millions of identical warnings or an error message that lists them all.
