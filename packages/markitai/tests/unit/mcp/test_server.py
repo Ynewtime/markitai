@@ -525,6 +525,7 @@ class TestDotenvLoading:
 
         runs: list[str] = []
         monkeypatch.setattr(server, "run", lambda transport: runs.append(transport))
+        monkeypatch.setattr("markitai.api._configure_host_logging", lambda: None)
         try:
             server_module.main()
             assert runs == ["stdio"]
@@ -536,3 +537,30 @@ class TestDotenvLoading:
         finally:
             for key in ("MARKITAI_T_BOTH", "MARKITAI_T_CWD", "MARKITAI_T_HOME"):
                 os.environ.pop(key, None)
+
+
+class TestHostLogging:
+    def test_main_replaces_debug_handler_with_redacted_errors(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Regression: markitai-mcp kept loguru's DEBUG-to-stderr handler and
+        never installed the URL credential redaction ``markitai mcp`` gets
+        from the CLI."""
+        import sys
+
+        from loguru import logger
+
+        monkeypatch.setattr(server, "run", lambda _transport: None)
+        monkeypatch.setattr(server_module, "_load_dotenv_files", lambda: None)
+        logger.remove()
+        logger.add(sys.stderr, level="DEBUG")  # what a fresh process starts with
+        try:
+            server_module.main()
+            logger.debug("cache internals")
+            logger.error("Failed to fetch https://alice:s3cret@example.com/doc")
+        finally:
+            logger.remove()
+        err = capsys.readouterr().err
+        assert "cache internals" not in err
+        assert "https://example.com/doc" in err
+        assert "s3cret" not in err

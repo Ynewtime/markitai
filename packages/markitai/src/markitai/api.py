@@ -79,6 +79,21 @@ def enable_worker_processes() -> None:
     enable()
 
 
+def _configure_host_logging() -> None:
+    """Take over loguru in a process markitai owns outside the CLI.
+
+    Loguru starts with a DEBUG handler on stderr and no URL credential
+    redaction. ``markitai mcp`` replaces both through the CLI; the
+    ``markitai-mcp`` console script calls this to get the same: errors only,
+    with credentials stripped from URLs.
+    """
+    from markitai.utils.url_redaction import redact_log_record
+
+    logger.remove()
+    logger.configure(patcher=redact_log_record)
+    logger.add(sys.stderr, level="ERROR", format="<level>{message}</level>")
+
+
 class NoModelConfiguredError(ValueError):
     """LLM enhancement is enabled but no model could be resolved.
 

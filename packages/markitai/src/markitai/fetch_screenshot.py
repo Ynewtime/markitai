@@ -40,8 +40,10 @@ def _url_to_screenshot_filename(url: str) -> str:
     """
     try:
         parsed = urlparse(url)
-        # Start with domain
-        parts = [parsed.netloc] if parsed.netloc else []
+        # Start with domain (host and port; userinfo would put credentials
+        # in the filename)
+        host = parsed.netloc.rpartition("@")[2]
+        parts = [host] if host else []
         # Add path parts
         if parsed.path and parsed.path != "/":
             path_parts = parsed.path.strip("/").split("/")

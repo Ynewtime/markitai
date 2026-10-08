@@ -266,7 +266,7 @@ class TestAddLLMModel:
                 json={
                     "model_name": "extra",
                     "model": "openai/gpt-new",
-                    "api_base": "env:MY_BASE",
+                    "api_base": "https://proxy.example/v1",
                 },
             )
         assert resp.status_code == 200
@@ -285,7 +285,7 @@ class TestAddLLMModel:
         assert stored_models[1]["model_name"] == "extra"
         assert stored_models[1]["litellm_params"] == {
             "model": "openai/gpt-new",
-            "api_base": "env:MY_BASE",
+            "api_base": "https://proxy.example/v1",
         }
         assert stored_models[1]["model_info"]["id"]
         if os.name == "posix":  # rewrite tightens permissions to owner-only
@@ -456,14 +456,14 @@ class TestUpdateLLMModel:
             await self._seed(client)
             resp = await client.put(
                 "/api/settings/llm/models/primary",
-                json={"api_key": "env:NEW_KEY_VAR"},
+                json={"api_key": "env:OPENAI_API_KEY"},
             )
         assert resp.status_code == 200
         assert resp.json()["deployments"][0]["api_key_configured"] is True
         params = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
             "model_list"
         ][0]["litellm_params"]
-        assert params["api_key"] == "env:NEW_KEY_VAR"
+        assert params["api_key"] == "env:OPENAI_API_KEY"
 
     async def test_put_masked_value_writeback_is_422(self, tmp_path: Path) -> None:
         """Echoing the masked key from GET back must never corrupt the file."""
@@ -1049,7 +1049,7 @@ class TestLLMSettingsProbe:
     async def test_probe_resolves_env_api_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("MARKITAI_TEST_KEY", "sk-resolved-999999")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-resolved-999999")
         captured: dict[str, Any] = {}
 
         async def fake_acompletion(**kwargs: Any) -> dict[str, str]:
@@ -1060,7 +1060,7 @@ class TestLLMSettingsProbe:
         async with _serve_client(_make_app(tmp_path)) as client:
             resp = await client.post(
                 "/api/settings/llm/test",
-                json={"model": "openai/gpt-test", "api_key": "env:MARKITAI_TEST_KEY"},
+                json={"model": "openai/gpt-test", "api_key": "env:OPENAI_API_KEY"},
             )
         assert resp.json()["ok"] is True
         assert captured["api_key"] == "sk-resolved-999999"
@@ -1092,7 +1092,7 @@ class TestLLMSettingsProbe:
     async def test_probe_missing_env_var_fails_without_calling_llm(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("MARKITAI_TEST_MISSING_VAR", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         calls: list[Any] = []
 
         async def fake_acompletion(**kwargs: Any) -> Any:
@@ -1105,7 +1105,7 @@ class TestLLMSettingsProbe:
                 "/api/settings/llm/test",
                 json={
                     "model": "openai/gpt-test",
-                    "api_key": "env:MARKITAI_TEST_MISSING_VAR",
+                    "api_key": "env:OPENAI_API_KEY",
                 },
             )
         data = resp.json()
@@ -1662,6 +1662,256 @@ class TestConfiguredConnectionReuse:
             "api_key": "sk-stored-secret",
             "api_base": "https://proxy.example/v1",
         }
+
+
+class TestClientCredentialBoundary:
+    """Settings callers cannot aim host secrets or stored keys at a new server."""
+
+    @staticmethod
+    def _record_completions(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> list[dict[str, Any]]:
+        calls: list[dict[str, Any]] = []
+
+        async def fake_acompletion(**kwargs: Any) -> dict[str, str]:
+            calls.append(kwargs)
+            return {"id": "ok"}
+
+        monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+        return calls
+
+    @staticmethod
+    def _record_discovery(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> list[dict[str, Any]]:
+        calls: list[dict[str, Any]] = []
+
+        async def fake_discover(provider: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs)
+            return {
+                "provider": provider,
+                "status": "ok",
+                "source": "live_api",
+                "authoritative": True,
+                "cached": False,
+                "stale": False,
+                "models": [],
+            }
+
+        monkeypatch.setattr(
+            "markitai.providers.discovery.discover_models", fake_discover
+        )
+        return calls
+
+    async def test_probe_rejects_arbitrary_env_reference(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_TEST_HOST_SECRET", "host-secret-123456")
+        calls = self._record_completions(monkeypatch)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test",
+                json={
+                    "model": "openai/x",
+                    "api_key": "env:MARKITAI_TEST_HOST_SECRET",
+                    "api_base": "https://attacker.example",
+                },
+            )
+        assert resp.status_code == 422
+        assert calls == []
+        assert "host-secret-123456" not in resp.text
+
+    async def test_probe_rejects_env_reference_in_api_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_TEST_HOST_SECRET", "host-secret-123456")
+        calls = self._record_completions(monkeypatch)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test",
+                json={
+                    "model": "openai/x",
+                    "api_key": "sk-literal",
+                    "api_base": "env:MARKITAI_TEST_HOST_SECRET",
+                },
+            )
+        assert resp.status_code == 422
+        assert calls == []
+
+    async def test_discovery_rejects_arbitrary_env_reference(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_TEST_HOST_SECRET", "host-secret-123456")
+        calls = self._record_discovery(monkeypatch)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={
+                    "provider": "openai",
+                    "api_key": "env:MARKITAI_TEST_HOST_SECRET",
+                    "api_base": "https://attacker.example",
+                },
+            )
+        assert resp.status_code == 422
+        assert calls == []
+
+    async def test_discovery_accepts_environment_card_reference(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The webapp sends an environment card's ``env:OPENAI_API_KEY``."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-env-card-123456")
+        calls = self._record_discovery(monkeypatch)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={"provider": "openai", "api_key": "env:OPENAI_API_KEY"},
+            )
+        assert resp.status_code == 200
+        assert calls[0]["api_key"] == "sk-env-card-123456"
+
+    async def test_write_rejects_arbitrary_env_reference(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            resp = await client.post(
+                "/api/settings/llm/models",
+                json={
+                    "model_name": "default",
+                    "model": "openai/x",
+                    "api_key": "env:MARKITAI_TEST_HOST_SECRET",
+                    "api_base": "https://attacker.example",
+                },
+            )
+        assert resp.status_code == 422
+        assert not config_path.exists()
+
+    async def test_provider_editor_can_resave_configured_env_reference(
+        self, tmp_path: Path
+    ) -> None:
+        """The editor round-trips the raw saved reference; that must still work."""
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry("openai/gpt-test", api_key="env:MARKITAI_TEST_CUSTOM_KEY")
+        ]
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, cfg, config_path=config_path)
+        ) as client:
+            payload = (await client.get("/api/settings/llm")).json()
+            provider_id = "legacy:" + payload["deployments"][0]["deployment_id"]
+            resp = await client.patch(
+                f"/api/settings/llm/providers/{provider_id}",
+                json={
+                    "api_key": "env:MARKITAI_TEST_CUSTOM_KEY",
+                    "api_base": "https://proxy.example/v1",
+                    "expected_revision": payload["revision"],
+                },
+            )
+        assert resp.status_code == 200, resp.text
+
+    async def test_probe_does_not_send_stored_key_to_another_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._record_completions(monkeypatch)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "openai/gpt-test",
+                api_key="sk-stored-1234567890",
+                api_base="https://proxy.example/v1",
+            )
+        ]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test",
+                json={
+                    "model": "openai/gpt-test",
+                    "api_base": "https://attacker.example",
+                },
+            )
+        assert resp.status_code == 422
+        assert calls == []
+
+    async def test_discovery_does_not_send_stored_key_to_another_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._record_discovery(monkeypatch)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "openai/gpt-test",
+                api_key="sk-stored-1234567890",
+                api_base="https://proxy.example/v1",
+            )
+        ]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            payload = (await client.get("/api/settings/llm")).json()
+            resp = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={
+                    "provider": "openai",
+                    "deployment_id": payload["deployments"][0]["deployment_id"],
+                    "api_base": "https://attacker.example",
+                },
+            )
+            same_base = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={
+                    "provider": "openai",
+                    "deployment_id": payload["deployments"][0]["deployment_id"],
+                    "api_base": "https://proxy.example/v1",
+                },
+            )
+        assert resp.status_code == 422
+        assert same_base.status_code == 200
+        assert calls == [
+            {
+                "api_key": "sk-stored-1234567890",
+                "api_base": "https://proxy.example/v1",
+                "refresh": False,
+            }
+        ]
+
+    async def test_reused_credentials_cannot_move_to_another_base(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            seeded = (
+                await client.post(
+                    "/api/settings/llm/models",
+                    json={
+                        "model_name": "default",
+                        "model": "openai/first",
+                        "api_key": "sk-stored-secret",
+                        "api_base": "https://proxy.example/v1",
+                    },
+                )
+            ).json()
+            added = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": seeded["revision"],
+                    "deployments": [
+                        {
+                            "model_name": "default",
+                            "model": "openai/second",
+                            "credential_deployment_id": seeded["deployments"][0][
+                                "deployment_id"
+                            ],
+                            "api_base": "https://attacker.example",
+                        }
+                    ],
+                },
+            )
+        assert added.status_code == 422
+        stored = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
+            "model_list"
+        ]
+        assert len(stored) == 1
 
 
 class TestOpenConfigFile:

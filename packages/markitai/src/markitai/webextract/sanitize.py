@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import unquote
 
 from bs4 import Tag
@@ -11,7 +12,19 @@ UNSAFE_URL_PREFIXES = (
     "data:text/javascript",
     "vbscript:",
 )
-_URL_ATTRS = ("href", "src", "action", "formaction")
+_URL_ATTRS = (
+    "href",
+    "xlink:href",
+    "src",
+    "srcset",
+    "poster",
+    "data",
+    "action",
+    "formaction",
+)
+# Browsers drop ASCII tab/newline anywhere in a URL and C0 controls or spaces
+# at its ends, so `java\tscript:` still runs; ignore them for the scheme test.
+_URL_IGNORED_CHARS = re.compile(r"[\x00-\x20]")
 REMOVE_TAGS = {
     "script",
     "style",
@@ -78,6 +91,12 @@ def _sanitize_tag(tag: Tag) -> None:
     for attr in _URL_ATTRS:
         value = tag.get(attr)
         if isinstance(value, str):
-            decoded = unquote(value).strip().lower()
-            if decoded.startswith(UNSAFE_URL_PREFIXES):
+            # srcset is a comma-separated list of candidate URLs.
+            urls = value.split(",") if attr == "srcset" else [value]
+            if any(_is_unsafe_url(url) for url in urls):
                 del tag.attrs[attr]
+
+
+def _is_unsafe_url(value: str) -> bool:
+    decoded = _URL_IGNORED_CHARS.sub("", unquote(value)).lower()
+    return decoded.startswith(UNSAFE_URL_PREFIXES)

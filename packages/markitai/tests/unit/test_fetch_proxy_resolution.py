@@ -12,7 +12,8 @@ Covers two regressions:
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -29,6 +30,15 @@ class _StubResponse:
         self.status_code = 200
         self.headers = {"Content-Type": "text/html"}
         self.url = url
+        self.request = SimpleNamespace(method="GET")
+
+    async def aiter_bytes(self) -> AsyncIterator[bytes]:
+        yield self.content
+
+    aiter_content = aiter_bytes
+
+    async def aclose(self) -> None:
+        pass
 
 
 class _StubClient:
@@ -40,6 +50,12 @@ class _StubClient:
     async def get(self, url: str, **kwargs: Any) -> _StubResponse:
         self.requested.append(url)
         return _StubResponse(url)
+
+    def build_request(self, method: str, url: str, **kwargs: Any) -> str:
+        return url
+
+    async def send(self, request: str, **kwargs: Any) -> _StubResponse:
+        return await self.get(request)
 
 
 @pytest.fixture

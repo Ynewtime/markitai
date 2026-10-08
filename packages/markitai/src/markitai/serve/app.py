@@ -1253,6 +1253,68 @@ def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
     return detail[:300]
 
 
+def _configured_env_refs(state: ServeState) -> frozenset[str]:
+    """Every ``env:`` reference already present in the saved configuration."""
+    values = [
+        value
+        for params in (m.litellm_params for m in state.configured_models)
+        for value in (params.api_key, params.api_base)
+    ] + [
+        value
+        for provider in state.configured_providers
+        for value in (provider.api_key, provider.api_base)
+    ]
+    return frozenset(v for v in values if v is not None and v.startswith("env:"))
+
+
+def _reject_client_env_refs(
+    api_key: str | None,
+    api_base: str | None,
+    configured: frozenset[str] = frozenset(),
+) -> None:
+    """Refuse ``env:`` references from HTTP clients that name arbitrary variables.
+
+    The server resolves ``env:NAME`` from its own environment (``.env``
+    included), so a free choice of NAME would let any settings caller send
+    any host secret to an endpoint it picks. Clients may name the provider
+    key variables the environment cards offer, plus references the saved
+    configuration already holds (the provider editor sends them back).
+    """
+    for field_name, value, allowed in (
+        ("api_key", api_key, PROVIDER_API_KEY_ENV.values()),
+        ("api_base", api_base, ()),
+    ):
+        if (
+            value is None
+            or not value.startswith("env:")
+            or value in configured
+            or value[4:] in allowed
+        ):
+            continue
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{field_name}: env: references from the web API are limited to "
+                f"{', '.join(PROVIDER_API_KEY_ENV.values())}; reference other "
+                "variables in the config file instead"
+            ),
+        )
+
+
+def _reject_rebound_credentials(
+    stored_key: str | None, stored_base: str | None, api_base: str | None
+) -> None:
+    """Refuse to send a stored key to an endpoint other than its saved one."""
+    if stored_key and api_base is not None and api_base != stored_base:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "stored credentials only work with their saved api_base; "
+                "send an api_key to use a different endpoint"
+            ),
+        )
+
+
 def _fill_stored_credentials(
     state: ServeState, body: LLMSettingsUpdate
 ) -> LLMSettingsUpdate:
@@ -1261,6 +1323,7 @@ def _fill_stored_credentials(
     A saved-row test posts only its deployment reference; resolve credentials
     from the running config exactly like a job run would. An explicit ``api_key``
     always wins, local providers never take one, and nothing is persisted.
+    A stored key is only sent to its own saved ``api_base``.
     """
     from markitai.providers import is_local_provider_model
 
@@ -1276,17 +1339,19 @@ def _fill_stored_credentials(
         if m.litellm_params.model == body.model
     ]
     if body.api_base is not None:
-        # Two entries may share a model string; prefer the same-base one.
+        # Two entries may share a model string; only a same-base one applies.
         same_base = [p for p in stored if p.api_base == body.api_base]
-        stored = same_base or stored
+        if not same_base:
+            for params in stored:
+                _reject_rebound_credentials(
+                    params.api_key, params.api_base, body.api_base
+                )
+        stored = same_base
     if not stored:
         return body
     params = stored[0]
     return body.model_copy(
-        update={
-            "api_key": params.api_key,
-            "api_base": body.api_base if body.api_base is not None else params.api_base,
-        }
+        update={"api_key": params.api_key, "api_base": params.api_base}
     )
 
 
@@ -2087,6 +2152,7 @@ def create_app(
         from markitai.config import resolve_env_value
         from markitai.providers.discovery import discover_models
 
+        _reject_client_env_refs(body.api_key, body.api_base)
         state = _state(request)
         stored_provider = next(
             (
@@ -2134,6 +2200,8 @@ def create_app(
             if stored is not None
             else None
         )
+        if body.api_key is None:
+            _reject_rebound_credentials(fallback_key, fallback_base, body.api_base)
         raw_key = body.api_key if body.api_key is not None else fallback_key
         raw_base = body.api_base if body.api_base is not None else fallback_base
         api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
@@ -2202,6 +2270,9 @@ def create_app(
         providers: list[Any],
         models: list[Any],
     ) -> dict[str, Any]:
+        _reject_client_env_refs(
+            body.api_key, body.api_base, _configured_env_refs(state)
+        )
         credential_source = (
             _configured_deployment_by_id(state, body.credential_deployment_id)
             if body.credential_deployment_id is not None
@@ -2252,6 +2323,8 @@ def create_app(
             if credential_source is not None
             else None
         )
+        if body.api_key is None:
+            _reject_rebound_credentials(fallback_key, fallback_base, body.api_base)
         api_key = body.api_key if body.api_key is not None else fallback_key
         api_base = body.api_base if body.api_base is not None else fallback_base
         if provider_id is None:
@@ -2323,6 +2396,10 @@ def create_app(
     async def update_llm_model(
         request: Request, model_name: str, body: LLMModelUpdate
     ) -> dict[str, Any]:
+        _reject_client_env_refs(
+            body.api_key, body.api_base, _configured_env_refs(_state(request))
+        )
+
         def mutate(
             entries: list[Any], _providers: list[Any], _legacy_mapping: dict[str, str]
         ) -> list[Any]:
@@ -2405,6 +2482,9 @@ def create_app(
     ) -> dict[str, Any]:
         if body.expected_revision is None:
             raise HTTPException(status_code=422, detail="expected_revision is required")
+        _reject_client_env_refs(
+            body.api_key, body.api_base, _configured_env_refs(_state(request))
+        )
 
         def mutate(
             entries: list[Any], _providers: list[Any], legacy_mapping: dict[str, str]
@@ -2479,6 +2559,10 @@ def create_app(
     async def update_llm_provider(
         request: Request, provider_id: str, body: LLMProviderUpdate
     ) -> dict[str, Any]:
+        _reject_client_env_refs(
+            body.api_key, body.api_base, _configured_env_refs(_state(request))
+        )
+
         def mutate(
             entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
         ) -> list[Any]:
@@ -2688,6 +2772,7 @@ def create_app(
                 model_name=body.model_name,
             )
         else:
+            _reject_client_env_refs(body.api_key, body.api_base)
             body = _fill_stored_credentials(_state(request), body)
         try:
             detail = await asyncio.wait_for(
