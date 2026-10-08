@@ -425,6 +425,15 @@ fn attachments(
     Ok(attachments)
 }
 
+/// An attachment name as a link label. Unlike EML, which follows the
+/// reference's `_` replacement, nothing is lost: brackets are escaped, and
+/// controls and angle brackets are handled as in a header.
+fn attachment_label(value: &str) -> String {
+    mail::safe_header(&value.replace('\\', "\\\\"))
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+}
+
 fn filetime(value: u64) -> Option<String> {
     if value == 0 {
         return None;
@@ -560,7 +569,7 @@ pub(super) fn extract_with_attachments(bytes: &[u8]) -> Result<(Document, HashSe
             originals.insert(attachment.asset.name.clone());
             document.markdown.push_str(&format!(
                 "\n\n[{}]({destination})",
-                mail::link_text(&attachment.label)
+                attachment_label(&attachment.label)
             ));
         }
         document.assets.push(attachment.asset);
@@ -881,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn headers_and_attachment_labels_use_the_shared_mail_escaping() {
+    fn headers_and_attachment_labels_are_escaped_without_losing_characters() {
         let mut streams = vec![
             (
                 "/__properties_version1.0".to_owned(),
@@ -910,7 +919,7 @@ mod tests {
         assert!(
             document
                 .markdown
-                .contains("\n\n[_x_ \\<y\\> z _1_](.markitai/assets/msg-2-"),
+                .contains("\n\n[\\[x\\] \\<y\\> z (1)](.markitai/assets/msg-2-"),
             "{}",
             document.markdown
         );

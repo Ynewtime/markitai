@@ -51,9 +51,9 @@ attachments receive a Markdown download link, even when the body also shows thei
 image. Their downloaded bytes bypass preview compression, filtering and image
 deduplication. The body can use a separate prepared preview; removing that preview
 does not remove the original. Filename labels remain visible while normal
-content-addressed publication may use different physical names. Link labels
-follow the EML label rules: controls collapse, backslashes and angle brackets are
-escaped, and brackets and parentheses become `_`. A missing or ambiguous content
+content-addressed publication may use different physical names. Link labels keep
+the name as written: controls collapse, and backslashes, brackets and angle
+brackets are escaped. A missing or ambiguous content
 ID produces a warning and stays a `cid:` image reference.
 
 Only an unambiguous, correctly typed `PidTagAttachmentHidden=true` (0x7FFE,
