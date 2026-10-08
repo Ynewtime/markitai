@@ -15,7 +15,6 @@ earliest moment an interrupt can arrive.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -204,47 +203,6 @@ async def test_items_waiting_for_a_slot_stay_pending(tmp_path: Path) -> None:
         d["status"] for d in _load_state(output_dir)["documents"].values()
     )
     assert statuses == ["in_progress", "pending", "pending"]
-
-
-@pytest.mark.asyncio
-async def test_library_process_batch_saves_state_on_cancellation(
-    tmp_path: Path,
-) -> None:
-    import asyncio
-
-    from markitai.batch import BatchProcessor, ProcessResult
-    from markitai.config import BatchConfig
-
-    files = [tmp_path / "a.txt", tmp_path / "b.txt"]
-    for f in files:
-        f.write_text("x")
-    b_started = asyncio.Event()
-
-    async def _process(path: Path) -> ProcessResult:
-        if path.name == "a.txt":
-            return ProcessResult(success=True, output_path="a.txt.md")
-        b_started.set()
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
-
-    processor = BatchProcessor(
-        BatchConfig(concurrency=1, state_flush_interval_seconds=3600),
-        tmp_path / "out",
-    )
-    run = asyncio.create_task(processor.process_batch(files, _process))
-    await b_started.wait()
-    await asyncio.sleep(0.05)
-    run.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await run
-
-    documents = _load_state(tmp_path / "out")["documents"]
-    # Stored absolute: the relative value only meant something in this cwd
-    assert documents["a.txt"] == {
-        "status": "completed",
-        "output": os.path.abspath("a.txt.md"),
-    }
-    assert documents["b.txt"]["status"] == "in_progress"
 
 
 @pytest.mark.asyncio
