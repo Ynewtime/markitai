@@ -128,6 +128,9 @@ height, matching the reference's default vision width even for small vector
 viewBoxes. Raster compression and maximum-width settings do not lower this
 vector preview resolution. An output exceeding 32 million pixels is rejected
 before allocating the canvas. Renderer and font differences remain possible.
+When the host lacks fontdb's default serif, sans-serif or monospace family, the
+first installed face covering basic Latin letters stands in; icon-only fonts
+are skipped, so SVG text on a host without a text font fails as unavailable.
 
 System fonts are loaded lazily once when text is present. Their files are the
 only ambient rendering resources read. SVG-specified file paths and network

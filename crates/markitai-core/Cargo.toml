@@ -12,6 +12,8 @@ libc = "0.2"
 tiff = "0.11.3"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp"] }
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "raster-images"] }
+# Same version and features as usvg uses, so SVG fallback checks read cmaps as rendering does.
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
 lopdf = { version = "0.45", default-features = false }
 png = "0.18"
 serde.workspace = true

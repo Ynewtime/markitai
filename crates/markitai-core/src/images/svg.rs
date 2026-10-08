@@ -163,41 +163,62 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
         .get_or_init(|| {
             let mut database = usvg::fontdb::Database::new();
             database.load_system_fonts();
-            // Font availability varies by host. Keep generic text usable even when
-            // the platform has no face with fontdb's default family names.
-            let fallback_family = database
-                .faces()
-                .next()
-                .and_then(|face| face.families.first())
-                .map(|item| item.0.clone());
-            if let Some(family) = fallback_family {
-                for generic in [
-                    usvg::fontdb::Family::Serif,
-                    usvg::fontdb::Family::SansSerif,
-                    usvg::fontdb::Family::Monospace,
-                ] {
-                    if database
-                        .query(&usvg::fontdb::Query {
-                            families: &[generic],
-                            ..Default::default()
-                        })
-                        .is_none()
-                    {
-                        match generic {
-                            usvg::fontdb::Family::Serif => {
-                                database.set_serif_family(family.clone())
-                            }
-                            usvg::fontdb::Family::SansSerif => {
-                                database.set_sans_serif_family(family.clone())
-                            }
-                            _ => database.set_monospace_family(family.clone()),
-                        }
-                    }
-                }
-            }
+            set_generic_fallback(&mut database);
             Arc::new(database)
         })
         .clone()
+}
+
+// Font availability varies by host. Keep generic text usable even when the
+// platform has no face with fontdb's default family names, but never hand it to
+// an icon font: without a face covering basic Latin the text error stays explicit.
+fn set_generic_fallback(database: &mut usvg::fontdb::Database) {
+    let missing = [
+        usvg::fontdb::Family::Serif,
+        usvg::fontdb::Family::SansSerif,
+        usvg::fontdb::Family::Monospace,
+    ]
+    .into_iter()
+    .filter(|generic| {
+        database
+            .query(&usvg::fontdb::Query {
+                families: &[*generic],
+                ..Default::default()
+            })
+            .is_none()
+    })
+    .collect::<Vec<_>>();
+    // Checking coverage reads font files, so skip it when nothing is missing.
+    if missing.is_empty() {
+        return;
+    }
+    let fallback_family = database
+        .faces()
+        .find(|face| has_latin_letters(database, face.id))
+        .and_then(|face| face.families.first())
+        .map(|item| item.0.clone());
+    if let Some(family) = fallback_family {
+        for generic in missing {
+            match generic {
+                usvg::fontdb::Family::Serif => database.set_serif_family(family.clone()),
+                usvg::fontdb::Family::SansSerif => database.set_sans_serif_family(family.clone()),
+                _ => database.set_monospace_family(family.clone()),
+            }
+        }
+    }
+}
+
+fn has_latin_letters(database: &usvg::fontdb::Database, id: usvg::fontdb::ID) -> bool {
+    database
+        .with_face_data(id, |data, index| {
+            skrifa::FontRef::from_index(data, index).is_ok_and(|font| {
+                let charmap = skrifa::charmap::Charmap::new(&font);
+                ('A'..='Z')
+                    .chain('a'..='z')
+                    .all(|letter| charmap.map(letter).is_some())
+            })
+        })
+        .unwrap_or(false)
 }
 
 pub(super) fn render(bytes: &[u8]) -> Result<DynamicImage> {
@@ -377,13 +398,111 @@ mod tests {
                 .to_string()
                 .contains("font")
         );
-        if !fonts().is_empty() {
+        // Hosts with only icon fonts have faces but no usable generic family.
+        if fonts()
+            .query(&usvg::fontdb::Query {
+                families: &[usvg::fontdb::Family::SansSerif],
+                ..Default::default()
+            })
+            .is_some()
+        {
             let image = render_at_width(source.as_bytes(), 100).unwrap().to_rgba8();
             let visible = image.pixels().filter(|pixel| pixel[3] != 0).count();
             assert!(
                 visible > 50 && visible < 4_000,
                 "visible glyph pixels: {visible}"
             );
+        }
+    }
+
+    /// A face with only `cmap` and `name` tables: enough for fontdb and charmaps.
+    fn synthetic_font(family: &str, ranges: &[(char, char)]) -> Vec<u8> {
+        let mut cmap = [0u16, 1, 3, 10]
+            .iter()
+            .flat_map(|value| value.to_be_bytes())
+            .collect::<Vec<_>>();
+        cmap.extend(12u32.to_be_bytes());
+        cmap.extend([12u16, 0].iter().flat_map(|value| value.to_be_bytes()));
+        let length = 16 + 12 * ranges.len() as u32;
+        for value in [length, 0, ranges.len() as u32] {
+            cmap.extend(value.to_be_bytes());
+        }
+        let mut glyph = 1;
+        for (start, end) in ranges {
+            for value in [*start as u32, *end as u32, glyph] {
+                cmap.extend(value.to_be_bytes());
+            }
+            glyph += *end as u32 - *start as u32 + 1;
+        }
+        let text = family
+            .encode_utf16()
+            .flat_map(u16::to_be_bytes)
+            .collect::<Vec<_>>();
+        let mut name = [0u16, 2, 30]
+            .iter()
+            .flat_map(|value| value.to_be_bytes())
+            .collect::<Vec<_>>();
+        for name_id in [1u16, 6] {
+            for value in [3, 1, 0x0409, name_id, text.len() as u16, 0] {
+                name.extend(u16::to_be_bytes(value));
+            }
+        }
+        name.extend(&text);
+        let mut font = [1u16, 0, 2, 32, 1, 0]
+            .iter()
+            .flat_map(|value| value.to_be_bytes())
+            .collect::<Vec<_>>();
+        let mut offset = 12 + 2 * 16;
+        for (tag, table) in [(b"cmap", &cmap), (b"name", &name)] {
+            font.extend(tag);
+            for value in [0, offset, table.len() as u32] {
+                font.extend(value.to_be_bytes());
+            }
+            offset += table.len() as u32;
+        }
+        font.extend(cmap);
+        font.extend(name);
+        font
+    }
+
+    #[test]
+    fn generic_text_fallback_skips_faces_without_latin_letters() {
+        let generic = |database: &usvg::fontdb::Database, family| {
+            let id = database.query(&usvg::fontdb::Query {
+                families: &[family],
+                ..Default::default()
+            })?;
+            Some(database.face(id)?.families[0].0.clone())
+        };
+        let mut database = usvg::fontdb::Database::new();
+        database.load_font_data(synthetic_font("Icons", &[('\u{f000}', '\u{f2ff}')]));
+        // Ligature icon fonts map lowercase letters only.
+        database.load_font_data(synthetic_font("Ligatures", &[('a', 'z')]));
+        assert_eq!(database.len(), 2);
+
+        let mut icons = database.clone();
+        set_generic_fallback(&mut icons);
+        assert_eq!(generic(&icons, usvg::fontdb::Family::SansSerif), None);
+        let source = picture(
+            r#"<text x="4" y="40" font-size="24" font-family="sans-serif">Hello SVG</text>"#,
+        );
+        let document = xml(source.as_bytes()).unwrap();
+        assert!(
+            render_document(&document, 100, Arc::new(icons))
+                .unwrap_err()
+                .to_string()
+                .contains("font or glyph unavailable")
+        );
+
+        database.load_font_data(synthetic_font("Text", &[('A', 'Z'), ('a', 'z')]));
+        database.load_font_data(synthetic_font("Later Text", &[('A', 'Z'), ('a', 'z')]));
+        set_generic_fallback(&mut database);
+        for family in [
+            usvg::fontdb::Family::Serif,
+            usvg::fontdb::Family::SansSerif,
+            usvg::fontdb::Family::Monospace,
+        ] {
+            assert_eq!(generic(&database, family).as_deref(), Some("Text"));
         }
     }
 
