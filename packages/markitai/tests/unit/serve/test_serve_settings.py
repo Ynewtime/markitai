@@ -456,14 +456,14 @@ class TestUpdateLLMModel:
             await self._seed(client)
             resp = await client.put(
                 "/api/settings/llm/models/primary",
-                json={"api_key": "env:OPENAI_API_KEY"},
+                json={"api_key": "sk-replacement-0001"},
             )
         assert resp.status_code == 200
         assert resp.json()["deployments"][0]["api_key_configured"] is True
         params = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
             "model_list"
         ][0]["litellm_params"]
-        assert params["api_key"] == "env:OPENAI_API_KEY"
+        assert params["api_key"] == "sk-replacement-0001"
 
     async def test_put_masked_value_writeback_is_422(self, tmp_path: Path) -> None:
         """Echoing the masked key from GET back must never corrupt the file."""
@@ -1804,11 +1804,121 @@ class TestClientCredentialBoundary:
                 f"/api/settings/llm/providers/{provider_id}",
                 json={
                     "api_key": "env:MARKITAI_TEST_CUSTOM_KEY",
-                    "api_base": "https://proxy.example/v1",
+                    "api_base": None,
                     "expected_revision": payload["revision"],
                 },
             )
         assert resp.status_code == 200, resp.text
+
+    async def test_provider_editor_cannot_move_env_reference_to_another_base(
+        self, tmp_path: Path
+    ) -> None:
+        """Keeping a configured ``env:`` key while changing the base is a 422.
+
+        Otherwise the next job or probe would send the host secret to the
+        new (caller-chosen) server.
+        """
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry("openai/gpt-test", api_key="env:MARKITAI_TEST_CUSTOM_KEY")
+        ]
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, cfg, config_path=config_path)
+        ) as client:
+            payload = (await client.get("/api/settings/llm")).json()
+            provider_id = "legacy:" + payload["deployments"][0]["deployment_id"]
+            resp = await client.patch(
+                f"/api/settings/llm/providers/{provider_id}",
+                json={
+                    "api_key": "env:MARKITAI_TEST_CUSTOM_KEY",
+                    "api_base": "https://attacker.example",
+                    "expected_revision": payload["revision"],
+                },
+            )
+        assert resp.status_code == 422
+        assert not config_path.exists()
+
+    async def test_provider_base_edit_cannot_move_stored_key(
+        self, tmp_path: Path
+    ) -> None:
+        """A base-only PATCH keeps the stored key, so it must not retarget it."""
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "openai/gpt-test",
+                api_key="sk-stored-1234567890",
+                api_base="https://proxy.example/v1",
+            )
+        ]
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, cfg, config_path=config_path)
+        ) as client:
+            payload = (await client.get("/api/settings/llm")).json()
+            provider_id = "legacy:" + payload["deployments"][0]["deployment_id"]
+            moved = await client.patch(
+                f"/api/settings/llm/providers/{provider_id}",
+                json={
+                    "api_base": "https://attacker.example",
+                    "expected_revision": payload["revision"],
+                },
+            )
+            with_key = await client.patch(
+                f"/api/settings/llm/providers/{provider_id}",
+                json={
+                    "api_key": "sk-caller-supplied-1",
+                    "api_base": "https://other.example/v1",
+                    "expected_revision": payload["revision"],
+                },
+            )
+        assert moved.status_code == 422
+        assert with_key.status_code == 200, with_key.text
+
+    async def test_model_key_edit_cannot_aim_env_reference_at_saved_base(
+        self, tmp_path: Path
+    ) -> None:
+        """Seed a custom base with a dummy key, then swap in ``env:OPENAI_API_KEY``."""
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            seeded = await client.post(
+                "/api/settings/llm/models",
+                json={
+                    "model_name": "primary",
+                    "model": "openai/gpt-test",
+                    "api_key": "sk-dummy-000000",
+                    "api_base": "https://attacker.example",
+                },
+            )
+            assert seeded.status_code == 200
+            resp = await client.put(
+                "/api/settings/llm/models/primary",
+                json={"api_key": "env:OPENAI_API_KEY"},
+            )
+        assert resp.status_code == 422
+        params = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
+            "model_list"
+        ][0]["litellm_params"]
+        assert params["api_key"] == "sk-dummy-000000"
+
+    async def test_probe_rejects_provider_env_reference_with_custom_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-host-openai-123456")
+        calls = self._record_completions(monkeypatch)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test",
+                json={
+                    "model": "openai/x",
+                    "api_key": "env:OPENAI_API_KEY",
+                    "api_base": "https://attacker.example",
+                },
+            )
+        assert resp.status_code == 422
+        assert calls == []
 
     async def test_probe_does_not_send_stored_key_to_another_base(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
