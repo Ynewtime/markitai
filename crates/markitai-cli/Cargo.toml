@@ -9,9 +9,11 @@ license.workspace = true
 name = "markitai"
 path = "src/main.rs"
 
+# mkai includes main.rs, so its unit tests are markitai's; run them once.
 [[bin]]
 name = "mkai"
 path = "src/mkai.rs"
+test = false
 
 [features]
 portable-media = ["markitai-core/portable-media"]
