@@ -270,15 +270,18 @@ fn read_docx(bytes: &[u8]) -> Metadata {
 /// An OpenDocument text's comments (`office:annotation`), which the
 /// Markdown leaves out as it does Word's. Counted while streaming
 /// `content.xml`, without building it, since the document reader builds it
-/// anyway.
+/// anyway. As for Word, comments that cannot be counted are reported rather
+/// than taken for none.
 fn read_odt(bytes: &[u8]) -> Metadata {
-    let count = (|| {
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
-        let xml = zip_text(&mut archive, "content.xml").ok()?;
+    let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+        // The document reader reports an invalid package itself.
+        return Metadata::default();
+    };
+    let count = zip_text(&mut archive, "content.xml").and_then(|xml| {
         let mut reader = quick_xml::Reader::from_str(&xml);
         let mut count = 0usize;
         loop {
-            match reader.read_event().ok()? {
+            match reader.read_event().map_err(|e| e.to_string())? {
                 quick_xml::events::Event::Start(event) | quick_xml::events::Event::Empty(event)
                     if event.local_name().as_ref() == b"annotation" =>
                 {
@@ -288,10 +291,17 @@ fn read_odt(bytes: &[u8]) -> Metadata {
                 _ => {}
             }
         }
-        Some(count)
-    })()
-    .unwrap_or(0);
-    comment_warning(count)
+        Ok(count)
+    });
+    match count {
+        Ok(count) => comment_warning(count),
+        Err(message) => Metadata {
+            warnings: vec![format!(
+                "OpenDocument comments could not be recovered: {message}"
+            )],
+            ..Metadata::default()
+        },
+    }
 }
 
 fn comment_warning(count: usize) -> Metadata {
@@ -546,6 +556,30 @@ mod tests {
             assert!(metadata.warnings[0].contains("Word review comments could not be recovered"));
             assert!(metadata.warnings[0].contains(reason));
         }
+    }
+
+    #[test]
+    fn odt_comments_warn_when_counted_or_unreadable() {
+        let content = |body: &str| {
+            format!(
+                "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\"><office:body>{body}</office:body></office:document-content>"
+            )
+        };
+        let none = archive(&[("content.xml", &content("<p/>"))]);
+        assert!(read(&none, "odt").warnings.is_empty());
+        let two = archive(&[(
+            "content.xml",
+            &content("<office:annotation/><office:annotation><p/></office:annotation>"),
+        )]);
+        assert_eq!(read(&two, "odt").warnings.len(), 1);
+        assert!(read(&two, "odt").warnings[0].contains("2 review comments"));
+        let malformed = archive(&[(
+            "content.xml",
+            "<office:document-content><office:annotation/></office:body>",
+        )]);
+        let metadata = read(&malformed, "odt");
+        assert_eq!(metadata.warnings.len(), 1, "{:?}", metadata.warnings);
+        assert!(metadata.warnings[0].contains("OpenDocument comments could not be recovered"));
     }
 
     #[test]

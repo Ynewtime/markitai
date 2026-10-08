@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- An ODT whose comments cannot be counted (for example a `content.xml` over the 16 MiB metadata limit) gets a warning that its comments could not be recovered, as a Word document does, instead of being reported as having no comments.
 - An SVG image embedded in a document (an HTML page, an e-book, a Word file) no longer adds the warning that an embedded image could not be decoded within native limits; the vector asset is kept unchanged as before.
 - A native panic during conversion reaches Python and Node.js as a `ConversionError` with the code `internal_error`, as it already did in Go and as the bindings guide states, instead of a Python `RuntimeError` or a Node.js `Error` without a code.
 - Workbook page capture no longer fails because of an optional repair step: an ODS, XLS or XLSB workbook whose right-edge overflow cannot be measured keeps LibreOffice's layout with a warning, and an XLSX/XLSM workbook whose styles the font-color policy cannot parse keeps LibreOffice's own font colors instead of aborting the export.
