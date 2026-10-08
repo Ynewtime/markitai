@@ -3,11 +3,72 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
+
+from markitai.constants import MAX_DOCUMENT_SIZE
+
+# A fetched body is held in memory and converted like a local file, so it gets
+# the local-file cap; past it the fetch fails instead of exhausting memory.
+MAX_RESPONSE_BYTES = MAX_DOCUMENT_SIZE
+
+
+# Responses that carry no body, whatever their Content-Length says.
+_BODYLESS_STATUSES = (204, 304)
+
+
+class ResponseTooLargeError(Exception):
+    """A response body is larger than :data:`MAX_RESPONSE_BYTES`."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"Response body exceeds the {MAX_RESPONSE_BYTES // (1024 * 1024)} MB limit"
+        )
+
+
+async def _read_capped_body(
+    chunks: AsyncIterator[bytes], content_length: str | None
+) -> bytes:
+    """Collect a streamed body, failing as soon as it passes the size cap.
+
+    A declared ``Content-Length`` over the cap fails before anything is read.
+    """
+    if (
+        content_length is not None
+        and content_length.strip().isdigit()
+        and int(content_length) > MAX_RESPONSE_BYTES
+    ):
+        raise ResponseTooLargeError()
+    parts: list[bytes] = []
+    size = 0
+    async for chunk in chunks:
+        size += len(chunk)
+        if size > MAX_RESPONSE_BYTES:
+            raise ResponseTooLargeError()
+        parts.append(chunk)
+    return b"".join(parts)
+
+
+async def _read_httpx_body(response: Any) -> None:
+    """Read a streamed httpx response within the cap, then close it.
+
+    Sets the body exactly where ``Response.aread`` would, so ``.content``
+    and ``.text`` work as for a non-streamed response.
+    """
+    bodyless = (
+        response.request.method == "HEAD" or response.status_code in _BODYLESS_STATUSES
+    )
+    try:
+        response._content = await _read_capped_body(
+            response.aiter_bytes(),
+            None if bodyless else response.headers.get("content-length"),
+        )
+    finally:
+        await response.aclose()
+
 
 # Strong references to pending close tasks so they are not garbage
 # collected before completing (create_task only keeps a weak reference).
@@ -67,13 +128,16 @@ async def public_http_request(
             client.cookies.clear()  # Never scope cookies to the pinned numeric IP.
             for index, address in enumerate(addresses):
                 try:
-                    response = await client.request(
-                        method,
-                        current.copy_with(host=address),
-                        headers=logical_request.headers,
-                        content=content,
-                        extensions={"sni_hostname": current.host},
+                    response = await client.send(
+                        client.build_request(
+                            method,
+                            current.copy_with(host=address),
+                            headers=logical_request.headers,
+                            content=content,
+                            extensions={"sni_hostname": current.host},
+                        ),
                         follow_redirects=False,
+                        stream=True,
                     )
                     break
                 except (httpx.ConnectError, httpx.ConnectTimeout):
@@ -86,7 +150,9 @@ async def public_http_request(
             cookies.extract_cookies(response)
             location = response.headers.get("location")
             if not follow_redirects or not response.is_redirect or not location:
+                await _read_httpx_body(response)
                 return response
+            await response.aclose()
             target = httpx.URL(urljoin(str(current), location))
             if (
                 target.host != current.host
@@ -357,9 +423,13 @@ class HttpxClient:
             client = self._get_or_create_client(
                 timeout_s, resolve_proxy_for_url(url, proxy)
             )
-            resp = await client.get(
-                url, headers=headers, timeout=httpx.Timeout(timeout_s)
+            resp = await client.send(
+                client.build_request(
+                    "GET", url, headers=headers, timeout=httpx.Timeout(timeout_s)
+                ),
+                stream=True,
             )
+            await _read_httpx_body(resp)
         return StaticHttpResponse(
             content=resp.content,
             status_code=resp.status_code,
@@ -463,9 +533,18 @@ class CurlCffiClient:
         if public_network_only.get():
             return await HttpxClient().get(url, headers, timeout_s, proxy)
         session = self._get_or_create_session(resolve_proxy_for_url(url, proxy))
-        resp = await session.get(url, headers=headers, timeout=timeout_s)
+        resp = await session.get(url, headers=headers, timeout=timeout_s, stream=True)
+        try:
+            content = await _read_capped_body(
+                resp.aiter_content(),
+                None
+                if resp.status_code in _BODYLESS_STATUSES
+                else resp.headers.get("content-length"),
+            )
+        finally:
+            await resp.aclose()
         return StaticHttpResponse(
-            content=resp.content,
+            content=content,
             status_code=resp.status_code,
             headers={k.lower(): v for k, v in resp.headers.items() if v is not None},
             url=resp.url,
