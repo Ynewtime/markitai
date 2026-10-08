@@ -13,10 +13,13 @@ installation steps are in the [quick start](quickstart.md) and
 [bindings](bindings.md#installation).
 
 `python scripts/check.py` runs the source gate with `MARKITAI_HOME` set to
-`.local/test-home` on all hosts; `scripts/check.sh` delegates to it on Unix. It
-runs the first three commands below and the `scripts/test_*.py` helper tests.
-It isolates Markitai state, but inherits `HOME`; for local verification provide
-a separate `HOME` as well, preserving explicit toolchain paths as needed.
+`.local/test-home` and `HOME` and `USERPROFILE` set to `.local/test-user-home`
+on all hosts; `scripts/check.sh` delegates to it on Unix. It runs the first
+three commands below and the `scripts/test_*.py` helper tests. `CARGO_HOME` and
+`RUSTUP_HOME` default to the original home's `.cargo` and `.rustup`, and Python
+or Node reached through a home-relative shim (mise, asdf) is replaced on `PATH`
+by the directory of the interpreter it resolves to. Other tools must be on
+`PATH` by an absolute directory.
 Build the optimized CLI separately:
 
 ```sh

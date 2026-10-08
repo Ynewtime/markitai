@@ -27,8 +27,10 @@ python3 scripts/benchmark_cli.py \
 ```
 
 On Linux use `.so`; on Windows use `.dll`. The reference needs its own installed
-`.venv`, or an explicit `--reference-python`. Use isolated `HOME` and
-`MARKITAI_HOME` directories, repository fixtures and loopback mock servers.
+`.venv`, or an explicit `--reference-python`. `audit_formats.py` gives each
+engine private `HOME`, `USERPROFILE` and `MARKITAI_HOME` directories under the
+output directory; run the other scripts with isolated `HOME` and
+`MARKITAI_HOME` directories. Use repository fixtures and loopback mock servers.
 
 Record the source and artifact identities, commands, platform, fixture set and
 raw results under ignored `.local/`. Compare output quality before interpreting
