@@ -1264,6 +1264,19 @@ async def run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
 
         ctx.shared_processor = create_llm_processor(ctx.config)
 
+    from markitai.llm.engine import llm_usage_scope
+
+    # Usage and request budgets are tracked under the basename (also the
+    # display/frontmatter source); scope them to this file so same-named
+    # files of a batch on the shared processor stay apart
+    with llm_usage_scope(str(ctx.input_path.resolve())):
+        return await _run_llm_enhancement(ctx)
+
+
+async def _run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
+    """Body of run_llm_enhancement, inside the file's usage scope."""
+    assert ctx.conversion_result is not None
+    assert ctx.shared_processor is not None
     if ctx.config.llm.pure and not ctx.config.screenshot.screenshot_only:
         # Pure mode: --screenshot-only takes precedence (mutually exclusive)
         from markitai.converter.base import IMAGE_ONLY_FORMATS

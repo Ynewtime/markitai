@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The LLM cache no longer returns stale output for a long document edited after its first 50,000 characters, or for pages and screenshots whose images changed but whose names did not: the cache key now covers the full text and the image bytes.
 - `cache.enabled: false` now turns off the LLM result cache (`cache.db` is no longer read or written), and `cache.max_size_bytes` now limits it.
 - An empty image caption or an empty screenshot extraction from the model is no longer cached for good (it counts as a failed analysis, so the original alt text is kept and the next run asks again), and images re-encoded to JPEG before sending are no longer labelled as PNG.
+- `.urls` batches share one LLM processor, so `--llm-concurrency` now limits the whole list instead of each URL; and same-named files in one batch (`a/report.pdf`, `b/report.pdf`) no longer share or wipe each other's LLM cost, usage and `max_requests_per_document` budget.
 
 ## [1.2.0] - 2026-09-28
 
