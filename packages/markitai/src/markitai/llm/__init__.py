@@ -42,7 +42,6 @@ from markitai.llm.content import (
 
 # Re-export model utilities from refactored module
 from markitai.llm.models import (
-    MarkitaiLLMLogger,
     context_display_name,
     get_model_info_cached,
     get_model_max_output_tokens,
@@ -97,5 +96,4 @@ __all__ = [
     "get_model_max_output_tokens",
     "get_response_cost",
     "context_display_name",
-    "MarkitaiLLMLogger",
 ]

@@ -608,10 +608,6 @@ class BatchProcessor:
         self._progress: Progress | None = None
         self._overall_task_id: TaskID | None = None
         self._url_task_id: TaskID | None = None
-        self._total_urls: int = 0
-        self._total_files: int = 0
-        self._completed_urls: int = 0
-        self._completed_files: int = 0
         self._active_file_items: dict[str, str] = {}
         self._active_url_items: dict[str, str] = {}
         self._dirty_keys: set[str] = set()
@@ -739,12 +735,6 @@ class BatchProcessor:
             transient=True,  # Clear progress when done
         )
 
-        # Store totals for progress display
-        self._total_urls = total_urls
-        self._total_files = total_files
-        self._completed_urls = 0
-        self._completed_files = 0
-
         # Add URL progress task if there are URLs to process
         if total_urls > 0:
             self._url_task_id = self._progress.add_task(
@@ -784,16 +774,8 @@ class BatchProcessor:
         # Re-add console handler (restore original state)
         if self._console_handler_id is not None:
             if self._console_log_restorer is not None:
-                self._restored_console_handler_id = self._console_log_restorer(
-                    self._verbose
-                )
+                self._console_log_restorer(self._verbose)
             self._console_handler_id = None
-
-    def update_progress_total(self, total: int) -> None:
-        """Update progress bar total after file discovery."""
-        self._total_files = total
-        if self._progress is not None and self._overall_task_id is not None:
-            self._progress.update(self._overall_task_id, total=total)
 
     def _render_active_items(self, items: dict[str, str]) -> str:
         """Render active item labels for a compact progress suffix."""
@@ -819,7 +801,6 @@ class BatchProcessor:
             elif clear_current:
                 self._active_file_items.clear()
 
-            self._completed_files += 1
             self._progress.advance(self._overall_task_id)
             if clear_current:
                 self._progress.update(
@@ -857,7 +838,6 @@ class BatchProcessor:
         if self._progress is not None and self._url_task_id is not None:
             if completed:
                 self._active_url_items.pop(item_key, None)
-                self._completed_urls += 1
                 self._progress.advance(self._url_task_id)
                 self._progress.update(
                     self._url_task_id,

@@ -295,11 +295,6 @@ class BaseConverter(ABC):
         """
         pass
 
-    def can_convert(self, path: Path | str) -> bool:
-        """Check if this converter can handle the given file."""
-        fmt = detect_format(path)
-        return fmt in self.supported_formats
-
 
 # Registry of converters by format, filled by @register_converter as each
 # converter module is imported.

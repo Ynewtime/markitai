@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from markitai.constants import DEFAULT_OCR_SAMPLE_PAGES, DEFAULT_RENDER_DPI
+from markitai.constants import DEFAULT_RENDER_DPI
 from markitai.ocr_layout import layout_ocr_text
 from markitai.utils.errors import MissingDependencyError, extra_install_command
 
@@ -934,45 +934,6 @@ class OCRProcessor:
             image_array = image_array[:, :, :3]
 
         return self.recognize_numpy(image_array)
-
-    def is_scanned_pdf(
-        self, pdf_path: Path, sample_pages: int = DEFAULT_OCR_SAMPLE_PAGES
-    ) -> bool:
-        """
-        Check if a PDF is likely scanned (image-based).
-
-        Args:
-            pdf_path: Path to the PDF file
-            sample_pages: Number of pages to sample
-
-        Returns:
-            True if PDF appears to be scanned
-        """
-        try:
-            import pymupdf
-        except ImportError:
-            return False
-
-        doc = pymupdf.open(pdf_path)
-        try:
-            total_text_length = 0
-            pages_to_check = min(sample_pages, len(doc))
-            if pages_to_check == 0:
-                # Zero-page PDF: nothing to scan, avoid division by zero
-                return False
-
-            for i in range(pages_to_check):
-                page = doc[i]
-                # Note: pymupdf get_text() returns str but type stubs say Any
-                text: str = page.get_text()  # type: ignore[assignment]
-                total_text_length += len(text.strip())
-
-            # If very little text extracted, likely scanned
-            avg_text_per_page = total_text_length / pages_to_check
-            return avg_text_per_page < 100  # Threshold: less than 100 chars per page
-
-        finally:
-            doc.close()
 
     def recognize_to_markdown(self, image_path: Path | str) -> str:
         """Perform OCR and lay the result out as Markdown in reading order.

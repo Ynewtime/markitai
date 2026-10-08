@@ -185,14 +185,3 @@ class UserNoticeCollector:
             except ValueError:  # logger reconfigured underneath us
                 pass
             self._sink_id = None
-
-
-@contextmanager
-def collect_user_notices() -> Iterator[list[str]]:
-    """Context-manager form of :class:`UserNoticeCollector`."""
-    collector = UserNoticeCollector()
-    collector.start()
-    try:
-        yield collector.notices
-    finally:
-        collector.stop()

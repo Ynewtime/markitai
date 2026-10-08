@@ -1393,7 +1393,6 @@ class TestLLMProcessorInit:
     ):
         """Test default usage tracking structures are created."""
         processor = LLMProcessor(llm_config, prompts_config)
-        assert processor._usage is not None
         assert processor._context_usage is not None
         assert processor._call_counter is not None
 
@@ -1406,9 +1405,9 @@ class TestLLMProcessorUsageTracking:
     ):
         """Test basic usage tracking."""
         processor = LLMProcessor(llm_config, prompts_config)
-        processor._track_usage("model-a", 100, 50, 0.001)
+        processor._track_usage("model-a", 100, 50, 0.001, context="file.pdf")
 
-        usage = processor.get_usage()
+        usage = processor.get_context_usage("file.pdf")
         assert "model-a" in usage
         assert usage["model-a"]["requests"] == 1
         assert usage["model-a"]["input_tokens"] == 100
@@ -1420,10 +1419,10 @@ class TestLLMProcessorUsageTracking:
     ):
         """Test usage accumulates across multiple calls."""
         processor = LLMProcessor(llm_config, prompts_config)
-        processor._track_usage("model-a", 100, 50, 0.001)
-        processor._track_usage("model-a", 200, 100, 0.002)
+        processor._track_usage("model-a", 100, 50, 0.001, context="file.pdf")
+        processor._track_usage("model-a", 200, 100, 0.002, context="file.pdf")
 
-        usage = processor.get_usage()
+        usage = processor.get_context_usage("file.pdf")
         assert usage["model-a"]["requests"] == 2
         assert usage["model-a"]["input_tokens"] == 300
         assert usage["model-a"]["output_tokens"] == 150
@@ -1439,15 +1438,6 @@ class TestLLMProcessorUsageTracking:
         context_usage = processor.get_context_usage("file.pdf")
         assert "model-a" in context_usage
         assert context_usage["model-a"]["requests"] == 1
-
-    def test_get_total_cost(self, llm_config: LLMConfig, prompts_config: PromptsConfig):
-        """Test getting total cost across all models."""
-        processor = LLMProcessor(llm_config, prompts_config)
-        processor._track_usage("model-a", 100, 50, 0.001)
-        processor._track_usage("model-b", 200, 100, 0.002)
-
-        total = processor.get_total_cost()
-        assert total == pytest.approx(0.003)
 
     def test_get_context_cost(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
@@ -1490,7 +1480,7 @@ class TestLLMProcessorUsageTracking:
 
         def track_usage():
             for _ in range(100):
-                processor._track_usage("model", 10, 5, 0.0001)
+                processor._track_usage("model", 10, 5, 0.0001, context="file.pdf")
 
         threads = [threading.Thread(target=track_usage) for _ in range(10)]
         for t in threads:
@@ -1498,7 +1488,7 @@ class TestLLMProcessorUsageTracking:
         for t in threads:
             t.join()
 
-        usage = processor.get_usage()
+        usage = processor.get_context_usage("file.pdf")
         assert usage["model"]["requests"] == 1000
 
 
@@ -1518,35 +1508,6 @@ class TestLLMProcessorCallCounter:
         assert idx1 == 1
         assert idx2 == 2
         assert idx3 == 1
-
-    def test_reset_call_counter_specific(
-        self, llm_config: LLMConfig, prompts_config: PromptsConfig
-    ):
-        """Test resetting counter for specific context."""
-        processor = LLMProcessor(llm_config, prompts_config)
-        processor._get_next_call_index("file.pdf")
-        processor._get_next_call_index("file.pdf")
-        processor._get_next_call_index("other.pdf")
-
-        processor.reset_call_counter("file.pdf")
-
-        # file.pdf should start fresh
-        assert processor._get_next_call_index("file.pdf") == 1
-        # other.pdf should continue
-        assert processor._get_next_call_index("other.pdf") == 2
-
-    def test_reset_call_counter_all(
-        self, llm_config: LLMConfig, prompts_config: PromptsConfig
-    ):
-        """Test resetting all counters."""
-        processor = LLMProcessor(llm_config, prompts_config)
-        processor._get_next_call_index("file.pdf")
-        processor._get_next_call_index("other.pdf")
-
-        processor.reset_call_counter()
-
-        assert processor._get_next_call_index("file.pdf") == 1
-        assert processor._get_next_call_index("other.pdf") == 1
 
 
 class TestLLMProcessorCacheManagement:

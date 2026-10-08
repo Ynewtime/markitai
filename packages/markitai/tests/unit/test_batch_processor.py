@@ -1119,37 +1119,20 @@ class TestProgressTracking:
             total_urls=5,
         )
 
+        def completed(task_id: object) -> float:
+            assert processor._progress is not None
+            return next(
+                t.completed for t in processor._progress.tasks if t.id == task_id
+            )
+
         # Test progress updates
         processor.advance_progress()
-        assert processor._completed_files == 1
+        assert completed(processor._overall_task_id) == 1
 
         processor.update_url_status("https://example.com", completed=True)
-        assert processor._completed_urls == 1
+        assert completed(processor._url_task_id) == 1
 
         # Stop live display
-        processor.stop_live_display()
-
-    def test_batch_processor_update_progress_total(
-        self,
-        batch_config: BatchConfig,
-        sample_output_dir: Path,
-    ) -> None:
-        """Test updating progress total after discovery."""
-        processor = BatchProcessor(
-            config=batch_config,
-            output_dir=sample_output_dir,
-        )
-
-        processor.start_live_display(
-            verbose=False,
-            total_files=5,
-            total_urls=0,
-        )
-
-        # Update total (e.g., after resume filtering)
-        processor.update_progress_total(10)
-        assert processor._total_files == 10
-
         processor.stop_live_display()
 
 

@@ -156,7 +156,6 @@ CONFIG_FILENAME = "markitai.json"
 # =============================================================================
 
 DEFAULT_OCR_LANG = "en"
-DEFAULT_OCR_SAMPLE_PAGES = 3  # Pages to sample for scanned PDF detection
 
 # =============================================================================
 # Misc Defaults

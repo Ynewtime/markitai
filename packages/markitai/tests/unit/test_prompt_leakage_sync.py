@@ -17,7 +17,6 @@ from markitai.llm.document import (
     PROMPT_LEAKAGE_MARKERS,
     PURE_MODE_RULES,
     SCREENSHOT_LABEL,
-    STANDARD_MODE_RULES,
     VISION_METADATA_SECTION,
     VISION_TAIL_REMINDER,
 )
@@ -28,7 +27,6 @@ from markitai.workflow.helpers import PROMPT_LEAKAGE_KEY_PATTERNS
 # In-code prompt fragments that are sent to the model alongside the .md
 # templates. Anything added here must also reach the model.
 IN_CODE_PROMPT_TEXTS: tuple[str, ...] = (
-    STANDARD_MODE_RULES,
     PURE_MODE_RULES,
     SCREENSHOT_LABEL,
     PAGE_LABEL_TEMPLATE,
