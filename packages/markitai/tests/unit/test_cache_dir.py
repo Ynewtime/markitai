@@ -280,6 +280,51 @@ class TestLLMProcessorCacheUsesGlobalDir:
         )
 
 
+class TestCreateLlmProcessorHonoursCacheConfig:
+    """Regression: cache.enabled and cache.max_size_bytes were not passed to
+    the LLM processor, so cache.db was read and written with cache disabled."""
+
+    @staticmethod
+    def _config(tmp_path: Path) -> MarkitaiConfig:
+        from markitai.config import LiteLLMParams, ModelConfig
+
+        cfg = MarkitaiConfig()
+        cfg.cache.global_dir = str(tmp_path / "cache")
+        cfg.llm.enabled = True
+        cfg.llm.model_list = [
+            ModelConfig(
+                model_name="test",
+                litellm_params=LiteLLMParams(
+                    model="openai/gpt-4o-mini", api_key="test-key"
+                ),
+            ),
+        ]
+        return cfg
+
+    def test_cache_disabled_is_neither_read_nor_written(self, tmp_path: Path) -> None:
+        from markitai.workflow.helpers import create_llm_processor
+
+        cfg = self._config(tmp_path)
+        cfg.cache.enabled = False
+
+        cache = create_llm_processor(cfg)._persistent_cache
+        cache.set("prompt", "content", {"cleaned_markdown": "x"})
+
+        assert cache.get("prompt", "content") is None
+        assert not (tmp_path / "cache").exists()
+
+    def test_max_size_bytes_reaches_the_cache_file(self, tmp_path: Path) -> None:
+        from markitai.workflow.helpers import create_llm_processor
+
+        cfg = self._config(tmp_path)
+        cfg.cache.max_size_bytes = 12345
+
+        cache = create_llm_processor(cfg)._persistent_cache
+
+        assert cache._global_cache is not None
+        assert cache._global_cache._max_size_bytes == 12345
+
+
 class TestCacheDirectoryExpansion:
     """Tests for cache directory path expansion."""
 

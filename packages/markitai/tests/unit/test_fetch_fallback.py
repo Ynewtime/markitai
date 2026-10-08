@@ -655,3 +655,87 @@ class TestCloudflareActionableErrors:
         assert "Cloudflare API token and account ID required" in message
         assert "markitai config set fetch.cloudflare.account_id <account-id>" in message
         assert "Config file:" in message
+
+
+class TestExplicitRemoteStrategyIsNotGlobalConsent:
+    """Regression: `-s jina` seeded the process-wide consent decision, so when
+    Jina refused, the fallback chain sent the URL to defuddle.md, Cloudflare
+    and FxTwitter even with fetch.remote_consent = "never"."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_consent(self):
+        from markitai.fetch_consent import reset_remote_consent
+
+        reset_remote_consent()
+        yield
+        reset_remote_consent()
+
+    def test_cli_explicit_jina_leaves_the_decision_open(self, tmp_path) -> None:
+        from click.testing import CliRunner
+
+        from markitai.cli import app
+        from markitai.fetch_consent import _get_state
+
+        with patch("markitai.cli.processors.url.process_url", new=AsyncMock()):
+            result = CliRunner().invoke(
+                app, ["https://example.com/page", "-s", "jina", "-o", str(tmp_path)]
+            )
+
+        assert result.exit_code == 0, result.output
+        assert _get_state().decision is None
+
+    @pytest.mark.asyncio
+    async def test_explicit_jina_works_without_global_consent(self) -> None:
+        """The explicit dispatch opts in to Jina on its own."""
+        jina_result = FetchResult(
+            content="# Article\n\n" + "Body text. " * 40,
+            strategy_used="jina",
+            url="https://example.com/article",
+        )
+        with patch(
+            "markitai.fetch_strategies.jina.fetch_with_jina",
+            AsyncMock(return_value=jina_result),
+        ) as jina:
+            result = await fetch_url(
+                "https://example.com/article",
+                FetchStrategy.JINA,
+                FetchConfig(remote_consent="never"),
+                explicit_strategy=True,
+                skip_read_cache=True,
+            )
+
+        assert result.strategy_used == "jina"
+        jina.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_fallback_after_refusal_honours_remote_consent(self) -> None:
+        defuddle = AsyncMock(
+            return_value=FetchResult(content="# x", strategy_used="defuddle", url="u")
+        )
+        with (
+            patch(
+                "markitai.fetch_strategies.jina.fetch_with_jina",
+                AsyncMock(side_effect=JinaRateLimitError()),
+            ),
+            patch("markitai.fetch_strategies.defuddle.fetch_with_defuddle", defuddle),
+            patch(
+                "markitai.fetch_strategies.static.StaticRunner.fetch",
+                AsyncMock(side_effect=FetchError("static failed")),
+            ),
+            patch(
+                "markitai.fetch_strategies.playwright.PlaywrightRunner.fetch",
+                AsyncMock(side_effect=FetchError("browser failed")),
+            ),
+            patch("sys.stdin") as stdin,
+            pytest.raises(FetchError),
+        ):
+            stdin.isatty.return_value = False
+            await fetch_url(
+                "https://example.com/article",
+                FetchStrategy.JINA,
+                FetchConfig(remote_consent="never"),
+                explicit_strategy=True,
+                skip_read_cache=True,
+            )
+
+        defuddle.assert_not_awaited()

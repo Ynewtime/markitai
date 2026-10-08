@@ -15,6 +15,7 @@ from html import escape
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.extractors.base import site_url
 from markitai.webextract.resolver import ResolvedPage
 from markitai.webextract.types import ContentProfile
 
@@ -30,9 +31,14 @@ class SteamNewsExtractor:
 
     def matches_url(self, url: str) -> bool:
         """Match Steam store news URLs."""
-        return bool(
-            re.search(r"store\.steampowered\.com/news/", url)
-            or re.search(r"/news/app/\d+/view/\d+", url)
+        parts = site_url(url, "store.steampowered.com")
+        return parts is not None and parts.path.startswith("/news/")
+
+    def matches_document(self, soup: BeautifulSoup) -> bool:
+        """Recognize a Steam event page served from another host by its data."""
+        config_el = soup.find(id="application_config")
+        return isinstance(config_el, Tag) and config_el.has_attr(
+            "data-partnereventstore"
         )
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:

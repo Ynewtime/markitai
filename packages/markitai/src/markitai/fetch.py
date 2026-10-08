@@ -279,6 +279,68 @@ async def _get_playwright_renderer(
     )
 
 
+# "This page needs JavaScript" wording (regex variants of JS_REQUIRED_PATTERNS)
+_JS_REQUIRED_TEXT_PATTERNS = (
+    r"this (?:page|site|website) requires javascript",
+    r"you need (?:to enable )?javascript",
+    r"enable javascript to (?:view|continue|access)",
+)
+
+# Cloudflare/bot-protection interstitials. They often also say "enable
+# JavaScript and cookies", but a browser meets the same check.
+_BOT_CHECK_TEXT_PATTERNS = (
+    r"^(?:\s*#?\s*)?(?:just a moment|one moment)\.{0,3}\s*$",
+    r"checking (?:if the site connection is secure|your browser)",
+    r"verifying (?:you are human|your browser)",
+    r"ray id:",  # Cloudflare error pages include Ray ID
+)
+
+
+# A page whose only text is a loading placeholder (a JavaScript shell)
+_LOADING_PLACEHOLDER_RE = re.compile(
+    r"\s*(?:(?:loading|please wait|loading please wait|"
+    r"正在加载|加载中|请稍候|読み込み中|読み込み中です|로딩 중|로딩 중입니다)\s*)+"
+)
+
+
+def _markdown_text(content: str) -> str:
+    """The visible text of Markdown: formatting, images and links stripped."""
+    text_only = re.sub(r"[#*_\[\]()>`\-|]", "", content)
+    text_only = re.sub(r"!\[.*?\]\(.*?\)", "", text_only)  # Remove image refs
+    text_only = re.sub(r"\[.*?\]\(.*?\)", "", text_only)  # Remove links
+    return " ".join(text_only.split()).strip()
+
+
+def _is_loading_placeholder(text_only: str) -> bool:
+    """Whether the visible text is nothing but a loading placeholder."""
+    placeholder = re.sub(r"[^\w\s]", " ", text_only.lower())
+    return bool(_LOADING_PLACEHOLDER_RE.fullmatch(placeholder))
+
+
+def _says_javascript_required(content: str) -> bool:
+    """Whether a page is explicitly a JavaScript shell (not a bot check).
+
+    The signal that teaches the SPA domain cache: the page says it needs
+    JavaScript, shows only a loading placeholder, or has no text at all. A
+    CAPTCHA, a Cloudflare challenge or a merely short page must not, or
+    every later request for the domain would go to the browser for 30 days.
+    """
+    content_lower = content.lower()
+    if any(re.search(p, content_lower, re.MULTILINE) for p in _BOT_CHECK_TEXT_PATTERNS):
+        return False
+    if any(
+        re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+        for pattern, _reason in _CAPTCHA_PATTERNS
+    ):
+        return False
+    if any(p.lower() in content_lower for p in JS_REQUIRED_PATTERNS) or any(
+        re.search(p, content_lower) for p in _JS_REQUIRED_TEXT_PATTERNS
+    ):
+        return True
+    text_only = _markdown_text(content)
+    return not text_only or _is_loading_placeholder(text_only)
+
+
 def detect_js_required(content: str, *, allow_short_content: bool = False) -> bool:
     """Detect if content indicates JavaScript rendering is required.
 
@@ -314,15 +376,9 @@ def detect_js_required(content: str, *, allow_short_content: bool = False) -> bo
     # These patterns are more specific to avoid false positives
     spa_text_patterns = [
         # JS requirement messages (already covered by JS_REQUIRED_PATTERNS, but regex variants)
-        r"this (?:page|site|website) requires javascript",
-        r"you need (?:to enable )?javascript",
-        r"enable javascript to (?:view|continue|access)",
+        *_JS_REQUIRED_TEXT_PATTERNS,
         # Cloudflare/bot protection (only when it's the main content)
-        r"^(?:\s*#?\s*)?(?:just a moment|one moment)\.{0,3}\s*$",
-        r"checking (?:if the site connection is secure|your browser)",
-        r"verifying (?:you are human|your browser)",
-        r"ray id:",  # Cloudflare error pages include Ray ID
-        # Common SPA loading states (only if very short content)
+        *_BOT_CHECK_TEXT_PATTERNS,
     ]
     for pattern in spa_text_patterns:
         if re.search(pattern, content_lower, re.MULTILINE):
@@ -331,23 +387,13 @@ def detect_js_required(content: str, *, allow_short_content: bool = False) -> bo
 
     # 3. Check for very short content (likely a JS-only page)
     # Strip markdown formatting for accurate length check
-    text_only = re.sub(r"[#*_\[\]()>`\-|]", "", content)
-    text_only = re.sub(r"!\[.*?\]\(.*?\)", "", text_only)  # Remove image refs
-    text_only = re.sub(r"\[.*?\]\(.*?\)", "", text_only)  # Remove links
-    text_only = " ".join(text_only.split()).strip()
+    text_only = _markdown_text(content)
 
     if allow_short_content:
         # Native extraction has already passed a content-aware quality gate.
         # A second arbitrary length/word-diversity threshold would turn valid
         # notes, formulas and short social posts into expensive browser jobs.
-        placeholder = re.sub(r"[^\w\s]", " ", text_only.lower())
-        return bool(
-            re.fullmatch(
-                r"\s*(?:(?:loading|please wait|loading please wait|"
-                r"正在加载|加载中|请稍候|読み込み中|読み込み中です|로딩 중|로딩 중입니다)\s*)+",
-                placeholder,
-            )
-        )
+        return _is_loading_placeholder(text_only)
 
     if len(text_only) < 100:
         logger.debug(f"JS required: content too short ({len(text_only)} chars)")
@@ -1215,6 +1261,22 @@ async def _screenshot_only_fallback(
     )
 
 
+# Anti-bot/CAPTCHA signatures (reason prefixed ``captcha_``)
+_CAPTCHA_PATTERNS = (
+    # Geetest (极验) — confirmed against a real bilibili.com challenge
+    # page returned during rate-limit-triggered testing (2026-07-07).
+    (r"智能验证检测中", "captcha_geetest"),
+    (r"由极验提供技术支持", "captcha_geetest"),
+    # Widely-documented anti-bot vendor signatures (Cloudflare browser
+    # check, reCAPTCHA, hCaptcha) — stable, well-known markers, not
+    # captured against a live challenge this session.
+    (r"Checking your browser before accessing", "captcha_cloudflare"),
+    (r"cf-browser-verification|cf_chl_", "captcha_cloudflare"),
+    (r"g-recaptcha|google\.com/recaptcha", "captcha_recaptcha"),
+    (r"hcaptcha\.com|h-captcha", "captcha_hcaptcha"),
+)
+
+
 def _is_invalid_content(
     content: str, *, allow_short_content: bool = False
 ) -> tuple[bool, str]:
@@ -1244,17 +1306,7 @@ def _is_invalid_content(
         (r"Something went wrong.*let's give it another shot", "error_page"),
         (r"Log in.*Sign up.*to continue", "login_required"),
         (r"You must be logged in", "login_required"),
-        # Geetest (极验) — confirmed against a real bilibili.com challenge
-        # page returned during rate-limit-triggered testing (2026-07-07).
-        (r"智能验证检测中", "captcha_geetest"),
-        (r"由极验提供技术支持", "captcha_geetest"),
-        # Widely-documented anti-bot vendor signatures (Cloudflare browser
-        # check, reCAPTCHA, hCaptcha) — stable, well-known markers, not
-        # captured against a live challenge this session.
-        (r"Checking your browser before accessing", "captcha_cloudflare"),
-        (r"cf-browser-verification|cf_chl_", "captcha_cloudflare"),
-        (r"g-recaptcha|google\.com/recaptcha", "captcha_recaptcha"),
-        (r"hcaptcha\.com|h-captcha", "captcha_hcaptcha"),
+        *_CAPTCHA_PATTERNS,
     ]
 
     for pattern, reason in invalid_patterns:
@@ -1318,8 +1370,9 @@ def _static_result_rejection(result: FetchResult) -> tuple[str | None, bool]:
 
     Returns:
         ``(reason, needs_browser)``. ``reason`` is None when the result is
-        acceptable; ``needs_browser`` is True when the page looked
-        JavaScript-rendered (the domain is then learned as a SPA).
+        acceptable; ``needs_browser`` is True when the page says it needs
+        JavaScript (the domain is then learned as a SPA). A CAPTCHA, a bot
+        check or a short page is rejected without teaching the cache.
     """
     if not _is_html_result(result):
         # Documents skip the JS heuristics and the length gate entirely:
@@ -1330,11 +1383,18 @@ def _static_result_rejection(result: FetchResult) -> tuple[str | None, bool]:
         return None, False
 
     native_accepted = _native_accepted(result)
-    if detect_js_required(result.content, allow_short_content=native_accepted):
-        return "page requires JavaScript rendering", True
     is_invalid, reason = _is_invalid_content(
         result.content, allow_short_content=native_accepted
     )
+    if is_invalid and reason.startswith("captcha_"):
+        # Before the JavaScript heuristics: challenge pages say "enable
+        # JavaScript" too, but they are not JavaScript shells
+        return f"invalid content ({reason})", False
+    if detect_js_required(result.content, allow_short_content=native_accepted):
+        return (
+            "page requires JavaScript rendering",
+            _says_javascript_required(result.content),
+        )
     if is_invalid:
         return f"invalid content ({reason})", False
     return None, False
@@ -1404,9 +1464,9 @@ async def _fetch_with_fallback(
     # DEFER it — the chain is local-first, so most fetches succeed via
     # static/playwright and the user is never asked (lazy consent).
     # A strategy selected in config is still governed by remote_consent.
-    # CLI-explicit remote choices seed the process decision to True before
-    # reaching this chain, so they remain deliberate opt-ins without creating
-    # a second bypass seam here.
+    # CLI-explicit remote choices never reach this chain (they dispatch
+    # directly); the chain they fall back to after a refusal is governed by
+    # remote_consent like any other.
     _consent_gated = True
     if _consent_gated and any(s in EXTERNAL_STRATEGIES for s in strategies):
         _peeked = peek_remote_consent(config)

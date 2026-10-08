@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from markitai.llm import LLMProcessor
 
 JOB_TTL_HOURS = 7 * 24.0  # conversion history is kept for 7 days
+# How often a running server expires history older than JOB_TTL_HOURS
+JOB_EXPIRY_INTERVAL_SECONDS = 3600.0
 META_FILENAME = "meta.json"
 #: Queue sentinel telling an SSE stream the server is shutting down. Never
 #: sent to clients: the stream just ends.
@@ -335,8 +337,42 @@ class JobRegistry:
                 pass
 
 
-def cleanup_stale_jobs(jobs_root: Path, ttl_hours: float = JOB_TTL_HOURS) -> int:
-    """Delete job directories whose mtime is older than *ttl_hours*.
+def _iso_timestamp(value: object) -> float | None:
+    """POSIX timestamp of an ISO-8601 string, or None when it is not one."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        return None
+
+
+def _meta_finished_at(job_dir: Path) -> float | None:
+    """``finished_at`` of a job directory's meta.json, as a timestamp."""
+    try:
+        meta = json.loads((job_dir / META_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return _iso_timestamp(meta.get("finished_at")) if isinstance(meta, dict) else None
+
+
+def cleanup_stale_jobs(
+    jobs_root: Path,
+    ttl_hours: float = JOB_TTL_HOURS,
+    *,
+    keep: frozenset[str] = frozenset(),
+) -> int:
+    """Delete job directories that finished more than *ttl_hours* ago.
+
+    A job's age is its meta.json ``finished_at``; the directory mtime moves
+    whenever meta.json is rewritten (an item deletion), so it is only the
+    fallback for directories without a readable meta (crash leftovers).
+
+    Args:
+        jobs_root: The serve jobs root.
+        ttl_hours: Retention in hours.
+        keep: Job ids to leave alone (registered in a running server, which
+            expires them itself; see :func:`expire_jobs`).
 
     Returns:
         Number of removed job directories.
@@ -357,12 +393,63 @@ def cleanup_stale_jobs(jobs_root: Path, ttl_hours: float = JOB_TTL_HOURS) -> int
     removed = 0
     for entry in jobs_root.iterdir():
         try:
-            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+            if not entry.is_dir() or entry.name in keep:
+                continue
+            finished = _meta_finished_at(entry)
+            age_from = finished if finished is not None else entry.stat().st_mtime
+            if age_from < cutoff:
                 shutil.rmtree(entry, ignore_errors=True)
                 removed += 1
         except OSError:
             continue
     return removed
+
+
+async def expire_jobs(registry: JobRegistry, ttl_hours: float = JOB_TTL_HOURS) -> int:
+    """Delete history that finished more than *ttl_hours* ago.
+
+    Startup cleanup alone let a long-running server keep its history (and
+    every CLI run recorded into it) forever. Registered jobs are removed
+    the way ``DELETE /api/history/{id}`` removes them; directories the
+    registry does not know go through :func:`cleanup_stale_jobs`.
+
+    Returns:
+        Number of removed jobs.
+    """
+    cutoff = time.time() - ttl_hours * 3600
+    removed = 0
+    for job in list(registry.jobs.values()):
+        finished = _iso_timestamp(job.finished_at)
+        if finished is None or finished >= cutoff:
+            continue
+        async with job.delete_lock:
+            if (
+                registry.get(job.job_id) is not job
+                or job.status == "running"
+                or job.runners
+            ):
+                continue
+            await asyncio.to_thread(registry.discard_job, job)
+            removed += 1
+    removed += await asyncio.to_thread(
+        cleanup_stale_jobs, registry.jobs_root, ttl_hours, keep=frozenset(registry.jobs)
+    )
+    return removed
+
+
+async def run_history_expiry(
+    registry: JobRegistry, interval_seconds: float = JOB_EXPIRY_INTERVAL_SECONDS
+) -> None:
+    """Expire old history every *interval_seconds* until cancelled."""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            removed = await expire_jobs(registry)
+        except Exception as e:  # never let a sweep end the loop
+            logger.warning("[Serve] History expiry failed: {}", e)
+            continue
+        if removed:
+            logger.info("[Serve] Expired {} old history job(s)", removed)
 
 
 # ---------------------------------------------------------------------------

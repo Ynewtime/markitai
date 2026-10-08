@@ -866,3 +866,125 @@ class TestBatchRendererFollowsEachUrlsProxy:
 
         assert seen["https://example.com/a"] is seen["https://example.com/b"]
         assert seen["https://example.com/a"].proxy is None
+
+
+class TestStaticClientsPerProxy:
+    """Regression: one client slot was shared by every proxy, and switching
+    proxy closed the old client while other coroutines were still awaiting
+    it, so a batch mixing proxied and NO_PROXY hosts failed at random."""
+
+    async def test_httpx_keeps_a_client_per_proxy_open(self) -> None:
+        import asyncio
+
+        from markitai.fetch_http import HttpxClient
+
+        client = HttpxClient()
+        proxied = client._get_or_create_client(5.0, "http://10.0.0.2:3128")
+        direct = client._get_or_create_client(5.0, None)
+        await asyncio.sleep(0)  # let any scheduled close run
+
+        assert not proxied.is_closed
+        assert client._get_or_create_client(5.0, "http://10.0.0.2:3128") is proxied
+        assert client._get_or_create_client(5.0, None) is direct
+
+        await client.close()
+        assert proxied.is_closed and direct.is_closed
+
+    async def test_curl_keeps_a_session_per_proxy_open(self) -> None:
+        import asyncio
+        import sys
+        import types
+
+        from markitai.fetch_http import CurlCffiClient
+
+        closed: list[Any] = []
+
+        class _Session:
+            def __init__(self, **kwargs: Any) -> None:
+                self.proxies = kwargs["proxies"]
+
+            async def close(self) -> None:
+                closed.append(self)
+
+        requests_module = types.ModuleType("curl_cffi.requests")
+        requests_module.AsyncSession = _Session  # type: ignore[attr-defined]
+        package = types.ModuleType("curl_cffi")
+        package.requests = requests_module  # type: ignore[attr-defined]
+        client = CurlCffiClient()
+        with patch.dict(
+            sys.modules, {"curl_cffi": package, "curl_cffi.requests": requests_module}
+        ):
+            proxied = client._get_or_create_session("http://10.0.0.2:3128")
+            direct = client._get_or_create_session(None)
+            await asyncio.sleep(0)
+
+            assert closed == []
+            assert client._get_or_create_session("http://10.0.0.2:3128") is proxied
+
+        await client.close()
+        assert set(closed) == {proxied, direct}
+
+
+# Real `scutil --proxy` layout: keys are printed alphabetically, so the port
+# comes before the host.
+SCUTIL_PROXY_OUTPUT = """<dictionary> {
+  ExceptionsList : <array> {
+    0 : *.local
+    1 : 169.254/16
+    2 : corp.example
+  }
+  FTPPassive : 1
+  HTTPEnable : 1
+  HTTPPort : 7890
+  HTTPProxy : 127.0.0.1
+  HTTPSEnable : 1
+  HTTPSPort : 7891
+  HTTPSProxy : proxy.corp.example
+  ProxyAutoConfigEnable : 0
+  SOCKSEnable : 0
+}
+"""
+
+
+class TestMacSystemProxy:
+    """Regression: the scutil parser stopped at HTTPSPort, before it had seen
+    HTTPSProxy, so macOS proxy auto-detection always found nothing."""
+
+    def test_parses_https_proxy_and_exceptions(self) -> None:
+        from markitai.fetch_session import _parse_scutil_proxy
+
+        proxy, bypass = _parse_scutil_proxy(SCUTIL_PROXY_OUTPUT)
+
+        assert proxy == "http://proxy.corp.example:7891"
+        assert bypass == "*.local,169.254/16,corp.example"
+
+    def test_falls_back_to_http_proxy(self) -> None:
+        from markitai.fetch_session import _parse_scutil_proxy
+
+        output = SCUTIL_PROXY_OUTPUT.replace("HTTPSEnable : 1", "HTTPSEnable : 0")
+
+        assert _parse_scutil_proxy(output)[0] == "http://127.0.0.1:7890"
+
+    def test_no_enabled_proxy(self) -> None:
+        from markitai.fetch_session import _parse_scutil_proxy
+
+        output = SCUTIL_PROXY_OUTPUT.replace("Enable : 1", "Enable : 0")
+
+        assert _parse_scutil_proxy(output) == ("", "*.local,169.254/16,corp.example")
+
+    def test_get_system_proxy_on_darwin(self) -> None:
+        import subprocess
+
+        from markitai.fetch_session import _get_system_proxy
+
+        completed = subprocess.CompletedProcess(
+            ["scutil", "--proxy"], 0, stdout=SCUTIL_PROXY_OUTPUT, stderr=""
+        )
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("subprocess.run", return_value=completed),
+        ):
+            proxy, bypass = _get_system_proxy()
+
+        assert proxy == "http://proxy.corp.example:7891"
+        assert "corp.example" in bypass

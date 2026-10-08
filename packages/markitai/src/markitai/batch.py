@@ -660,6 +660,13 @@ class BatchProcessor:
                 "image_desc_enabled",
                 "scan_max_depth",
                 "glob_patterns",
+                # output_affecting_options(): present only when not default,
+                # so a default run keeps the hash (and the state) it had
+                "pure",
+                "keep_base",
+                "screenshot_only",
+                "profile",
+                "fetch_strategy",
             )
         }
 

@@ -301,3 +301,96 @@ class TestAutoNonHtml:
                 skip_read_cache=True,
             )
         spa_cache.record_spa_domain.assert_called_once_with("https://spa.example.com/")
+
+
+class TestSpaLearningSignals:
+    """Regression: a Cloudflare challenge ("Just a moment...", "Ray ID:"), a
+    CAPTCHA or a merely short page taught the 30-day SPA cache, sending every
+    later request for the domain to the browser. Only an explicit JavaScript
+    shell may teach it (website/guide/fetch-policy.md, "SPA learning")."""
+
+    @staticmethod
+    async def _fetch_static_only(html: str) -> MagicMock:
+        response = StaticHttpResponse(
+            content=html.encode(),
+            status_code=200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            url="https://site.example.com/",
+        )
+        spa_cache = MagicMock()
+        spa_cache.is_known_spa.return_value = False
+        config = FetchConfig()
+        config.policy.strategy_priority = ["static"]
+        with (
+            patch("markitai.fetch.get_spa_domain_cache", return_value=spa_cache),
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=_client(response),
+            ),
+            pytest.raises(FetchError),
+        ):
+            await fetch_url(
+                "https://site.example.com/",
+                FetchStrategy.AUTO,
+                config,
+                skip_read_cache=True,
+            )
+        return spa_cache
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "html",
+        [
+            # Cloudflare interstitial: says "enable JavaScript", but a browser
+            # meets the same check
+            "<html><body><h1>Just a moment...</h1>"
+            "<p>Enable JavaScript and cookies to continue</p>"
+            "<p>Ray ID: 8c1f2e3d4a5b6c7d</p></body></html>",
+            "<html><body><p>Verifying you are human. This may take a few "
+            "seconds.</p></body></html>",
+            # Geetest CAPTCHA
+            "<html><body><p>智能验证检测中</p><p>由极验提供技术支持</p>"
+            "<p>Please enable JavaScript</p></body></html>",
+        ],
+    )
+    async def test_challenge_and_short_pages_do_not_teach(self, html: str) -> None:
+        spa_cache = await self._fetch_static_only(html)
+
+        spa_cache.record_spa_domain.assert_not_called()
+
+    def test_short_page_is_retried_in_a_browser_without_teaching(self) -> None:
+        from markitai.fetch import _static_result_rejection
+        from markitai.fetch_types import FetchResult
+
+        rejection, needs_browser = _static_result_rejection(
+            FetchResult(
+                content="# Not found\n\nNo such page.",
+                strategy_used="static",
+                url="https://site.example.com/",
+            )
+        )
+
+        assert rejection == "page requires JavaScript rendering"
+        assert needs_browser is False
+
+    @pytest.mark.parametrize("content", ["", "Loading...", "Please enable JavaScript."])
+    def test_javascript_shells_still_teach(self, content: str) -> None:
+        from markitai.fetch import _static_result_rejection
+        from markitai.fetch_types import FetchResult
+
+        _rejection, needs_browser = _static_result_rejection(
+            FetchResult(
+                content=content, strategy_used="static", url="https://a.example/"
+            )
+        )
+
+        assert needs_browser is True
+
+    @pytest.mark.asyncio
+    async def test_explicit_javascript_requirement_teaches(self) -> None:
+        spa_cache = await self._fetch_static_only(
+            "<html><body><p>This site requires JavaScript.</p></body></html>"
+        )
+
+        spa_cache.record_spa_domain.assert_called_once_with("https://site.example.com/")

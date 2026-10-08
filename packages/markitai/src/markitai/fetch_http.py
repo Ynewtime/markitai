@@ -335,25 +335,25 @@ _DIRECT_MOUNT_KEYS = ("http://", "https://", "all://")
 class HttpxClient:
     """Static HTTP client using httpx with connection pooling.
 
-    Maintains a persistent AsyncClient for connection reuse across requests.
-    The client is lazily initialized on first use and rebuilt when proxy config
-    changes. Call close() to release resources.
+    Maintains persistent AsyncClients for connection reuse across requests,
+    one per effective proxy: a batch mixing proxied and NO_PROXY/loopback
+    hosts keeps both pools open instead of closing the client other requests
+    are still awaiting. Clients are created lazily. Call close() to release
+    resources.
     """
 
     name = "httpx"
 
     def __init__(self) -> None:
-        self._client: Any = None
-        self._client_proxy: str | None = None  # Track proxy for rebuild
-        self._client_loop: Any = None  # Event loop the client is bound to
+        # (effective proxy, event loop the client is bound to) -> client
+        self._clients: dict[tuple[str | None, Any], Any] = {}
 
     def _get_or_create_client(self, timeout_s: float, proxy: str | None) -> Any:
-        """Get or create a shared httpx.AsyncClient.
+        """Get or create the shared httpx.AsyncClient for ``proxy``.
 
-        Rebuilds the client if the proxy configuration changes or the
-        running event loop differs from the one the client was created on
-        (each CLI invocation runs its own asyncio.run loop; reusing a
-        client bound to a closed loop raises "Event loop is closed").
+        Clients are bound to the running event loop: each CLI invocation
+        runs its own asyncio.run loop, and reusing a client bound to a
+        closed loop raises "Event loop is closed".
         """
         import asyncio
 
@@ -361,22 +361,17 @@ class HttpxClient:
             loop: Any = asyncio.get_running_loop()
         except RuntimeError:  # sync/test context: skip the loop check
             loop = None
-        if (
-            self._client is not None
-            and self._client_proxy == proxy
-            and (loop is None or self._client_loop is loop)
-        ):
-            return self._client
+        for (client_proxy, client_loop), client in self._clients.items():
+            if client_proxy == proxy and (loop is None or client_loop is loop):
+                return client
 
         import httpx
 
-        # Close old client if proxy or loop changed
-        if self._client is not None:
-            if loop is None or self._client_loop is loop:
-                schedule_client_close(self._client.aclose(), self.name)
-            else:
+        if loop is not None:
+            for key in [k for k in self._clients if k[1] is not loop]:
                 # The old loop is gone; its connections died with it
                 logger.debug("[HTTP] Dropping httpx client bound to a stale loop")
+                del self._clients[key]
 
         client_kwargs: dict[str, Any] = {
             "follow_redirects": True,
@@ -391,10 +386,9 @@ class HttpxClient:
             # from the environment. Other env settings (CA bundle) still apply.
             client_kwargs["mounts"] = dict.fromkeys(_DIRECT_MOUNT_KEYS)
 
-        self._client = httpx.AsyncClient(**client_kwargs)
-        self._client_proxy = proxy
-        self._client_loop = loop
-        return self._client
+        client = httpx.AsyncClient(**client_kwargs)
+        self._clients[(proxy, loop)] = client
+        return client
 
     async def get(
         self,
@@ -438,7 +432,7 @@ class HttpxClient:
         )
 
     async def close(self) -> None:
-        """Close the shared client and release resources.
+        """Close the shared clients and release resources.
 
         A client bound to a different (dead) event loop cannot be aclosed
         from the current loop — its connections died with that loop, so
@@ -446,41 +440,38 @@ class HttpxClient:
         """
         import asyncio
 
-        if self._client is not None:
-            try:
-                current = asyncio.get_running_loop()
-            except RuntimeError:
-                current = None
-            if self._client_loop is None or self._client_loop is current:
-                await self._client.aclose()
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        clients, self._clients = self._clients, {}
+        for (_proxy, client_loop), client in clients.items():
+            if client_loop is None or client_loop is current:
+                await client.aclose()
             else:
                 logger.debug(
                     "[HTTP] Dropping httpx client bound to a stale loop (close)"
                 )
-            self._client = None
-            self._client_proxy = None
-            self._client_loop = None
 
 
 class CurlCffiClient:
     """Static HTTP client using curl-cffi (impersonation support).
 
-    Maintains a persistent AsyncSession for connection reuse.
-    Call close() to release resources.
+    Maintains persistent AsyncSessions for connection reuse, one per
+    effective proxy (see HttpxClient). Call close() to release resources.
     """
 
     name = "curl_cffi"
 
     def __init__(self) -> None:
-        self._session: Any = None
-        self._session_proxy: str | None = None
-        self._session_loop: Any = None  # Event loop the session is bound to
+        # (effective proxy, event loop the session is bound to) -> session
+        self._sessions: dict[tuple[str | None, Any], Any] = {}
 
     def _get_or_create_session(self, proxy: str | None) -> Any:
-        """Get or create a shared curl-cffi AsyncSession.
+        """Get or create the shared curl-cffi AsyncSession for ``proxy``.
 
-        Rebuilds when the proxy or the running event loop changes (a
-        session bound to a closed loop raises "Event loop is closed").
+        Sessions are bound to the running event loop (a session bound to a
+        closed loop raises "Event loop is closed").
         """
         import asyncio
 
@@ -488,33 +479,27 @@ class CurlCffiClient:
             loop: Any = asyncio.get_running_loop()
         except RuntimeError:  # sync/test context: skip the loop check
             loop = None
-        if (
-            self._session is not None
-            and self._session_proxy == proxy
-            and (loop is None or self._session_loop is loop)
-        ):
-            return self._session
+        for (session_proxy, session_loop), session in self._sessions.items():
+            if session_proxy == proxy and (loop is None or session_loop is loop):
+                return session
 
         from curl_cffi.requests import AsyncSession  # type: ignore[import-not-found]
 
-        # Close old session if proxy or loop changed
-        if self._session is not None:
-            if loop is None or self._session_loop is loop:
-                schedule_client_close(self._session.close(), self.name)
-            else:
+        if loop is not None:
+            for key in [k for k in self._sessions if k[1] is not loop]:
                 logger.debug("[HTTP] Dropping curl session bound to a stale loop")
+                del self._sessions[key]
 
         # An empty proxy string makes libcurl connect directly even when
         # http_proxy/HTTPS_PROXY are set; None would let it re-read them for
         # a host resolve_proxy_for_url already exempted (NO_PROXY, loopback).
         proxies = {"http": proxy, "https": proxy} if proxy else {"all": ""}
-        self._session = AsyncSession(
+        session = AsyncSession(
             impersonate="chrome",
             proxies=proxies,  # type: ignore[arg-type]  # ProxySpec TypedDict accepts str values
         )
-        self._session_proxy = proxy
-        self._session_loop = loop
-        return self._session
+        self._sessions[(proxy, loop)] = session
+        return session
 
     async def get(
         self,
@@ -551,27 +536,25 @@ class CurlCffiClient:
         )
 
     async def close(self) -> None:
-        """Close the shared session and release resources.
+        """Close the shared sessions and release resources.
 
         A session bound to a different (dead) event loop cannot be closed
         from the current loop — drop the reference instead.
         """
         import asyncio
 
-        if self._session is not None:
-            try:
-                current = asyncio.get_running_loop()
-            except RuntimeError:
-                current = None
-            if self._session_loop is None or self._session_loop is current:
-                await self._session.close()
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        sessions, self._sessions = self._sessions, {}
+        for (_proxy, session_loop), session in sessions.items():
+            if session_loop is None or session_loop is current:
+                await session.close()
             else:
                 logger.debug(
                     "[HTTP] Dropping curl session bound to a stale loop (close)"
                 )
-            self._session = None
-            self._session_proxy = None
-            self._session_loop = None
 
 
 # Global singleton clients (lazily initialized, reused across calls)

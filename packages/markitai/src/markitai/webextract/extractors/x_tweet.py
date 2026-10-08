@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.extractors.base import site_url
 from markitai.webextract.extractors.x_common import (
     _extract_article_title,
     extract_tweet_id_from_url,
@@ -43,7 +44,8 @@ class XTweetExtractor:
 
     def matches_url(self, url: str) -> bool:
         """Match x.com and twitter.com status URLs."""
-        return ("x.com/" in url or "twitter.com/" in url) and "/status/" in url
+        parts = site_url(url, "x.com", "twitter.com")
+        return parts is not None and "/status/" in parts.path
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Extract the conversation timeline or single tweet."""
