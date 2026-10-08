@@ -51,7 +51,7 @@ fn date(age: ElementRef<'_>) -> Option<String> {
 }
 
 fn link(site: &Url, href: &str) -> Option<String> {
-    site.join(href.trim()).ok().map(String::from)
+    super::safe_url(href, Some(site))
 }
 
 /// A reply level from `td.ind`: its `indent` attribute, or the width of its
@@ -481,6 +481,18 @@ mod tests {
              2. [Ask HN: Z](https://news.ycombinator.com/item?id=2)  \n   [discuss](https://news.ycombinator.com/item?id=2)\n\n\
              [More](https://news.ycombinator.com/news?p=2)"
         );
+    }
+
+    #[test]
+    fn links_with_unsafe_schemes_are_not_written() {
+        let story = convert(
+            r#"<table id="hnmain"><tr><td><table class="fatitem"><tr class="athing" id="1"><td class="title"><span class="titleline"><a href="javascript:alert(1)">A story</a></span></td></tr><tr><td class="subtext"><span class="score">5 points</span> by <a class="hnuser" href="user?id=poster">poster</a></td></tr><tr><td></td><td><div class="toptext">Story text</div></td></tr></table></td></tr></table>"#,
+        );
+        assert_eq!(story.markdown, "Story text");
+        let listing = convert(
+            r#"<table id="hnmain"><tr><td><table><tr class="athing" id="1"><td class="title"><span class="titleline"><a href="https://example.com/x">X</a></span></td></tr><tr><td class="subtext"><a href="javascript:alert(2)">3&nbsp;comments</a></td></tr></table><a class="morelink" href="javascript:alert(3)">More</a></td></tr></table>"#,
+        );
+        assert_eq!(listing.markdown, "1. [X](https://example.com/x)");
     }
 
     #[test]

@@ -688,7 +688,10 @@ fn resolved_url(value: &str, base: Option<&Url>) -> Option<String> {
             .filter(|url| matches!(url.scheme(), "http" | "https"))
             .map(|url| url.to_string());
     }
-    (!value.contains(':')).then(|| destination(value))
+    // Without a base, a colon before the first `/`, `?` or `#` could be read
+    // as a scheme; one after it is part of a relative path or query.
+    let head = value.split(['/', '?', '#']).next().unwrap_or_default();
+    (!head.contains(':')).then(|| destination(value))
 }
 
 /// A saved page's own address for its relative links: an absolute
@@ -6059,6 +6062,16 @@ map(callbackFn, thisArg)
             "https://exam\tple.test/",
         ] {
             assert!(safe_url(value, Some(&base)).is_none());
+        }
+    }
+
+    #[test]
+    fn relative_links_may_hold_a_colon_after_their_first_segment() {
+        for value in ["/wiki/Help:Contents", "?t=10:30", "#note:1", "docs/a:b.md"] {
+            assert_eq!(safe_url(value, None).as_deref(), Some(value));
+        }
+        for value in ["javascript:alert(1)", "1x:payload", "x y:z"] {
+            assert!(safe_url(value, None).is_none(), "{value}");
         }
     }
 

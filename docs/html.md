@@ -152,7 +152,8 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   `<base href>`, else its canonical link (only root-relative links when that is
   the home page, whose directory is unknown); images keep their relative paths,
   which a page saved with its files points at those files. Without such an
-  address, and in fragments, relative destinations stay as written. A
+  address, and in fragments, relative destinations stay as written, a colon
+  after their first `/`, `?` or `#` included (`/wiki/Help:Contents`). A
   scheme-relative address (`//host/path`) takes `https:` when no page URL is
   given, since Markdown would read it as a local path.
 - An image is its largest `srcset` candidate (`data-srcset` first): the widest

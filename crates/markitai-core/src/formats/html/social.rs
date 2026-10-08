@@ -508,7 +508,7 @@ fn quote_block(quote: ElementRef<'_>, base: Option<&Url>) -> Result<Option<Strin
     if let Some(href) = quote.value().attribute("data-href")
         && let Some(url) = Url::parse("https://x.com")
             .ok()
-            .and_then(|x| x.join(href).ok())
+            .and_then(|x| super::safe_url(href, Some(&x)))
     {
         lines.push(format!("[{url}]({url})"));
     }
@@ -968,6 +968,21 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         assert_eq!(doc.metadata["author"], "@ada");
         assert_eq!(doc.metadata["published"], "2025-02-25");
         assert_eq!(doc.markdown.matches("Good luck!").count(), 1);
+    }
+
+    #[test]
+    fn a_quoted_post_link_with_an_unsafe_scheme_is_not_written() {
+        let quote = r#"<div role="link" data-href="javascript:alert(1)//status/1"><article>
+            <div dir="auto">A quoted line.</div>
+            </article></div>"#;
+        let main = article("ada", "Ada", ID, "3:04 AM · Feb 25, 2025", "Hi", quote);
+        let doc = extract_html(&page(&main, ""), Some(STATUS)).unwrap();
+        assert!(
+            doc.markdown.contains("> A quoted line."),
+            "{}",
+            doc.markdown
+        );
+        assert!(!doc.markdown.contains("javascript:"), "{}", doc.markdown);
     }
 
     #[test]
