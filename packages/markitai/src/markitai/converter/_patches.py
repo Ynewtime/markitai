@@ -2,7 +2,6 @@
 
 This module applies monkey patches to fix known issues in dependencies:
 - openpyxl 3.1.x FileVersion TypeError ('bg' argument)
-- lxml XMLSyntaxError from malformed PPTX files
 """
 
 from __future__ import annotations
@@ -42,47 +41,6 @@ def apply_openpyxl_patches() -> None:
         FileVersion.__init__._markitai_patched = True  # type: ignore[attr-defined]
 
 
-def apply_pptx_patches() -> None:
-    """Apply patches for python-pptx/lxml compatibility issues.
-
-    Fixes: XMLSyntaxError from malformed PPTX files converted from PPT
-
-    When MS Office converts .ppt to .pptx, it may produce XML with
-    mismatched tags (e.g., 'rupB' vs 'bgPr'). This patch makes the
-    XML parser more lenient.
-    """
-    # Check if lxml is available
-    try:
-        from lxml import etree  # type: ignore[import-not-found]
-    except ImportError:
-        return  # lxml not installed
-
-    # Check if python-pptx is installed
-    try:
-        import pptx.oxml
-    except ImportError:
-        return  # python-pptx not installed
-
-    # Create a lenient parser that recovers from errors
-    _lenient_parser = etree.XMLParser(recover=True, remove_blank_text=True)
-
-    original_parse_xml = pptx.oxml.parse_xml
-
-    @functools.wraps(original_parse_xml)
-    def patched_parse_xml(xml: bytes | str) -> Any:
-        try:
-            return original_parse_xml(xml)
-        except etree.XMLSyntaxError:
-            # Fallback to lenient parser
-            if isinstance(xml, str):
-                xml = xml.encode("utf-8")
-            return etree.fromstring(xml, parser=_lenient_parser)
-
-    if not getattr(pptx.oxml.parse_xml, "_markitai_patched", False):
-        pptx.oxml.parse_xml = patched_parse_xml
-        pptx.oxml.parse_xml._markitai_patched = True  # type: ignore[attr-defined]
-
-
 def apply_all_patches() -> None:
     """Apply all compatibility patches.
 
@@ -93,6 +51,5 @@ def apply_all_patches() -> None:
         return
 
     apply_openpyxl_patches()
-    apply_pptx_patches()
 
     _patches_applied = True
