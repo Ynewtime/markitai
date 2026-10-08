@@ -302,7 +302,7 @@ def _open_browser_when_ready(
         "Disable the access token. Requests from other machines then need no "
         "credential. Their URL targets must be public and LLM settings stay "
         "blocked, but uploads and history access, downloads and deletion remain "
-        "available; loopback keeps full access either way."
+        "available; loopback keeps full access, LLM settings included."
     ),
 )
 @click.option(
@@ -331,7 +331,8 @@ def serve(
 
     An access token is generated at startup (pin it with the
     MARKITAI_SERVE_TOKEN environment variable). Requests from other machines
-    must present it; requests from this machine never need it.
+    must present it; requests from this machine need it only for the LLM
+    settings, which hold your provider keys.
 
     Examples:
         markitai serve                    # http://127.0.0.1:3600, opens browser

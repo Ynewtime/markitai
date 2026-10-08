@@ -28,9 +28,9 @@ markitai serve
 
 ## 访问令牌
 
-启动时服务会打印一个以 `#token=…` 结尾的 URL。本机请求不需要令牌；其他设备必须打开这个 URL，脚本则以 `Authorization: Bearer <token>` 发送令牌。
+启动时服务会打印一个以 `#token=…` 结尾的 URL，自动打开的浏览器用的也是这个 URL。本机请求不需要令牌，但 LLM 设置（`/api/settings/llm…`）除外：这些接口存放着提供商密钥，而本机任何程序、另一个 `localhost` 端口上的网页同样是从本机连进来的，所以这些接口始终要求令牌。其他设备必须打开这个 URL，脚本则以 `Authorization: Bearer <token>` 发送令牌。服务端看不到客户端地址的请求按其他设备对待。
 
-设 `MARKITAI_SERVE_TOKEN` 可以让令牌在重启后保持不变。`--no-auth` 完全去掉令牌：其他设备仍能上传、下载和查看历史，但 URL 目标只能是公网地址，且不能改 LLM 设置。
+设 `MARKITAI_SERVE_TOKEN` 可以让令牌在重启后保持不变。`--no-auth` 完全去掉令牌：其他设备仍能上传、下载和查看历史，但 URL 目标只能是公网地址，且不能改 LLM 设置。此时本机不带令牌即可使用 LLM 设置。
 
 ## 从其他设备访问
 

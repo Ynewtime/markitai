@@ -7,7 +7,7 @@
  * address bar; API fetches then send it as `Authorization: Bearer` and
  * header-less browser requests (EventSource, download links, inline images)
  * append it back as `?token=`. Without a stored token everything is sent
- * bare — loopback sessions need none.
+ * bare — loopback sessions need none outside the LLM settings.
  */
 
 const STORAGE_KEY = "markitai.serve.token";

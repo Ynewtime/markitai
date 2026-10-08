@@ -319,8 +319,8 @@ def _is_trusted_origin(
 class _HostGuardMiddleware:
     """Reject DNS-rebinding hosts and cross-site state-changing requests.
 
-    The loopback peer check on the settings routes cannot stop DNS
-    rebinding: the browser connects to 127.0.0.1 (so the peer *is* loopback)
+    The loopback peer check (on the settings routes with ``--no-auth``)
+    cannot stop DNS rebinding: the browser connects to 127.0.0.1 (so the peer *is* loopback)
     while the page came from an attacker-controlled DNS name. Validating the
     Host header closes that hole. The Origin check covers CSRF: multipart
     POSTs are CORS-safelisted (no preflight), so any website could otherwise
@@ -403,9 +403,13 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def _is_loopback_scope(scope: Any) -> bool:
-    """ASGI-scope variant of :func:`_is_loopback_host`."""
+    """ASGI-scope variant of :func:`_is_loopback_host`.
+
+    A request without a client address is not loopback: the server cannot
+    tell where it came from.
+    """
     client = scope.get("client")
-    return _is_loopback_host(client[0] if client else "127.0.0.1")
+    return bool(client) and _is_loopback_host(client[0])
 
 
 def _scope_bearer_token(scope: Any) -> str | None:
@@ -443,11 +447,12 @@ def _scope_presents_token(scope: Any, token: str) -> bool:
 class _TokenAuthMiddleware:
     """Reject non-loopback API requests that do not present the serve token.
 
-    Loopback peers stay fully trusted without a token (the CLI, tests and
+    Loopback peers stay trusted without a token (the CLI, tests and
     ``--record-history`` tooling on the operator's machine keep working
-    unchanged), and the static app shell stays reachable so a browser can
-    load the UI from the tokened URL — only ``/api/`` carries anything worth
-    protecting. A ``token`` of None disables the gate entirely (``--no-auth``):
+    unchanged), except on the LLM settings routes, which
+    ``protect_local_settings`` gates on the token for every peer. The static
+    app shell stays reachable so a browser can load the UI from the tokened
+    URL — only ``/api/`` carries anything worth protecting. A ``token`` of None disables the gate entirely (``--no-auth``):
     remote peers then fall back to the legacy public-URL-only policy enforced
     by ``_guard_fetch_targets`` and the loopback-only settings middleware.
     """
@@ -489,10 +494,9 @@ def _is_loopback_peer(request: Request) -> bool:
 
     Unlike Host/Origin, the peer address is chosen by the kernel, not by the
     caller, so it is the one trustworthy answer to "is this the operator's own
-    machine?". A missing client (in-process ASGI calls) counts as loopback.
+    machine?". A request without a client address is not loopback.
     """
-    host = request.client.host if request.client is not None else "127.0.0.1"
-    return _is_loopback_host(host)
+    return request.client is not None and _is_loopback_host(request.client.host)
 
 
 def _is_trusted_request(request: Request) -> bool:
@@ -1708,9 +1712,10 @@ def create_app(
             headers besides localhost and IP literals (DNS-rebinding and
             CSRF protection).
         token: Access token required from non-loopback peers on ``/api/``
-            routes; a token-bearing remote peer is trusted like a loopback
-            one. None disables token auth: remote peers may then only submit
-            public URLs and never reach the settings routes.
+            routes, and from every peer on the LLM settings routes; a
+            token-bearing remote peer is trusted like a loopback one. None
+            disables token auth: remote peers may then only submit public
+            URLs, and only loopback peers reach the settings routes.
     """
 
     @asynccontextmanager
@@ -1913,6 +1918,18 @@ def create_app(
     @app.middleware("http")
     async def protect_local_settings(request: Request, call_next: Any) -> Response:
         if request.url.path.startswith("/api/settings/llm"):
+            # These routes read and write provider keys, so with token auth
+            # on they need the token from every peer: any local process, or a
+            # page on another localhost origin, is a loopback peer too.
+            serve_token = request.app.state.serve_token
+            if serve_token is not None and not _scope_presents_token(
+                request.scope, serve_token
+            ):
+                return JSONResponse(
+                    {"detail": _AUTH_REQUIRED_DETAIL, "code": _http_error_code(401)},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer", "Cache-Control": "no-store"},
+                )
             if not _is_trusted_request(request):
                 return JSONResponse(
                     {

@@ -18,7 +18,7 @@ import type {
 import { authHeaders, withToken } from "./token";
 
 /** Same-origin API fetch carrying the access token header when one is stored
- * (non-loopback sessions authenticate with it; loopback needs none). */
+ * (non-loopback sessions and the LLM settings authenticate with it). */
 function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, {
     ...init,
