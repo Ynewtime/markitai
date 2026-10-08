@@ -78,6 +78,17 @@ class TestSPADomainCacheBasicOps:
         assert cache.is_known_spa("https://spa-app.example.com/other") is True
         assert cache.is_known_spa("https://other.com") is False
 
+    def test_userinfo_never_reaches_the_cache_file(self, tmp_path: Path):
+        from markitai.fetch_cache import SPADomainCache
+
+        cache_path = tmp_path / "spa.json"
+        cache = SPADomainCache(cache_path)
+        cache.record_spa_domain("https://alice:s3cret@spa-app.example.com:8443/a/b")
+        assert "s3cret" not in cache_path.read_text(encoding="utf-8")
+        assert "alice" not in cache_path.read_text(encoding="utf-8")
+        assert cache.is_known_spa("https://spa-app.example.com:8443/other") is True
+        assert cache.is_known_spa("https://spa-app.example.com/other") is False
+
     def test_clear(self, tmp_path: Path):
         from markitai.fetch_cache import SPADomainCache
 

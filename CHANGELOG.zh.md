@@ -12,6 +12,7 @@
 - **`serve` 的 LLM 设置**：设置接口的调用方不能再把任意主机环境变量（`env:NAME`）或已保存的 key 发往自己指定的服务器。Web API 传入的 `env:` 引用仅限各服务商的 key 变量（`env:OPENAI_API_KEY` 等）和配置文件里已有的引用；已保存的 key 只发往它自己的 `api_base`（否则返回 422，要换端点请直接提供 key）。
 - **`serve` 请求日志**：网页工作台加在事件流、文件和归档 URL 上的访问令牌（`?token=`）在终端和日志文件里会被遮蔽。
 - **URL 抓取**：超过 500 MB（与本地文件相同的上限）的响应会让抓取失败，不再无上限地读进内存；`Content-Length` 已超限时在读取正文前就失败。
+- **URL 中的凭据**：带 `user:password@` 的 URL 不会再把这部分写进截图文件名或 `~/.markitai/learned_spa_domains.json`。
 
 ## [1.2.0] - 2026-09-28
 

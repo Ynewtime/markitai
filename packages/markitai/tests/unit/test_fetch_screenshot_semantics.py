@@ -351,6 +351,18 @@ class TestTilesAndFilenames:
             "example.com_page2.full--1.jpg",
         ]
 
+    def test_filename_drops_url_userinfo(self):
+        from markitai.fetch_screenshot import _url_to_screenshot_filename
+
+        assert (
+            _url_to_screenshot_filename("https://alice:s3cret@example.com/a/b")
+            == "example.com_a_b.full.jpg"
+        )
+        assert (
+            _url_to_screenshot_filename("https://bob@example.com:8080/a")
+            == "example.com_8080_a.full.jpg"
+        )
+
     @pytest.mark.asyncio
     async def test_recapture_drops_tiles_of_a_longer_previous_page(self, tmp_path):
         from PIL import Image

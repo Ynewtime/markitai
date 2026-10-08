@@ -662,9 +662,9 @@ class SPADomainCache:
             logger.warning(f"Failed to save SPA domain cache: {e}")
 
     def _extract_domain(self, url: str) -> str:
-        """Extract domain from URL."""
+        """Extract domain (host and port, never userinfo) from URL."""
         parsed = urlparse(url)
-        return parsed.netloc.lower()
+        return parsed.netloc.rpartition("@")[2].lower()
 
     def _is_expired(self, entry: dict[str, Any]) -> bool:
         """Check if a cache entry has expired."""
