@@ -381,6 +381,37 @@ async def _run_url_llm_branches(
     )
 
 
+def output_affecting_options(
+    cfg: MarkitaiConfig,
+    fetch_strategy: FetchStrategy | None = None,
+    explicit_fetch_strategy: bool = False,
+) -> dict[str, Any]:
+    """Non-default settings that change a batch's output, for its state hash.
+
+    A resumed batch skips items its state records as done, so a run with
+    different output settings must get its own state file. Only settings
+    that differ from the default are returned, which keeps the state of a
+    default run where earlier versions put it.
+
+    Args:
+        cfg: Configuration
+        fetch_strategy: Fetch strategy of the run
+        explicit_fetch_strategy: Whether ``-s`` chose the strategy
+    """
+    options: dict[str, Any] = {}
+    if cfg.llm.enabled and cfg.llm.pure:
+        options["pure"] = True
+    if cfg.llm.enabled and cfg.llm.keep_base:
+        options["keep_base"] = True
+    if cfg.screenshot.screenshot_only:
+        options["screenshot_only"] = True
+    if cfg.output.profile is not None:
+        options["profile"] = str(cfg.output.profile)
+    if explicit_fetch_strategy and fetch_strategy is not None:
+        options["fetch_strategy"] = fetch_strategy.value
+    return options
+
+
 def create_url_processor(
     cfg: MarkitaiConfig,
     output_dir: Path,
@@ -927,6 +958,9 @@ async def process_batch(
     }
     if normalized_globs:
         task_options["glob_patterns"] = normalized_globs
+    task_options.update(
+        output_affecting_options(cfg, fetch_strategy, explicit_fetch_strategy)
+    )
     if cfg.llm.enabled and cfg.llm.model_list:
         task_options["models"] = [m.litellm_params.model for m in cfg.llm.model_list]
 

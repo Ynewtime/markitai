@@ -1089,6 +1089,7 @@ async def process_url_batch(
         batch_item_claim_scope,
         create_url_processor,
         drop_duplicate_url_entries,
+        output_affecting_options,
     )
     from markitai.fetch import FetchStrategy
     from markitai.security import check_symlink_safety
@@ -1179,6 +1180,7 @@ async def process_url_batch(
         "screenshot": cfg.screenshot.enabled,
         "alt": cfg.image.alt_enabled,
         "desc": cfg.image.desc_enabled,
+        **output_affecting_options(cfg, fetch_strategy, explicit_fetch_strategy),
     }
     batch = BatchProcessor(
         cfg.batch,
