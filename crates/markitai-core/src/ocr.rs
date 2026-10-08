@@ -44,13 +44,31 @@ pub(crate) struct OcrResult {
     pub capped: bool,
 }
 
+/// Text regions the portable engine reads per image, at most; specks and
+/// faint regions do not count.
+pub(crate) const MAX_TEXT_REGIONS: usize = 1000;
+
 /// The warning for an image or page with more text regions than the portable
-/// engine reads (`paddle::detect::MAX_REGIONS`); `subject` names it.
+/// engine reads ([`MAX_TEXT_REGIONS`]); `subject` names it.
 pub(crate) fn capped_warning(subject: &str) -> String {
     format!(
-        "Local OCR read only the first 1,000 text regions of {subject}, from the top; the text \
-         below them is missing."
+        "Local OCR read only the first {} text regions of {subject}, from the top; the text \
+         below them is missing.",
+        thousands(MAX_TEXT_REGIONS)
     )
+}
+
+/// `n` with a comma between each group of three digits: 1000 is "1,000".
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }
 
 /// The warning for an image or page that the default language policy could
@@ -848,6 +866,24 @@ fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, conf
 pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_capped_warning_names_the_region_limit() {
+        assert_eq!(
+            capped_warning("this image"),
+            "Local OCR read only the first 1,000 text regions of this image, from the top; \
+             the text below them is missing."
+        );
+        assert!(capped_warning("x").contains(&thousands(MAX_TEXT_REGIONS)));
+        for (n, grouped) in [
+            (0, "0"),
+            (999, "999"),
+            (1000, "1,000"),
+            (1_234_567, "1,234,567"),
+        ] {
+            assert_eq!(thousands(n), grouped);
+        }
+    }
 
     #[test]
     fn vision_failures_name_rosetta_only_in_a_translated_process() {

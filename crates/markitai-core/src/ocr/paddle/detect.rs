@@ -15,9 +15,9 @@ const BOX_THRESHOLD: f32 = 0.5;
 const UNCLIP_RATIO: f32 = 1.6;
 /// Regions with a shorter side than this (in map pixels) are specks.
 const MIN_SIDE: f32 = 3.0;
-/// Text regions read per image, at most; specks and faint regions do not
-/// count. [`crate::ocr::capped_warning`] names this number.
-pub(super) const MAX_REGIONS: usize = 1000;
+/// Text regions read per image, at most: [`crate::ocr::MAX_TEXT_REGIONS`],
+/// which [`crate::ocr::capped_warning`] names.
+pub(super) const MAX_REGIONS: usize = crate::ocr::MAX_TEXT_REGIONS;
 /// The model reads sides that are multiples of this.
 pub(super) const STRIDE: u32 = 32;
 /// The longer side of an image is scaled down to this before detection. The
