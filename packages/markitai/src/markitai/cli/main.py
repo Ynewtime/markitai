@@ -998,10 +998,7 @@ def app(
 
     # Determine fetch strategy
     from markitai.cli.ui import ConsoleInteraction
-    from markitai.fetch_consent import (
-        set_remote_consent,
-        set_remote_consent_prompt_allowed,
-    )
+    from markitai.fetch_consent import set_remote_consent_prompt_allowed
 
     # Register session-owned consent before using its setters, without loading
     # the webpage strategies and extraction pipeline for a local text file.
@@ -1047,9 +1044,10 @@ def app(
         if fetch_strategy == FetchStrategy.CLOUDFLARE:
             # Also enable CF Workers AI toMarkdown for file conversion
             cfg.fetch.cloudflare.convert_enabled = True
-        if fetch_strategy_name in ("defuddle", "jina", "cloudflare"):
-            # Explicitly choosing a remote service counts as consent this run
-            set_remote_consent(True)
+        # An explicit remote strategy is consent for that service only: the
+        # explicit dispatch opts in on its own, and seeding the process-wide
+        # decision would also hand the URL to every service of the fallback
+        # chain (defuddle.md, Cloudflare, FxTwitter) the user never chose.
     else:
         # Use config default or auto
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)

@@ -17,6 +17,7 @@
 - `--resume` 不再跳过在其他输出设置下完成的条目：`--pure`、`--keep-base`、`--screenshot-only`、`output.profile` 和 `-s` 现在各自使用独立的批量状态。`--llm-batch` 遇到 URL 或 `.urls` 文件时直接报错，不再按全价逐个请求。
 - MCP `batch_convert` 启用 LLM 时整个任务共用一个 LLM 处理器，`llm.concurrency` 现在限制整个批量而不是每个条目（此前 10 个条目的批量可能同时发出约 100 个请求）。
 - 批量抓取同时包含走代理和 NO_PROXY/本机地址的 URL 时不再随机失败：静态 HTTP 客户端为每个代理各保留一个连接池，不再在其他请求仍在使用时关闭共用的那个。
+- 显式的 `-s jina`、`-s defuddle` 或 `-s cloudflare` 只代表对该服务的同意：它拒绝请求、markitai 回退到自动链时，由 `fetch.remote_consent` 决定其他远程服务（defuddle.md、Cloudflare、FxTwitter）能否收到该 URL。
 
 ## [1.2.0] - 2026-09-28
 
