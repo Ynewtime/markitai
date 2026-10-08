@@ -308,7 +308,8 @@ does. The first rule that applies wins:
    of `NO_PROXY` (or `no_proxy`) count as local-only patterns too. Patterns use
    the `NO_PROXY` grammar: `*`, `.name` and `*.name` (subdomains only), CIDR
    blocks (`10.0.0.0/8`, `192.168.1.0/255.255.255.0`, `fd00::/8`), and exact
-   hosts or addresses.
+   hosts or addresses. A Unicode name such as `bücher.de` matches its punycode
+   host.
 2. `fetch.domain_profiles."<host[:port]>".strategy_priority` (the exact
    authority, as the browser profile is looked up) replaces the order.
 3. That profile's `prefer_strategy` goes first, followed by the default order
@@ -739,7 +740,8 @@ all setting subprocesses, whose output is limited and process group reaped.
 `NO_PROXY` (or `no_proxy` when it is unset or empty) always applies; a system
 exception list applies only with its system proxy. `*` matches everything,
 `.name`/`*.name` match subdomains only, other names and addresses match exactly,
-and CIDR blocks match addresses. Each unsupported entry, such as `<local>`, a
+and CIDR blocks (a prefix length or an IPv4 netmask) match addresses; this is
+the grammar of `fetch.policy.local_only_patterns` too. Each unsupported entry, such as `<local>`, a
 port-qualified host, another wildcard or malformed CIDR, is ignored on its own,
 as the reference ignores it. Loopback hosts are always direct. Proxy settings
 above 64 KiB are rejected. Static fetch accepts credentials in an environment

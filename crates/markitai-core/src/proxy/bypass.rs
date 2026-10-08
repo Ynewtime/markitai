@@ -1,7 +1,9 @@
 //! `NO_PROXY`-style exceptions with the reference matcher's semantics:
 //! `*` matches everything, `.example.com` and `*.example.com` match
 //! subdomains only, other names and IP addresses match exactly, and CIDR
-//! blocks match addresses. Unsupported rules such as `<local>`, port-qualified
+//! blocks (a prefix length or an IPv4 netmask) match addresses. Names are
+//! compared as the URL parser spells them, so Unicode names match punycode.
+//! `fetch.policy.local_only_patterns` uses the same grammar. Unsupported rules such as `<local>`, port-qualified
 //! hosts, other wildcards or malformed CIDR are ignored one by one, as the
 //! reference ignores them; they never disable the remaining valid rules.
 use super::{MAX_SETTING, invalid};
@@ -20,7 +22,7 @@ enum Rule {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct Bypass {
+pub(crate) struct Bypass {
     rules: Vec<Rule>,
     seen: HashSet<Rule>,
 }
@@ -72,8 +74,15 @@ fn rule(raw: &str) -> Option<Rule> {
         return Some(Rule::All);
     }
     if let Some((address, bits)) = raw.rsplit_once('/') {
-        let address = unbracket(address).parse::<IpAddr>().ok()?;
-        let bits = bits.parse::<u8>().ok()?;
+        let address = unbracket(address);
+        let address = address.split('%').next().unwrap_or(address);
+        let address = address.parse::<IpAddr>().ok()?;
+        let bits = bits.parse::<u8>().ok().or_else(|| {
+            let mask = bits.parse::<Ipv4Addr>().ok()?;
+            address
+                .is_ipv4()
+                .then(|| u32::from(mask).leading_ones() as u8)
+        })?;
         return Some(Rule::Network(network(address, bits)?, bits));
     }
     if let Ok(address) = unbracket(raw).parse::<IpAddr>() {
@@ -83,6 +92,14 @@ fn rule(raw: &str) -> Option<Rule> {
         return domain(suffix).map(Rule::Suffix);
     }
     domain(raw).map(Rule::Exact)
+}
+
+fn host(url: &Url) -> (String, Option<IpAddr>) {
+    let name = unbracket(url.host_str().unwrap_or(""))
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let address = name.parse::<IpAddr>().ok();
+    (name, address)
 }
 
 fn loopback(name: &str, address: Option<IpAddr>) -> bool {
@@ -102,12 +119,20 @@ impl Bypass {
             return Err(invalid());
         }
         let mut this = Self::default();
-        for raw in raw.split(',').map(str::trim).filter(|raw| !raw.is_empty()) {
-            if let Some(rule) = rule(&raw.to_ascii_lowercase()) {
-                this.push(rule);
-            }
+        for raw in raw.split(',') {
+            this.add(raw);
         }
         Ok(this)
+    }
+
+    /// One entry; an unsupported one is ignored.
+    pub(crate) fn add(&mut self, raw: &str) {
+        let raw = raw.trim();
+        if !raw.is_empty()
+            && let Some(rule) = rule(&raw.to_ascii_lowercase())
+        {
+            self.push(rule);
+        }
     }
 
     fn push(&mut self, rule: Rule) {
@@ -123,14 +148,15 @@ impl Bypass {
         Ok(())
     }
 
+    /// Whether a request to `url` goes direct: a loopback host or a listed one.
     pub(super) fn matches(&self, url: &Url) -> bool {
-        let name = unbracket(url.host_str().unwrap_or(""))
-            .trim_end_matches('.')
-            .to_ascii_lowercase();
-        let address = name.parse::<IpAddr>().ok();
-        if loopback(&name, address) {
-            return true;
-        }
+        let (name, address) = host(url);
+        loopback(&name, address) || self.listed(url)
+    }
+
+    /// Whether a rule names `url`'s host, without the implicit loopback rule.
+    pub(crate) fn listed(&self, url: &Url) -> bool {
+        let (name, address) = host(url);
         self.rules.iter().any(|rule| match rule {
             Rule::All => true,
             Rule::Exact(value) => name == *value,
