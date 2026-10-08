@@ -131,8 +131,8 @@ that the write occurred but its durability could not be confirmed. Reload settin
 before another change; this case is not reported as a successful durable save.
 
 Configuration reads and writes are limited to 8 MiB; settings request bodies to
-1 MiB. A symlinked configuration is read and saved through its link, which is
-kept; nonregular configuration files are rejected, and reads never block on a
+1 MiB. A symlinked configuration file, or one in a symlinked folder, is read and
+saved through its link, which is kept; nonregular configuration files are rejected, and reads never block on a
 FIFO. New configuration files are 0600
 on Unix; new directories are private. Existing project directories are not
 chmodded. External editors that do not cooperate with the service can race the
