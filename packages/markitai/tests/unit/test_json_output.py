@@ -389,6 +389,37 @@ class TestCliContract:
         # The untouched file keeps its old content.
         assert (out / "doc.txt.md").read_text(encoding="utf-8") == "# old\n"
 
+    def test_batch_existing_output_reports_the_skip_reason(
+        self, tmp_path: Path
+    ) -> None:
+        """A directory batch turns a "skipped (exists)" result into the
+        item's skip_reason, not a plain success."""
+        from markitai.cli.main import app
+
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "doc.txt.md").write_text("# old\n", encoding="utf-8")
+        src_dir = tmp_path / "in"
+        src_dir.mkdir()
+        (src_dir / "doc.txt").write_text("# new\n", encoding="utf-8")
+        (src_dir / "other.txt").write_text("# other\n", encoding="utf-8")
+        config_file = tmp_path / "config.json"
+        config_file.write_text('{"output": {"on_conflict": "skip"}}', encoding="utf-8")
+
+        result = CliRunner().invoke(
+            app,
+            [str(src_dir), "-o", str(out), "--json", "-c", str(config_file)],
+        )
+
+        assert result.exit_code == 0, result.output
+        body = json.loads(result.stdout)
+        assert body["totals"]["skipped"] == 1
+        items = {Path(item["source"]).name: item for item in body["items"]}
+        assert items["doc.txt"]["status"] == "skipped"
+        assert items["doc.txt"]["skip_reason"] == "exists"
+        assert items["other.txt"]["status"] != "skipped"
+        assert (out / "doc.txt.md").read_text(encoding="utf-8") == "# old\n"
+
     def test_batch_partial_failure_exits_10_and_reports_both(
         self, tmp_path: Path
     ) -> None:

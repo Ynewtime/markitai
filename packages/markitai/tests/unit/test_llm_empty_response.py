@@ -186,6 +186,29 @@ def _make_enhancer(memory_cache: Any, persistent_cache: Any) -> DocumentEnhancer
     )
 
 
+class TestVisionDocumentEmptyResponse:
+    """Vision document path: an empty answer must not pass for enhanced."""
+
+    @pytest.mark.asyncio
+    async def test_enhance_document_with_vision_fails_on_empty(
+        self, tmp_path: Path
+    ) -> None:
+        """An empty answer fails the batch (the extracted text rides on the
+        error) instead of passing unenhanced pages off as enhanced."""
+        memory = ContentCache()
+        persistent = PersistentCache(global_dir=tmp_path / "cache", enabled=True)
+        enhancer = _make_enhancer(memory, persistent)
+        page = tmp_path / "page-1.png"
+        page.write_bytes(b"png")
+        extracted = "# Doc\n\nExtracted body."
+
+        with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+            await enhancer.enhance_document_with_vision(extracted, [page], "doc.pdf")
+
+        assert exc_info.value.cleaned_markdown == extracted
+        assert persistent.stats()["cache"]["count"] == 0
+
+
 class TestCleanDocumentPureEmptyResponse:
     """Pure mode writes the answer straight to disk — never a blank file.
 
