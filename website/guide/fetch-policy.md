@@ -6,7 +6,7 @@ When you give markitai a URL, it tries several ways of fetching the page, cheape
 
 Three things decide the order:
 
-1. **An explicit strategy**: `-s static`, `-s playwright`, `-s defuddle`, `-s jina` or `-s cloudflare` uses that one strategy. If a remote service refuses (rate limit, auth failure), the run falls back to the `auto` chain instead of failing.
+1. **An explicit strategy**: `-s static`, `-s playwright`, `-s defuddle`, `-s jina` or `-s cloudflare` uses that one strategy. If a remote service refuses (rate limit, auth failure), the run falls back to the `auto` chain instead of failing. The `-s` choice is consent for that one service: whether the chain may use the other remote services is still up to `remote_consent`.
 2. **A domain profile**: per-domain settings such as a selector to wait for, extra wait time, or a custom strategy order.
 3. **Adaptive fallback** (`auto`, the default): one of the two orders below, adjusted by what markitai has learned about the domain.
 
