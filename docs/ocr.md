@@ -224,7 +224,9 @@ verify each file against the bundled size and SHA-256 before publication. Repair
 does not overwrite an unsafe path. A failed download leaves the existing model;
 if an error occurs after publication, run `doctor` again to inspect its state.
 The optional Korean reading may retain the first reading if its model cannot
-load or infer; ordinary OCR never repairs a corrupt model implicitly.
+load or infer. A Korean model that cannot load is tried once per process, so a
+long-running `markitai serve` or MCP process uses a model installed later only
+after a restart. Ordinary OCR never repairs a corrupt model implicitly.
 
 ### Languages
 
