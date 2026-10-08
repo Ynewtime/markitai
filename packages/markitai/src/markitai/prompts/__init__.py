@@ -42,9 +42,6 @@ class PromptManager:
         "document_process_user",
         "document_vision_system",
         "document_vision_user",
-        # URL prompts
-        "url_enhance_system",
-        "url_enhance_user",
         # Screenshot-only extraction prompts
         "screenshot_extract_system",
         "screenshot_extract_user",
