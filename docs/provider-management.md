@@ -23,8 +23,8 @@ Quick-add `/api/settings/llm/detected` is an array derived from nonempty process
 environment keys. It does not contact providers; its candidates already have an
 environment credential, so `requires_api_key` is false.
 
-Each provider uses its model-list protocol, including Anthropic headers, Gemini
-query authentication, Ollama tags and Azure versioned regional models. Discovery
+Each provider uses its model-list protocol, including Anthropic headers, the Gemini
+`x-goog-api-key` header (never a `?key=` query), Ollama tags and Azure versioned regional models. Discovery
 bases for Gemini/Ollama differ from their OpenAI-compatible inference bases.
 Azure results are partial and non-authoritative: base model names do not prove a
 deployment with that name exists. Pagination indicators also produce an explicit

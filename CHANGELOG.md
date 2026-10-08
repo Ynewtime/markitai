@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- Gemini model discovery sends the API key in the `x-goog-api-key` header instead of a `?key=` query parameter, where request logs and proxies along the way could record it.
 - `fetch.policy.local_only_patterns` and the inherited `NO_PROXY` entries are read by the proxy exceptions' parser instead of a second copy that had drifted: a Unicode name such as `bücher.de` now matches its punycode host, so a URL marked local-only is no longer sent to Defuddle, Jina or Cloudflare; in turn, proxy exceptions accept the IPv4 netmask form (`192.168.1.0/255.255.255.0`) that local-only patterns already did.
 - Remote fetch services and document-image downloads share one private-address check, which now also covers benchmarking `198.18.0.0/15`, `192.0.0.0/24`, IPv6 site-local and documentation ranges, and IPv6 addresses that carry a private IPv4 address (IPv4-compatible, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`); image downloads also apply the documentation ranges they skipped. An image on an IPv6 literal host such as `http://[::1]/` is classified instead of failing as an unresolvable host name, so a page on a private IPv6 address can localize its own images. Defuddle, Jina and Cloudflare receive the URL as parsed and checked rather than the text as typed.
 - An empty `MARKITAI_HOME` (for example `MARKITAI_HOME= markitai …`), `HOME` or `USERPROFILE` now counts as unset instead of making the current directory the private home, where config, `.env`, caches, history and browser or OCR installs were scattered and every path counted as inside the managed home.

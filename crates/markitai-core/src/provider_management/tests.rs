@@ -126,8 +126,8 @@ fn discovery_uses_provider_specific_paths_credentials_and_typed_models() {
         ),
         (
             "gemini",
-            "/base/models?pageSize=1000&key=private-test-key",
-            "",
+            "/base/models?pageSize=1000",
+            "x-goog-api-key: private-test-key",
             r#"{"models":[{"name":"models/embedding","supportedGenerationMethods":["embedContent"]},{"name":"models/gemini-test","supportedGenerationMethods":["generateContent"]}]}"#,
             "gemini/gemini-test",
             false,
@@ -193,6 +193,9 @@ fn discovery_uses_provider_specific_paths_credentials_and_typed_models() {
         if matches!(provider, "gemini" | "ollama") {
             assert!(!requests[0].contains("authorization:"));
         }
+        // The key never travels in the request line, where logs record it.
+        let line = requests[0].lines().next().unwrap();
+        assert!(!line.contains("private-test-key"), "{line}");
     }
 }
 
