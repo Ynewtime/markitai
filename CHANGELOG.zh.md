@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [1.2.1]
+
+### 修复
+
+- LLM 限流报错里出现 "402"（例如 token 数 "Used 29402"）时仍会重试，`1.204s`、`750ms`、`6m0s` 这类等待时间也能正确识别；只有 HTTP 402 才算计费错误。
+
 ## [1.2.0] - 2026-09-28
 
 ### 新增

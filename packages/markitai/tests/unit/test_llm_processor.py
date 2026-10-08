@@ -349,6 +349,21 @@ class TestCooldownSecondsForError:
             cooldown_seconds_for_error("Rate limit: quota will reset after 30s") == 30.0
         )
 
+    @pytest.mark.parametrize(
+        ("message", "seconds"),
+        [
+            ("Rate limit reached. Please try again in 1.204s.", 1.204),
+            ("429 rate limit: retry in 0.5s", 0.5),
+            ("429 rate limit: please try again in 6m0s", 360.0),
+            ("429 rate limit: please try again in 1m30s", 90.0),
+            ("429 rate limit: please try again in 750ms", 0.75),
+            ("429 Too Many Requests, retry after 20 seconds", 20.0),
+        ],
+    )
+    def test_retry_after_units(self, message: str, seconds: float):
+        """Fractions, minutes and milliseconds are read as written."""
+        assert cooldown_seconds_for_error(message) == pytest.approx(seconds)
+
     def test_model_level_error(self):
         """Model-level errors get the long cooldown."""
         assert (
