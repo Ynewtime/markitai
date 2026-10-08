@@ -54,13 +54,9 @@ macro_rules! say {
         }
     };
 }
-// Every platform publishes batches with native ownership. The ordinary runner
-// remains only as a test reference for reports without recovery state.
+// Every platform publishes batches with native ownership.
 #[path = "batch_run.rs"]
 mod batch_run;
-#[cfg(test)]
-#[path = "batch_run_portable.rs"]
-mod batch_run_portable_tests;
 #[path = "provider_batch/mod.rs"]
 mod provider_batch;
 use crate::report::{
@@ -1368,7 +1364,6 @@ fn execute_conversion(
     )
 }
 
-#[cfg_attr(not(unix), allow(dead_code))] // Read by the Unix batch path.
 struct BatchDestination<'a> {
     mode: RunMode,
     output: &'a Path,

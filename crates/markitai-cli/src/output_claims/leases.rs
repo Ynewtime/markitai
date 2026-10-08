@@ -919,11 +919,13 @@ mod tests {
         assert!(real.is_dir());
     }
 
+    #[cfg(unix)]
     fn original_resolve(path: &Path, allow: bool) -> std::result::Result<PathBuf, String> {
         check_policy(path, allow).map_err(|error| error.to_string())?;
         crate::report_store::resolve_path(path).map_err(|error| Error::from(error).to_string())
     }
 
+    #[cfg(unix)]
     fn original_member(path: &Path, allow: bool) -> std::result::Result<PathBuf, String> {
         check_member_policy(path, allow).map_err(|error| error.to_string())?;
         crate::report_store::resolve_path(path.parent().unwrap_or_else(|| Path::new("")))
