@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **URL fetching**: a response larger than 500 MB (the local-file limit) fails the fetch instead of being read into memory without bound; an over-limit `Content-Length` fails before the body is read.
 - **Credentials in URLs**: a URL with a `user:password@` part no longer writes it into screenshot filenames or into `~/.markitai/learned_spa_domains.json`.
 - **Web extraction sanitizer**: `javascript:` links in inline SVG (`xlink:href`), in `srcset`, `poster` and `data`, or split by tabs, newlines and control characters (`java&#9;script:`) are removed instead of reaching the Markdown.
+- **`markitai-mcp` logging** matches `markitai mcp`: only errors on stderr, with credentials stripped from URLs. It printed debug lines and full URLs, including any `user:password@` or tokens in them.
 
 ## [1.2.0] - 2026-09-28
 

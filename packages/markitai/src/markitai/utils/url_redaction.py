@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from markitai.fetch_policy import sensitive_path_segment_indexes
@@ -44,3 +45,10 @@ def redact_urls_in_text(message: str) -> str:
     """
     message = _HTTP_URL_IN_TEXT.sub(lambda match: redact_url(match.group(0)), message)
     return _TOKEN_QUERY_PARAM.sub(rf"\1{_REDACTED_PATH_SEGMENT}", message)
+
+
+def redact_log_record(record: Any) -> None:
+    """Loguru patcher: remove URL credential surfaces before any sink."""
+    message = record.get("message")
+    if isinstance(message, str):
+        record["message"] = redact_urls_in_text(message)
