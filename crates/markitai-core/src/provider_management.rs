@@ -401,12 +401,6 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
     if let Some(base) = &base {
         checked_url(base)?;
     }
-    if provider == "chatgpt" {
-        return Ok(discovery::unavailable(
-            &provider,
-            "This provider requires an unavailable OAuth or local runtime integration",
-        ));
-    }
     let Some(base) = base.filter(|value| !value.trim().is_empty()) else {
         return Ok(discovery::unavailable(
             &provider,

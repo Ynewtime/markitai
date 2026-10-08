@@ -314,12 +314,8 @@ fn decode_ansi(bytes: &[u8], codepage: Option<u32>, warnings: &mut Vec<String>) 
     if let Ok(text) = std::str::from_utf8(bytes) {
         return Ok(text.trim().to_owned());
     }
-    let (text, malformed) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);
-    if malformed {
-        return Err(error(
-            "text cannot be decoded without replacement characters",
-        ));
-    }
+    // Windows-1252 maps every byte, so this fallback cannot fail.
+    let (text, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);
     Ok(text.trim().to_owned())
 }
 

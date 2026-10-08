@@ -18,11 +18,6 @@ mod portable;
 const RENDERER_VARIABLE: &str = "MARKITAI_PDF_RENDERER";
 const MAX_INPUT: usize = 500 * 1024 * 1024;
 
-/// Every build has a page renderer: CoreGraphics on macOS, hayro elsewhere.
-pub(crate) fn available() -> bool {
-    true
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Backend {
     #[cfg(target_os = "macos")]
@@ -274,8 +269,7 @@ mod limits_tests {
     }
 
     #[test]
-    fn every_build_renders_and_lists_its_default_backend_first() {
-        assert!(available());
+    fn every_build_lists_its_default_backend_first() {
         let compiled = Backend::compiled();
         assert_eq!(compiled.first(), Some(&Backend::DEFAULT));
         assert!(compiled.iter().all(|backend| !backend.name().is_empty()));

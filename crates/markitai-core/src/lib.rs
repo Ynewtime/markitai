@@ -102,12 +102,10 @@ pub fn rosetta_translated() -> bool {
     false
 }
 
-pub fn pdf_raster_available() -> bool {
-    pdf_raster::available()
-}
-
+/// Every build has a PDF page renderer (CoreGraphics on macOS, hayro
+/// elsewhere), so Office rendering needs only LibreOffice.
 pub fn office_render_available() -> bool {
-    office_render::available() && pdf_raster::available()
+    office_render::available()
 }
 
 /// Launch and close an isolated browser session; no document or provider request is made.

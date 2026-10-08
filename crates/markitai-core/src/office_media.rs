@@ -23,12 +23,6 @@ pub(crate) fn prepare(
     cfg: &Value,
     vlm_disabled: bool,
 ) -> Result<(Vec<Asset>, bool)> {
-    if !crate::pdf_raster::available() {
-        return Err(Error::Unsupported(
-            "Office page capture requires an available native PDF page renderer on this platform"
-                .into(),
-        ));
-    }
     let llm = config::enabled(cfg, "/llm/enabled");
     let ocr = config::enabled(cfg, "/ocr/enabled");
     let local_ocr = ocr && (!llm || vlm_disabled);

@@ -228,15 +228,10 @@ fn decode_with(
     if let Some(guessed) = legacy(bytes) {
         return Ok(guessed);
     }
-    // Legacy Western text is a supported input; never silently replace bytes.
-    let (decoded, malformed) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);
-    if malformed {
-        Err(Error::Conversion(
-            "Input text is not valid UTF-8, UTF-16 or Windows-1252".into(),
-        ))
-    } else {
-        Ok((decoded.into_owned(), None))
-    }
+    // Legacy Western text is a supported input. Windows-1252 maps every byte,
+    // so this decode never substitutes a replacement character.
+    let (decoded, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);
+    Ok((decoded.into_owned(), None))
 }
 
 /// Multibyte encodings tried for unlabeled non-UTF-8 text, in the order that

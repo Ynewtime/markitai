@@ -474,19 +474,13 @@ fn checks(
         browser.install_hint = "MARKITAI_BROWSER_EXECUTABLE is set, so only that path is tried and doctor --fix will not replace it: point it at a working Chrome/Chromium executable, or unset it to use an installed browser or markitai doctor --fix".into();
     }
     result.insert("playwright", browser);
-    let mut office = backend(
+    let office = backend(
         "LibreOffice",
         "Office page and slide rendering",
         office,
         "Installed executable responds to --version in an isolated profile; document export fidelity is not tested",
         office_install_hint(std::env::consts::OS),
     );
-    if office.status == "ok" && !markitai_core::pdf_raster_available() {
-        office.status = "warning";
-        office
-            .message
-            .push_str("; native PDF rendering is unavailable on this platform");
-    }
     result.insert("libreoffice", office);
     result.insert("rapidocr", local_ocr(cfg));
     let mut legacy = Check::new(

@@ -1043,9 +1043,7 @@ fn publish_screenshot(
         crate::asset_store::insert_or_verify(&path, &screenshot.bytes)?;
         return Ok(path);
     }
-    Err(Error::Conversion(
-        "Screenshot version counter exhausted".into(),
-    ))
+    unreachable!("the revision range is unbounded")
 }
 
 fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
