@@ -344,7 +344,9 @@ class LLMProviderCredentials(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    api_key: str | None
+    # Masked like every other settings response; ``env:`` references verbatim.
+    # The editor omits ``api_key`` on save unless the user typed a new one.
+    api_key_masked: str | None
     api_base: str | None  # RAW saved base; null when on the provider default
     api_base_placeholder: str | None  # provider default, for the editor only
 

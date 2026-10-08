@@ -349,6 +349,9 @@ export function SettingsModal({
 
   const [editingProvider, setEditingProvider] = useState<ProviderConnection | null>(null);
   const [editProviderKey, setEditProviderKey] = useState("");
+  // the masked stored key the field starts with; save sends api_key only
+  // when the field no longer holds it, so an untouched field keeps the key
+  const [editProviderKeyMasked, setEditProviderKeyMasked] = useState("");
   const [editProviderBase, setEditProviderBase] = useState("");
   // provider default shown as the base field's placeholder; an empty field
   // saves null (keep using the default) rather than pinning the default URL
@@ -361,6 +364,7 @@ export function SettingsModal({
     const requestId = ++providerCredentialsRequestRef.current;
     setEditingProvider(connection);
     setEditProviderKey("");
+    setEditProviderKeyMasked("");
     setEditProviderBase("");
     setEditBasePlaceholder("");
     setProviderCredentialsBusy(true);
@@ -369,7 +373,8 @@ export function SettingsModal({
     try {
       const credentials = await fetchLLMProviderCredentials(connection.provider_id);
       if (requestId !== providerCredentialsRequestRef.current) return;
-      setEditProviderKey(credentials.api_key ?? "");
+      setEditProviderKey(credentials.api_key_masked ?? "");
+      setEditProviderKeyMasked(credentials.api_key_masked ?? "");
       setEditProviderBase(credentials.api_base ?? "");
       setEditBasePlaceholder(credentials.api_base_placeholder ?? "");
     } catch (error) {
@@ -399,9 +404,12 @@ export function SettingsModal({
     }
     setProviderBusy(true);
     setListError(null);
+    const key = editProviderKey.trim();
     try {
       const next = await updateLLMProvider(editingProvider.provider_id, {
-        api_key: editProviderKey.trim() === "" ? null : editProviderKey.trim(),
+        ...(editProviderKey === editProviderKeyMasked
+          ? {}
+          : { api_key: key === "" ? null : key }),
         api_base: editProviderBase.trim() === "" ? null : editProviderBase.trim(),
         expected_revision: settings.revision,
       });

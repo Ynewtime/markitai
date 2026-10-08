@@ -2126,10 +2126,10 @@ def create_app(
     ) -> dict[str, str | None]:
         """Return one saved connection's editable values on explicit request.
 
-        Provider collection responses remain secret-free. This endpoint is
-        covered by the loopback-only settings middleware and is called only
-        when the user opens the provider editor. API keys stay behind a
-        password control; API bases are ordinary, non-secret URL fields.
+        The stored key is never returned, only its masked form: the editor
+        shows it and leaves ``api_key`` out of the update unless the user
+        types a new key, so the stored one stays. API bases are ordinary,
+        non-secret URL fields.
         """
         state = _state(request)
         saved = next(
@@ -2146,7 +2146,7 @@ def create_app(
             # pin the default as an explicit override; the default is offered
             # separately for the editor's placeholder.
             return {
-                "api_key": saved.api_key,
+                "api_key_masked": _mask_api_key(saved.api_key),
                 "api_base": saved.api_base,
                 "api_base_placeholder": provider_default_api_base(saved.provider),
             }
@@ -2164,7 +2164,7 @@ def create_app(
         if legacy is not None:
             legacy_provider = legacy.litellm_params.model.split("/", 1)[0].lower()
             return {
-                "api_key": legacy.litellm_params.api_key,
+                "api_key_masked": _mask_api_key(legacy.litellm_params.api_key),
                 "api_base": legacy.litellm_params.api_base,
                 "api_base_placeholder": provider_default_api_base(legacy_provider),
             }
