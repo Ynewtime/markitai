@@ -32,6 +32,9 @@ mod sanitize;
 mod sanitize_tests;
 
 const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
+/// Operators one decoded content stream may hold before inspection or
+/// operator filtering gives up on it.
+const MAX_CONTENT_OPERATIONS: usize = 1_000_000;
 const MAX_ASSET_BYTES: usize = 128 * 1024 * 1024;
 // PDF images keep their own 32 Mi limit: one between it and `images::MAX_PIXELS`
 // is still extracted, and asset preparation keeps it unchanged with a notice.
@@ -490,6 +493,11 @@ fn inspect_content(
             return None;
         }
     };
+    if content.operations.len() > MAX_CONTENT_OPERATIONS {
+        out.warn("Content stream has more operators than the inspection limit.".into());
+        out.incomplete = true;
+        return None;
+    }
     inspect_operations(pdf, &content, resources, state, seen_forms, depth, out);
     Some(content)
 }
@@ -536,7 +544,8 @@ fn inspect_operations(
                     out.visibility_unknown.insert(reason);
                 }
             }
-            "BI" | "ID" => {
+            // lopdf reads a whole inline image, `BI` to `EI`, as one `BI`.
+            "BI" => {
                 out.warn("Inline PDF images are not extracted.".into());
             }
             "Do" => {
@@ -1788,6 +1797,35 @@ mod tests {
                 "An invoked XObject resource could not be resolved.",
             ]
         );
+    }
+
+    #[test]
+    fn content_past_the_operator_limit_is_not_inspected() {
+        let pdf = lopdf::Document::with_version("1.7");
+        let inspect = |bytes: &[u8]| {
+            let mut out = PageInspection::default();
+            let content = inspect_content(
+                &pdf,
+                bytes,
+                &[],
+                GraphicsState::default(),
+                &mut BTreeSet::new(),
+                0,
+                &mut out,
+            );
+            (out, content.is_some())
+        };
+        let (exact, read) = inspect("n ".repeat(MAX_CONTENT_OPERATIONS).as_bytes());
+        assert!(read && !exact.incomplete && exact.warnings.is_empty());
+        let (over, read) = inspect("n ".repeat(MAX_CONTENT_OPERATIONS + 1).as_bytes());
+        assert!(!read && over.incomplete);
+        assert_eq!(
+            over.warnings,
+            ["Content stream has more operators than the inspection limit."]
+        );
+        // A stray `ID` is not an inline image: lopdf reads real ones as `BI`.
+        let (stray, read) = inspect(b"ID");
+        assert!(read && !stray.incomplete && stray.warnings.is_empty());
     }
 
     #[test]

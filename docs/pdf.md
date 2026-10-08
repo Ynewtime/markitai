@@ -423,7 +423,9 @@ released at the end of that page's preparation; the reader keeps the page's runs
 until the positioned-text pass completes, as it did when it walked them itself.
 Only the page's frame and bounded grid coordinates survive until then. Form
 inspection retains the existing shared 64 MiB page/Form byte budget, 256 content
-inspections and 32 nested Form levels; Form operations are not used as
+inspections and 32 nested Form levels, and, like operator filtering, leaves a
+content stream of more than a million operators uninspected with a warning,
+which makes the page's inspection incomplete; Form operations are not used as
 speculative table borders. Pages with incomplete inspection retain the original
 warning and fallback behavior.
 

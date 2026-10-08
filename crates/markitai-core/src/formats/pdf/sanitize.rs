@@ -5,7 +5,10 @@
 //! reading; the original assets, comments and scan-layer verdict remain owned
 //! by the first reading.
 
-use super::{GraphicsState, MAX_STREAM_BYTES, PdfPages, decoded, matrix_scale, named_resource};
+use super::{
+    GraphicsState, MAX_CONTENT_OPERATIONS, MAX_STREAM_BYTES, PdfPages, decoded, matrix_scale,
+    named_resource,
+};
 use crate::{Error, Result};
 use lopdf::{
     Dictionary, Document, Object, ObjectId, Stream,
@@ -552,7 +555,7 @@ impl Background<'_> {
         let Ok(content) = Content::decode(bytes) else {
             return true;
         };
-        if content.operations.len() > 1_000_000 {
+        if content.operations.len() > MAX_CONTENT_OPERATIONS {
             return true;
         }
         for op in content.operations {
@@ -648,7 +651,7 @@ impl Rewriter<'_> {
         *self.global_bytes += bytes.len();
         let content =
             Content::decode(bytes).map_err(|_| "content operators could not be decoded")?;
-        if content.operations.len() > 1_000_000 {
+        if content.operations.len() > MAX_CONTENT_OPERATIONS {
             return Err("operator filtering exceeded its operation budget");
         }
         let mut operations = Vec::with_capacity(content.operations.len());
