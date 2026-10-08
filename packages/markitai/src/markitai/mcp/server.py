@@ -38,6 +38,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from markitai import __version__, aconvert
 from markitai.api import (
+    ConfigFileError,
     ConversionError,
     ConversionOutput,
     FetchError,
@@ -61,6 +62,7 @@ _DEFAULT_BATCH_CONCURRENCY = 10
 # an opaque "Error executing tool ..." with the reason dropped, so these are
 # re-raised as ToolError carrying their message.
 _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
+    ConfigFileError,
     ConversionError,
     FetchError,
     FileNotFoundError,

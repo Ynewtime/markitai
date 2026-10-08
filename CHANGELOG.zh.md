@@ -52,6 +52,7 @@
 - `markitai serve` 不再返回已保存的 API key：`GET /api/settings/llm/providers/{id}/credentials` 返回打码后的 `api_key_masked`（`sk…7890`；`env:` 引用原样返回），不再返回原始 `api_key`。提供商编辑器显示这个打码值，只有你改动 key 时才发送，所以保存时不动该字段就保留已保存的 key；清空字段仍会删除 key。
 - `markitai serve` 设置中 key 与非保存时地址配对被拒时，错误信息现在会说明可行的做法：直接输入 key 本身，或在配置文件里配置这一对。serve 和配置指南也解释了这条规则和两种做法。
 - 缩小到 512 px 后仍超过 5 MB 视觉输入上限的图片，现在按 512 px 的版本发送，不再发送原始的更大图片。缩放也会恰好停在 512 px，而不是停在高于它的上一档。
+- MCP 服务器遇到格式错误或取值无效的配置文件时，会返回具体信息（"Invalid JSON in …"、"Invalid configuration in …"），不再是含糊的 "Error executing tool" 错误。`ConfigFileError` 现在可从 `markitai.api` 导入，`markitai.config.ConfigFileError` 照常可用。
 
 ## [1.2.0] - 2026-09-28
 

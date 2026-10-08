@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `markitai serve` no longer returns stored API keys: `GET /api/settings/llm/providers/{id}/credentials` answers `api_key_masked` (`sk…7890`; `env:` references as is) instead of the raw `api_key`. The provider editor shows that masked value and sends a key only when you change it, so saving an edit that leaves the field alone keeps the stored key; clearing the field still removes it.
 - The `markitai serve` settings errors for a key paired with an address it wasn't saved with now say what works: enter the key itself, or set the pair up in the config file. The serve and configuration guides explain the rule and both ways.
 - An image that is still over the 5 MB vision limit after being scaled down to 512 px is sent at 512 px instead of at its original, larger size. The scaling also stops exactly at 512 px instead of at the last step above it.
+- The MCP server reports a malformed or invalid config file with its message ("Invalid JSON in …", "Invalid configuration in …") instead of an opaque "Error executing tool" error. `ConfigFileError` is now exported from `markitai.api`, and `markitai.config.ConfigFileError` keeps working.
 
 ## [1.2.0] - 2026-09-28
 

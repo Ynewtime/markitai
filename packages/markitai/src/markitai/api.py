@@ -40,7 +40,7 @@ from loguru import logger
 
 from markitai.fetch_types import FetchError
 from markitai.types import LLMUsageByModel
-from markitai.utils.errors import ConversionError
+from markitai.utils.errors import ConfigFileError, ConversionError
 from markitai.utils.suppress import suppress_parser_noise
 
 if TYPE_CHECKING:
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from markitai.workflow.core import ConversionContext
 
 __all__ = [
+    "ConfigFileError",
     "ConversionError",
     "ConversionOutput",
     "ConversionUsage",
