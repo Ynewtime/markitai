@@ -751,6 +751,80 @@ fn bounded_journal_compaction_preserves_all_acknowledged_sequences() {
     );
 }
 
+/// A completed item with one model's usage, as an LLM batch records it.
+fn paid(fixture: &Fixture, key: &str) -> Value {
+    let row = json!({"requests":2,"input_tokens":10020,"output_tokens":1003,"cost_usd":0.0028,
+        "priced_requests":2,"unpriced_requests":0,"cost_status":"complete",
+        "pricing_snapshot":"litellm-1.100.1-selected-2026-09-29"});
+    json!({"status":"completed","output":fixture.output(key),"diagnostics":{"last_attempt":{
+        "operation":"convert","status":"done","error":null,"usage":{"requests":2,
+        "input_tokens":10020,"output_tokens":1003,"cost_usd":0.0028,
+        "by_model":{"openai/gpt-5.6-luna":row}}}}})
+}
+
+#[test]
+fn a_batch_within_the_entry_limit_compacts_after_every_item_completes() {
+    let fixture = Fixture::directory();
+    // A quarter of the entry limit already outgrew the old base limit.
+    let count = Limits::default().entries / 4;
+    let keys: Vec<_> = (0..count)
+        .map(|index| format!("nested/quarterly-report-{index:06}.pdf"))
+        .collect();
+    let mut store = fixture.open();
+    store
+        .begin(discovered(
+            &keys.iter().map(String::as_str).collect::<Vec<_>>(),
+        ))
+        .unwrap();
+    for key in &keys {
+        store
+            .record(ItemKey::File(key.clone()), paid(&fixture, key))
+            .unwrap();
+    }
+    store.flush().unwrap();
+    store.compact().unwrap();
+    drop(store);
+    let (recovered, warnings) = loaded(&mut fixture.open());
+    assert!(warnings.is_empty());
+    assert_eq!(recovered.documents.len(), count);
+    assert!(
+        recovered
+            .documents
+            .values()
+            .all(|entry| entry.status == Status::Completed)
+    );
+}
+
+#[test]
+fn a_batch_that_could_not_be_compacted_once_finished_is_refused_before_work() {
+    let fixture = Fixture::directory();
+    let limits = Limits {
+        base_bytes: 4096,
+        ..Limits::default()
+    };
+    let keys: Vec<_> = (0..10).map(|index| format!("item-{index}.txt")).collect();
+    let keys: Vec<_> = keys.iter().map(String::as_str).collect();
+    let mut store = fixture.open_with(limits);
+    // Ten pending entries encode well under 4 KiB but cannot finish within it.
+    assert!(
+        codec::encode(&discovered(&keys), &fixture.scope, false, limits)
+            .unwrap()
+            .len()
+            < 1024
+    );
+    assert!(matches!(
+        store.begin(discovered(&keys)),
+        Err(Error::Limit("projected base bytes"))
+    ));
+    assert!(!fixture.base().exists());
+    // Completed entries do not grow, so a resumed remainder that fits begins.
+    let mut snapshot = discovered(&keys);
+    for entry in snapshot.documents.values_mut().skip(3) {
+        entry.status = Status::Completed;
+    }
+    store.begin(snapshot).unwrap();
+}
+
 #[test]
 fn absent_base_does_not_adopt_an_orphan_journal_and_oversized_base_is_corrupt() {
     let fixture = Fixture::directory();

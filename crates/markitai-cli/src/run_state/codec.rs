@@ -686,17 +686,13 @@ impl Write for BoundedWriter {
     }
 }
 
-fn serialized(value: &impl Serialize, limit: usize, pretty: bool) -> Result<Vec<u8>> {
+fn serialized(value: &impl Serialize, limit: usize) -> Result<Vec<u8>> {
     let mut writer = BoundedWriter {
         bytes: Vec::new(),
         limit,
         exceeded: false,
     };
-    let result = if pretty {
-        serde_json::to_writer_pretty(&mut writer, value)
-    } else {
-        serde_json::to_writer(&mut writer, value)
-    };
+    let result = serde_json::to_writer(&mut writer, value);
     if writer.exceeded {
         return Err(Error::Limit("serialized bytes"));
     }
@@ -759,6 +755,7 @@ pub(crate) fn encode(
         #[serde(rename = "_markitai", skip_serializing_if = "Option::is_none")]
         checkpoint: &'a Option<Checkpoint>,
     }
+    // Compact: indentation of nested usage rows would cost more than the data.
     serialized(
         &WireSnapshot {
             version: "1.0",
@@ -768,7 +765,6 @@ pub(crate) fn encode(
             checkpoint: &snapshot.checkpoint,
         },
         limits.base_bytes,
-        true,
     )
 }
 
@@ -850,7 +846,6 @@ pub(crate) fn encode_event_limited(event: &Event, limit: usize) -> Result<Vec<u8
             fence: &event.fence,
         },
         limit,
-        false,
     )
 }
 
