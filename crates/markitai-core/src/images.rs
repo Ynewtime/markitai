@@ -544,6 +544,9 @@ pub(crate) fn extract(
         if recognized.unread {
             doc.warnings.push(crate::ocr::unread_warning("this image"));
         }
+        if recognized.capped {
+            doc.warnings.push(crate::ocr::capped_warning("this image"));
+        }
         ocr_metadata(&mut doc, cfg);
         Ok((doc, Vec::new()))
     } else {
@@ -678,6 +681,9 @@ fn extract_heif(
         if recognized.unread {
             doc.warnings.push(crate::ocr::unread_warning("this image"));
         }
+        if recognized.capped {
+            doc.warnings.push(crate::ocr::capped_warning("this image"));
+        }
         ocr_metadata(&mut doc, cfg);
         Ok((doc, Vec::new()))
     } else {
@@ -758,6 +764,12 @@ fn extract_tiff(
             let recognized = crate::ocr::recognize_rgb(rgb_on_white(&image), cfg)?;
             if recognized.unread {
                 doc.warnings.push(crate::ocr::unread_warning(&format!(
+                    "TIFF page {}",
+                    index + 1
+                )));
+            }
+            if recognized.capped {
+                doc.warnings.push(crate::ocr::capped_warning(&format!(
                     "TIFF page {}",
                     index + 1
                 )));

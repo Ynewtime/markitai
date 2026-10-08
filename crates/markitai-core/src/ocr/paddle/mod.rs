@@ -166,7 +166,7 @@ impl Detector {
         Ok(plan)
     }
 
-    fn regions(&self, image: &RgbImage) -> Result<Vec<detect::Region>> {
+    fn regions(&self, image: &RgbImage) -> Result<(Vec<detect::Region>, bool)> {
         // Bound cold optimization and input planes as well as the inference itself.
         let _turn = DetectionTurn::take();
         let layout = detect::Layout::of(image.width(), image.height());
@@ -405,9 +405,10 @@ struct Cut {
     flagged: bool,
 }
 
-/// The text lines of `image`, cut out upright.
-fn cuts(engine: &Engine, image: &RgbImage) -> Result<Vec<Cut>> {
-    let regions = engine.detector.regions(image)?;
+/// The text lines of `image`, cut out upright, and whether it had more than
+/// [`detect::MAX_REGIONS`].
+fn cuts(engine: &Engine, image: &RgbImage) -> Result<(Vec<Cut>, bool)> {
+    let (regions, capped) = engine.detector.regions(image)?;
     let mut cuts = Vec::with_capacity(regions.len());
     for region in &regions {
         let [tl, tr, _, bl] = region.corners;
@@ -452,7 +453,7 @@ fn cuts(engine: &Engine, image: &RgbImage) -> Result<Vec<Cut>> {
             cut.flagged = over;
         }
     }
-    Ok(cuts)
+    Ok((cuts, capped))
 }
 
 /// Threads reading lines in this process, beyond the callers' own.
@@ -680,7 +681,7 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
     let choice = choice(spelling)?;
     models::preflight(&needed(spelling)?)?;
     let engine = engine()?;
-    let cuts = cuts(&engine, image)?;
+    let (cuts, capped) = cuts(&engine, image)?;
     let (lines, language, unread) = match choice {
         Choice::Model(name) => {
             let all: Vec<&Cut> = cuts.iter().collect();
@@ -688,7 +689,9 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
         }
         Choice::Default => read_default(&cuts)?,
     };
-    finish(lines, image, language, unread)
+    let mut result = finish(lines, image, language, unread)?;
+    result.capped = capped;
+    Ok(result)
 }
 
 /// The default language. The multilingual recognizer reads Latin script,
