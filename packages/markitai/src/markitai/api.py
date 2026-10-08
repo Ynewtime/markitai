@@ -29,6 +29,10 @@ import shutil
 import sys
 import tempfile
 import time
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -42,6 +46,7 @@ from markitai.utils.suppress import suppress_parser_noise
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
+    from markitai.llm import LLMProcessor
     from markitai.workflow.core import ConversionContext
 
 __all__ = [
@@ -402,7 +407,12 @@ async def _aconvert_file(
     from markitai.utils.paths import derive_output_name
     from markitai.workflow.core import ConversionContext, convert_document_core
 
-    ctx = ConversionContext(input_path=path, output_dir=workdir, config=cfg)
+    ctx = ConversionContext(
+        input_path=path,
+        output_dir=workdir,
+        config=cfg,
+        shared_processor=_batch_processor.get() if cfg.llm.enabled else None,
+    )
     result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
 
     if not result.success:
@@ -471,7 +481,8 @@ async def _aconvert_url(
     from markitai.output_profiles import assets_visible
     from markitai.workflow.url import convert_url_cascade
 
-    result = await convert_url_cascade(url, cfg, workdir)
+    processor = _batch_processor.get() if cfg.llm.enabled else None
+    result = await convert_url_cascade(url, cfg, workdir, processor=processor)
 
     if result.skipped:
         assert result.skip_target is not None
@@ -526,6 +537,64 @@ async def _aconvert_url(
         usage=ConversionUsage.from_usage_dict(result.cost_usd, result.llm_usage),
         warnings=list(result.warnings),
     )
+
+
+# The LLM processor the aconvert calls of one batch share (see
+# _share_llm_processor); None gives every call its own.
+_batch_processor: ContextVar[LLMProcessor | None] = ContextVar(
+    "markitai_api_batch_processor", default=None
+)
+
+
+@asynccontextmanager
+async def _share_llm_processor(
+    *,
+    llm: bool | None,
+    ocr: bool | None,
+    screenshot: bool | None,
+    alt: bool | None,
+    desc: bool | None,
+    profile: OutputProfileName | None = None,
+) -> AsyncIterator[None]:
+    """Let the ``aconvert`` calls made in this block share one LLM processor.
+
+    A processor per call is a semaphore per call, so a batch of N sources
+    could have N x ``llm.concurrency`` requests in flight; the CLI and
+    ``serve`` batches share one. The processor is built from the config the
+    calls resolve (same file hierarchy, same overrides). When LLM is off or
+    the config does not resolve, nothing is shared and every call reports
+    its own error as before.
+    """
+    processor: LLMProcessor | None = None
+    try:
+        cfg = await asyncio.to_thread(
+            _resolve_config,
+            None,
+            llm=llm,
+            ocr=ocr,
+            screenshot=screenshot,
+            alt=alt,
+            desc=desc,
+            profile=profile,
+        )
+    except Exception:
+        cfg = None
+    if cfg is not None and cfg.llm.enabled and cfg.llm.model_list:
+        import importlib
+
+        # The LLM stack takes most of a second to import: off the loop
+        await asyncio.to_thread(importlib.import_module, "markitai.llm")
+        from markitai.llm import LLMRuntime
+        from markitai.workflow.helpers import create_llm_processor
+
+        processor = create_llm_processor(
+            cfg, runtime=LLMRuntime(concurrency=cfg.llm.concurrency)
+        )
+    token = _batch_processor.set(processor)
+    try:
+        yield
+    finally:
+        _batch_processor.reset(token)
 
 
 async def aconvert(
@@ -607,7 +676,14 @@ async def aconvert(
     try:
         # Per-call capture: a library has no console, and concurrent
         # aconvert calls each collect only their own notices.
-        with capture_task_notices() as notices:
+        if cfg.llm.enabled and _batch_processor.get() is not None:
+            from markitai.llm.engine import llm_usage_scope
+
+            # This call's own usage and budget on the shared processor
+            usage_scope = llm_usage_scope(uuid.uuid4().hex)
+        else:
+            usage_scope = nullcontext()
+        with capture_task_notices() as notices, usage_scope:
             result = await _aconvert_source(
                 src, source, cfg, workdir, in_memory=in_memory
             )

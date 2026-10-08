@@ -536,3 +536,52 @@ class TestDotenvLoading:
         finally:
             for key in ("MARKITAI_T_BOTH", "MARKITAI_T_CWD", "MARKITAI_T_HOME"):
                 os.environ.pop(key, None)
+
+
+class TestBatchSharesOneLlmProcessor:
+    """Regression: every batch item built its own LLMProcessor (and so its
+    own semaphore), letting a 10-item batch run 10 x llm.concurrency requests
+    at once despite the docstring promising the CLI's batch behavior."""
+
+    async def test_llm_batch_builds_one_processor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        server_module._JOBS.clear()
+        monkeypatch.setenv("MODEL", "openai/gpt-4o-mini")
+        created: list[object] = []
+
+        def fake_create_llm_processor(cfg: object, runtime: object = None) -> object:
+            processor = MagicMock(name=f"processor-{len(created)}")
+            created.append(processor)
+            return processor
+
+        seen: list[object] = []
+
+        async def fake_run_llm_enhancement(ctx: object) -> object:
+            from markitai.workflow.core import ConversionStepResult
+
+            seen.append(ctx.shared_processor)  # type: ignore[attr-defined]
+            return ConversionStepResult(success=True)
+
+        monkeypatch.setattr(
+            "markitai.workflow.helpers.create_llm_processor",
+            fake_create_llm_processor,
+        )
+        monkeypatch.setattr(
+            "markitai.workflow.core.run_llm_enhancement", fake_run_llm_enhancement
+        )
+        sources = []
+        for i in range(3):
+            path = tmp_path / f"doc-{i}.md"
+            path.write_text(f"# Doc {i}\n\nBody.\n", encoding="utf-8")
+            sources.append(str(path))
+
+        started = await batch_convert(
+            sources, output_dir=str(tmp_path / "out"), llm=True, concurrency=3
+        )
+        await _wait_for_completion(started["job_id"])
+
+        assert len(created) == 1
+        assert seen == [created[0]] * 3

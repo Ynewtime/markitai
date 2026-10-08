@@ -43,6 +43,7 @@ from markitai.api import (
     FetchError,
     NoModelConfiguredError,
     OutputProfileName,
+    _share_llm_processor,
 )
 
 # Inline markdown budget per tool result. Past this, the result carries a
@@ -472,7 +473,14 @@ async def _convert_all(
             job.results = [slot for slot in slots if slot is not None]
             job.done += 1
 
-    await asyncio.gather(*(one(index, source) for index, source in enumerate(sources)))
+    # One LLM processor for the whole job, so llm.concurrency bounds the
+    # batch rather than each item
+    async with _share_llm_processor(
+        llm=llm, ocr=ocr, screenshot=screenshot, alt=alt, desc=desc, profile=profile
+    ):
+        await asyncio.gather(
+            *(one(index, source) for index, source in enumerate(sources))
+        )
 
 
 def _forget_finished_jobs(keep: int = _MAX_FINISHED_JOBS) -> None:

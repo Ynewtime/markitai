@@ -67,6 +67,20 @@ class TestUsageScope:
             assert budget.exceeded("report.pdf") is False
 
 
+class TestNestedUsageScope:
+    def test_inner_scope_refines_the_outer_one(self) -> None:
+        """An MCP batch item (outer scope) converting the same file as another
+        item (same inner path scope) still gets its own tally."""
+        processor = LLMProcessor(LLMConfig(), PromptsConfig())
+
+        for item, cost in (("item-1", 0.1), ("item-2", 0.2)):
+            with llm_usage_scope(item), llm_usage_scope("/in/report.pdf"):
+                processor._track_usage("m", 1, 1, cost, context="report.pdf")
+
+        with llm_usage_scope("item-1"), llm_usage_scope("/in/report.pdf"):
+            assert processor.get_context_cost("report.pdf") == pytest.approx(0.1)
+
+
 class TestSameNamedFilesInOneBatch:
     async def test_each_file_reports_only_its_own_cost(self, tmp_path: Path) -> None:
         cfg = MarkitaiConfig()

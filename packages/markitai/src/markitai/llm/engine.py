@@ -162,10 +162,14 @@ _usage_scope: ContextVar[str] = ContextVar("markitai_llm_usage_scope", default="
 def llm_usage_scope(scope: str) -> Iterator[None]:
     """Keep the usage and request budget of one work item apart.
 
+    Scopes nest: an inner scope refines the enclosing one instead of
+    replacing it.
+
     Args:
         scope: Unique id of the item (e.g. its resolved input path).
     """
-    token = _usage_scope.set(scope)
+    outer = _usage_scope.get()
+    token = _usage_scope.set(f"{outer}\x00{scope}" if outer else scope)
     try:
         yield
     finally:
