@@ -61,11 +61,11 @@ class TestLLMProcessor:
         processor = LLMProcessor(llm_config, prompts_config)
 
         # Simulate tracking
-        processor._track_usage("test-model", 100, 50, 0.001)
-        processor._track_usage("test-model", 200, 100, 0.002)
-        processor._track_usage("other-model", 50, 25, 0.0005)
+        processor._track_usage("test-model", 100, 50, 0.001, context="doc.pdf")
+        processor._track_usage("test-model", 200, 100, 0.002, context="doc.pdf")
+        processor._track_usage("other-model", 50, 25, 0.0005, context="doc.pdf")
 
-        usage = processor.get_usage()
+        usage = processor.get_context_usage("doc.pdf")
         assert "test-model" in usage
         assert usage["test-model"]["requests"] == 2
         assert usage["test-model"]["input_tokens"] == 300
@@ -75,8 +75,7 @@ class TestLLMProcessor:
         assert "other-model" in usage
         assert usage["other-model"]["requests"] == 1
 
-        total_cost = processor.get_total_cost()
-        assert total_cost == pytest.approx(0.0035)
+        assert processor.get_context_cost("doc.pdf") == pytest.approx(0.0035)
 
     async def test_analyze_with_instructor_tracks_usage(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
@@ -116,38 +115,10 @@ class TestLLMProcessor:
         assert result.llm_usage["test-model"]["requests"] == 1
         assert result.llm_usage["test-model"]["input_tokens"] == 123
         assert result.llm_usage["test-model"]["output_tokens"] == 45
-        # Also verify processor's aggregate usage
-        usage = processor.get_usage()
-        assert "test-model" in usage
-        assert usage["test-model"]["input_tokens"] == 123
-        assert usage["test-model"]["output_tokens"] == 45
 
 
 class TestLLMProcessorAsync:
     """Async tests for LLMProcessor."""
-
-    async def test_clean_markdown(
-        self, llm_config: LLMConfig, prompts_config: PromptsConfig
-    ):
-        """Test markdown cleaning."""
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        # Mock the router's acompletion
-        mock_response = MagicMock()
-        mock_response.choices = [
-            MagicMock(message=MagicMock(content="Cleaned markdown"))
-        ]
-        mock_response.model = "test-model"
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-
-        with patch.object(processor, "_router") as mock_router:
-            mock_router.acompletion = AsyncMock(return_value=mock_response)
-            processor._router = mock_router
-
-            result = await processor.clean_markdown("# Test\n\nSome content")
-
-            assert result == "Cleaned markdown"
-            mock_router.acompletion.assert_called_once()
 
     async def test_process_document(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
@@ -162,7 +133,7 @@ class TestLLMProcessorAsync:
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
-        # Set response for clean_markdown only (frontmatter is generated programmatically)
+        # Plain-text response (frontmatter is generated programmatically)
         clean_response = MagicMock()
         clean_response.choices = [
             MagicMock(message=MagicMock(content="# Test Heading\n\nCleaned content"))

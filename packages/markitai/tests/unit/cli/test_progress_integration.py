@@ -51,8 +51,6 @@ def make_fetch_result(content: str = "# Test Page\n\nSome content.") -> MagicMoc
     result.strategy_used = "static"
     result.screenshot_path = None
     result.title = "Test Page"
-    result.static_content = None
-    result.browser_content = None
     result.metadata = {}
     return result
 

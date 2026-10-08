@@ -10,6 +10,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -305,6 +306,10 @@ class TestSubdirectoryImagesJson:
         assert (output_dir / "sub" / "nested.txt.md").exists()
 
     @pytest.mark.slow
+    @pytest.mark.skipif(
+        importlib.util.find_spec("anydoc") is None,
+        reason="legacy extra (firecrawl-anydoc) not installed",
+    )
     def test_doc_in_subdir_creates_assets(
         self, runner: CliRunner, doc_file: Path, tmp_path: Path
     ) -> None:

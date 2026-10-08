@@ -5,9 +5,11 @@
 Highest to lowest:
 
 1. Command-line flags
-2. Environment variables
-3. Configuration file
+2. Configuration file
+3. Environment variables
 4. Built-in defaults
+
+Credential and model variables (`JINA_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `MODEL`) are fallbacks: they are read only when the config file does not set the value (`MODEL` only when `llm.model_list` is empty). Three switches sit above the config file: `MARKITAI_RECORD_HISTORY` (`1` or `0`) overrides `history.record`, `MARKITAI_PURE=1` turns on pure mode (CLI only), and `MARKITAI_NO_REMOTE_FETCH=1` blocks every remote fetch service. A command-line flag still wins over the first two.
 
 ## Configuration File
 
@@ -391,7 +393,7 @@ Each entry in `model_list` accepts `weight` inside `litellm_params`. `1` is norm
 
 ### Adaptive Timeout
 
-The subscription providers scale the request timeout with prompt length, image count and expected output, between 60 and 600 seconds, so large documents do not time out and short requests stay responsive.
+The Copilot provider scales the request timeout with prompt length, image count and expected output, between 60 and 600 seconds, so large documents do not time out and short requests stay responsive. The Claude Agent SDK manages its own timeouts.
 
 ### Prompt Caching (Claude Agent)
 
@@ -658,7 +660,7 @@ Every LLM task has a system prompt (role and rules) and a user prompt (the conte
 ├── image_caption_system.md      # alt text
 ├── image_description_system.md  # image descriptions
 ├── document_process_system.md   # document processing
-└── url_enhance_system.md        # URL enhancement
+└── screenshot_extract_system.md # --screenshot-only extraction
 ```
 
 ```json
@@ -670,4 +672,4 @@ Every LLM task has a system prompt (role and rules) and a user prompt (the conte
 }
 ```
 
-The keys are `cleaner`, `image_caption`, `image_description`, `image_analysis`, `document_process`, `document_vision` and `url_enhance`, each with a `_system` and a `_user` variant.
+The keys are `cleaner`, `image_caption`, `image_description`, `image_analysis`, `document_process` and `document_vision`, each with a `_system` and a `_user` variant.

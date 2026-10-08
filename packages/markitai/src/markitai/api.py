@@ -13,8 +13,7 @@ serve app use: local files go through ``workflow.core.convert_document_core``
 and URLs follow the programmatic recipe established by ``serve.jobs``
 (``fetch.fetch_url`` + ``workflow.helpers`` + ``LLMProcessor``).
 
-Stability: **provisional** — markitai is 0.x and this API may change in
-minor releases. Signatures and ``ConversionOutput`` fields are expected to
+Stability: **provisional** — this API may change in minor releases. Signatures and ``ConversionOutput`` fields are expected to
 grow; existing fields will not be silently repurposed.
 
 Layering: this module sits at the orchestration level, next to ``workflow``
@@ -226,7 +225,7 @@ def _resolve_config(
 
     Args:
         config: Base configuration. None loads the same file hierarchy the
-            CLI uses (``MARKITAI_CONFIG``, project ``.markitai.json``,
+            CLI uses (``MARKITAI_CONFIG``, project ``markitai.json``,
             ``~/.markitai/config.json``, built-in defaults).
         llm: Override for ``llm.enabled`` (None keeps the config value).
         ocr: Override for ``ocr.enabled``.
@@ -490,8 +489,8 @@ async def _aconvert_url(
     cascade owns fetch/images/LLM/frontmatter/profile; this wrapper owns
     API-facing concerns: frontmatter/asset extraction from the written
     files and in-memory mode. A failed LLM enhancement follows
-    ``llm.on_failure`` like everywhere else. The CLI's vision/screenshot-only
-    URL branches are not replicated.
+    ``llm.on_failure`` like everywhere else. The cascade's screenshot-only
+    branch is the same one the CLI uses.
     """
     from markitai.output_profiles import assets_visible
     from markitai.workflow.url import convert_url_cascade

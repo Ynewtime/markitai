@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import fnmatch
 import glob as glob_module
 import json
 import os
 import re
-from collections.abc import Callable, Coroutine, Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -31,7 +30,6 @@ from rich.progress import (
 
 from markitai.constants import (
     MARKITAI_META_DIR,
-    REPORTS_REL_PATH,
     STATES_REL_PATH,
     VISIBLE_ASSETS_REL_PATH,
 )
@@ -41,7 +39,6 @@ from markitai.runs.report import build_llm_usage_block, build_report_shell
 from markitai.security import atomic_write_json
 from markitai.utils import term
 from markitai.utils.term import get_stderr_console
-from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
     from markitai.config import BatchConfig
@@ -552,10 +549,6 @@ class ProcessResult:
     warnings: list[str] = field(default_factory=list)
 
 
-# Type alias for process function
-ProcessFunc = Callable[[Path], Coroutine[Any, Any, ProcessResult]]
-
-
 class BatchProcessor:
     """Batch processor with concurrent execution and progress display."""
 
@@ -614,10 +607,6 @@ class BatchProcessor:
         self._progress: Progress | None = None
         self._overall_task_id: TaskID | None = None
         self._url_task_id: TaskID | None = None
-        self._total_urls: int = 0
-        self._total_files: int = 0
-        self._completed_urls: int = 0
-        self._completed_files: int = 0
         self._active_file_items: dict[str, str] = {}
         self._active_url_items: dict[str, str] = {}
         self._dirty_keys: set[str] = set()
@@ -635,7 +624,7 @@ class BatchProcessor:
         Hash is based on:
         - input_path (resolved)
         - output_dir (resolved)
-        - key task options (llm_enabled, ocr_enabled, etc.)
+        - key task options (llm, ocr, etc.)
 
         This ensures different parameter combinations produce different hashes,
         so resuming with different options creates a new state file.
@@ -653,11 +642,6 @@ class BatchProcessor:
                 "screenshot",
                 "alt",
                 "desc",
-                "llm_enabled",
-                "ocr_enabled",
-                "screenshot_enabled",
-                "image_alt_enabled",
-                "image_desc_enabled",
                 "scan_max_depth",
                 "glob_patterns",
                 # output_affecting_options(): present only when not default,
@@ -687,34 +671,10 @@ class BatchProcessor:
         return states_dir / f"markitai.{self.task_hash}.state.json"
 
     def _get_report_file_path(self) -> Path:
-        """Generate report file path based on task hash.
+        """Report file path for this task (see ``get_report_file_path``)."""
+        from markitai.utils.cli_helpers import get_report_file_path
 
-        Format: reports/markitai.<hash>.report.json
-        Respects on_conflict strategy for rename.
-        """
-        reports_dir = self.output_dir / REPORTS_REL_PATH
-        base_path = reports_dir / f"markitai.{self.task_hash}.report.json"
-
-        if not base_path.exists():
-            return base_path
-
-        if self.on_conflict == "skip":
-            return base_path  # Will be handled by caller
-        elif self.on_conflict == "overwrite":
-            return base_path
-        else:  # rename
-            seq = 2
-            max_seq = 9999  # Safety limit to prevent infinite loop
-            while seq <= max_seq:
-                new_path = reports_dir / f"markitai.{self.task_hash}.v{seq}.report.json"
-                if not new_path.exists():
-                    return new_path
-                seq += 1
-            # Fallback: use timestamp if too many versions exist
-            import time
-
-            ts = int(time.time())
-            return reports_dir / f"markitai.{self.task_hash}.{ts}.report.json"
+        return get_report_file_path(self.output_dir, self.task_hash, self.on_conflict)
 
     def start_live_display(
         self,
@@ -749,12 +709,6 @@ class BatchProcessor:
             console=self.console,
             transient=True,  # Clear progress when done
         )
-
-        # Store totals for progress display
-        self._total_urls = total_urls
-        self._total_files = total_files
-        self._completed_urls = 0
-        self._completed_files = 0
 
         # Add URL progress task if there are URLs to process
         if total_urls > 0:
@@ -795,16 +749,8 @@ class BatchProcessor:
         # Re-add console handler (restore original state)
         if self._console_handler_id is not None:
             if self._console_log_restorer is not None:
-                self._restored_console_handler_id = self._console_log_restorer(
-                    self._verbose
-                )
+                self._console_log_restorer(self._verbose)
             self._console_handler_id = None
-
-    def update_progress_total(self, total: int) -> None:
-        """Update progress bar total after file discovery."""
-        self._total_files = total
-        if self._progress is not None and self._overall_task_id is not None:
-            self._progress.update(self._overall_task_id, total=total)
 
     def _render_active_items(self, items: dict[str, str]) -> str:
         """Render active item labels for a compact progress suffix."""
@@ -830,7 +776,6 @@ class BatchProcessor:
             elif clear_current:
                 self._active_file_items.clear()
 
-            self._completed_files += 1
             self._progress.advance(self._overall_task_id)
             if clear_current:
                 self._progress.update(
@@ -868,7 +813,6 @@ class BatchProcessor:
         if self._progress is not None and self._url_task_id is not None:
             if completed:
                 self._active_url_items.pop(item_key, None)
-                self._completed_urls += 1
                 self._progress.advance(self._url_task_id)
                 self._progress.update(
                     self._url_task_id,
@@ -1415,230 +1359,6 @@ class BatchProcessor:
 
         return state
 
-    async def process_batch(
-        self,
-        files: list[Path],
-        process_func: ProcessFunc,
-        resume: bool = False,
-        options: dict[str, Any] | None = None,
-        verbose: bool = False,
-        console_handler_id: int | None = None,
-        started_at: str | None = None,
-    ) -> BatchState:
-        """
-        Process files in batch with concurrency control.
-
-        Args:
-            files: List of files to process
-            process_func: Async function to process each file
-            resume: Whether to resume from previous state
-            options: Task options to record in report
-            verbose: Whether to show log panel during processing
-            console_handler_id: Loguru console handler ID for temporary disable
-                               (ignored if start_live_display was already called)
-            started_at: ISO timestamp when processing started (for accurate duration)
-
-        Returns:
-            Final batch state
-        """
-        # Use provided started_at or default to now
-        actual_started_at = started_at or datetime.now(UTC).astimezone().isoformat()
-
-        # Initialize or load state
-        if resume:
-            self.state = self.load_state()
-            if self.state:
-                files = self.state.get_pending_files()
-                logger.info(
-                    f"Resuming batch: {self.state.completed_count} completed, "
-                    f"{len(files)} remaining"
-                )
-                # Reset started_at for accurate duration calculation in this session
-                self.state.started_at = actual_started_at
-
-        if self.state is None:
-            self.state = self.init_state(
-                input_dir=files[0].parent if files else Path("."),
-                files=files,
-                options=options or {},
-                started_at=actual_started_at,
-            )
-            self.save_state(force=True)
-
-        if not files:
-            logger.info("No files to process")
-            self.save_state(force=True)
-            return self.state
-
-        # Preheat OCR engine if OCR is enabled to eliminate cold start delay
-        if options and options.get("ocr_enabled"):
-            try:
-                from markitai.ocr import OCRProcessor
-
-                OCRProcessor.preheat()
-            except ImportError:
-                logger.debug("OCR preheat skipped: RapidOCR not installed")
-
-        concurrency = self.config.concurrency
-
-        # Check if Live display was already started by caller
-        live_already_started = self._live is not None
-
-        # Use existing progress or create new one
-        if live_already_started and self._progress is not None:
-            progress = self._progress
-            overall_task = self._overall_task_id
-            assert overall_task is not None  # Guaranteed when _progress is set
-            # Update total in case it changed
-            progress.update(overall_task, total=len(files))
-        else:
-            # Create progress display (legacy path for backwards compatibility)
-            # Format: "Files  ━━━━━━━━━━━━━  5/7  0:15  (example.pdf)"
-            progress = Progress(
-                TextColumn("[progress.description]{task.description: <6}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeElapsedColumn(),
-                TextColumn("{task.fields[current]}"),
-                console=self.console,
-                transient=True,  # Clear progress when done
-            )
-            overall_task = progress.add_task(
-                "Files",
-                total=len(files),
-                current="",
-            )
-
-        async def process_single(file_path: Path) -> None:
-            """Process a single file and update state.
-
-            Concurrency is controlled by the queue + worker pool, not a semaphore.
-            """
-            assert self.state is not None  # Guaranteed by _init_state() above
-            file_key = str(file_path)
-            file_state = self.state.files.get(file_key)
-
-            if file_state is None:
-                file_state = FileState(path=file_key)
-                self.state.files[file_key] = file_state
-
-            # Update state to in_progress
-            file_state.status = FileStatus.IN_PROGRESS
-            file_state.started_at = datetime.now(UTC).astimezone().isoformat()
-            self._dirty_keys.add(file_key)
-
-            start_time = asyncio.get_running_loop().time()
-
-            try:
-                # Show current file being processed
-                progress.update(overall_task, current=f"({file_path.name})")
-                result = await process_func(file_path)
-
-                if result.success:
-                    file_state.status = FileStatus.COMPLETED
-                    file_state.output = result.output_path
-                    file_state.images = result.images
-                    file_state.screenshots = result.screenshots
-                    file_state.cost_usd = result.cost_usd
-                    file_state.llm_usage = result.llm_usage
-                    file_state.cache_hit = result.cache_hit
-                    # Extract skip reason from ProcessResult error field
-                    if result.error and result.error.startswith("skipped ("):
-                        # e.g. "skipped (image_only)" → "image_only"
-                        file_state.skip_reason = result.error[9:-1]
-                    self._dirty_keys.add(file_key)
-                    # Collect image analysis result for JSON aggregation
-                    if result.image_analysis_result is not None:
-                        self.image_analysis_results.append(result.image_analysis_result)
-                else:
-                    file_state.status = FileStatus.FAILED
-                    file_state.error = result.error
-                    self._dirty_keys.add(file_key)
-
-            except Exception as e:
-                file_state.status = FileStatus.FAILED
-                file_state.error = format_error_message(e)
-                self._dirty_keys.add(file_key)
-                logger.error(
-                    f"Failed to process {file_path.name}: {format_error_message(e)}"
-                )
-
-            finally:
-                end_time = asyncio.get_running_loop().time()
-                file_state.completed_at = datetime.now(UTC).astimezone().isoformat()
-                file_state.duration = end_time - start_time
-
-                # Update progress and clear current file
-                progress.advance(overall_task)
-                progress.update(overall_task, current="")
-
-            # Save state (non-blocking, throttled)
-            # Use asyncio.to_thread to avoid blocking the event loop
-            await asyncio.to_thread(self.save_state)
-
-        async def _run_with_workers(
-            file_iter: Iterable[Path], worker_count: int
-        ) -> None:
-            queue: asyncio.Queue[Path | None] = asyncio.Queue(maxsize=worker_count * 2)
-
-            async def producer() -> None:
-                for f in file_iter:
-                    await queue.put(f)
-                for _ in range(worker_count):
-                    await queue.put(None)
-
-            async def worker() -> None:
-                while True:
-                    item = await queue.get()
-                    if item is None:
-                        break
-                    try:
-                        await process_single(item)
-                    except Exception:
-                        logger.debug("Unexpected error in worker", exc_info=True)
-
-            producer_task = asyncio.create_task(producer())
-            workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
-            await asyncio.gather(producer_task, *workers)
-
-        try:
-            # If Live display was already started, just run the workers without creating new Live
-            if live_already_started:
-                await _run_with_workers(files, concurrency)
-            else:
-                # No external Live display provided - create one here
-                # Disable console handler to avoid conflict with progress bar
-                if console_handler_id is not None:
-                    try:
-                        logger.remove(console_handler_id)
-                    except ValueError:
-                        pass  # Handler already removed
-
-                self._notice_collector.start()
-                try:
-                    # Progress bar only (verbose logs handled by loguru)
-                    with Live(progress, console=self.console, refresh_per_second=4):
-                        await _run_with_workers(files, concurrency)
-                finally:
-                    self._notice_collector.stop()
-                    # Re-add console handler (restore original state)
-                    if console_handler_id is not None and (
-                        self._console_log_restorer is not None
-                    ):
-                        self._restored_console_handler_id = self._console_log_restorer(
-                            verbose
-                        )
-        except BaseException:
-            # Ctrl-C arrives as CancelledError/KeyboardInterrupt; keep what
-            # finished since the last throttled save before propagating.
-            self.persist_state_on_abort()
-            raise
-
-        # Final save — compact WAL into base state
-        self.compact_state()
-
-        return self.state
-
     def generate_report(self) -> dict[str, Any]:
         """
         Generate final processing report.
@@ -1665,7 +1385,7 @@ class BatchProcessor:
         """Finalize and save report to file.
 
         Report file is saved to: reports/markitai.<hash>.report.json
-        Respects on_conflict strategy (skip/overwrite/rename).
+        (``.v<N>`` added under on_conflict="rename"; otherwise replaced).
 
         Returns:
             Path to the report file

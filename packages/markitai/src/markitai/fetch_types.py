@@ -18,17 +18,8 @@ class FetchStrategy(Enum):
     STATIC = "static"
     DEFUDDLE = "defuddle"  # Defuddle content extraction API
     PLAYWRIGHT = "playwright"  # Playwright Python (recommended)
-    CLOUDFLARE = "cloudflare"  # CF Browser Rendering /markdown API
+    CLOUDFLARE = "cloudflare"  # CF Browser Rendering /content API
     JINA = "jina"
-
-
-# Reasons that indicate content is completely invalid and should not be used
-# When these are detected, we should raise an error instead of using invalid content
-CRITICAL_INVALID_REASONS = {
-    "javascript_disabled",  # JS-rendered sites (Twitter/X, etc.)
-    "javascript_required",  # Sites requiring JS
-    "login_required",  # Sites requiring authentication
-}
 
 
 class FetchError(Exception):
@@ -57,19 +48,7 @@ class JinaAPIError(FetchError):
 
 @dataclass
 class FetchResult:
-    """Result of a URL fetch operation.
-
-    Supports multi-source content for URL fetching:
-    - content: Primary markdown content (best available)
-    - static_content: Content from static/jina fetch (pure text)
-    - browser_content: Content from browser fetch (rendered page)
-    - screenshot_path: Full-page screenshot (visual reference)
-
-    For LLM processing, all three sources can be provided:
-    1. static_content - Clean text, reliable but may miss JS content
-    2. browser_content - Rendered content, includes JS but may have noise
-    3. screenshot - Visual reference for layout/structure
-    """
+    """Result of a URL fetch operation."""
 
     content: str  # Primary markdown content (best available)
     strategy_used: str  # Actual strategy used (static/browser/jina)
@@ -82,9 +61,6 @@ class FetchResult:
     #: All screenshot files: single path when within tile_height, or the
     #: vertical tiles (primary first) of a long page split for VLM reads.
     screenshot_tiles: list[Path] = field(default_factory=list)
-    # Multi-source content for enhanced LLM processing
-    static_content: str | None = None  # Content from static fetch
-    browser_content: str | None = None  # Content from browser fetch
 
 
 @dataclass

@@ -1309,81 +1309,6 @@ class TestDetectJsRequiredEdgeCases:
         assert detect_js_required(content) is True
 
 
-class TestFetchResultMultiSource:
-    """Tests for FetchResult with multi-source content fields."""
-
-    def test_fetch_result_with_static_content(self) -> None:
-        """Test FetchResult with static_content field."""
-        from markitai.fetch import FetchResult
-
-        result = FetchResult(
-            content="Primary content",
-            strategy_used="static",
-            url="https://example.com",
-            static_content="Static content from direct fetch",
-            browser_content=None,
-        )
-
-        assert result.static_content == "Static content from direct fetch"
-        assert result.browser_content is None
-
-    def test_fetch_result_with_browser_content(self) -> None:
-        """Test FetchResult with browser_content field."""
-        from markitai.fetch import FetchResult
-
-        result = FetchResult(
-            content="Primary content",
-            strategy_used="browser",
-            url="https://example.com",
-            static_content=None,
-            browser_content="Browser rendered content",
-        )
-
-        assert result.static_content is None
-        assert result.browser_content == "Browser rendered content"
-
-    def test_fetch_result_with_both_sources(self) -> None:
-        """Test FetchResult with both static and browser content."""
-        from markitai.fetch import FetchResult
-
-        result = FetchResult(
-            content="Primary content",
-            strategy_used="multi",
-            url="https://example.com",
-            static_content="Static version",
-            browser_content="Browser version",
-            screenshot_path=Path("/tmp/screenshot.jpg"),
-        )
-
-        assert result.static_content == "Static version"
-        assert result.browser_content == "Browser version"
-        assert result.screenshot_path is not None
-
-
-class TestCriticalInvalidReasons:
-    """Tests for CRITICAL_INVALID_REASONS constant."""
-
-    def test_critical_reasons_defined(self) -> None:
-        """Test that critical invalid reasons are properly defined."""
-        from markitai.fetch import CRITICAL_INVALID_REASONS
-
-        assert "javascript_disabled" in CRITICAL_INVALID_REASONS
-        assert "javascript_required" in CRITICAL_INVALID_REASONS
-        assert "login_required" in CRITICAL_INVALID_REASONS
-
-    def test_critical_reasons_used_correctly(self) -> None:
-        """Test that critical reasons match _is_invalid_content reasons."""
-        from markitai.fetch import CRITICAL_INVALID_REASONS, _is_invalid_content
-
-        # JavaScript disabled content
-        _, reason = _is_invalid_content("JavaScript is disabled in your browser")
-        assert reason in CRITICAL_INVALID_REASONS
-
-        # Login required content
-        _, reason = _is_invalid_content("You must be logged in to view this")
-        assert reason in CRITICAL_INVALID_REASONS
-
-
 class TestFetchCacheComputeHash:
     """Tests for FetchCache._compute_hash method."""
 
@@ -3713,16 +3638,6 @@ class TestFetchResultFields:
         )
         assert result.screenshot_path is None
 
-    def test_fetch_result_default_multi_source_fields(self) -> None:
-        """Test FetchResult default multi-source fields."""
-        from markitai.fetch import FetchResult
-
-        result = FetchResult(
-            content="content", strategy_used="static", url="https://example.com"
-        )
-        assert result.static_content is None
-        assert result.browser_content is None
-
 
 class TestFetchWithFallbackJsDetection:
     """Tests for JS detection in fallback flow."""
@@ -4930,12 +4845,23 @@ async def test_conditional_fetch_forwards_accept_header():
         url="https://example.com",
     )
 
+    client = MagicMock()
+    client.name = "httpx"
+    client.get = AsyncMock(return_value=mock_resp)
     with patch(
-        "markitai.fetch_http.HttpxClient.get",
-        new_callable=AsyncMock,
-        return_value=mock_resp,
-    ) as _mock_get:
-        await fetch_with_static_conditional("https://example.com")
+        "markitai.fetch_strategies.static.get_static_http_client",
+        return_value=client,
+    ):
+        await fetch_with_static_conditional(
+            "https://example.com",
+            cached_etag='"v1"',
+            cached_last_modified="Wed, 01 Jan 2025 00:00:00 GMT",
+        )
+
+    headers = client.get.await_args.kwargs["headers"]
+    assert headers["Accept"] == "text/markdown, text/html;q=0.9, */*;q=0.5"
+    assert headers["If-None-Match"] == '"v1"'
+    assert headers["If-Modified-Since"] == "Wed, 01 Jan 2025 00:00:00 GMT"
 
 
 def test_fetch_metadata_contains_policy_reason_without_user_noise():
@@ -5425,48 +5351,8 @@ class TestFetchCacheRoundTrip:
         assert cached.screenshot_path == screenshot
         cache.close()
 
-    def test_cache_preserves_static_content(self, tmp_path: Path) -> None:
-        """static_content should survive cache round-trip."""
-        from markitai.fetch import FetchCache, FetchResult
-
-        cache = FetchCache(tmp_path / "test.db")
-        url = "https://example.com/page"
-
-        result = FetchResult(
-            content="Primary content",
-            strategy_used="multi",
-            url=url,
-            static_content="Static version of the page",
-        )
-        cache.set(url, result)
-
-        cached = cache.get(url)
-        assert cached is not None
-        assert cached.static_content == "Static version of the page"
-        cache.close()
-
-    def test_cache_preserves_browser_content(self, tmp_path: Path) -> None:
-        """browser_content should survive cache round-trip."""
-        from markitai.fetch import FetchCache, FetchResult
-
-        cache = FetchCache(tmp_path / "test.db")
-        url = "https://example.com/page"
-
-        result = FetchResult(
-            content="Primary content",
-            strategy_used="multi",
-            url=url,
-            browser_content="Browser rendered content",
-        )
-        cache.set(url, result)
-
-        cached = cache.get(url)
-        assert cached is not None
-        assert cached.browser_content == "Browser rendered content"
-        cache.close()
-
-    def test_cache_preserves_all_multi_source_fields(self, tmp_path: Path) -> None:
-        """All multi-source fields should survive cache round-trip together."""
+    def test_cache_preserves_all_fields(self, tmp_path: Path) -> None:
+        """All fields should survive cache round-trip together."""
         from markitai.fetch import FetchCache, FetchResult
 
         cache = FetchCache(tmp_path / "test.db")
@@ -5480,8 +5366,6 @@ class TestFetchCacheRoundTrip:
             final_url="https://example.com/page/final",
             metadata={"key": "value"},
             screenshot_path=Path("/tmp/screenshot.jpg"),
-            static_content="Static version",
-            browser_content="Browser version",
         )
         cache.set(url, result)
 
@@ -5493,12 +5377,10 @@ class TestFetchCacheRoundTrip:
         assert cached.final_url == "https://example.com/page/final"
         assert cached.metadata == {"key": "value"}
         assert cached.screenshot_path == Path("/tmp/screenshot.jpg")
-        assert cached.static_content == "Static version"
-        assert cached.browser_content == "Browser version"
         cache.close()
 
-    def test_cache_preserves_none_multi_source_fields(self, tmp_path: Path) -> None:
-        """None values for multi-source fields should remain None after round-trip."""
+    def test_cache_preserves_none_screenshot_path(self, tmp_path: Path) -> None:
+        """A missing screenshot_path should remain None after round-trip."""
         from markitai.fetch import FetchCache, FetchResult
 
         cache = FetchCache(tmp_path / "test.db")
@@ -5514,8 +5396,6 @@ class TestFetchCacheRoundTrip:
         cached = cache.get(url)
         assert cached is not None
         assert cached.screenshot_path is None
-        assert cached.static_content is None
-        assert cached.browser_content is None
         cache.close()
 
 

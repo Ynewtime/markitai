@@ -334,69 +334,6 @@ class TestImageDescriptions:
         assert a2_image["source"] == "doc1.pdf"
 
 
-class TestBatchResumeDuration:
-    """Tests for resume mode duration calculation."""
-
-    async def test_resume_resets_started_at(self, tmp_path: Path) -> None:
-        """Test that resume mode resets started_at for accurate duration."""
-        from datetime import datetime
-
-        from markitai.batch import BatchProcessor, BatchState, FileState, FileStatus
-        from markitai.config import BatchConfig
-
-        input_dir = tmp_path / "input"
-        input_dir.mkdir()
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        # Create processor first to get the state file path
-        config = BatchConfig()
-        processor = BatchProcessor(config, output_dir, input_path=input_dir)
-
-        # Create old state file with old timestamp at the correct path
-        old_time = "2026-01-01T00:00:00+00:00"
-        state = BatchState(
-            started_at=old_time,
-            updated_at=old_time,
-            input_dir=str(input_dir),
-            output_dir=str(output_dir),
-        )
-        state.files[str(input_dir / "file1.txt")] = FileState(
-            path=str(input_dir / "file1.txt"),
-            status=FileStatus.COMPLETED,
-        )
-        state.files[str(input_dir / "file2.txt")] = FileState(
-            path=str(input_dir / "file2.txt"),
-            status=FileStatus.PENDING,
-        )
-
-        # Save state to the correct state file path (states/markitai.<hash>.state.json)
-        processor.state_file.parent.mkdir(parents=True, exist_ok=True)
-        processor.state_file.write_text(json.dumps(state.to_dict()))
-
-        # Create the pending file
-        (input_dir / "file2.txt").write_text("content")
-
-        # Process with resume
-        async def mock_process(path: Path):
-            from markitai.batch import ProcessResult
-
-            return ProcessResult(success=True, output_path=str(path) + ".md")
-
-        before_process = datetime.now().astimezone()
-        await processor.process_batch(
-            [input_dir / "file2.txt"],
-            mock_process,
-            resume=True,
-        )
-
-        # Check that started_at was reset
-        assert processor.state is not None
-        started_at = datetime.fromisoformat(processor.state.started_at)
-        # started_at should be close to when we started processing (within a few seconds)
-        assert (started_at - before_process).total_seconds() < 5
-
-
 class TestUnsupportedFormatMessage:
     """The message must turn a dead end into a next step."""
 

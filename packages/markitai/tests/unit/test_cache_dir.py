@@ -36,8 +36,6 @@ class TestFetchCacheUsesGlobalDir:
         mock_result.strategy_used = "static"
         mock_result.screenshot_path = None
         mock_result.title = "Test"
-        mock_result.static_content = None
-        mock_result.browser_content = None
 
         captured_cache_dir = None
 

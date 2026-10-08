@@ -140,11 +140,6 @@ class LoggingContext:
         self._current_handler_id: int | None = console_handler_id
         self._suspended = False
 
-    @property
-    def current_handler_id(self) -> int | None:
-        """Get the current console handler ID."""
-        return self._current_handler_id
-
     def suspend_console(self) -> LoggingContext:
         """Return self as context manager for suspend/resume."""
         return self

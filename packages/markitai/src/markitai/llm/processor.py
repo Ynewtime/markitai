@@ -46,7 +46,6 @@ from markitai.llm.cache import ContentCache, PersistentCache
 from markitai.llm.document import DocumentEnhancer
 from markitai.llm.engine import LLMEngine, RequestBudget, scoped_usage_key
 from markitai.llm.models import (
-    MarkitaiLLMLogger,
     get_model_info_cached,
     model_list_fingerprint,
 )
@@ -64,9 +63,6 @@ from markitai.utils.text import preview_items_for_log
 # LiteLLM will automatically cap it to the model's limit
 litellm.modify_params = True
 
-
-# Global callback instance (uses MarkitaiLLMLogger from models.py)
-_markitai_llm_logger = MarkitaiLLMLogger()
 
 # Pseudo-model key marking a tripped request budget in the per-context usage
 # report. All-zero numbers: totals are unaffected, only the marker shows up
@@ -159,8 +155,6 @@ class LLMProcessor:
                 "cost_usd": 0.0,
             }
 
-        self._usage: defaultdict[str, dict[str, Any]] = defaultdict(_make_usage_dict)
-
         # Per-context usage tracking for batch processing
         self._context_usage: defaultdict[str, defaultdict[str, dict[str, Any]]] = (
             defaultdict(lambda: defaultdict(_make_usage_dict))
@@ -223,13 +217,7 @@ class LLMProcessor:
             _ = self.vision_router
 
     def _setup_callbacks(self) -> None:
-        """Register LiteLLM callbacks and custom providers."""
-        # Add our custom logger to litellm callbacks if not already added
-        if _markitai_llm_logger not in (litellm.callbacks or []):
-            if litellm.callbacks is None:
-                litellm.callbacks = []
-            litellm.callbacks.append(_markitai_llm_logger)
-
+        """Register custom LiteLLM providers."""
         # Register custom providers (claude-agent, copilot, etc.)
         from markitai.providers import register_providers
 
@@ -243,17 +231,6 @@ class LLMProcessor:
         with self._usage_lock:
             self._call_counter[context] += 1
             return self._call_counter[context]
-
-    def reset_call_counter(self, context: str = "") -> None:
-        """Reset call counter for a context or all contexts.
-
-        Thread-safe: uses lock for safe modification.
-        """
-        with self._usage_lock:
-            if context:
-                self._call_counter.pop(context, None)
-            else:
-                self._call_counter.clear()
 
     @property
     def router(self) -> MarkitaiRouter:
@@ -390,10 +367,6 @@ class LLMProcessor:
     # (signatures preserved verbatim for callers and tests)
     # =========================================================================
 
-    async def clean_markdown(self, content: str, context: str = "") -> str:
-        """Clean and optimize markdown content (see DocumentEnhancer)."""
-        return await self.documents.clean_markdown(content, context)
-
     async def clean_document_pure(self, markdown: str, source: str) -> str:
         """Pure cleaning: raw markdown in, LLM response out (see DocumentEnhancer)."""
         return await self.documents.clean_document_pure(markdown, source)
@@ -441,25 +414,6 @@ class LLMProcessor:
         """Vision-referenced format cleaning (see DocumentEnhancer)."""
         return await self.documents.enhance_document_with_vision(
             extracted_text, page_images, context=context
-        )
-
-    async def enhance_url_with_vision(
-        self,
-        content: str,
-        screenshot_path: Path,
-        context: str = "",
-        original_title: str | None = None,
-        fetch_strategy: str | None = None,
-        extra_meta: dict[str, Any] | None = None,
-    ) -> tuple[str, str]:
-        """Enhance URL content with screenshot reference (see DocumentEnhancer)."""
-        return await self.documents.enhance_url_with_vision(
-            content,
-            screenshot_path,
-            context=context,
-            original_title=original_title,
-            fetch_strategy=fetch_strategy,
-            extra_meta=extra_meta,
         )
 
     async def extract_from_screenshot(
@@ -973,7 +927,7 @@ class LLMProcessor:
         context: str = "",
         cached_tokens: int = 0,
     ) -> None:
-        """Track usage statistics per model (and optionally per context).
+        """Track usage statistics per context and model (no-op without context).
 
         Thread-safe: uses lock to protect concurrent access to usage dicts.
 
@@ -986,49 +940,23 @@ class LLMProcessor:
             cached_tokens: Cache-read input tokens (prompt caching hits);
                 a subset of input_tokens billed at the provider's cache rate
         """
+        if not context:
+            return
         with self._usage_lock:
-            # Track global usage (defaultdict auto-creates entries; the
-            # cached key uses .get so hand-built dicts without it survive)
-            self._usage[model]["requests"] += 1
-            self._usage[model]["input_tokens"] += input_tokens
-            self._usage[model]["output_tokens"] += output_tokens
-            self._usage[model]["cached_input_tokens"] = (
-                self._usage[model].get("cached_input_tokens", 0) + cached_tokens
+            # defaultdict auto-creates entries; the cached key uses .get so
+            # hand-built dicts without it survive
+            ctx = self._context_usage[scoped_usage_key(context)][model]
+            ctx["requests"] += 1
+            ctx["input_tokens"] += input_tokens
+            ctx["output_tokens"] += output_tokens
+            ctx["cached_input_tokens"] = (
+                ctx.get("cached_input_tokens", 0) + cached_tokens
             )
-            self._usage[model]["cost_usd"] += cost
-
-            # Track per-context usage if context provided
-            if context:
-                ctx = self._context_usage[scoped_usage_key(context)][model]
-                ctx["requests"] += 1
-                ctx["input_tokens"] += input_tokens
-                ctx["output_tokens"] += output_tokens
-                ctx["cached_input_tokens"] = (
-                    ctx.get("cached_input_tokens", 0) + cached_tokens
-                )
-                ctx["cost_usd"] += cost
+            ctx["cost_usd"] += cost
 
         # Outside the usage lock: the breaker keeps its own, and this is the
         # one place every answer's price passes through.
-        if context:
-            self._request_budget.charge(context, cost)
-
-    def get_usage(self) -> dict[str, dict[str, Any]]:
-        """Get global usage statistics.
-
-        Thread-safe: uses lock and returns a deep copy.
-        """
-
-        with self._usage_lock:
-            return copy.deepcopy(self._usage)
-
-    def get_total_cost(self) -> float:
-        """Get total cost across all models.
-
-        Thread-safe: uses lock for consistent read.
-        """
-        with self._usage_lock:
-            return sum(u["cost_usd"] for u in self._usage.values())
+        self._request_budget.charge(context, cost)
 
     def get_context_usage(self, context: str) -> dict[str, dict[str, Any]]:
         """Get usage statistics for a specific context.

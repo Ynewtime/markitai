@@ -620,7 +620,7 @@ class LLMEngine:
 
     The engine also owns the content-cache hit/miss counters: every
     structured call with a cache key counts one hit or one miss, and the
-    document service records its manual ``clean_markdown`` cache events
+    document and vision services record their manual cache events
     via ``record_cache_hit`` / ``record_cache_miss``.
     """
 

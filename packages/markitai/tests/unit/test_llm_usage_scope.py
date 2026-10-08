@@ -123,6 +123,36 @@ class TestSameNamedFilesInOneBatch:
         ]
 
 
+class TestImageCacheIsFreedPerDocument:
+    async def test_finished_document_releases_its_images(self, tmp_path: Path) -> None:
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        processor = LLMProcessor(cfg.llm, cfg.prompts)
+        image = tmp_path / "page-1.png"
+        image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)
+
+        async def fake_standard_llm(ctx: ConversionContext) -> ConversionStepResult:
+            processor._get_cached_image(image)
+            assert processor._image_cache_bytes > 0
+            return ConversionStepResult(success=True)
+
+        path = tmp_path / "report.pdf"
+        path.write_bytes(b"%PDF")
+        ctx = ConversionContext(
+            input_path=path,
+            output_dir=tmp_path / "out",
+            config=cfg,
+            shared_processor=processor,
+        )
+        ctx.conversion_result = MagicMock(metadata={})
+
+        with patch.object(core, "process_with_standard_llm", fake_standard_llm):
+            await core.run_llm_enhancement(ctx)
+
+        assert processor._image_cache_bytes == 0
+        assert len(processor._image_cache) == 0
+
+
 class TestUrlListBatchSharesOneProcessor:
     async def test_every_url_uses_the_batch_processor(self, tmp_path: Path) -> None:
         class Entry:

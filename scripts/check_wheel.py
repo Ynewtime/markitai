@@ -25,15 +25,18 @@ def check_wheel(wheel_path: Path) -> None:
     with zipfile.ZipFile(wheel_path) as wheel_file:
         names = set(wheel_file.namelist())
         entry_points_path = next(
-            name for name in names if name.endswith(".dist-info/entry_points.txt")
+            (name for name in names if name.endswith(".dist-info/entry_points.txt")),
+            None,
         )
+        if entry_points_path is None:
+            raise SystemExit("wheel is missing dist-info/entry_points.txt")
         entry_points = wheel_file.read(entry_points_path).decode()
 
-    missing = REQUIRED_FILES - names
-    if missing or not any(
-        name.startswith("markitai/serve/static/assets/") for name in names
-    ):
-        raise SystemExit(f"wheel is missing packaged webapp files: {sorted(missing)}")
+    missing = sorted(REQUIRED_FILES - names)
+    if not any(name.startswith("markitai/serve/static/assets/") for name in names):
+        missing.append("markitai/serve/static/assets/")
+    if missing:
+        raise SystemExit(f"wheel is missing packaged webapp files: {missing}")
 
     # MIT requires the licence to travel with every copy, and Apache-2.0
     # section 4(d) requires the NOTICE; both land in dist-info/licenses/

@@ -105,12 +105,7 @@ class ConversionContext:
     warnings: list[str] = field(default_factory=list)
 
     # Additional tracking (for caller use)
-    duration: float = 0.0
     cache_hit: bool = False
-    input_base_dir: Path | None = None  # For batch relative path calculation
-
-    # Optional callback for stage completion (stage_name, duration)
-    on_stage_complete: Callable[[str, float], None] | None = None
 
     @property
     def produced_file(self) -> Path | None:
@@ -1269,8 +1264,14 @@ async def run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
     # Usage and request budgets are tracked under the basename (also the
     # display/frontmatter source); scope them to this file so same-named
     # files of a batch on the shared processor stay apart
-    with llm_usage_scope(str(ctx.input_path.resolve())):
-        return await _run_llm_enhancement(ctx)
+    try:
+        with llm_usage_scope(str(ctx.input_path.resolve())):
+            return await _run_llm_enhancement(ctx)
+    finally:
+        # The image cache only pays off within a document (its keys are
+        # this file's pages and images); free it so a batch's shared
+        # processor does not hold up to 500 MB of finished documents.
+        ctx.shared_processor.clear_image_cache()
 
 
 async def _run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:

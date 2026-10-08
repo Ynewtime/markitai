@@ -64,6 +64,31 @@ class TestConfigLocationHint:
         assert "~/.markitai/config.json" in hint
         assert "markitai init" in hint
 
+    def test_cli_run_with_root_config_is_named(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """A CLI run's -c file is the one the hint names afterwards."""
+        from click.testing import CliRunner
+
+        import markitai.config as config_module
+        from markitai.cli import app
+
+        # Restored after the test: the CLI replaces the process-wide manager
+        monkeypatch.setattr(
+            config_module, "config_manager", config_module.ConfigManager()
+        )
+        cfg_file = tmp_path / "custom.json"
+        cfg_file.write_text("{}", encoding="utf-8")
+        doc = tmp_path / "a.txt"
+        doc.write_text("hello", encoding="utf-8")
+
+        result = CliRunner().invoke(
+            app, ["-c", str(cfg_file), str(doc), "-o", str(tmp_path / "out")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert str(cfg_file) in config_location_hint()
+
 
 class TestFormatActionableError:
     """Tests for format_actionable_error()."""

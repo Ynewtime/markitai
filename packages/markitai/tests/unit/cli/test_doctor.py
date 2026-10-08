@@ -240,6 +240,20 @@ class TestDoctorSummaryAllGood:
                 "markitai.cli.commands.doctor.subprocess.run",
                 return_value=MagicMock(returncode=0, stdout="ffmpeg version 7.0.0"),
             ),
+            # The ocr, legacy and serve extras may be absent from the test venv
+            patch.dict("sys.modules", {"rapidocr": MagicMock(__version__="1.3.0")}),
+            patch(
+                "markitai.cli.commands.doctor._check_anydoc",
+                return_value={
+                    "name": "anydoc",
+                    "description": "Legacy Office conversion (.doc/.ppt)",
+                    "status": "ok",
+                    "optional": True,
+                    "message": "v1.0.0",
+                    "install_hint": "",
+                },
+            ),
+            patch("markitai.serve.is_serve_available", return_value=True),
         ):
             mock_cm.return_value.load.return_value = mock_config
             result = cli_runner.invoke(doctor, ["--json"])

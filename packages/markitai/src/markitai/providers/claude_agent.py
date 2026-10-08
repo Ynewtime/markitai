@@ -59,7 +59,6 @@ from markitai.providers.common import (
     sync_completion,
 )
 from markitai.providers.errors import classify_and_raise_provider_error
-from markitai.providers.timeout import calculate_timeout_from_messages
 
 if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
@@ -94,9 +93,6 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
     # enabled for these one-shot extraction calls).
     STRUCTURED_OUTPUT_MODE = "json_schema"
 
-    # Threshold for enabling prompt caching (~1024 tokens ≈ 4096 chars)
-    _CACHE_THRESHOLD_CHARS: int = 4096
-
     def __init__(self, timeout: int = DEFAULT_ROUTER_TIMEOUT) -> None:
         """Initialize the provider.
 
@@ -106,48 +102,6 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         if not LITELLM_AVAILABLE:
             raise RuntimeError("LiteLLM not available. Install with: uv add litellm")
         self.timeout = timeout
-
-    def _add_cache_control(
-        self,
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Add cache_control to eligible messages for prompt caching.
-
-        Anthropic's prompt caching caches content marked with cache_control.
-        We add it to long system prompts to reduce compute costs.
-
-        Args:
-            messages: OpenAI-style messages
-
-        Returns:
-            Messages with cache_control added where beneficial
-        """
-        result = []
-        for msg in messages:
-            role = msg.get("role", "")
-            content = msg.get("content", "")
-
-            # Only cache long system messages
-            if role == "system" and isinstance(content, str):
-                if len(content) >= self._CACHE_THRESHOLD_CHARS:
-                    # Convert to content blocks format with cache_control
-                    result.append(
-                        {
-                            "role": "system",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": content,
-                                    "cache_control": {"type": "ephemeral"},
-                                }
-                            ],
-                        }
-                    )
-                    continue
-
-            result.append(msg.copy())
-
-        return result
 
     def _convert_content_to_sdk_format(
         self, content: str | list[dict[str, Any]]
@@ -370,9 +324,6 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         # Extract model name from provider prefix
         model_name = model.replace("claude-agent/", "")
 
-        # Add cache_control to eligible messages for prompt caching
-        messages = self._add_cache_control(messages)
-
         # Check if messages contain images
         contains_images = has_images(messages)
 
@@ -414,10 +365,6 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         response_format = kwargs.get("response_format")
         output_format = self._convert_response_format(response_format)
 
-        # Calculate adaptive timeout based on message content
-        timeout = calculate_timeout_from_messages(messages)
-        logger.trace(f"[ClaudeAgent] Using adaptive timeout: {timeout}s")
-
         start_time = time.time()
         result_text = ""
         structured_output: dict[str, Any] | None = None
@@ -425,9 +372,8 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         total_cost_usd: float = 0.0
 
         try:
-            # Build options dict
-            # Note: timeout is calculated but SDK v0.1.27+ doesn't support timeout param
-            # The SDK handles timeouts internally
+            # Build options dict (the SDK takes no timeout; it handles
+            # timeouts itself)
             options_kwargs: dict[str, Any] = {
                 # The prompt carries untrusted document/web text, so the
                 # agent gets no tools: an empty `allowed_tools` restricts

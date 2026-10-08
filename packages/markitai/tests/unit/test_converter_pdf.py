@@ -57,20 +57,6 @@ class TestPdfConverterInit:
         converter = PdfConverter()
         assert converter.supported_formats == [FileFormat.PDF]
 
-    def test_can_convert_pdf(self) -> None:
-        """Test can_convert method for PDF files."""
-        converter = PdfConverter()
-        assert converter.can_convert("test.pdf") is True
-        assert converter.can_convert("test.PDF") is True
-        assert converter.can_convert(Path("document.pdf")) is True
-
-    def test_cannot_convert_non_pdf(self) -> None:
-        """Test can_convert method for non-PDF files."""
-        converter = PdfConverter()
-        assert converter.can_convert("test.docx") is False
-        assert converter.can_convert("test.txt") is False
-        assert converter.can_convert("test.pptx") is False
-
 
 class TestFixImagePaths:
     """Tests for _fix_image_paths helper method."""

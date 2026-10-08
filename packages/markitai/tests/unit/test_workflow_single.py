@@ -67,12 +67,7 @@ class TestSingleFileWorkflow:
     def test_init_with_processor(self, mock_config, mock_processor):
         """Test initialization with existing processor."""
         workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
-        assert workflow._processor is mock_processor
-
-    def test_init_without_processor(self, mock_config):
-        """Test initialization without processor (lazy creation)."""
-        workflow = SingleFileWorkflow(mock_config)
-        assert workflow._processor is None
+        assert workflow.processor is mock_processor
 
     def test_llm_cost_initial(self, mock_config, mock_processor):
         """Test initial LLM cost is zero."""
@@ -83,21 +78,6 @@ class TestSingleFileWorkflow:
         """Test initial LLM usage is empty."""
         workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
         assert workflow._llm_usage == {}
-
-    def test_processor_property_creates_on_demand(self, mock_config):
-        """Test that processor property creates processor on demand."""
-        workflow = SingleFileWorkflow(mock_config)
-
-        with patch("markitai.workflow.helpers.create_llm_processor") as mock_create:
-            mock_processor = MagicMock()
-            mock_create.return_value = mock_processor
-
-            # Access processor property
-            processor = workflow.processor
-
-            # Should have created the processor
-            mock_create.assert_called_once()
-            assert processor is mock_processor
 
     def test_merge_usage(self, mock_config, mock_processor):
         """Test _merge_usage method."""
@@ -860,55 +840,6 @@ class TestSingleFileWorkflowExtractFromScreenshots:
                 page_images=page_images,
                 source="doc.pdf",
             )
-
-
-class TestSingleFileWorkflowNoCacheOptions:
-    """Tests for SingleFileWorkflow cache options."""
-
-    @pytest.fixture
-    def mock_config(self):
-        """Create a mock configuration."""
-        config = MagicMock()
-        config.llm.concurrency = 5
-        config.image.alt_enabled = False
-        config.image.desc_enabled = False
-        config.cache.no_cache = False
-        config.cache.no_cache_patterns = []
-        config.model_copy = MagicMock(return_value=config)
-        return config
-
-    def test_init_with_no_cache(self, mock_config):
-        """Test initialization with no_cache option."""
-        workflow = SingleFileWorkflow(mock_config, no_cache=True)
-        assert workflow._no_cache is True
-
-    def test_init_with_no_cache_patterns(self, mock_config):
-        """Test initialization with no_cache_patterns."""
-        patterns = ["*.pdf", "docs/*"]
-        workflow = SingleFileWorkflow(mock_config, no_cache_patterns=patterns)
-        assert workflow._no_cache_patterns == patterns
-
-    def test_processor_applies_no_cache_to_config(self, mock_config):
-        """Test that processor creation applies no_cache settings."""
-        with patch("markitai.workflow.helpers.create_llm_processor") as mock_create:
-            mock_processor = MagicMock()
-            mock_create.return_value = mock_processor
-
-            workflow = SingleFileWorkflow(
-                mock_config,
-                no_cache=True,
-                no_cache_patterns=["*.pdf"],
-            )
-
-            # Access processor to trigger creation
-            _ = workflow.processor
-
-            # Verify create_llm_processor was called
-            mock_create.assert_called_once()
-            # The temp_config should have no_cache settings applied
-            call_config = mock_create.call_args[0][0]
-            assert call_config.cache.no_cache is True
-            assert call_config.cache.no_cache_patterns == ["*.pdf"]
 
 
 class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:

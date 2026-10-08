@@ -32,14 +32,14 @@
         },
         "scan_max_files": {
           "default": 10000,
-          "description": "Max files to scan per directory",
+          "description": "Max files to scan across the whole input tree",
           "minimum": 1,
           "title": "Scan Max Files",
           "type": "integer"
         },
         "heavy_task_limit": {
           "default": 0,
-          "description": "Max heavy tasks (0=unlimited)",
+          "description": "Max heavy tasks (0=auto-detect from system memory)",
           "minimum": 0,
           "title": "Heavy Task Limit",
           "type": "integer"
@@ -1423,30 +1423,6 @@
           ],
           "default": null,
           "title": "Document Vision User"
-        },
-        "url_enhance_system": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Url Enhance System"
-        },
-        "url_enhance_user": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Url Enhance User"
         }
       },
       "title": "PromptsConfig",

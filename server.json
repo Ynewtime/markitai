@@ -23,8 +23,8 @@
         {
           "type": "named",
           "name": "--from",
-          "value": "markitai[mcp]",
-          "description": "Install markitai with the mcp extra (the MCP SDK) for this run",
+          "value": "markitai[mcp]==1.2.0",
+          "description": "Install this markitai release with the mcp extra (the MCP SDK) for this run",
           "isRequired": true
         }
       ],

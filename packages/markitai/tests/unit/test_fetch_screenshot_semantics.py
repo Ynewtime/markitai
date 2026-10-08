@@ -591,8 +591,6 @@ def _mock_fetch_result(url: str, **overrides) -> MagicMock:
     result.screenshot_tiles = []
     result.title = "Page"
     result.final_url = url
-    result.static_content = None
-    result.browser_content = None
     result.metadata = {}
     for key, value in overrides.items():
         setattr(result, key, value)

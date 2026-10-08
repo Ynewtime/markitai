@@ -94,16 +94,6 @@ class TestPromptManager:
 
         assert "Dir cleaner system" in prompt
 
-    def test_list_prompts(self) -> None:
-        """Test listing available prompts."""
-        manager = PromptManager()
-        prompts = manager.list_prompts()
-
-        assert len(prompts) == len(PromptManager.PROMPT_NAMES)
-        for name in PromptManager.PROMPT_NAMES:
-            assert name in prompts
-            assert prompts[name] == "built-in"
-
 
 class TestBuiltinPrompts:
     """Tests for built-in prompt files."""
@@ -151,14 +141,6 @@ class TestCleanerModeRules:
         path = BUILTIN_PROMPTS_DIR / "cleaner_system.md"
         content = path.read_text(encoding="utf-8")
         assert "{mode_rules}" in content
-
-    def test_standard_mode_rules_include_image_placeholders(self) -> None:
-        """Standard mode_rules should include __MARKITAI_IMG_N__ preservation."""
-        manager = PromptManager()
-        from markitai.llm.document import STANDARD_MODE_RULES
-
-        prompt = manager.get_prompt("cleaner_system", mode_rules=STANDARD_MODE_RULES)
-        assert "__MARKITAI_IMG_N__" in prompt
 
     def test_pure_mode_rules_include_frontmatter_preservation(self) -> None:
         """Pure mode_rules should include YAML frontmatter preservation."""

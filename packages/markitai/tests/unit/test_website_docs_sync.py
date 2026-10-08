@@ -397,6 +397,17 @@ def test_release_versions_match_the_package() -> None:
     assert [server["version"]] + [p["version"] for p in server["packages"]] == [
         version
     ] * (1 + len(server["packages"])), "bump both versions in server.json"
+    # Registry clients run `uvx --from <value>`: unpinned, they would run
+    # whatever is latest on PyPI instead of the release this entry names
+    from_pins = [
+        arg["value"]
+        for package in server["packages"]
+        for arg in package.get("runtimeArguments", [])
+        if arg.get("name") == "--from"
+    ]
+    assert from_pins == [f"markitai[mcp]=={version}"] * len(server["packages"]), (
+        "pin --from in server.json to the release"
+    )
     workspace = tomllib.loads(
         (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
