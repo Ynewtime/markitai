@@ -443,25 +443,6 @@ class LLMProcessor:
             extracted_text, page_images, context=context
         )
 
-    async def enhance_url_with_vision(
-        self,
-        content: str,
-        screenshot_path: Path,
-        context: str = "",
-        original_title: str | None = None,
-        fetch_strategy: str | None = None,
-        extra_meta: dict[str, Any] | None = None,
-    ) -> tuple[str, str]:
-        """Enhance URL content with screenshot reference (see DocumentEnhancer)."""
-        return await self.documents.enhance_url_with_vision(
-            content,
-            screenshot_path,
-            context=context,
-            original_title=original_title,
-            fetch_strategy=fetch_strategy,
-            extra_meta=extra_meta,
-        )
-
     async def extract_from_screenshot(
         self,
         screenshot_path: Path,

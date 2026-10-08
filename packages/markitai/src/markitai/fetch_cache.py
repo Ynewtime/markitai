@@ -200,6 +200,7 @@ class FetchCache:
                     etag TEXT,
                     last_modified TEXT,
                     screenshot_path TEXT,
+                    -- Unused; kept so older cache files stay compatible
                     static_content TEXT,
                     browser_content TEXT
                 )
@@ -301,8 +302,6 @@ class FetchCache:
                 metadata=metadata,
                 cache_hit=True,
                 screenshot_path=screenshot_path,
-                static_content=row["static_content"],
-                browser_content=row["browser_content"],
             )
 
         return None
@@ -438,8 +437,6 @@ class FetchCache:
                 metadata=metadata,
                 cache_hit=True,
                 screenshot_path=screenshot_path,
-                static_content=row["static_content"],
-                browser_content=row["browser_content"],
             )
             return result, row["etag"], row["last_modified"]
 
@@ -512,8 +509,8 @@ class FetchCache:
                 INSERT OR REPLACE INTO fetch_cache
                 (key, url, content, strategy_used, title, final_url, metadata,
                  created_at, accessed_at, size_bytes, etag, last_modified,
-                 screenshot_path, static_content, browser_content)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 screenshot_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     key,
@@ -529,8 +526,6 @@ class FetchCache:
                     etag,
                     last_modified,
                     screenshot_path_str,
-                    result.static_content,
-                    result.browser_content,
                 ),
             )
         logger.debug(

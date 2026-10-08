@@ -49,8 +49,6 @@ class TestFetchTypesImport:
         assert result.title is None
         assert result.cache_hit is False
         assert result.screenshot_path is None
-        assert result.static_content is None
-        assert result.browser_content is None
 
     def test_conditional_fetch_result_dataclass(self):
         from markitai.fetch_types import ConditionalFetchResult, FetchResult
