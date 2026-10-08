@@ -70,6 +70,9 @@ class FakeLLMProcessor:
     def format_llm_output(self, markdown: str, frontmatter: str) -> str:
         return f"---\n{frontmatter}\n---\n\n{markdown}"
 
+    def clear_image_cache(self) -> None:
+        pass
+
     def get_context_cost(self, context: str) -> float:
         return 0.0123
 
