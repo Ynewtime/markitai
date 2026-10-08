@@ -102,6 +102,25 @@ except ImportError:
 _copilot_cli_cache: dict[str, str | None] = {}
 
 
+def _deny_all_permissions(request: Any, invocation: Any) -> Any:
+    """Copilot permission handler that rejects every request.
+
+    The prompt carries untrusted document/web text, so nothing the model
+    asks for (shell, file writes, URL fetches) may be approved.
+    """
+    try:
+        # github-copilot-sdk >= 1.0
+        from copilot.generated.rpc import (  # type: ignore[import-not-found]
+            PermissionDecisionReject,
+        )
+    except ImportError:
+        # github-copilot-sdk 0.x: the result type defaults to a denial
+        from copilot import PermissionRequestResult  # type: ignore[import-not-found]
+
+        return PermissionRequestResult()  # type: ignore[operator]
+    return PermissionDecisionReject(feedback="markitai does not allow tool use")
+
+
 def _find_copilot_cli() -> str | None:
     """Find the Copilot CLI executable path.
 
@@ -637,14 +656,15 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         try:
             client = await self._get_client()
 
-            from copilot import PermissionHandler  # type: ignore[import-not-found]
-
-            # Create session without tools for pure LLM completion
+            # Create session without tools for pure LLM completion: the
+            # prompt carries untrusted text, so no tool is enabled and any
+            # permission request is denied.
             session = await client.create_session(
                 {
                     "model": model_name,
                     "streaming": False,
-                    "on_permission_request": PermissionHandler.approve_all,
+                    "available_tools": [],
+                    "on_permission_request": _deny_all_permissions,
                 }
             )
 
