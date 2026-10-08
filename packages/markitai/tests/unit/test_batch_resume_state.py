@@ -15,7 +15,7 @@ earliest moment an interrupt can arrive.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -481,6 +481,63 @@ async def test_resume_with_relative_input_keeps_the_subdirectory(
     ) == ["sub/a.txt.md"]
     documents = _load_state(tmp_path / "out")["documents"]
     assert documents["sub/a.txt"]["status"] == "completed"
+
+
+class _WindowsPath(PureWindowsPath):
+    """``Path`` as it behaves on Windows, usable on any OS."""
+
+    def resolve(self, strict: bool = False) -> _WindowsPath:
+        return self
+
+
+def test_state_keys_are_posix_paths_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A state written on Windows keys ``sub\\a.txt`` as ``sub/a.txt``.
+
+    The keys were built with ``str(path.relative_to(input_dir))``, which
+    uses the native separator: a state file or sidecar written on Windows
+    could not be resumed elsewhere, and a lookup by ``sub/a.txt`` missed.
+    """
+    import json
+
+    from markitai import batch as batch_module
+    from markitai.batch import BatchProcessor, BatchState, FileState, FileStatus
+
+    cfg = MarkitaiConfig()
+    processor = BatchProcessor(cfg.batch, tmp_path / "out")
+    abs_key = "C:\\Users\\dev\\docs\\sub\\a.txt"
+    input_dir, output_dir = "C:\\Users\\dev\\docs", "C:\\Users\\dev\\out"
+    processor.state = BatchState(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        options={"input_dir": input_dir, "output_dir": output_dir},
+        files={abs_key: FileState(path=abs_key, status=FileStatus.FAILED)},
+    )
+    monkeypatch.setattr(batch_module, "Path", _WindowsPath)
+
+    assert list(processor.state.to_dict()["documents"]) == ["sub/a.txt"]
+    processor.save_state(force=True)
+    base = json.loads(processor.state_file.read_text(encoding="utf-8"))
+    assert list(base["documents"]) == ["sub/a.txt"]
+
+    # The sidecar uses the same key, and replaying it finds the document
+    processor.state.files[abs_key].status = FileStatus.COMPLETED
+    processor.state.files[abs_key].output = "C:\\Users\\dev\\out\\sub\\a.txt.md"
+    processor._append_incremental({abs_key})  # what a throttled save appends
+    sidecar = processor.state_file.with_suffix(".jsonl").read_text(encoding="utf-8")
+    assert [json.loads(line)["key"] for line in sidecar.splitlines()] == ["sub/a.txt"]
+    resumed = processor.load_state()
+    assert resumed is not None
+    assert resumed.files[abs_key].status == FileStatus.COMPLETED
+
+    # A sidecar written on Windows before keys were POSIX-style still replays
+    with processor.state_file.with_suffix(".jsonl").open("a", encoding="utf-8") as f:
+        legacy = {"status": "failed", "error": "boom"}
+        f.write(json.dumps({"type": "file", "key": "sub\\a.txt", "data": legacy}))
+    resumed = processor.load_state()
+    assert resumed is not None
+    assert resumed.files[abs_key].error == "boom"
 
 
 # ---------------------------------------------------------------------------

@@ -215,6 +215,22 @@ def _state_path(value: str) -> str:
     return os.path.abspath(value)
 
 
+def _document_key(path: str | Path, input_dir: Path) -> str:
+    """State-file key of one document: its path under ``input_dir``, POSIX-style.
+
+    The state file and its ``.jsonl`` sidecar key documents by this path,
+    with ``/`` separators on every OS, so a state written on Windows resumes
+    on Linux and the other way round, and ``sub/a.txt`` is the same key
+    everywhere. ``input_dir`` must already be resolved. A file outside it
+    is keyed by its name.
+    """
+    file_path = Path(path).resolve()
+    try:
+        return file_path.relative_to(input_dir).as_posix()
+    except ValueError:
+        return file_path.name
+
+
 def _minimal_entry(state: FileState | UrlState) -> dict[str, Any]:
     """Resume-relevant fields of one item (shared by state file and sidecar).
 
@@ -350,13 +366,7 @@ class BatchState:
         input_dir_path = Path(self.input_dir).resolve()
         files_dict = {}
         for path, state in self.files.items():
-            file_path = Path(path).resolve()
-            try:
-                rel_path = str(file_path.relative_to(input_dir_path))
-            except ValueError:
-                # File is not under input_dir, use filename only
-                rel_path = file_path.name
-            files_dict[rel_path] = {
+            files_dict[_document_key(path, input_dir_path)] = {
                 "status": state.status.value,
                 "output": state.output,
                 "error": state.error,
@@ -413,14 +423,8 @@ class BatchState:
         input_dir_path = Path(self.input_dir).resolve()
         files_dict = {}
         for path, state in self.files.items():
-            file_path = Path(path).resolve()
-            try:
-                rel_path = str(file_path.relative_to(input_dir_path))
-            except ValueError:
-                rel_path = file_path.name
-
             # Minimal state: only what's needed for resume
-            files_dict[rel_path] = _minimal_entry(state)
+            files_dict[_document_key(path, input_dir_path)] = _minimal_entry(state)
 
         # Convert URLs to minimal dict (a named entry's key is not its URL)
         urls_dict: dict[str, dict[str, Any]] = {}
@@ -1022,14 +1026,11 @@ class BatchProcessor:
             try:
                 # Build reverse lookup: relative_path -> absolute_key (O(N) once)
                 input_dir_path = Path(state.input_dir) if state.input_dir else Path(".")
-                rel_to_abs: dict[str, str] = {}
-                for abs_key in state.files:
-                    file_path = Path(abs_key).resolve()
-                    try:
-                        rel_path = str(file_path.relative_to(input_dir_path.resolve()))
-                    except ValueError:
-                        rel_path = file_path.name
-                    rel_to_abs[rel_path] = abs_key
+                input_dir_resolved = input_dir_path.resolve()
+                rel_to_abs = {
+                    _document_key(abs_key, input_dir_resolved): abs_key
+                    for abs_key in state.files
+                }
 
                 with open(jsonl_path, encoding="utf-8") as f:
                     for line in f:
@@ -1046,8 +1047,10 @@ class BatchProcessor:
                         entry_data = entry.get("data", {})
 
                         if entry_type == "file":
-                            # Resolve relative key to absolute key
-                            abs_key = rel_to_abs.get(key)
+                            # Resolve relative key to absolute key; sidecars
+                            # written before keys were POSIX-style used the
+                            # native separator
+                            abs_key = rel_to_abs.get(Path(key).as_posix())
                             if abs_key and abs_key in state.files:
                                 fs = state.files[abs_key]
                                 fs.status = FileStatus(
@@ -1178,18 +1181,12 @@ class BatchProcessor:
         for key in dirty_keys:
             if key in self.state.files:
                 file_state = self.state.files[key]
-                # Convert to relative path for consistency with to_minimal_dict
-                file_path = Path(key).resolve()
-                try:
-                    rel_path = str(file_path.relative_to(input_dir_path))
-                except ValueError:
-                    rel_path = file_path.name
-
                 lines.append(
                     json.dumps(
                         {
                             "type": "file",
-                            "key": rel_path,
+                            # Same key as to_minimal_dict
+                            "key": _document_key(key, input_dir_path),
                             "data": _minimal_entry(file_state),
                         },
                         separators=(",", ":"),
