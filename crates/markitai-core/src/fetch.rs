@@ -15,6 +15,7 @@ mod policy;
 mod remote;
 mod sites;
 
+pub(crate) use policy::secret_parameter;
 use remote::{Service, Services};
 
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
@@ -130,8 +131,8 @@ fn shown_url(url: &Url) -> String {
     ];
     let mut url = url.clone();
     url.set_fragment(None);
-    // The project's own redaction covers token, key, secret, password,
-    // signature and credential names; the rest of the query is screened here.
+    // The project's own redaction covers the names the fetch policy treats
+    // as secret; the rest of the query is screened more strictly here.
     let Ok(mut url) = Url::parse(&output::redact_url(url.as_str())) else {
         return String::new();
     };
