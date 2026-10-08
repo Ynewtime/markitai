@@ -94,34 +94,7 @@ class TestConversionContext:
         assert sample_context.llm_cost == 0.0
         assert sample_context.llm_usage == {}
         assert sample_context.image_analysis is None
-        # New fields
-        assert sample_context.duration == 0.0
         assert sample_context.cache_hit is False
-        assert sample_context.input_base_dir is None
-        assert sample_context.on_stage_complete is None
-
-    def test_on_stage_complete_callback(
-        self, sample_txt_path: Path, tmp_path: Path, default_config: MarkitaiConfig
-    ) -> None:
-        """Test on_stage_complete callback can be set and called."""
-        callback_calls: list[tuple[str, float]] = []
-
-        def callback(stage: str, duration: float) -> None:
-            callback_calls.append((stage, duration))
-
-        ctx = ConversionContext(
-            input_path=sample_txt_path,
-            output_dir=tmp_path / "output",
-            config=default_config,
-            on_stage_complete=callback,
-        )
-
-        # Verify callback is set
-        assert ctx.on_stage_complete is not None
-
-        # Invoke callback
-        ctx.on_stage_complete("test_stage", 1.5)
-        assert callback_calls == [("test_stage", 1.5)]
 
 
 class TestConversionStepResult:

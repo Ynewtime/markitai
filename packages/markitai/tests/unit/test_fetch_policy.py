@@ -163,19 +163,6 @@ class TestFetchPolicyEngine:
         ]
         assert decision.reason == "default"
 
-    def test_default_order_ignores_jina_key(self) -> None:
-        """has_jina_key no longer changes ordering (local-first order is fixed)."""
-        decision = self.engine.decide(
-            "example.com", False, None, [], True, has_jina_key=True
-        )
-        assert decision.order == [
-            "static",
-            "playwright",
-            "defuddle",
-            "jina",
-            "cloudflare",
-        ]
-
     def test_spa_order(self) -> None:
         decision = self.engine.decide("twitter.com", True, None, ["twitter.com"], True)
         assert decision.order == [
@@ -188,9 +175,7 @@ class TestFetchPolicyEngine:
         assert decision.reason == "spa_or_pattern"
 
     def test_explicit_strategy(self) -> None:
-        decision = self.engine.decide(
-            "example.com", False, "static", [], True, has_jina_key=True
-        )
+        decision = self.engine.decide("example.com", False, "static", [], True)
         assert decision.order == ["static"]
 
     def test_disabled_policy(self) -> None:

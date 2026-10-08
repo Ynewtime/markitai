@@ -36,10 +36,6 @@ class TestEnrichmentPolicy:
         policy = EnrichmentPolicy(allow_async=False)
         assert policy.allow_async is False
 
-    def test_preferred_enrichers_defaults_to_empty(self) -> None:
-        policy = EnrichmentPolicy()
-        assert policy.preferred_enrichers == []
-
 
 # ---------------------------------------------------------------------------
 # BaseEnricher protocol tests

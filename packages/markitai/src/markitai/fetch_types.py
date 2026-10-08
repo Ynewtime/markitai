@@ -22,15 +22,6 @@ class FetchStrategy(Enum):
     JINA = "jina"
 
 
-# Reasons that indicate content is completely invalid and should not be used
-# When these are detected, we should raise an error instead of using invalid content
-CRITICAL_INVALID_REASONS = {
-    "javascript_disabled",  # JS-rendered sites (Twitter/X, etc.)
-    "javascript_required",  # Sites requiring JS
-    "login_required",  # Sites requiring authentication
-}
-
-
 class FetchError(Exception):
     """Base exception for fetch errors."""
 

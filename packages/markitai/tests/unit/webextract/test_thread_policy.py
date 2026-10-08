@@ -20,7 +20,6 @@ def test_thread_policy_defaults_do_not_include_unrelated_replies() -> None:
     """Default policy for X status pages must exclude third-party replies.
 
     Verifies:
-    - include_main_item is True (the focal post must always be included)
     - include_author_thread is True (the author's own reply chain is relevant)
     - include_third_party_replies is False (noise for most use-cases)
     """
@@ -32,7 +31,6 @@ def test_thread_policy_defaults_do_not_include_unrelated_replies() -> None:
     policy = get_thread_policy(X_URL)
 
     assert policy is not None
-    assert policy.include_main_item is True
     assert policy.include_author_thread is True
     assert policy.include_third_party_replies is False
 

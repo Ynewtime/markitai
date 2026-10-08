@@ -215,7 +215,6 @@ def create_process_file(
                 config=cfg,
                 shared_processor=shared_processor,
                 use_multiprocess_images=True,
-                input_base_dir=input_dir,
             )
 
             # Run core conversion pipeline

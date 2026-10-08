@@ -60,13 +60,6 @@ class TestFetchTypesImport:
         assert cfr.etag == "abc"
         assert cfr.last_modified is None
 
-    def test_critical_invalid_reasons_constant(self):
-        from markitai.fetch_types import CRITICAL_INVALID_REASONS
-
-        assert isinstance(CRITICAL_INVALID_REASONS, set)
-        assert "javascript_required" in CRITICAL_INVALID_REASONS
-        assert "login_required" in CRITICAL_INVALID_REASONS
-
 
 class TestBackwardCompatibility:
     """Verify types are still importable from markitai.fetch."""
@@ -93,8 +86,3 @@ class TestBackwardCompatibility:
 
         cfr = ConditionalFetchResult(result=None, not_modified=True)
         assert cfr.not_modified is True
-
-    def test_critical_invalid_reasons_from_fetch(self):
-        from markitai.fetch import CRITICAL_INVALID_REASONS
-
-        assert "login_required" in CRITICAL_INVALID_REASONS

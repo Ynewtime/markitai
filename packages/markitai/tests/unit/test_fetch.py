@@ -1309,30 +1309,6 @@ class TestDetectJsRequiredEdgeCases:
         assert detect_js_required(content) is True
 
 
-class TestCriticalInvalidReasons:
-    """Tests for CRITICAL_INVALID_REASONS constant."""
-
-    def test_critical_reasons_defined(self) -> None:
-        """Test that critical invalid reasons are properly defined."""
-        from markitai.fetch import CRITICAL_INVALID_REASONS
-
-        assert "javascript_disabled" in CRITICAL_INVALID_REASONS
-        assert "javascript_required" in CRITICAL_INVALID_REASONS
-        assert "login_required" in CRITICAL_INVALID_REASONS
-
-    def test_critical_reasons_used_correctly(self) -> None:
-        """Test that critical reasons match _is_invalid_content reasons."""
-        from markitai.fetch import CRITICAL_INVALID_REASONS, _is_invalid_content
-
-        # JavaScript disabled content
-        _, reason = _is_invalid_content("JavaScript is disabled in your browser")
-        assert reason in CRITICAL_INVALID_REASONS
-
-        # Login required content
-        _, reason = _is_invalid_content("You must be logged in to view this")
-        assert reason in CRITICAL_INVALID_REASONS
-
-
 class TestFetchCacheComputeHash:
     """Tests for FetchCache._compute_hash method."""
 

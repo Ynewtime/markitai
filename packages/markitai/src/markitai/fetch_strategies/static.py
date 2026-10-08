@@ -580,9 +580,7 @@ class StaticRunner:
             return await fetch_with_static(url)
 
         # For fresh explicit fetch, use conditional to capture validators
-        cond_result = await fetch_with_static_conditional(
-            url, ctx.cached_etag, ctx.cached_last_modified
-        )
+        cond_result = await fetch_with_static_conditional(url)
         if cond_result.result is None:
             raise FetchError(f"No content from conditional fetch: {url}")
         result = cond_result.result
