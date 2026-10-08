@@ -28,9 +28,9 @@ The workspace opens in your browser at `http://127.0.0.1:3600`.
 
 ## Access Token
 
-At startup the server prints a URL that ends in `#token=…`. Requests from this machine need no token. Every other device must open that URL; scripts send the token as `Authorization: Bearer <token>`.
+At startup the server prints a URL that ends in `#token=…`, and the browser it opens uses that URL. Requests from this machine need no token, except for the LLM settings (`/api/settings/llm…`), which hold your provider keys: any local program or a page on another `localhost` port also connects from this machine, so those routes always need the token. Every other device must open that URL; scripts send the token as `Authorization: Bearer <token>`. A request whose client address the server can't see counts as coming from another device.
 
-Set `MARKITAI_SERVE_TOKEN` to keep the same token across restarts. `--no-auth` drops the token entirely: other devices can still upload, download and use history, but their URL targets are limited to public addresses and LLM settings are locked.
+Set `MARKITAI_SERVE_TOKEN` to keep the same token across restarts. `--no-auth` drops the token entirely: other devices can still upload, download and use history, but their URL targets are limited to public addresses and LLM settings are locked. This machine then reaches the LLM settings without a token.
 
 ## Accessing from Other Devices
 

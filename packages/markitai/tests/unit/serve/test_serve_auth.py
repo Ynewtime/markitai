@@ -1,9 +1,10 @@
 """Tests for the serve access-token authentication.
 
-The trust rule under test: a loopback peer is always trusted (token or not),
-a non-loopback peer must present the serve token — in the ``Authorization:
-Bearer`` header or the ``?token=`` query parameter — and is then trusted like
-a loopback peer (private URL targets, history deletion and LLM settings all
+The trust rule under test: a loopback peer is trusted without the token
+except on the LLM settings routes, which always need it; a request with no
+client address is not loopback; a non-loopback peer must present the serve
+token — in the ``Authorization: Bearer`` header or the ``?token=`` query
+parameter — and is then trusted like a loopback peer (private URL targets, history deletion and LLM settings all
 work). ``create_app(token=None)`` (the ``--no-auth`` CLI path and the default
 for embedders) keeps the pre-token behavior, covered further by
 test_serve_url_policy.py.
@@ -135,7 +136,7 @@ async def _drain(client: httpx.AsyncClient, job_id: str, **kwargs: Any) -> dict:
 
 
 class TestLoopbackPeer:
-    """The operator's machine never needs the token."""
+    """The operator's machine needs no token outside the LLM settings."""
 
     async def test_no_token_passes(self, tmp_path: Path) -> None:
         async with _serve_client(_make_app(tmp_path, TOKEN)) as client:
@@ -152,6 +153,68 @@ class TestLoopbackPeer:
                 "/api/capabilities", headers={"Authorization": "Bearer mk_wrong"}
             )
         assert resp.status_code == 200
+
+
+class TestLoopbackSettingsNeedToken:
+    """LLM settings and stored credentials need the token even on loopback.
+
+    Any local process or another localhost origin reaches the server as a
+    loopback peer, so peer address alone must not unlock provider keys.
+    """
+
+    @pytest.mark.parametrize(
+        "path",
+        ["/api/settings/llm", "/api/settings/llm/providers/openai/credentials"],
+    )
+    async def test_rejected_without_token(self, tmp_path: Path, path: str) -> None:
+        async with _serve_client(_make_app(tmp_path, TOKEN)) as client:
+            resp = await client.get(path)
+            wrong = await client.get(path, headers={"Authorization": "Bearer mk_wrong"})
+        assert resp.status_code == 401
+        assert resp.headers["WWW-Authenticate"] == "Bearer"
+        assert "token" in resp.json()["detail"]
+        assert wrong.status_code == 401
+
+    async def test_allowed_with_token(self, tmp_path: Path) -> None:
+        async with _serve_client(_make_app(tmp_path, TOKEN)) as client:
+            header = await client.get("/api/settings/llm", headers=AUTH_HEADER)
+            query = await client.get("/api/settings/llm", params={"token": TOKEN})
+        assert header.status_code == 200
+        assert query.status_code == 200
+
+    async def test_auth_disabled_keeps_loopback_access(self, tmp_path: Path) -> None:
+        async with _serve_client(_make_app(tmp_path, None)) as client:
+            resp = await client.get("/api/settings/llm")
+        assert resp.status_code == 200
+
+
+class TestMissingClientAddress:
+    """A request without a client address is not treated as loopback."""
+
+    @asynccontextmanager
+    async def _clientless(self, app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app, client=None)  # type: ignore[arg-type]
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://127.0.0.1"
+            ) as client:
+                yield client
+
+    async def test_api_needs_token(self, tmp_path: Path) -> None:
+        async with self._clientless(_make_app(tmp_path, TOKEN)) as client:
+            resp = await client.get("/api/history")
+            authed = await client.get("/api/history", headers=AUTH_HEADER)
+        assert resp.status_code == 401
+        assert authed.status_code == 200
+
+    async def test_auth_disabled_settings_and_private_urls_refused(
+        self, tmp_path: Path
+    ) -> None:
+        async with self._clientless(_make_app(tmp_path, None)) as client:
+            settings = await client.get("/api/settings/llm")
+            private = await client.post("/api/jobs", files=_url_job([PRIVATE_URL]))
+        assert settings.status_code == 403
+        assert private.status_code == 403
 
 
 class TestRemotePeerWithoutToken:
