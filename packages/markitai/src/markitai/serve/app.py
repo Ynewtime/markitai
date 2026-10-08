@@ -1307,15 +1307,16 @@ def _check_credential_target(
         detail = (
             "api_key: env: references from the web API are limited to "
             f"{', '.join(PROVIDER_API_KEY_ENV.values())} with the provider's "
-            "default api_base; reference other variables or endpoints in the "
-            "config file instead"
+            "default api_base; to use another variable or endpoint, enter the "
+            "key itself or set the pair up in the config file"
         )
     elif api_key == client_key:
         return
     else:
         detail = (
-            "stored credentials only work with their saved api_base; "
-            "send an api_key to use a different endpoint"
+            "stored credentials only work with their saved api_base; to use "
+            "a different endpoint, enter the key itself or change api_base "
+            "in the config file"
         )
     raise HTTPException(status_code=422, detail=detail)
 
@@ -1328,8 +1329,9 @@ def _reject_rebound_credentials(
         raise HTTPException(
             status_code=422,
             detail=(
-                "stored credentials only work with their saved api_base; "
-                "send an api_key to use a different endpoint"
+                "stored credentials only work with their saved api_base; to use "
+                "a different endpoint, enter the key itself or change api_base "
+                "in the config file"
             ),
         )
 

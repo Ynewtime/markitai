@@ -77,6 +77,8 @@ The settings dialog edits the same configuration as `markitai config`: discover 
 
 The provider editor shows a saved key only in masked form (`sk…7890`; an `env:` reference is shown as is). Leave the field as it is to keep the saved key, type a new key to replace it, or clear it to remove the key.
 
+A key is tied to the address it was saved with, so the settings dialog never sends a key you didn't type to a server you picked. It refuses (HTTP 422) to pair an `env:` reference with a custom address, to use an `env:` variable other than the provider key variables (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, ...), and to change the address of a connection without re-entering its key. To use such a pairing, either enter the key itself in the dialog together with the new address, or write the pair in the config file (`markitai config edit`, or edit it by hand; see [Custom API Endpoint](/guide/configuration#custom-api-endpoint)). Pairs already in the config file keep working from the dialog.
+
 ## History
 
 Finished jobs stay under `~/.markitai/serve/jobs/` for 7 days. From the history page you can reopen a job, download its outputs again, delete it, or download everything as one zip.

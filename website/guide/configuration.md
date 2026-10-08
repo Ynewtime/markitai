@@ -308,7 +308,7 @@ Common errors:
 
 ### Custom API Endpoint
 
-`api_base` points a provider at another endpoint: a self-hosted server, a regional proxy or an API gateway. It accepts `env:VAR_NAME` like `api_key`:
+`api_base` points a provider at another endpoint: a self-hosted server, a regional proxy or an API gateway. It accepts `env:VAR_NAME` like `api_key`. The `markitai serve` settings dialog won't pair an `env:` key with a custom endpoint (see [LLM Settings](/guide/serve#llm-settings)); set that up here, or enter the key itself in the dialog:
 
 ```json
 {

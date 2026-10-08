@@ -1878,6 +1878,45 @@ class TestClientCredentialBoundary:
         assert resp.status_code == 422
         assert not config_path.exists()
 
+    async def test_rejected_pairings_say_how_to_set_them_up(
+        self, tmp_path: Path
+    ) -> None:
+        """The 422s name the two ways that work: enter the key, or the config file."""
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry("openai/gpt-test", api_key="env:OPENAI_API_KEY"),
+            _model_entry(
+                "deepseek/deepseek-chat",
+                api_key="sk-stored-1234567890",
+                model_name="b",
+            ),
+        ]
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, cfg, config_path=config_path)
+        ) as client:
+            payload = (await client.get("/api/settings/llm")).json()
+            ids = ["legacy:" + d["deployment_id"] for d in payload["deployments"]]
+            env_moved = await client.patch(
+                f"/api/settings/llm/providers/{ids[0]}",
+                json={
+                    "api_base": "https://gateway.example/v1",
+                    "expected_revision": payload["revision"],
+                },
+            )
+            stored_moved = await client.patch(
+                f"/api/settings/llm/providers/{ids[1]}",
+                json={
+                    "api_base": "https://gateway.example/v1",
+                    "expected_revision": payload["revision"],
+                },
+            )
+        for resp in (env_moved, stored_moved):
+            assert resp.status_code == 422
+            detail = resp.json()["detail"]
+            assert "enter the key itself" in detail
+            assert "config file" in detail
+
     async def test_provider_base_edit_cannot_move_stored_key(
         self, tmp_path: Path
     ) -> None:
