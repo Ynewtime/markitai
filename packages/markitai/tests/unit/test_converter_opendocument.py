@@ -146,6 +146,43 @@ class TestOdsConverter:
         assert lines[2].startswith("| x | x | x | y |")
         assert lines[4].count("| z ") == 1000  # capped, not 99999
 
+    def test_repeated_empty_cells_and_rows_keep_their_width(
+        self, tmp_path: Path
+    ) -> None:
+        """LibreOffice stores `1, <empty x2>, 4` as one cell repeated twice.
+
+        Collapsing that run to a single blank shifted `4` from column D to
+        column C; collapsing a run of blank rows moved later rows up.
+        """
+        cell = "<table:table-cell><text:p>{}</text:p></table:table-cell>"
+        path = _write_odf(
+            tmp_path / "gaps.ods",
+            '<office:spreadsheet><table:table table:name="S">'
+            "<table:table-row>"
+            + "".join(cell.format(h) for h in "ABCD")
+            + "</table:table-row>"
+            "<table:table-row>"
+            + cell.format("1")
+            + '<table:table-cell table:number-columns-repeated="2"/>'
+            + cell.format("4")
+            + "</table:table-row>"
+            '<table:table-row table:number-rows-repeated="2">'
+            "<table:table-cell/></table:table-row>"
+            "<table:table-row>" + cell.format("5") + "</table:table-row>"
+            "</table:table></office:spreadsheet>",
+        )
+
+        lines = OdsConverter().convert(path).markdown.splitlines()
+
+        assert lines[2:] == [
+            "| A | B | C | D |",
+            "| --- | --- | --- | --- |",
+            "| 1 |  |  | 4 |",
+            "|  |  |  |  |",
+            "|  |  |  |  |",
+            "| 5 |  |  |  |",
+        ]
+
     def test_empty_trailing_rows_and_columns_are_trimmed(self, tmp_path: Path) -> None:
         path = _write_odf(
             tmp_path / "trailing.ods",

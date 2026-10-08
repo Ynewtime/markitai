@@ -247,17 +247,6 @@ def _host_header_hostname(value: str) -> str | None:
         return None
 
 
-def _origin_hostname(value: str) -> str | None:
-    """Extract the lowercased hostname from an Origin header value.
-
-    Opaque origins (``null``) and malformed values yield None.
-    """
-    try:
-        return urlsplit(value).hostname
-    except ValueError:
-        return None
-
-
 def _normalize_allowed_host(value: str) -> str:
     """Normalize a user-supplied allowlist entry to a bare lowercase hostname."""
     host = value.strip().lower()
@@ -284,26 +273,46 @@ def _is_trusted_hostname(hostname: str | None, extra_allowed: frozenset[str]) ->
     return True
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
 def _is_trusted_origin(
-    origin_hostname: str | None,
-    host_hostname: str | None,
+    origin_header: str,
+    host_header: str | None,
     extra_allowed: frozenset[str],
 ) -> bool:
-    """Whether *origin_hostname* may issue a state-changing cross-site request.
+    """Whether *origin_header* may issue a state-changing cross-site request.
 
     Unlike the Host header, the Origin is fully attacker-controlled, so the
     blanket IP-literal trust of ``_is_trusted_hostname`` must not apply here:
     an attacker can host the exploit page from a bare IP and would otherwise
-    pass. Trust only loopback, explicit ``--allowed-host`` entries, or an
-    origin whose host equals the already Host-validated host (i.e. the request
+    pass. Trust only explicit ``--allowed-host`` entries, or an origin whose
+    host *and port* equal the already Host-validated ones (i.e. the request
     is same-origin: the attacker's page would have to be served from the very
-    address the victim connected to, which makes it the real app).
+    address the victim connected to, which makes it the real app). Loopback
+    names get no blanket pass: a page on another local port (Jupyter, a dev
+    server, ``python -m http.server``) is a separate origin.
     """
-    if not origin_hostname:
+    if host_header is None:
         return False
-    if origin_hostname in _LOCAL_HOSTNAMES or origin_hostname in extra_allowed:
+    try:
+        origin = urlsplit(origin_header)
+        host = urlsplit(f"//{host_header}")
+        # A Host without a port means the default port of the origin's scheme
+        default_port = _DEFAULT_PORTS.get(origin.scheme)
+        origin_port = origin.port or default_port
+        host_port = host.port or default_port
+    except ValueError:
+        return False
+    if not origin.hostname:
+        return False
+    if origin.hostname in extra_allowed:
         return True
-    return host_hostname is not None and origin_hostname == host_hostname
+    return (
+        origin.hostname == host.hostname
+        and origin_port is not None
+        and origin_port == host_port
+    )
 
 
 class _HostGuardMiddleware:
@@ -355,9 +364,7 @@ class _HostGuardMiddleware:
                 origin_header is not None
                 and scope.get("method", "").upper() in _STATE_CHANGING_METHODS
                 and not _is_trusted_origin(
-                    _origin_hostname(origin_header),
-                    host_hostname,
-                    self.allowed_hosts,
+                    origin_header, host_header, self.allowed_hosts
                 )
             ):
                 response = JSONResponse(

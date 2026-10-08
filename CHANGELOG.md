@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Claude Agent and Copilot providers run with no tools**: the model no longer has Bash, file writes or web fetches auto-approved, so a prompt-injected document or web page cannot run commands as you.
+- **`--resume` on a relative input directory**: a retried file from a subdirectory (`docs/sub/a.pdf`) is written back to `out/sub/` instead of the output root, where it could collide with other files and its image links broke.
+- **`serve` rejects writes from other local ports**: a page on another `localhost` port (Jupyter, a dev server, a downloaded HTML file under `python -m http.server`) could start jobs, retries and settings actions; the Origin must now match the server's host and port, as the docs already promised.
+- **ODS tables keep their gaps**: a run of empty cells (`1, <empty ×2>, 4`) no longer collapses to one, which moved later values into the wrong column; runs of empty rows are kept too.
+- **ChatGPT provider**: a rate limit (429) or server error (5xx) that outlasts the retries now fails only that request instead of skipping the rest of the document, and a truncated or failed streamed answer is reported as such instead of being accepted and cached as complete.
 - Errors and warnings on stderr are no longer hard-wrapped at 80 columns when stderr is not a terminal (pipes, log files, CI), so each message stays on one line and can be grepped. Terminal output is unchanged.
 
 ## [1.2.0] - 2026-09-28

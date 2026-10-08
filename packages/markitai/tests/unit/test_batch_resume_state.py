@@ -457,6 +457,74 @@ async def test_resume_from_another_cwd_writes_into_the_original_output(
     assert "bravo" in (tmp_path / "out" / "b.txt.md").read_text(encoding="utf-8")
 
 
+@pytest.mark.asyncio
+async def test_resume_with_relative_input_keeps_the_subdirectory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`markitai docs -o out --resume` retries a failed `docs/sub/a.txt`.
+
+    The resumed state rebuilds its keys as absolute paths, which are not
+    under the relative ``docs``, so the retried file used to land in
+    ``out/a.txt.md`` instead of ``out/sub/a.txt.md``.
+    """
+    import json
+
+    from markitai.batch import BatchProcessor
+    from markitai.cli.processors.batch import process_batch
+
+    (tmp_path / "docs" / "sub").mkdir(parents=True)
+    (tmp_path / "docs" / "sub" / "a.txt").write_text("alpha")
+    monkeypatch.chdir(tmp_path)
+    input_dir, output_dir = Path("docs"), Path("out")
+
+    cfg = MarkitaiConfig()
+    probe = BatchProcessor(
+        cfg.batch,
+        output_dir,
+        input_path=input_dir,
+        task_options={
+            "concurrency": cfg.batch.concurrency,
+            "llm": False,
+            "ocr": False,
+            "screenshot": False,
+            "alt": False,
+            "desc": False,
+            "scan_max_depth": cfg.batch.scan_max_depth,
+        },
+    )
+    probe.state_file.parent.mkdir(parents=True)
+    probe.state_file.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "options": {
+                    "input_dir": str(input_dir.resolve()),
+                    "output_dir": str(output_dir.resolve()),
+                },
+                "documents": {"sub/a.txt": {"status": "failed", "error": "boom"}},
+                "urls": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    await process_batch(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        cfg=cfg,
+        resume=True,
+        dry_run=False,
+        quiet=True,
+    )
+
+    assert sorted(
+        p.relative_to(tmp_path / "out").as_posix()
+        for p in (tmp_path / "out").rglob("*.md")
+    ) == ["sub/a.txt.md"]
+    documents = _load_state(tmp_path / "out")["documents"]
+    assert documents["sub/a.txt"]["status"] == "completed"
+
+
 # ---------------------------------------------------------------------------
 # URL-list batches (`markitai list.urls -o out`) share the state machinery
 # ---------------------------------------------------------------------------
