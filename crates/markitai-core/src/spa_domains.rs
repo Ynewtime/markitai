@@ -90,7 +90,12 @@ fn open(cfg: &Value, create: bool, write: bool) -> Result<Option<Connection>> {
             return Ok(None);
         }
         let parent = path.parent().ok_or_else(unavailable)?;
-        crate::output::create_private_dir(parent).map_err(|_| unavailable())?;
+        // Not `output::create_private_dir`: the checks around this call let the
+        // parent itself be a root-owned system alias (macOS /tmp), which it refuses.
+        crate::platform::private_directory()
+            .recursive(true)
+            .create(parent)
+            .map_err(|_| unavailable())?;
         crate::output::check_path(&path, false).map_err(|_| unavailable())?;
         let temporary = tempfile::NamedTempFile::new_in(parent).map_err(|_| unavailable())?;
         match crate::platform::persist_noclobber(temporary, &path) {
