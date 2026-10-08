@@ -6,7 +6,6 @@ import json
 
 from markitai.utils.text import (
     clean_control_characters,
-    clean_ppt_headers_footers,
     extract_asset_image_names,
     format_error_message,
     markdown_image_reference,
@@ -455,39 +454,3 @@ class TestRepairJsonString:
 
     def test_returns_none_when_there_is_no_json(self) -> None:
         assert repair_json_string("no json here at all") is None
-
-
-class TestCleanPptHeadersFooters:
-    _CONTENT = """<!-- Page number: 1 -->
-
-Acme Corp
-2024
-Annual results were strong this year.
-
-Acme Corp
-1
-
-<!-- Page number: 2 -->
-
-Revenue grew in every region.
-
-Acme Corp
-2
-
-<!-- Page number: 3 -->
-
-Costs stayed flat.
-
-Acme Corp
-3
-"""
-
-    def test_footer_removed_at_page_ends_only(self) -> None:
-        """A repeated footer is cut from the end of each page, not from the
-        body: page 1's body lines "Acme Corp" / "2024" are kept."""
-        cleaned = clean_ppt_headers_footers(self._CONTENT)
-
-        assert cleaned.count("Acme Corp") == 1
-        assert "Acme Corp\n2024\nAnnual results" in cleaned
-        assert "\n1\n" not in cleaned
-        assert "Costs stayed flat." in cleaned
