@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- HTML text with a long run of unclosed TeX openers (`\(` or `\[`) converts in linear time instead of hanging: each opener no longer searches the rest of the text again for its closer.
 - A shared incomplete-cost warning now adds up the rows it covers instead of repeating one row's count: the card names the models that have no reviewed price and how many requests each accounts for, in the page's language, and lists the rows under its details. A batch is named for what was submitted — a folder, even one that holds a `.urls` list; a batch that named nothing reads as its job id rather than as one file inside it. Every ledger row keeps its action slot, so status marks, spinners and download icons line up in one column.
 - The incomplete-cost warning names the model and the reason (`Cost is incomplete: 2 requests to deepseek-chat have no reviewed price…`, or `reported no usage counts` when the provider sent no token counts) instead of saying "some observed requests"; up to three models are named and the rest are counted. One warning shared by several rows now reports as a single card that counts the rows it speaks for and lists them under its details, rather than a card per row.
 - The preset row marks a preset only while the request still equals it: enabling LLM enhancement on the minimal preset leaves all three unmarked and shows the Custom chip, instead of keeping Minimal selected beside the overridden CLI line.

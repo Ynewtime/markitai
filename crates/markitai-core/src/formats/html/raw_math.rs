@@ -45,11 +45,12 @@ pub(super) fn split(text: &str) -> Option<Vec<Piece<'_>>> {
     let mut pieces = Vec::new();
     let mut plain = 0;
     let mut at = 0;
+    let (mut parens, mut brackets, mut dollar_pairs) = Default::default();
     while at < bytes.len() {
         let found = match bytes[at] {
             b'\\' => match bytes.get(at + 1) {
-                Some(b'(') => inline(text, at + 2, "\\)"),
-                Some(b'[') => display(text, at + 2, "\\]", true),
+                Some(b'(') => inline(text, at + 2, "\\)", &mut parens),
+                Some(b'[') => display(text, at + 2, "\\]", true, &mut brackets),
                 // An escaped backslash or dollar sign is text.
                 Some(b'\\' | b'$') => {
                     at += 2;
@@ -58,7 +59,7 @@ pub(super) fn split(text: &str) -> Option<Vec<Piece<'_>>> {
                 _ => None,
             },
             b'$' if bytes.get(at + 1) == Some(&b'$') => {
-                let found = display(text, at + 2, "$$", false);
+                let found = display(text, at + 2, "$$", false, &mut dollar_pairs);
                 if found.is_none() {
                     // `$$` that closes nothing: both dollar signs are text.
                     at += 2;
@@ -91,6 +92,25 @@ fn flush<'a>(text: &'a str, pieces: &mut Vec<Piece<'a>>, from: usize, to: usize)
     }
 }
 
+/// Where a closer next occurs, as last searched. The scan only moves
+/// forward, so a closer found stays the next one until the scan passes it,
+/// and one not found is never found: each byte is searched once, not once per
+/// opener before it.
+#[derive(Default)]
+struct Closer(Option<Option<usize>>);
+
+impl Closer {
+    fn find(&mut self, text: &str, start: usize, close: &str) -> Option<usize> {
+        match self.0 {
+            Some(Some(found)) if found >= start => Some(found),
+            Some(None) => None,
+            _ => *self
+                .0
+                .insert(text[start..].find(close).map(|length| start + length)),
+        }
+    }
+}
+
 /// A display expression whose content starts at `start` and which `close`
 /// ends: the end of the closing delimiter, the trimmed content and `true`.
 fn display<'a>(
@@ -98,8 +118,9 @@ fn display<'a>(
     start: usize,
     close: &str,
     needs_math: bool,
+    closer: &mut Closer,
 ) -> Option<(usize, &'a str, bool)> {
-    let length = text[start..].find(close)?;
+    let length = closer.find(text, start, close)? - start;
     let latex = text[start..start + length].trim();
     (!latex.is_empty() && (!needs_math || looks_like_math(latex))).then_some((
         start + length + close.len(),
@@ -109,8 +130,13 @@ fn display<'a>(
 }
 
 /// An inline `\( ... \)` expression on one line.
-fn inline<'a>(text: &'a str, start: usize, close: &str) -> Option<(usize, &'a str, bool)> {
-    let length = text[start..].find(close)?;
+fn inline<'a>(
+    text: &'a str,
+    start: usize,
+    close: &str,
+    closer: &mut Closer,
+) -> Option<(usize, &'a str, bool)> {
+    let length = closer.find(text, start, close)? - start;
     let latex = text[start..start + length].trim();
     (length <= MAX_INLINE
         && !latex.is_empty()
@@ -258,6 +284,25 @@ mod tests {
                 Piece::Text("."),
             ])
         );
+    }
+
+    #[test]
+    fn openers_without_closers_are_read_in_linear_time() {
+        // Each opener searched the rest of the text for its closer, so a long
+        // run of openers once took quadratic time: minutes for these texts.
+        let (sender, received) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for opener in ["\\(", "\\["] {
+                let text = opener.repeat(1 << 20);
+                sender.send(split(&text).is_none()).unwrap();
+            }
+        });
+        for _ in 0..2 {
+            let none = received
+                .recv_timeout(std::time::Duration::from_secs(20))
+                .expect("the split finishes");
+            assert!(none);
+        }
     }
 
     #[test]
