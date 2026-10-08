@@ -295,23 +295,67 @@ fn a_group_of_one_deployment_keeps_its_previous_policy() {
     assert!(result.unwrap_err().to_string().contains("HTTP 401"));
     assert!(warnings.is_empty());
     assert_eq!(only.count(), 3);
-    // A retryable refusal still uses backoff and the retry allowance.
-    let unavailable = Repeat::new(403, json!({"error":{"code":"model_not_found"}}));
-    let cfg = pool(&[("openai/only", &unavailable.base, 1)]);
-    let _scope = DocumentScope::new(&cfg);
-    let mut pauses = Vec::new();
-    let error = run_with_runtime(
-        &plain(),
-        &cfg,
-        &HashMap::new(),
-        &mut |pause| pauses.push(pause),
-        Some(&runtime),
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("HTTP 403"));
-    assert_eq!(pauses, [Duration::from_secs(1), Duration::from_secs(2)]);
-    assert_eq!(unavailable.count(), 3);
-    assert!(take_document_warnings().is_empty());
+    // An unavailable model cannot succeed on retry, while a temporary status
+    // keeps its backoff and retry allowance even when its body names the model.
+    for (status, pauses_expected, visits) in [
+        (404, vec![], 1),
+        (403, vec![], 1),
+        (503, vec![Duration::from_secs(1), Duration::from_secs(2)], 3),
+    ] {
+        let unavailable = Repeat::new(status, json!({"error":{"code":"model_not_found"}}));
+        let cfg = pool(&[("openai/only", &unavailable.base, 1)]);
+        let _scope = DocumentScope::new(&cfg);
+        let mut pauses = Vec::new();
+        let error = run_with_runtime(
+            &plain(),
+            &cfg,
+            &HashMap::new(),
+            &mut |pause| pauses.push(pause),
+            Some(&runtime),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains(&format!("HTTP {status}")));
+        assert_eq!(pauses, pauses_expected, "{status}");
+        assert_eq!(unavailable.count(), visits, "{status}");
+        assert!(take_document_warnings().is_empty());
+    }
+}
+
+#[test]
+fn an_unavailable_model_moves_to_a_sibling_at_once_and_stays_excluded_for_the_run() {
+    for body in [
+        json!({"error":{"code":"model_not_found","message":"private-token"}}),
+        json!({"error":{"status":"FAILED_PRECONDITION","message":"User location is not supported for the API use."}}),
+    ] {
+        let missing = Repeat::new(400, body.clone());
+        let good = Repeat::new(200, success("# cleaned"));
+        let mut cfg = pool(&[
+            ("openai/missing", &missing.base, FIRST),
+            ("openai/good", &good.base, 1),
+        ]);
+        cfg["llm"]["router_settings"]["num_retries"] = json!(0);
+        let runtime = LlmRuntime::new(1).unwrap();
+        for served in 1..=2 {
+            let (result, warnings) = document(&cfg, &runtime);
+            assert_eq!(result.unwrap().0, "# cleaned");
+            if served == 1 {
+                let refusal = if body["error"]["code"] == "model_not_found" {
+                    "is unavailable"
+                } else {
+                    "is not available in this region"
+                };
+                assert_eq!(
+                    warnings,
+                    [format!(
+                        "LLM deployment openai/missing {refusal} and is skipped for this run"
+                    )]
+                );
+            } else {
+                assert!(warnings.is_empty());
+            }
+            assert_eq!((missing.count(), good.count()), (1, served));
+        }
+    }
 }
 
 #[test]
