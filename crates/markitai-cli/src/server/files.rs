@@ -118,11 +118,17 @@ pub(super) async fn result(
 ) -> ApiResult<Json<Value>> {
     let job = jobs::get(&state, &id)?;
     crate::task::blocking(move||{
-        let _guard=job.access.lock().unwrap();let data=job.data.lock().unwrap();
-        let item=data.items.iter().find(|item|item.item_id==item_id).ok_or_else(||ApiError::new(404,"item_not_found","item not found"))?;
+        let _guard=job.access.lock().unwrap();
+        // Copy this item's row; reading its files must not hold the data lock.
+        let (item,base,assets)={
+            let data=job.data.lock().unwrap();
+            let item=data.items.iter().find(|item|item.item_id==item_id).ok_or_else(||ApiError::new(404,"item_not_found","item not found"))?.clone();
+            let base=item_base(&data,&item);
+            (item,base,data.assets.get(&item_id).cloned())
+        };
         let selected=item.output.as_deref().filter(|_|item.status=="done").ok_or_else(||ApiError::new(404,"result_unavailable","item result not available"))?;
         let out=job.folder.join("out");store::safe_file(&out,selected)?;
-        let base=item_base(&data,item)?;
+        let base=base?;
         let base_name=format!("{base}.md");let enhanced_name=format!("{base}.llm.md");
         let base_path=store::safe_file(&out,&base_name).ok();let enhanced_path=store::safe_file(&out,&enhanced_name).ok();
         let (variant,path)=if item.llm_enhanced&&enhanced_path.is_some(){("llm",enhanced_path.clone().unwrap())}else if let Some(path)=base_path.clone(){("base",path)}else if let Some(path)=enhanced_path.clone(){("llm",path)}else{return Err(ApiError::new(404,"result_unavailable","item result not available"));};
@@ -138,7 +144,7 @@ pub(super) async fn result(
         if item.llm_enhanced && enhanced_path.is_some() {
             add(enhanced_name)?;
         }
-        if let Some(assets)=data.assets.get(&item_id){for asset in assets{add(asset.clone())?;}}
+        if let Some(assets)=assets{for asset in assets{add(asset)?;}}
         else {
             // Older CLI/server histories lack an item asset index. Recover ownership
             // through actual destinations rather than exposing unrelated job assets.
@@ -259,14 +265,8 @@ pub(super) async fn history_archive(
     ExtractState(state): ExtractState<Arc<State>>,
 ) -> ApiResult<Response> {
     http::refresh(&state).await?;
-    let mut jobs = state
-        .jobs
-        .lock()
-        .unwrap()
-        .values()
-        .filter(|job| job.data.lock().unwrap().status == "done")
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut jobs = http::registered_jobs(&state);
+    jobs.retain(|job| job.data.lock().unwrap().status == "done");
     crate::sort::by_key(&mut jobs, |job| {
         super::types::instant(&job.data.lock().unwrap().created_at)
     });

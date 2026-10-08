@@ -384,28 +384,42 @@ pub(super) async fn create(
         let lock = lock_options.open(lockpath).map_err(ApiError::internal)?;
         lock.lock().map_err(ApiError::internal)?;
         let _publication = PublicationLock(lock);
-        let mut registry = publication_state.jobs.lock().unwrap();
-        if publication_state.closing.load(Ordering::SeqCst) {
-            return Err(ApiError::new(
-                503,
-                "shutting_down",
-                "server is shutting down",
-            ));
-        }
-        if folder.exists() {
-            return Err(ApiError::new(
-                409,
-                "job_id_collision",
-                "job identifier collision; retry the request",
-            ));
-        }
-        markitai_core::platform::rename(stage.path(), &folder).map_err(ApiError::internal)?;
+        let job = {
+            let mut registry = publication_state.jobs.lock().unwrap();
+            if publication_state.closing.load(Ordering::SeqCst) {
+                return Err(ApiError::new(
+                    503,
+                    "shutting_down",
+                    "server is shutting down",
+                ));
+            }
+            if folder.exists() {
+                return Err(ApiError::new(
+                    409,
+                    "job_id_collision",
+                    "job identifier collision; retry the request",
+                ));
+            }
+            markitai_core::platform::rename(stage.path(), &folder).map_err(ApiError::internal)?;
+            // Registered with the rename, so a concurrent rescan never reads
+            // this running job as interrupted. The flushes below run without
+            // the registry lock, which every job route takes.
+            let job = Arc::new(Job::new(folder.clone(), data));
+            registry.insert(job.data.lock().unwrap().id.clone(), job.clone());
+            job
+        };
         // Windows cannot flush the jobs directory; flushing the renamed job's
         // metadata commits the rename instead.
         if let Err(error) = store::unmark_upload(&folder)
             .and_then(|()| markitai_core::platform::sync_renamed_path(&folder.join("meta.json")))
             .and_then(|()| markitai_core::platform::sync_directory(&publication_state.root))
         {
+            // Nobody has been given this job's id yet.
+            publication_state
+                .jobs
+                .lock()
+                .unwrap()
+                .retain(|_, known| !Arc::ptr_eq(known, &job));
             // Only this transaction's newly created UUID directory is removed.
             // Existing jobs were excluded before rename while holding the lock.
             if let Err(cleanup) = std::fs::remove_dir_all(&folder) {
@@ -414,8 +428,6 @@ pub(super) async fn create(
             let _ = markitai_core::platform::sync_directory(&publication_state.root);
             return Err(ApiError::internal(error));
         }
-        let job = Arc::new(Job::new(folder, data));
-        registry.insert(job.data.lock().unwrap().id.clone(), job.clone());
         Ok(job)
     })
     .await
@@ -559,6 +571,11 @@ pub(super) async fn refresh(state: &Arc<State>) -> ApiResult<()> {
         .map_err(ApiError::internal)?
         .map_err(ApiError::internal)
 }
+/// The registered jobs, copied out so that locking each one never holds the
+/// registry that every job route needs.
+pub(super) fn registered_jobs(state: &State) -> Vec<Arc<Job>> {
+    state.jobs.lock().unwrap().values().cloned().collect()
+}
 /// A registered job, else one another local process saved since the last
 /// scan; a known job needs no scan of every job folder.
 pub(super) async fn registered(state: &Arc<State>, id: &str) -> ApiResult<Arc<Job>> {
@@ -572,11 +589,8 @@ pub(super) async fn history(
     ExtractState(state): ExtractState<Arc<State>>,
 ) -> ApiResult<Json<Value>> {
     refresh(&state).await?;
-    let mut entries = state
-        .jobs
-        .lock()
-        .unwrap()
-        .values()
+    let mut entries = registered_jobs(&state)
+        .iter()
         .filter_map(|job| {
             let data = job.data.lock().unwrap();
             (data.status == "done").then(|| data.history())
@@ -729,6 +743,10 @@ mod error_code_tests {
             .route("/api/jobs", post(create))
             .route("/api/jobs/{job_id}", get(snapshot))
             .route("/api/history", get(history))
+            .route(
+                "/api/jobs/{job_id}/items/{item_id}",
+                axum::routing::delete(super::super::rerun::delete),
+            )
             .route(
                 "/api/history/archive",
                 get(super::super::files::history_archive),
@@ -1110,5 +1128,68 @@ mod error_code_tests {
                 ("notes/notes.md".to_owned(), "00000000000a".to_owned()),
             ]
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn slow_item_deletion_does_not_stall_job_reads() {
+        let temp = tempfile::tempdir().unwrap();
+        let (state, router) = service(temp.path());
+        let id = "0123456789ab";
+        let folder = temp.path().join(id);
+        store::private_dir(&folder.join("out/assets")).unwrap();
+        for name in ["a", "b"] {
+            std::fs::write(folder.join(format!("out/{name}.md")), name).unwrap();
+        }
+        std::fs::write(folder.join("out/assets/images.json"), r#"{"images":[]}"#).unwrap();
+        let item = |id: &str, name: &str| {
+            json!({"item_id":id,"name":format!("https://example.test/{name}"),"kind":"url",
+                "status":"done","output":format!("{name}.md"),"output_name":format!("{name}.md")})
+        };
+        std::fs::write(
+            folder.join("meta.json"),
+            json!({"job_id":id,"created_at":"2026-10-09T02:00:00.000Z","finished_at":"2026-10-09T02:00:01.000Z",
+                "status":"done","version":2,"options":{},"items":[item("1","a"),item("2","b")],
+                "native_bases":{"1":"a","2":"b"}})
+            .to_string(),
+        )
+        .unwrap();
+        let (status, _) = call(&router, "GET", "/api/history", &[]).await;
+        assert_eq!(status, 200);
+        let job = state.jobs.lock().unwrap()[id].clone();
+        // Another writer holds the image index lock, so the deletion waits on it.
+        let staged = tempfile::tempdir().unwrap();
+        let held =
+            super::super::sidecar::prune(staged.path(), &folder.join("out"), &HashSet::new())
+                .unwrap();
+        assert_eq!(held.len(), 1);
+        let deleting = tokio::spawn({
+            let router = router.clone();
+            async move { call(&router, "DELETE", &format!("/api/jobs/{id}/items/1"), &[]).await }
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while job.access.try_lock().is_ok() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "deletion never started"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(job.access.try_lock().is_err(), "deletion is still waiting");
+        assert!(job.data.try_lock().is_ok());
+        let started = std::time::Instant::now();
+        let (status, snapshot) = call(&router, "GET", &format!("/api/jobs/{id}"), &[]).await;
+        assert_eq!(status, 200);
+        assert_eq!(snapshot["items"].as_array().unwrap().len(), 2);
+        let (status, _) = call(&router, "GET", "/api/history", &[]).await;
+        assert_eq!(status, 200);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(held);
+        let (status, _) = deleting.await.unwrap();
+        assert_eq!(status, 204);
+        let (_, snapshot) = call(&router, "GET", &format!("/api/jobs/{id}"), &[]).await;
+        assert_eq!(snapshot["items"].as_array().unwrap().len(), 1);
+        assert!(!folder.join("out/a.md").exists());
+        assert!(folder.join("out/b.md").exists());
     }
 }

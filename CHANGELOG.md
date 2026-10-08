@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- In `markitai serve`, a slow item retry, item delete or result read no longer freezes the job's snapshot, event stream and history while it works on files: file work runs under the job's own access lock and the shared job state is held only briefly. History reads and job creation no longer hold the job registry while locking each job or flushing a new job to disk.
 - One damaged job folder under `MARKITAI_HOME/serve/jobs` no longer stops `markitai serve` from starting or makes history, item retry and item delete fail: the folder is skipped with one warning on standard error and left in place. Retrying or deleting an item of a known job no longer rescans every saved job.
 - `markitai serve` lists history newest first by the actual time, not by comparing timestamp text: CLI histories record local time with an offset (`+08:00`) and server jobs UTC (`Z`), so outside UTC the two interleaved out of order. The history ZIP likewise takes jobs oldest first, so its `(2)` folder suffixes follow creation order.
 - A large batch no longer finishes every conversion and then fails its final recovery-state compaction (exit 1, no report). The state base is now compact JSON with a 64 MiB limit, the same as its journal, so the 100,000-entry limit is reachable when items carry LLM usage; a batch whose finished state could still not fit stops before any conversion with `Recovery state projected base bytes limit exceeded`.
