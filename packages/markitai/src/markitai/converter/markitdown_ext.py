@@ -16,6 +16,7 @@ from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
     FileFormat,
+    conversion_failed,
     register_converter,
 )
 from markitai.notices import user_notice
@@ -312,11 +313,19 @@ class IpynbConverter(BaseConverter):
 
 @register_converter(FileFormat.NUMBERS)
 class NumbersConverter(BaseConverter):
-    """Converter for Apple Numbers spreadsheet files using markitdown."""
+    """Apple Numbers spreadsheets, which no local reader can convert.
+
+    markitdown has no Numbers converter: its generic zip handler returned
+    the package's metadata members (never the tables) as a successful
+    document. The format stays known so ``-b cloudflare`` converts it.
+    """
 
     supported_formats = [FileFormat.NUMBERS]
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        return _convert(input_path)
+        conversion_failed(
+            "Apple Numbers files cannot be converted locally; export the "
+            "spreadsheet to .xlsx or .csv, or convert it with -b cloudflare"
+        )
