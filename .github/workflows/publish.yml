@@ -2,7 +2,8 @@ name: Release
 
 # Manual release flow (no release-please). To cut a release:
 #   1. bump __version__ in packages/markitai/src/markitai/__init__.py, and the
-#      version in the root pyproject.toml and (twice) in server.json
+#      version in the root pyproject.toml and in server.json (both versions
+#      and the `markitai[mcp]==X.Y.Z` pin of `--from`)
 #   2. add a `## [X.Y.Z]` section to CHANGELOG.md
 #   3. if the webapp changed, run scripts/sync_webapp_static.sh so the packaged
 #      serve/static matches webapp/src (the `webapp` job below re-checks this
@@ -227,7 +228,7 @@ jobs:
           if [ "$committed" != "$version" ]; then
             echo "::warning::server.json at $TAG says $committed; publishing it as $version. Bump server.json in the release commit."
           fi
-          jq --arg v "$version" '.version = $v | .packages |= map(.version = $v)' server.json > server.json.tmp
+          jq --arg v "$version" '.version = $v | .packages |= map(.version = $v | .runtimeArguments |= map(if .name == "--from" then .value = "markitai[mcp]==" + $v else . end))' server.json > server.json.tmp
           mv server.json.tmp server.json
           ./mcp-publisher validate server.json
 
