@@ -8,6 +8,9 @@ from urllib.parse import urlsplit, urlunsplit
 from markitai.fetch_policy import sensitive_path_segment_indexes
 
 _HTTP_URL_IN_TEXT = re.compile(r"https?://[^\s<>'\"]+")
+# `serve` access tokens ride in `?token=` on SSE, file and archive URLs (they
+# cannot send headers); Uvicorn's access log prints the bare request target.
+_TOKEN_QUERY_PARAM = re.compile(r"([?&]token=)[^&#\s<>'\"]+", re.IGNORECASE)
 _REDACTED_PATH_SEGMENT = "[REDACTED]"
 
 
@@ -35,5 +38,9 @@ def redact_url(url: str) -> str:
 
 
 def redact_urls_in_text(message: str) -> str:
-    """Remove credential surfaces from every HTTP(S) URL in text."""
-    return _HTTP_URL_IN_TEXT.sub(lambda match: redact_url(match.group(0)), message)
+    """Remove credential surfaces from every HTTP(S) URL in text.
+
+    Also masks ``token=`` query values in scheme-less request targets.
+    """
+    message = _HTTP_URL_IN_TEXT.sub(lambda match: redact_url(match.group(0)), message)
+    return _TOKEN_QUERY_PARAM.sub(rf"\1{_REDACTED_PATH_SEGMENT}", message)
