@@ -306,7 +306,12 @@ again with `--resume`; completed items are kept and unfinished items are retried
 Keep the same command and configuration. Resume compares saved feature switches,
 paths and directory discovery settings (the batch concurrency, `-j`, may change);
 it does not compare every model, prompt
-or output-profile setting. To reprocess after such a change, use a new output
+or output-profile setting. These settings also name the state file, so after
+changing one `--resume` finds no saved state and starts a fresh batch (reported
+unless `-q`). If the state it finds was saved with other settings (an older
+state, for example), it stops with exit status 1, names each differing option
+with its saved and current value, and leaves the saved progress as it is; run
+with the saved options, or without `--resume` to start over. To reprocess after such a change, use a new output
 directory without `--resume`. On Unix, after Ctrl-C or SIGTERM the
 closing summary lists
 what was done and then the items that were never started, for example

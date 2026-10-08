@@ -198,20 +198,35 @@ fn options(cli: &Cli, cfg: &Value, scope: &Scope) -> Value {
 }
 /// The short state filename is only a lookup hint. Reusing completed entries
 /// requires the complete saved selection to match this run's normalized options.
-/// Missing/older fields are deliberately a fresh run, never an assumed match.
+/// Missing/older fields are deliberately a mismatch, never an assumed match.
 /// Concurrency is saved, as the reference's state records it, but not
 /// compared: it changes how many items run at once, not what they produce.
-fn resume_options_match(snapshot: &Snapshot, current: &Value) -> bool {
-    let compared = |mut options: Value| {
-        if let Some(options) = options.as_object_mut() {
-            options.remove("concurrency");
-        }
-        options
-    };
-    !snapshot.options.is_empty()
-        && current.is_object()
-        && serde_json::to_value(&snapshot.options)
-            .is_ok_and(|saved| compared(saved) == compared(current.clone()))
+/// Returns each differing option as `key (saved X, now Y)`; empty means resume.
+fn resume_option_differences(snapshot: &Snapshot, current: &Value) -> Vec<String> {
+    if snapshot.options.is_empty() {
+        return vec!["the saved state records no options".into()];
+    }
+    let empty = serde_json::Map::new();
+    let current = current.as_object().unwrap_or(&empty);
+    let shown = |value: Option<&Value>| value.map_or_else(|| "unset".into(), Value::to_string);
+    current
+        .keys()
+        .chain(
+            snapshot
+                .options
+                .keys()
+                .filter(|key| !current.contains_key(*key)),
+        )
+        .filter(|key| *key != "concurrency")
+        .filter(|key| snapshot.options.get(*key) != current.get(*key))
+        .map(|key| {
+            format!(
+                "{key} (saved {}, now {})",
+                shown(snapshot.options.get(key)),
+                shown(current.get(key))
+            )
+        })
+        .collect()
 }
 
 fn discovered(tasks: &[Task], options: Value) -> Snapshot {
@@ -710,18 +725,17 @@ fn run_with_namespace(
                 for warning in warnings {
                     eprintln!("Warning: {warning}");
                 }
-                if resume_options_match(&snapshot, &state_options) {
-                    continued = true;
-                    *snapshot
-                } else {
-                    if !cli.quiet {
-                        say!(
-                            "Recovery options differ or are incomplete; starting a fresh batch instead of skipping prior results.",
-                            "恢复状态的选项不同或不完整，将重新处理，避免错误跳过已有结果。"
-                        );
-                    }
-                    Snapshot::default()
+                // Refuse rather than start over: a fresh batch would replace
+                // the saved progress and convert every item again.
+                let differences = resume_option_differences(&snapshot, &state_options);
+                if !differences.is_empty() {
+                    return Err(runtime(format!(
+                        "--resume refused: the saved recovery state was made with different options: {}. Run with the saved options to resume, or omit --resume to start a fresh batch that replaces the saved progress.",
+                        differences.join(", ")
+                    )));
                 }
+                continued = true;
+                *snapshot
             }
             LoadOutcome::Missing => {
                 if !cli.quiet {
@@ -2555,6 +2569,10 @@ mod resume_options_tests {
         }
     }
 
+    fn matches(snapshot: &Snapshot, current: &Value) -> bool {
+        resume_option_differences(snapshot, current).is_empty()
+    }
+
     #[test]
     fn full_resume_options_match_independently_of_object_key_order() {
         let value = current();
@@ -2567,8 +2585,8 @@ mod resume_options_tests {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
         );
-        assert!(resume_options_match(&saved(reordered), &value));
-        assert!(!resume_options_match(&saved(value), &Value::Null));
+        assert!(matches(&saved(reordered), &value));
+        assert!(!matches(&saved(value), &Value::Null));
     }
 
     #[test]
@@ -2587,11 +2605,24 @@ mod resume_options_tests {
         ] {
             let mut changed = original.clone();
             changed[key] = next;
-            assert!(
-                !resume_options_match(&saved(original.clone()), &changed),
-                "{key}"
-            );
+            assert!(!matches(&saved(original.clone()), &changed), "{key}");
         }
+    }
+
+    #[test]
+    fn differences_name_each_changed_option_with_both_values() {
+        let original = current();
+        let mut changed = original.clone();
+        changed["ocr"] = json!(true);
+        changed["glob_patterns"] = json!(["**/*.pdf"]);
+        changed["concurrency"] = json!(8);
+        assert_eq!(
+            resume_option_differences(&saved(original), &changed),
+            [
+                r#"glob_patterns (saved ["**/*.png"], now ["**/*.pdf"])"#,
+                "ocr (saved false, now true)",
+            ]
+        );
     }
 
     #[test]
@@ -2600,31 +2631,37 @@ mod resume_options_tests {
         let current = current();
         let mut changed = current.clone();
         changed["concurrency"] = json!(8);
-        assert!(resume_options_match(&saved(changed), &current));
+        assert!(matches(&saved(changed), &current));
         let mut absent = current.clone();
         absent.as_object_mut().unwrap().remove("concurrency");
-        assert!(resume_options_match(&saved(absent.clone()), &current));
-        assert!(resume_options_match(&saved(current.clone()), &absent));
+        assert!(matches(&saved(absent.clone()), &current));
+        assert!(matches(&saved(current.clone()), &absent));
     }
 
     #[test]
     fn incomplete_or_extra_legacy_options_are_not_assumed_equivalent() {
         let current = current();
-        assert!(!resume_options_match(&Snapshot::default(), &current));
-        assert!(!resume_options_match(&Snapshot::default(), &json!({})));
+        assert_eq!(
+            resume_option_differences(&Snapshot::default(), &current),
+            ["the saved state records no options"]
+        );
+        assert!(!matches(&Snapshot::default(), &json!({})));
         for key in ["ocr", "scan_max_depth", "glob_patterns"] {
             let mut absent = current.clone();
             absent.as_object_mut().unwrap().remove(key);
-            assert!(
-                !resume_options_match(&saved(absent), &current),
-                "missing {key}"
+            assert_eq!(
+                resume_option_differences(&saved(absent), &current),
+                [format!("{key} (saved unset, now {})", current[key])]
             );
             let mut null = current.clone();
             null[key] = Value::Null;
-            assert!(!resume_options_match(&saved(null), &current), "null {key}");
+            assert!(!matches(&saved(null), &current), "null {key}");
         }
         let mut extra = current.clone();
         extra["legacy_only"] = json!(true);
-        assert!(!resume_options_match(&saved(extra), &current));
+        assert_eq!(
+            resume_option_differences(&saved(extra), &current),
+            ["legacy_only (saved true, now unset)"]
+        );
     }
 }

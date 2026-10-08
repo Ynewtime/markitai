@@ -993,6 +993,39 @@ fn unavailable_state_storage_prevents_fetch_and_preserves_the_obstruction() {
 }
 
 #[test]
+fn resume_with_different_saved_options_refuses_and_keeps_the_saved_progress() {
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::start();
+    configure(root.path(), &server, false);
+    write(root.path(), "input/a.txt", "MARKERXA first file.");
+    write(root.path(), "input/b.txt", "MARKERXB second file.");
+    envelope(invoke(root.path(), &["input", "-o", "out", "--json"]), 0);
+    let out = root.path().join("out");
+    // A state saved under the same lookup hash with other options: an older
+    // build's state, or a six-hex collision.
+    let path = state_path(&out);
+    let mut saved = snapshot(&out);
+    saved["options"]["ocr"] = json!(true);
+    saved["options"]["legacy_only"] = json!(1);
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let resumed = invoke(
+        root.path(),
+        &["input", "-o", "out", "--resume", "-q", "-j", "3"],
+    );
+    assert_eq!(resumed.status.code(), Some(1));
+    let message = String::from_utf8_lossy(&resumed.stderr);
+    assert!(
+        message.contains("--resume refused")
+            && message.contains("ocr (saved true, now false), legacy_only (saved 1, now unset)")
+            && !message.contains("concurrency"),
+        "{message}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    no_versions(&out);
+}
+
+#[test]
 fn resume_dry_run_and_empty_inputs_do_not_create_persistence_shells() {
     let root = tempfile::tempdir().unwrap();
     let server = Server::start();

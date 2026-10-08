@@ -128,7 +128,9 @@ unfinished staging is removed. Existing corrupt-state quarantine is separate.
 The non-quiet CLI reports the local backup path on stderr without dumping state
 contents; stdout JSON keeps its existing schema. A missing state for the exact
 paths/options can start a fresh run and is reported on non-quiet stderr. No other
-hash is automatically selected. Foreign scope and Numbers-package child records
+hash is automatically selected. A loaded state whose saved options differ from
+this run's (concurrency aside) is refused before any state change: the error
+names each differing option with its saved and current value, also under `-q`. Foreign scope and Numbers-package child records
 remain errors before native takeover.
 
 Rollback here means recovering the old **state pair**, not undoing a run. Stop
