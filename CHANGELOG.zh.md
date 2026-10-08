@@ -21,6 +21,7 @@
 - macOS 系统代理自动检测恢复正常（`scutil --proxy` 先列端口后列主机，此前总是检测不到代理）；`NO_PROXY` 或 `local_only_patterns` 中的 `corp.example` 这类条目现在也覆盖其子域名（`api.corp.example`），与 curl、urllib 和 Go 一致。
 - Cloudflare 验证页（"Just a moment..."、"Ray ID"）、验证码页面和仅仅是内容较短的页面不再写入 30 天的 SPA 缓存，一次人机验证不会再让该站点之后的所有请求都走浏览器。声明需要 JavaScript 或只显示加载占位的页面仍会写入。
 - 网页提取按主机名选择站点提取器：`dropbox.com/status/…`、`linux.com/news/article/…`、`docs.github.com/…/issues/…` 这类页面不再被当作 X 帖子或 GitHub 讨论处理，内容不再丢失。
+- `--record-history` 只复制本次记录的输出所用的图片和截图，不再把共享输出目录里历来生成的全部资源都复制一遍；`markitai serve` 运行期间也会按任务完成时间删除超过 7 天的历史（此前只在启动时按目录修改时间清理）。
 
 ## [1.2.0] - 2026-09-28
 
