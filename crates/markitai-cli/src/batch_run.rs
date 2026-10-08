@@ -199,10 +199,19 @@ fn options(cli: &Cli, cfg: &Value, scope: &Scope) -> Value {
 /// The short state filename is only a lookup hint. Reusing completed entries
 /// requires the complete saved selection to match this run's normalized options.
 /// Missing/older fields are deliberately a fresh run, never an assumed match.
+/// Concurrency is saved, as the reference's state records it, but not
+/// compared: it changes how many items run at once, not what they produce.
 fn resume_options_match(snapshot: &Snapshot, current: &Value) -> bool {
+    let compared = |mut options: Value| {
+        if let Some(options) = options.as_object_mut() {
+            options.remove("concurrency");
+        }
+        options
+    };
     !snapshot.options.is_empty()
         && current.is_object()
-        && serde_json::to_value(&snapshot.options).is_ok_and(|saved| saved == *current)
+        && serde_json::to_value(&snapshot.options)
+            .is_ok_and(|saved| compared(saved) == compared(current.clone()))
 }
 
 fn discovered(tasks: &[Task], options: Value) -> Snapshot {
@@ -2575,7 +2584,6 @@ mod resume_options_tests {
             ("glob_patterns", json!(["**/*.pdf"])),
             ("input_dir", json!("/synthetic/other")),
             ("output_dir", json!("/synthetic/other")),
-            ("concurrency", json!(3)),
         ] {
             let mut changed = original.clone();
             changed[key] = next;
@@ -2587,11 +2595,24 @@ mod resume_options_tests {
     }
 
     #[test]
+    fn a_changed_or_missing_concurrency_still_resumes() {
+        // `-j` changes how many items run at once, not what they produce.
+        let current = current();
+        let mut changed = current.clone();
+        changed["concurrency"] = json!(8);
+        assert!(resume_options_match(&saved(changed), &current));
+        let mut absent = current.clone();
+        absent.as_object_mut().unwrap().remove("concurrency");
+        assert!(resume_options_match(&saved(absent.clone()), &current));
+        assert!(resume_options_match(&saved(current.clone()), &absent));
+    }
+
+    #[test]
     fn incomplete_or_extra_legacy_options_are_not_assumed_equivalent() {
         let current = current();
         assert!(!resume_options_match(&Snapshot::default(), &current));
         assert!(!resume_options_match(&Snapshot::default(), &json!({})));
-        for key in ["ocr", "scan_max_depth", "glob_patterns", "concurrency"] {
+        for key in ["ocr", "scan_max_depth", "glob_patterns"] {
             let mut absent = current.clone();
             absent.as_object_mut().unwrap().remove(key);
             assert!(

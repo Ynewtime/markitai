@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- `--resume` keeps a directory batch's progress when only the batch concurrency (`-j` or `batch.concurrency`) changed, as the reference does; before, the saved progress was set aside and every item converted again (including paid model requests), with renamed duplicates under the default output policy.
 - Saved output no longer keeps secrets that error messages already hid: the `source` and `source_url` metadata saved with a URL conversion now redact the same secret parameter names as the fetch policy, so an Azure SAS `sig=`, an OAuth `code=` or `session=` is written as `REDACTED`, and so is a token in a form-like fragment (`#access_token=…`). A URL with nothing secret keeps its query as written instead of being re-encoded.
 - A page read by a site reader (WeChat, Zhihu, Bilibili, Douban, Jianshu, cnblogs and the other blogs, including a saved WeChat page known only by its markers) no longer crashes the process with a stack overflow when its markup or a code block nests tens of thousands of elements deep: as on every other page, content below 256 levels is kept as plain text with a warning.
 - Normal output no longer loses text after a stray `[`: the repair of a link whose text a line break splits starts at the link's own bracket, so prose such as `a[i` or `[sic` followed later by a link keeps every line and paragraph in between instead of being cut down to the first line.
