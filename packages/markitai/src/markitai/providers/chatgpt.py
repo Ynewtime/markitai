@@ -138,11 +138,12 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
         url: str,
         request_body: dict[str, Any],
         headers: dict[str, str],
-    ) -> tuple[str, int, int]:
+    ) -> tuple[str, int, int, str]:
         """Make a streaming request and collect the full response.
 
         The ChatGPT Responses API requires stream=true. We collect text deltas
-        and extract usage from the final response.completed event.
+        and extract usage from the final response.completed (or
+        response.incomplete) event.
 
         Args:
             url: API endpoint URL.
@@ -150,17 +151,20 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
             headers: HTTP headers.
 
         Returns:
-            Tuple of (result_text, input_tokens, output_tokens).
+            Tuple of (result_text, input_tokens, output_tokens, finish_reason).
 
         Raises:
             AuthenticationError: On 401/403 responses.
-            ProviderError: On other API errors.
+            ProviderError: On other API errors and failed responses
+                (retryable for 429/5xx and stream failures, so they are not
+                mistaken for errors that every call of the document repeats).
         """
         import json as json_mod
 
         text_parts: list[str] = []
         input_tokens = 0
         output_tokens = 0
+        finish_reason = "stop"
 
         try:
             client = await self._get_client()
@@ -193,6 +197,8 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
                     raise ProviderError(
                         f"ChatGPT API error ({response.status_code}): {error_text}",
                         provider="chatgpt",
+                        retryable=response.status_code == 429
+                        or response.status_code >= 500,
                     )
 
                 # Parse SSE stream
@@ -212,9 +218,27 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
                     if event_type == "response.output_text.delta":
                         text_parts.append(event.get("delta", ""))
 
-                    elif event_type == "response.completed":
+                    elif event_type in ("response.failed", "error"):
+                        error = event.get("response", {}).get("error") or event
+                        raise ProviderError(
+                            "ChatGPT response failed: "
+                            f"{error.get('message') or error.get('code') or event}",
+                            provider="chatgpt",
+                            retryable=True,
+                        )
+
+                    elif event_type in ("response.completed", "response.incomplete"):
                         # Final event with full response and usage
                         resp = event.get("response", {})
+                        if event_type == "response.incomplete":
+                            reason = (resp.get("incomplete_details") or {}).get(
+                                "reason"
+                            )
+                            finish_reason = (
+                                "content_filter"
+                                if reason == "content_filter"
+                                else "length"
+                            )
                         usage = resp.get("usage", {})
                         input_tokens = usage.get("input_tokens", 0)
                         output_tokens = usage.get("output_tokens", 0)
@@ -245,7 +269,7 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
                 provider="chatgpt",
             ) from e
 
-        return "".join(text_parts), input_tokens, output_tokens
+        return "".join(text_parts), input_tokens, output_tokens, finish_reason
 
     def _convert_messages(
         self, messages: list[dict[str, Any]]
@@ -422,9 +446,12 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
         )
 
         # Make streaming API call and collect the final response
-        result_text, input_tokens, output_tokens = await self._stream_response(
-            url, request_body, headers
-        )
+        (
+            result_text,
+            input_tokens,
+            output_tokens,
+            finish_reason,
+        ) = await self._stream_response(url, request_body, headers)
 
         logger.debug(
             f"[ChatGPT] Completed, response_length={len(result_text)}, "
@@ -437,7 +464,7 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
             choices=[
                 {
                     "message": {"role": "assistant", "content": result_text},
-                    "finish_reason": "stop",
+                    "finish_reason": finish_reason,
                     "index": 0,
                 }
             ],

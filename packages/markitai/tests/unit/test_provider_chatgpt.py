@@ -451,6 +451,113 @@ class TestAPICall:
                 [{"role": "user", "content": "Hello"}],
             )
 
+    @pytest.mark.parametrize("status_code", [429, 500, 502, 503])
+    async def test_rate_limit_and_server_errors_are_not_fatal(
+        self, status_code: int
+    ) -> None:
+        """A 429/5xx is transient: it must not end the whole document.
+
+        A non-retryable ProviderError counts as fatal for the document
+        (find_fatal_document_error), which skips every remaining page
+        batch after a single overloaded response.
+        """
+        from markitai.llm.engine import find_fatal_document_error
+        from markitai.providers.errors import ProviderError
+
+        provider = self._make_provider()
+        provider._authenticator = self._mock_auth()
+        provider._client = _mock_stream_client(
+            [], status_code=status_code, error_body='{"detail": "slow down"}'
+        )
+
+        with pytest.raises(ProviderError, match="slow down") as exc_info:
+            await provider.acompletion(
+                "chatgpt/codex-mini",
+                [{"role": "user", "content": "Hello"}],
+            )
+
+        assert exc_info.value.retryable is True
+        assert find_fatal_document_error(exc_info.value) is None
+
+    async def test_client_error_stays_fatal(self) -> None:
+        from markitai.llm.engine import find_fatal_document_error
+        from markitai.providers.errors import ProviderError
+
+        provider = self._make_provider()
+        provider._authenticator = self._mock_auth()
+        provider._client = _mock_stream_client(
+            [], status_code=400, error_body='{"detail": "Bad Request"}'
+        )
+
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.acompletion(
+                "chatgpt/codex-mini",
+                [{"role": "user", "content": "Hello"}],
+            )
+
+        assert find_fatal_document_error(exc_info.value) is exc_info.value
+
+    async def test_incomplete_response_reports_length(self) -> None:
+        """A truncated answer must not be reported (and cached) as complete."""
+        provider = self._make_provider()
+        provider._authenticator = self._mock_auth()
+        delta = json.dumps({"type": "response.output_text.delta", "delta": "Hal"})
+        incomplete = json.dumps(
+            {
+                "type": "response.incomplete",
+                "response": {
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                    "usage": {"input_tokens": 10, "output_tokens": 3},
+                },
+            }
+        )
+        provider._client = _mock_stream_client(
+            [f"data: {delta}", f"data: {incomplete}"]
+        )
+
+        result = await provider.acompletion(
+            "chatgpt/codex-mini",
+            [{"role": "user", "content": "Hello"}],
+        )
+
+        assert result.choices[0].finish_reason == "length"
+        assert result.choices[0].message.content == "Hal"
+        assert result.usage.completion_tokens == 3
+
+    @pytest.mark.parametrize(
+        "event",
+        [
+            {
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "error": {"code": "server_error", "message": "it broke"},
+                },
+            },
+            {"type": "error", "code": "server_error", "message": "it broke"},
+        ],
+    )
+    async def test_failed_stream_raises(self, event: dict[str, Any]) -> None:
+        """A failed response must not come back as an empty success."""
+        from markitai.llm.engine import find_fatal_document_error
+        from markitai.providers.errors import ProviderError
+
+        provider = self._make_provider()
+        provider._authenticator = self._mock_auth()
+        delta = json.dumps({"type": "response.output_text.delta", "delta": "Hal"})
+        provider._client = _mock_stream_client(
+            [f"data: {delta}", f"data: {json.dumps(event)}"]
+        )
+
+        with pytest.raises(ProviderError, match="it broke") as exc_info:
+            await provider.acompletion(
+                "chatgpt/codex-mini",
+                [{"role": "user", "content": "Hello"}],
+            )
+
+        assert find_fatal_document_error(exc_info.value) is None
+
     async def test_api_403_raises_authentication_error(self) -> None:
         from markitai.providers.errors import AuthenticationError
 
@@ -625,7 +732,7 @@ class TestChatGPTOAuthUX:
         with patch.object(
             provider, "_stream_response", new_callable=AsyncMock
         ) as mock_stream:
-            mock_stream.return_value = ("result", 10, 5)
+            mock_stream.return_value = ("result", 10, 5, "stop")
             result = await provider.acompletion(
                 "chatgpt/codex-mini",
                 [{"role": "user", "content": "test"}],
