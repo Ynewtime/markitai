@@ -23,11 +23,12 @@ from html import escape
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.extractors.base import site_url
 from markitai.webextract.resolver import ResolvedPage
 from markitai.webextract.types import ContentProfile
 
 # Bilibili opus/dynamic post URLs: bilibili.com/opus/<id>
-_OPUS_URL_RE = re.compile(r"bilibili\.com/opus/\d+")
+_OPUS_PATH_RE = re.compile(r"/opus/\d+(?:/.*)?")
 
 # "编辑于 2026年06月10日 19:48" or "发布于 2026年06月10日 19:48" -> 2026-06-10
 _PUB_TIME_RE = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")
@@ -40,7 +41,8 @@ class BilibiliOpusExtractor:
 
     def matches_url(self, url: str) -> bool:
         """Match Bilibili opus post URLs."""
-        return bool(_OPUS_URL_RE.search(url))
+        parts = site_url(url, "bilibili.com")
+        return parts is not None and bool(_OPUS_PATH_RE.fullmatch(parts.path))
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Return the content module (legacy protocol compliance path).

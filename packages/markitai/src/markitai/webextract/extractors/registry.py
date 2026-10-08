@@ -32,10 +32,13 @@ _EXTRACTORS: tuple[BaseSiteExtractor, ...] = (
 
 # Raw-HTML markers for the document sniff below. ``matches_document`` can only
 # succeed when the page carries a Substack preload payload or a substackcdn
-# asset, so a page without either marker never needs to be parsed just to be
-# rejected. Deliberately a superset of the real check: it only decides whether
-# parsing is worth it, never whether the extractor matches.
-_DOCUMENT_SNIFF_MARKERS = re.compile(r"substackcdn|_preloads", re.IGNORECASE)
+# asset, or Steam's event-store data, so a page without any marker never needs
+# to be parsed just to be rejected. Deliberately a superset of the real check:
+# it only decides whether parsing is worth it, never whether the extractor
+# matches.
+_DOCUMENT_SNIFF_MARKERS = re.compile(
+    r"substackcdn|_preloads|data-partnereventstore", re.IGNORECASE
+)
 
 # Reused instance: ``matches_document`` is stateless, so constructing a fresh
 # extractor per lookup only allocated garbage.
@@ -43,6 +46,9 @@ _SUBSTACK_EXTRACTOR = next(
     extractor
     for extractor in _EXTRACTORS
     if isinstance(extractor, SubstackNoteExtractor)
+)
+_STEAM_EXTRACTOR = next(
+    extractor for extractor in _EXTRACTORS if isinstance(extractor, SteamNewsExtractor)
 )
 
 
@@ -89,6 +95,8 @@ def find_extractor_for_document(soup: BeautifulSoup) -> BaseSiteExtractor | None
 
     if _SUBSTACK_EXTRACTOR.matches_document(soup):
         return _SUBSTACK_EXTRACTOR
+    if _STEAM_EXTRACTOR.matches_document(soup):
+        return _STEAM_EXTRACTOR
     return None
 
 
