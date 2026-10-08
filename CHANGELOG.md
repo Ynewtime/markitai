@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- An LLM rate limit (HTTP 429) whose message points at the billing page — OpenAI's lower tiers suggest adding a payment method to raise the limit — is retried as a rate limit instead of stopping the document and its sibling requests as a quota or billing refusal. A 429 that carries the `insufficient_quota` code, and any HTTP 402, still stop at once.
 - `--resume` keeps a directory batch's progress when only the batch concurrency (`-j` or `batch.concurrency`) changed, as the reference does; before, the saved progress was set aside and every item converted again (including paid model requests), with renamed duplicates under the default output policy.
 - Saved output no longer keeps secrets that error messages already hid: the `source` and `source_url` metadata saved with a URL conversion now redact the same secret parameter names as the fetch policy, so an Azure SAS `sig=`, an OAuth `code=` or `session=` is written as `REDACTED`, and so is a token in a form-like fragment (`#access_token=…`). A URL with nothing secret keeps its query as written instead of being re-encoded.
 - A page read by a site reader (WeChat, Zhihu, Bilibili, Douban, Jianshu, cnblogs and the other blogs, including a saved WeChat page known only by its markers) no longer crashes the process with a stack overflow when its markup or a code block nests tens of thousands of elements deep: as on every other page, content below 256 levels is kept as plain text with a warning.

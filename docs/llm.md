@@ -305,7 +305,9 @@ refusals the same way.
 in a group. Connection failures, timeouts, interrupted response reads, temporary
 HTTP failures, rate limits, recognized unavailable-model responses and empty
 text responses may retry. Billing/payment/insufficient-quota failures stop the
-entire operation. Truncated output is rejected instead of being accepted as a
+entire operation. A 429 is a rate limit, retried even when its message mentions
+billing or payment, unless it carries the `insufficient_quota` code; an HTTP 402
+always stops. Truncated output is rejected instead of being accepted as a
 complete document.
 
 An authentication or permission refusal excludes that deployment for the rest
