@@ -1299,7 +1299,8 @@ class ConfigManager:
             parent[final_key] = value
 
 
-# Global config manager instance
+# Process-wide config manager: the CLI replaces it with the manager that
+# loaded the current run's config (config_location_hint reads it)
 config_manager = ConfigManager()
 
 

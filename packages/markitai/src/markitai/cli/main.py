@@ -769,6 +769,11 @@ def app(
     except ConfigFileError as exc:
         stderr_console.print(f"[red]{exc}[/red]")
         abort_with_json(str(exc))
+    # Publish the run's manager so config_location_hint() names the file
+    # this run actually read (including -c)
+    import markitai.config as config_module
+
+    config_module.config_manager = config_manager
 
     # Determine if we're in single file/URL mode (not batch)
     # Single file/URL mode: quiet console unless --verbose is specified
