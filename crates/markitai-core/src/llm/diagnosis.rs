@@ -50,9 +50,19 @@ pub(super) fn transport(error: reqwest::Error, timeout: u64) -> String {
             format!("LLM request timed out: no response within {timeout} s")
         };
     }
+    match cause(error) {
+        Some(cause) => format!("LLM request failed: {cause}"),
+        None => "LLM request failed".into(),
+    }
+}
+
+/// Why a request that was not timed out received no HTTP response, such as
+/// `connection refused` or `TLS handshake failed (…)`.
+pub(super) fn cause(error: reqwest::Error) -> Option<String> {
+    let error = error.without_url();
     let chain = Chain::of(&error);
     if chain.refused() {
-        return "LLM request failed: connection refused".into();
+        return Some("connection refused".into());
     }
     let kind = if chain.unresolved() {
         Some("host name not resolved")
@@ -66,10 +76,9 @@ pub(super) fn transport(error: reqwest::Error, timeout: u64) -> String {
         None
     };
     match (kind, chain.innermost()) {
-        (Some(kind), Some(detail)) => format!("LLM request failed: {kind} ({detail})"),
-        (Some(kind), None) => format!("LLM request failed: {kind}"),
-        (None, Some(detail)) => format!("LLM request failed: {detail}"),
-        (None, None) => "LLM request failed".into(),
+        (Some(kind), Some(detail)) => Some(format!("{kind} ({detail})")),
+        (Some(kind), None) => Some(kind.into()),
+        (None, detail) => detail,
     }
 }
 
@@ -119,6 +128,15 @@ pub(super) fn not_json(
 /// `HTTP {status}` with the provider's error type or code and its cleaned
 /// message, when its body carries them.
 pub(super) fn http(status: u16, body: &[u8], entry: &Deployment, prompts: &Prompts) -> String {
+    format!(
+        "LLM returned HTTP {status}{}",
+        refusal(status, body, entry, prompts)
+    )
+}
+
+/// What follows `HTTP {status}`: ` ({code}): {message}`, either part
+/// omitted when the body does not carry it safely.
+pub(super) fn refusal(status: u16, body: &[u8], entry: &Deployment, prompts: &Prompts) -> String {
     let (code, said) = match serde_json::from_slice::<Value>(body) {
         Ok(value) => {
             // Gemini's OpenAI-compatible endpoint wraps its error in a list.
@@ -131,11 +149,13 @@ pub(super) fn http(status: u16, body: &[u8], entry: &Deployment, prompts: &Promp
         Err(_) => (None, html_title(body).or_else(|| plain_line(body))),
     };
     let said = said.and_then(|said| shown(&said, entry, prompts));
+    let key = entry.key.as_deref().filter(|key| key.len() >= 4);
+    let code = code.filter(|code| key.is_none_or(|key| !code.contains(key)));
     match (code, said) {
-        (Some(code), Some(said)) => format!("LLM returned HTTP {status} ({code}): {said}"),
-        (Some(code), None) => format!("LLM returned HTTP {status} ({code})"),
-        (None, Some(said)) => format!("LLM returned HTTP {status}: {said}"),
-        (None, None) => format!("LLM returned HTTP {status}"),
+        (Some(code), Some(said)) => format!(" ({code}): {said}"),
+        (Some(code), None) => format!(" ({code})"),
+        (None, Some(said)) => format!(": {said}"),
+        (None, None) => String::new(),
     }
 }
 
@@ -152,7 +172,8 @@ fn error_code(value: &Value, status: u16) -> Option<String> {
             }
             _ => continue,
         };
-        if identifier(&name, 60) && !names.contains(&name) {
+        // A code is shown as it is, so one that looks like a credential is not.
+        if identifier(&name, 60) && without_credentials(&name) == name && !names.contains(&name) {
             names.push(name);
         }
     }
@@ -232,7 +253,11 @@ fn shown(text: &str, entry: &Deployment, prompts: &Prompts) -> Option<String> {
     if text.trim().is_empty() {
         return None;
     }
-    if echoes(&text, prompts) {
+    // Only the shown part, and a stretch past it so that an echo cut at its
+    // end is still found, is searched for: each window scans the whole
+    // request, and an error body may be 64 KiB.
+    let searched: String = text.chars().take(SAID_CHARS + 4 * ECHO_WINDOW).collect();
+    if echoes(&searched, prompts) {
         return Some("[message withheld: it repeats the request]".into());
     }
     let mut said: String = text.chars().take(SAID_CHARS).collect();
@@ -634,6 +659,38 @@ mod tests {
         // Messages longer than the cap are cut.
         let long = format!(r#"{{"error":{{"message":"{}"}}}}"#, "word ".repeat(100));
         assert!(http(400, long.as_bytes(), &entry("k"), &prompts("x")).ends_with('…'));
+        // Only the shown part is compared with the request, so a 64 KiB body
+        // against a large document stays cheap; an echo in it is still caught.
+        let document = "quarterly widget figures ".repeat(40_000);
+        let late = format!(
+            r#"{{"error":{{"message":"{} near the quarterly widget figures"}}}}"#,
+            "padding ".repeat(8_000)
+        );
+        assert!(
+            http(400, late.as_bytes(), &entry("k"), &prompts(&document)).ends_with('…'),
+            "the echo after the shown part is cut, not searched"
+        );
+        let early = r#"{"error":{"message":"near the quarterly widget figures"}}"#;
+        assert!(
+            http(400, early.as_bytes(), &entry("k"), &prompts(&document))
+                .ends_with("[message withheld: it repeats the request]")
+        );
+        // A code is shown verbatim, so a credential-shaped one is dropped.
+        let code = format!(r#"{{"error":{{"code":"{key}","message":"Denied"}}}}"#);
+        assert_eq!(
+            http(401, code.as_bytes(), &entry("k"), &prompts("x")),
+            "LLM returned HTTP 401: Denied"
+        );
+        let configured = r#"{"error":{"code":"tenant-key-1","message":"Denied"}}"#;
+        assert_eq!(
+            http(
+                401,
+                configured.as_bytes(),
+                &entry("tenant-key-1"),
+                &prompts("x")
+            ),
+            "LLM returned HTTP 401: Denied"
+        );
     }
 
     #[test]
