@@ -26,6 +26,11 @@ from unittest.mock import MagicMock
 import instructor
 import litellm
 import pytest
+from litellm.exceptions import (
+    BadRequestError,
+    NotFoundError,
+    ServiceUnavailableError,
+)
 
 from markitai.constants import DEFAULT_INSTRUCTOR_MAX_RETRIES
 from markitai.llm.engine import (
@@ -590,3 +595,99 @@ class TestWhatMocksCannotProve:
         for tier in ALL_TIERS:
             ladder = structured_mode_ladder([TIER_MODELS[tier]])
             assert ladder[-1] is instructor.Mode.MD_JSON
+
+
+# =============================================================================
+# DeepSeek thinking models: no forced tool_choice, and a 400 is not "budget"
+# =============================================================================
+
+
+class TestDeepSeekThinkingModels:
+    """The shipped DeepSeek default answered the forced tool call of the TOOLS
+    rung with HTTP 400 "Thinking mode does not support this tool_choice", and
+    with a request cap of 1 the item reported only "budget exhausted"."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_cache(self):
+        import markitai.llm.structured as structured_mod
+
+        structured_mod._model_mode_cache.clear()
+        yield
+        structured_mod._model_mode_cache.clear()
+
+    def test_default_deepseek_model_is_never_sent_a_forced_tool_call(self):
+        from markitai.constants import PROVIDER_DEFAULT_MODELS
+
+        model = PROVIDER_DEFAULT_MODELS["deepseek"]
+        # LiteLLM lists it as tool-calling, which is what put TOOLS first
+        assert litellm.supports_function_calling(model)
+        assert model_structured_mode(model) == MODE_MD_JSON
+        assert structured_mode_ladder([model]) == (instructor.Mode.MD_JSON,)
+
+    def test_deepseek_model_without_thinking_keeps_tools(self):
+        assert model_structured_mode("deepseek/deepseek-chat") == MODE_TOOLS
+
+
+class TestRejectedRungThenBudget:
+    @pytest.mark.asyncio
+    async def test_budget_refusal_names_the_rejected_request(self):
+        """A provider 4xx followed by the budget refusal reports the 4xx."""
+        rejected = BadRequestError(
+            message='DeepseekException - {"error": {"message": "Thinking mode '
+            'does not support this tool_choice"}}',
+            model="deepseek-v4-flash",
+            llm_provider="deepseek",
+        )
+        router = _ScriptedRouter(TOOLS_MODEL, [rejected])
+
+        with pytest.raises(LLMRequestBudgetExceededError) as exc_info:
+            await _engine(router, RequestBudget(limit=1)).complete_structured(
+                _frontmatter_call()
+            )
+
+        assert len(router.calls) == 1
+        message = str(exc_info.value)
+        assert "budget exhausted" in message
+        assert "HTTP 400" in message
+        assert "Thinking mode does not support this tool_choice" in message
+
+    @pytest.mark.parametrize(
+        ("error", "status", "text"),
+        [
+            (
+                NotFoundError(
+                    message="model not found: deepseek-v9",
+                    model="deepseek-v9",
+                    llm_provider="deepseek",
+                ),
+                404,
+                "model not found",
+            ),
+            (
+                ServiceUnavailableError(
+                    message="upstream overloaded",
+                    model="gemini-flash-lite-latest",
+                    llm_provider="gemini",
+                ),
+                503,
+                "upstream overloaded",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_refused_retry_names_the_failed_request(
+        self, error: Exception, status: int, text: str
+    ):
+        """A retry the budget refuses reports the failure it would retry."""
+        router = _ScriptedRouter(TEXT_MODEL, [error])
+        engine = _engine(router, RequestBudget(limit=1))
+        engine.max_retries = 1
+
+        with pytest.raises(LLMRequestBudgetExceededError) as exc_info:
+            await engine.complete_structured(_frontmatter_call())
+
+        assert len(router.calls) == 1
+        message = str(exc_info.value)
+        assert "budget exhausted" in message
+        assert f"HTTP {status}" in message
+        assert text in message
