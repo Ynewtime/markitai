@@ -37,6 +37,8 @@ from typing import Any, cast
 import instructor
 from loguru import logger
 
+from markitai.llm.error_redaction import redact_provider_message
+
 # ---------------------------------------------------------------------------
 # Pending-run state (survives process exit for two-phase collect)
 # ---------------------------------------------------------------------------
@@ -318,6 +320,23 @@ class BatchOutputLine:
     error: str | None  # provider error message, or HTTP status when not 200
 
 
+def _describe_batch_error(error: Any) -> str:
+    """A batch line's error as ``type: message``, cleaned like a live error.
+
+    OpenAI writes ``{"code", "message"}``, Anthropic ``{"type": "error",
+    "error": {"type", "message"}}``; the message may quote the request.
+    """
+    if isinstance(error, dict):
+        nested = error.get("error")
+        inner = nested if isinstance(nested, dict) else error
+        kind = inner.get("code") or inner.get("type")
+        message = inner.get("message")
+        if isinstance(message, str):
+            message = redact_provider_message(message)
+            return f"{kind}: {message}" if kind else message
+    return redact_provider_message(str(error))
+
+
 def read_openai_batch_output(path: Path) -> Iterator[BatchOutputLine]:
     """Iterate a downloaded OpenAI batch output jsonl."""
     with path.open(encoding="utf-8") as f:
@@ -331,7 +350,7 @@ def read_openai_batch_output(path: Path) -> Iterator[BatchOutputLine]:
             status = response.get("status_code")
             error = entry.get("error")
             if error:
-                yield BatchOutputLine(custom_id, None, str(error))
+                yield BatchOutputLine(custom_id, None, _describe_batch_error(error))
             elif status == 200:
                 yield BatchOutputLine(custom_id, response.get("body"), None)
             else:
@@ -629,7 +648,7 @@ async def download_anthropic_batch_output(
                 elif result.type == "errored":
                     line = {
                         "custom_id": entry.custom_id,
-                        "error": str(result.error.model_dump(mode="json")),
+                        "error": result.error.model_dump(mode="json"),
                     }
                 else:  # canceled / expired
                     line = {"custom_id": entry.custom_id, "error": result.type}
