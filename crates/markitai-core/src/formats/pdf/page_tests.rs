@@ -663,3 +663,44 @@ fn clipped_vector_chart_becomes_an_asset_without_the_screenshot_option() {
             < document.markdown.find("paragraph after").unwrap()
     );
 }
+
+#[test]
+fn text_drawn_outside_the_crop_box_is_left_out_with_a_warning() {
+    // One line inside the CropBox, one sentinel below and left of it: a
+    // viewer shows only the first, upright or turned.
+    let stream = [
+        text_at(500, "Visible line inside the crop box."),
+        "BT /F1 8 Tf 1 0 0 1 5 10 Tm (OUTSIDE CROP MUST NOT APPEAR) Tj ET".into(),
+    ]
+    .join("\n");
+    let (bytes, _) = fixture(&[stream], false);
+    for rotate in [0, 90] {
+        let mut pdf = lopdf::Document::load_mem(&bytes).unwrap();
+        let id = pdf.get_pages()[&1];
+        let page = pdf.get_dictionary_mut(id).unwrap();
+        page.set(
+            "CropBox",
+            vec![30.into(), 60.into(), 580.into(), 760.into()],
+        );
+        page.set("Rotate", rotate);
+        let mut cropped = Vec::new();
+        pdf.save_to(&mut cropped).unwrap();
+        let pages = extract_pages(&cropped).unwrap();
+        let markdown = &pages.pages[0].markdown;
+        assert!(
+            markdown.contains("Visible line inside the crop box."),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("OUTSIDE CROP"), "{rotate}: {markdown}");
+        assert!(
+            pages
+                .document
+                .warnings
+                .iter()
+                .any(|w| w
+                    .starts_with("PDF page 1: 1 text item(s) drawn outside the visible page area")),
+            "{:?}",
+            pages.document.warnings
+        );
+    }
+}

@@ -121,6 +121,12 @@ mode 7 is never treated as an OCR layer. The only mode-3 text the core reads is
 a searchable scan's OCR text layer that passes the checks below; it retains the
 existing guard against plain-text recovery of suspicious pages.
 
+Text drawn outside the visible page area (CropBox intersected with MediaBox) is
+left out of the page body, as a viewer never shows it, and a warning gives the
+number of items left out. A word run counts when its whole extent lies more than
+6 points beyond the area; short glyph fragments and runs that continue an
+on-page line stay, because rotated display text can leave them there.
+
 These rules do not establish complete rendered visibility: transparency,
 blending, soft masks, occlusion, arbitrary clipping and mixed-visibility
 `ActualText` spans still need broader interpretation. Pages with visibility

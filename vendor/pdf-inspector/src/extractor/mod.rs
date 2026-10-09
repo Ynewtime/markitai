@@ -233,7 +233,7 @@ pub(crate) fn extract_text_with_positions_and_rects_with_password<P: AsRef<Path>
     crate::validate_pdf_file(&path)?;
     let (doc, _) = crate::load_document_from_path_with_password(&path, password)?;
     let font_cmaps = FontCMaps::from_doc(&doc);
-    let (extraction, _thresholds, _gid_pages, _page_rotations, _cmap_coverage) =
+    let (extraction, _thresholds, _gid_pages, _page_rotations, _cmap_coverage, _off_page) =
         extract_positioned_text_from_doc_in_page_box(
             &doc,
             &font_cmaps,
@@ -342,7 +342,7 @@ pub fn extract_text_with_positions_and_rotations_mem_with_options(
     crate::validate_pdf_bytes(buffer)?;
     let (doc, _) = crate::load_document_from_mem(buffer)?;
     let font_cmaps = FontCMaps::from_doc(&doc);
-    let ((mut items, _rects, _lines), _thresholds, _gid_pages, page_rotations, _cmap_coverage) =
+    let ((mut items, _rects, _lines), _thresholds, _gid_pages, page_rotations, _cmap_coverage, _off_page) =
         extract_positioned_text_from_doc_in_page_box(&doc, &font_cmaps, page_filter, options)?;
     if options.frame == PositionFrame::Display {
         display_frame::document_items_to_display_frame(&doc, &mut items, &page_rotations);
@@ -451,15 +451,21 @@ pub(crate) type PageRotations = HashMap<u32, geometry::PageRotation>;
 
 /// What a document-level extraction returns: the text, rectangles and lines
 /// of the extracted pages, their join thresholds, the pages with gid-encoded
-/// fonts, their frame rotations and, per font, the two-byte codes shown
-/// through the font's CMap and how many of them the CMap had no entry for.
+/// fonts, their frame rotations, per font, the two-byte codes shown
+/// through the font's CMap and how many of them the CMap had no entry for,
+/// and the text left out because it lay outside the visible page box.
 pub(crate) type DocumentExtraction = (
     PageExtraction,
     PageThresholds,
     HashSet<u32>,
     PageRotations,
     CMapCoverageByFont,
+    OffPageText,
 );
+
+/// markitai: per page (1-indexed), how many text items lay outside the
+/// visible page box and were left out of the extraction.
+pub(crate) type OffPageText = HashMap<u32, u32>;
 
 /// Extract positioned text, rectangles, and line segments from a pre-loaded document.
 ///
@@ -565,6 +571,7 @@ fn extract_positioned_text_with_folio_context_impl(
         mut gid_encoded_pages,
         mut page_rotations,
         cmap_coverage,
+        off_page_text,
     ) = extract_positioned_text_impl(
         doc,
         font_cmaps,
@@ -581,6 +588,7 @@ fn extract_positioned_text_with_folio_context_impl(
             gid_encoded_pages,
             page_rotations,
             cmap_coverage,
+            off_page_text,
         ));
     }
 
@@ -599,6 +607,7 @@ fn extract_positioned_text_with_folio_context_impl(
         context_gid_pages,
         context_rotations,
         _context_coverage,
+        _context_off_page,
     ) = extract_positioned_text_impl(
         doc,
         font_cmaps,
@@ -623,6 +632,7 @@ fn extract_positioned_text_with_folio_context_impl(
         gid_encoded_pages,
         page_rotations,
         cmap_coverage,
+        off_page_text,
     ))
 }
 
@@ -908,6 +918,7 @@ fn extract_positioned_text_impl(
     // Pages whose coordinate frame was turned (see `PageRotation`): the
     // document-level annotation items appended below must follow.
     let mut page_rotations: PageRotations = HashMap::new();
+    let mut off_page_text: OffPageText = HashMap::new();
     // Visible page box per extracted page, for the form-field shift below.
     let mut page_boxes: HashMap<u32, PageBox> = HashMap::new();
 
@@ -993,7 +1004,46 @@ fn extract_positioned_text_impl(
                 })
             });
             let coherent = off.len() >= 10 && wordy_chars * 2 >= total_chars.max(1) && !straddles;
-            if bx1 - bx0 >= 72.0 && by1 - by0 >= 72.0 && coherent {
+            let large = bx1 - bx0 >= 72.0 && by1 - by0 >= 72.0;
+            // markitai: a word run drawn wholly beyond the box (its whole
+            // extent, not just its center, past the tolerance) is never shown
+            // by a viewer either, even alone: it is a way to hide text from
+            // a reader. Short glyph fragments and runs continuing an on-page
+            // line stay, as above.
+            let beyond = |x: f32, y: f32, w: f32, h: f32| {
+                let (x0, x1) = if w < 0.0 { (x + w, x) } else { (x, x + w) };
+                let (y0, y1) = if h < 0.0 { (y + h, y) } else { (y, y + h) };
+                x1 < bx0 - TOL || x0 > bx1 + TOL || y1 < by0 - TOL || y0 > by1 + TOL
+            };
+            let stray: Vec<(f32, f32, f32)> = if large && !coherent {
+                off.iter()
+                    .filter(|o| {
+                        beyond(o.x, o.y, o.width, o.height)
+                            && o.text.trim().chars().count() >= 4
+                            && !items.iter().any(|i| {
+                                !outside(i)
+                                    && (i.y - o.y).abs() <= 2.0
+                                    && (o.x - (i.x + i.width)).abs() <= 10.0
+                            })
+                    })
+                    .map(|o| (o.x, o.y, o.width))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if !stray.is_empty() {
+                let is_stray = |x: f32, y: f32, w: f32| stray.contains(&(x, y, w));
+                items.retain(|it| !is_stray(it.x, it.y, it.width));
+                // A run lying inside a dropped item's extent goes with it.
+                run_coverage.retain(|run| match run.position {
+                    Some((x, y, width)) => !stray.iter().any(|&(sx, sy, sw)| {
+                        (y - sy).abs() <= 2.0 && x >= sx - 1.0 && x + width <= sx + sw + 1.0
+                    }),
+                    None => true,
+                });
+                off_page_text.insert(*page_num, stray.len() as u32);
+            }
+            if large && coherent {
                 let before = items.len();
                 items.retain(|it| !outside(it));
                 // The runs left out take their CMap coverage with them; a
@@ -1006,6 +1056,7 @@ fn extract_positioned_text_impl(
                     None => true,
                 });
                 if items.len() < before {
+                    off_page_text.insert(*page_num, (before - items.len()) as u32);
                     debug!(
                         "page {}: clipped {} items outside page box ({:.0},{:.0})-({:.0},{:.0})",
                         page_num,
@@ -1148,6 +1199,7 @@ fn extract_positioned_text_impl(
         gid_encoded_pages,
         page_rotations,
         cmap_coverage,
+        off_page_text,
     ))
 }
 
@@ -5875,7 +5927,7 @@ BT /F1 12 Tf 0 1 -1 0 240 100 Tm (WORLD) Tj ET"
         doc.trailer.set("Root", Object::Reference(catalog_id));
 
         let font_cmaps = FontCMaps::from_doc(&doc);
-        let ((items, _, _), _, _, page_rotations, _) =
+        let ((items, _, _), _, _, page_rotations, _, _) =
             extract_positioned_text_from_doc(&doc, &font_cmaps, None).unwrap();
         assert_eq!(page_rotations.get(&1), Some(&geometry::PageRotation::Ccw));
         let field = items

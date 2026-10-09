@@ -1244,6 +1244,8 @@ fn extract_pages_inner(
     let mut omitted = BTreeMap::new();
     // The pages the reader read from their OCR text layer, by page number.
     let mut layers = BTreeMap::new();
+    // How many text items each page drew outside its visible area.
+    let mut off_page = BTreeMap::new();
     let extracted = match whole {
         Ok(result) => {
             omitted.extend(
@@ -1258,6 +1260,7 @@ fn extract_pages_inner(
                     .into_iter()
                     .map(|layer| (layer.page, layer)),
             );
+            off_page.extend(result.off_page_text_by_page);
             result.pages
         }
         Err(error) => {
@@ -1288,6 +1291,7 @@ fn extract_pages_inner(
                                     .into_iter()
                                     .map(|layer| (layer.page, layer)),
                             );
+                            off_page.extend(result.off_page_text_by_page);
                             result.pages.pop()
                         })
                         .unwrap_or(pdf_inspector::PageMarkdown {
@@ -1454,6 +1458,9 @@ fn extract_pages_inner(
             document
                 .warnings
                 .push(format!("PDF page {number}: {warning}"));
+        }
+        if let Some(items) = off_page.remove(&number) {
+            document.warnings.push(format!("PDF page {number}: {items} text item(s) drawn outside the visible page area (CropBox) were left out; a viewer does not show them."));
         }
         if !inspection.signals.is_empty() {
             document.warnings.push(format!("PDF page {number}: contains {}; the native reader applies its own visibility heuristics, and complete hidden-text filtering is not established.", inspection.signals.into_iter().collect::<Vec<_>>().join(", ")));
