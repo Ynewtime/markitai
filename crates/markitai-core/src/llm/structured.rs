@@ -191,15 +191,14 @@ impl Wire {
         {
             return Err(blocked(FailureKind::Truncated, &truncation(data)));
         }
+        if let Some(message) = filtered(data) {
+            return Err(blocked(FailureKind::Refusal, &message));
+        }
         if data
             .pointer("/choices/0/message/refusal")
             .and_then(Value::as_str)
             .is_some_and(|value| !value.is_empty())
             || data.get("stop_reason").and_then(Value::as_str) == Some("refusal")
-            || data
-                .pointer("/choices/0/finish_reason")
-                .and_then(Value::as_str)
-                == Some("content_filter")
         {
             return Err(blocked(
                 FailureKind::Refusal,

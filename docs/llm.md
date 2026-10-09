@@ -631,8 +631,10 @@ validate the decoded object with the same application-owned contract. Tool
 responses may have no text body; this is valid when their typed data is valid.
 
 Each non-final mode gets one schema-validation attempt. Rejection of tools/schema
-parameters with HTTP 400/422 descends without resending the same shape. Unrelated
-invalid-input errors, explicit refusal, token-limit truncation, quota and budget
+parameters with HTTP 400/422 descends without resending the same shape. A provider
+content filter (a finish reason starting with `content_filter`, such as Gemini's
+`content_filter: RECITATION`) is an explicit refusal and its error names the
+reason. Unrelated invalid-input errors, explicit refusal, token-limit truncation, quota and budget
 failures stop the ladder; authentication failures first move to unexcluded
 sibling deployments and then configured routing fallbacks before stopping.
 Transport retries stay inside the router. Exhausted network/HTTP transport errors

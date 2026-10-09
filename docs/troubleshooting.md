@@ -135,6 +135,19 @@ deployment is skipped for the run with one warning and the others serve the
 documents. A bare `LLM returned HTTP 401` or `403` usually means a rejected key
 or a missing permission.
 
+**`LLM provider withheld the answer (finish reason: content_filter: RECITATION): it resembles existing published text, …`.**
+Gemini filters answers that would reproduce published text; a scan of a widely
+copied sample or public document can trigger it, because its faithful
+transcription is that text. The same request is filtered again, so it is not
+resent. Use another provider or model for that document, or keep the base
+output (`llm.on_failure: fallback`). Other content filters are reported with
+their own finish reason.
+
+**`LLM output was truncated by its token limit: reasoning used all 8192 output tokens; …`.**
+The model spent the whole output budget thinking before it wrote the answer.
+Lower or remove `litellm_params.reasoning_effort`, or raise `max_tokens`; see
+[LLM](llm.md#providers-and-request-parameters).
+
 **`Warning: Cost is incomplete: …`.** The named model or endpoint is not in the
 bundled [price catalog](pricing.md), so `cost_usd` only counts the requests whose
 price is known. It does not mean the call was free. The warning names the model

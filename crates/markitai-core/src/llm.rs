@@ -1868,21 +1868,45 @@ fn truncation(data: &Value) -> String {
     }
 }
 
-/// Names how a paid response without answer text ended, so a block (for
-/// example Gemini's recitation or safety stop) is told apart from a bug.
-fn empty_answer(data: &Value) -> String {
-    let reason = data
-        .pointer("/choices/0/finish_reason")
+/// The provider's finish reason, when it is a short identifier that can be
+/// shown (Gemini words its filters `content_filter: RECITATION`).
+fn finish_reason(data: &Value) -> Option<&str> {
+    data.pointer("/choices/0/finish_reason")
         .or_else(|| data.get("stop_reason"))
         .and_then(Value::as_str)
         .filter(|reason| {
             !reason.is_empty()
-                && reason.len() <= 40
+                && reason.len() <= 60
                 && reason
                     .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
-        });
-    match reason {
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':' | ' '))
+        })
+}
+
+/// An answer the provider withheld with its content filter. The same request
+/// is filtered again; a recitation block (Gemini withholds text resembling
+/// published works, such as a widely copied sample document) is named.
+fn filtered(data: &Value) -> Option<String> {
+    data.pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        .filter(|reason| reason.starts_with("content_filter"))?;
+    let reason = finish_reason(data).unwrap_or("content_filter");
+    Some(if reason.contains("RECITATION") {
+        format!(
+            "LLM provider withheld the answer (finish reason: {reason}): it resembles existing published text, which the provider does not reproduce"
+        )
+    } else {
+        format!("LLM provider withheld the answer (finish reason: {reason})")
+    })
+}
+
+/// Names how a paid response without answer text ended, so a block (for
+/// example Gemini's recitation or safety stop) is told apart from a bug.
+fn empty_answer(data: &Value) -> String {
+    if let Some(message) = filtered(data) {
+        return message;
+    }
+    match finish_reason(data) {
         Some(reason) => format!("LLM returned no text (finish reason: {reason})"),
         None => "LLM returned no text".into(),
     }

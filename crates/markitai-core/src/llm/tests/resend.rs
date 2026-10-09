@@ -3,10 +3,68 @@
 //! counts against the per-document budget.
 use super::*;
 
-/// Gemini's OpenAI-compatible endpoint, answering a recitation-blocked
-/// request: a paid response without content.
+/// A paid response without content, in the shape of Gemini's
+/// OpenAI-compatible endpoint.
 fn empty_gemini_answer() -> Value {
     json!({"choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant"}}],"model":"gemini-flash-lite-latest","object":"chat.completion","usage":{"completion_tokens":0,"prompt_tokens":3903,"total_tokens":3903}})
+}
+
+/// The answer Gemini gave the live benchmark's 3-page scan of a widely
+/// copied sample PDF (captured 2026-10-09; the native API reported
+/// `finishReason: RECITATION` with citations of published copies).
+fn recitation_answer() -> Value {
+    json!({"choices":[{"finish_reason":"content_filter: RECITATION","index":0,"message":{"role":"assistant"}}],"created":1791512310,"id":"8U7IavrWEKfY9tMPoNKT0Ac","model":"gemini-flash-lite-latest","object":"chat.completion","usage":{"completion_tokens":0,"prompt_tokens":3903,"total_tokens":3903}})
+}
+
+const RECITATION: &str = "LLM provider withheld the answer (finish reason: content_filter: RECITATION): it resembles existing published text, which the provider does not reproduce";
+
+fn scan(frames: &[VisionFrame<'_>], cfg: &Value) -> VisionFailure {
+    process_vision_with_runtime(
+        VisionRequest {
+            markdown: "",
+            source_label: "scan.pdf",
+            cache_context: "scan.pdf",
+            kind: VisionKind::PagedDocument,
+            frames,
+        },
+        cfg,
+        None,
+    )
+    .unwrap_err()
+}
+
+#[test]
+fn a_recitation_block_is_named_and_never_sent_again() {
+    let server = Mock::new(vec![(200, recitation_answer())]);
+    let mut cfg = cfg("gemini/gemini-flash-lite-latest", &server.base);
+    cfg["llm"]["max_requests_per_document"] = json!(3);
+    let scope = DocumentScope::new(&cfg);
+    let frames: Vec<_> = (1..=3)
+        .map(|number| VisionFrame {
+            number,
+            mime: "image/png",
+            bytes: b"scanned page",
+        })
+        .collect();
+    let failure = scan(&frames, &cfg);
+    assert_eq!(failure.error.to_string(), RECITATION);
+    // A provider block is final for the document, like a refusal.
+    assert!(!failure.allow_text_fallback);
+    assert_eq!(server.finish().len(), 1);
+    assert_eq!(scope.usage().requests, 1);
+    drop(scope);
+
+    // Plain requests name it too and do not resend it to the same model.
+    let server = Mock::new(vec![(200, recitation_answer())]);
+    let error = run(
+        &plain(),
+        &super::cfg("gemini/gemini-flash-lite-latest", &server.base),
+        &HashMap::new(),
+        &mut |_| panic!("a filtered answer is not retried after a backoff"),
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), RECITATION);
+    assert_eq!(server.finish().len(), 1);
 }
 
 fn document_answer(markdown: &str) -> Value {
