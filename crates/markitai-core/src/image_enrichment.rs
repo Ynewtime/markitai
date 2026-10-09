@@ -80,8 +80,13 @@ pub(crate) fn start(
         .into_iter()
         .filter_map(|asset| {
             let digest = crate::hex(Sha256::digest(&asset.bytes));
-            seen.insert(digest.clone())
-                .then(|| (digest, asset.name.clone(), asset.bytes.clone()))
+            seen.insert(digest.clone()).then(|| {
+                let asset = crate::Asset {
+                    name: asset.name.clone(),
+                    bytes: asset.bytes.clone(),
+                };
+                (digest, asset)
+            })
         })
         .collect();
     if images.is_empty() {
@@ -108,18 +113,14 @@ pub(crate) fn start(
                     let _document = document
                         .as_ref()
                         .map(llm::DocumentHandle::enter_image_worker);
-                    while let Some((digest, name, bytes)) =
+                    while let Some((digest, asset)) =
                         images.get(next.fetch_add(1, Ordering::Relaxed))
                     {
                         if flag.load(Ordering::Acquire) {
                             break;
                         }
-                        let asset = crate::Asset {
-                            name: name.clone(),
-                            bytes: bytes.clone(),
-                        };
                         let answer = analyze_assets(
-                            &[&asset],
+                            &[asset],
                             &context,
                             &source,
                             &cfg,
