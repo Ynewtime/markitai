@@ -354,7 +354,7 @@ impl Model {
                                 let content = json!({"cleaned_markdown":text,"frontmatter":{"description":"Authored complete source","tags":["fixture"]}}).to_string();
                                 json!({"model":"terminal-fixture","choices":[{"message":{"content":content},"finish_reason":"stop"}]})
                             } else {
-                                json!({"error":{"message":"PRIVATE_PROVIDER_RESPONSE", "code":"invalid_api_key", "type":"invalid_api_key"}})
+                                json!({"error":{"message":"Incorrect API key provided: PRIVATE_LOOPBACK_KEY", "code":"invalid_api_key", "type":"invalid_api_key"}})
                             };
                             if let Some((input, output)) = answer.tokens { response["usage"] = json!({"prompt_tokens":input,"completion_tokens":output}); }
                             let encoded = response.to_string();

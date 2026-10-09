@@ -257,3 +257,105 @@ fn subcommands_do_not_enable_conversion_logs_or_change_their_stdout() {
     assert_eq!(output.stdout, b"INFO\n");
     assert!(!root.path().join("logs").exists());
 }
+
+/// A loopback model endpoint that answers every request with HTTP 401 and
+/// a message quoting the credential and the start of the document.
+fn echoing_refusal() -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut request = Vec::new();
+            let mut buffer = [0; 8192];
+            // Head and body: enough to see the credential and the document.
+            while !String::from_utf8_lossy(&request).contains("DOCUMENT-TEXT") {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            let request = String::from_utf8_lossy(&request);
+            let key = request
+                .lines()
+                .find_map(|line| line.strip_prefix("authorization: Bearer "))
+                .unwrap_or("none");
+            let body = serde_json::json!({"error":{
+                "message": format!("Incorrect API key provided: {key}. Rejected request for 'The private DOCUMENT-TEXT of this test file'"),
+                "type": "invalid_request_error", "code": "invalid_api_key"}})
+            .to_string();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    address
+}
+
+#[test]
+fn llm_failures_name_their_cause_and_deployment_in_every_channel_without_secrets() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("note.md"),
+        "# Note\n\nThe private DOCUMENT-TEXT of this test file.\n",
+    )
+    .unwrap();
+    let refused = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .to_string();
+    let refusing = echoing_refusal();
+    for (address, expected) in [
+        (
+            &refused,
+            format!("LLM request failed: connection refused (deployment openai/test at {refused})"),
+        ),
+        (
+            &refusing,
+            format!(
+                "LLM returned HTTP 401 (invalid_request_error/invalid_api_key): Incorrect API key provided: [REDACTED]. Rejected request for '…' (deployment openai/test at {refusing})"
+            ),
+        ),
+    ] {
+        let cfg = json!({"cache":{"enabled":false},"llm":{"enabled":true,"on_failure":"fail",
+            "model_list":[{"model_name":"default","litellm_params":{"model":"openai/test",
+                "api_key":"credential-that-must-not-leak","api_base":format!("http://{address}/v1")}}],
+            "router_settings":{"num_retries":0,"timeout":5}}});
+        let logs = root
+            .path()
+            .join(format!("logs-{}", address.replace([':', '.'], "-")));
+        let env = [
+            ("MARKITAI_LOG_DIR", logs.to_str().unwrap()),
+            ("MARKITAI_LOG_FORMAT", "json"),
+        ];
+        let json = invoke(
+            root.path(),
+            cfg.clone(),
+            &["note.md", "-o", "out", "--llm", "--json"],
+            &env,
+        );
+        assert_eq!(json.status.code(), Some(1));
+        let envelope: Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(envelope["items"][0]["error"], expected.as_str());
+        let plain = invoke(root.path(), cfg, &["note.md", "-o", "out", "--llm"], &env);
+        assert_eq!(plain.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&plain.stderr);
+        assert!(stderr.contains(&format!("Error: {expected}")), "{stderr}");
+        let rows = serde_json::to_string(&records(&logs)).unwrap();
+        assert!(rows.contains(&expected), "{rows}");
+        for channel in [
+            String::from_utf8_lossy(&json.stdout).into_owned(),
+            String::from_utf8_lossy(&json.stderr).into_owned(),
+            stderr.into_owned(),
+            rows,
+        ] {
+            for secret in ["credential-that-must-not-leak", "DOCUMENT-TEXT"] {
+                assert!(!channel.contains(secret), "{channel}");
+            }
+        }
+    }
+}

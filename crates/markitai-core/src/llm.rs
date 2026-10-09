@@ -6,6 +6,7 @@ mod chunks;
 mod claude;
 mod copilot;
 mod degeneration;
+mod diagnosis;
 mod document;
 pub(crate) mod flight;
 pub(crate) mod providers;
@@ -569,6 +570,8 @@ struct Failure {
     fatal: bool,
     document_fatal: bool,
     retry_after: Option<u64>,
+    /// The deployment and host an HTTP exchange failure is attributed to.
+    deployment: Option<String>,
 }
 impl Failure {
     fn resource_limit(message: &str) -> Self {
@@ -579,6 +582,7 @@ impl Failure {
             fatal: true,
             document_fatal: true,
             retry_after: None,
+            deployment: None,
         }
     }
     fn terminal(message: &str) -> Self {
@@ -589,7 +593,12 @@ impl Failure {
             fatal: false,
             document_fatal: false,
             retry_after: None,
+            deployment: None,
         }
+    }
+    fn at(mut self, entry: &Deployment) -> Self {
+        self.deployment = Some(diagnosis::deployment(entry));
+        self
     }
 }
 
@@ -1409,6 +1418,7 @@ fn run_mode(
                         prompts,
                         &mut usage,
                         structured,
+                        timeout,
                         strategy.measured().then_some(&mut observation),
                     )
                 };
@@ -1479,8 +1489,14 @@ fn run_mode(
                 }
                 Err(failure) => {
                     failed.insert(selected);
+                    let cause = failure.error.to_string();
                     last_error = VisionFailure {
-                        error: failure.error,
+                        error: match &failure.deployment {
+                            Some(deployment) => {
+                                Error::Conversion(format!("{cause} ({deployment})"))
+                            }
+                            None => failure.error,
+                        },
                         allow_text_fallback: !failure.document_fatal,
                         kind: failure.kind,
                     };
@@ -1537,8 +1553,8 @@ fn run_mode(
                     }
                     slept += backoff;
                     note_document_warning(format!(
-                        "LLM request to {} failed ({}) and was sent again",
-                        entries[selected].id, last_error.error
+                        "LLM request to {} failed ({cause}) and was sent again",
+                        entries[selected].id
                     ));
                     sleep(Duration::from_secs(backoff));
                     attempt += 1;
@@ -1645,6 +1661,7 @@ fn request_with_mode(
     prompts: &Prompts,
     usage: &mut ConversionUsage,
     structured: Option<structured::Wire>,
+    timeout: u64,
     mut observation: Option<&mut routing::Observation>,
 ) -> std::result::Result<String, Failure> {
     let mut request = client.post(&entry.endpoint);
@@ -1669,24 +1686,20 @@ fn request_with_mode(
         {
             *observation = routing::Observation::Timeout;
         }
+        // Only a request that never reached the provider is safe to send
+        // again. After a timeout the provider may have completed and billed
+        // it, and that usage is never reported.
+        let retryable = error.is_connect();
         Failure {
             kind: FailureKind::Transport,
-            error: Error::Conversion(
-                if error.is_timeout() {
-                    "LLM request timed out"
-                } else {
-                    "LLM request failed"
-                }
-                .into(),
-            ),
-            // Only a request that never reached the provider is safe to send
-            // again. After a timeout the provider may have completed and billed
-            // it, and that usage is never reported.
-            retryable: error.is_connect(),
+            error: Error::Conversion(diagnosis::transport(error, timeout)),
+            retryable,
             fatal: false,
             document_fatal: false,
             retry_after: None,
+            deployment: None,
         }
+        .at(entry)
     })?;
     let status = response.status().as_u16();
     let retry_after = response
@@ -1694,6 +1707,11 @@ fn request_with_mode(
         .get("retry-after")
         .and_then(|header| header.to_str().ok())
         .and_then(|text| text.parse::<u64>().ok());
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|header| header.to_str().ok())
+        .map(str::to_owned);
     let limit = if status < 300 {
         MAX_RESPONSE
     } else {
@@ -1710,21 +1728,22 @@ fn request_with_mode(
         .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| {
-            if metric_read_timeout(&error)
-                && let Some(observation) = observation.as_deref_mut()
-            {
+            let timed_out = metric_read_timeout(&error);
+            if timed_out && let Some(observation) = observation.as_deref_mut() {
                 *observation = routing::Observation::Timeout;
             }
             Failure {
                 kind: FailureKind::Transport,
-                error: Error::Conversion("Cannot read LLM response".into()),
+                error: Error::Conversion(diagnosis::unreadable(&error, timed_out, timeout)),
                 // A successful status means the provider completed and billed
                 // the request; sending it again would pay twice.
                 retryable: status >= 300,
                 fatal: false,
                 document_fatal: false,
                 retry_after: None,
+                deployment: None,
             }
+            .at(entry)
         })?;
     if status >= 300 {
         // The reference provider adapters classify an explicit HTTP 408 as a
@@ -1776,19 +1795,29 @@ fn request_with_mode(
             },
             error: Error::Conversion(match refusal_reason(status, &body) {
                 Some(reason) => format!("LLM returned HTTP {status}: {reason}"),
-                None => format!("LLM returned HTTP {status}"),
+                None => diagnosis::http(status, &bytes, entry, prompts),
             }),
             retryable: !fatal && transient,
             fatal,
             document_fatal: fatal || matches!(status, 401 | 403) || invalid_request,
             retry_after,
-        });
+            deployment: None,
+        }
+        .at(entry));
     }
     if bytes.len() as u64 > MAX_RESPONSE {
         return Err(Failure::resource_limit("LLM response exceeds 100 MiB"));
     }
-    let data: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| Failure::terminal("LLM response is not valid JSON"))?;
+    let data: Value = serde_json::from_slice(&bytes).map_err(|_| {
+        Failure::terminal(&diagnosis::not_json(
+            status,
+            content_type.as_deref(),
+            &bytes,
+            entry,
+            prompts,
+        ))
+        .at(entry)
+    })?;
     record_usage(usage, entry, &data);
     let envelope = match entry.protocol {
         Protocol::Anthropic => data.get("content").is_some_and(Value::is_array),
@@ -1847,6 +1876,7 @@ fn request_with_mode(
             fatal: false,
             document_fatal: false,
             retry_after: None,
+            deployment: None,
         })
 }
 
@@ -1937,8 +1967,8 @@ fn quota_refused(status: u16, body: &str) -> bool {
 
 /// A fixed phrase for a refusal whose lowercased provider body names a
 /// recognized cause, such as a regional block that a 403 status alone would
-/// present as a credential problem. The provider's own wording never reaches
-/// public errors, because it can echo document text or credentials.
+/// present as a credential problem. It replaces the provider's own wording,
+/// which other refusals show only as [`diagnosis::http`] cleans it.
 fn refusal_reason(status: u16, body: &str) -> Option<&'static str> {
     let names = |patterns: &[&str]| patterns.iter().any(|pattern| body.contains(pattern));
     if names(&[
@@ -2079,6 +2109,7 @@ mod tests {
     mod hardening;
     mod reasoning;
     mod resend;
+    mod transport;
     use super::*;
     use std::io::Write;
     use std::net::{TcpListener, TcpStream};
@@ -2792,9 +2823,9 @@ mod tests {
     #[test]
     fn quota_errors_authentication_and_request_budget_stop_without_leaking() {
         for (status, message, budget) in [
-            (429, "insufficient_quota private-token", 10),
-            (401, "private-token", 10),
-            (503, "temporary private-token", 1),
+            (429, "insufficient_quota fake-test-key", 10),
+            (401, "Incorrect API key provided: fake-test-key", 10),
+            (503, "temporary fake-test-key", 1),
         ] {
             let server = Mock::new(vec![(status, json!({"error":message}))]);
             let mut cfg = cfg("openai/test", &server.base);
@@ -2804,8 +2835,13 @@ mod tests {
             })
             .unwrap_err()
             .to_string();
-            assert!(!error.contains("private-token"));
-            assert!(!error.contains("fake-test-key"));
+            assert!(!error.contains("fake-test-key"), "{error}");
+            if status == 401 {
+                assert!(
+                    error.contains("LLM returned HTTP 401: Incorrect API key provided: [REDACTED] (deployment openai/test at 127.0.0.1:"),
+                    "{error}"
+                );
+            }
             if budget == 1 {
                 assert!(error.contains("budget"));
             }

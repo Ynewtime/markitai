@@ -340,15 +340,15 @@ fn refusals_truncation_unrelated_bad_input_and_auth_never_descend_or_cache() {
                 }
                 "input" => (
                     400,
-                    json!({"error":{"param":"messages","message":"invalid image PRIVATE_PROVIDER_DETAIL"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
+                    json!({"error":{"param":"messages","message":"invalid image sent with key local-fixture"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
                 ),
                 "auth" => (
                     401,
-                    json!({"error":{"message":"PRIVATE_PROVIDER_DETAIL"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
+                    json!({"error":{"message":"Incorrect API key provided: local-fixture"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
                 ),
                 _ => (
                     402,
-                    json!({"error":{"message":"billing PRIVATE_PROVIDER_DETAIL"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
+                    json!({"error":{"message":"billing refused for key local-fixture"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
                 ),
             }
         });
@@ -362,7 +362,7 @@ fn refusals_truncation_unrelated_bad_input_and_auth_never_descend_or_cache() {
             first
                 .warnings
                 .iter()
-                .all(|value| !value.contains("PRIVATE_PROVIDER_DETAIL"))
+                .all(|value| !value.contains("local-fixture"))
         );
         let second = run(&input, config.clone(), None).unwrap();
         assert!(!second.llm_cache_hit());

@@ -165,7 +165,7 @@ fn success(request: &Value) -> Value {
         "usage":{"prompt_tokens":7,"completion_tokens":5}})
 }
 fn denied(input: u64, output: u64, kind: &str) -> Value {
-    json!({"error":{"message":"private-provider-body-must-not-escape","code":kind,"type":kind},
+    json!({"error":{"message":"Incorrect API key provided: private-mcp-fixture-key","code":kind,"type":kind},
         "usage":{"prompt_tokens":input,"completion_tokens":output}})
 }
 fn attempt(value: &Value, status: &str, input: u64, output: u64) {
@@ -203,12 +203,8 @@ fn attempt(value: &Value, status: &str, input: u64, output: u64) {
             .sum::<u64>(),
         output
     );
+    // The provider's refusal echoes the key; its message is shown without it.
     assert!(!value.to_string().contains("private-mcp-fixture-key"));
-    assert!(
-        !value
-            .to_string()
-            .contains("private-provider-body-must-not-escape")
-    );
 }
 
 #[test]

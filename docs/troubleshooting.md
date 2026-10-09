@@ -132,8 +132,21 @@ provider refuses this model for the network's region; the key itself may be
 valid. OpenRouter does this for some models. Use another provider or model, or
 pin one with `MODEL`. When ambient keys form the model pool, the blocked
 deployment is skipped for the run with one warning and the others serve the
-documents. A bare `LLM returned HTTP 401` or `403` usually means a rejected key
-or a missing permission.
+documents. Other refusals carry the provider's own error type and message, for
+example `LLM returned HTTP 401 (invalid_request_error/invalid_api_key):
+Incorrect API key provided: [REDACTED]. … (deployment openai/gpt-6-luna at
+api.openai.com)`; a 401 or 403 usually means a rejected key or a missing
+permission.
+
+**`LLM request failed: connection refused (deployment … at 127.0.0.1:4000)`.**
+No HTTP response arrived; the words after `failed:` say why and the parenthesis
+at the end names the deployment and host. `connection refused` means nothing
+listens there (a local server that is not running, or a wrong port in
+`api_base`); `host name not resolved` a misspelled host or no DNS; `TLS
+handshake failed` a proxy or server certificate the system does not trust, or
+`https://` to a plain HTTP port; `connection closed without a response` a proxy
+or server that dropped the request. `LLM request timed out: no response within
+120 s` names `router_settings.timeout`. See [LLM](llm.md#request-failures).
 
 **`LLM provider withheld the answer (finish reason: content_filter: RECITATION): it resembles existing published text, …`.**
 Gemini filters answers that would reproduce published text; a scan of a widely

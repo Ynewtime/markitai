@@ -328,6 +328,7 @@ fn blocked(kind: FailureKind, message: &str) -> Failure {
         fatal: false,
         document_fatal: true,
         retry_after: None,
+        deployment: None,
     }
 }
 

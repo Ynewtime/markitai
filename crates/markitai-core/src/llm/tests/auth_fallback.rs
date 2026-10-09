@@ -76,8 +76,9 @@ fn pool(rows: &[(&str, &str, u64)]) -> Value {
         .collect();
     cfg
 }
+/// A refusal that echoes the credential it was sent, as OpenAI's does.
 fn refused() -> Value {
-    json!({"error":{"message":"private-token rejected"}})
+    json!({"error":{"message":"Incorrect API key provided: fake-test-key"}})
 }
 fn skipped(model: &str) -> String {
     format!("LLM deployment {model} failed authentication and is skipped for this run")
@@ -155,7 +156,7 @@ fn every_deployment_refused_leaves_the_error_to_configured_fallbacks() {
     let (result, mut warnings) = document(&cfg, &runtime);
     let error = result.unwrap_err().to_string();
     assert!(error.contains("LLM returned HTTP 40"), "{error}");
-    assert!(!error.contains("private-token"));
+    assert!(!error.contains("fake-test-key"), "{error}");
     warnings.sort();
     assert_eq!(
         warnings,
@@ -261,17 +262,20 @@ fn recognized_refusals_name_a_fixed_cause_but_never_the_provider_wording() {
         );
         assert!(!error.contains("private-token"), "{error}");
     }
-    // Unrecognized bodies keep the bare status.
+    // Other refusals carry the provider's cleaned message and name the
+    // deployment and host; the echoed credential is replaced.
     let only = Repeat::new(401, refused());
     let (result, _) = document(
         &pool(&[("openai/only", &only.base, 1)]),
         &LlmRuntime::new(1).unwrap(),
     );
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .ends_with("LLM returned HTTP 401")
+    let host = only.base.trim_start_matches("http://");
+    let host = &host[..host.find('/').unwrap_or(host.len())];
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        format!(
+            "LLM returned HTTP 401: Incorrect API key provided: [REDACTED] (deployment openai/only at {host})"
+        )
     );
 }
 

@@ -71,7 +71,7 @@ fn run(root: &Path, source: &str, resume: bool, expected_exit: i32) -> Value {
     let envelope: Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(envelope["version"], "1.0");
     assert!(!err.contains("Recorded in history:"));
-    assert!(!err.contains("provider-private-payload"));
+    assert!(!err.contains("loopback-only"));
     envelope
 }
 
@@ -179,7 +179,7 @@ impl Model {
                 let (status, response) = if text.contains("TERMINALBADINVALID") {
                     (200, reply("not a structured document"))
                 } else if text.contains("TERMINALBAD") && !recovery.load(Ordering::Acquire) {
-                    let mut response = json!({"error":{"code":"invalid_api_key","type":"invalid_api_key","message":"provider-private-payload"}});
+                    let mut response = json!({"error":{"code":"invalid_api_key","type":"invalid_api_key","message":"Incorrect API key provided: loopback-only"}});
                     if !text.contains("TERMINALBADUNKNOWN") {
                         let (input, output) = if text.contains("TERMINALBADZERO") {
                             (0, 0)
@@ -329,7 +329,7 @@ fn assert_failed(item: &Value, requests: u64, input: u64, output: u64) {
         item["llm_usage"],
         item["diagnostics"]["last_attempt"]["usage"]["by_model"]
     );
-    assert!(!item.to_string().contains("provider-private-payload"));
+    assert!(!item.to_string().contains("loopback-only"));
 }
 
 #[test]
