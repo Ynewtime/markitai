@@ -634,9 +634,14 @@ class LLMProcessor:
                     model_config.litellm_params.weight
                 )
 
-            # Note: max_tokens is NOT set at Router level
-            # It will be calculated dynamically per-request based on input size
-            # This avoids context overflow issues with shared context models
+            # The per-request max_tokens is calculated dynamically from input
+            # size (see _calculate_dynamic_max_tokens), which reads this
+            # configured cap back from the entry: dropping it here sent the
+            # model's catalog maximum (up to 128k) instead of the config's.
+            if model_config.litellm_params.max_tokens is not None:
+                model_entry["litellm_params"]["max_tokens"] = (
+                    model_config.litellm_params.max_tokens
+                )
 
             if model_config.model_info:
                 model_entry["model_info"] = model_config.model_info.model_dump()
@@ -797,7 +802,10 @@ class LLMProcessor:
 
         When router is provided, uses the minimum max_output_tokens across all
         models in the router to ensure compatibility with any model the router
-        might select.
+        might select. A router entry's configured ``litellm_params.max_tokens``
+        replaces its model's output limit, and ``model_info.max_tokens`` /
+        ``max_input_tokens`` replace the limits detected from litellm; the
+        result never exceeds the pool's output limit.
 
         Also detects table-heavy content (>20 rows) and applies a higher token floor.
 
@@ -847,13 +855,23 @@ class LLMProcessor:
             all_max_outputs: list[int] = []
             all_max_contexts: list[int] = []
             for model_config in router.model_list:
-                model_id = model_config.get("litellm_params", {}).get("model")
+                params = model_config.get("litellm_params") or {}
+                model_id = params.get("model")
                 if model_id:
                     info = get_model_info_cached(model_id)
-                    if info.get("max_output_tokens"):
-                        all_max_outputs.append(info["max_output_tokens"])
-                    if info.get("max_input_tokens"):
-                        all_max_contexts.append(info["max_input_tokens"])
+                    overrides = model_config.get("model_info") or {}
+                    entry_output = (
+                        params.get("max_tokens")
+                        or overrides.get("max_tokens")
+                        or info.get("max_output_tokens")
+                    )
+                    entry_context = overrides.get("max_input_tokens") or info.get(
+                        "max_input_tokens"
+                    )
+                    if entry_output:
+                        all_max_outputs.append(entry_output)
+                    if entry_context:
+                        all_max_contexts.append(entry_context)
             if all_max_outputs:
                 max_output = min(all_max_outputs)
             if all_max_contexts:
@@ -888,6 +906,9 @@ class LLMProcessor:
         # Ensure reasonable minimum (higher for table-heavy content)
         min_floor = 4000 if is_table_heavy else 1000
         max_tokens = max(max_tokens, min_floor)
+        # ...but the floor must not lift it above the model's (or the
+        # configured) output limit
+        max_tokens = min(max_tokens, max_output)
 
         logger.trace(
             f"[DynamicTokens] input_est={input_tokens}, model={target_model_id}, "
