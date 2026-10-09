@@ -114,7 +114,8 @@ class TestBuildRequest:
             mode=instructor.Mode.TOOLS,
             max_tokens=4096,
         )
-        assert req["body"]["max_tokens"] == 4096
+        assert req["body"]["max_completion_tokens"] == 4096
+        assert "max_tokens" not in req["body"]
 
 
 ANTHROPIC_BODY = {

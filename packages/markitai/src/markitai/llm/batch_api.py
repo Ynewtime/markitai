@@ -197,7 +197,10 @@ def build_openai_batch_request(
     )
     body: dict[str, Any] = {"model": model, **mode_kwargs}
     if max_tokens is not None:
-        body["max_tokens"] = max_tokens
+        # The chat-completions name every current model accepts: reasoning
+        # models (o-series, gpt-5) reject the deprecated ``max_tokens``, and
+        # a batch body gets no litellm translation.
+        body["max_completion_tokens"] = max_tokens
     if "tools" in body and _supports_reasoning(model):
         # OpenAI's batch deployments refuse function tools while reasoning is
         # on: "Function tools with reasoning_effort are not supported for
