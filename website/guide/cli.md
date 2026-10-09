@@ -191,7 +191,7 @@ markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "fai
 
 The document is `{version, ok, error, batch, items[], totals}`:
 
-- `items[]`: one entry per input with `source`, `status` (`completed`, `failed`, `skipped`, `pending`), `output`, `error`, `warnings`, `cost_usd`, `duration_s`, `fetch_strategy`, `screenshots` and `llm_usage`. `pending` only comes from an `--llm-batch` run that stopped waiting: the base `.md` is written and the enhancement is still running in the batch. `warnings` lists problems that did not fail the item, such as an image whose analysis failed or a requested screenshot that could not be captured.
+- `items[]`: one entry per input with `source`, `status` (`completed`, `failed`, `skipped`, `pending`), `output`, `error`, `warnings`, `cost_usd`, `duration_s`, `fetch_strategy`, `screenshots` and `llm_usage`. `pending` only comes from an `--llm-batch` run that stopped waiting: the base `.md` is written and the enhancement is still running in the batch. `warnings` lists problems that did not fail the item, such as an image whose analysis failed or a requested screenshot that could not be captured. When a model has no known price, its `llm_usage` entry counts `unpriced_requests` and `cost_usd` covers only the priced requests: the cost is unknown, not zero.
 - `error`: a run-level failure that produced no item, otherwise `null`.
 - `batch`: after an `--llm-batch` handoff, `{id, status, collect_command}` for the batch still running; otherwise `null`.
 - `totals`: counts by status plus `cost_usd` and `duration_s`.

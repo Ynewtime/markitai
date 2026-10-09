@@ -123,7 +123,7 @@ def get_model_max_output_tokens(model: str) -> int:
     return get_model_info_cached(model)["max_output_tokens"]
 
 
-def get_response_cost(response: Any) -> float:
+def get_response_cost(response: Any) -> float | None:
     """Get cost from a LiteLLM ModelResponse.
 
     For local providers (claude-agent, copilot), the cost is stored in
@@ -134,7 +134,8 @@ def get_response_cost(response: Any) -> float:
         response: LiteLLM ModelResponse object
 
     Returns:
-        Cost in USD, or 0.0 if unavailable
+        Cost in USD, or None when the model has no known price (an unknown
+        price is not a zero one)
     """
     # Check for cost from local provider (stored in _hidden_params)
     hidden_params = getattr(response, "_hidden_params", None)
@@ -145,9 +146,42 @@ def get_response_cost(response: Any) -> float:
 
     # Fall back to litellm's cost calculation
     try:
-        return completion_cost(completion_response=response) or 0.0
+        cost = completion_cost(completion_response=response)
     except Exception:
-        return 0.0
+        return None
+    if cost:
+        return cost
+    return 0.0 if _has_listed_price(response, hidden_params) else None
+
+
+def _has_listed_price(response: Any, hidden_params: Any) -> bool:
+    """Whether litellm's cost table lists a price for the response's model.
+
+    ``completion_cost`` answers $0 for a model whose entry has no price at
+    all: one registered only for its ``model_info`` (``supports_vision``,
+    context size) from the config. Only an entry with an actual price, zero
+    included (a local model), makes $0 the cost.
+    """
+    import litellm
+
+    model = getattr(response, "model", None) or ""
+    provider = (
+        hidden_params.get("custom_llm_provider")
+        if isinstance(hidden_params, dict)
+        else None
+    )
+    for key in (f"{provider}/{model}" if provider else None, model):
+        entry = litellm.model_cost.get(key) if key else None
+        if isinstance(entry, dict) and any(
+            "cost_per" in name and value is not None for name, value in entry.items()
+        ):
+            return True
+    return False
+
+
+def format_cost(cost: float | None) -> str:
+    """A request's cost for log lines: ``$0.000123``, or ``unknown``."""
+    return "unknown" if cost is None else f"${cost:.6f}"
 
 
 def context_display_name(context: str) -> str:

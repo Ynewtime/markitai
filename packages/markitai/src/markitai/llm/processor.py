@@ -169,6 +169,9 @@ class LLMProcessor:
         # Call counter for each context (file)
         self._call_counter: defaultdict[str, int] = defaultdict(int)
 
+        # Models already reported as having no known price (warned once)
+        self._unpriced_models: set[str] = set()
+
         # Lock for thread-safe access to usage tracking dicts in concurrent contexts
         # Using threading.Lock instead of asyncio.Lock because:
         # 1. Dict operations are CPU-bound and don't need await
@@ -442,6 +445,8 @@ class LLMProcessor:
         original_markdown: str,
         cleaned_markdown: str,
         source: str,
+        *,
+        vision: bool = False,
     ) -> str:
         """Protect page-marked documents from LLM structural drift.
 
@@ -450,7 +455,7 @@ class LLMProcessor:
         processor.
         """
         return self.documents._stabilize_paged_markdown(
-            original_markdown, cleaned_markdown, source
+            original_markdown, cleaned_markdown, source, vision=vision
         )
 
     # =========================================================================
@@ -929,7 +934,7 @@ class LLMProcessor:
         model: str,
         input_tokens: int,
         output_tokens: int,
-        cost: float,
+        cost: float | None,
         context: str = "",
         cached_tokens: int = 0,
     ) -> None:
@@ -941,7 +946,9 @@ class LLMProcessor:
             model: Model name
             input_tokens: Number of input tokens
             output_tokens: Number of output tokens
-            cost: Cost in USD
+            cost: Cost in USD, or None when the model has no known price:
+                the request is counted in ``unpriced_requests`` so the
+                reported cost becomes unknown instead of $0
             context: Optional context identifier (e.g., filename)
             cached_tokens: Cache-read input tokens (prompt caching hits);
                 a subset of input_tokens billed at the provider's cache rate
@@ -958,11 +965,33 @@ class LLMProcessor:
             ctx["cached_input_tokens"] = (
                 ctx.get("cached_input_tokens", 0) + cached_tokens
             )
-            ctx["cost_usd"] += cost
+            if cost is None:
+                ctx["unpriced_requests"] = ctx.get("unpriced_requests", 0) + 1
+            else:
+                ctx["cost_usd"] += cost
+            warn_unpriced = cost is None and model not in self._unpriced_models
+            if warn_unpriced:
+                self._unpriced_models.add(model)
+
+        if warn_unpriced:
+            from markitai.notices import user_notice
+
+            cap = (
+                "; llm.max_cost_per_document_usd cannot limit it"
+                if self.config.max_cost_per_document_usd > 0
+                else ""
+            )
+            user_notice(
+                "No price is known for LLM model {}: its cost is reported as "
+                "unknown, not $0{}",
+                model,
+                cap,
+            )
 
         # Outside the usage lock: the breaker keeps its own, and this is the
         # one place every answer's price passes through.
-        self._request_budget.charge(context, cost)
+        if cost is not None:
+            self._request_budget.charge(context, cost)
 
     def get_context_usage(self, context: str) -> dict[str, dict[str, Any]]:
         """Get usage statistics for a specific context.
@@ -996,6 +1025,9 @@ class LLMProcessor:
 
     def clear_context_usage(self, context: str) -> None:
         """Clear usage tracking (and request budget) for a specific context.
+
+        Inside a document block the request budget belongs to the document
+        and outlives its contexts (see ``RequestBudget.clear``).
 
         Thread-safe: uses lock for safe modification.
 

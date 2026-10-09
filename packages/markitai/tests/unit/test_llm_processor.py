@@ -201,8 +201,8 @@ class TestGetResponseCost:
             cost = get_response_cost(response)
             assert cost == 0.005
 
-    def test_cost_zero_on_exception(self):
-        """Test returns 0.0 when cost calculation fails."""
+    def test_cost_unknown_on_exception(self):
+        """A failed cost calculation is an unknown cost (None), not $0."""
         response = MagicMock()
         response._hidden_params = {}
 
@@ -210,7 +210,7 @@ class TestGetResponseCost:
             "markitai.llm.models.completion_cost", side_effect=Exception("Error")
         ):
             cost = get_response_cost(response)
-            assert cost == 0.0
+            assert cost is None
 
     def test_no_hidden_params(self):
         """Test when _hidden_params is None."""

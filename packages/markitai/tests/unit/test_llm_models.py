@@ -340,7 +340,7 @@ class TestGetResponseCost:
             assert result == pytest.approx(0.0456)
 
     def test_litellm_completion_cost_failure(self):
-        """Test fallback to 0.0 when completion_cost fails."""
+        """A model litellm cannot price has an unknown cost (None), not $0."""
         response = MagicMock()
         response._hidden_params = {}
 
@@ -349,7 +349,7 @@ class TestGetResponseCost:
 
             result = get_response_cost(response)
 
-            assert result == 0.0
+            assert result is None
 
     def test_no_hidden_params(self):
         """Test when response has no _hidden_params attribute."""
