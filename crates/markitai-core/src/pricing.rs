@@ -186,6 +186,14 @@ fn object<'a>(
         .map(|value| value.as_object().ok_or(UnknownPrice::InvalidUsage))
         .transpose()
 }
+// The same counter reported under both Chat Completions and Responses names
+// must agree; an absent one is zero.
+fn agree(values: [Option<u64>; 2]) -> Result<u64, UnknownPrice> {
+    if values[0].zip(values[1]).is_some_and(|(a, b)| a != b) {
+        return Err(UnknownPrice::InvalidUsage);
+    }
+    Ok(values[0].or(values[1]).unwrap_or(0))
+}
 fn add(a: u64, b: u64) -> Result<u64, UnknownPrice> {
     a.checked_add(b).ok_or(UnknownPrice::Overflow)
 }
@@ -236,11 +244,7 @@ fn calculate(
         .ok_or(UnknownPrice::MissingUsage)?;
     tier(response.get("service_tier"), class)?;
     tier(usage.get("service_tier"), class)?;
-    let rates = match class {
-        BillingClass::Standard => tariff.rates,
-        BillingClass::Batch => tariff.rates.batch(),
-    };
-    let (base, cached, write5, write1, output) = match provider {
+    let (base, cached, written, written_1h, output) = match provider {
         Provider::OpenAi => {
             allowed_keys(
                 usage,
@@ -259,24 +263,42 @@ fn calculate(
             )?;
             let input = required(usage, "prompt_tokens", Some("input_tokens"))?;
             let output = required(usage, "completion_tokens", Some("output_tokens"))?;
-            let mut caches = [None, None];
+            let (mut cached, mut written) = ([None, None], [None, None]);
             for (index, key) in ["prompt_tokens_details", "input_tokens_details"]
                 .iter()
                 .enumerate()
             {
                 if let Some(details) = object(usage, key)? {
-                    allowed_keys(details, &["cached_tokens", "audio_tokens"])?;
+                    allowed_keys(
+                        details,
+                        &[
+                            "cached_tokens",
+                            "cache_write_tokens",
+                            "audio_tokens",
+                            "text_tokens",
+                            "image_tokens",
+                        ],
+                    )?;
                     if optional(details, "audio_tokens")? != 0 {
                         return Err(UnknownPrice::UnsupportedUsage);
                     }
-                    caches[index] = number(details.get("cached_tokens"))?;
+                    // Text and image counts split the prompt by modality; image
+                    // input is metered as ordinary input tokens.
+                    let modalities = add(
+                        optional(details, "text_tokens")?,
+                        optional(details, "image_tokens")?,
+                    )?;
+                    if modalities > input {
+                        return Err(UnknownPrice::InvalidUsage);
+                    }
+                    cached[index] = number(details.get("cached_tokens"))?;
+                    written[index] = number(details.get("cache_write_tokens"))?;
                 }
             }
-            if caches[0].zip(caches[1]).is_some_and(|(a, b)| a != b) {
-                return Err(UnknownPrice::InvalidUsage);
-            }
-            let cached = caches[0].or(caches[1]).unwrap_or(0);
-            if cached > input {
+            // OpenAI's prompt caching guide prices the prompt as ordinary
+            // input, cached reads and cache writes, each a disjoint part of it.
+            let (cached, written) = (agree(cached)?, agree(written)?);
+            if add(cached, written)? > input {
                 return Err(UnknownPrice::InvalidUsage);
             }
             for key in ["completion_tokens_details", "output_tokens_details"] {
@@ -286,6 +308,7 @@ fn calculate(
                         &[
                             "reasoning_tokens",
                             "audio_tokens",
+                            "text_tokens",
                             "accepted_prediction_tokens",
                             "rejected_prediction_tokens",
                         ],
@@ -295,6 +318,7 @@ fn calculate(
                     }
                     for counter in [
                         "reasoning_tokens",
+                        "text_tokens",
                         "accepted_prediction_tokens",
                         "rejected_prediction_tokens",
                     ] {
@@ -304,7 +328,7 @@ fn calculate(
                     }
                 }
             }
-            (input - cached, cached, 0, 0, output)
+            (input - cached - written, cached, written, 0, output)
         }
         Provider::Anthropic => {
             allowed_keys(
@@ -352,13 +376,22 @@ fn calculate(
             (input, cached, write5, write1, output)
         }
     };
-    let all_input = add(add(add(base, cached)?, write5)?, write1)?;
+    let all_input = add(add(add(base, cached)?, written)?, written_1h)?;
     if tariff
         .max_priced_input
         .is_some_and(|limit| all_input > limit)
     {
         return Err(UnknownPrice::Context);
     }
+    let rates = match tariff.long {
+        Some(long) if all_input >= long.long_from => long.rates,
+        Some(long) if all_input > long.short_max => return Err(UnknownPrice::Context),
+        _ => tariff.rates,
+    };
+    let rates = match class {
+        BillingClass::Standard => rates,
+        BillingClass::Batch => rates.batch(),
+    };
     if let Some(total) = number(usage.get("total_tokens"))?
         && add(all_input, output)? != total
     {
@@ -374,8 +407,8 @@ fn calculate(
     let amount = terms(&[
         (base, rates.input),
         (cached, rates.cache_read),
-        (write5, write_rate(write5, rates.cache_write_5m)?),
-        (write1, write_rate(write1, rates.cache_write_1h)?),
+        (written, write_rate(written, rates.cache_write)?),
+        (written_1h, write_rate(written_1h, rates.cache_write_1h)?),
         (output, rates.output),
     ])?;
     Ok((amount, tariff.family))
@@ -426,6 +459,88 @@ mod tests {
         assert_eq!(
             amount(&openai(), &response, BillingClass::Batch),
             1_500_000_000
+        );
+    }
+
+    fn luna() -> Identity<'static> {
+        Identity {
+            model: "gpt-6-luna",
+            ..openai()
+        }
+    }
+
+    #[test]
+    fn openai_cache_writes_are_a_separately_billed_part_of_the_prompt() {
+        // The usage shape of OpenAI's Chat Completions reference.
+        let response = json!({"model":"gpt-6-luna","service_tier":"default","usage":{
+            "prompt_tokens":10000,"completion_tokens":500,"total_tokens":10500,
+            "prompt_tokens_details":{"audio_tokens":0,"cache_write_tokens":3000,
+                "cached_tokens":4000,"image_tokens":1200,"text_tokens":8800},
+            "completion_tokens_details":{"accepted_prediction_tokens":0,"audio_tokens":0,
+                "reasoning_tokens":300,"rejected_prediction_tokens":0,"text_tokens":200}}});
+        let standard = 3000 * 100_000 + 4000 * 10_000 + 3000 * 125_000 + 500 * 500_000;
+        assert_eq!(amount(&luna(), &response, BillingClass::Standard), standard);
+        assert_eq!(
+            amount(&luna(), &response, BillingClass::Batch),
+            standard / 2
+        );
+
+        let mut both_names = response.clone();
+        both_names["usage"]["input_tokens_details"] = json!({"cache_write_tokens":2999});
+        let mut too_many = response.clone();
+        too_many["usage"]["prompt_tokens_details"]["cache_write_tokens"] = json!(6001);
+        let mut modalities = response.clone();
+        modalities["usage"]["prompt_tokens_details"]["image_tokens"] = json!(1201);
+        let mut text_output = response.clone();
+        text_output["usage"]["completion_tokens_details"]["text_tokens"] = json!(501);
+        for invalid in [both_names, too_many, modalities, text_output] {
+            assert_eq!(
+                quote(&luna(), &invalid, BillingClass::Standard),
+                Quote::Unknown(UnknownPrice::InvalidUsage)
+            );
+        }
+
+        // GPT-4.1 has no reviewed cache-write rate: a write is not guessed.
+        let older = json!({"usage":{"prompt_tokens":10,"completion_tokens":1,
+            "prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0}}});
+        assert_eq!(
+            amount(&openai(), &older, BillingClass::Standard),
+            10 * 2_000_000 + 8_000_000
+        );
+        let mut written = older;
+        written["usage"]["prompt_tokens_details"]["cache_write_tokens"] = json!(4);
+        assert_eq!(
+            quote(&openai(), &written, BillingClass::Standard),
+            Quote::Unknown(UnknownPrice::CacheDetails)
+        );
+    }
+
+    #[test]
+    fn openai_long_context_reprices_the_whole_request_once_certain() {
+        let response = |prompt: u64| {
+            json!({"usage":{"prompt_tokens":prompt,"completion_tokens":1000,
+                "prompt_tokens_details":{"cached_tokens":100_000,"cache_write_tokens":50_000}}})
+        };
+        let short = 122_000 * 100_000 + 100_000 * 10_000 + 50_000 * 125_000 + 1000 * 500_000;
+        assert_eq!(
+            amount(&luna(), &response(272_000), BillingClass::Standard),
+            short
+        );
+        // Between 272,000 and 272 x 1,024 the published "272K" boundary is unclear.
+        for unclear in [272_001, 275_000, 278_528] {
+            assert_eq!(
+                quote(&luna(), &response(unclear), BillingClass::Standard),
+                Quote::Unknown(UnknownPrice::Context)
+            );
+        }
+        let long = 128_529 * 200_000 + 100_000 * 20_000 + 50_000 * 250_000 + 1000 * 750_000;
+        assert_eq!(
+            amount(&luna(), &response(278_529), BillingClass::Standard),
+            long
+        );
+        assert_eq!(
+            amount(&luna(), &response(278_529), BillingClass::Batch),
+            long / 2
         );
     }
 

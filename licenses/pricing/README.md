@@ -1,6 +1,6 @@
 # Offline token tariff provenance
 
-This catalog contains eight exact model keys from the LiteLLM 1.106.0.dev2
+This catalog contains nine exact model keys from the LiteLLM 1.106.0.dev2
 backup data (a development pre-release: on 2026-10-09 the newest PyPI release
 carrying the claude-haiku-5-5 row; the wheel file and digest are named in
 provenance.json). The source file hash, distribution RECORD entry, exact source-byte
@@ -17,7 +17,7 @@ future prices. Estimates use public list tariffs and actual response counters,
 not negotiated invoices, credits or taxes. Only the two exact first-party
 endpoints and listed models are priced. Unsupported categories, tiers, contexts,
 models and proxies remain unknown. Reasoning tokens are already part of output;
-cached input is charged once. Batch is classified per attempt and never applied
+cached input and cache writes are each charged once, at their own rates. Batch is classified per attempt and never applied
 to an aggregate that might also contain Standard fallback requests.
 
 The full workspace license review remains a separate task; this provenance record

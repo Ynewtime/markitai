@@ -8,7 +8,7 @@ when looking up a tariff.
 
 ## Reviewed catalog
 
-Snapshot `litellm-1.106.0.dev2-selected-2026-10-09` derives eight exact source keys
+Snapshot `litellm-1.106.0.dev2-selected-2026-10-09` derives nine exact source keys
 from the backup data in LiteLLM 1.106.0.dev2's wheel. That is a development
 pre-release, chosen because it was the newest PyPI release with the
 `claude-haiku-5-5` row; every rate used is also checked against the provider's
@@ -26,10 +26,19 @@ All prices below are USD per million tokens, Standard class:
 | OpenAI `gpt-4.1` | 2 | 0.50 | 8 | unsupported |
 | OpenAI `gpt-4.1-mini` | 0.40 | 0.10 | 1.60 | unsupported |
 | OpenAI `gpt-4.1-nano` | 0.10 | 0.025 | 0.40 | unsupported |
+| OpenAI `gpt-6-luna`, prompt ≤ 272,000 | 0.10 | 0.01 | 0.50 | 0.125 (30m) |
+| OpenAI `gpt-6-luna`, prompt > 278,528 | 0.20 | 0.02 | 0.75 | 0.25 (30m) |
 | Anthropic `claude-sonnet-4-5-20250929` | 3 | 0.30 | 15 | 3.75 / 6 |
 | Anthropic `claude-haiku-4-5-20251001` | 1 | 0.10 | 5 | 1.25 / 2 |
 
-Each listed OpenAI ID also accepts its exact `-2025-04-14` snapshot ID.
+Each listed GPT-4.1 ID also accepts its exact `-2025-04-14` snapshot ID;
+`gpt-6-luna` has no other snapshot ID. Its
+[model page](https://developers.openai.com/api/docs/models/gpt-6-luna) and the
+[pricing page](https://developers.openai.com/api/docs/pricing) price a prompt over
+"272K" input tokens at the long-context rates for the whole request. That
+boundary could also be read as 272 × 1,024, so a prompt between 272,001 and
+278,528 tokens, cached reads and writes included, stays unpriced rather than
+risk the cheaper band.
 `claude-sonnet-4-5` and `claude-haiku-4-5` are the only added Claude aliases;
 unknown suffixes are not matched. The official
 [Haiku page](https://platform.claude.com/docs/en/models/haiku-4-5/overview) and
@@ -45,7 +54,8 @@ Prices apply only to these exact final endpoints:
 - `https://api.openai.com/v1/chat/completions`
 - `https://api.anthropic.com/v1/messages`
 
-Custom/proxy endpoints, alternate hosts/ports/paths, regional hosting, other
+Custom/proxy endpoints, alternate hosts/ports/paths, regional hosting (such as
+OpenAI's `us.`/`eu.` data-residency hosts, billed 10% higher), other
 providers or models are unpriced. An Anthropic response's `usage.inference_geo` keeps
 the listed rates only when it is `not_available` or `global`; US-only inference is
 billed at a premium and stays unpriced. An accepted model configuration is not proof
@@ -64,9 +74,14 @@ and [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 documentation; billing category does not imply that every provider's Batch API
 is implemented.
 
-OpenAI prompt totals include cached reads, so their cached subset is subtracted
-once before applying the ordinary input rate. Reasoning and prediction counts
-are already part of output and are not added again. Anthropic base input excludes
+OpenAI prompt totals include cached reads and cache writes
+(`prompt_tokens_details.cache_write_tokens`), so both subsets are subtracted
+once before applying the ordinary input rate, as OpenAI's
+[prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
+computes input cost. Cache writes cost 1.25× ordinary input; a model without a
+reviewed write rate (GPT-4.1) leaves a positive write count unpriced. Text and
+image counts only split the prompt by modality. Reasoning, prediction and text
+output counts are already part of output and are not added again. Anthropic base input excludes
 cache reads and writes. Its cache creation totals and explicit 5m/1h breakdown
 must agree; positive creation without enough TTL detail remains unpriced.
 Unknown billing categories, audio charges, contradictory counters, missing
