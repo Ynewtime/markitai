@@ -5,7 +5,8 @@ same decoding, resize and asset rules. Native decoding uses no Python process or
 external image editor. Optional [image enrichment](image-enrichment.md) can fetch
 actual remote image references before passing their bytes to these decoders.
 JPEG, PNG, GIF, BMP, TIFF and WebP use Rust codecs. Static SVG inputs are rendered
-natively with resvg. On macOS, HEIF/HEIC and AVIF use ImageIO's native codecs.
+natively with resvg. On macOS, HEIF/HEIC and AVIF use ImageIO's native codecs;
+on Windows and Linux, HEIF/HEIC uses the built-in pure-Rust decoder.
 
 ## Standalone inputs
 
@@ -53,8 +54,18 @@ when enabled; HEIF/AVIF bytes are never labeled as PNG and sent unchanged.
 Standalone inputs retain the normal one-preview document shape. Original files
 are not modified.
 
-There is no Python, libheif or external decoder process. Other platforms report
-`unsupported`, as does a macOS runtime unable to decode a particular codec. OS
+There is no Python, libheif or external decoder process. On Windows and Linux,
+HEIF/HEIC is decoded in process by [`heifer`](https://crates.io/crates/heifer)
+0.2.0 (MIT OR Apache-2.0, no `unsafe` code, no C library): the ISO BMFF
+container, HEVC intra pictures (Main, Main 10, Main Still Picture and the intra
+range extensions, 8 to 12 bits), grids, overlays, alpha planes, clean aperture,
+rotation and mirror; ICC profiles are not applied and high bit depths become
+8-bit. It counts the container's images and
+selects the primary one as ImageIO does, within the same 32-million-pixel limit;
+the corpus's `english.heic` decodes to the same pixels as libheif's. Coding it
+does not read is an explicit unsupported error. AVIF (AV1) is decoded only by
+macOS ImageIO; Windows and Linux report `unsupported`, as does a macOS runtime
+unable to decode a particular codec. OS
 codec availability depends on the installed macOS version; current verification
 does not establish support on every version allowed by the binary deployment
 target. HDR/high-bit-depth images are converted to an 8-bit sRGB representation;

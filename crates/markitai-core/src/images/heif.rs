@@ -1,10 +1,13 @@
-//! In-memory HEIF/AVIF primary-image decoding through the operating system.
+//! In-memory HEIF/AVIF primary-image decoding: through the operating system
+//! on macOS, with the pure-Rust HEIF decoder elsewhere.
 
-use crate::{Error, Result};
+use crate::Result;
 use image::DynamicImage;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(not(target_os = "macos"))]
+mod portable;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Info {
@@ -64,7 +67,6 @@ pub(super) fn signature(bytes: &[u8]) -> bool {
             .any(|value| brand(value))
 }
 
-#[cfg(any(target_os = "macos", test))]
 fn validate_container(bytes: &[u8]) -> Result<()> {
     let mut offset = 0usize;
     let mut boxes = 0usize;
@@ -119,15 +121,13 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Decoded> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Err(Error::Unsupported(
-            "HEIF/AVIF decoding requires macOS ImageIO in this build; no image has been sent to a model".into(),
-        ))
+        portable::decode(bytes)
     }
 }
 
 #[cfg(target_os = "macos")]
-fn unavailable() -> Error {
-    Error::Unsupported("The macOS ImageIO runtime cannot decode this HEIF/AVIF image; no image has been sent to a model".into())
+fn unavailable() -> crate::Error {
+    crate::Error::Unsupported("The macOS ImageIO runtime cannot decode this HEIF/AVIF image; no image has been sent to a model".into())
 }
 
 #[cfg(test)]
@@ -163,14 +163,5 @@ mod tests {
         assert!(validate_container(&large).is_err());
         assert!(validate_container(b"\0\0\0\0mdatpayload").is_ok());
         assert!(validate_container(b"\0\0\0\x04free").is_err());
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn unsupported_platform_never_returns_an_empty_image() {
-        assert!(matches!(
-            decode(include_bytes!("fixtures/heif/white_1x1.avif")),
-            Err(Error::Unsupported(_))
-        ));
     }
 }

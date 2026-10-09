@@ -64,6 +64,8 @@ hayro = { version = "=0.7.1", default-features = false, features = ["embed-fonts
 memchr = "2"
 tract-onnx = { version = "=0.23.8", default-features = false }
 tract-linalg = { version = "=0.23.8", default-features = false, features = ["multithread-mm"] }
+# Pure-Rust HEIF/HEIC (HEVC) decoding; macOS uses ImageIO.
+heifer = { version = "=0.2.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -723,9 +723,10 @@ make. XLS, XLSX, XLSM, XLSB and ODS screenshots use
 complete-sheet export, including hidden and empty sheets; this is not printed-page
 pagination. Numbers screenshots and OCR remain unsupported. See the Office guide
 for import fidelity, font handling and resource limits.
-macOS HEIF/AVIF primary images use native
-ImageIO decoding, with the scoped limits in [images](images.md); other platforms
-still return an explicit unsupported error. Local and static/automatic URL PDFs support explicit
+HEIF/HEIC and AVIF primary images use native
+ImageIO decoding on macOS, with the scoped limits in [images](images.md); on
+Windows and Linux HEIF/HEIC uses the built-in pure-Rust decoder and AVIF still
+returns an explicit unsupported error. Local and static/automatic URL PDFs support explicit
 page rendering, screenshots and OCR through the [PDF media pipeline](pdf-ocr.md),
 including its documented accuracy gap. URL media preserves original request
 identity while processing downloaded bytes without a second download.
