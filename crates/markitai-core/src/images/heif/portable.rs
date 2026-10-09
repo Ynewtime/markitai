@@ -42,6 +42,13 @@ fn images(file: &HeifFile<'_>) -> Vec<u32> {
 
 pub(super) fn decode(bytes: &[u8]) -> Result<Decoded> {
     super::validate_container(bytes)?;
+    // heifer is young; an image it cannot handle must fail this conversion,
+    // not the process. The closure only reads the caller's bytes.
+    std::panic::catch_unwind(|| decode_checked(bytes))
+        .unwrap_or_else(|_| Err(failure("the portable decoder failed on this image")))
+}
+
+fn decode_checked(bytes: &[u8]) -> Result<Decoded> {
     let file = HeifFile::parse(bytes).map_err(failure)?;
     let primary = file.primary_item().map_err(failure)?;
     if primary.item_type.0 == *b"av01" {
