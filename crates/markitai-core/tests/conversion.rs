@@ -16,6 +16,8 @@ mod multipage_image;
 #[path = "conversion/heif_image.rs"]
 mod heif_image;
 
+#[path = "conversion/image_concurrency.rs"]
+mod image_concurrency;
 #[path = "conversion/image_enrichment.rs"]
 mod image_enrichment;
 

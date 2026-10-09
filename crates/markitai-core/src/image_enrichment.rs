@@ -14,6 +14,134 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+type Answers = HashMap<String, std::result::Result<Value, String>>;
+
+/// Image analysis of a document, started beside its enhancement: the image
+/// prompts read the base Markdown, not the enhanced one. Dropping it stops
+/// requests not yet sent and waits for those in flight, so no request
+/// outlives the conversion that pays for it.
+pub(crate) struct Pending {
+    stop: Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<Answers>>,
+}
+impl Pending {
+    fn finish(mut self) -> Answers {
+        let worker = self.worker.take().expect("pending analysis is joined once");
+        worker
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+}
+impl Drop for Pending {
+    fn drop(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            self.stop.store(true, Ordering::Release);
+            let _ = worker.join();
+        }
+    }
+}
+
+/// The opening of the document body given to image prompts as context.
+fn context(markdown: &str) -> String {
+    let (_, body) = crate::output::split_frontmatter(markdown);
+    body.chars().take(200).collect()
+}
+
+/// The document's assets that its Markdown references, in asset order.
+fn referenced(doc: &Document) -> Vec<&crate::Asset> {
+    let referenced: HashSet<_> = output_profiles::image_references(&doc.markdown)
+        .iter()
+        .filter_map(|target| resources::asset_name(target))
+        .collect();
+    doc.assets
+        .iter()
+        .filter(|asset| referenced.contains(&asset.name))
+        .collect()
+}
+
+/// Starts analysing each distinct referenced image of a (non-image) document
+/// while its enhancement runs. Requests share the document's budget and the
+/// runtime's `llm.concurrency`.
+pub(crate) fn start(
+    doc: &Document,
+    base: &str,
+    source: &str,
+    cfg: &Value,
+    runtime: &LlmRuntime,
+) -> Option<Pending> {
+    if !enabled(source, cfg) {
+        return None;
+    }
+    let mut seen = HashSet::new();
+    let images: Vec<_> = referenced(doc)
+        .into_iter()
+        .filter_map(|asset| {
+            let digest = crate::hex(Sha256::digest(&asset.bytes));
+            seen.insert(digest.clone())
+                .then(|| (digest, asset.name.clone(), asset.bytes.clone()))
+        })
+        .collect();
+    if images.is_empty() {
+        return None;
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    let document = llm::DocumentHandle::current();
+    if let Some(document) = &document {
+        document.reserve();
+    }
+    let (context, source, cfg, runtime, flag) = (
+        context(base),
+        source.to_owned(),
+        cfg.clone(),
+        runtime.clone(),
+        stop.clone(),
+    );
+    let worker = std::thread::spawn(move || {
+        let next = AtomicUsize::new(0);
+        let answers = Mutex::new(Answers::new());
+        std::thread::scope(|scope| {
+            for _ in 0..images.len().min(runtime.concurrency()) {
+                scope.spawn(|| {
+                    let _document = document
+                        .as_ref()
+                        .map(llm::DocumentHandle::enter_image_worker);
+                    while let Some((digest, name, bytes)) =
+                        images.get(next.fetch_add(1, Ordering::Relaxed))
+                    {
+                        if flag.load(Ordering::Acquire) {
+                            break;
+                        }
+                        let asset = crate::Asset {
+                            name: name.clone(),
+                            bytes: bytes.clone(),
+                        };
+                        let answer = analyze_assets(
+                            &[&asset],
+                            &context,
+                            &source,
+                            &cfg,
+                            Some(&runtime),
+                            Some(&flag),
+                        )
+                        .map_err(|error| error.to_string());
+                        answers
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(digest.clone(), answer);
+                    }
+                });
+            }
+        });
+        answers.into_inner().unwrap_or_else(|e| e.into_inner())
+    });
+    Some(Pending {
+        stop,
+        worker: Some(worker),
+    })
+}
 
 pub(crate) fn enabled(source: &str, cfg: &Value) -> bool {
     let standalone = !crate::is_url(source)
@@ -51,6 +179,8 @@ pub(crate) fn prepare(
 
 /// Run after document enhancement and before profile/publication transforms.
 /// Public `asset` paths still name owned assets; publication resolves them once.
+/// A document's images were analysed by `pending` beside its enhancement; an
+/// enhancement that failed discards them like the enhanced body.
 pub(crate) fn analyze(
     doc: &Document,
     result: &mut ConversionOutput,
@@ -58,6 +188,7 @@ pub(crate) fn analyze(
     standalone: bool,
     cfg: &Value,
     runtime: Option<&LlmRuntime>,
+    pending: Option<Pending>,
 ) -> Result<()> {
     if !enabled(source, cfg) {
         return Ok(());
@@ -65,30 +196,27 @@ pub(crate) fn analyze(
     if !standalone && result.llm_markdown.is_none() {
         return Ok(());
     }
-    let body = result.llm_markdown.as_deref().unwrap_or(&doc.markdown);
-    let (_, body_context) = crate::output::split_frontmatter(body);
-    let context: String = body_context.chars().take(200).collect();
     let references = output_profiles::image_references(&doc.markdown);
-    let referenced: HashSet<_> = references
-        .iter()
-        .filter_map(|target| resources::asset_name(target))
-        .collect();
-    let mut responses: HashMap<String, std::result::Result<Value, String>> = HashMap::new();
+    // An enhancement served from the cache never spent its reserved request.
+    if let Some(document) = llm::DocumentHandle::current() {
+        document.release();
+    }
+    let mut responses = pending.map(Pending::finish).unwrap_or_default();
     let mut captions = HashMap::new();
     let mut first_answer = None;
-    let selected: Vec<_> = doc
-        .assets
-        .iter()
-        .filter(|asset| referenced.contains(&asset.name))
-        .collect();
+    let selected = referenced(doc);
     // Multipage TIFF previews are one standalone image document. Analyze all
     // previews together rather than discarding the later pages' descriptions.
     let standalone_answer = if standalone && !selected.is_empty() {
-        Some(analyze_assets(&selected, &context, source, cfg, runtime)?)
+        let context = context(result.llm_markdown.as_deref().unwrap_or(&doc.markdown));
+        Some(analyze_assets(
+            &selected, &context, source, cfg, runtime, None,
+        )?)
     } else {
         None
     };
     let mut attempted = 0;
+    let mut answered = HashSet::new();
     for (index, asset) in selected.iter().enumerate() {
         let digest = crate::hex(Sha256::digest(&asset.bytes));
         let answer = if let Some(answer) = &standalone_answer {
@@ -97,17 +225,22 @@ pub(crate) fn analyze(
                 answer["llm_usage"] = json!({});
             }
             Ok(answer)
-        } else if let Some(cached) = responses.get(&digest) {
-            cached.clone().map(|mut entry| {
+        } else if !answered.insert(digest.clone()) {
+            responses[&digest].clone().map(|mut entry| {
                 entry["llm_usage"] = json!({});
                 entry
             })
         } else {
             attempted += 1;
-            let answer = analyze_assets(&[*asset], &context, source, cfg, runtime)
-                .map_err(|error| error.to_string());
-            responses.insert(digest, answer.clone());
-            answer
+            responses
+                .entry(digest)
+                .or_insert_with(|| {
+                    Err(
+                        "analysis stopped after an earlier fatal LLM failure of this document"
+                            .into(),
+                    )
+                })
+                .clone()
         };
         match answer {
             Ok(mut answer) => {
@@ -198,6 +331,7 @@ fn analyze_assets(
     source: &str,
     cfg: &Value,
     runtime: Option<&LlmRuntime>,
+    stop: Option<&AtomicBool>,
 ) -> Result<Value> {
     let mut frames = Vec::new();
     let mut total = 0usize;
@@ -229,6 +363,7 @@ fn analyze_assets(
         &input,
         cfg,
         runtime,
+        stop,
     )?;
     Ok(
         json!({"alt":answer.caption,"desc":answer.description,"text":answer.extracted_text,

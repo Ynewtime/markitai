@@ -234,6 +234,7 @@ fn entry(provider: &str, endpoint: &str) -> Deployment {
         endpoint: endpoint.into(),
         protocol: Protocol::Chat,
         max_tokens: None,
+        reasoning_effort: None,
         supports_vision: None,
     }
 }

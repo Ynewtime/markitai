@@ -49,7 +49,8 @@ With an empty model list, a nonempty `MODEL` selects one model. Otherwise each
 available API credential joins the pool: Anthropic, OpenAI, Gemini, DeepSeek
 and OpenRouter. The model aliases are derived from the reference checkout's
 provider-default table, not an independent assertion about current provider
-availability. Pin `MODEL` or a configured deployment to control which provider
+availability; DeepSeek's is `deepseek/deepseek-flash`, the id DeepSeek's model
+list names (the reference's `deepseek-v4-flash` is an alias of it). Pin `MODEL` or a configured deployment to control which provider
 receives documents. Keys of the [OpenAI-compatible
 prefixes](#openai-compatible-prefixes) do not join this pool, because no default
 model is known for them; name one with `MODEL` (for example
@@ -279,6 +280,25 @@ catalog or tokenizer and does not size output caps from a context window; a
 declared `model_info.max_input_tokens` sizes document chunks instead (see
 [below](#structured-documents-and-complete-long-text)).
 
+`litellm_params.reasoning_effort` controls how much a reasoning model thinks
+before it answers: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`
+(LiteLLM's name for the setting). Reasoning tokens are output tokens, so a model
+that thinks at length can spend the whole `max_tokens` budget before writing the
+cleaned document; the request then fails with `LLM output was truncated by its
+token limit: reasoning used all N output tokens; lower
+litellm_params.reasoning_effort or raise max_tokens`.
+
+| Deployment | Without the setting | With a value |
+|---|---|---|
+| `deepseek/` | `thinking: {"type": "disabled"}`: clean-up, transcription and descriptions need no reasoning | `none` disables thinking; other values enable it and send `reasoning_effort`, which DeepSeek maps to `low`, `high` or `max` |
+| Other OpenAI-compatible endpoints (`openai/`, `gemini/`, `openrouter/`, `azure/`, …) | nothing; the model's own default applies | sent as `reasoning_effort`; the provider decides which values a model accepts and rejects others with HTTP 400 |
+| `anthropic/` | nothing; extended thinking stays off | only `none` is accepted; other values are a configuration error |
+| `copilot/`, `claude-agent/`, `chatgpt/` | the runtime's default | not accepted, like `max_tokens` |
+
+```json
+{"model_name": "default", "litellm_params": {"model": "deepseek/deepseek-flash", "max_tokens": 8192, "reasoning_effort": "low"}}
+```
+
 Image requests reuse routing, authentication, budgets and retry behavior.
 OpenAI-compatible requests carry a data URL; Anthropic receives native base64
 image blocks. JPEG, PNG, WebP and GIF MIME types are accepted. Deployments
@@ -302,8 +322,12 @@ refusals the same way.
 ## Retries, budgets and usage
 
 `router_settings.num_retries` means additional attempts after the first attempt
-in a group. Connection failures, temporary HTTP failures (408, 409, 5xx), rate
-limits and empty text responses may retry. A request that timed out, or whose
+in a group. Connection failures, temporary HTTP failures (408, 409, 5xx) and rate
+limits may retry. A request is never sent again unchanged after the provider
+answered it: a response without any text (the error names its finish reason)
+moves only to a deployment of the group not yet tried, without backoff, and an
+answer rejected by validation is followed by a request whose system prompt names
+the rejection. A request that timed out, or whose
 successful response was cut off while being read, is not sent again: the
 provider may already have completed and billed it, and that usage cannot be
 recorded. A configured fallback group can still run.
@@ -333,10 +357,9 @@ usual, and later requests fail that group without a network call. A group with a
 single deployment identity keeps the earlier rule: its authentication failure is
 not excluded, does not retry the same group, and a fallback group can still run.
 
-The warning accompanies the typed document or visual enhancement that observed
-the refusal. Pure-mode enhancement and image caption/description analysis apply
-the same exclusion but do not yet carry its warning, and a document whose
-enhancement still fails reports only its final error. LiteLLM 1.100.1's
+The warning accompanies the document whose request observed the refusal,
+including pure-mode enhancement and image analysis; a document whose
+enhancement still fails with `on_failure: fail` reports only its final error. LiteLLM 1.100.1's
 `Router.should_retry_this_error` likewise moves an authentication or permission
 error to another deployment only when the group has more than one, but spends a
 retry on the move and cools a 401 deployment down only for `cooldown_time`
@@ -348,6 +371,15 @@ are capped at 60 seconds; exhausting the sleep allowance returns the last
 failure. HTTP request timeouts are separate from this sleep allowance. The
 request budget is checked before requests and before scheduling another sleep,
 so an exhausted budget does not wait needlessly.
+
+Every request sent again is reported as a warning of its document, and each
+counts toward `llm.max_requests_per_document`: a transport retry (`LLM request
+to openai/gpt-5.6-luna failed (LLM returned HTTP 503) and was sent again`), a move
+to another deployment after an empty answer, a structured answer discarded by
+validation together with the mode of the next request (`LLM tool-call answer was
+rejected (…); the request was sent again in JSON-schema mode`), a rejected visual
+batch, and image analysis falling back to separate caption and description
+requests. A discarded answer is paid; its usage stays in the totals.
 
 `llm.max_requests_per_document` counts every HTTP attempt, including failed
 requests, transport retries and fallback groups. Zero disables this budget.
@@ -572,7 +604,7 @@ The initial exact capability table is deliberately small:
 | Provider and exact model IDs | Available modes before JSON text |
 |---|---|
 | OpenAI `gpt-4.1`, `gpt-4.1-2025-04-14` | Named tools, JSON schema |
-| Anthropic `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Named tools, native JSON schema |
+| Anthropic `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Native JSON schema; its forced tool answers dropped the protected markers in live checks, costing a second request |
 | Anthropic `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, `claude-mythos-5-1` | Native JSON schema; these models restrict forced named tools |
 | Gemini `gemini-3.8-flash` through its OpenAI-compatible endpoint | JSON schema |
 | Other or unknown IDs, including Azure deployment aliases | JSON text |
@@ -599,13 +631,17 @@ validate the decoded object with the same application-owned contract. Tool
 responses may have no text body; this is valid when their typed data is valid.
 
 Each non-final mode gets one schema-validation attempt. Rejection of tools/schema
-parameters with HTTP 400/422 descends without resending the same shape. Unrelated
-invalid-input errors, explicit refusal, token-limit truncation, quota and budget
+parameters with HTTP 400/422 descends without resending the same shape. A provider
+content filter (a finish reason starting with `content_filter`, such as Gemini's
+`content_filter: RECITATION`) is an explicit refusal and its error names the
+reason. Unrelated invalid-input errors, explicit refusal, token-limit truncation, quota and budget
 failures stop the ladder; authentication failures first move to unexcluded
 sibling deployments and then configured routing fallbacks before stopping.
 Transport retries stay inside the router. Exhausted network/HTTP transport errors
 stop the ladder in every mode and do not trigger image caption/description fallback.
-The final JSON-text mode gets three validation attempts total. Response-size
+The final JSON-text mode gets three validation attempts total; each attempt
+after a rejected answer adds the rejection to the system prompt, and a response
+without any text ends the ladder after that one request. Response-size
 limits are terminal resource errors, not invalid JSON to retry or downgrade. All actual HTTP attempts
 use the same document budget, runtime permit and paid-usage accounting. Structured
 fatal responses publish cancellation before releasing their permit.
@@ -659,7 +695,8 @@ semantic fidelity; model accuracy still needs independent evaluation.
 
 The first typed visual batch follows the provider ladder above. Later plain
 cleaning batches retain at most three validation attempts for malformed output
-or violated content guards, within the shared request budget. The known minimum number
+or violated content guards, within the shared request budget; as in the ladder,
+a retry names the rejection in its system prompt. The known minimum number
 of uncached batches must fit the remaining budget before the first request.
 Transport retries, visual validation, document fallback and image analysis use
 that same budget; zero still means unlimited. Paid error and invalid responses

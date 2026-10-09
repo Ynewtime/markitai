@@ -35,7 +35,7 @@ pub(super) fn deployment(
             !model.is_empty() && model.len() <= 512 && !model.chars().any(char::is_control)
         })
         .ok_or_else(|| Error::Config("Claude model identifier is invalid".into()))?;
-    for field in ["api_key", "api_base", "max_tokens"] {
+    for field in ["api_key", "api_base", "max_tokens", "reasoning_effort"] {
         if params
             .get(field)
             .is_some_and(|value| !value.is_null() && value.as_str() != Some(""))
@@ -88,6 +88,7 @@ pub(super) fn deployment(
         endpoint,
         protocol: Protocol::Chat,
         max_tokens: None,
+        reasoning_effort: None,
         supports_vision: entry
             .pointer("/model_info/supports_vision")
             .and_then(Value::as_bool),

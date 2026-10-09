@@ -136,6 +136,7 @@ mod tests {
             endpoint: "claude-cli://fixture".into(),
             protocol: Protocol::Anthropic,
             max_tokens: None,
+            reasoning_effort: None,
             supports_vision: None,
         }
     }

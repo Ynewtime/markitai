@@ -55,12 +55,17 @@ pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
         entry.protocol,
     ) {
         ("openai", "gpt-4.1" | "gpt-4.1-2025-04-14", Protocol::Chat) => (true, true),
-        ("anthropic", "claude-haiku-4-5" | "claude-haiku-4-5-20251001", Protocol::Anthropic) => {
-            (true, true)
-        }
+        // Claude Haiku 4.5 supports forced tools, but its tool answers dropped
+        // every protected marker in both live runs of 2026-10-09 (a second,
+        // paid JSON-schema request then succeeded), so it starts at schema.
         (
             "anthropic",
-            "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-fable-5-1" | "claude-mythos-5-1",
+            "claude-haiku-4-5"
+            | "claude-haiku-4-5-20251001"
+            | "claude-opus-5-5"
+            | "claude-sonnet-5-5"
+            | "claude-fable-5-1"
+            | "claude-mythos-5-1",
             Protocol::Anthropic,
         ) => (false, true),
         ("gemini", "gemini-3.8-flash", Protocol::Chat) => (false, true),
@@ -92,6 +97,16 @@ fn modes(prompts: &Prompts, cfg: &Value, env: &HashMap<String, String>) -> Resul
     }
     result.push(Mode::JsonText);
     Ok(result)
+}
+
+impl Mode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Tools => "tool-call",
+            Self::JsonSchema => "JSON-schema",
+            Self::JsonText => "JSON-text",
+        }
+    }
 }
 
 impl Wire {
@@ -179,20 +194,16 @@ impl Wire {
             == Some("length")
             || data.get("stop_reason").and_then(Value::as_str) == Some("max_tokens")
         {
-            return Err(blocked(
-                FailureKind::Truncated,
-                "LLM output was truncated by its token limit",
-            ));
+            return Err(blocked(FailureKind::Truncated, &truncation(data)));
+        }
+        if let Some(message) = filtered(data) {
+            return Err(blocked(FailureKind::Refusal, &message));
         }
         if data
             .pointer("/choices/0/message/refusal")
             .and_then(Value::as_str)
             .is_some_and(|value| !value.is_empty())
             || data.get("stop_reason").and_then(Value::as_str) == Some("refusal")
-            || data
-                .pointer("/choices/0/finish_reason")
-                .and_then(Value::as_str)
-                == Some("content_filter")
         {
             return Err(blocked(
                 FailureKind::Refusal,
@@ -256,7 +267,7 @@ impl Wire {
                 .collect::<Vec<_>>()
                 .join("\n");
             if text.trim().is_empty() {
-                Err(invalid())
+                Err(Failure::terminal(&empty_answer(data)))
             } else {
                 Ok(text)
             }
@@ -268,9 +279,21 @@ impl Wire {
             {
                 return Err(invalid());
             }
-            let content = data
+            let Some(content) = data
                 .pointer("/choices/0/message/content")
-                .ok_or_else(invalid)?;
+                .filter(|content| !content.is_null())
+            else {
+                return Err(
+                    if data
+                        .pointer("/choices/0/message")
+                        .is_some_and(Value::is_object)
+                    {
+                        Failure::terminal(&empty_answer(data))
+                    } else {
+                        invalid()
+                    },
+                );
+            };
             let text = content
                 .as_str()
                 .map(str::to_owned)
@@ -285,7 +308,7 @@ impl Wire {
                 })
                 .ok_or_else(invalid)?;
             if text.trim().is_empty() {
-                Err(invalid())
+                Err(Failure::terminal(&empty_answer(data)))
             } else {
                 Ok(text)
             }
@@ -322,11 +345,26 @@ pub(super) fn run<T>(
     let before = document_usage().expect("structured request scope installed");
     let ladder = modes(request.prompts, cfg, env)?;
     let mut last = Error::Conversion("LLM returned no valid structured result".into());
+    let mut rejected: Option<(Mode, String)> = None;
     for mode in ladder {
         let attempts = if mode == Mode::JsonText { 3 } else { 1 };
+        // A rejected answer is never answered by the same request again: a
+        // later attempt names the rejection, so it is a different request.
+        let mut corrected = None;
         for attempt in 0..attempts {
+            // A discarded answer is paid and its follow-up request is another
+            // one: both are visible as a warning, and the budget counts both.
+            if let Some((previous, reason)) = rejected.take()
+                && !document_exhausted()
+            {
+                note_document_warning(format!(
+                    "LLM {} answer was rejected ({reason}); the request was sent again in {} mode",
+                    previous.label(),
+                    mode.label()
+                ));
+            }
             let text = match run_mode(
-                request.prompts,
+                corrected.as_ref().unwrap_or(request.prompts),
                 cfg,
                 env,
                 &mut std::thread::sleep,
@@ -350,13 +388,13 @@ pub(super) fn run<T>(
                     {
                         return Err(failure);
                     }
-                    if mode == Mode::JsonText && failure.kind != FailureKind::Validation {
+                    // An empty or malformed envelope is the provider's answer to
+                    // this exact request; sending it unchanged gets it again.
+                    if mode == Mode::JsonText {
                         return Err(failure);
                     }
+                    rejected = Some((mode, failure.error.to_string()));
                     last = failure.error;
-                    if mode == Mode::JsonText {
-                        continue;
-                    }
                     break;
                 }
             };
@@ -367,7 +405,10 @@ pub(super) fn run<T>(
                         usage_difference(&document_usage().expect("scope installed"), &before),
                     ));
                 }
-                Err(error) => last = error,
+                Err(error) => {
+                    rejected = Some((mode, error.to_string()));
+                    last = error;
+                }
             }
             if mode == Mode::JsonText
                 && attempt + 1 == attempts
@@ -383,6 +424,9 @@ pub(super) fn run<T>(
                 return Err(VisionFailure::blocked(Error::Conversion(format!(
                     "{last}; LLM per-document request budget exhausted during structured validation"
                 ))));
+            }
+            if mode == Mode::JsonText {
+                corrected = Some(super::corrected(request.prompts, &last));
             }
         }
     }
@@ -484,6 +528,40 @@ mod tests {
                 ..
             })
         ));
+    }
+    #[test]
+    fn anthropic_tools_use_a_forced_native_tool() {
+        let entry = deployments(
+            &config::normalize(&json!({"llm":{"model_list":[{"model_name":"default","litellm_params":{"model":"anthropic/claude-test","api_key":"k"}}]}}))
+                .unwrap(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .remove(0);
+        let prompts = Prompts {
+            system: "system".into(),
+            user: "user".into(),
+            image: None,
+            cache_scope: String::new(),
+        };
+        let body = Wire {
+            mode: Mode::Tools,
+            schema: Schema::Document,
+        }
+        .payload(&entry, &prompts);
+        assert_eq!(
+            body["tool_choice"],
+            json!({"type":"tool","name":"MarkitaiDocument","disable_parallel_tool_use":true})
+        );
+        assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+        assert!(body.get("response_format").is_none());
+        // Claude Haiku 4.5 starts at the schema rung.
+        let haiku = Deployment {
+            model: "claude-haiku-4-5".into(),
+            provider: "anthropic".into(),
+            ..entry
+        };
+        assert_eq!(capabilities(&haiku), (false, true));
     }
     #[test]
     fn parameter_rejection_does_not_reclassify_bad_images() {

@@ -27,8 +27,14 @@ not confused while downloading. Successful localization replaces only image
 references, including reference-style images sharing a definition with an
 ordinary link. The latter link keeps its original destination.
 
-After the document model returns, image analysis changes captions in the enhanced
-Markdown. The base Markdown retains author captions. Missing or failed images
+A document's distinct images are analysed while its text is enhanced, on as
+many requests at once as `llm.concurrency` allows. The document's first
+enhancement request is kept for it: image requests never take the last request
+the document's budget allows before the enhancement has started. When the
+document model returns, the captions replace alt text in the enhanced
+Markdown. If enhancement fails, image requests not yet sent are cancelled and
+answers already received are discarded with the enhanced body; their usage
+still counts. The base Markdown retains author captions. Missing or failed images
 retain their original references and receive warnings; an unsuccessful analysis
 does not create a success-shaped image metadata record. Duplicate image bytes
 share analysis within one conversion. The total model usage counts each paid
@@ -71,7 +77,7 @@ The existing prompt file settings are supported: `image_analysis_system/user`,
 `image_caption_system/user`, and `image_description_system/user`. Values are file
 paths, not inline prompts. Files in `prompts.dir` are also recognized. Image
 prompts can use `{source}`, `{language}`, `{document_context}`, and `{content}`;
-the two context names use the first 200 characters of enhanced document content.
+the two context names use the first 200 characters of the base document body.
 Template substitution is one pass, so tokens in inserted source content are not
 interpreted again. Built-in instructions treat the image and document as data;
 custom system files remain an explicit user-controlled instruction surface.

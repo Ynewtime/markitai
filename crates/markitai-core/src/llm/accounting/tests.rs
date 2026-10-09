@@ -19,6 +19,7 @@ fn entry() -> Deployment {
         endpoint: "https://api.openai.com/v1/chat/completions".into(),
         protocol: Protocol::Chat,
         max_tokens: None,
+        reasoning_effort: None,
         supports_vision: None,
     }
 }
