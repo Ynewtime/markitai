@@ -24,6 +24,7 @@
 
 ### Changed
 
+- Default models without `llm.model_list` move to each provider's current small model: `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, `deepseek/deepseek-flash` (the ID DeepSeek's model list reports) and `openrouter/google/gemini-3.5-flash-lite`; Gemini keeps `gemini-flash-lite-latest`. `claude-haiku-5-5` uses named tools and native JSON schema; its price is reported as unknown until the pricing snapshot includes it.
 - Omit PDF page and slide-number comments from final Markdown by default; `output.page_markers` and `--page-markers` keep them. Internal page alignment, RAG page provenance and literal code examples are preserved.
 - Write line breaks (`<br>`, manual breaks in Word/ODT/RTF/EPUB) as Markdown two-space hard breaks instead of a trailing backslash; normal output keeps them, including inside HTML list items.
 - The batch status line shows the time taken so far instead of a remaining-time estimate, which swung with item size and model requests.

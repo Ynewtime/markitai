@@ -45,7 +45,8 @@ impl Schema {
     }
 }
 
-// Exact identities verified against official provider contracts on 2026-09-29.
+// Exact identities verified against official provider contracts on 2026-09-29
+// (claude-haiku-5-5 on 2026-10-09: forced tool choice and structured outputs).
 // Sources and exclusions are recorded in the structured-transport planning doc.
 // An OpenAI-compatible endpoint or a vision flag alone establishes neither bit.
 pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
@@ -55,9 +56,11 @@ pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
         entry.protocol,
     ) {
         ("openai", "gpt-4.1" | "gpt-4.1-2025-04-14", Protocol::Chat) => (true, true),
-        ("anthropic", "claude-haiku-4-5" | "claude-haiku-4-5-20251001", Protocol::Anthropic) => {
-            (true, true)
-        }
+        (
+            "anthropic",
+            "claude-haiku-5-5" | "claude-haiku-4-5" | "claude-haiku-4-5-20251001",
+            Protocol::Anthropic,
+        ) => (true, true),
         (
             "anthropic",
             "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-fable-5-1" | "claude-mythos-5-1",

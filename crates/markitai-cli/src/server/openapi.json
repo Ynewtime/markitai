@@ -765,7 +765,7 @@
         "additionalProperties": false,
         "properties": {
           "model_name": { "type": "string", "description": "Routing group" },
-          "model": { "type": "string", "examples": ["openai/gpt-5.6-luna"] },
+          "model": { "type": "string", "examples": ["openai/gpt-6-luna"] },
           "provider": { "type": "string" },
           "api_key": { "type": "string", "description": "A literal key or `env:NAME`" },
           "api_base": { "type": "string" },

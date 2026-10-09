@@ -218,7 +218,8 @@ fn anthropic_native_tools_and_schema_use_native_shapes_and_tokens() {
     let input = source(dir.path());
     let server = Server::new(|request, index| {
         assert!(request.get("response_format").is_none());
-        if index == 0 {
+        // Haiku models take a forced named tool; Sonnet 5.5 rejects it and uses the schema.
+        if index != 1 {
             assert_eq!(
                 request["tool_choice"],
                 json!({"type":"tool","name":"MarkitaiDocument","disable_parallel_tool_use":true})
@@ -240,13 +241,14 @@ fn anthropic_native_tools_and_schema_use_native_shapes_and_tokens() {
     for model in [
         "anthropic/claude-haiku-4-5-20251001",
         "anthropic/claude-sonnet-5-5",
+        "anthropic/claude-haiku-5-5",
     ] {
         let result = run(&input, cfg(&server, dir.path(), model), None).unwrap();
         assert_eq!(result.usage.input_tokens, 5);
         assert_eq!(result.usage.requests, 1);
         assert_eq!(result.frontmatter["tags"], json!(["transport"]));
     }
-    assert_eq!(server.count(), 2);
+    assert_eq!(server.count(), 3);
 }
 
 #[test]

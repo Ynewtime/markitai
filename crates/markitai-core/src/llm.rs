@@ -42,19 +42,19 @@ const DEFAULT_MODELS: [(&str, &str, &str); 5] = [
     (
         "anthropic",
         "ANTHROPIC_API_KEY",
-        "anthropic/claude-haiku-4-5",
+        "anthropic/claude-haiku-5-5",
     ),
-    ("openai", "OPENAI_API_KEY", "openai/gpt-5.6-luna"),
+    ("openai", "OPENAI_API_KEY", "openai/gpt-6-luna"),
     (
         "gemini",
         "GEMINI_API_KEY",
         "gemini/gemini-flash-lite-latest",
     ),
-    ("deepseek", "DEEPSEEK_API_KEY", "deepseek/deepseek-v4-flash"),
+    ("deepseek", "DEEPSEEK_API_KEY", "deepseek/deepseek-flash"),
     (
         "openrouter",
         "OPENROUTER_API_KEY",
-        "openrouter/google/gemini-3.1-flash-lite",
+        "openrouter/google/gemini-3.5-flash-lite",
     ),
 ];
 
@@ -2387,9 +2387,9 @@ mod tests {
         assert_eq!(
             models,
             [
-                "anthropic/claude-haiku-4-5",
-                "openai/gpt-5.6-luna",
-                "openrouter/google/gemini-3.1-flash-lite"
+                "anthropic/claude-haiku-5-5",
+                "openai/gpt-6-luna",
+                "openrouter/google/gemini-3.5-flash-lite"
             ]
         );
     }
