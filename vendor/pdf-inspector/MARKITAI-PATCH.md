@@ -679,6 +679,14 @@ The local changes, each marked `markitai` (or, for sorts, made through
   Run in the isolated copy, the crate's unit tests give 1,720 passed and the
   same 21 failed.
 
+- `src/extractor/content_stream.rs`: in a `TJ` array, a space glyph that starts
+  the string right after an offset wrote a word break (justified text widens
+  each break with an offset before its space glyph, `<73> -130 <20>`) is that
+  break, so the words are joined by one space, not two. Consecutive space glyphs
+  stay. Covered by `crates/markitai-core/src/formats/pdf/page_tests.rs`
+  (`a_justified_word_break_is_one_space`); the crate's unit tests in the isolated
+  copy give 1,720 passed and the same 21 failed.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths, except as listed above. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,

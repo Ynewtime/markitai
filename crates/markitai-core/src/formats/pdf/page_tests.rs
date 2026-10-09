@@ -789,3 +789,25 @@ fn images_are_placed_where_they_are_drawn_among_the_lines() {
         document.warnings
     );
 }
+
+#[test]
+fn a_justified_word_break_is_one_space() {
+    // Justified text widens each break with an offset before its space
+    // glyph; a double space between words is two glyphs and stays.
+    let stream = [
+        "BT /F1 12 Tf 1 0 0 1 40 700 Tm [(Vivamus) -400 ( dapibus) -400 ( sodales) -400 ( ex,)] TJ ET",
+        "BT /F1 12 Tf 1 0 0 1 40 680 Tm [(Two  spaces) ( stay  apart.)] TJ ET",
+    ]
+    .join("\n");
+    let (bytes, _) = fixture(&[stream], false);
+    let pages = extract_pages(&bytes).unwrap();
+    let markdown = &pages.pages[0].markdown;
+    assert!(
+        markdown.contains("Vivamus dapibus sodales ex,"),
+        "{markdown:?}"
+    );
+    assert!(
+        markdown.contains("Two  spaces stay  apart."),
+        "{markdown:?}"
+    );
+}

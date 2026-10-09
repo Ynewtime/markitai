@@ -1580,6 +1580,9 @@ pub(crate) fn read_page_runs(
                         // The array's last string, when it is a wide-spaced
                         // boundary string, and the sub-run text before it.
                         let mut deferred_word_gaps: Option<(String, WordGapCandidate)> = None;
+                        // markitai: the current text ends with a space an
+                        // offset wrote, not a glyph.
+                        let mut gap_space = false;
                         // Only positioning may follow the array's last string;
                         // the next run decides for a candidate there.
                         let last_string_index = array.iter().rposition(|el| {
@@ -1644,6 +1647,7 @@ pub(crate) fn read_page_runs(
                                             && !current_text.ends_with(' ')
                                         {
                                             current_text.push(' ');
+                                            gap_space = true;
                                         }
                                     }
                                     continue;
@@ -1704,6 +1708,7 @@ pub(crate) fn read_page_runs(
                                             && !current_text.ends_with(' ')
                                         {
                                             current_text.push(' ');
+                                            gap_space = true;
                                         }
                                     }
                                     continue;
@@ -1922,7 +1927,17 @@ pub(crate) fn read_page_runs(
                                         }
                                         _ => text,
                                     };
-                                    current_text.push_str(&text);
+                                    // markitai: justified text widens a word
+                                    // break with an offset before its space
+                                    // glyph (`<73> -130 <20>`); that glyph is
+                                    // the break the offset already wrote.
+                                    match text.strip_prefix(' ') {
+                                        Some(rest) if gap_space && current_text.ends_with(' ') => {
+                                            current_text.push_str(rest)
+                                        }
+                                        _ => current_text.push_str(&text),
+                                    }
+                                    gap_space = false;
                                     current_symbol_rewrite |= legacy_symbol_rewrite;
                                 }
                             }

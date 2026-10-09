@@ -46,6 +46,7 @@
 
 ### Fixed
 
+- PDF justified text no longer shows two spaces between words where the producer widens each break with a `TJ` offset before the space glyph (the bold run of the reference `sample.pdf`).
 - A batch item's `duration_s` (and report time) is its own conversion and publication work; it no longer includes the time the item waited for its publication group to commit, which made `-j 1` item times add up to several times the wall time.
 - Legacy PPT slides keep their EMF and WMF pictures (the reference `sample.ppt`'s chart preview), decoded completely as legacy DOC pictures are, instead of omitting them as an unsupported format.
 - A frontmatter title taken from the first heading is plain text: Markdown escapes (`ZZZ\_Sheet\_1` from a Numbers sheet), link addresses and emphasis markers around it are no longer kept.
