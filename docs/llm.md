@@ -337,10 +337,9 @@ usual, and later requests fail that group without a network call. A group with a
 single deployment identity keeps the earlier rule: its authentication failure is
 not excluded, does not retry the same group, and a fallback group can still run.
 
-The warning accompanies the typed document or visual enhancement that observed
-the refusal. Pure-mode enhancement and image caption/description analysis apply
-the same exclusion but do not yet carry its warning, and a document whose
-enhancement still fails reports only its final error. LiteLLM 1.100.1's
+The warning accompanies the document whose request observed the refusal,
+including pure-mode enhancement and image analysis; a document whose
+enhancement still fails with `on_failure: fail` reports only its final error. LiteLLM 1.100.1's
 `Router.should_retry_this_error` likewise moves an authentication or permission
 error to another deployment only when the group has more than one, but spends a
 retry on the move and cools a 401 deployment down only for `cooldown_time`
@@ -352,6 +351,15 @@ are capped at 60 seconds; exhausting the sleep allowance returns the last
 failure. HTTP request timeouts are separate from this sleep allowance. The
 request budget is checked before requests and before scheduling another sleep,
 so an exhausted budget does not wait needlessly.
+
+Every request sent again is reported as a warning of its document, and each
+counts toward `llm.max_requests_per_document`: a transport retry (`LLM request
+to openai/gpt-5.6-luna failed (LLM returned HTTP 503) and was sent again`), a move
+to another deployment after an empty answer, a structured answer discarded by
+validation together with the mode of the next request (`LLM tool-call answer was
+rejected (…); the request was sent again in JSON-schema mode`), a rejected visual
+batch, and image analysis falling back to separate caption and description
+requests. A discarded answer is paid; its usage stays in the totals.
 
 `llm.max_requests_per_document` counts every HTTP attempt, including failed
 requests, transport retries and fallback groups. Zero disables this budget.

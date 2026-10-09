@@ -94,6 +94,16 @@ fn modes(prompts: &Prompts, cfg: &Value, env: &HashMap<String, String>) -> Resul
     Ok(result)
 }
 
+impl Mode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Tools => "tool-call",
+            Self::JsonSchema => "JSON-schema",
+            Self::JsonText => "JSON-text",
+        }
+    }
+}
+
 impl Wire {
     pub(super) fn payload(self, entry: &Deployment, prompts: &Prompts) -> Value {
         let mut body = super::payload(entry, prompts);
@@ -334,12 +344,24 @@ pub(super) fn run<T>(
     let before = document_usage().expect("structured request scope installed");
     let ladder = modes(request.prompts, cfg, env)?;
     let mut last = Error::Conversion("LLM returned no valid structured result".into());
+    let mut rejected: Option<(Mode, String)> = None;
     for mode in ladder {
         let attempts = if mode == Mode::JsonText { 3 } else { 1 };
         // A rejected answer is never answered by the same request again: a
         // later attempt names the rejection, so it is a different request.
         let mut corrected = None;
         for attempt in 0..attempts {
+            // A discarded answer is paid and its follow-up request is another
+            // one: both are visible as a warning, and the budget counts both.
+            if let Some((previous, reason)) = rejected.take()
+                && !document_exhausted()
+            {
+                note_document_warning(format!(
+                    "LLM {} answer was rejected ({reason}); the request was sent again in {} mode",
+                    previous.label(),
+                    mode.label()
+                ));
+            }
             let text = match run_mode(
                 corrected.as_ref().unwrap_or(request.prompts),
                 cfg,
@@ -370,6 +392,7 @@ pub(super) fn run<T>(
                     if mode == Mode::JsonText {
                         return Err(failure);
                     }
+                    rejected = Some((mode, failure.error.to_string()));
                     last = failure.error;
                     break;
                 }
@@ -381,7 +404,10 @@ pub(super) fn run<T>(
                         usage_difference(&document_usage().expect("scope installed"), &before),
                     ));
                 }
-                Err(error) => last = error,
+                Err(error) => {
+                    rejected = Some((mode, error.to_string()));
+                    last = error;
+                }
             }
             if mode == Mode::JsonText
                 && attempt + 1 == attempts

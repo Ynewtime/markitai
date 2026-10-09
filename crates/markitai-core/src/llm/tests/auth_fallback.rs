@@ -317,7 +317,11 @@ fn a_group_of_one_deployment_keeps_its_previous_policy() {
         assert!(error.to_string().contains(&format!("HTTP {status}")));
         assert_eq!(pauses, pauses_expected, "{status}");
         assert_eq!(unavailable.count(), visits, "{status}");
-        assert!(take_document_warnings().is_empty());
+        // Every retry is visible.
+        let retried = (visits > 1).then(|| {
+            format!("LLM request to openai/only failed (LLM returned HTTP {status}: the model is unavailable) and was sent again")
+        });
+        assert_eq!(take_document_warnings(), Vec::from_iter(retried));
     }
 }
 

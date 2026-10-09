@@ -648,6 +648,11 @@ fn run_batch(
     let mut failure = Error::Conversion("Invalid visual response".into());
     let mut corrected = None;
     for attempt in 0..3 {
+        if corrected.is_some() {
+            note_document_warning(format!(
+                "A visual batch answer was rejected ({failure}); the batch was sent again"
+            ));
+        }
         let (text, _) = run_controlled(
             corrected.as_ref().unwrap_or(&prompts),
             cfg,
