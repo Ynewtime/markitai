@@ -14,7 +14,9 @@ output can retain trusted fetch metadata; canonical fields and unreliable langua
 metadata are excluded from that merge.
 
 Explicit reader titles take precedence. Otherwise the basic workflow uses its
-first heading or the source stem. CSV, TSV and XML fall back to the complete source
+first heading, as plain text (link text without the address, no emphasis
+markers around it, backslash escapes undone: `# ZZZ\_Sheet\_1` gives
+`ZZZ_Sheet_1`), or the source stem. CSV, TSV and XML fall back to the complete source
 filename because a data row or element name is not a reliable document title.
 
 Ordinary Markdown receives heading spacing, trailing whitespace (a hard break's

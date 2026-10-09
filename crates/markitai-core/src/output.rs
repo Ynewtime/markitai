@@ -392,8 +392,8 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
             .then(|| {
                 markdown.trim_start().lines().find_map(|line| {
                     if line.starts_with("# ") || line.starts_with("##") {
-                        let title = line.trim_start_matches('#').trim().replace("**", "");
-                        (!title.trim().is_empty()).then(|| title.trim().to_owned())
+                        let title = heading_title(&line.trim_start_matches('#').replace("**", ""));
+                        (!title.is_empty()).then_some(title)
                     } else {
                         None
                     }
@@ -461,6 +461,22 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
         warnings: std::mem::take(&mut doc.warnings),
         ..Default::default()
     }
+}
+
+/// A Markdown heading's text as a plain title: links, inline tags and
+/// emphasis read as [`normalize_title`] reads them, and backslash escapes
+/// undone (`ZZZ\_Sheet\_1` is `ZZZ_Sheet_1`).
+fn heading_title(heading: &str) -> String {
+    let text = normalize_title(heading);
+    let mut title = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match chars.peek() {
+            Some(next) if ch == '\\' && next.is_ascii_punctuation() => {}
+            _ => title.push(ch),
+        }
+    }
+    title.trim().to_owned()
 }
 
 fn normalize_title(title: &str) -> String {
@@ -1677,6 +1693,23 @@ mod tests {
         let mut cfg = config::defaults();
         let normal = prepare("existing.md", "existing.md", &mut document, &cfg);
         assert_eq!(normal.frontmatter["title"], "Heading");
+        // A heading's escapes and emphasis are not part of the title.
+        for (heading, title) in [
+            ("# ZZZ\\_Sheet\\_1", "ZZZ_Sheet_1"),
+            (
+                "## Notes on \\*stars\\* and C:\\\\temp",
+                "Notes on *stars* and C:\\temp",
+            ),
+            ("# *Emphasized*", "Emphasized"),
+            ("# [Linked](https://example.test) title", "Linked title"),
+        ] {
+            let mut heading_only = Document {
+                markdown: format!("{heading}\n\nBody"),
+                ..Default::default()
+            };
+            let output = prepare("sheet.numbers", "sheet.numbers", &mut heading_only, &cfg);
+            assert_eq!(output.frontmatter["title"], title, "{heading}");
+        }
         assert!(!normal.frontmatter.contains_key("author"));
         assert_eq!(
             normal.markdown,
