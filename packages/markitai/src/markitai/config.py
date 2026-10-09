@@ -348,12 +348,12 @@ class LLMConfig(BaseModel):
     max_requests_per_document: int = Field(
         default=DEFAULT_MAX_REQUESTS_PER_DOCUMENT,
         ge=0,
-        description="Circuit breaker: max LLM requests per document context, counting every attempt (retries included). When exceeded, remaining enhancement for that document is skipped and the unenhanced output is kept (logged + marked in the usage report). The default covers a ~400-page document plus a healthy retry allowance; raise it for larger documents. 0 disables the cap.",
+        description="Circuit breaker: max LLM requests per document, counting every attempt (retries included) of all its stages together (text enhancement and image analysis). When exceeded, remaining enhancement for that document is skipped and the unenhanced output is kept (logged + marked in the usage report). The default covers a ~400-page document plus a healthy retry allowance; raise it for larger documents. 0 disables the cap.",
     )
     max_cost_per_document_usd: float = Field(
         default=0.0,
         ge=0.0,
-        description="Circuit breaker: max USD one document context may spend. Charged after each answer (a call's price is not knowable before making it), so the cap bounds what a document goes on to spend rather than the single call that crosses it. On trip, the rest of that document's enhancement is skipped and the unenhanced output is kept. 0 (default) disables the cap — a limit guessed for someone else's workload turns a large legitimate run into a silent downgrade.",
+        description="Circuit breaker: max USD one document may spend, all its stages together. Charged after each answer (a call's price is not knowable before making it), so the cap bounds what a document goes on to spend rather than the single call that crosses it. On trip, the rest of that document's enhancement is skipped and the unenhanced output is kept. 0 (default) disables the cap — a limit guessed for someone else's workload turns a large legitimate run into a silent downgrade.",
     )
     max_vision_pages_per_document: int = Field(
         default=0,

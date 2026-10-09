@@ -22,6 +22,8 @@ from markitai.llm.engine import (
     LLMEnhancementDegradedError,
     LLMRequestBudgetExceededError,
     RequestBudget,
+    llm_document_budget,
+    llm_usage_scope,
 )
 from markitai.llm.processor import REQUEST_BUDGET_EXCEEDED_MARKER, LLMProcessor
 from markitai.llm.types import Frontmatter
@@ -274,3 +276,100 @@ class TestProcessorBudgetEndToEnd:
         with pytest.raises(LLMEnhancementDegradedError):
             await processor.process_document("# T\n\nBody.", "doc.pdf")
         assert router.acompletion.call_count == 2  # one fresh request allowed
+
+
+class TestDocumentBudget:
+    """llm.max_requests_per_document bounds the document, not each stage.
+
+    A document's text enhancement tracks under its name (``a.pptx``) and its
+    image analysis under ``/abs/a.pptx:images``; with a budget per context,
+    cap 3 let ``sample.pptx --alt --desc`` make 6 attempts.
+    """
+
+    def test_stages_of_one_document_share_the_cap(self):
+        budget = RequestBudget(limit=3)
+        with llm_usage_scope("/abs/a.pptx"):
+            budget.spend("a.pptx")
+            budget.spend("/abs/a.pptx:images")
+            budget.spend("a.pptx")
+            with pytest.raises(LLMRequestBudgetExceededError):
+                budget.spend("/abs/a.pptx:images")
+            assert budget.exceeded("a.pptx") is True
+            assert budget.remaining("/abs/a.pptx:images") == 0
+
+    def test_a_finished_stage_does_not_refund_its_requests(self):
+        budget = RequestBudget(limit=2)
+        with llm_usage_scope("/abs/a.pptx"):
+            budget.spend("/abs/a.pptx:images")
+            budget.spend("/abs/a.pptx:images")
+            budget.clear("/abs/a.pptx:images")  # the image stage is done
+            with pytest.raises(LLMRequestBudgetExceededError):
+                budget.spend("a.pptx")
+
+    def test_each_document_gets_its_own_budget(self):
+        """Also the same file converted again later in one process."""
+        budget = RequestBudget(limit=1)
+        for _ in range(2):
+            with llm_usage_scope("/abs/a.pptx"):
+                budget.spend("a.pptx")
+                with pytest.raises(LLMRequestBudgetExceededError):
+                    budget.spend("/abs/a.pptx:images")
+        with llm_document_budget():
+            budget.spend("b.pdf")
+
+    def test_cost_limit_is_per_document(self):
+        budget = RequestBudget(limit=0, cost_limit=1.0)
+        with llm_document_budget():
+            budget.charge("a.pptx", 0.6)
+            budget.charge("/abs/a.pptx:images", 0.6)
+            with pytest.raises(LLMRequestBudgetExceededError):
+                budget.spend("a.pptx")
+
+    @pytest.mark.asyncio
+    async def test_concurrent_stages_make_at_most_cap_requests(self):
+        """Both stages failing in parallel spend from one cap of 3."""
+        processor, router = TestProcessorBudgetEndToEnd._processor(limit=3)
+        with llm_usage_scope("/abs/a.pptx"):
+            results = await asyncio.gather(
+                processor.process_document("# T\n\nSlide text.", "a.pptx"),
+                processor.process_document("# T\n\nAlt text.", "/abs/a.pptx:images"),
+                return_exceptions=True,
+            )
+        assert all(isinstance(r, Exception) for r in results)
+        assert router.acompletion.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_url_cascade_stages_share_one_budget(self, tmp_path):
+        """A URL's text and image stages run in one document budget too."""
+        from markitai.config import MarkitaiConfig
+        from markitai.fetch_types import FetchResult
+        from markitai.workflow.url import convert_url_cascade
+
+        budget = RequestBudget(limit=2)
+        refused: list[str] = []
+
+        async def stage(markdown, url, cfg, output_file, fetch_result, proc):
+            budget.spend(url)
+            budget.spend(f"{output_file.with_suffix('.llm.md')}:images")
+            try:
+                budget.spend(url)
+            except LLMRequestBudgetExceededError as exc:
+                refused.append(str(exc))
+            return None, 0.0, {}, None
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.cache.enabled = False
+        await convert_url_cascade(
+            "https://example.com/x",
+            cfg,
+            tmp_path / "out",
+            fetch_result=FetchResult(
+                content="# Page\n\nbody",
+                strategy_used="static",
+                url="https://example.com/x",
+            ),
+            processor=MagicMock(),
+            llm_stage=stage,
+        )
+        assert len(refused) == 1

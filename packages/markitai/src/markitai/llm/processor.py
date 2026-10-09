@@ -999,6 +999,9 @@ class LLMProcessor:
     def clear_context_usage(self, context: str) -> None:
         """Clear usage tracking (and request budget) for a specific context.
 
+        Inside a document block the request budget belongs to the document
+        and outlives its contexts (see ``RequestBudget.clear``).
+
         Thread-safe: uses lock for safe modification.
 
         Args:
