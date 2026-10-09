@@ -175,7 +175,11 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   elements are read only when the picture's `<img>` shows nothing but an inline
   placeholder: the largest candidate of the first source set stands for it.
   Otherwise their types and media queries choose between formats and crops, not
-  sizes, and the `<img>` stands. The lines of an alt text or title are joined with
+  sizes, and the `<img>` stands. An image with no address, or only an inline
+  placeholder, and no usable set takes the first `data-` attribute holding one
+  absolute or root-relative image file address (`data-image-loader`, a site's own
+  lazy-loading name); a relative path or a page address there is not read. The
+  lines of an alt text or title are joined with
   a space, so a figure's description is not cut at its first line, and an empty
   title is left out (`![](a.webp "")` becomes `![](a.webp)`).
 - A lazy-loading page's `<noscript>` fallback stands for its image: a

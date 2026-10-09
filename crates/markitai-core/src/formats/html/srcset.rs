@@ -218,12 +218,81 @@ pub(super) fn image(element: &scraper::node::Element) -> Option<&str> {
             plain
         };
     }
-    plain
+    match plain {
+        Some(url) if !placeholder(url) => Some(url),
+        _ => lazy_address(element).or(plain),
+    }
+}
+
+/// A lazy-loading address under an attribute name this reader does not know
+/// (`data-image-loader`, `data-lazy-url`): the first `data-` attribute whose
+/// value is one absolute or root-relative address of an image file. Read
+/// only for an image with no address, or an inline placeholder.
+fn lazy_address(element: &scraper::node::Element) -> Option<&str> {
+    element.attrs.iter().find_map(|(name, value)| {
+        let value = value.trim();
+        let located = value.starts_with("https://")
+            || value.starts_with("http://")
+            || value.starts_with("//")
+            || (value.starts_with('/') && !value.starts_with("//"));
+        let path = value.split(['?', '#']).next().unwrap_or_default();
+        let image = path.rsplit_once('.').is_some_and(|(_, extension)| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "svg" | "bmp"
+            )
+        });
+        (name.local.starts_with("data-")
+            && located
+            && image
+            && !value.contains(char::is_whitespace))
+        .then_some(value)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unknown_lazy_attribute_stands_in_for_a_placeholder_only() {
+        let image = |markup: &str| {
+            let fragment = scraper::Html::parse_fragment(markup);
+            let element = fragment
+                .root_element()
+                .descendants()
+                .filter_map(scraper::ElementRef::wrap)
+                .find(|element| element.value().name() == "img")
+                .unwrap()
+                .value()
+                .clone();
+            image(&element).map(str::to_owned)
+        };
+        let placeholder = "data:image/svg+xml,%3Csvg%3E%3C/svg%3E";
+        assert_eq!(
+            image(&format!(
+                r#"<img src="{placeholder}" data-image-loader="https://i.test/a-17.png" data-image-path="reviews/a-17.png">"#
+            ))
+            .as_deref(),
+            Some("https://i.test/a-17.png")
+        );
+        assert_eq!(
+            image(r#"<img data-lazy-url="/media/b.webp?w=800">"#).as_deref(),
+            Some("/media/b.webp?w=800")
+        );
+        // A real address stays; a relative path, a page or two words are no image address.
+        assert_eq!(
+            image(r#"<img src="real.jpg" data-loader="https://i.test/other.png">"#).as_deref(),
+            Some("real.jpg")
+        );
+        assert_eq!(
+            image(&format!(
+                r#"<img src="{placeholder}" data-path="reviews/c.png" data-href="https://i.test/page.html" data-x="/a.png /b.png">"#
+            ))
+            .as_deref(),
+            Some(placeholder)
+        );
+    }
 
     #[test]
     fn the_widest_candidate_wins_then_the_densest() {

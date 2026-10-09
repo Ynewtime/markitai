@@ -46,6 +46,7 @@
 
 ### Fixed
 
+- HTML: a lazy-loaded image whose address is in a site's own `data-` attribute (`data-image-loader`) behind an inline placeholder is kept, instead of being dropped with the placeholder.
 - A PDF page that binds a large image in its resources but never draws it is read as the text page it is, without the warning that it was "read as plain text because it looked like a scan" (page 5 of the reference `sample.pdf`).
 - PDF justified text no longer shows two spaces between words where the producer widens each break with a `TJ` offset before the space glyph (the bold run of the reference `sample.pdf`).
 - A batch item's `duration_s` (and report time) is its own conversion and publication work; it no longer includes the time the item waited for its publication group to commit, which made `-j 1` item times add up to several times the wall time.
