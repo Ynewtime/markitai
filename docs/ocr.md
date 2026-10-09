@@ -271,6 +271,13 @@ still receives the ordinary no-text warning.
 - Spaces between numbers and words, code symbols and small glyphs can change.
 - First recognition and first model loading can be much slower than subsequent
   calls. Download time, cold caches and parallel work are separate costs.
+- Work is spread over the processor's cores: text detection runs its matrix
+  kernels on up to eight threads, the direction classifier and the first
+  recognizer are prepared while the first image's text is detected, lines are
+  read side by side (an image with one or two lines uses the detection threads),
+  and a PDF's scanned pages are recognized two at a time while the next page
+  renders. Results are the same as on one thread; a multi-page scan holds two
+  pages' detection memory at once (about 300 bytes per page pixel each).
 - Model files are additional installed disk space, separate from the CLI binary.
 
 Measured quality and performance have specific source, platform and corpus

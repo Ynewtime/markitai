@@ -173,7 +173,9 @@ impl Detector {
         let plan = self.plan(layout.width, layout.height)?;
         let shape = [1, 3, layout.height as usize, layout.width as usize];
         let data = detect::input(image, &layout);
-        let (map, out) = run(&plan, &shape, data, DETECTOR)?;
+        let (map, out) = tract_linalg::multithread::multithread_tract_scope(executor(), || {
+            run(&plan, &shape, data, DETECTOR)
+        })?;
         if !detection_shape(&out, map.len(), layout.width, layout.height) {
             return Err(failure("detection model returned a map of the wrong size"));
         }
@@ -182,6 +184,25 @@ impl Detector {
             &layout,
         )
     }
+}
+
+/// The threads tract's matrix kernels share for a detection: a page's
+/// convolutions split over its rows, with the same results as on one thread.
+fn executor() -> tract_linalg::multithread::Executor {
+    static EXECUTOR: std::sync::OnceLock<tract_linalg::multithread::Executor> =
+        std::sync::OnceLock::new();
+    EXECUTOR
+        .get_or_init(|| {
+            let threads = std::thread::available_parallelism()
+                .map_or(1, |n| n.get())
+                .min(8);
+            if threads > 1 {
+                tract_linalg::multithread::Executor::multithread_with_name(threads, "markitai-ocr")
+            } else {
+                tract_linalg::multithread::Executor::SingleThread
+            }
+        })
+        .clone()
 }
 
 fn detection_shape(shape: &[usize], values: usize, width: u32, height: u32) -> bool {
@@ -275,10 +296,9 @@ impl Recognizer {
     }
 }
 
-/// The detector and the direction classifier, loaded once per process.
+/// The detector, loaded once per process.
 struct Engine {
     detector: Detector,
-    classifier: Plan,
 }
 
 fn engine() -> Result<Arc<Engine>> {
@@ -291,22 +311,27 @@ fn engine() -> Result<Arc<Engine>> {
         model: parse(DETECTOR, models::Role::Detect)?,
         plans: Mutex::new(Vec::new()),
     };
-    let classifier = plan(
-        parse(CLASSIFIER, models::Role::Classify)?,
-        [
-            Some(classify::BATCH),
-            Some(3),
-            Some(classify::HEIGHT as usize),
-            Some(classify::WIDTH as usize),
-        ],
-        CLASSIFIER,
-    )?;
-    let engine = Arc::new(Engine {
-        detector,
-        classifier,
-    });
+    let engine = Arc::new(Engine { detector });
     *slot = Some(engine.clone());
     Ok(engine)
+}
+
+static CLASSIFIERS: Loads<Plan> = Loads::new();
+
+/// The direction classifier, loaded once per process.
+fn classifier() -> Result<Arc<Plan>> {
+    CLASSIFIERS.get(CLASSIFIER, || {
+        plan(
+            parse(CLASSIFIER, models::Role::Classify)?,
+            [
+                Some(classify::BATCH),
+                Some(3),
+                Some(classify::HEIGHT as usize),
+                Some(classify::WIDTH as usize),
+            ],
+            CLASSIFIER,
+        )
+    })
 }
 
 /// Values loaded once per process, by name. Each name loads under its own
@@ -406,9 +431,23 @@ struct Cut {
 }
 
 /// The text lines of `image`, cut out upright, and whether it had more than
-/// [`detect::MAX_REGIONS`].
-fn cuts(engine: &Engine, image: &RgbImage) -> Result<(Vec<Cut>, bool)> {
-    let (regions, capped) = engine.detector.regions(image)?;
+/// [`detect::MAX_REGIONS`]. The classifier and the recognizer `reader` load
+/// on their own threads while the detector reads the image, the first time
+/// in a process: optimizing a model takes a tenth of a second or more.
+fn cuts(engine: &Engine, image: &RgbImage, reader: &'static str) -> Result<(Vec<Cut>, bool)> {
+    let (detected, classifier) = std::thread::scope(|scope| {
+        let classifier = scope.spawn(classifier);
+        // A failure is reported when the lines are read with it.
+        let reader = scope.spawn(move || recognizer(reader).map(drop));
+        let detected = engine.detector.regions(image);
+        let _ = reader.join();
+        let classifier = classifier
+            .join()
+            .unwrap_or_else(|_| Err(failure("the classifier failed to load")));
+        (detected, classifier)
+    });
+    let (regions, capped) = detected?;
+    let classifier = classifier?;
     let mut cuts = Vec::with_capacity(regions.len());
     for region in &regions {
         let [tl, tr, _, bl] = region.corners;
@@ -447,7 +486,7 @@ fn cuts(engine: &Engine, image: &RgbImage) -> Result<(Vec<Cut>, bool)> {
             classify::HEIGHT as usize,
             classify::WIDTH as usize,
         ];
-        let (answers, _) = run(&engine.classifier, &shape, data, CLASSIFIER)?;
+        let (answers, _) = run(&classifier, &shape, data, CLASSIFIER)?;
         let turned = classify::upside_down(&answers, batch.len())?;
         for (cut, over) in batch.iter_mut().zip(turned) {
             cut.flagged = over;
@@ -513,6 +552,13 @@ fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
             done.push((index, read_cut(recognizer, cut)?));
         }
     };
+    // One or two lines (a label, a caption) share the detector's threads;
+    // more are read side by side, one thread each.
+    if cuts.len() <= 2 {
+        return tract_linalg::multithread::multithread_tract_scope(executor(), || {
+            cuts.iter().map(|cut| read_cut(recognizer, cut)).collect()
+        });
+    }
     let helpers = take_helpers(MAX_HELPERS_PER_IMAGE.min(cuts.len().saturating_sub(1)));
     let results: Vec<Result<Vec<(usize, Line)>>> = std::thread::scope(|scope| {
         let spawned: Vec<_> = (0..helpers).map(|_| scope.spawn(work)).collect();
@@ -681,7 +727,11 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
     let choice = choice(spelling)?;
     models::preflight(&needed(spelling)?)?;
     let engine = engine()?;
-    let (cuts, capped) = cuts(&engine, image)?;
+    let reader = match choice {
+        Choice::Model(name) => name,
+        Choice::Default => MULTILINGUAL,
+    };
+    let (cuts, capped) = cuts(&engine, image, reader)?;
     let (lines, language, unread) = match choice {
         Choice::Model(name) => {
             let all: Vec<&Cut> = cuts.iter().collect();

@@ -2114,6 +2114,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tiff",
+ "tract-linalg",
  "tract-onnx",
  "tungstenite",
  "url",
@@ -4169,6 +4170,7 @@ dependencies = [
  "minijinja",
  "num-traits",
  "pastey",
+ "rayon",
  "tract-data",
  "walkdir",
 ]

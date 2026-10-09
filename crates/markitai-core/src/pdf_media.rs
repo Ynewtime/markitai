@@ -684,11 +684,79 @@ pub(crate) fn capture_external_pdf(
     Ok(captured)
 }
 
+const WEBP_NOTE: &str =
+    "PDF screenshots use lossless WebP; image.quality does not affect this encoder.";
+
+/// Scanned pages recognized at once; a recognition's detection holds about
+/// 300 bytes per page pixel while it runs.
+const OCR_PAGES_AT_ONCE: usize = 2;
+
+/// A rendered page: its screenshot's diagnostics and its recognition, if any.
+struct Pending<'scope> {
+    index: usize,
+    warnings: Vec<String>,
+    recognition: Option<std::thread::ScopedJoinHandle<'scope, Result<ocr::OcrResult>>>,
+}
+
+/// Write a rendered page's diagnostics and recognized text, in page order.
+fn apply_page(pages: &mut PdfPages, counts: &mut OcrCounts, done: Pending<'_>) -> Result<()> {
+    pages.document.warnings.extend(done.warnings);
+    let Some(recognition) = done.recognition else {
+        return Ok(());
+    };
+    let page = &mut pages.pages[done.index];
+    let result = recognition
+        .join()
+        .unwrap_or_else(|_| Err(failure("a recognition thread failed")))
+        .map_err(|error| failure(format!("local OCR failed on page {}: {error}", page.number)))?;
+    if result.unread {
+        pages
+            .document
+            .warnings
+            .push(ocr::unread_warning(&format!("PDF page {}", page.number)));
+    }
+    if result.capped {
+        pages
+            .document
+            .warnings
+            .push(ocr::capped_warning(&format!("PDF page {}", page.number)));
+    }
+    page.markdown = result.text;
+    page.needs_ocr = false;
+    page.ocr_reason = None;
+    page.ocr_completed = true;
+    // The page's text is now this recognition's, not its OCR layer's.
+    page.ocr_layer = None;
+    if page.markdown.trim().is_empty() {
+        counts.blank += 1;
+        pages.document.warnings.push(format!(
+            "PDF page {}: local OCR completed with no recognized text.",
+            page.number
+        ));
+    } else {
+        counts.nonempty += 1;
+    }
+    Ok(())
+}
+
 pub(crate) fn prepare(
     bytes: &[u8],
     prefix: &str,
     cfg: &Value,
     vlm_optout: bool,
+) -> Result<PreparedPdf> {
+    prepare_with(bytes, prefix, cfg, vlm_optout, &ocr::recognize_rgb)
+}
+
+/// What recognizes a rendered page; [`ocr::recognize_rgb`] outside tests.
+type Recognize<'a> = dyn Fn(RgbImage, &Value) -> Result<ocr::OcrResult> + Sync + 'a;
+
+fn prepare_with(
+    bytes: &[u8],
+    prefix: &str,
+    cfg: &Value,
+    vlm_optout: bool,
+    recognize: &Recognize<'_>,
 ) -> Result<PreparedPdf> {
     validate_name(prefix)?;
     let mut pages = extract_pdf_pages_bounded_with_config(bytes, MAX_PAGES, cfg)?;
@@ -729,69 +797,78 @@ pub(crate) fn prepare(
             "VLM OCR is disabled; only locally extracted text is used for PDF LLM enhancement."
         }.into());
     }
-    for (&index, &size) in render_indices.iter().zip(&sizes) {
-        let page = &mut pages.pages[index];
-        let pixels = session
-            .as_ref()
-            .expect("render indices require a session")
-            .render(page.number, DPI)?;
-        if pixels.dimensions() != size {
-            return Err(failure(
-                "rendered dimensions changed after budget validation",
-            ));
-        }
-        if plan.screenshots {
-            let encoded = encode_screenshot(&pixels, cfg, MAX_SHOT_BYTES, None)?;
-            budget.screenshot(encoded.bytes.len())?;
-            if encoded.fallback {
-                pages.document.warnings.push(format!("PDF page {}: screenshot size required JPEG compression fallback.", page.number));
-            } else if encoded.format == Encoding::Webp && !pages.document.warnings.iter().any(|warning| warning == "PDF screenshots use lossless WebP; image.quality does not affect this encoder.") {
-                pages.document.warnings.push("PDF screenshots use lossless WebP; image.quality does not affect this encoder.".into());
-            }
-            screenshots.push(Asset {
-                name: format!(
-                    "{prefix}.page{:04}.{}",
-                    page.number,
-                    encoded.format.extension()
-                ),
-                bytes: encoded.bytes,
-            });
-            screenshot_pages.push(index);
-        }
-        if plan.recognize[index] {
-            counts.attempted += 1;
-            let result = ocr::recognize_rgb(pixels, cfg).map_err(|error| {
-                failure(format!("local OCR failed on page {}: {error}", page.number))
-            })?;
-            if result.unread {
-                pages
-                    .document
-                    .warnings
-                    .push(ocr::unread_warning(&format!("PDF page {}", page.number)));
-            }
-            if result.capped {
-                pages
-                    .document
-                    .warnings
-                    .push(ocr::capped_warning(&format!("PDF page {}", page.number)));
-            }
-            page.markdown = result.text;
-            page.needs_ocr = false;
-            page.ocr_reason = None;
-            page.ocr_completed = true;
-            // The page's text is now this recognition's, not its OCR layer's.
-            page.ocr_layer = None;
-            if page.markdown.trim().is_empty() {
-                counts.blank += 1;
-                pages.document.warnings.push(format!(
-                    "PDF page {}: local OCR completed with no recognized text.",
-                    page.number
+    // Pages are rendered here, in order (a session stays on its thread), and
+    // recognized on up to OCR_PAGES_AT_ONCE threads at once. Each page's
+    // diagnostics are written in page order once its recognition is in.
+    let mut webp_noted = false;
+    std::thread::scope(|scope| -> Result<()> {
+        let mut pending: std::collections::VecDeque<Pending<'_>> =
+            std::collections::VecDeque::new();
+        for (&index, &size) in render_indices.iter().zip(&sizes) {
+            let number = pages.pages[index].number;
+            let pixels = session
+                .as_ref()
+                .expect("render indices require a session")
+                .render(number, DPI)?;
+            if pixels.dimensions() != size {
+                return Err(failure(
+                    "rendered dimensions changed after budget validation",
                 ));
-            } else {
-                counts.nonempty += 1;
+            }
+            let mut warnings = Vec::new();
+            if plan.screenshots {
+                let encoded = encode_screenshot(&pixels, cfg, MAX_SHOT_BYTES, None)?;
+                budget.screenshot(encoded.bytes.len())?;
+                if encoded.fallback {
+                    warnings.push(format!(
+                        "PDF page {number}: screenshot size required JPEG compression fallback."
+                    ));
+                } else if encoded.format == Encoding::Webp
+                    && !webp_noted
+                    && !pages
+                        .document
+                        .warnings
+                        .iter()
+                        .any(|warning| warning == WEBP_NOTE)
+                {
+                    webp_noted = true;
+                    warnings.push(WEBP_NOTE.into());
+                }
+                screenshots.push(Asset {
+                    name: format!("{prefix}.page{number:04}.{}", encoded.format.extension()),
+                    bytes: encoded.bytes,
+                });
+                screenshot_pages.push(index);
+            }
+            // Wait for the oldest recognition only when another would
+            // exceed the limit: the next page renders while two run.
+            if plan.recognize[index] {
+                while pending.iter().filter(|p| p.recognition.is_some()).count()
+                    >= OCR_PAGES_AT_ONCE
+                {
+                    let next = pending.pop_front().expect("a page is pending");
+                    apply_page(&mut pages, &mut counts, next)?;
+                }
+            }
+            let recognition = plan.recognize[index].then(|| {
+                counts.attempted += 1;
+                scope.spawn(move || recognize(pixels, cfg))
+            });
+            pending.push_back(Pending {
+                index,
+                warnings,
+                recognition,
+            });
+            while pending.front().is_some_and(|p| p.recognition.is_none()) {
+                let next = pending.pop_front().expect("a page is pending");
+                apply_page(&mut pages, &mut counts, next)?;
             }
         }
-    }
+        while let Some(next) = pending.pop_front() {
+            apply_page(&mut pages, &mut counts, next)?;
+        }
+        Ok(())
+    })?;
     let picture_counts = if plan.local_ocr {
         recognize_native_pictures(&mut pages, &plan, cfg, &mut budget)?
     } else {
@@ -1291,6 +1368,102 @@ mod tests {
         );
         // A picture without text is ordinary and only counted.
         assert!(warnings.is_empty());
+    }
+
+    /// Image-only pages, each one gray of its own (page `n` at `40 * n`).
+    fn scans(count: u8) -> Vec<u8> {
+        use lopdf::{Dictionary, Object, Stream, dictionary};
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let tree = pdf.new_object_id();
+        let mut kids = Vec::new();
+        for page in 1..=count {
+            let gray = 40 * page;
+            let image = pdf.add_object(Stream::new(
+                dictionary! {
+                    "Type" => "XObject", "Subtype" => "Image", "Width" => 1, "Height" => 1,
+                    "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8
+                },
+                vec![gray; 3],
+            ));
+            let content = pdf.add_object(Stream::new(
+                Dictionary::new(),
+                b"q 72 0 0 96 0 0 cm /Scan Do Q".to_vec(),
+            ));
+            kids.push(Object::Reference(pdf.add_object(dictionary! {
+                "Type" => "Page", "Parent" => tree, "Contents" => content,
+                "Resources" => dictionary! { "XObject" => dictionary! { "Scan" => image } }
+            })));
+        }
+        pdf.objects.insert(
+            tree,
+            dictionary! {
+                "Type" => "Pages", "Count" => i64::from(count), "Kids" => kids,
+                "MediaBox" => vec![0.into(), 0.into(), 72.into(), 96.into()]
+            }
+            .into(),
+        );
+        let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        pdf.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn scanned_pages_are_recognized_two_at_a_time_and_written_in_page_order() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (running, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let recognize = |pixels: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            let (width, height) = pixels.dimensions();
+            let page = (u64::from(pixels.get_pixel(width / 2, height / 2).0[0]) + 20) / 40;
+            // Earlier pages take longer, so later ones finish first.
+            std::thread::sleep(std::time::Duration::from_millis(80 * (5 - page)));
+            running.fetch_sub(1, Ordering::SeqCst);
+            Ok(ocr::OcrResult {
+                text: if page == 2 {
+                    String::new()
+                } else {
+                    format!("Recognized page {page}.")
+                },
+                confidence: 1.0,
+                boxes: Vec::new(),
+                scale: 1.0,
+                language: "test".into(),
+                unread: page == 3,
+                capped: false,
+            })
+        };
+        let cfg =
+            json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});
+        let prepared = prepare_with(&scans(4), "scan.pdf", &cfg, false, &recognize).unwrap();
+        assert_eq!(most.load(Ordering::SeqCst), OCR_PAGES_AT_ONCE);
+        let (document, _) = prepared.finish().unwrap();
+        let markdown = &document.markdown;
+        let at = |text: &str| {
+            markdown
+                .find(text)
+                .unwrap_or_else(|| panic!("{text}: {markdown}"))
+        };
+        assert!(
+            at("Recognized page 1.") < at("Recognized page 3.")
+                && at("Recognized page 3.") < at("Recognized page 4.")
+        );
+        assert_eq!(document.metadata["ocr_pages_attempted"], 4);
+        assert_eq!(document.metadata["ocr_pages_blank"], 1);
+        // Each page's notices in page order, though page 3 finished first.
+        let warning = |text: &str| {
+            document
+                .warnings
+                .iter()
+                .position(|warning| warning.contains(text))
+                .unwrap_or_else(|| panic!("{text}: {:?}", document.warnings))
+        };
+        assert!(
+            warning("PDF page 2: local OCR completed with no recognized text")
+                < warning("PDF page 3")
+        );
     }
 
     #[cfg(target_os = "macos")]
