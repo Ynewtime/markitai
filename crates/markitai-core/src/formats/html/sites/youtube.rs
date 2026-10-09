@@ -130,7 +130,12 @@ fn player_response(document: &Html) -> Option<Value> {
             let at = text.find("ytInitialPlayerResponse")?;
             let rest = &text[at..];
             let start = rest.find('{')?;
-            let rest = &rest[start..rest.len().min(start + MAX_SCRIPT)];
+            // The read limit may fall inside a character; end before it.
+            let mut end = rest.len().min(start + MAX_SCRIPT);
+            while !rest.is_char_boundary(end) {
+                end -= 1;
+            }
+            let rest = &rest[start..end];
             serde_json::Deserializer::from_str(rest)
                 .into_iter::<Value>()
                 .next()?
@@ -273,5 +278,16 @@ mod tests {
         assert!(markdown.contains("Views: 42"), "{markdown}");
         assert!(!markdown.contains("Before you continue"), "{markdown}");
         assert_eq!(document.metadata["published"], "2024-03-15T07:00:00-07:00");
+    }
+
+    #[test]
+    fn a_player_response_longer_than_the_read_limit_is_cut_at_a_character() {
+        // The limit falls inside a two-byte character of an oversized script.
+        let filler = "é".repeat(super::MAX_SCRIPT / 2 + 1);
+        let page = format!(
+            r#"<html><body><p>Page text</p><script>var ytInitialPlayerResponse = {{"ab":"{filler}"}};</script></body></html>"#
+        );
+        let document = extract_html(&page, Some("https://www.youtube.com/watch?v=abc")).unwrap();
+        assert!(document.markdown.contains("Page text"), "{}", document.markdown);
     }
 }
