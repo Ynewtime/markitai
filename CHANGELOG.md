@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- HTML: a lazy-loading page's `<noscript>` image fallbacks are kept as images instead of being dropped, and a `<picture>` whose `<img>` is only an inline placeholder takes the address of its first `<source>` set.
 - PDF text drawn outside the visible page area (CropBox) is left out of the body with a warning giving the number of items, as a viewer never shows it; a single such line was extracted before, because only neighboring-page paragraphs were clipped.
 - A serve job snapshot's job-level `options` lists only the supported option keys, as each item's `options` already did, instead of echoing everything saved with the job: the stored `remote_processing` consent and CLI history metadata such as `origin` are no longer returned.
 - The workbench's detected models come from the same table and environment as conversions: API keys in `.env` files count, as they do for `MODEL`-less conversions, the list follows the pool's priority (Anthropic, OpenAI, Gemini, DeepSeek, OpenRouter) instead of starting with OpenAI, and `MODEL` is also read from `.env`. Workbench conversions without a `llm.model_list` use that same pool, so with several keys they now try Anthropic first, as CLI conversions do. A key that is only whitespace no longer adds its provider to a conversion's automatic pool.

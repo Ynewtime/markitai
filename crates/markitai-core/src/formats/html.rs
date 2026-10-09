@@ -4,6 +4,7 @@ mod callouts;
 mod charset;
 mod code;
 mod facts;
+mod fallbacks;
 mod furniture;
 mod hacker_news;
 mod mail;
@@ -5159,6 +5160,7 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     let source = flatten_shadow_roots(source);
     let mut document = Html::parse_document(&source);
     stream::restore(&mut document)?;
+    fallbacks::recover(&mut document);
     let base = base_url.and_then(|value| Url::parse(value).ok());
     // A reading site's article, read from what the page serves (see `sites`).
     let mut site_metadata = Map::new();

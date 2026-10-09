@@ -42,6 +42,7 @@
 
 ### 修复
 
+- HTML：懒加载页面中 `<noscript>` 内的图片回退会作为图片保留，不再被丢弃；`<img>` 仅为内联占位图的 `<picture>` 改用其第一个 `<source>` 图片集中的地址。
 - 绘制在 PDF 可见页面区域（CropBox）之外的文字不再进入正文，并给出警告说明省略的条目数，因为阅读器从不显示它们；此前只裁掉相邻页面的段落，单独一行这样的文字仍会被提取。
 - serve 任务快照的任务级 `options` 只列出受支持的选项键，与各条目的 `options` 一致，不再原样返回任务保存的全部内容：已保存的 `remote_processing` 授权及 `origin` 等 CLI 历史元数据不再返回。
 - 工作台检测到的模型与转换使用同一张表和同一环境：`.env` 文件中的 API key 同样计入（与未设 `MODEL` 的转换一致），列表按模型池优先级（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter）排列，不再以 OpenAI 开头，`MODEL` 也从 `.env` 读取。未配置 `llm.model_list` 的工作台转换也使用同一模型池，因此设置了多个 key 时与 CLI 转换一样先试 Anthropic。只含空白的 key 不再让对应服务商进入转换的自动模型池。

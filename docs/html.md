@@ -171,10 +171,17 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   densities only, the candidate is denser than the address's implicit `1x`.
   Otherwise the address stays (BBC's `src` is 2560 pixels wide and its set ends at
   1920). An inline `data:` candidate is never chosen. `<picture><source>`
-  elements are not read, since their types and media queries choose between
-  formats and crops, not sizes. The lines of an alt text or title are joined with
+  elements are read only when the picture's `<img>` shows nothing but an inline
+  placeholder: the largest candidate of the first source set stands for it.
+  Otherwise their types and media queries choose between formats and crops, not
+  sizes, and the `<img>` stands. The lines of an alt text or title are joined with
   a space, so a figure's description is not cut at its first line, and an empty
   title is left out (`![](a.webp "")` becomes `![](a.webp)`).
+- A lazy-loading page's `<noscript>` fallback stands for its image: a
+  `<noscript>` in the body holding only images (no text, no other elements)
+  replaces itself with them when its parent shows no image of its own, and an
+  inline-placeholder `<img>` beside it is dropped. Hidden images and 1-pixel
+  trackers stay out.
 - Emphasis the page nests with itself (`<b><strong>x</strong></b>`,
   `<em><i>x</i></em>`) is written once (`**x**`, not `****x****`); differently
   nested emphasis keeps both (`***x***`).
