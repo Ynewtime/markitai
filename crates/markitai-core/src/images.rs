@@ -529,8 +529,10 @@ pub(crate) fn extract(
     if local_ocr {
         let recognized = if tiff::signature(&bytes) {
             crate::ocr::recognize_rgb(rgb_on_white(&tiff::Pages::new(&bytes)?.decode(0)?), cfg)?
+        } else if svg {
+            crate::ocr::recognize_rgb(rgb_on_white(&svg::render_for_ocr(&bytes)?), cfg)?
         } else {
-            crate::ocr::recognize(if svg { &image.bytes } else { &bytes }, cfg)?
+            crate::ocr::recognize(&bytes, cfg)?
         };
         if recognized.text.trim().is_empty() {
             // An image with text that could not be read has its own warning.

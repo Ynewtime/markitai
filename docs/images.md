@@ -126,7 +126,9 @@ clipping, masks, text and embedded base64 PNG/JPEG/GIF/WebP images use resvg's
 static renderer. The PNG preserves transparency and renders at 2048 pixels wide with proportional
 height, matching the reference's default vision width even for small vector
 viewBoxes. Raster compression and maximum-width settings do not lower this
-vector preview resolution. An output exceeding 32 million pixels is rejected
+vector preview resolution. Local OCR reads its own rendering at twice the SVG's
+width (as the reference rasterizes SVG for OCR), at most 2048 pixels wide, so a
+small drawing is not detected on a canvas ten times its size. An output exceeding 32 million pixels is rejected
 before allocating the canvas. Renderer and font differences remain possible.
 When the host lacks fontdb's default serif, sans-serif or monospace family, the
 first installed face covering basic Latin letters stands in; icon-only fonts

@@ -221,11 +221,34 @@ fn has_latin_letters(database: &usvg::fontdb::Database, id: usvg::fontdb::ID) ->
         .unwrap_or(false)
 }
 
-pub(super) fn render(bytes: &[u8]) -> Result<DynamicImage> {
-    render_at_width(bytes, VISION_WIDTH)
+/// The width an SVG is rendered at.
+#[derive(Clone, Copy)]
+enum Width {
+    Pixels(u32),
+    /// A multiple of the SVG's own width, at most `VISION_WIDTH`.
+    Times(f64),
 }
 
+/// For local OCR, an SVG renders at twice its own size (as the reference
+/// rasterizes it), at most `VISION_WIDTH` wide: its text is then a size the
+/// recognizer reads, without detecting text on a canvas ten times the
+/// drawing.
+const OCR_SCALE: f64 = 2.0;
+
+pub(super) fn render(bytes: &[u8]) -> Result<DynamicImage> {
+    render_with(bytes, Width::Pixels(VISION_WIDTH))
+}
+
+pub(super) fn render_for_ocr(bytes: &[u8]) -> Result<DynamicImage> {
+    render_with(bytes, Width::Times(OCR_SCALE))
+}
+
+#[cfg(test)]
 fn render_at_width(bytes: &[u8], width: u32) -> Result<DynamicImage> {
+    render_with(bytes, Width::Pixels(width))
+}
+
+fn render_with(bytes: &[u8], width: Width) -> Result<DynamicImage> {
     let document = xml(bytes)?;
     let has_text = preflight(&document)?;
     let fontdb = if has_text {
@@ -238,7 +261,7 @@ fn render_at_width(bytes: &[u8], width: u32) -> Result<DynamicImage> {
 
 fn render_document(
     document: &usvg::roxmltree::Document<'_>,
-    pixel_width: u32,
+    pixel_width: Width,
     fontdb: Arc<usvg::fontdb::Database>,
 ) -> Result<DynamicImage> {
     let rejected_image = AtomicBool::new(false);
@@ -320,6 +343,12 @@ fn render_document(
     if f64::from(width).ceil() * f64::from(height).ceil() > MAX_PIXELS as f64 {
         return Err(error("SVG canvas exceeds 32 million pixels"));
     }
+    let pixel_width = match pixel_width {
+        Width::Pixels(pixels) => pixels,
+        Width::Times(times) => (f64::from(width) * times)
+            .ceil()
+            .clamp(1.0, f64::from(VISION_WIDTH)) as u32,
+    };
     let scale = f64::from(pixel_width) / f64::from(width);
     let scaled_height = (f64::from(height) * scale).ceil().max(1.0);
     if pixel_width == 0 || scaled_height * f64::from(pixel_width) > MAX_PIXELS as f64 {
@@ -348,6 +377,19 @@ mod tests {
 
     fn picture(body: &str) -> String {
         format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80">{body}</svg>"#)
+    }
+
+    #[test]
+    fn local_ocr_renders_twice_the_drawing_at_most_the_vision_width() {
+        let small = r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect width="200" height="100" fill="blue"/></svg>"#;
+        let size = |image: DynamicImage| (image.width(), image.height());
+        assert_eq!(size(render_for_ocr(small.as_bytes()).unwrap()), (400, 200));
+        assert_eq!(size(render(small.as_bytes()).unwrap()), (2048, 1024));
+        let large = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3000 1500"><rect width="3000" height="1500" fill="blue"/></svg>"#;
+        assert_eq!(
+            size(render_for_ocr(large.as_bytes()).unwrap()),
+            (2048, 1024)
+        );
     }
 
     #[test]
@@ -393,7 +435,7 @@ mod tests {
         let document = xml(source.as_bytes()).unwrap();
         let empty = Arc::new(usvg::fontdb::Database::new());
         assert!(
-            render_document(&document, 100, empty)
+            render_document(&document, Width::Pixels(100), empty)
                 .unwrap_err()
                 .to_string()
                 .contains("font")
@@ -488,7 +530,7 @@ mod tests {
         );
         let document = xml(source.as_bytes()).unwrap();
         assert!(
-            render_document(&document, 100, Arc::new(icons))
+            render_document(&document, Width::Pixels(100), Arc::new(icons))
                 .unwrap_err()
                 .to_string()
                 .contains("font or glyph unavailable")
