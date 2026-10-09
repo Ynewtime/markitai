@@ -281,3 +281,40 @@ fn current_document_drawing_group_must_be_unique_without_dropping_body_text() {
         assert!(kept, "ambiguity only suppresses newly resolved figures");
     }
 }
+
+/// markitai: an EMF blip as PowerPoint stores it: uid, the 34-byte
+/// metafile header, then the zlib-compressed metafile.
+fn emf(metafile: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(metafile).unwrap();
+    let compressed = encoder.finish().unwrap();
+    let mut body = vec![0; 16 + 34];
+    body[16..20].copy_from_slice(&(metafile.len() as u32).to_le_bytes());
+    body[44..48].copy_from_slice(&(compressed.len() as u32).to_le_bytes());
+    body[49] = 0xFE;
+    body.extend(compressed);
+    rec(0xF01A, 0, 0x3D4, &body)
+}
+
+#[test]
+fn complete_emf_pictures_are_kept_and_partial_ones_omitted() {
+    let mut embedded = fbse(&emf(b"EMBEDDED EMF"), 0, 1);
+    // An FBSE names its blip type (msoblipEMF = 2) in both type bytes and
+    // its instance.
+    embedded[0..2].copy_from_slice(&(2u16 | 2 << 4).to_le_bytes());
+    embedded[8] = 2;
+    embedded[9] = 2;
+    // A metafile that inflates to less than its declared size.
+    let mut partial = emf(b"PARTIAL EMF");
+    partial[24..28].copy_from_slice(&64u32.to_le_bytes());
+    let group = bank(&[embedded, emf(b"DIRECT EMF"), partial]);
+    let mut b = Bank::read(&group, &[]).unwrap();
+    assert!(b.image(1).unwrap().is_some());
+    assert!(b.image(2).unwrap().is_some());
+    assert!(b.image(3).unwrap().is_none());
+    let kept: Vec<_> = b.assets.assets.iter().map(|a| a.bytes.as_slice()).collect();
+    assert_eq!(kept, [b"EMBEDDED EMF".as_slice(), b"DIRECT EMF"]);
+    assert!(b.assets.assets.iter().all(|a| a.media_type == "image/emf"));
+    assert_eq!(b.warnings, ["A referenced OfficeArt picture format is unsupported and was omitted."]);
+}

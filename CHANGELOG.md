@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- Legacy PPT slides keep their EMF and WMF pictures (the reference `sample.ppt`'s chart preview), decoded completely as legacy DOC pictures are, instead of omitting them as an unsupported format.
 - A frontmatter title taken from the first heading is plain text: Markdown escapes (`ZZZ\_Sheet\_1` from a Numbers sheet), link addresses and emphasis markers around it are no longer kept.
 - HTML: YouTube watch pages have their own reader (title, channel, description, view and date lines, loaded comments; from the rendered page or the server's player response), so the guide links and the like, dislike, share and save buttons no longer leak into the Markdown. A saved Bilibili opus page that names no address is recognized by its `.bili-opus-view` markup, so its reader drops the author avatar and the page chrome.
 - HTML: a link around an image-only block and a name (a Mastodon avatar beside the display name) puts the link on the name, with the avatar before it, instead of writing a link whose text holds a blank line, which Markdown renders as literal brackets.

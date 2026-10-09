@@ -4,6 +4,8 @@
 //! blocks). Only the picture payloads are extracted; drawing geometry is
 //! out of scope.
 
+use crate::package::limits;
+use crate::shared::binary::get_u32;
 use std::borrow::Cow;
 use std::io::Read;
 
@@ -124,9 +126,58 @@ fn fbse_blip_offset(body: &[u8]) -> Option<usize> {
     36usize.checked_add(cb_name)
 }
 
-/// Decode the blip embedded in an FBSE (0xF007) record body, if present.
-pub(crate) fn fbse_blip(body: &[u8], max_bytes: usize) -> Option<Blip<'_>> {
-    let offset = fbse_blip_offset(body)?;
-    let (ver_inst, rec_type, blip_body) = record_at(body, offset)?;
-    decode_blip(ver_inst, rec_type, blip_body, max_bytes)
+/// markitai: a JPEG, PNG, EMF or WMF blip decoded completely, never a
+/// truncated prefix: metafiles must inflate (zlib, MS-ODRAW compression 0)
+/// or be stored to exactly their declared size. Shared by the DOC and PPT
+/// picture readers; the record is bounded by `MAX_ENTRY_BYTES`.
+pub(crate) fn complete_blip(version: u16, kind: u16, body: &[u8]) -> Option<Blip<'_>> {
+    let max = limits::MAX_ENTRY_BYTES as usize;
+    if body.len() > max || version & 0xF != 0 {
+        return None;
+    }
+    let instance = version >> 4;
+    match kind {
+        0xF01D if matches!(instance, 0x46A | 0x46B | 0x6E2 | 0x6E3) => {
+            decode_blip(version, kind, body, max)
+        }
+        0xF01E if matches!(instance, 0x6E0 | 0x6E1) => decode_blip(version, kind, body, max),
+        0xF01A | 0xF01B => {
+            let doubled = match (kind, instance) {
+                (0xF01A, 0x3D4) | (0xF01B, 0x216) => false,
+                (0xF01A, 0x3D5) | (0xF01B, 0x217) => true,
+                _ => return None,
+            };
+            let header_offset = if doubled { 32 } else { 16 };
+            let header = body.get(header_offset..)?;
+            let size = get_u32(header, 0)? as usize;
+            let saved = get_u32(header, 28)? as usize;
+            let data = header.get(34..)?;
+            if size > max || data.len() != saved || header[33] != 0xFE {
+                return None;
+            }
+            let bytes = match header[32] {
+                0 => {
+                    // MS-ODRAW compression 0 is RFC1950 (zlib), not raw deflate.
+                    let mut decoder = flate2::Decompress::new(true);
+                    let mut decoded = Vec::with_capacity(size + 1);
+                    let status = decoder
+                        .decompress_vec(data, &mut decoded, flate2::FlushDecompress::Finish)
+                        .ok()?;
+                    if status != flate2::Status::StreamEnd
+                        || decoded.len() != size
+                        || decoder.total_in() != data.len() as u64
+                    {
+                        return None;
+                    }
+                    Cow::Owned(decoded)
+                }
+                0xFE if data.len() == size => Cow::Borrowed(data),
+                _ => return None,
+            };
+            let (media_type, extension) =
+                if kind == 0xF01A { ("image/emf", "emf") } else { ("image/wmf", "wmf") };
+            Some(Blip { media_type, extension, bytes })
+        }
+        _ => None,
+    }
 }

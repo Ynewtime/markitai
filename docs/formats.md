@@ -483,6 +483,11 @@ cache layout and tested with objects generated from the specifications
 MS Graph or PowerPoint was available, so their real-world layout is not yet
 verified.
 
+Pictures on legacy PPT slides keep their JPEG, PNG, EMF or WMF data, as in
+legacy DOC: a metafile is kept only when it inflates (or is stored) to exactly
+its declared size; other picture formats (PICT, DIB, TIFF) and partial
+metafiles are omitted with a warning.
+
 A PPTX graphic frame holding a `p:oleObj` reads the same way: the object's own
 part (`ppt/embeddings/…`) is a compound file read as above, or a zipped package
 read as an OpenDocument chart or spreadsheet or else as an OOXML workbook (an
