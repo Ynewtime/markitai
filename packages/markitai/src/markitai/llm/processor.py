@@ -442,6 +442,8 @@ class LLMProcessor:
         original_markdown: str,
         cleaned_markdown: str,
         source: str,
+        *,
+        vision: bool = False,
     ) -> str:
         """Protect page-marked documents from LLM structural drift.
 
@@ -450,7 +452,7 @@ class LLMProcessor:
         processor.
         """
         return self.documents._stabilize_paged_markdown(
-            original_markdown, cleaned_markdown, source
+            original_markdown, cleaned_markdown, source, vision=vision
         )
 
     # =========================================================================

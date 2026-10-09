@@ -128,7 +128,7 @@ def append_reference_image_comments(
 
 
 def maybe_stabilize_markdown(
-    processor: Any, baseline: str, content: str, source: str
+    processor: Any, baseline: str, content: str, source: str, *, vision: bool = False
 ) -> str:
     """Apply paged markdown stabilization if the processor supports it.
 
@@ -137,6 +137,7 @@ def maybe_stabilize_markdown(
         baseline: Original markdown before LLM processing.
         content: LLM-processed markdown to stabilize.
         source: Source identifier for logging.
+        vision: The content came from a call that saw the page images.
 
     Returns:
         Stabilized content if the processor supports it, otherwise the
@@ -144,7 +145,11 @@ def maybe_stabilize_markdown(
     """
     stabilize = getattr(processor, "_stabilize_paged_markdown", None)
     if callable(stabilize):
-        stabilized = str(stabilize(baseline, content, source))
+        stabilized = str(
+            stabilize(baseline, content, source, vision=True)
+            if vision
+            else stabilize(baseline, content, source)
+        )
         if stabilized != content:
             logger.warning(f"[{source}] Stabilized paged markdown output")
         return stabilized
