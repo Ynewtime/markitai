@@ -10,6 +10,7 @@ from urllib.parse import quote
 from pydantic import ValidationError
 
 from markitai.utils.errors import SelfExplanatoryError
+from markitai.utils.secret_redaction import redact_secrets
 
 
 def markdown_image_reference(alt: str, path: str) -> str:
@@ -248,6 +249,9 @@ def format_error_message(error: Any, max_length: int = 200) -> str:
         if "Traceback (most recent call last):" in msg:
             # Keep only the part before the traceback
             msg = msg.split("Traceback (most recent call last):")[0].strip()
+
+        # Never print a credential an error echoes (a provider's 401)
+        msg = redact_secrets(msg)
 
         # Replace newlines with spaces to keep log output on single line
         msg = re.sub(r"\s*\n\s*", " ", msg)
