@@ -811,3 +811,58 @@ fn a_justified_word_break_is_one_space() {
         "{markdown:?}"
     );
 }
+
+#[test]
+fn a_photo_the_page_binds_but_never_draws_does_not_make_it_a_scan() {
+    // Every page of a document binds the same large photo; this one shows
+    // only a few lines of text and never draws it.
+    let mut pdf = lopdf::Document::with_version("1.7");
+    let tree = pdf.new_object_id();
+    let font = pdf.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+    });
+    let photo = pdf.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 1000,
+            "Height" => 1000, "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8
+        },
+        vec![128; 1000 * 1000],
+    ));
+    let stream = [
+        text_at(700, "A page of ordinary text that happens to bind a photo."),
+        text_at(686, "Its content never draws that photo anywhere at all."),
+    ]
+    .join("\n");
+    let content = pdf.add_object(Stream::new(Dictionary::new(), stream.into_bytes()));
+    let page = pdf.add_object(dictionary! {
+        "Type" => "Page", "Parent" => tree, "Contents" => content,
+        "Resources" => dictionary! {
+            "Font" => dictionary! { "F1" => font },
+            "XObject" => dictionary! { "Photo" => photo }
+        }
+    });
+    pdf.objects.insert(
+        tree,
+        dictionary! {
+            "Type" => "Pages", "Count" => 1, "Kids" => vec![page.into()],
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+        }
+        .into(),
+    );
+    let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+    pdf.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    let pages = extract_pages(&bytes).unwrap();
+    assert!(!pages.pages[0].needs_ocr);
+    assert!(pages.pages[0].markdown.contains("happens to bind a photo"));
+    assert!(
+        !pages
+            .document
+            .warnings
+            .iter()
+            .any(|w| w.contains("looked like a scan")),
+        "{:?}",
+        pages.document.warnings
+    );
+}

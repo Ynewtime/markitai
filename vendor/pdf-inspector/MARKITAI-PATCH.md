@@ -687,6 +687,17 @@ The local changes, each marked `markitai` (or, for sorts, made through
   (`a_justified_word_break_is_one_space`); the crate's unit tests in the isolated
   copy give 1,720 passed and the same 21 failed.
 
+- `src/detector.rs`, `src/detector/content_scan.rs`: per-page Markdown no
+  longer routes a page to OCR for a template image the page only binds: when
+  the executed content was read completely (`ExecutedContent::complete`) and
+  drew no image, `PageAnalysis::template_image_undrawn` clears
+  `template_image_needs_ocr`. `has_template_image` itself still describes the
+  bound pixels, as upstream's tests require, and whole-document classification
+  is unchanged. Covered by `page_tests.rs`
+  (`a_photo_the_page_binds_but_never_draws_does_not_make_it_a_scan`); the
+  crate's unit tests in the isolated copy give 1,720 passed and the same 21
+  failed.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths, except as listed above. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,

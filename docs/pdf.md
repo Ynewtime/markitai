@@ -75,8 +75,11 @@ OCR, containing suspicious hidden text, read from an embedded OCR text layer
 (see [Searchable scans](#searchable-scans)), or having incomplete content
 inspection does not enter refinement. Text size for the hidden-text check is the effective
 size after the text matrix, transformation and Form matrices: Quartz writes
-`1 Tf` and scales with the text matrix, which is ordinary 12pt text. The existing narrowly guarded font-decoded recovery
-for a false scan verdict remains in place. A missing or unreadable page keeps
+`1 Tf` and scales with the text matrix, which is ordinary 12pt text. A large image the page
+binds in its resources but whose completely read content never draws it (a photo
+every page of a document binds and one page shows) no longer makes the page a
+scan. The existing narrowly guarded font-decoded recovery for other false scan
+verdicts remains in place. A missing or unreadable page keeps
 its place, with an explicit warning (and its page marker under `--page-markers`).
 
 The pinned dependency has a small, tracked policy patch under

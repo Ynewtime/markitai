@@ -46,6 +46,7 @@
 
 ### Fixed
 
+- A PDF page that binds a large image in its resources but never draws it is read as the text page it is, without the warning that it was "read as plain text because it looked like a scan" (page 5 of the reference `sample.pdf`).
 - PDF justified text no longer shows two spaces between words where the producer widens each break with a `TJ` offset before the space glyph (the bold run of the reference `sample.pdf`).
 - A batch item's `duration_s` (and report time) is its own conversion and publication work; it no longer includes the time the item waited for its publication group to commit, which made `-j 1` item times add up to several times the wall time.
 - Legacy PPT slides keep their EMF and WMF pictures (the reference `sample.ppt`'s chart preview), decoded completely as legacy DOC pictures are, instead of omitting them as an unsupported format.
