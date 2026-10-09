@@ -338,11 +338,11 @@ payloads. A refusal whose body names a recognized cause gets a fixed phrase
 after its status instead of the provider's message:
 `LLM returned HTTP 403: the model is not available in this region`,
 `…: the account's quota or billing does not allow this request` or
-`…: the model is unavailable`. The model connection test in `serve` words its
-failures the same way, without the deployment suffix: `Model connection request
-failed: connection refused`, or `Model connection returned HTTP 401
-(invalid_api_key): Incorrect API key provided: [REDACTED].` with the same
-cleaning, or one of the fixed phrases.
+`…: the model is unavailable`. The model connection test in `serve` names a
+missing response's cause the same way (`Model connection request failed:
+connection refused`) and uses the same fixed phrases, but of a provider's
+refusal it shows only the error type or code, never its message:
+`Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)`.
 
 ## Retries, budgets and usage
 

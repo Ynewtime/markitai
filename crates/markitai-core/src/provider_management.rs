@@ -428,7 +428,8 @@ fn probe_with_environment(request: &Value, allow_environment: bool) -> Result<Va
             json!({"ok":true,"detail":format!("{} responded", model.chars().take(280).collect::<String>())}),
         ),
         Err(error) => {
-            // This helper's errors are deliberately fixed text or HTTP status,
+            // This helper's errors are deliberately fixed text, an HTTP status
+            // with the provider's error type or code, or a transport cause;
             // never reqwest URLs, response bodies or user-supplied credentials.
             let detail: String = match error {
                 Error::Unsupported(_) => {

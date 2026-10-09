@@ -148,8 +148,9 @@ fn perform(entry: &Deployment) -> Result<()> {
     if entry.protocol == Protocol::Anthropic {
         call = call.header("anthropic-version", "2023-06-01");
     }
-    // Failures are worded as conversion's are (diagnosis), without the
-    // endpoint, the key or the probe's prompt.
+    // A failure names its cause as conversion's does (diagnosis), but the
+    // provider's own wording is never shown here: only its error type or
+    // code, without the endpoint, the key or the probe's prompt.
     let response = call.json(&body).send().map_err(|error| {
         if error.is_timeout() {
             return failure("Model connection test timed out");
@@ -168,7 +169,7 @@ fn perform(entry: &Deployment) -> Result<()> {
             Some(reason) => format!("Model connection returned HTTP {status}: {reason}"),
             None => format!(
                 "Model connection returned HTTP {status}{}",
-                diagnosis::refusal(status, &bytes, entry, &prompts)
+                diagnosis::refusal_code(status, &bytes, entry)
             ),
         }));
     }
@@ -244,7 +245,7 @@ mod tests {
                 }
             }
             let body = json!({"error":{"type":"invalid_request_error","code":"invalid_api_key",
-                "message":"Incorrect API key provided: probe-key-must-not-leak."}})
+                "message":"Incorrect API key provided: probe-key-must-not-leak. See http://private-host/keys"}})
             .to_string();
             let _ = write!(
                 stream,
@@ -256,7 +257,7 @@ mod tests {
         server.join().unwrap();
         assert_eq!(
             said,
-            "Model connection returned HTTP 401 (invalid_request_error/invalid_api_key): Incorrect API key provided: [REDACTED]."
+            "Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)"
         );
     }
 }

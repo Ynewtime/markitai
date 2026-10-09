@@ -137,26 +137,38 @@ pub(super) fn http(status: u16, body: &[u8], entry: &Deployment, prompts: &Promp
 /// What follows `HTTP {status}`: ` ({code}): {message}`, either part
 /// omitted when the body does not carry it safely.
 pub(super) fn refusal(status: u16, body: &[u8], entry: &Deployment, prompts: &Prompts) -> String {
-    let (code, said) = match serde_json::from_slice::<Value>(body) {
-        Ok(value) => {
-            // Gemini's OpenAI-compatible endpoint wraps its error in a list.
-            let value = match &value {
-                Value::Array(items) => items.first().cloned().unwrap_or(Value::Null),
-                _ => value,
-            };
-            (error_code(&value, status), error_message(&value))
-        }
-        Err(_) => (None, html_title(body).or_else(|| plain_line(body))),
+    let (code, said) = match parsed(body) {
+        Some(value) => (shown_code(&value, status, entry), error_message(&value)),
+        None => (None, html_title(body).or_else(|| plain_line(body))),
     };
     let said = said.and_then(|said| shown(&said, entry, prompts));
-    let key = entry.key.as_deref().filter(|key| key.len() >= 4);
-    let code = code.filter(|code| key.is_none_or(|key| !code.contains(key)));
     match (code, said) {
         (Some(code), Some(said)) => format!(" ({code}): {said}"),
         (Some(code), None) => format!(" ({code})"),
         (None, Some(said)) => format!(": {said}"),
         (None, None) => String::new(),
     }
+}
+
+/// Only the provider's error type or code, as ` ({code})`, for the serve
+/// connection test, which shows no provider wording.
+pub(super) fn refusal_code(status: u16, body: &[u8], entry: &Deployment) -> String {
+    parsed(body)
+        .and_then(|value| shown_code(&value, status, entry))
+        .map_or_else(String::new, |code| format!(" ({code})"))
+}
+
+fn parsed(body: &[u8]) -> Option<Value> {
+    // Gemini's OpenAI-compatible endpoint wraps its error in a list.
+    serde_json::from_slice(body).ok().map(|value| match value {
+        Value::Array(items) => items.into_iter().next().unwrap_or(Value::Null),
+        value => value,
+    })
+}
+
+fn shown_code(value: &Value, status: u16, entry: &Deployment) -> Option<String> {
+    let key = entry.key.as_deref().filter(|key| key.len() >= 4);
+    error_code(value, status).filter(|code| key.is_none_or(|key| !code.contains(key)))
 }
 
 /// The error's type, code and status names (`invalid_request_error`,

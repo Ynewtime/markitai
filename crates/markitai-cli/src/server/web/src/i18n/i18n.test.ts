@@ -280,9 +280,9 @@ test("probe and discovery phrases are translated; unknown text is kept", () => {
   assert.equal(serviceNote("en", "Model connection test timed out").text, MESSAGES.en.errModelTimeout);
   assert.equal(serviceNote("zh", "Model connection returned HTTP 401").text, "服务商拒绝了凭据（HTTP 401）。请检查 API key。");
   assert.equal(serviceNote("en", "Model connection request failed: connection refused").text, MESSAGES.en.probeUnreachable);
-  const refused = serviceNote("zh", "Model connection returned HTTP 401 (invalid_api_key): Incorrect API key provided: [REDACTED].");
+  const refused = serviceNote("zh", "Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)");
   assert.equal(refused.text, "服务商拒绝了凭据（HTTP 401）。请检查 API key。");
-  assert.equal(refused.detail, "Model connection returned HTTP 401 (invalid_api_key): Incorrect API key provided: [REDACTED].");
+  assert.equal(refused.detail, "Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)");
   assert.deepEqual(serviceNote("en", "A brand new phrase"), { text: "A brand new phrase", detail: "" });
   assert.deepEqual(serviceNote("en", undefined), { text: "", detail: "" });
   assert.equal(
