@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- HTML: a link around an image-only block and a name (a Mastodon avatar beside the display name) puts the link on the name, with the avatar before it, instead of writing a link whose text holds a blank line, which Markdown renders as literal brackets.
 - PDF images are placed where they are drawn among their page's text: before it, after the paragraph above them, or after it, instead of always after the page's text, which could split a sentence that continues on the next page. Only images that cannot be located still follow the text, with the existing warning.
 - HTML: a lazy-loading page's `<noscript>` image fallbacks are kept as images instead of being dropped, and a `<picture>` whose `<img>` is only an inline placeholder takes the address of its first `<source>` set.
 - PDF text drawn outside the visible page area (CropBox) is left out of the body with a warning giving the number of items, as a viewer never shows it; a single such line was extracted before, because only neighboring-page paragraphs were clipped.

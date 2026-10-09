@@ -140,7 +140,8 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   being written as `[](url)`. A link wrapped around blocks (a card's cover,
   heading and summary) cannot be one Markdown link: it is written as its
   content, with the link on its first heading, else on its first block with text
-  and no block inside.
+  and no block inside, else, when its blocks hold only images (an avatar beside
+  a name), on its first inline element with text outside them.
 - Preformatted code keeps indentation and empty lines. A `<code>` element with
   inline `white-space: pre` styling is treated as a code block. Chemical and
   mathematical `<sub>`/`<sup>` text retains those tags.
