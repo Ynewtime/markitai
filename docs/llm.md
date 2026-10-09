@@ -302,8 +302,12 @@ refusals the same way.
 ## Retries, budgets and usage
 
 `router_settings.num_retries` means additional attempts after the first attempt
-in a group. Connection failures, temporary HTTP failures (408, 409, 5xx), rate
-limits and empty text responses may retry. A request that timed out, or whose
+in a group. Connection failures, temporary HTTP failures (408, 409, 5xx) and rate
+limits may retry. A request is never sent again unchanged after the provider
+answered it: a response without any text (the error names its finish reason)
+moves only to a deployment of the group not yet tried, without backoff, and an
+answer rejected by validation is followed by a request whose system prompt names
+the rejection. A request that timed out, or whose
 successful response was cut off while being read, is not sent again: the
 provider may already have completed and billed it, and that usage cannot be
 recorded. A configured fallback group can still run.
@@ -605,7 +609,9 @@ failures stop the ladder; authentication failures first move to unexcluded
 sibling deployments and then configured routing fallbacks before stopping.
 Transport retries stay inside the router. Exhausted network/HTTP transport errors
 stop the ladder in every mode and do not trigger image caption/description fallback.
-The final JSON-text mode gets three validation attempts total. Response-size
+The final JSON-text mode gets three validation attempts total; each attempt
+after a rejected answer adds the rejection to the system prompt, and a response
+without any text ends the ladder after that one request. Response-size
 limits are terminal resource errors, not invalid JSON to retry or downgrade. All actual HTTP attempts
 use the same document budget, runtime permit and paid-usage accounting. Structured
 fatal responses publish cancellation before releasing their permit.
@@ -659,7 +665,8 @@ semantic fidelity; model accuracy still needs independent evaluation.
 
 The first typed visual batch follows the provider ladder above. Later plain
 cleaning batches retain at most three validation attempts for malformed output
-or violated content guards, within the shared request budget. The known minimum number
+or violated content guards, within the shared request budget; as in the ladder,
+a retry names the rejection in its system prompt. The known minimum number
 of uncached batches must fit the remaining budget before the first request.
 Transport retries, visual validation, document fallback and image analysis use
 that same budget; zero still means unlimited. Paid error and invalid responses

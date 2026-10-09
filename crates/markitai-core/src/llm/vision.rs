@@ -646,9 +646,10 @@ fn run_batch(
         .map(|(answer, _)| answer);
     }
     let mut failure = Error::Conversion("Invalid visual response".into());
+    let mut corrected = None;
     for attempt in 0..3 {
         let (text, _) = run_controlled(
-            &prompts,
+            corrected.as_ref().unwrap_or(&prompts),
             cfg,
             env,
             &mut std::thread::sleep,
@@ -665,6 +666,7 @@ fn run_batch(
                 "LLM per-document request budget exhausted during visual validation".into(),
             )));
         }
+        corrected = Some(super::corrected(&prompts, &failure));
     }
     Err(failure.into())
 }

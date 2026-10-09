@@ -256,7 +256,7 @@ impl Wire {
                 .collect::<Vec<_>>()
                 .join("\n");
             if text.trim().is_empty() {
-                Err(invalid())
+                Err(Failure::terminal(&empty_answer(data)))
             } else {
                 Ok(text)
             }
@@ -268,9 +268,21 @@ impl Wire {
             {
                 return Err(invalid());
             }
-            let content = data
+            let Some(content) = data
                 .pointer("/choices/0/message/content")
-                .ok_or_else(invalid)?;
+                .filter(|content| !content.is_null())
+            else {
+                return Err(
+                    if data
+                        .pointer("/choices/0/message")
+                        .is_some_and(Value::is_object)
+                    {
+                        Failure::terminal(&empty_answer(data))
+                    } else {
+                        invalid()
+                    },
+                );
+            };
             let text = content
                 .as_str()
                 .map(str::to_owned)
@@ -285,7 +297,7 @@ impl Wire {
                 })
                 .ok_or_else(invalid)?;
             if text.trim().is_empty() {
-                Err(invalid())
+                Err(Failure::terminal(&empty_answer(data)))
             } else {
                 Ok(text)
             }
@@ -324,9 +336,12 @@ pub(super) fn run<T>(
     let mut last = Error::Conversion("LLM returned no valid structured result".into());
     for mode in ladder {
         let attempts = if mode == Mode::JsonText { 3 } else { 1 };
+        // A rejected answer is never answered by the same request again: a
+        // later attempt names the rejection, so it is a different request.
+        let mut corrected = None;
         for attempt in 0..attempts {
             let text = match run_mode(
-                request.prompts,
+                corrected.as_ref().unwrap_or(request.prompts),
                 cfg,
                 env,
                 &mut std::thread::sleep,
@@ -350,13 +365,12 @@ pub(super) fn run<T>(
                     {
                         return Err(failure);
                     }
-                    if mode == Mode::JsonText && failure.kind != FailureKind::Validation {
+                    // An empty or malformed envelope is the provider's answer to
+                    // this exact request; sending it unchanged gets it again.
+                    if mode == Mode::JsonText {
                         return Err(failure);
                     }
                     last = failure.error;
-                    if mode == Mode::JsonText {
-                        continue;
-                    }
                     break;
                 }
             };
@@ -383,6 +397,9 @@ pub(super) fn run<T>(
                 return Err(VisionFailure::blocked(Error::Conversion(format!(
                     "{last}; LLM per-document request budget exhausted during structured validation"
                 ))));
+            }
+            if mode == Mode::JsonText {
+                corrected = Some(super::corrected(request.prompts, &last));
             }
         }
     }

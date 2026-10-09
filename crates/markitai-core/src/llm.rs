@@ -118,6 +118,21 @@ struct Prompts {
     cache_scope: String,
 }
 
+/// The request that follows a rejected answer: the system prompt names the
+/// application's own rejection (never the answer), so a retry is never the
+/// identical request that was just answered.
+fn corrected(prompts: &Prompts, rejection: &Error) -> Prompts {
+    Prompts {
+        system: format!(
+            "{}\nThe previous answer to this request was rejected: {rejection}. Return a complete answer that follows these instructions exactly.",
+            prompts.system
+        ),
+        user: prompts.user.clone(),
+        image: prompts.image.clone(),
+        cache_scope: prompts.cache_scope.clone(),
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Enhancement {
     pub markdown: String,
@@ -488,6 +503,8 @@ enum FailureKind {
     /// A deployment's credential or subscription account was refused.
     Authentication,
     Validation,
+    /// A successful response without any answer text.
+    Empty,
     ModeRejected,
     InvalidRequest,
     Refusal,
@@ -1422,6 +1439,14 @@ fn run_mode(
                         // The whole group is now excluded; its error stands.
                         break;
                     }
+                    if failure.kind == FailureKind::Empty {
+                        // The same deployment answers the same request the same
+                        // way; only a sibling not yet tried may still answer it.
+                        if candidates.iter().any(|index| !failed.contains(index)) {
+                            continue;
+                        }
+                        break;
+                    }
                     if !failure.retryable || attempt == retries {
                         break;
                     }
@@ -1733,13 +1758,33 @@ fn request_with_mode(
     }
     text.filter(|text| !text.trim().is_empty())
         .ok_or_else(|| Failure {
-            kind: FailureKind::Transport,
-            error: Error::Conversion("LLM returned no text".into()),
-            retryable: true,
+            kind: FailureKind::Empty,
+            error: Error::Conversion(empty_answer(&data)),
+            retryable: false,
             fatal: false,
             document_fatal: false,
             retry_after: None,
         })
+}
+
+/// Names how a paid response without answer text ended, so a block (for
+/// example Gemini's recitation or safety stop) is told apart from a bug.
+fn empty_answer(data: &Value) -> String {
+    let reason = data
+        .pointer("/choices/0/finish_reason")
+        .or_else(|| data.get("stop_reason"))
+        .and_then(Value::as_str)
+        .filter(|reason| {
+            !reason.is_empty()
+                && reason.len() <= 40
+                && reason
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+        });
+    match reason {
+        Some(reason) => format!("LLM returned no text (finish reason: {reason})"),
+        None => "LLM returned no text".into(),
+    }
 }
 
 const REGION_UNAVAILABLE: &str = "the model is not available in this region";
@@ -1907,6 +1952,7 @@ fn record_usage_class(
 mod tests {
     mod auth_fallback;
     mod hardening;
+    mod resend;
     use super::*;
     use std::io::Write;
     use std::net::{TcpListener, TcpStream};
@@ -2663,24 +2709,6 @@ mod tests {
         .to_string();
         assert!(error.contains("quota or billing"), "{error}");
         assert_eq!(server.finish().len(), 1);
-    }
-
-    #[test]
-    fn empty_paid_response_is_retried_and_usage_is_retained() {
-        let server = Mock::new(vec![(200, success(" ")), (200, success("real"))]);
-        let (text, usage) = run(
-            &plain(),
-            &cfg("openai/test", &server.base),
-            &HashMap::new(),
-            &mut |_| {},
-        )
-        .unwrap();
-        assert_eq!(text, "real");
-        assert_eq!(
-            (usage.requests, usage.input_tokens, usage.output_tokens),
-            (2, 22, 14)
-        );
-        assert_eq!(server.finish().len(), 2);
     }
 
     #[test]
