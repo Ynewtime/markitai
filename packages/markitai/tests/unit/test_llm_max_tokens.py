@@ -221,6 +221,33 @@ class TestBatchMaxTokens:
         assert _configured_max_tokens(cfg, "anthropic/claude-haiku-4-5") == 8192
         assert _anthropic_max_tokens("claude-haiku-4-5", 8192) == 8192
 
+    def test_cap_above_the_model_limit_is_clamped(self) -> None:
+        # The live path's litellm.modify_params clamps this; a batch body
+        # with 100000 would fail every request against a 64000 limit.
+        cfg = self._cfg(
+            ModelConfig(
+                model_name="default",
+                litellm_params=LiteLLMParams(
+                    model="anthropic/claude-haiku-4-5", max_tokens=100_000
+                ),
+            )
+        )
+        with patch("litellm.get_model_info", return_value={"max_output_tokens": 64000}):
+            assert _configured_max_tokens(cfg, "anthropic/claude-haiku-4-5") == 64000
+        with patch("litellm.get_model_info", side_effect=Exception("unknown")):
+            assert _configured_max_tokens(cfg, "anthropic/claude-haiku-4-5") == 100_000
+
+    def test_model_info_limit_replaces_the_catalog_limit(self) -> None:
+        cfg = self._cfg(
+            ModelConfig(
+                model_name="default",
+                litellm_params=LiteLLMParams(model="openai/gpt-4o", max_tokens=50_000),
+                model_info=ModelInfo(max_tokens=32_000),
+            )
+        )
+        with patch("litellm.get_model_info", return_value={"max_output_tokens": 16384}):
+            assert _configured_max_tokens(cfg, "openai/gpt-4o") == 32_000
+
     def test_model_info_limit_is_the_fallback(self) -> None:
         cfg = self._cfg(
             ModelConfig(

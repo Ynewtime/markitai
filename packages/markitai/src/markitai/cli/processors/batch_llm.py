@@ -251,17 +251,33 @@ def _configured_max_tokens(cfg: Any, target: str) -> int | None:
     Same precedence as the live path (``_calculate_dynamic_max_tokens``):
     ``litellm_params.max_tokens`` first, then the ``model_info.max_tokens``
     limit override. Several entries for the one model take the smallest.
+
+    The cap never exceeds the model's output limit (``model_info.max_tokens``,
+    else litellm's catalog when it knows the model). On the live path
+    ``litellm.modify_params`` clamps an oversized cap; a batch body gets no
+    litellm translation, so the provider would reject every request in it.
     """
-    caps = []
+    import litellm
+
+    caps: list[int] = []
+    limit_overridden = False
     for entry in cfg.llm.model_list or []:
         if entry.litellm_params.model != target:
             continue
-        cap = entry.litellm_params.max_tokens or (
-            entry.model_info.max_tokens if entry.model_info else None
-        )
-        if cap:
-            caps.append(cap)
-    return min(caps) if caps else None
+        limit = entry.model_info.max_tokens if entry.model_info else None
+        caps.extend(c for c in (entry.litellm_params.max_tokens, limit) if c)
+        limit_overridden = limit_overridden or bool(limit)
+    if not caps:
+        return None
+    cap = min(caps)
+    if not limit_overridden:
+        try:
+            catalog_limit = litellm.get_model_info(target).get("max_output_tokens")
+        except Exception:
+            catalog_limit = None
+        if catalog_limit:
+            cap = min(cap, int(catalog_limit))
+    return cap
 
 
 def _anthropic_max_tokens(model: str, configured: int | None = None) -> int:
