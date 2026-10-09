@@ -279,6 +279,25 @@ catalog or tokenizer and does not size output caps from a context window; a
 declared `model_info.max_input_tokens` sizes document chunks instead (see
 [below](#structured-documents-and-complete-long-text)).
 
+`litellm_params.reasoning_effort` controls how much a reasoning model thinks
+before it answers: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`
+(LiteLLM's name for the setting). Reasoning tokens are output tokens, so a model
+that thinks at length can spend the whole `max_tokens` budget before writing the
+cleaned document; the request then fails with `LLM output was truncated by its
+token limit: reasoning used all N output tokens; lower
+litellm_params.reasoning_effort or raise max_tokens`.
+
+| Deployment | Without the setting | With a value |
+|---|---|---|
+| `deepseek/` | `thinking: {"type": "disabled"}`: clean-up, transcription and descriptions need no reasoning | `none` disables thinking; other values enable it and send `reasoning_effort`, which DeepSeek maps to `low`, `high` or `max` |
+| Other OpenAI-compatible endpoints (`openai/`, `gemini/`, `openrouter/`, `azure/`, …) | nothing; the model's own default applies | sent as `reasoning_effort`; the provider decides which values a model accepts and rejects others with HTTP 400 |
+| `anthropic/` | nothing; extended thinking stays off | only `none` is accepted; other values are a configuration error |
+| `copilot/`, `claude-agent/`, `chatgpt/` | the runtime's default | not accepted, like `max_tokens` |
+
+```json
+{"model_name": "default", "litellm_params": {"model": "deepseek/deepseek-flash", "max_tokens": 8192, "reasoning_effort": "low"}}
+```
+
 Image requests reuse routing, authentication, budgets and retry behavior.
 OpenAI-compatible requests carry a data URL; Anthropic receives native base64
 image blocks. JPEG, PNG, WebP and GIF MIME types are accepted. Deployments

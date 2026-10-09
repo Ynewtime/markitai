@@ -97,6 +97,7 @@ impl Session {
                 || entry.endpoint != first.endpoint
                 || entry.key != first.key
                 || entry.max_tokens != first.max_tokens
+                || entry.reasoning_effort != first.reasoning_effort
         }) {
             return Err(Error::Unsupported(
                 "Provider Batch requires one effective model, endpoint and account".into(),
@@ -351,6 +352,7 @@ impl Plan {
             endpoint: format!("{}/chat/completions", self.endpoint.api_base),
             protocol: Protocol::Chat,
             max_tokens: None,
+            reasoning_effort: None,
             supports_vision: None,
         }
     }

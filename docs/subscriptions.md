@@ -46,7 +46,7 @@ Configure the existing `llm.model_list[].litellm_params.model` as `copilot/MODEL
 home when provided; `COPILOT_CACHE_HOME` independently selects its cache directory.
 The connect handshake uses the pinned `editorName`/`editorVersion` fields. Explicit token precedence is COPILOT_GITHUB_TOKEN, GH_TOKEN,
 GITHUB_TOKEN. Otherwise the official runtime resolves existing authentication.
-No HTTP api_key/api_base or strict max_tokens setting is accepted for this route;
+No HTTP api_key/api_base, strict max_tokens or reasoning_effort setting is accepted for this route;
 the pinned subscription protocol cannot enforce those settings. Missing login is
 an error during conversion; it never initiates an interactive login command.
 
@@ -130,7 +130,7 @@ markitai auth claude login
 Status accepts only the official subscription account method. Login replaces the
 Unix process with official `claude auth login`, preserving terminal, PID and exit
 status; on Windows it runs as a waited-for child, as for Copilot. API key/base and OAuth-token environment overrides are removed from the
-child; API settings and strict max_tokens are not accepted on this subscription
+child; API settings, strict max_tokens and reasoning_effort are not accepted on this subscription
 route. JSON status remains zero-exit when signed out, matching the public command.
 The retained `sdk_installed` status field is false because a Python SDK is not
 used; `details.native_adapter` identifies the native adapter.

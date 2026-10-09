@@ -47,6 +47,14 @@ def main() -> None:
 
     # Rust-only page/slide marker preference; the reference remains read-only.
     schema["$defs"]["OutputConfig"]["properties"]["page_markers"] = {"default": False, "type": "boolean"}
+    # Rust-only reasoning control of a deployment, after max_tokens.
+    params = schema["$defs"]["LiteLLMParams"]["properties"]
+    efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+    schema["$defs"]["LiteLLMParams"]["properties"] = {
+        **{key: params[key] for key in list(params)[: list(params).index("max_tokens") + 1]},
+        "reasoning_effort": {"anyOf": [{"enum": efforts, "type": "string"}, {"type": "null"}], "default": None},
+        **{key: params[key] for key in list(params)[list(params).index("max_tokens") + 1 :]},
+    }
     defaults = reference.MarkitaiConfig().model_dump(mode="json")
     defaults["output"]["page_markers"] = False
 

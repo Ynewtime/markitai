@@ -18,7 +18,7 @@ pub(super) fn deployment(
         .ok_or_else(|| {
             Error::Unsupported("The installed Codex adapter has not validated this model".into())
         })?;
-    for field in ["api_key", "api_base", "max_tokens"] {
+    for field in ["api_key", "api_base", "max_tokens", "reasoning_effort"] {
         if params
             .get(field)
             .is_some_and(|v| !v.is_null() && v.as_str() != Some(""))
@@ -66,6 +66,7 @@ pub(super) fn deployment(
         endpoint: format!("codex-cli://{}", crate::hex(hash.finalize())),
         protocol: Protocol::Chat,
         max_tokens: None,
+        reasoning_effort: None,
         supports_vision: entry
             .pointer("/model_info/supports_vision")
             .and_then(Value::as_bool),
@@ -212,6 +213,7 @@ mod tests {
             endpoint: "codex-cli://fixture".into(),
             protocol: Protocol::Chat,
             max_tokens: None,
+            reasoning_effort: None,
             supports_vision: None,
         }
     }

@@ -25,7 +25,7 @@ Doctor checks runtime version and status, not inference or model entitlement.
 Discovery returns the tested adapter allowlist and labels it nonauthoritative.
 
 Set `llm.model_list[].litellm_params.model` to `chatgpt/gpt-5.5`. Do not supply
-api_key, api_base or max_tokens; the subscription runtime cannot enforce those
+api_key, api_base, max_tokens or reasoning_effort; the subscription runtime cannot enforce those
 HTTP settings. Its ordered requests share the normal concurrency, document
 request admission, cancellation, content validation and configured fallback
 rules. Native transport failures do not automatically retry the same deployment.

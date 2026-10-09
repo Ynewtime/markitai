@@ -87,6 +87,8 @@ struct Deployment {
     endpoint: String,
     protocol: Protocol,
     max_tokens: Option<u64>,
+    /// `litellm_params.reasoning_effort`, or the provider's clean-up default.
+    reasoning_effort: Option<String>,
     supports_vision: Option<bool>,
 }
 
@@ -106,6 +108,7 @@ impl std::fmt::Debug for Deployment {
             .field("endpoint", &crate::output::redact_url(&self.endpoint))
             .field("protocol", &self.protocol)
             .field("max_tokens", &self.max_tokens)
+            .field("reasoning_effort", &self.reasoning_effort)
             .field("supports_vision", &self.supports_vision)
             .finish()
     }
@@ -963,6 +966,7 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                     .pointer("/model_info/max_tokens")
                     .and_then(Value::as_u64)
             });
+        let reasoning_effort = reasoning_effort(provider, protocol, params)?;
         result.push(Deployment {
             id: model.into(),
             explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),
@@ -982,6 +986,7 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             endpoint,
             protocol,
             max_tokens,
+            reasoning_effort,
             supports_vision: entry
                 .pointer("/model_info/supports_vision")
                 .and_then(Value::as_bool),
@@ -1000,6 +1005,21 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
         ));
     }
     Ok(result)
+}
+
+/// The reasoning setting a deployment sends. DeepSeek thinks by default and
+/// can spend the whole output budget on it before cleaning a document, so
+/// its default is no thinking; other providers keep their own default.
+fn reasoning_effort(provider: &str, protocol: Protocol, params: &Value) -> Result<Option<String>> {
+    let configured = params.get("reasoning_effort").and_then(Value::as_str);
+    if protocol == Protocol::Anthropic && configured.is_some_and(|effort| effort != "none") {
+        return Err(Error::Unsupported(
+            "Anthropic deployments do not accept reasoning_effort; only none (the default) is supported".into(),
+        ));
+    }
+    Ok(configured
+        .or((provider == "deepseek").then_some("none"))
+        .map(str::to_owned))
 }
 
 fn endpoint(base: &str, model: &str, protocol: Protocol, version: Option<&str>) -> Result<String> {
@@ -1604,6 +1624,16 @@ fn payload(entry: &Deployment, prompts: &Prompts) -> Value {
             };
             payload[field] = json!(max_tokens);
         }
+        match (entry.provider.as_str(), entry.reasoning_effort.as_deref()) {
+            (_, None) => {}
+            // DeepSeek's switch is `thinking`; its effort applies while thinking.
+            ("deepseek", Some("none")) => payload["thinking"] = json!({"type":"disabled"}),
+            ("deepseek", Some(effort)) => {
+                payload["thinking"] = json!({"type":"enabled"});
+                payload["reasoning_effort"] = json!(effort);
+            }
+            (_, Some(effort)) => payload["reasoning_effort"] = json!(effort),
+        }
         payload
     }
 }
@@ -1806,9 +1836,7 @@ fn request_with_mode(
         == Some("length")
         || data.get("stop_reason").and_then(Value::as_str) == Some("max_tokens");
     if truncated {
-        return Err(Failure::terminal(
-            "LLM output was truncated by its token limit",
-        ));
+        return Err(Failure::terminal(&truncation(&data)));
     }
     text.filter(|text| !text.trim().is_empty())
         .ok_or_else(|| Failure {
@@ -1819,6 +1847,24 @@ fn request_with_mode(
             document_fatal: false,
             retry_after: None,
         })
+}
+
+/// A response cut off by its output cap; when reasoning spent the whole cap,
+/// the error says so and how to change it.
+fn truncation(data: &Value) -> String {
+    let usage = data.get("usage");
+    let output = usage
+        .and_then(|usage| usage.get("completion_tokens"))
+        .and_then(Value::as_u64);
+    let reasoning = usage
+        .and_then(|usage| usage.pointer("/completion_tokens_details/reasoning_tokens"))
+        .and_then(Value::as_u64);
+    match (output, reasoning) {
+        (Some(output), Some(reasoning)) if reasoning > 0 && reasoning >= output => format!(
+            "LLM output was truncated by its token limit: reasoning used all {output} output tokens; lower litellm_params.reasoning_effort or raise max_tokens"
+        ),
+        _ => "LLM output was truncated by its token limit".into(),
+    }
 }
 
 /// Names how a paid response without answer text ended, so a block (for
@@ -2006,6 +2052,7 @@ fn record_usage_class(
 mod tests {
     mod auth_fallback;
     mod hardening;
+    mod reasoning;
     mod resend;
     use super::*;
     use std::io::Write;

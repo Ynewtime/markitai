@@ -189,10 +189,7 @@ impl Wire {
             == Some("length")
             || data.get("stop_reason").and_then(Value::as_str) == Some("max_tokens")
         {
-            return Err(blocked(
-                FailureKind::Truncated,
-                "LLM output was truncated by its token limit",
-            ));
+            return Err(blocked(FailureKind::Truncated, &truncation(data)));
         }
         if data
             .pointer("/choices/0/message/refusal")
