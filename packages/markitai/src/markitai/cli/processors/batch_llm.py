@@ -245,15 +245,36 @@ def _batch_custom_id(index: int, source: str, kind: str = "doc") -> str:
     return f"{kind}_{index}_{safe}"[:64]
 
 
-def _anthropic_max_tokens(model: str) -> int:
+def _configured_max_tokens(cfg: Any, target: str) -> int | None:
+    """The output cap the config sets for ``target``, or None.
+
+    Same precedence as the live path (``_calculate_dynamic_max_tokens``):
+    ``litellm_params.max_tokens`` first, then the ``model_info.max_tokens``
+    limit override. Several entries for the one model take the smallest.
+    """
+    caps = []
+    for entry in cfg.llm.model_list or []:
+        if entry.litellm_params.model != target:
+            continue
+        cap = entry.litellm_params.max_tokens or (
+            entry.model_info.max_tokens if entry.model_info else None
+        )
+        if cap:
+            caps.append(cap)
+    return min(caps) if caps else None
+
+
+def _anthropic_max_tokens(model: str, configured: int | None = None) -> int:
     """The output cap Anthropic requires on every batched request.
 
-    The live path lets litellm supply a default; the Messages API has none,
-    so read the model's own ceiling and fall back to a value large enough
-    for a cleaned document if litellm has never heard of the model.
+    A configured cap wins. Otherwise: the Messages API has no default, so
+    read the model's own ceiling and fall back to a value large enough for a
+    cleaned document if litellm has never heard of the model.
     """
     from markitai.llm.models import get_model_max_output_tokens
 
+    if configured:
+        return configured
     try:
         return int(get_model_max_output_tokens(f"anthropic/{model}"))
     except Exception:
@@ -868,6 +889,7 @@ async def _run_batch_llm_enhancement(
 
     # Only a submission needs them: a fully cached run talks to no API.
     credentials = _batch_credentials(cfg, model, provider)
+    max_tokens = _configured_max_tokens(cfg, f"{provider}/{model}")
     state_dir = BatchRunState.state_dir_for(output_dir, "pending")
     # Leftovers of a run that died before submitting describe nothing that
     # exists server-side; staging over them would mix two runs' inputs.
@@ -893,7 +915,7 @@ async def _run_batch_llm_enhancement(
                     messages=messages,
                     response_model=response_model,
                     model=model,
-                    max_tokens=_anthropic_max_tokens(model),
+                    max_tokens=_anthropic_max_tokens(model, max_tokens),
                 )
             )
         else:
@@ -904,6 +926,7 @@ async def _run_batch_llm_enhancement(
                     response_model=response_model,
                     model=model,
                     mode=mode,
+                    max_tokens=max_tokens,
                 )
             )
     # Written either way: it is the record of what was submitted, and the
