@@ -197,7 +197,7 @@ class MockVisionProcessor(VisionAnalyzer):
         model: str,
         input_tokens: int,
         output_tokens: int,
-        cost: float,
+        cost: float | None,
         context: str = "",
         cached_tokens: int = 0,
     ):
@@ -212,7 +212,7 @@ class MockVisionProcessor(VisionAnalyzer):
         self._usage[model]["requests"] += 1
         self._usage[model]["input_tokens"] += input_tokens
         self._usage[model]["output_tokens"] += output_tokens
-        self._usage[model]["cost_usd"] += cost
+        self._usage[model]["cost_usd"] += cost or 0.0
 
     async def _call_llm(
         self,

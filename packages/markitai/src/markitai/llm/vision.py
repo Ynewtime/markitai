@@ -39,6 +39,7 @@ from markitai.llm.types import (
     SingleImageResult,
 )
 from markitai.providers.common import has_images
+from markitai.types import request_usage
 from markitai.utils.mime import (
     get_llm_image_mime,
     is_llm_supported_image,
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
     from markitai.config import LLMConfig
     from markitai.llm.engine import LLMEngine
     from markitai.prompts import PromptManager
-    from markitai.types import LLMUsageByModel, ModelUsageStats
+    from markitai.types import LLMUsageByModel
 
 
 # In-code prompt fragments that are part of the effective image-analysis
@@ -258,6 +259,10 @@ def _merge_llm_usage(
         merged[model]["cost_usd"] = merged[model].get("cost_usd", 0.0) + usage.get(
             "cost_usd", 0.0
         )
+        if usage.get("unpriced_requests"):
+            merged[model]["unpriced_requests"] = merged[model].get(
+                "unpriced_requests", 0
+            ) + usage.get("unpriced_requests", 0)
 
     return merged
 
@@ -872,7 +877,7 @@ class VisionAnalyzer:
                 actual_model = getattr(raw_response, "model", None) or "default"
                 input_tokens = 0
                 output_tokens = 0
-                cost = 0.0
+                cost: float | None = 0.0
                 if hasattr(raw_response, "usage") and raw_response.usage is not None:
                     input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
                     output_tokens = (
@@ -899,15 +904,12 @@ class VisionAnalyzer:
 
                 # Calculate per-image usage (divide batch usage by number of images)
                 num_images = max(len(response.images), 1)
+                # Each image counts as 1 request share
                 per_image_llm_usage: LLMUsageByModel = {
-                    actual_model: cast(
-                        "ModelUsageStats",
-                        {
-                            "requests": 1,  # Each image counts as 1 request share
-                            "input_tokens": input_tokens // num_images,
-                            "output_tokens": output_tokens // num_images,
-                            "cost_usd": cost / num_images,
-                        },
+                    actual_model: request_usage(
+                        input_tokens // num_images,
+                        output_tokens // num_images,
+                        None if cost is None else cost / num_images,
                     )
                 }
 
@@ -1108,22 +1110,14 @@ class VisionAnalyzer:
         actual_model = getattr(raw_response, "model", None) or model
         input_tokens = 0
         output_tokens = 0
-        cost = 0.0
+        cost: float | None = 0.0
         if hasattr(raw_response, "usage") and raw_response.usage is not None:
             input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
             output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
             cost = get_response_cost(raw_response)
 
         llm_usage: LLMUsageByModel = {
-            actual_model: cast(
-                "ModelUsageStats",
-                {
-                    "requests": 1,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cost_usd": cost,
-                },
-            )
+            actual_model: request_usage(input_tokens, output_tokens, cost)
         }
 
         return ImageAnalysis(
@@ -1209,20 +1203,14 @@ class VisionAnalyzer:
         # Build aggregated llm_usage from both calls
         llm_usage: LLMUsageByModel = {}
         for resp in [caption_response, desc_response]:
-            if resp.model not in llm_usage:
-                llm_usage[resp.model] = cast(
-                    "ModelUsageStats",
-                    {
-                        "requests": 0,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "cost_usd": 0.0,
-                    },
-                )
-            llm_usage[resp.model]["requests"] += 1
-            llm_usage[resp.model]["input_tokens"] += resp.input_tokens
-            llm_usage[resp.model]["output_tokens"] += resp.output_tokens
-            llm_usage[resp.model]["cost_usd"] += resp.cost_usd
+            llm_usage = _merge_llm_usage(
+                llm_usage,
+                {
+                    resp.model: request_usage(
+                        resp.input_tokens, resp.output_tokens, resp.cost_usd
+                    )
+                },
+            )
 
         return ImageAnalysis(
             caption=caption_response.content.strip(),
@@ -1262,12 +1250,11 @@ class VisionAnalyzer:
                 merged_usage = _merge_llm_usage(
                     merged_usage,
                     {
-                        caption_response.model: {
-                            "requests": 1,
-                            "input_tokens": caption_response.input_tokens,
-                            "output_tokens": caption_response.output_tokens,
-                            "cost_usd": caption_response.cost_usd,
-                        }
+                        caption_response.model: request_usage(
+                            caption_response.input_tokens,
+                            caption_response.output_tokens,
+                            caption_response.cost_usd,
+                        )
                     },
                 )
             except Exception as e:
@@ -1296,12 +1283,11 @@ class VisionAnalyzer:
                 merged_usage = _merge_llm_usage(
                     merged_usage,
                     {
-                        description_response.model: {
-                            "requests": 1,
-                            "input_tokens": description_response.input_tokens,
-                            "output_tokens": description_response.output_tokens,
-                            "cost_usd": description_response.cost_usd,
-                        }
+                        description_response.model: request_usage(
+                            description_response.input_tokens,
+                            description_response.output_tokens,
+                            description_response.cost_usd,
+                        )
                     },
                 )
             except Exception as e:
