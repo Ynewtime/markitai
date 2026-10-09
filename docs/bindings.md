@@ -7,9 +7,8 @@ an installed binding does not add missing format, OCR, or browser capabilities.
 
 Local OCR uses Vision on macOS and Paddle on Windows/Linux; Paddle models
 are prepared separately. PDF page rendering uses CoreGraphics on macOS by
-default and built-in hayro on Windows/Linux. HEIF/HEIC decodes everywhere
-(ImageIO on macOS, a built-in decoder elsewhere); AVIF decoding remains
-macOS-only. Optional browser and Office backends still need their external
+default and built-in hayro on Windows/Linux. HEIF/HEIC and AVIF decode
+everywhere (ImageIO on macOS, built-in decoders elsewhere). Optional browser and Office backends still need their external
 applications; see [quick start](quickstart.md#platform-support).
 
 ## Installation

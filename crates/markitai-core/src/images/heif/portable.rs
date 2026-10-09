@@ -1,7 +1,7 @@
 //! HEIF/HEIC decoding without the operating system, on Windows and Linux:
 //! the pure-Rust `heifer` decoder (ISO BMFF container, HEVC intra pictures,
 //! grids, overlays, alpha planes, clean aperture, rotation and mirror). AVIF
-//! (AV1) images are not decoded here.
+//! (AV1) images go to the rav1d-based decoder in `avif`.
 
 use super::{Decoded, Info};
 use crate::{Error, Result};
@@ -13,7 +13,7 @@ fn failure(message: impl std::fmt::Display) -> Error {
     super::super::error(format!("HEIF: {message}"))
 }
 
-fn unsupported(what: &str) -> Error {
+pub(super) fn unsupported(what: &str) -> Error {
     Error::Unsupported(format!("{what}; no image has been sent to a model"))
 }
 
@@ -42,25 +42,25 @@ fn images(file: &HeifFile<'_>) -> Vec<u32> {
 
 pub(super) fn decode(bytes: &[u8]) -> Result<Decoded> {
     super::validate_container(bytes)?;
-    // heifer is young; an image it cannot handle must fail this conversion,
-    // not the process. The closure only reads the caller's bytes.
+    // heifer is young and rav1d is a port of C; an image either cannot handle
+    // must fail this conversion, not the process. The closure only reads the
+    // caller's bytes.
     std::panic::catch_unwind(|| decode_checked(bytes))
         .unwrap_or_else(|_| Err(failure("the portable decoder failed on this image")))
 }
 
 fn decode_checked(bytes: &[u8]) -> Result<Decoded> {
     let file = HeifFile::parse(bytes).map_err(failure)?;
-    let primary = file.primary_item().map_err(failure)?;
-    if primary.item_type.0 == *b"av01" {
-        return Err(unsupported(
-            "AVIF decoding requires macOS ImageIO in this build",
-        ));
-    }
+    file.primary_item().map_err(failure)?;
     let images = images(&file);
     let index = images
         .iter()
         .position(|&id| id == file.primary_id)
         .ok_or_else(|| failure("the container has no valid primary image"))?;
+    if super::avif::is_av1(&file, file.primary_id) {
+        let image = super::avif::decode(&file)?;
+        return pixels(image, "AVIF", images.len(), index);
+    }
     let options = heifer::Options {
         max_threads: 0,
         max_pixels: super::super::MAX_PIXELS,
@@ -76,6 +76,15 @@ fn decode_checked(bytes: &[u8]) -> Result<Decoded> {
         }
         error => failure(error),
     })?;
+    pixels(decoded, "HEIF", images.len(), index)
+}
+
+fn pixels(
+    decoded: heifer::Image,
+    format: &'static str,
+    images: usize,
+    primary: usize,
+) -> Result<Decoded> {
     let (width, height) = (decoded.width, decoded.height);
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > super::super::MAX_PIXELS
     {
@@ -92,9 +101,9 @@ fn decode_checked(bytes: &[u8]) -> Result<Decoded> {
     Ok(Decoded {
         image,
         info: Info {
-            format: "HEIF",
-            images: images.len(),
-            primary: index,
+            format,
+            images,
+            primary,
         },
     })
 }
@@ -154,11 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn avif_and_damaged_files_are_errors_not_empty_images() {
-        assert!(matches!(
-            decode(include_bytes!("../fixtures/heif/white_1x1.avif")),
-            Err(Error::Unsupported(_))
-        ));
+    fn damaged_files_are_errors_not_empty_images() {
         let whole = include_bytes!("../fixtures/heif/english.heic");
         assert!(decode(&whole[..whole.len() / 2]).is_err());
     }

@@ -24,11 +24,11 @@
     "max_concurrency": 4
   },
   "summary": {
-    "requested_packages": 25,
-    "exact_commit_manifest_matches": 24,
-    "full_license_text_packages": 25,
+    "requested_packages": 26,
+    "exact_commit_manifest_matches": 25,
+    "full_license_text_packages": 26,
     "notice_only_packages": 0,
-    "overlay_files": 41,
+    "overlay_files": 43,
     "source_archives": 7,
     "historical_text_packages": 3,
     "reviewed_publication_version_stamps": 1
@@ -1772,6 +1772,71 @@
           "content_kind": "full_license_text"
         }
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#atomig-macro@0.4.0",
+      "name": "atomig-macro",
+      "version": "0.4.0",
+      "declared_license": "MIT/Apache-2.0",
+      "repository": "https://github.com/LukasKalbertodt/atomig",
+      "commit": "abd42e50a6a1b0615505189a780fcb5da19d7385",
+      "path_in_vcs": "atomig-macro",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": false,
+      "version_inherited_from_workspace": false,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT",
+        "Apache-2.0"
+      ],
+      "applicability": "The exact package manifest declares license = \"MIT/Apache-2.0\" (MIT or Apache-2.0); the same-commit root LICENSE-MIT and LICENSE-APACHE, which the atomig 0.4.3 package published from this commit ships, are the complete terms of both options.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/atomig-macro/Cargo.toml",
+          "bytes": 443,
+          "sha256": "376fabdd7a9edbaad7aef35443688f75ad61baa610ee5d4126e5a4a7c65f1db2",
+          "source_url": "https://raw.githubusercontent.com/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/atomig-macro/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/atomig-macro-0.4.0/Cargo.toml.orig",
+          "bytes": 443,
+          "sha256": "376fabdd7a9edbaad7aef35443688f75ad61baa610ee5d4126e5a4a7c65f1db2"
+        },
+        {
+          "path": "local-evidence/atomig-macro-0.4.0/.cargo_vcs_info.json",
+          "bytes": 106,
+          "sha256": "f96c4373958f2482c91689a55077b16877cbacf21f916721d4814defeb7e796b"
+        },
+        {
+          "path": "upstream/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/Cargo.toml",
+          "bytes": 921,
+          "sha256": "bb15c7d09129c1c5f276a15b61a8d06681718882413e3915208e631a925d9691",
+          "source_url": "https://raw.githubusercontent.com/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/Cargo.toml"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/atomig-macro-0.4.0/LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "6f54826bbf67526f2d41937c1904ae2de63ef5707b80c68deadbf073b5669c40",
+          "destination": "licenses/atomig-macro-0.4.0/LICENSE-MIT",
+          "source_path": "upstream/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/LICENSE-MIT",
+          "source_sha256": "6f54826bbf67526f2d41937c1904ae2de63ef5707b80c68deadbf073b5669c40",
+          "content_kind": "full_license_text"
+        },
+        {
+          "path": "overlay/licenses/atomig-macro-0.4.0/LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "destination": "licenses/atomig-macro-0.4.0/LICENSE-APACHE",
+          "source_path": "upstream/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/LICENSE-APACHE",
+          "source_sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "content_kind": "full_license_text"
+        }
+      ]
     }
   ],
   "unresolved_full_license_text": [],
@@ -1894,6 +1959,20 @@
     ],
     "authenticated_requests": false,
     "checks": "Each published Cargo.toml.orig and .cargo_vcs_info.json (local registry source) equals the same-commit crate manifest and names this commit and path; the crates publish no license file of their own.",
+    "legal_review": "not_performed"
+  },
+  "atomig_macro_license_collection": {
+    "date": "2026-10-09",
+    "repository": "https://github.com/LukasKalbertodt/atomig",
+    "commit": "abd42e50a6a1b0615505189a780fcb5da19d7385",
+    "retrieved": [
+      "https://raw.githubusercontent.com/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/Cargo.toml",
+      "https://raw.githubusercontent.com/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/LICENSE-MIT",
+      "https://raw.githubusercontent.com/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/LICENSE-APACHE",
+      "https://raw.githubusercontent.com/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/atomig-macro/Cargo.toml"
+    ],
+    "authenticated_requests": false,
+    "checks": "The published Cargo.toml.orig and .cargo_vcs_info.json (local registry source) equal the same-commit crate manifest and name this commit and path; the root LICENSE-MIT and LICENSE-APACHE equal those the atomig 0.4.3 package (same commit) ships; atomig-macro publishes no license file of its own.",
     "legal_review": "not_performed"
   }
 }

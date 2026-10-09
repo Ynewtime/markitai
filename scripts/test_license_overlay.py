@@ -28,6 +28,7 @@ class LicenseOverlayTests(unittest.TestCase):
         self.packages = []
         self.node_packages = []
         self.heif_packages = []
+        self.avif_packages = []
         for item in self.manifest["packages"]:
             label = f"{item['name']}-{item['version']}"
             source = self.root / "registry" / label
@@ -46,6 +47,8 @@ class LicenseOverlayTests(unittest.TestCase):
                 target_packages = self.node_packages
             elif item["name"].startswith("heifer"):
                 target_packages = self.heif_packages
+            elif item["name"] == "atomig-macro":
+                target_packages = self.avif_packages
             else:
                 target_packages = self.packages
             target_packages.append({"id": item["id"], "name": item["name"], "version": item["version"],
@@ -403,7 +406,7 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
         result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 24)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 25)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
                     "tract-extra": ("reviewed_publication_version_stamp",
@@ -631,7 +634,7 @@ class LicenseOverlayTests(unittest.TestCase):
         result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages)
         self.assertEqual(result["record"]["matched_packages"], 21)
         self.assertEqual(result["record"]["complete_text_packages"], 21)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 24)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 25)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         self.assertEqual(len(result["record"]["source_archives"]), 7)
         for entry in self.manifest["packages"]:
@@ -663,6 +666,20 @@ class LicenseOverlayTests(unittest.TestCase):
             self.assertTrue(record["complete_text"])
             self.assertEqual(sorted(Path(text["path"]).name for text in record["texts"]),
                              ["LICENSE-APACHE", "LICENSE-MIT"])
+
+    def test_atomig_macro_terms_are_the_published_commit_root_licenses(self):
+        self.assertEqual(len(self.avif_packages), 1)
+        result = stage_overlay(self.vendor, self.destination, self.packages + self.avif_packages)
+        self.assertEqual(result["record"]["matched_packages"], 18)
+        package = self.avif_packages[0]
+        entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
+        self.assertFalse(entry["license_inherited_from_workspace"])
+        self.assertEqual(entry["path_in_vcs"], "atomig-macro")
+        record = result["packages"][package["id"]]
+        self.assertEqual(record["manifest_provenance"], "raw_exact_match")
+        self.assertTrue(record["complete_text"])
+        self.assertEqual(sorted(Path(text["path"]).name for text in record["texts"]),
+                         ["LICENSE-APACHE", "LICENSE-MIT"])
 
     def test_node_parent_child_and_vcs_cannot_be_resealed_into_other_identity(self):
         entry = next(p for p in self.manifest["packages"] if p["name"] == "napi-build")

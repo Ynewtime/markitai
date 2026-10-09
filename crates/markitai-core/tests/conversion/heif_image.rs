@@ -68,8 +68,8 @@ fn model(config: &mut Value, base: &str) {
         "model_list":[{"model_name":"heif-local","litellm_params":{"model":"openai/mock","api_base":base,"api_key":"fixture-only"},"model_info":{"supports_vision":true}}]});
 }
 
-/// HEIC everywhere (ImageIO on macOS, the built-in decoder elsewhere); AVIF
-/// where ImageIO decodes it.
+/// HEIC and AVIF everywhere: ImageIO on macOS, the built-in decoders
+/// elsewhere.
 #[test]
 fn actual_heic_and_avif_reach_vision_as_png_with_upright_pixels() {
     use base64::Engine;
@@ -80,18 +80,24 @@ fn actual_heic_and_avif_reach_vision_as_png_with_upright_pixels() {
         return;
     }
     let directory = tempfile::tempdir().unwrap();
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut cases = vec![(
-        "rotated.svg",
-        include_bytes!("../../src/images/fixtures/heif/quadrants-orientation6.heic").as_slice(),
-        (80, 120),
-    )];
-    #[cfg(target_os = "macos")]
-    cases.push((
-        "tiny.png",
-        include_bytes!("../../src/images/fixtures/heif/white_1x1.avif").as_slice(),
-        (1, 1),
-    ));
+    let cases = [
+        (
+            "rotated.svg",
+            include_bytes!("../../src/images/fixtures/heif/quadrants-orientation6.heic").as_slice(),
+            (80, 120),
+        ),
+        (
+            "tiny.png",
+            include_bytes!("../../src/images/fixtures/heif/white_1x1.avif").as_slice(),
+            (1, 1),
+        ),
+        (
+            "turned.avif",
+            include_bytes!("../../src/images/fixtures/heif/quadrants-121x81-orientation6.avif")
+                .as_slice(),
+            (81, 121),
+        ),
+    ];
     for (name, bytes, dimensions) in cases {
         let path = directory.path().join(name);
         std::fs::write(&path, bytes).unwrap();

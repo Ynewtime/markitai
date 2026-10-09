@@ -725,8 +725,8 @@ pagination. Numbers screenshots and OCR remain unsupported. See the Office guide
 for import fidelity, font handling and resource limits.
 HEIF/HEIC and AVIF primary images use native
 ImageIO decoding on macOS, with the scoped limits in [images](images.md); on
-Windows and Linux HEIF/HEIC uses the built-in pure-Rust decoder and AVIF still
-returns an explicit unsupported error. Local and static/automatic URL PDFs support explicit
+Windows and Linux HEIF/HEIC uses the built-in pure-Rust decoder and AVIF the
+built-in AV1 decoder (rav1d). Local and static/automatic URL PDFs support explicit
 page rendering, screenshots and OCR through the [PDF media pipeline](pdf-ocr.md),
 including its documented accuracy gap. URL media preserves original request
 identity while processing downloaded bytes without a second download.

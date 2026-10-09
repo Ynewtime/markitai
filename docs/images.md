@@ -6,7 +6,8 @@ external image editor. Optional [image enrichment](image-enrichment.md) can fetc
 actual remote image references before passing their bytes to these decoders.
 JPEG, PNG, GIF, BMP, TIFF and WebP use Rust codecs. Static SVG inputs are rendered
 natively with resvg. On macOS, HEIF/HEIC and AVIF use ImageIO's native codecs;
-on Windows and Linux, HEIF/HEIC uses the built-in pure-Rust decoder.
+on Windows and Linux, HEIF/HEIC uses the built-in pure-Rust decoder and AVIF the
+built-in AV1 decoder.
 
 ## Standalone inputs
 
@@ -63,10 +64,29 @@ rotation and mirror; ICC profiles are not applied and high bit depths become
 8-bit. It counts the container's images and
 selects the primary one as ImageIO does, within the same 32-million-pixel limit;
 the corpus's `english.heic` decodes to the same pixels as libheif's. Coding it
-does not read is an explicit unsupported error. AVIF (AV1) is decoded only by
-macOS ImageIO; Windows and Linux report `unsupported`, as does a macOS runtime
-unable to decode a particular codec. OS
-codec availability depends on the installed macOS version; current verification
+does not read is an explicit unsupported error.
+
+AVIF on Windows and Linux uses the same container reader and colour
+conversion with [rav1d](https://github.com/memorysafety/rav1d), the Rust port
+of the dav1d AV1 decoder (BSD-2-Clause), vendored in `vendor/rav1d` at a pinned
+upstream commit without its assembly. It reads single images and grids of
+them, 8 to 12 bits, monochrome and 4:2:0, 4:2:2 and 4:4:4 chroma, alpha planes
+(also as grids), clean aperture, rotation and mirror. An animated AVIF gives
+its still primary image (one with only a track is an error); gain maps and ICC
+profiles are not applied, and overlays (`iovl`) are an unsupported error.
+rav1d is a port of C and contains `unsafe` code, unlike heifer: each image
+decodes on the calling thread with frames bounded to 32 million pixels, and a
+panic in the decoder fails that image only. Chroma is upsampled by nearest
+neighbour, as for HEIC: on libavif's v1.3.0 test files the pixels are mostly
+within a few levels of Pillow 12.3's (libavif with dav1d), with larger
+differences at sharp colour edges of tiny or subsampled images. 52,000 mutated
+AVIF files decoded or failed without a panic or a slow decode. Without
+assembly and on one thread it is slower than libavif with dav1d: on Linux
+arm64 a 1600 by 1000 AVIF takes 32 ms (Pillow 31 ms) and a 12-megapixel one
+225 ms (Pillow 70 ms).
+
+On macOS, a runtime unable to decode a particular codec reports
+`unsupported`. OS codec availability depends on the installed macOS version; current verification
 does not establish support on every version allowed by the binary deployment
 target. HDR/high-bit-depth images are converted to an 8-bit sRGB representation;
 HDR tone fidelity and every HEIF coding variant are not claimed. The owned input,
@@ -75,8 +95,10 @@ decode time are not an OS sandbox or a peak-RSS guarantee.
 
 Regression fixtures include locally authored HEIC quadrant images with EXIF
 orientations 1 and 6, a two-image collection whose second image is primary,
-and local OCR text. Real AVIF white-pixel and transparent-circle files come from
-libavif v1.3.0 under its stated BSD license. Source URLs, exact hashes and local
+and local OCR text. An odd-sized AVIF quadrant image with `irot` is authored
+with Pillow (`generate-avif-quadrants.py`); real AVIF white-pixel,
+transparent-circle, 10-bit alpha with rotation and grid-with-grid-alpha files
+come from libavif v1.3.0 under its stated BSD license. Source URLs, exact hashes and local
 generation commands are stored beside the fixtures in
 `crates/markitai-core/src/images/fixtures/heif/provenance.json`; the license and
 authored HEIC generator are included. Tests inspect decoded pixels, alpha,
