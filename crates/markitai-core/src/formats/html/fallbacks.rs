@@ -10,6 +10,8 @@ use scraper::{ElementRef, Html, Node};
 
 /// Fallbacks recovered per page; a page with more is read as it is.
 const MAX_FALLBACKS: usize = 1_000;
+/// `<noscript>` elements examined per page; a page with more is read as it is.
+const MAX_NOSCRIPTS: usize = 4 * MAX_FALLBACKS;
 
 fn placeholder(url: &str) -> bool {
     url.trim()
@@ -69,6 +71,24 @@ fn fallback_images(noscript: ElementRef<'_>) -> Vec<scraper::node::Element> {
 pub(super) fn recover(document: &mut Html) {
     let mut fallbacks = Vec::new();
     let mut pictures = Vec::new();
+    let mut noscripts = 0;
+    // The boxes that already show an image, found once for the page: every
+    // ancestor of an image with a shown address (a lazy `data-src` the
+    // reader follows). Such a box needs no fallback.
+    let mut showing = std::collections::HashSet::new();
+    for image in document
+        .root_element()
+        .descendants()
+        .filter_map(ElementRef::wrap)
+        .filter(|image| image.value().name() == "img" && shown(image.value()).is_some())
+    {
+        // An ancestor already marked has its own ancestors marked too.
+        for ancestor in image.ancestors() {
+            if !showing.insert(ancestor.id()) {
+                break;
+            }
+        }
+    }
     for element in document
         .root_element()
         .descendants()
@@ -79,6 +99,10 @@ pub(super) fn recover(document: &mut Html) {
         }
         match element.value().name() {
             "noscript" => {
+                noscripts += 1;
+                if noscripts > MAX_NOSCRIPTS {
+                    continue;
+                }
                 let in_body = element
                     .ancestors()
                     .filter_map(ElementRef::wrap)
@@ -86,13 +110,7 @@ pub(super) fn recover(document: &mut Html) {
                 let Some(parent) = element.parent().and_then(ElementRef::wrap) else {
                     continue;
                 };
-                // A box that already shows an image (a lazy `data-src` the
-                // reader follows) needs no fallback.
-                let shows_image = parent
-                    .descendants()
-                    .filter_map(ElementRef::wrap)
-                    .any(|image| image.value().name() == "img" && shown(image.value()).is_some());
-                if !in_body || is_hidden(element) || shows_image {
+                if !in_body || is_hidden(element) || showing.contains(&parent.id()) {
                     continue;
                 }
                 let images = fallback_images(element);

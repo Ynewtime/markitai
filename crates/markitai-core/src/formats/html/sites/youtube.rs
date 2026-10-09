@@ -288,6 +288,10 @@ mod tests {
             r#"<html><body><p>Page text</p><script>var ytInitialPlayerResponse = {{"ab":"{filler}"}};</script></body></html>"#
         );
         let document = extract_html(&page, Some("https://www.youtube.com/watch?v=abc")).unwrap();
-        assert!(document.markdown.contains("Page text"), "{}", document.markdown);
+        assert!(
+            document.markdown.contains("Page text"),
+            "{}",
+            document.markdown
+        );
     }
 }
