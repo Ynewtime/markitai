@@ -336,5 +336,7 @@ class TestLogUrlRedaction:
 
         assert log_file is not None
         content = log_file.read_text()
-        assert "/api/jobs/abc/files/out.md?download=1&token=" in content
+        # LiteLLM >= 1.104 also filters uvicorn.access and replaces the whole
+        # ``token=...`` pair with REDACTED; either way the path stays readable.
+        assert "/api/jobs/abc/files/out.md?download=1&" in content
         assert "mk_SECRET123" not in content
