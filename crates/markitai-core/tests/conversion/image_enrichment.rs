@@ -284,15 +284,19 @@ fn run(
 fn body(result: &markitai_core::ConversionOutput) -> &str {
     result.llm_markdown.as_deref().expect("enhanced Markdown")
 }
+/// The model requests, document text first: image analysis runs beside the
+/// enhancement, so its requests may arrive before the text request.
 fn requests(server: &Server) -> Vec<Value> {
-    server
+    let mut requests: Vec<Value> = server
         .requests()
         .iter()
         .map(|request| {
             assert!(request.head.starts_with("POST /v1/chat/completions "));
             serde_json::from_slice(&request.body).unwrap()
         })
-        .collect()
+        .collect();
+    requests.sort_by_key(|request| !request["messages"][1]["content"].is_string());
+    requests
 }
 fn vision_bytes(request: &Value) -> Vec<Vec<u8>> {
     use base64::Engine;
