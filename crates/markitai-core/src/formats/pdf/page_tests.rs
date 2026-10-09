@@ -704,3 +704,88 @@ fn text_drawn_outside_the_crop_box_is_left_out_with_a_warning() {
         );
     }
 }
+
+#[test]
+fn images_are_placed_where_they_are_drawn_among_the_lines() {
+    // A banner above the text, a figure between two paragraphs and a
+    // footer image below the text, drawn in the reverse order.
+    let mut pdf = lopdf::Document::with_version("1.7");
+    let tree = pdf.new_object_id();
+    let font = pdf.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+    });
+    let mut xobjects = Dictionary::new();
+    for (index, rgb) in [[255, 0, 0], [0, 255, 0], [0, 0, 255]]
+        .into_iter()
+        .enumerate()
+    {
+        let image = pdf.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 1,
+                "Height" => 1, "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8
+            },
+            rgb.to_vec(),
+        ));
+        xobjects.set(format!("Im{index}"), image);
+    }
+    let stream = [
+        "q 300 0 0 40 40 100 cm /Im2 Do Q".to_owned(),
+        "q 300 0 0 60 40 520 cm /Im1 Do Q".to_owned(),
+        "q 300 0 0 50 40 730 cm /Im0 Do Q".to_owned(),
+        text_at(
+            700,
+            "The opening paragraph starts right below the banner image.",
+        ),
+        text_at(
+            686,
+            "It continues on a second line before the figure is drawn.",
+        ),
+        text_at(
+            480,
+            "The closing paragraph follows the figure in the reading order.",
+        ),
+    ]
+    .join("\n");
+    let content = pdf.add_object(Stream::new(Dictionary::new(), stream.into_bytes()));
+    let page = pdf.add_object(dictionary! {
+        "Type" => "Page", "Parent" => tree, "Contents" => content,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font }, "XObject" => xobjects }
+    });
+    pdf.objects.insert(
+        tree,
+        dictionary! {
+            "Type" => "Pages", "Count" => 1, "Kids" => vec![page.into()],
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+        }
+        .into(),
+    );
+    let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+    pdf.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    let document = extract_pages(&bytes).unwrap().finish().unwrap();
+    let markdown = &document.markdown;
+    let at = |needle: &str| {
+        markdown
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle}\n{markdown}"))
+    };
+    let image = |index: u8| {
+        let names: Vec<_> = document
+            .assets
+            .iter()
+            .map(|asset| asset.name.as_str())
+            .collect();
+        at(&format!(".markitai/assets/{}", names[index as usize]))
+    };
+    // Assets are named in drawing order: footer, figure, banner.
+    assert!(image(2) < at("The opening paragraph"), "{markdown}");
+    assert!(at("before the figure is drawn.") < image(1), "{markdown}");
+    assert!(image(1) < at("The closing paragraph"), "{markdown}");
+    assert!(at("in the reading order.") < image(0), "{markdown}");
+    assert!(
+        !document.warnings.iter().any(|w| w == LIMITATION),
+        "{:?}",
+        document.warnings
+    );
+}

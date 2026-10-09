@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- PDF images are placed where they are drawn among their page's text: before it, after the paragraph above them, or after it, instead of always after the page's text, which could split a sentence that continues on the next page. Only images that cannot be located still follow the text, with the existing warning.
 - HTML: a lazy-loading page's `<noscript>` image fallbacks are kept as images instead of being dropped, and a `<picture>` whose `<img>` is only an inline placeholder takes the address of its first `<source>` set.
 - PDF text drawn outside the visible page area (CropBox) is left out of the body with a warning giving the number of items, as a viewer never shows it; a single such line was extracted before, because only neighboring-page paragraphs were clipped.
 - A serve job snapshot's job-level `options` lists only the supported option keys, as each item's `options` already did, instead of echoing everything saved with the job: the stored `remote_processing` consent and CLI history metadata such as `origin` are no longer returned.

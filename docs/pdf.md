@@ -217,6 +217,15 @@ still read from their layer, so a page recognized again by OCR drops out.
 Embedded objects shared between pages still produce a single asset, with each
 page retaining its own reference.
 
+At assembly each image of a page read from its text is placed where it is
+drawn: before the text when it lies above every text line, after the paragraph
+holding the nearest line above it that shares its columns, or after the text
+when it lies below every line. The paragraph is found by the last 40 letters and
+digits of that line, which must occur exactly once in the page's Markdown. An
+image drawn inside a form, twice on one page, beside text with no line above it,
+or whose line cannot be found follows the page's text as before, and only then
+does the warning that images are placed after their page's text appear.
+
 The ordinary `extract` entrypoint calls `finish`, which preserves page markers,
 image-reference order, metadata, inspection diagnostics and the final empty-content
 error. An unreadable or blank page is available to a media/OCR caller before that
@@ -352,7 +361,7 @@ is dropped; any other first row becomes a body row. Other text between the
 parts, another column count, a header of empty cells, a single column or a page
 recognized by OCR keeps the tables apart. A part on its own (per-page
 extraction, or a page recognized by OCR next to it) is headed by its first row,
-so no table has an empty header row. Page images stay after their own page's
+so no table has an empty header row. Page images stay with their own page's
 text.
 
 Before replacing page Markdown, decoded alphanumeric character counts must agree

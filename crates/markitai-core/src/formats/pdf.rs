@@ -20,6 +20,8 @@ mod ocr_layer_tests;
 #[cfg(test)]
 #[path = "pdf/page_tests.rs"]
 mod page_tests;
+#[path = "pdf/placement.rs"]
+mod placement;
 #[cfg(test)]
 #[path = "pdf/policy_tests.rs"]
 mod policy_tests;
@@ -691,6 +693,9 @@ pub(crate) struct PdfPage {
     pub needs_ocr: bool,
     pub ocr_reason: Option<String>,
     pub asset_names: Vec<String>,
+    /// Where each asset goes in the page's text, for those placed by
+    /// position; the others follow the text.
+    image_places: BTreeMap<String, placement::Place>,
     pub asset_ocr: BTreeMap<String, String>,
     pub screenshot_name: Option<String>,
     pub visibility_suspect: bool,
@@ -780,8 +785,8 @@ impl PdfPages {
                 .metadata
                 .insert("ocr_layer_pages".into(), layer_pages.into());
         }
-        let appended_images = pages.iter().any(|page| !page.asset_names.is_empty());
-        for (page, readable) in pages.into_iter().zip(readable) {
+        let mut appended_images = false;
+        for (mut page, readable) in pages.into_iter().zip(readable) {
             readable_pages += usize::from(readable);
             let mut warning = Vec::new();
             // A page whose text all continued the previous page's table
@@ -795,19 +800,59 @@ impl PdfPages {
             for warning in warning {
                 deferred.push((page.warning_index, warning));
             }
+            // Images placed by position go before the text or after their
+            // paragraph; the others follow the text, in drawing order.
+            let mut leading = String::new();
+            let mut inserts: Vec<(usize, String)> = Vec::new();
+            let text_end = section.len();
             for name in page.asset_names {
-                section.push_str(&format!(
-                    "\n\n![Image on page {}](.markitai/assets/{name})",
-                    page.number
-                ));
+                let mut image =
+                    format!("![Image on page {}](.markitai/assets/{name})", page.number);
                 if let Some(text) = page
                     .asset_ocr
                     .get(&name)
                     .filter(|text| !text.trim().is_empty())
                 {
-                    section.push_str("\n\n");
-                    section.push_str(text.trim());
+                    image.push_str("\n\n");
+                    image.push_str(text.trim());
                 }
+                let at = match page.image_places.remove(&name) {
+                    Some(placement::Place::Start) if section.len() > marker_len(&section) => {
+                        leading.push_str(&image);
+                        leading.push_str("\n\n");
+                        continue;
+                    }
+                    Some(placement::Place::After(line)) => {
+                        placement::after_paragraph(&section[..text_end], &line)
+                    }
+                    Some(placement::Place::End) => Some(text_end),
+                    _ => None,
+                };
+                appended_images |= at.is_none();
+                inserts.push((at.unwrap_or(text_end), image));
+            }
+            // Later offsets first, so earlier ones stay valid; images at one
+            // offset keep their drawing order.
+            inserts.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+            let mut index = 0;
+            while index < inserts.len() {
+                let at = inserts[index].0;
+                let group: Vec<_> = inserts[index..]
+                    .iter()
+                    .take_while(|(offset, _)| *offset == at)
+                    .map(|(_, image)| image.as_str())
+                    .collect();
+                index += group.len();
+                section.insert_str(at, &format!("\n\n{}", group.join("\n\n")));
+            }
+            if !leading.is_empty() {
+                let marker = marker_len(&section);
+                let gap = if marker == 0 { "" } else { "\n\n" };
+                let body = section[marker..].trim_start_matches('\n').to_owned();
+                section.truncate(marker);
+                section.push_str(gap);
+                section.push_str(&leading);
+                section.push_str(&body);
             }
             if let Some(name) = page.screenshot_name {
                 section.push_str("\n\n");
@@ -909,6 +954,15 @@ fn join_bold_runs(markdown: &str) -> std::borrow::Cow<'_, str> {
         output.push_str(rest);
     }
     std::borrow::Cow::Owned(output)
+}
+
+/// The length of the page-number marker that opens a page's section.
+fn marker_len(section: &str) -> usize {
+    if section.starts_with("<!-- Page number: ") {
+        section.find(" -->").map_or(0, |end| end + " -->".len())
+    } else {
+        0
+    }
 }
 
 fn page_markdown(page: &PdfPage, warnings: &mut Vec<String>) -> String {
@@ -1384,6 +1438,28 @@ fn extract_pages_inner(
             }
         }
     };
+    // Where each image of a page read from its text goes in that text.
+    let image_pages: HashSet<u32> = inspections
+        .iter()
+        .filter(|(number, inspection)| {
+            !inspection.images.is_empty()
+                && pages
+                    .get(number)
+                    .is_some_and(|page| !page.needs_ocr && !page.markdown.trim().is_empty())
+                && !layer_checks.contains_key(number)
+        })
+        .map(|(&number, _)| number)
+        .collect();
+    let mut image_places = match &loaded {
+        Ok(loaded) if !image_pages.is_empty() => loaded
+            .text_with_positions_and_rotations(
+                Some(&image_pages),
+                pdf_inspector::PositionOptions::new(),
+            )
+            .map(|(items, _)| placement::places(pdf, &page_ids, &items))
+            .unwrap_or_default(),
+        _ => BTreeMap::new(),
+    };
     // The layout reader was the last to read the pages' text.
     if let Ok(loaded) = &loaded {
         loaded.forget_page_runs();
@@ -1454,6 +1530,8 @@ fn extract_pages_inner(
         let warning_index = document.warnings.len();
         let visibility_suspect = !inspection.signals.is_empty();
         let mut asset_names = Vec::new();
+        let mut page_places = image_places.remove(&number).unwrap_or_default();
+        let mut places = BTreeMap::new();
         for warning in inspection.warnings {
             document
                 .warnings
@@ -1507,6 +1585,9 @@ fn extract_pages_inner(
                 }
             });
             if let Some(name) = name {
+                if let Some(place) = page_places.remove(&image_id) {
+                    places.insert(name.clone(), place);
+                }
                 asset_names.push(name.clone());
             }
         }
@@ -1516,6 +1597,7 @@ fn extract_pages_inner(
             needs_ocr: page.needs_ocr,
             ocr_reason: page.ocr_reason,
             asset_names,
+            image_places: places,
             asset_ocr: BTreeMap::new(),
             screenshot_name: None,
             visibility_suspect,
@@ -2020,6 +2102,7 @@ mod tests {
                 needs_ocr: false,
                 ocr_reason: None,
                 asset_names: Vec::new(),
+                image_places: BTreeMap::new(),
                 asset_ocr: BTreeMap::new(),
                 screenshot_name: None,
                 visibility_suspect: false,
@@ -2038,6 +2121,7 @@ mod tests {
                 needs_ocr: true,
                 ocr_reason: Some("image-only".into()),
                 asset_names: Vec::new(),
+                image_places: BTreeMap::new(),
                 asset_ocr: BTreeMap::new(),
                 screenshot_name: None,
                 visibility_suspect: false,
@@ -2779,6 +2863,7 @@ mod tests {
             needs_ocr: false,
             ocr_reason: None,
             asset_names: Vec::new(),
+            image_places: BTreeMap::new(),
             asset_ocr: BTreeMap::new(),
             screenshot_name: None,
             visibility_suspect: false,

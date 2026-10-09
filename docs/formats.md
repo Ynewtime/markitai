@@ -810,7 +810,8 @@ the real header is text above the table, as in XLSX (see
 retained. Hidden XLS/XLSX/XLSB worksheets, rows and columns are omitted by the upstream parser
 and reported explicitly. Older XLS code pages other than
 Windows-1252, exact presentation image encoding, PDF table
-layout and PDF image placement require further compatibility work.
+layout and the placement of PDF images that cannot be located among their page's
+text lines require further compatibility work.
 
 ## Error and output principles
 
