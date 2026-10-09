@@ -22,17 +22,12 @@ import json
 from typing import Any
 
 from markitai.runs.types import Outcome
-from markitai.types import reported_cost, reported_usage
 
 ENVELOPE_VERSION = "1.0"
 
 
 def _item(outcome: Outcome) -> dict[str, Any]:
-    """Render one Outcome as a stable, flat JSON object.
-
-    ``cost_usd`` is null when a request had no known price: unknown, not free.
-    """
-    cost = reported_cost(outcome.cost_usd, outcome.llm_usage)
+    """Render one Outcome as a stable, flat JSON object."""
     return {
         "kind": outcome.kind,
         "source": outcome.source,
@@ -43,7 +38,7 @@ def _item(outcome: Outcome) -> dict[str, Any]:
         "skip_reason": outcome.skip_reason,
         "images": outcome.images,
         "screenshots": outcome.screenshots,
-        "cost_usd": None if cost is None else round(cost, 6),
+        "cost_usd": round(outcome.cost_usd, 6),
         "duration_s": (
             round(outcome.duration, 3) if outcome.duration is not None else None
         ),
@@ -52,7 +47,7 @@ def _item(outcome: Outcome) -> dict[str, Any]:
         "llm_cache_hit": outcome.llm_cache_hit,
         "fetch_strategy": outcome.fetch_strategy,
         "source_file": outcome.source_file,
-        "llm_usage": reported_usage(outcome.llm_usage),
+        "llm_usage": outcome.llm_usage,
     }
 
 
@@ -96,11 +91,7 @@ def build_envelope(
             "failed": failed,
             "skipped": skipped,
             "pending": pending,
-            "cost_usd": (
-                None
-                if any(i["cost_usd"] is None for i in items)
-                else round(sum(i["cost_usd"] for i in items), 6)
-            ),
+            "cost_usd": round(sum(i["cost_usd"] for i in items), 6),
             "duration_s": round(
                 sum(i["duration_s"] or 0.0 for i in items),
                 3,

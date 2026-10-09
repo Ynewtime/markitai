@@ -1,10 +1,12 @@
-"""An LLM model without a known price is reported as unknown cost, never $0.
+"""An LLM model without a known price is reported as unpriced, never as free.
 
 LiteLLM prices nothing it has no table entry for, and a config that gives a
 model ``model_info`` (``supports_vision``, context size) registers an entry
 with no price at all, for which ``completion_cost`` answers $0. Both used to
 reach ``--json`` as ``cost_usd: 0.0`` (``deepseek/deepseek-flash`` in the live
-benchmark: 4 requests, ~9.9k tokens, "0.0"), with no warning.
+benchmark: 4 requests, ~9.9k tokens, "0.0"), with no warning and nothing to
+tell them from a free model. ``cost_usd`` stays a number (the priced
+subtotal, as in markitai 1.3); ``unpriced_requests`` marks the unknown part.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from markitai.notices import capture_task_notices
 from markitai.runs.json_output import build_envelope
 from markitai.runs.report import build_llm_usage_block
 from markitai.runs.types import Outcome
+from markitai.types import request_usage
 from markitai.workflow.helpers import merge_llm_usage
 
 UNPRICED = {
@@ -127,7 +130,9 @@ class TestTracking:
 
 
 class TestReporting:
-    def test_json_item_and_totals_report_unknown(self) -> None:
+    """``cost_usd`` keeps its type; ``unpriced_requests`` reaches every report."""
+
+    def test_json_item_carries_the_unpriced_count(self) -> None:
         envelope = build_envelope(
             [
                 Outcome(
@@ -147,37 +152,29 @@ class TestReporting:
             ]
         )
         unpriced, priced = envelope["items"]
-        assert unpriced["cost_usd"] is None
-        assert unpriced["llm_usage"]["my-model"]["cost_usd"] is None
-        assert priced["cost_usd"] == 0.000045
-        assert priced["llm_usage"]["gpt-4o-mini"]["cost_usd"] == 0.000045
-        assert envelope["totals"]["cost_usd"] is None
-
-    def test_priced_run_still_sums(self) -> None:
-        envelope = build_envelope(
-            [
-                Outcome(
-                    kind="file",
-                    source="b.pdf",
-                    status="completed",
-                    cost_usd=0.000045,
-                    llm_usage=PRICED,
-                )
-            ]
-        )
+        assert unpriced["cost_usd"] == 0.0
+        assert unpriced["llm_usage"]["my-model"]["unpriced_requests"] == 2
+        assert "unpriced_requests" not in priced["llm_usage"]["gpt-4o-mini"]
         assert envelope["totals"]["cost_usd"] == 0.000045
 
-    def test_report_block_reports_unknown(self) -> None:
+    def test_report_block_carries_the_unpriced_count(self) -> None:
         block = build_llm_usage_block({**UNPRICED, **PRICED}, cost_usd=0.000045)
-        assert block["cost_usd"] is None
-        assert block["models"]["my-model"]["cost_usd"] is None
-        assert block["models"]["gpt-4o-mini"]["cost_usd"] == 0.000045
+        assert block["cost_usd"] == 0.000045
+        assert block["models"]["my-model"]["unpriced_requests"] == 2
         assert block["requests"] == 3
 
-    def test_api_usage_reports_unknown(self) -> None:
+    def test_api_usage_keeps_a_numeric_cost(self) -> None:
         usage = ConversionUsage.from_usage_dict(0.0, dict(UNPRICED))
-        assert usage.cost_usd is None
+        assert usage.cost_usd == 0.0
+        assert usage.by_model["my-model"].get("unpriced_requests") == 2
         assert usage.requests == 2
-        assert ConversionUsage.from_usage_dict(0.000045, dict(PRICED)).cost_usd == (
-            0.000045
-        )
+
+    def test_request_usage_marks_an_unknown_price(self) -> None:
+        assert request_usage(10, 5, None) == {
+            "requests": 1,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cost_usd": 0.0,
+            "unpriced_requests": 1,
+        }
+        assert "unpriced_requests" not in request_usage(10, 5, 0.0)

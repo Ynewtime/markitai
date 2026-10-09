@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from markitai.runs.types import Outcome
-from markitai.types import reported_cost, reported_usage
 
 REPORT_VERSION = "1.0"
 
@@ -63,9 +62,6 @@ def build_llm_usage_block(
 ) -> dict[str, Any]:
     """Build the ``llm_usage`` report block shared by every report shape.
 
-    A model with requests of unknown price reports ``cost_usd: null``, and
-    so does the total: unknown, not free.
-
     Args:
         models: Per-model usage stats
             ``{model: {requests, input_tokens, output_tokens, ...}}``.
@@ -77,9 +73,9 @@ def build_llm_usage_block(
         "output_tokens": ..., "cost_usd": ...}``
     """
     return {
-        "models": reported_usage(models),
+        "models": models,
         **_llm_usage_totals(models),
-        "cost_usd": reported_cost(cost_usd, models),
+        "cost_usd": cost_usd,
     }
 
 
@@ -131,7 +127,7 @@ def build_single_report(
                 "llm_usage": {
                     "input_tokens": totals["input_tokens"],
                     "output_tokens": totals["output_tokens"],
-                    "cost_usd": reported_cost(outcome.cost_usd, outcome.llm_usage),
+                    "cost_usd": outcome.cost_usd,
                 },
             }
         }
@@ -158,7 +154,7 @@ def build_single_report(
                 "images": outcome.images,
                 "screenshots": outcome.screenshots,
                 "duration": outcome.duration,
-                "llm_usage": reported_usage(outcome.llm_usage),
+                "llm_usage": outcome.llm_usage,
             }
         }
 

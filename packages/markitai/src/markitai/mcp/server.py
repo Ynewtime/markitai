@@ -88,7 +88,7 @@ class ConvertResult(TypedDict):
     output_dir: str
     assets: list[str]
     screenshots: list[str]
-    cost_usd: float | None
+    cost_usd: float
     skip_reason: str | None
     duration_s: float
     warnings: list[str]

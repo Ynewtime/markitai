@@ -45,7 +45,7 @@ os.environ["MODEL"] = "openai/gpt-5.6-luna"  # or configure llm.model_list
 out = markitai.convert("report.pdf", output_dir="out/", llm=True)
 print(out.llm_markdown)  # enhanced body
 print(out.frontmatter["title"])  # parsed YAML frontmatter
-print(out.usage.cost_usd)  # LLM spend for this conversion (None: a model has no known price)
+print(out.usage.cost_usd)  # LLM spend for this conversion
 ```
 
 Models resolve as in the CLI: `llm.model_list` from your [configuration](/guide/configuration) first, then the `MODEL` environment variable, then [automatic detection](/guide/configuration#defaults-markitai-picks-for-you) of provider API keys in the environment and signed-in subscription providers. When detection finds several providers they share one pool, and a loguru warning (stderr by default) lists them once per process; set `MODEL` to pin one. By default it loads the same config files as the CLI. Unlike the CLI, the library does not read `.env` files, so export keys before calling it. Pass a `markitai.MarkitaiConfig` for full control:
