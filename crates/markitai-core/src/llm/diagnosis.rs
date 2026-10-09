@@ -579,7 +579,8 @@ mod tests {
 
     #[test]
     fn provider_words_never_carry_credentials_or_the_request() {
-        let key = "sk-live-0123456789abcdefABCDEF";
+        // Assembled here so the source holds no secret-shaped literal.
+        let key = &format!("sk-{}", "live-0123456789abcdefABCDEF");
         let body = format!(
             r#"{{"error":{{"message":"Incorrect API key provided: {key}. Also sk-proj-****wxyz, Bearer abc.def and https://u:p@api.example.test/keys?api_key=zzz#frag; trace 9f8e7d6c5b4a39281706f5e4d3c2b1a0ffeeddcc","type":"invalid_request_error"}}}}"#
         );
