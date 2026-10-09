@@ -727,3 +727,154 @@ class TestImageWarningsReachTheResult:
         assert processed.success
         assert len(processed.warnings) == 1
         assert "vision router down" in processed.warnings[0]
+
+
+# =============================================================================
+# VLM OCR (--ocr --llm) of scanned pages: the transcription is the output
+# =============================================================================
+
+
+class TestScannedPageTranscription:
+    """A scanned page has no text layer, so its extracted section is only the
+    page marker; the page drift guard used to revert any transcription over
+    200 characters there, and the item completed with an empty body."""
+
+    SCANNED = "<!-- Page number: 1 -->\n\n<!-- Page number: 2 -->\n"
+    PAGE_1 = (
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
+        "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim "
+        "veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea "
+        "commodo consequat. Duis aute irure dolor in reprehenderit in voluptate."
+    )
+    PAGE_2 = (
+        "第一章 概述\n\n本文档用于测试中文文本提取、表格识别和光学字符识别。"
+        "日本語のテキストも含まれています。한국어 문장도 포함되어 있습니다。"
+        "第二章 数据\n\n| 项目 | 数量 | 单价 |\n|---|---|---|\n| 苹果 | 3 | 5.00 |\n"
+        "| 香蕉 | 12 | 2.50 |\n| 橙子 | 7 | 4.20 |\n\n以上数据仅用于识别测试，并无实际意义。"
+    )
+
+    def _transcription(self) -> str:
+        return (
+            f"<!-- Page number: 1 -->\n\n{self.PAGE_1}\n\n"
+            f"<!-- Page number: 2 -->\n\n{self.PAGE_2}"
+        )
+
+    def test_vision_plan_keeps_the_transcription(self, tmp_path: Path) -> None:
+        plan = _enhancer(_FakeEngine()).prepare_vision_plan(
+            self.SCANNED, [tmp_path / "p1.png", tmp_path / "p2.png"], "scan.pdf"
+        )
+        _, mapping = content_utils.protect_content(self.SCANNED)
+        answer = self._transcription()
+        for placeholder, original in mapping.items():
+            answer = answer.replace(original, placeholder)
+        assert plan.call.validate is not None
+
+        result = plan.call.validate(
+            EnhancedDocumentResult(
+                cleaned_markdown=answer,
+                frontmatter=Frontmatter(description="d", tags=["t"]),
+            )
+        )
+
+        assert self.PAGE_1.strip() in result.cleaned_markdown
+        assert self.PAGE_2 in result.cleaned_markdown
+
+    async def test_vision_cleanup_keeps_the_transcription(self, tmp_path: Path) -> None:
+        pages = [tmp_path / "p1.png", tmp_path / "p2.png"]
+        _, mapping = content_utils.protect_content(self.SCANNED)
+        answer = self._transcription()
+        for placeholder, original in mapping.items():
+            answer = answer.replace(original, placeholder)
+
+        result = await _enhancer(_FakeEngine(text=answer)).enhance_document_with_vision(
+            self.SCANNED, pages, "scan.pdf"
+        )
+
+        assert self.PAGE_1.strip() in result
+        assert self.PAGE_2 in result
+
+    def test_written_output_restabilization_keeps_the_transcription(
+        self, tmp_path: Path
+    ) -> None:
+        """The workflow re-stabilizes the written .llm.md against the base
+        .md; on the vision path that pass must keep the transcription too."""
+        from markitai.workflow.core import stabilize_written_llm_output
+
+        base_md = tmp_path / "scan.pdf.md"
+        base_md.write_text(self.SCANNED, encoding="utf-8")
+        llm_md = tmp_path / "scan.pdf.llm.md"
+        llm_md.write_text(
+            f"---\ntitle: scan\n---\n\n{self._transcription()}\n", encoding="utf-8"
+        )
+        ctx = MagicMock()
+        ctx.output_file = base_md
+        ctx.paged_stabilized = False
+        ctx.base_written = True
+        ctx.input_path.name = "scan.pdf"
+        ctx.conversion_result.markdown = self.SCANNED
+
+        stabilize_written_llm_output(ctx, _enhancer(_FakeEngine()), vision=True)
+
+        written = llm_md.read_text(encoding="utf-8")
+        assert self.PAGE_1.strip() in written
+        assert self.PAGE_2 in written
+
+    def test_text_only_cleanup_still_reverts_invented_pages(self) -> None:
+        """Without page images the model cannot have read an empty page."""
+        stabilized = _enhancer(_FakeEngine())._stabilize_paged_markdown(
+            self.SCANNED, self._transcription(), "scan.pdf"
+        )
+        assert self.PAGE_1.strip() not in stabilized
+
+    def test_vision_plan_fails_when_every_line_is_reverted(
+        self, tmp_path: Path
+    ) -> None:
+        """An answer whose text the guards all revert is not a success with an
+        empty body: the call fails (nothing is cached)."""
+        plan = _enhancer(_FakeEngine()).prepare_vision_plan(
+            self.SCANNED, [tmp_path / "p1.png", tmp_path / "p2.png"], "scan.pdf"
+        )
+        _, mapping = content_utils.protect_content(self.SCANNED)
+        # Pages swapped: marker drift restores the (empty) original layout
+        answer = (
+            f"<!-- Page number: 2 -->\n\n{self.PAGE_2}\n\n"
+            f"<!-- Page number: 1 -->\n\n{self.PAGE_1}"
+        )
+        for placeholder, value in mapping.items():
+            answer = answer.replace(value, placeholder)
+        assert plan.call.validate is not None
+
+        with pytest.raises(ValueError, match="discarded"):
+            plan.call.validate(
+                EnhancedDocumentResult(
+                    cleaned_markdown=answer,
+                    frontmatter=Frontmatter(description="d", tags=["t"]),
+                )
+            )
+
+    def test_image_only_pages_keep_their_images_without_failing(
+        self, tmp_path: Path
+    ) -> None:
+        """Reverted OCR prose on an image-only page leaves the image: not empty."""
+        original = "<!-- Page number: 1 -->\n\n![](.markitai/assets/scan.png)\n"
+        plan = _enhancer(_FakeEngine()).prepare_vision_plan(
+            original, [tmp_path / "p1.png"], "scan.pdf"
+        )
+        _, mapping = content_utils.protect_content(original)
+        answer = (
+            "<!-- Page number: 1 -->\n\n![](.markitai/assets/scan.png)\n\n"
+            f"{self.PAGE_1}"
+        )
+        for placeholder, value in mapping.items():
+            answer = answer.replace(value, placeholder)
+        assert plan.call.validate is not None
+
+        result = plan.call.validate(
+            EnhancedDocumentResult(
+                cleaned_markdown=answer,
+                frontmatter=Frontmatter(description="d", tags=["t"]),
+            )
+        )
+
+        assert "![](.markitai/assets/scan.png)" in result.cleaned_markdown
+        assert self.PAGE_1 not in result.cleaned_markdown

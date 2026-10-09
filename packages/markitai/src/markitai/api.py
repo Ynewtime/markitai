@@ -120,7 +120,9 @@ class ConversionUsage:
         output_tokens: Total output tokens across all models.
         by_model: Per-model breakdown, same shape as the workflow layer's
             usage dicts: ``{model: {requests, input_tokens, output_tokens,
-            cost_usd}}``.
+            cost_usd}}``. A model with no known price also counts
+            ``unpriced_requests``; ``cost_usd`` then leaves those requests
+            out, so the cost is unknown rather than what it says.
     """
 
     cost_usd: float = 0.0

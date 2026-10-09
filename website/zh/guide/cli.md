@@ -191,7 +191,7 @@ markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "fai
 
 文档结构是 `{version, ok, error, batch, items[], totals}`：
 
-- `items[]`：每个输入一条，含 `source`、`status`（`completed`、`failed`、`skipped`、`pending`）、`output`、`error`、`warnings`、`cost_usd`、`duration_s`、`fetch_strategy`、`screenshots` 和 `llm_usage`。`pending` 只出现在不再等待的 `--llm-batch` 运行里：基础 `.md` 已写出，增强还在批次里运行。`warnings` 列出没让条目失败的问题，比如某张图片分析失败，或要求的截图没拍到。
+- `items[]`：每个输入一条，含 `source`、`status`（`completed`、`failed`、`skipped`、`pending`）、`output`、`error`、`warnings`、`cost_usd`、`duration_s`、`fetch_strategy`、`screenshots` 和 `llm_usage`。`pending` 只出现在不再等待的 `--llm-batch` 运行里：基础 `.md` 已写出，增强还在批次里运行。`warnings` 列出没让条目失败的问题，比如某张图片分析失败，或要求的截图没拍到。模型没有已知价格时，它的 `llm_usage` 条目会记 `unpriced_requests`，`cost_usd` 只含有价格的请求：费用未知，不是零。
 - `error`：没产生任何条目的运行级错误，否则为 `null`。
 - `batch`：`--llm-batch` 转为后台后，是仍在运行的批次 `{id, status, collect_command}`；否则为 `null`。
 - `totals`：按状态计数，加 `cost_usd` 和 `duration_s`。

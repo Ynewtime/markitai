@@ -86,6 +86,9 @@ def _resolve_model_structured_mode(model_id: str) -> str:
     if declared is not None:
         return declared if declared in _INSTRUCTOR_MODES else MODE_MD_JSON
 
+    if _is_deepseek_thinking_model(model_id):
+        return MODE_MD_JSON
+
     # LiteLLM's capability table. Both helpers raise for unknown models, and
     # an unknown model must not be assumed capable.
     try:
@@ -99,6 +102,23 @@ def _resolve_model_structured_mode(model_id: str) -> str:
     except Exception:
         logger.trace("[Structured] No response-schema metadata for {}", model_id)
     return MODE_MD_JSON
+
+
+def _is_deepseek_thinking_model(model_id: str) -> bool:
+    """A DeepSeek model that answers in thinking mode by default.
+
+    LiteLLM marks ``deepseek/deepseek-v4-flash`` as tool- and schema-capable,
+    but in thinking mode DeepSeek rejects a forced ``tool_choice`` with HTTP
+    400 ("Thinking mode does not support this tool_choice"), and its API has
+    no ``json_schema`` response format, so every document would spend one
+    failed request per rejected tier first.
+    """
+    if not model_id.startswith("deepseek/"):
+        return False
+    try:
+        return bool(litellm.supports_reasoning(model_id))
+    except Exception:
+        return False
 
 
 def structured_mode_ladder(model_ids: Iterable[str]) -> tuple[instructor.Mode, ...]:

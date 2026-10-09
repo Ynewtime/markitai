@@ -1223,7 +1223,7 @@ class TestVisionContentPartsReminder:
             return (b"fake", "ZmFrZQ==")
 
         # Patch _stabilize_paged_markdown to pass through
-        def fake_stabilize(extracted, result, context):
+        def fake_stabilize(extracted, result, context, *, vision=False):
             return result
 
         # Patch persistent cache to avoid disk I/O
