@@ -1,5 +1,6 @@
 //! A document's image analysis runs beside its enhancement, within
-//! `llm.concurrency`.
+//! `llm.concurrency`, and every request of the document spends one
+//! `llm.max_requests_per_document` budget.
 use super::*;
 use std::sync::{
     Arc, Mutex,
@@ -131,6 +132,15 @@ fn faithful(request: &Value) -> String {
     }
 }
 
+/// Every text answer is rejected; images are answered.
+fn rejecting(request: &Value) -> String {
+    if is_image(request) {
+        faithful(request)
+    } else {
+        "not structured JSON".into()
+    }
+}
+
 fn png(shade: u8) -> Vec<u8> {
     let mut bytes = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(100, 100, |x, y| {
@@ -214,4 +224,51 @@ fn images_are_analysed_beside_enhancement_within_the_concurrency_setting() {
     assert_eq!(model.peak.load(Ordering::Acquire), 2);
     assert_eq!(output.usage.requests, 3);
     assert_eq!(output.images.len(), 2);
+}
+
+#[test]
+fn text_and_image_requests_spend_one_budget_per_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = report(dir.path());
+    // The text answers are rejected; its retries and both images share the
+    // document's cap of three instead of each holding a cap of their own.
+    let model = Model::new(1, rejecting);
+    let output = run(&source, config(&model, 3, 3));
+    assert_eq!(model.requests().len(), 3);
+    assert_eq!(output.usage.requests, 3);
+    assert!(output.llm_markdown.is_none());
+    assert!(
+        output
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("LLM enhancement failed")),
+        "{:?}",
+        output.warnings
+    );
+    drop(model);
+
+    // The enhancement keeps its first request: a cap of one never goes to
+    // an image, and the next document starts with a budget of its own.
+    let model = Model::new(1, faithful);
+    let runtime = markitai_core::LlmRuntime::new(3).unwrap();
+    for _ in 0..2 {
+        let output = markitai_core::convert_with_context(
+            &source,
+            ConvertOptions {
+                config: Some(config(&model, 3, 1)),
+                ..Default::default()
+            },
+            markitai_core::ConvertContext {
+                llm_runtime: Some(&runtime),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(output.usage.requests, 1);
+        assert!(output.llm_markdown.is_some());
+        assert!(output.images.is_empty());
+    }
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(!requests.iter().any(is_image));
 }
