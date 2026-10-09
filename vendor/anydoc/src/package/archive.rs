@@ -159,6 +159,27 @@ impl<'a> Package<'a> {
         }
     }
 
+    /// markitai: [`Package::optional_xml_part`], handing each closed `child`
+    /// of a `parent` element to `detached` (see `xml::parse_xml_with`).
+    pub fn optional_xml_part_with(
+        &mut self,
+        name: &str,
+        detach: (&str, &str),
+        detached: &mut dyn FnMut(Element),
+    ) -> Result<Option<Element>, ConvertError> {
+        let Some(bytes) = self.optional_part(name)? else {
+            return Ok(None);
+        };
+        match super::xml::parse_xml_with(&bytes, Some(detach), detached) {
+            Ok(tree) => Ok(Some(tree)),
+            Err(e) if e.is_fatal() => Err(e),
+            Err(e) => {
+                log::warn!("skipping corrupt part {name}: {e}");
+                Ok(None)
+            }
+        }
+    }
+
     /// Read and parse an XML part that must exist and parse for any
     /// meaningful output.
     pub fn required_xml_part(&mut self, name: &str) -> Result<Element, ConvertError> {

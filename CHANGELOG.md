@@ -24,6 +24,7 @@
 
 ### Changed
 
+- Large XLSX worksheets use far less memory: rows are read as the XML parser closes each one instead of from a tree of the whole sheet, and parsed XML keeps no spare capacity. A 20,000-row workbook (9 MB of sheet XML) peaks at 84 MB instead of 384 MB, with the same output.
 - Omit PDF page and slide-number comments from final Markdown by default; `output.page_markers` and `--page-markers` keep them. Internal page alignment, RAG page provenance and literal code examples are preserved.
 - Write line breaks (`<br>`, manual breaks in Word/ODT/RTF/EPUB) as Markdown two-space hard breaks instead of a trailing backslash; normal output keeps them, including inside HTML list items.
 - The batch status line shows the time taken so far instead of a remaining-time estimate, which swung with item size and model requests.
