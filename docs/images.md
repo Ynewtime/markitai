@@ -75,15 +75,18 @@ them, 8 to 12 bits, monochrome and 4:2:0, 4:2:2 and 4:4:4 chroma, alpha planes
 its still primary image (one with only a track is an error); gain maps and ICC
 profiles are not applied, and overlays (`iovl`) are an unsupported error.
 rav1d is a port of C and contains `unsafe` code, unlike heifer: each image
-decodes on the calling thread with frames bounded to 32 million pixels, and a
-panic in the decoder fails that image only. Chroma is upsampled by nearest
+decodes on the calling thread with frames bounded to 32 million pixels, one
+file to 96 million decoded pixels and 2,050 AV1 items in all (a grid may name
+one small tile a thousand times, each decoded as a large frame), and a panic
+in the decoder fails that image only. Chroma is upsampled by nearest
 neighbour, as for HEIC: on libavif's v1.3.0 test files the pixels are mostly
 within a few levels of Pillow 12.3's (libavif with dav1d), with larger
 differences at sharp colour edges of tiny or subsampled images. 52,000 mutated
 AVIF files decoded or failed without a panic or a slow decode. Without
 assembly and on one thread it is slower than libavif with dav1d: on Linux
 arm64 a 1600 by 1000 AVIF takes 32 ms (Pillow 31 ms) and a 12-megapixel one
-225 ms (Pillow 70 ms).
+225 ms (Pillow 70 ms). The decoder adds about 1.2 MB to the release CLI
+(36.8 to 38.0 MB on Linux arm64).
 
 On macOS, a runtime unable to decode a particular codec reports
 `unsupported`. OS codec availability depends on the installed macOS version; current verification

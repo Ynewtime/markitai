@@ -21,6 +21,12 @@ const MAX_PIXELS: u64 = super::super::MAX_PIXELS;
 const MAX_DEPTH: u32 = 4;
 /// More tiles than a 32-megapixel image of 256 by 256 tiles needs.
 const MAX_TILES: usize = 1024;
+/// Pixels decoded for one file, alpha and tiles past the canvas included. A
+/// grid may name one item many times and a coded picture may be larger than
+/// the size it declares, so neither the canvas nor `ispe` bounds the work.
+const MAX_DECODED_PIXELS: u64 = 3 * MAX_PIXELS;
+/// AV1 items decoded for one file: every tile of a colour and an alpha grid.
+const MAX_DECODED_ITEMS: usize = 2 * MAX_TILES + 2;
 const ALPHA: [&str; 2] = [
     "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha",
     "urn:mpeg:hevc:2015:auxid:1",
@@ -49,12 +55,28 @@ pub(super) fn is_av1(file: &HeifFile<'_>, id: ItemId) -> bool {
     false
 }
 
-/// The primary image with its alpha plane and transforms.
-pub(super) fn decode(file: &HeifFile<'_>) -> Result<Image> {
-    item(file, file.primary_id, 0, false)
+/// What one file may still decode.
+struct Budget {
+    pixels: u64,
+    items: usize,
 }
 
-fn item(file: &HeifFile<'_>, id: ItemId, depth: u32, alpha: bool) -> Result<Image> {
+/// The primary image with its alpha plane and transforms.
+pub(super) fn decode(file: &HeifFile<'_>) -> Result<Image> {
+    let mut budget = Budget {
+        pixels: MAX_DECODED_PIXELS,
+        items: MAX_DECODED_ITEMS,
+    };
+    item(file, file.primary_id, 0, false, &mut budget)
+}
+
+fn item(
+    file: &HeifFile<'_>,
+    id: ItemId,
+    depth: u32,
+    alpha: bool,
+    budget: &mut Budget,
+) -> Result<Image> {
     if depth > MAX_DEPTH {
         return Err(failure("derived images are nested too deeply"));
     }
@@ -64,8 +86,8 @@ fn item(file: &HeifFile<'_>, id: ItemId, depth: u32, alpha: bool) -> Result<Imag
         return Err(failure("the image exceeds 32 million pixels"));
     }
     let mut image = match &file.item(id).map_err(failure)?.item_type.0 {
-        b"av01" => coded(file, id, alpha)?,
-        b"grid" => grid(file, id, depth, alpha)?,
+        b"av01" => coded(file, id, alpha, budget)?,
+        b"grid" => grid(file, id, depth, alpha, budget)?,
         other => {
             return Err(unsupported(&format!(
                 "This AVIF image uses a derived image the portable decoder does not read ({})",
@@ -79,7 +101,7 @@ fn item(file: &HeifFile<'_>, id: ItemId, depth: u32, alpha: bool) -> Result<Imag
         return Ok(image);
     }
     if let Some(plane) = alpha_item(file, id)? {
-        let plane = item(file, plane, depth + 1, true)?;
+        let plane = item(file, plane, depth + 1, true, budget)?;
         attach_alpha(&mut image, &plane)?;
     }
     for property in file.item_properties(id).map_err(failure)? {
@@ -147,9 +169,9 @@ fn nclx(file: &HeifFile<'_>, id: ItemId) -> Result<Option<ColorParams>> {
         }))
 }
 
-fn coded(file: &HeifFile<'_>, id: ItemId, alpha: bool) -> Result<Image> {
+fn coded(file: &HeifFile<'_>, id: ItemId, alpha: bool, budget: &mut Budget) -> Result<Image> {
     let nclx = nclx(file, id)?;
-    let (frame, width, height) = picture(&file.item_data(id).map_err(failure)?)?;
+    let (frame, width, height) = picture(&file.item_data(id).map_err(failure)?, budget)?;
     let params = nclx.unwrap_or_else(|| ColorParams::from_frame(&frame));
     let mut image = if alpha {
         alpha_plane(&frame, params.full_range)
@@ -198,17 +220,24 @@ fn alpha_plane(frame: &Frame, full_range: bool) -> Image {
 /// Decodes one AV1 image item payload. The planes are padded to whole chroma
 /// samples (heifer's conversion expects even sizes for subsampled chroma);
 /// returns them with the picture's own size.
-fn picture(data: &[u8]) -> Result<(Frame, u32, u32)> {
+fn picture(data: &[u8], budget: &mut Budget) -> Result<(Frame, u32, u32)> {
     let av1 = |error: Rav1dError| failure(format!("the AV1 data cannot be decoded ({error})"));
     if data.is_empty() {
         return Err(failure("an image item has no AV1 data"));
     }
+    if budget.items == 0 || budget.pixels == 0 {
+        return Err(failure(
+            "decoding it needs more than 96 million pixels or 2,050 AV1 items",
+        ));
+    }
+    budget.items -= 1;
     let mut settings = Settings::new();
     // One thread: no worker threads, so a failure stays on this thread.
     settings.set_n_threads(1);
     settings.set_max_frame_delay(1);
     settings.set_all_layers(false);
-    settings.set_frame_size_limit(MAX_PIXELS as u32);
+    // rav1d refuses a larger frame before decoding it.
+    settings.set_frame_size_limit(budget.pixels.min(MAX_PIXELS) as u32);
     // A damaged stream is this image's error, not lines on the host's stderr.
     settings.set_logging(false);
     let mut decoder = Decoder::with_settings(&settings).map_err(av1)?;
@@ -240,6 +269,9 @@ fn picture(data: &[u8]) -> Result<(Frame, u32, u32)> {
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_PIXELS {
         return Err(failure("the image is empty or exceeds 32 million pixels"));
     }
+    budget.pixels = budget
+        .pixels
+        .saturating_sub(u64::from(width) * u64::from(height));
     let depth = picture
         .bits_per_component()
         .ok_or_else(|| failure("AV1 bit depth is invalid"))?
@@ -304,7 +336,13 @@ fn picture(data: &[u8]) -> Result<(Frame, u32, u32)> {
     Ok((frame, width, height))
 }
 
-fn grid(file: &HeifFile<'_>, id: ItemId, depth: u32, alpha: bool) -> Result<Image> {
+fn grid(
+    file: &HeifFile<'_>,
+    id: ItemId,
+    depth: u32,
+    alpha: bool,
+    budget: &mut Budget,
+) -> Result<Image> {
     let grid = file.grid(id).map_err(failure)?;
     let tiles = file.referenced_items(id, b"dimg");
     let columns = u32::from(grid.columns);
@@ -322,7 +360,7 @@ fn grid(file: &HeifFile<'_>, id: ItemId, depth: u32, alpha: bool) -> Result<Imag
     }
     let mut canvas: Option<Image> = None;
     for (index, &tile) in tiles.iter().enumerate() {
-        let tile = item(file, tile, depth + 1, alpha)?;
+        let tile = item(file, tile, depth + 1, alpha, budget)?;
         let canvas =
             canvas.get_or_insert_with(|| Image::filled(width, height, tile.bit_depth, [0; 4]));
         let (column, row) = (index as u32 % columns, index as u32 / columns);
@@ -471,6 +509,33 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(rgba(&circle, 0, 0)[3], 0);
+    }
+
+    #[test]
+    fn decoding_is_bounded_across_a_files_tiles_and_alpha() {
+        use super::{Budget, item};
+        use heifer::heifer_isobmff::HeifFile;
+        // 12 colour and 12 alpha tiles of 128 by 200 pixels. A grid may name
+        // one tile many times and a tile may be larger than its `ispe`, so
+        // the work is counted as decoded, not as declared.
+        let file = HeifFile::parse(include_bytes!(
+            "../fixtures/heif/color_grid_alpha_grid_gainmap_nogrid.avif"
+        ))
+        .unwrap();
+        let within = |pixels, items| {
+            item(
+                &file,
+                file.primary_id,
+                0,
+                false,
+                &mut Budget { pixels, items },
+            )
+            .map(|_| ())
+        };
+        assert!(within(24 * 128 * 200, 24).is_ok());
+        let error = within(24 * 128 * 200, 23).unwrap_err().to_string();
+        assert!(error.contains("more than 96 million pixels"), "{error}");
+        assert!(within(24 * 128 * 200 - 1, 24).is_err());
     }
 
     #[test]
