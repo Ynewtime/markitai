@@ -509,6 +509,20 @@ def find_fatal_document_error(exc: BaseException) -> BaseException | None:
     return None
 
 
+def _describe_request_failure(exc: BaseException) -> str:
+    """The provider's own answer inside an instructor wrapper, with its status.
+
+    Instructor reports a rejected request as a retry exception; the HTTP
+    status and the provider's message (a 400 "Thinking mode does not support
+    this tool_choice") are what the user can act on.
+    """
+    for nested in _iter_exception_chain(exc):
+        status = getattr(nested, "status_code", None)
+        if isinstance(status, int) and status >= 400:
+            return f"HTTP {status} {format_error_message(nested)}"
+    return format_error_message(exc)
+
+
 def find_budget_exceeded_error(
     exc: BaseException,
 ) -> LLMRequestBudgetExceededError | None:
@@ -578,6 +592,7 @@ async def run_structured_ladder(
         Tuple of (parsed_result, raw_response).
     """
     rungs = tuple(ladder) or (instructor.Mode.MD_JSON,)
+    previous_error: BaseException | None = None
 
     for index, mode in enumerate(rungs):
         is_last = index == len(rungs) - 1
@@ -601,6 +616,13 @@ async def run_structured_ladder(
                 raise fatal_provider_error
             budget_error = find_budget_exceeded_error(e)
             if budget_error is not None:
+                if previous_error is not None:
+                    # "budget exhausted" alone hides why the budget ran out:
+                    # name the failed request the refused one would replace
+                    raise LLMRequestBudgetExceededError(
+                        f"{budget_error} after {rungs[index - 1].value} failed: "
+                        f"{_describe_request_failure(previous_error)}"
+                    ) from previous_error
                 raise budget_error
             if is_last:
                 repaired = try_repair_instructor_response(e, response_model)
@@ -609,9 +631,10 @@ async def run_structured_ladder(
                 return repaired
             logger.warning(
                 f"[LLM:{call_id}] Structured mode {mode.value} failed "
-                f"({format_error_message(e)}); falling back to "
+                f"({_describe_request_failure(e)}); falling back to "
                 f"{rungs[index + 1].value}"
             )
+            previous_error = e
 
     raise RuntimeError(f"[LLM:{call_id}] Unexpected state in structured ladder")
 
@@ -1152,7 +1175,16 @@ class LLMEngine:
             # Per-document circuit breaker: refuse the attempt (outside the
             # try, so the refusal is not mistaken for a transport error)
             if budget_context is not None and self.request_budget is not None:
-                self.request_budget.spend(budget_context)
+                try:
+                    self.request_budget.spend(budget_context)
+                except LLMRequestBudgetExceededError as refusal:
+                    if last_exception is None:
+                        raise
+                    # A refused retry: report the failure it would retry
+                    raise LLMRequestBudgetExceededError(
+                        f"{refusal} after a failed request: "
+                        f"{_describe_request_failure(last_exception)}"
+                    ) from last_exception
 
             start_time = time.perf_counter()
 
