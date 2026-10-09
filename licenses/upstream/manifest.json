@@ -24,11 +24,11 @@
     "max_concurrency": 4
   },
   "summary": {
-    "requested_packages": 21,
-    "exact_commit_manifest_matches": 20,
-    "full_license_text_packages": 21,
+    "requested_packages": 25,
+    "exact_commit_manifest_matches": 24,
+    "full_license_text_packages": 25,
     "notice_only_packages": 0,
-    "overlay_files": 33,
+    "overlay_files": 41,
     "source_archives": 7,
     "historical_text_packages": 3,
     "reviewed_publication_version_stamps": 1
@@ -1512,6 +1512,266 @@
           "content_kind": "full_license_text"
         }
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#heifer@0.2.0",
+      "name": "heifer",
+      "version": "0.2.0",
+      "declared_license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/HarpeLm/Heifer",
+      "commit": "515c7a7fd67599c29b4e52e8b77fbc0674f7f24e",
+      "path_in_vcs": "crates/heifer",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": true,
+      "version_inherited_from_workspace": true,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT",
+        "Apache-2.0"
+      ],
+      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer/Cargo.toml",
+          "bytes": 843,
+          "sha256": "890a44aab1c0f3166f0384b92faa130c1817a94fd3b320cb88c75250fb5193dd",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/heifer-0.2.0/Cargo.toml.orig",
+          "bytes": 843,
+          "sha256": "890a44aab1c0f3166f0384b92faa130c1817a94fd3b320cb88c75250fb5193dd"
+        },
+        {
+          "path": "local-evidence/heifer-0.2.0/.cargo_vcs_info.json",
+          "bytes": 107,
+          "sha256": "c134c325f688540ea4b5f2dfd7097c5fa389e0caef5a0ce6d62beb7556311a27"
+        },
+        {
+          "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml",
+          "bytes": 790,
+          "sha256": "214062847cc068989bcee184dbc145b1106120b59573940122186bcb5200e476",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/heifer-0.2.0/LICENSE-MIT",
+          "bytes": 1076,
+          "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1",
+          "destination": "licenses/heifer-0.2.0/LICENSE-MIT",
+          "source_path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+          "source_sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1",
+          "content_kind": "full_license_text"
+        },
+        {
+          "path": "overlay/licenses/heifer-0.2.0/LICENSE-APACHE",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "destination": "licenses/heifer-0.2.0/LICENSE-APACHE",
+          "source_path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+          "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "content_kind": "full_license_text"
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#heifer-hevc-dec@0.2.0",
+      "name": "heifer-hevc-dec",
+      "version": "0.2.0",
+      "declared_license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/HarpeLm/Heifer",
+      "commit": "515c7a7fd67599c29b4e52e8b77fbc0674f7f24e",
+      "path_in_vcs": "crates/heifer-hevc-dec",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": true,
+      "version_inherited_from_workspace": true,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT",
+        "Apache-2.0"
+      ],
+      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-hevc-dec/Cargo.toml",
+          "bytes": 439,
+          "sha256": "a82d7c39f5cc185488c34a7be6116ab7ee6655ce2d30beb157aa39369ec60f07",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-hevc-dec/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/heifer-hevc-dec-0.2.0/Cargo.toml.orig",
+          "bytes": 439,
+          "sha256": "a82d7c39f5cc185488c34a7be6116ab7ee6655ce2d30beb157aa39369ec60f07"
+        },
+        {
+          "path": "local-evidence/heifer-hevc-dec-0.2.0/.cargo_vcs_info.json",
+          "bytes": 116,
+          "sha256": "8078b6edc3cd1a9750f19f72f328195b4ddaeca5ee69e5b2d11b26bf453e3b44"
+        },
+        {
+          "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml",
+          "bytes": 790,
+          "sha256": "214062847cc068989bcee184dbc145b1106120b59573940122186bcb5200e476",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/heifer-hevc-dec-0.2.0/LICENSE-MIT",
+          "bytes": 1076,
+          "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1",
+          "destination": "licenses/heifer-hevc-dec-0.2.0/LICENSE-MIT",
+          "source_path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+          "source_sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1",
+          "content_kind": "full_license_text"
+        },
+        {
+          "path": "overlay/licenses/heifer-hevc-dec-0.2.0/LICENSE-APACHE",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "destination": "licenses/heifer-hevc-dec-0.2.0/LICENSE-APACHE",
+          "source_path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+          "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "content_kind": "full_license_text"
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#heifer-hevc-enc@0.2.0",
+      "name": "heifer-hevc-enc",
+      "version": "0.2.0",
+      "declared_license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/HarpeLm/Heifer",
+      "commit": "515c7a7fd67599c29b4e52e8b77fbc0674f7f24e",
+      "path_in_vcs": "crates/heifer-hevc-enc",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": true,
+      "version_inherited_from_workspace": true,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT",
+        "Apache-2.0"
+      ],
+      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-hevc-enc/Cargo.toml",
+          "bytes": 421,
+          "sha256": "12330727a44125901018b5a6078b9ad5af556321b6716050fa4fbaf9292f7439",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-hevc-enc/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/heifer-hevc-enc-0.2.0/Cargo.toml.orig",
+          "bytes": 421,
+          "sha256": "12330727a44125901018b5a6078b9ad5af556321b6716050fa4fbaf9292f7439"
+        },
+        {
+          "path": "local-evidence/heifer-hevc-enc-0.2.0/.cargo_vcs_info.json",
+          "bytes": 116,
+          "sha256": "7213a412bd3029b0a431a0739a6f1958c76066be6052ff22f33f3d2514464c53"
+        },
+        {
+          "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml",
+          "bytes": 790,
+          "sha256": "214062847cc068989bcee184dbc145b1106120b59573940122186bcb5200e476",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/heifer-hevc-enc-0.2.0/LICENSE-MIT",
+          "bytes": 1076,
+          "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1",
+          "destination": "licenses/heifer-hevc-enc-0.2.0/LICENSE-MIT",
+          "source_path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+          "source_sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1",
+          "content_kind": "full_license_text"
+        },
+        {
+          "path": "overlay/licenses/heifer-hevc-enc-0.2.0/LICENSE-APACHE",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "destination": "licenses/heifer-hevc-enc-0.2.0/LICENSE-APACHE",
+          "source_path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+          "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "content_kind": "full_license_text"
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#heifer-isobmff@0.2.0",
+      "name": "heifer-isobmff",
+      "version": "0.2.0",
+      "declared_license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/HarpeLm/Heifer",
+      "commit": "515c7a7fd67599c29b4e52e8b77fbc0674f7f24e",
+      "path_in_vcs": "crates/heifer-isobmff",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": true,
+      "version_inherited_from_workspace": true,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT",
+        "Apache-2.0"
+      ],
+      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-isobmff/Cargo.toml",
+          "bytes": 407,
+          "sha256": "24c5392e7588ced142b93cae17633ce0645288b549ba82043be78bea3342a3c1",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-isobmff/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/heifer-isobmff-0.2.0/Cargo.toml.orig",
+          "bytes": 407,
+          "sha256": "24c5392e7588ced142b93cae17633ce0645288b549ba82043be78bea3342a3c1"
+        },
+        {
+          "path": "local-evidence/heifer-isobmff-0.2.0/.cargo_vcs_info.json",
+          "bytes": 115,
+          "sha256": "a7563187fd3e6adabc69c06347f91ebe658f158dadf28618532a377b45103edb"
+        },
+        {
+          "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml",
+          "bytes": 790,
+          "sha256": "214062847cc068989bcee184dbc145b1106120b59573940122186bcb5200e476",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/heifer-isobmff-0.2.0/LICENSE-MIT",
+          "bytes": 1076,
+          "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1",
+          "destination": "licenses/heifer-isobmff-0.2.0/LICENSE-MIT",
+          "source_path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+          "source_sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1",
+          "content_kind": "full_license_text"
+        },
+        {
+          "path": "overlay/licenses/heifer-isobmff-0.2.0/LICENSE-APACHE",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "destination": "licenses/heifer-isobmff-0.2.0/LICENSE-APACHE",
+          "source_path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+          "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "content_kind": "full_license_text"
+        }
+      ]
     }
   ],
   "unresolved_full_license_text": [],
@@ -1618,5 +1878,22 @@
     "path": "napi-license-provenance.json",
     "bytes": 10284,
     "sha256": "386e2b7dc38e112611af3b6f8801819592c00dfd44e885bf820be2e1d507bee3"
+  },
+  "heifer_license_collection": {
+    "date": "2026-10-09",
+    "repository": "https://github.com/HarpeLm/Heifer",
+    "commit": "515c7a7fd67599c29b4e52e8b77fbc0674f7f24e",
+    "retrieved": [
+      "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml",
+      "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+      "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+      "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer/Cargo.toml",
+      "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-hevc-dec/Cargo.toml",
+      "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-hevc-enc/Cargo.toml",
+      "https://raw.githubusercontent.com/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-isobmff/Cargo.toml"
+    ],
+    "authenticated_requests": false,
+    "checks": "Each published Cargo.toml.orig and .cargo_vcs_info.json (local registry source) equals the same-commit crate manifest and names this commit and path; the crates publish no license file of their own.",
+    "legal_review": "not_performed"
   }
 }

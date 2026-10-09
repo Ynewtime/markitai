@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/HarpeLm/Heifer"
+homepage = "https://github.com/HarpeLm/Heifer"
+keywords = ["heic", "heif", "hevc", "image", "decoder"]
+categories = ["multimedia::images", "multimedia::encoding", "parser-implementations"]
+
+[workspace.dependencies]
+heifer-isobmff = { path = "crates/heifer-isobmff", version = "0.2.0" }
+heifer-hevc-dec = { path = "crates/heifer-hevc-dec", version = "0.2.0" }
+heifer-hevc-enc = { path = "crates/heifer-hevc-enc", version = "0.2.0" }
+thiserror = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

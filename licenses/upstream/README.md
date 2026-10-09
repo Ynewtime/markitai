@@ -25,6 +25,19 @@ Offline synthetic wheel/npm payload tests check these exact copied bytes;
 actual installed npm package verification is pending until the candidate is
 built. Legal review remains not_performed.
 
+## heifer 0.2.0 crates
+
+heifer, heifer-hevc-dec, heifer-hevc-enc and heifer-isobmff 0.2.0 (the
+Windows/Linux HEIF/HEIC decoder) publish no license file. Each exact published
+manifest inherits `license = "MIT OR Apache-2.0"` and its version from the
+workspace manifest of HarpeLm/Heifer at the published commit `515c7a7f…`; its
+`Cargo.toml.orig` and VCS record equal the same-commit crate manifest. The
+same-commit root LICENSE-MIT and LICENSE-APACHE are copied unchanged as the
+complete terms of both options; the retrievals are listed under
+`heifer_license_collection` in the manifest. This brings the overlay to
+twenty-five versions, twenty-four raw exact manifest matches and forty-one
+overlay files. Legal review remains not_performed.
+
 ## Original seventeen-version collection and retained history
 
 Packaging validates this directory offline before copying it. Package manifests,

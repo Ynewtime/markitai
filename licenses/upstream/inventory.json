@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 6448,
-      "sha256": "ad75ceb693906c4d3fd8f95d1b00af84ada0b8f766ef907d15f55e2df375cc4a"
+      "bytes": 7191,
+      "sha256": "9ab2ec9432be2294f3650b01a48f2ddfdd1b3449280e3e80633335329c0a3b0c"
     },
     {
       "path": "input-manifest.json",
@@ -60,6 +60,46 @@
       "path": "local-evidence/dispatch2-0.3.1/README.md",
       "bytes": 748,
       "sha256": "eba8f5b9bc021bfaaf84478017baf838a92d56a47e691a8b8989aae1210c05d7"
+    },
+    {
+      "path": "local-evidence/heifer-0.2.0/.cargo_vcs_info.json",
+      "bytes": 107,
+      "sha256": "c134c325f688540ea4b5f2dfd7097c5fa389e0caef5a0ce6d62beb7556311a27"
+    },
+    {
+      "path": "local-evidence/heifer-0.2.0/Cargo.toml.orig",
+      "bytes": 843,
+      "sha256": "890a44aab1c0f3166f0384b92faa130c1817a94fd3b320cb88c75250fb5193dd"
+    },
+    {
+      "path": "local-evidence/heifer-hevc-dec-0.2.0/.cargo_vcs_info.json",
+      "bytes": 116,
+      "sha256": "8078b6edc3cd1a9750f19f72f328195b4ddaeca5ee69e5b2d11b26bf453e3b44"
+    },
+    {
+      "path": "local-evidence/heifer-hevc-dec-0.2.0/Cargo.toml.orig",
+      "bytes": 439,
+      "sha256": "a82d7c39f5cc185488c34a7be6116ab7ee6655ce2d30beb157aa39369ec60f07"
+    },
+    {
+      "path": "local-evidence/heifer-hevc-enc-0.2.0/.cargo_vcs_info.json",
+      "bytes": 116,
+      "sha256": "7213a412bd3029b0a431a0739a6f1958c76066be6052ff22f33f3d2514464c53"
+    },
+    {
+      "path": "local-evidence/heifer-hevc-enc-0.2.0/Cargo.toml.orig",
+      "bytes": 421,
+      "sha256": "12330727a44125901018b5a6078b9ad5af556321b6716050fa4fbaf9292f7439"
+    },
+    {
+      "path": "local-evidence/heifer-isobmff-0.2.0/.cargo_vcs_info.json",
+      "bytes": 115,
+      "sha256": "a7563187fd3e6adabc69c06347f91ebe658f158dadf28618532a377b45103edb"
+    },
+    {
+      "path": "local-evidence/heifer-isobmff-0.2.0/Cargo.toml.orig",
+      "bytes": 407,
+      "sha256": "24c5392e7588ced142b93cae17633ce0645288b549ba82043be78bea3342a3c1"
     },
     {
       "path": "local-evidence/include_dir-0.7.4/.cargo_vcs_info.json",
@@ -303,8 +343,8 @@
     },
     {
       "path": "manifest.json",
-      "bytes": 83993,
-      "sha256": "e2ab7dfd49b11d883b9bd361a83432e737623ac12805012ce930806ef9aa6695"
+      "bytes": 99203,
+      "sha256": "0420cfc35ff6297966aa1e9fe1c29a87ab3a5d8da0c7ebbda034420daeaaa077"
     },
     {
       "path": "napi-license-provenance.json",
@@ -335,6 +375,46 @@
       "path": "overlay/licenses/dispatch2-0.3.1/LICENSE.md",
       "bytes": 1339,
       "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+    },
+    {
+      "path": "overlay/licenses/heifer-0.2.0/LICENSE-APACHE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "overlay/licenses/heifer-0.2.0/LICENSE-MIT",
+      "bytes": 1076,
+      "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1"
+    },
+    {
+      "path": "overlay/licenses/heifer-hevc-dec-0.2.0/LICENSE-APACHE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "overlay/licenses/heifer-hevc-dec-0.2.0/LICENSE-MIT",
+      "bytes": 1076,
+      "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1"
+    },
+    {
+      "path": "overlay/licenses/heifer-hevc-enc-0.2.0/LICENSE-APACHE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "overlay/licenses/heifer-hevc-enc-0.2.0/LICENSE-MIT",
+      "bytes": 1076,
+      "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1"
+    },
+    {
+      "path": "overlay/licenses/heifer-isobmff-0.2.0/LICENSE-APACHE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "overlay/licenses/heifer-isobmff-0.2.0/LICENSE-MIT",
+      "bytes": 1076,
+      "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1"
     },
     {
       "path": "overlay/licenses/include_dir-0.7.4/LICENSE",
@@ -600,6 +680,41 @@
       "path": "source-archives/tract-extra-0.23.8.crate",
       "bytes": 15844,
       "sha256": "2a05c86ece0c47880c7726e08dabb72d68e9cba0cd36d44bc0aa90e2291a05db"
+    },
+    {
+      "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/Cargo.toml",
+      "bytes": 790,
+      "sha256": "214062847cc068989bcee184dbc145b1106120b59573940122186bcb5200e476"
+    },
+    {
+      "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-APACHE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/LICENSE-MIT",
+      "bytes": 1076,
+      "sha256": "fea27f8faa7a178621d21d677ff89532776b7ba9292939085914bb6639f33fb1"
+    },
+    {
+      "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-hevc-dec/Cargo.toml",
+      "bytes": 439,
+      "sha256": "a82d7c39f5cc185488c34a7be6116ab7ee6655ce2d30beb157aa39369ec60f07"
+    },
+    {
+      "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-hevc-enc/Cargo.toml",
+      "bytes": 421,
+      "sha256": "12330727a44125901018b5a6078b9ad5af556321b6716050fa4fbaf9292f7439"
+    },
+    {
+      "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer-isobmff/Cargo.toml",
+      "bytes": 407,
+      "sha256": "24c5392e7588ced142b93cae17633ce0645288b549ba82043be78bea3342a3c1"
+    },
+    {
+      "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer/Cargo.toml",
+      "bytes": 843,
+      "sha256": "890a44aab1c0f3166f0384b92faa130c1817a94fd3b320cb88c75250fb5193dd"
     },
     {
       "path": "upstream/Michael-F-Bryan/include_dir/d742c6fffce99ee89da91b934e7ce6fb2a82680c/Cargo.toml",

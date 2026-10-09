@@ -27,6 +27,7 @@ class LicenseOverlayTests(unittest.TestCase):
         self.manifest = json.loads((self.vendor / "manifest.json").read_text())
         self.packages = []
         self.node_packages = []
+        self.heif_packages = []
         for item in self.manifest["packages"]:
             label = f"{item['name']}-{item['version']}"
             source = self.root / "registry" / label
@@ -41,7 +42,12 @@ class LicenseOverlayTests(unittest.TestCase):
                             target = source / name
                             target.parent.mkdir(parents=True, exist_ok=True)
                             target.write_bytes(archive.extractfile(member).read())
-            target_packages = self.node_packages if item["name"] in {"napi", "napi-build", "napi-derive", "napi-sys"} else self.packages
+            if item["name"] in {"napi", "napi-build", "napi-derive", "napi-sys"}:
+                target_packages = self.node_packages
+            elif item["name"].startswith("heifer"):
+                target_packages = self.heif_packages
+            else:
+                target_packages = self.packages
             target_packages.append({"id": item["id"], "name": item["name"], "version": item["version"],
                                   "source": "registry+fixture", "license": item["declared_license"],
                                   "license_file": None, "repository": item["repository"],
@@ -397,7 +403,7 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
         result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 20)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 24)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
                     "tract-extra": ("reviewed_publication_version_stamp",
@@ -625,7 +631,7 @@ class LicenseOverlayTests(unittest.TestCase):
         result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages)
         self.assertEqual(result["record"]["matched_packages"], 21)
         self.assertEqual(result["record"]["complete_text_packages"], 21)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 20)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 24)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         self.assertEqual(len(result["record"]["source_archives"]), 7)
         for entry in self.manifest["packages"]:
@@ -644,6 +650,19 @@ class LicenseOverlayTests(unittest.TestCase):
             self.assertIn(b"Copyright (c) 2018 GitHub", raw)
             self.assertEqual(hashlib.sha256(raw).hexdigest(), "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215")
         self.assertEqual(result["record"]["legal_review"], "not_performed")
+
+    def test_heifer_terms_cover_the_workspace_inherited_license_of_each_crate(self):
+        self.assertEqual(len(self.heif_packages), 4)
+        result = stage_overlay(self.vendor, self.destination, self.packages + self.heif_packages)
+        self.assertEqual(result["record"]["matched_packages"], 21)
+        for package in self.heif_packages:
+            entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
+            self.assertTrue(entry["license_inherited_from_workspace"])
+            record = result["packages"][package["id"]]
+            self.assertEqual(record["manifest_provenance"], "raw_exact_match")
+            self.assertTrue(record["complete_text"])
+            self.assertEqual(sorted(Path(text["path"]).name for text in record["texts"]),
+                             ["LICENSE-APACHE", "LICENSE-MIT"])
 
     def test_node_parent_child_and_vcs_cannot_be_resealed_into_other_identity(self):
         entry = next(p for p in self.manifest["packages"] if p["name"] == "napi-build")
