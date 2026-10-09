@@ -8,9 +8,12 @@ when looking up a tariff.
 
 ## Reviewed catalog
 
-Snapshot `litellm-1.100.1-selected-2026-09-29` derives eight exact source keys
-from LiteLLM 1.100.1's installed backup data. Two additional Claude aliases are
-verified against official model pages. [Provenance](../licenses/pricing/provenance.json)
+Snapshot `litellm-1.106.0.dev2-selected-2026-10-09` derives eight exact source keys
+from the backup data in LiteLLM 1.106.0.dev2's wheel. That is a development
+pre-release, chosen because it was the newest PyPI release with the
+`claude-haiku-5-5` row; every rate used is also checked against the provider's
+official pricing. Two additional Claude aliases are verified against official
+model pages. [Provenance](../licenses/pricing/provenance.json)
 records original source digest, exact byte ranges, decimal rates, wheel RECORD
 identity and verification links. [Source objects](../licenses/pricing/source-rows.json)
 and the [original notice](../licenses/pricing/LiteLLM-LICENSE) remain intact.
@@ -89,7 +92,7 @@ Per-model usage keeps its existing requests/input/output/cost fields and adds:
   "priced_requests": 1,
   "unpriced_requests": 1,
   "cost_status": "partial",
-  "pricing_snapshot": "litellm-1.100.1-selected-2026-09-29"
+  "pricing_snapshot": "litellm-1.106.0.dev2-selected-2026-10-09"
 }
 ```
 

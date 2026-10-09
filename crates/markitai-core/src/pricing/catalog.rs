@@ -4,7 +4,7 @@
 //! licenses/pricing. These public-list estimates are not invoice settlement.
 use super::Provider;
 
-pub(super) const SNAPSHOT: &str = "litellm-1.100.1-selected-2026-09-29";
+pub(super) const SNAPSHOT: &str = "litellm-1.106.0.dev2-selected-2026-10-09";
 
 #[derive(Clone, Copy)]
 pub(super) struct Rates {
@@ -100,8 +100,51 @@ pub(super) fn lookup(provider: Provider, model: &str) -> Option<Tariff> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{BillingClass, Identity, Quote, UnknownPrice, quote};
-    use serde_json::json;
+    use super::super::{BillingClass, Identity, Provider, Quote, UnknownPrice, quote};
+    use super::{SNAPSHOT, Tariff, lookup};
+    use serde_json::{Value, json};
+
+    // The compiled rates must be exactly the recorded source rows, field by field.
+    fn recorded_rate(tariff: &Tariff, field: &str) -> Option<u128> {
+        let (rates, field) = match field.strip_suffix("_batches") {
+            Some(standard) => (tariff.rates.batch(), standard),
+            None => (tariff.rates, field),
+        };
+        match field {
+            "input_cost_per_token" => Some(rates.input),
+            "output_cost_per_token" => Some(rates.output),
+            "cache_read_input_token_cost" => Some(rates.cache_read),
+            "cache_creation_input_token_cost" => rates.cache_write_5m,
+            "cache_creation_input_token_cost_above_1hr" => rates.cache_write_1h,
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn compiled_rates_are_the_recorded_provenance_rows() {
+        let provenance: Value =
+            serde_json::from_str(include_str!("../../../../licenses/pricing/provenance.json"))
+                .unwrap();
+        assert_eq!(provenance["snapshot"], SNAPSHOT);
+        let rows = provenance["rows"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let model = row["model"].as_str().unwrap();
+            let provider = if model.starts_with("claude-") {
+                Provider::Anthropic
+            } else {
+                Provider::OpenAi
+            };
+            let tariff = lookup(provider, model).unwrap_or_else(|| panic!("{model} not compiled"));
+            for (field, value) in row["picodollars_per_token"].as_object().unwrap() {
+                assert_eq!(
+                    recorded_rate(&tariff, field),
+                    Some(u128::from(value.as_u64().unwrap())),
+                    "{model} {field}"
+                );
+            }
+        }
+    }
     #[test]
     fn reviewed_claude_aliases_share_only_their_exact_dated_tariff() {
         for (alias, dated) in [
