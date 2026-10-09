@@ -42,6 +42,7 @@
 
 ### Fixed
 
+- A batch item's `duration_s` (and report time) is its own conversion and publication work; it no longer includes the time the item waited for its publication group to commit, which made `-j 1` item times add up to several times the wall time.
 - Legacy PPT slides keep their EMF and WMF pictures (the reference `sample.ppt`'s chart preview), decoded completely as legacy DOC pictures are, instead of omitting them as an unsupported format.
 - A frontmatter title taken from the first heading is plain text: Markdown escapes (`ZZZ\_Sheet\_1` from a Numbers sheet), link addresses and emphasis markers around it are no longer kept.
 - HTML: YouTube watch pages have their own reader (title, channel, description, view and date lines, loaded comments; from the rendered page or the server's player response), so the guide links and the like, dislike, share and save buttons no longer leak into the Markdown. A saved Bilibili opus page that names no address is recognized by its `.bili-opus-view` markup, so its reader drops the author avatar and the page chrome.

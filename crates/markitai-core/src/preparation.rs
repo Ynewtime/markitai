@@ -9,7 +9,9 @@ pub struct PreparedConversion {
     outcome: DetailedResult<ConversionOutput>,
     plan: output::PreparedOutput,
     usage: ConversionUsage,
-    started: Instant,
+    /// The item's own conversion and publication time so far; time spent
+    /// waiting for a publication group to commit is not part of it.
+    worked: std::time::Duration,
 }
 
 /// Prepare the exact document bytes for an already acquired native claim.
@@ -44,7 +46,7 @@ pub fn prepare_with_publication(
         outcome,
         plan,
         usage,
-        started,
+        worked: started.elapsed(),
     }
 }
 
@@ -71,12 +73,13 @@ impl PreparedConversion {
             mut outcome,
             plan,
             usage,
-            started,
+            worked,
         } = self;
+        let finalizing = Instant::now();
         plan.finalize()
             .map_err(|error| ConversionFailure { error, usage })?;
         if let Ok(output) = &mut outcome {
-            output.duration = started.elapsed().as_secs_f64();
+            output.duration = (worked + finalizing.elapsed()).as_secs_f64();
         }
         outcome
     }
@@ -95,11 +98,13 @@ impl PreparedConversion {
         mut self,
         publication: &dyn output::Publication,
     ) -> DetailedResult<ConversionOutput> {
+        let publishing = Instant::now();
         for member in self.take_members() {
             if let Err(error) = publication.publish(&member.path, &member.bytes) {
                 return Err(self.fail_publication(error));
             }
         }
+        self.worked += publishing.elapsed();
         self.finish_after_publication()
     }
 }
@@ -188,6 +193,29 @@ mod tests {
         let path = prepared.members()[0].path.clone();
         drop(prepared);
         assert!(!path.exists());
+    }
+    #[test]
+    fn waiting_for_a_publication_group_is_not_the_items_duration() {
+        let root = tempfile::tempdir().unwrap();
+        let publication = Publisher {
+            calls: AtomicUsize::new(0),
+            fail: false,
+        };
+        let mut prepared = prepare(root.path(), &publication);
+        let converted = prepared.worked;
+        let members = prepared.take_members();
+        // Other items of a serial batch join the group before it commits.
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        for member in &members {
+            publication.publish(&member.path, &member.bytes).unwrap();
+        }
+        let output = prepared.finish_after_publication().unwrap();
+        assert!(output.duration >= converted.as_secs_f64());
+        assert!(
+            output.duration < converted.as_secs_f64() + 0.3,
+            "{}",
+            output.duration
+        );
     }
     #[test]
     fn immediate_fallback_uses_the_prepared_bytes_and_preserves_failure() {
