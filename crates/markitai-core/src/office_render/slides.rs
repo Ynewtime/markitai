@@ -21,8 +21,8 @@ pub(super) fn odp(bytes: &[u8]) -> Result<usize> {
                     return Err(failure("ODP XML nesting exceeds 128"));
                 }
                 let ns = reader.resolver().resolve_element(element.name()).0;
-                if element.local_name().as_ref() == b"presentation"
-                    && matches!(ns, ResolveResult::Bound(uri) if uri.as_ref()==b"urn:oasis:names:tc:opendocument:xmlns:office:1.0")
+                if element.local_name().into_inner() == "presentation"
+                    && matches!(ns, ResolveResult::Bound(uri) if uri.into_inner() == "urn:oasis:names:tc:opendocument:xmlns:office:1.0")
                 {
                     if presentation.is_some() {
                         return Err(failure("nested ODP presentation"));
@@ -32,8 +32,8 @@ pub(super) fn odp(bytes: &[u8]) -> Result<usize> {
                     }
                 }
                 if presentation.is_some_and(|parent| depth == parent + 1)
-                    && element.local_name().as_ref() == b"page"
-                    && matches!(ns, ResolveResult::Bound(uri) if uri.as_ref()==b"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0")
+                    && element.local_name().into_inner() == "page"
+                    && matches!(ns, ResolveResult::Bound(uri) if uri.into_inner() == "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0")
                 {
                     count += 1;
                     if count > super::MAX_PAGES {

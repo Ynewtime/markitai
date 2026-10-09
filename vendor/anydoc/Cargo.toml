@@ -69,7 +69,7 @@ version = "0.4"
 version = "1.14.2"
 
 [dependencies.quick-xml]
-version = "0.41.0"
+version = "0.42.0"
 
 [dependencies.zip]
 version = "8.6.0"

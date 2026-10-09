@@ -102,19 +102,16 @@ fn elements_with_limits(
                 }
                 element_count += 1;
                 let mut element = Element {
-                    name: String::from_utf8_lossy(event.local_name().as_ref()).into_owned(),
+                    name: event.local_name().into_inner().to_owned(),
                     ..Element::default()
                 };
                 for attr in event.attributes() {
                     let attr = attr.map_err(|e| e.to_string())?;
                     element.attributes.insert(
-                        String::from_utf8_lossy(attr.key.local_name().as_ref()).into_owned(),
-                        attr.decoded_and_normalized_value(
-                            quick_xml::XmlVersion::Implicit1_0,
-                            reader.decoder(),
-                        )
-                        .map_err(|e| e.to_string())?
-                        .into_owned(),
+                        attr.key.local_name().into_inner().to_owned(),
+                        attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                            .map_err(|e| e.to_string())?
+                            .into_owned(),
                     );
                 }
                 if empty {
@@ -127,17 +124,14 @@ fn elements_with_limits(
                 }
             }
             Event::Text(text) => {
-                let decoded = text.decode().map_err(|e| e.to_string())?;
-                let decoded = quick_xml::escape::unescape(&decoded).map_err(|e| e.to_string())?;
+                let decoded = quick_xml::escape::unescape(&text).map_err(|e| e.to_string())?;
                 append_text(&mut stack, &decoded, &mut remaining_text)?;
             }
             Event::CData(text) => {
-                let decoded = text.decode().map_err(|e| e.to_string())?;
-                append_text(&mut stack, &decoded, &mut remaining_text)?;
+                append_text(&mut stack, &text, &mut remaining_text)?;
             }
             Event::GeneralRef(reference) => {
-                let name = reference.decode().map_err(|e| e.to_string())?;
-                let entity = format!("&{name};");
+                let entity = format!("&{};", &*reference);
                 let decoded = quick_xml::escape::unescape(&entity).map_err(|e| e.to_string())?;
                 append_text(&mut stack, &decoded, &mut remaining_text)?;
             }
@@ -318,7 +312,7 @@ fn read_odt(bytes: &[u8]) -> Metadata {
         loop {
             match reader.read_event().map_err(|e| e.to_string())? {
                 quick_xml::events::Event::Start(event) | quick_xml::events::Event::Empty(event)
-                    if event.local_name().as_ref() == b"annotation" =>
+                    if event.local_name().into_inner() == "annotation" =>
                 {
                     count += 1;
                 }

@@ -76,15 +76,14 @@ fn unsupported_encoding(bytes: &[u8], deadline: Instant) -> Result<bool> {
     declaration
         .xml_version()
         .map_err(|_| failure("invalid workbook XML declaration"))?;
-    let content = std::str::from_utf8(declaration.as_ref())
-        .map_err(|_| failure("invalid workbook XML declaration"))?;
+    let content: &str = &declaration;
     let declaration = quick_xml::events::BytesStart::from_content(content, 3);
     let mut unsupported = false;
     for attribute in declaration.attributes() {
         check_deadline(deadline)?;
         let attribute = attribute.map_err(|_| failure("invalid workbook XML declaration"))?;
-        if attribute.key.as_ref() == b"encoding" {
-            let value = attribute.value.as_ref();
+        if attribute.key.into_inner() == "encoding" {
+            let value = attribute.value.as_bytes();
             if !value.first().is_some_and(u8::is_ascii_alphabetic)
                 || !value
                     .iter()

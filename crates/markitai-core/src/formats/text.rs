@@ -592,10 +592,7 @@ pub(super) fn xml(source: &str) -> Result<Document> {
                     return Err(Error::Conversion("XML nesting exceeds 256 elements".into()));
                 }
                 let local_name = element.local_name();
-                let name = reader
-                    .decoder()
-                    .decode(local_name.as_ref())
-                    .map_err(|e| malformed(&e))?;
+                let name = local_name.into_inner();
                 if level <= 6 {
                     blocks.push(format!("{} {name}", "#".repeat(level)));
                 } else {
@@ -603,19 +600,15 @@ pub(super) fn xml(source: &str) -> Result<Document> {
                 }
                 for attr in element.attributes() {
                     let attr = attr.map_err(|e| malformed(&e))?;
-                    if attr.key.as_ref() == b"xmlns" || attr.key.as_ref().starts_with(b"xmlns:") {
+                    if attr.key.into_inner() == "xmlns"
+                        || attr.key.into_inner().starts_with("xmlns:")
+                    {
                         continue;
                     }
                     let key = attr.key.local_name();
-                    let key = reader
-                        .decoder()
-                        .decode(key.as_ref())
-                        .map_err(|e| malformed(&e))?;
+                    let key = key.into_inner();
                     let value = attr
-                        .decoded_and_normalized_value(
-                            quick_xml::XmlVersion::Implicit1_0,
-                            reader.decoder(),
-                        )
+                        .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                         .map_err(|e| malformed(&e))?;
                     blocks.push(format!("{key}: {value}"));
                 }
@@ -626,19 +619,14 @@ pub(super) fn xml(source: &str) -> Result<Document> {
             Event::End(_) => {
                 depth = depth.saturating_sub(1);
             }
-            Event::Text(text) => pending.push_str(
-                &text
-                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
-                    .map_err(|e| malformed(&e))?,
-            ),
-            Event::CData(text) => pending.push_str(
-                &text
-                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
-                    .map_err(|e| malformed(&e))?,
-            ),
+            Event::Text(text) => {
+                pending.push_str(&text.xml_content(quick_xml::XmlVersion::Implicit1_0))
+            }
+            Event::CData(text) => {
+                pending.push_str(&text.xml_content(quick_xml::XmlVersion::Implicit1_0))
+            }
             Event::GeneralRef(reference) => {
-                let name = reference.decode().map_err(|e| malformed(&e))?;
-                let encoded = format!("&{name};");
+                let encoded = format!("&{};", &*reference);
                 pending
                     .push_str(&quick_xml::escape::unescape(&encoded).map_err(|e| malformed(&e))?);
             }

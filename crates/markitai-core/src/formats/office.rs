@@ -110,23 +110,19 @@ fn xml(bytes: &[u8]) -> Result<Node> {
                     return Err(error("XML structure exceeds node/depth limits"));
                 }
                 let ns = match reader.resolver().resolve_element(event.name()).0 {
-                    ResolveResult::Bound(uri) => namespace(uri.as_ref()),
+                    ResolveResult::Bound(uri) => namespace(uri.into_inner().as_bytes()),
                     _ => Ns::Other,
                 };
                 let mut node = Node {
                     ns,
-                    name: String::from_utf8_lossy(event.local_name().as_ref()).into_owned(),
+                    name: event.local_name().into_inner().to_owned(),
                     ..Node::default()
                 };
                 for attribute in event.attributes() {
                     let attribute = attribute.map_err(error)?;
-                    let name =
-                        String::from_utf8_lossy(attribute.key.local_name().as_ref()).into_owned();
+                    let name = attribute.key.local_name().into_inner().to_owned();
                     let value = attribute
-                        .decoded_and_normalized_value(
-                            quick_xml::XmlVersion::Implicit1_0,
-                            reader.decoder(),
-                        )
+                        .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                         .map_err(error)?
                         .into_owned();
                     match reader.resolver().resolve_attribute(attribute.key).0 {
@@ -134,9 +130,11 @@ fn xml(bytes: &[u8]) -> Result<Node> {
                             node.attributes.insert(name, value);
                         }
                         ResolveResult::Bound(uri)
-                            if matches!(uri.as_ref(),
-                            b"http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-                            | b"http://purl.oclc.org/ooxml/officeDocument/relationships") =>
+                            if matches!(
+                                uri.into_inner(),
+                                "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                                    | "http://purl.oclc.org/ooxml/officeDocument/relationships"
+                            ) =>
                         {
                             node.relations.insert(name, value);
                         }
@@ -150,21 +148,17 @@ fn xml(bytes: &[u8]) -> Result<Node> {
                 }
             }
             Event::Text(value) => {
-                stack.last_mut().unwrap().text.push_str(
-                    &value
-                        .xml_content(quick_xml::XmlVersion::Implicit1_0)
-                        .map_err(error)?,
-                );
-            }
-            Event::CData(value) => {
                 stack
                     .last_mut()
                     .unwrap()
                     .text
-                    .push_str(&value.decode().map_err(error)?);
+                    .push_str(&value.xml_content(quick_xml::XmlVersion::Implicit1_0));
+            }
+            Event::CData(value) => {
+                stack.last_mut().unwrap().text.push_str(&value);
             }
             Event::GeneralRef(value) => {
-                let entity = format!("&{};", value.decode().map_err(error)?);
+                let entity = format!("&{};", &*value);
                 stack
                     .last_mut()
                     .unwrap()

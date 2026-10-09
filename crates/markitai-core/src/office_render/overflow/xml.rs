@@ -59,9 +59,7 @@ impl Node {
 }
 fn namespace(value: ResolveResult<'_>, budget: &mut IndexBudget) -> Result<String> {
     match value {
-        ResolveResult::Bound(uri) => budget.retain(
-            std::str::from_utf8(uri.as_ref()).map_err(|_| failure("invalid workbook namespace"))?,
-        ),
+        ResolveResult::Bound(uri) => budget.retain(uri.into_inner()),
         ResolveResult::Unbound => Ok(String::new()),
         ResolveResult::Unknown(_) => Err(failure("unbound workbook XML namespace")),
     }
@@ -104,15 +102,14 @@ fn index_with_budget(bytes: &[u8], deadline: Instant, limit: usize) -> Result<Ve
                     .map_err(|_| failure("invalid workbook XML declaration"))?;
                 // Inspect every pseudo-attribute so duplicate/conflicting encoding
                 // declarations cannot hide behind the first value returned by encoding().
-                let content = std::str::from_utf8(declaration.as_ref())
-                    .map_err(|_| failure("invalid workbook XML declaration"))?;
+                let content: &str = &declaration;
                 let declaration = quick_xml::events::BytesStart::from_content(content, 3);
                 for attribute in declaration.attributes() {
                     super::check_deadline(deadline)?;
                     let attribute =
                         attribute.map_err(|_| failure("invalid workbook XML declaration"))?;
-                    if attribute.key.as_ref() == b"encoding"
-                        && !attribute.value.as_ref().eq_ignore_ascii_case(b"UTF-8")
+                    if attribute.key.into_inner() == "encoding"
+                        && !attribute.value.eq_ignore_ascii_case("UTF-8")
                     {
                         return Err(failure("unsupported workbook XML encoding: UTF-8 required"));
                     }
@@ -135,10 +132,7 @@ fn index_with_budget(bytes: &[u8], deadline: Instant, limit: usize) -> Result<Ve
                     reader.resolver().resolve_element(element.name()).0,
                     &mut budget,
                 )?;
-                let local = budget.retain(
-                    std::str::from_utf8(element.local_name().as_ref())
-                        .map_err(|_| failure("invalid workbook element"))?,
-                )?;
+                let local = budget.retain(element.local_name().into_inner())?;
                 let mut attributes = BTreeMap::new();
                 for attribute in element.attributes() {
                     super::check_deadline(deadline)?;
@@ -147,10 +141,7 @@ fn index_with_budget(bytes: &[u8], deadline: Instant, limit: usize) -> Result<Ve
                     let (resolved, local) = reader.resolver().resolve_attribute(attribute.key);
                     let key = (
                         namespace(resolved, &mut budget)?,
-                        budget.retain(
-                            std::str::from_utf8(local.as_ref())
-                                .map_err(|_| failure("invalid workbook attribute"))?,
-                        )?,
+                        budget.retain(local.into_inner())?,
                     );
                     // UTF-8 validation and rejection of custom entities mean XML
                     // reference decoding/normalization cannot grow this length.
@@ -191,7 +182,9 @@ fn index_with_budget(bytes: &[u8], deadline: Instant, limit: usize) -> Result<Ve
                 nodes[node].close_start = start;
                 nodes[node].end = end;
             }
-            Event::Text(text) if stack.is_empty() && !text.iter().all(u8::is_ascii_whitespace) => {
+            Event::Text(text)
+                if stack.is_empty() && !text.bytes().all(|b| b.is_ascii_whitespace()) =>
+            {
                 return Err(failure("text outside workbook XML root"));
             }
             Event::DocType(_) => return Err(failure("workbook document types are not accepted")),

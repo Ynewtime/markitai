@@ -4,10 +4,10 @@ use super::{Result, failure};
 use quick_xml::{events::Event, name::ResolveResult};
 
 const MAX_XML: u64 = 32 * 1024 * 1024;
-const ODF_OFFICE: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:office:1.0";
-const ODF_TABLE: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:table:1.0";
-const OOXML: &[u8] = b"http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-const STRICT_OOXML: &[u8] = b"http://purl.oclc.org/ooxml/spreadsheetml/main";
+const ODF_OFFICE: &str = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
+const ODF_TABLE: &str = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
+const OOXML: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const STRICT_OOXML: &str = "http://purl.oclc.org/ooxml/spreadsheetml/main";
 
 fn part(bytes: &[u8], name: &str) -> Result<Vec<u8>> {
     crate::opc::Zip::open(bytes, crate::opc::MAX_ENTRIES)
@@ -43,11 +43,11 @@ fn count(xml: &[u8], odf: bool) -> Result<usize> {
                 let namespace = reader.resolver().resolve_element(element.name()).0;
                 let local = element.local_name();
                 let is_container = if odf {
-                    local.as_ref() == b"spreadsheet"
-                        && matches!(namespace, ResolveResult::Bound(uri) if uri.as_ref() == ODF_OFFICE)
+                    local.into_inner() == "spreadsheet"
+                        && matches!(namespace, ResolveResult::Bound(uri) if uri.into_inner() == ODF_OFFICE)
                 } else {
-                    local.as_ref() == b"sheets"
-                        && matches!(namespace, ResolveResult::Bound(uri) if matches!(uri.as_ref(), OOXML | STRICT_OOXML))
+                    local.into_inner() == "sheets"
+                        && matches!(namespace, ResolveResult::Bound(uri) if matches!(uri.into_inner(), OOXML | STRICT_OOXML))
                 };
                 if is_container {
                     if saw_container {
@@ -59,11 +59,11 @@ fn count(xml: &[u8], odf: bool) -> Result<usize> {
                     }
                 }
                 let is_sheet = if odf {
-                    local.as_ref() == b"table"
-                        && matches!(namespace, ResolveResult::Bound(uri) if uri.as_ref() == ODF_TABLE)
+                    local.into_inner() == "table"
+                        && matches!(namespace, ResolveResult::Bound(uri) if uri.into_inner() == ODF_TABLE)
                 } else {
-                    local.as_ref() == b"sheet"
-                        && matches!(namespace, ResolveResult::Bound(uri) if matches!(uri.as_ref(), OOXML | STRICT_OOXML))
+                    local.into_inner() == "sheet"
+                        && matches!(namespace, ResolveResult::Bound(uri) if matches!(uri.into_inner(), OOXML | STRICT_OOXML))
                 };
                 if container.is_some_and(|parent| depth == parent + 1) && is_sheet {
                     count += 1;

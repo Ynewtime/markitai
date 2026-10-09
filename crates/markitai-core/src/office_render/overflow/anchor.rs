@@ -76,21 +76,11 @@ fn text_present(bytes: &[u8], n: &xml::Node, deadline: Instant) -> Result<bool> 
             .map_err(|_| failure("invalid worksheet text"))?
         {
             Event::Text(t) => {
-                let t = t.decode().map_err(|_| failure("invalid worksheet text"))?;
                 present |= !t.trim().is_empty();
             }
-            Event::CData(t) => {
-                present |= !t
-                    .decode()
-                    .map_err(|_| failure("invalid worksheet text"))?
-                    .trim()
-                    .is_empty()
-            }
+            Event::CData(t) => present |= !t.trim().is_empty(),
             Event::GeneralRef(t) => {
-                let t = t
-                    .decode()
-                    .map_err(|_| failure("invalid worksheet text reference"))?;
-                let reference = format!("&{t};");
+                let reference = format!("&{};", &*t);
                 present |= !quick_xml::escape::unescape(&reference)
                     .map_err(|_| failure("invalid worksheet text reference"))?
                     .trim()

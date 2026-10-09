@@ -252,7 +252,7 @@ pub fn parse_xml_with(
             }
             Event::End(end) => match stack.pop() {
                 Some(mut elem) => {
-                    if elem.local.as_bytes() != end.local_name().as_ref() {
+                    if elem.local != end.local_name().into_inner() {
                         recovered = true;
                     }
                     // markitai: a closed element keeps no spare capacity; a
@@ -267,23 +267,20 @@ pub fn parse_xml_with(
                 None => recovered = true,
             },
             Event::Text(e) => {
-                let text = match e.decode() {
-                    Ok(t) => t.into_owned(),
-                    Err(_) => String::from_utf8_lossy(e.as_ref()).into_owned(),
-                };
+                let text = e.into_inner().into_owned();
                 if !text.is_empty() {
                     bump_nodes(&mut nodes)?;
                     push_text(&mut stack, &mut root, text);
                 }
             }
             Event::GeneralRef(e) => {
-                let name = String::from_utf8_lossy(e.as_ref()).into_owned();
+                let name = e.into_inner().into_owned();
                 let resolved = resolve_entity(&name).unwrap_or_else(|| format!("&{name};"));
                 bump_nodes(&mut nodes)?;
                 push_text(&mut stack, &mut root, resolved);
             }
             Event::CData(e) => {
-                let text = String::from_utf8_lossy(e.as_ref()).into_owned();
+                let text = e.into_inner().into_owned();
                 bump_nodes(&mut nodes)?;
                 push_text(&mut stack, &mut root, text);
             }
@@ -394,10 +391,10 @@ fn start_to_element(
 ) -> Element {
     let (res, local) = reader.resolver().resolve_element(e.name());
     let ns = match res {
-        ResolveResult::Bound(namespace) => Some(intern(interner, namespace.as_ref())),
+        ResolveResult::Bound(namespace) => Some(intern(interner, namespace.into_inner().as_bytes())),
         _ => None,
     };
-    let local = String::from_utf8_lossy(local.as_ref()).into_owned();
+    let local = local.into_inner().to_owned();
     let mut attrs = Vec::new();
     for attr in e.attributes() {
         let attr = match attr {
@@ -410,21 +407,21 @@ fn start_to_element(
         };
         // Namespace declarations are consumed by the reader's resolver; the
         // DOM stores only resolved names.
-        if attr.key.as_ref().strip_prefix(b"xmlns").is_some_and(|r| matches!(r, [] | [b':', ..])) {
+        if attr.key.into_inner().strip_prefix("xmlns").is_some_and(|r| r.is_empty() || r.starts_with(':')) {
             continue;
         }
         let (res, alocal) = reader.resolver().resolve_attribute(attr.key);
         let ans = match res {
-            ResolveResult::Bound(namespace) => Some(intern(interner, namespace.as_ref())),
+            ResolveResult::Bound(namespace) => Some(intern(interner, namespace.into_inner().as_bytes())),
             _ => None,
         };
         let value = attr
-            .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, reader.decoder())
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map(|v| v.into_owned())
-            .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).into_owned());
+            .unwrap_or_else(|_| attr.value.clone().into_owned());
         attrs.push(Attr {
             ns: ans,
-            local: String::from_utf8_lossy(alocal.as_ref()).into_owned(),
+            local: alocal.into_inner().to_owned(),
             value,
         });
     }
@@ -442,9 +439,9 @@ fn start_to_element(
             .split_whitespace()
             .map(|prefix| {
                 let probe = format!("{prefix}:x");
-                match reader.resolver().resolve_element(QName(probe.as_bytes())).0 {
+                match reader.resolver().resolve_element(QName(&probe)).0 {
                     ResolveResult::Bound(namespace) => {
-                        let raw = String::from_utf8_lossy(namespace.as_ref()).into_owned();
+                        let raw = namespace.into_inner().to_owned();
                         normalize_ooxml_uri(&raw).unwrap_or(raw)
                     }
                     _ => prefix.to_string(),
