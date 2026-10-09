@@ -53,6 +53,7 @@ from markitai.constants import (
     DEFAULT_RETRY_BASE_DELAY,
     DEFAULT_RETRY_MAX_DELAY,
 )
+from markitai.llm.error_redaction import redact_provider_exception
 from markitai.llm.models import format_cost, get_response_cost
 from markitai.llm.router import MODEL_LEVEL_ERROR_PATTERNS, POOL_EXHAUSTED_PATTERN
 from markitai.llm.structured import router_structured_ladder
@@ -788,7 +789,11 @@ class LLMEngine:
 
         async def guarded(*args: Any, **kwargs: Any) -> Any:
             self._spend_request_budget(context)
-            return await acompletion(*args, **kwargs)
+            try:
+                return await acompletion(*args, **kwargs)
+            except Exception as e:
+                redact_provider_exception(e, kwargs.get("messages"))
+                raise
 
         return guarded
 
@@ -1265,6 +1270,7 @@ class LLMEngine:
 
                 except RETRYABLE_ERRORS as e:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    redact_provider_exception(e, kwargs.get("messages"))
                     last_exception = e
 
                     # Check for quota/billing errors that should NOT be retried
@@ -1323,6 +1329,7 @@ class LLMEngine:
 
                 except Exception as e:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    redact_provider_exception(e, kwargs.get("messages"))
                     error_msg_lower = str(e).lower()
 
                     # Model-level errors are retryable (the router cooldown

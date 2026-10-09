@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from markitai.fetch_policy import sensitive_path_segment_indexes
+from markitai.utils.secret_redaction import redact_secrets
 
 _HTTP_URL_IN_TEXT = re.compile(r"https?://[^\s<>'\"]+")
 # `serve` access tokens ride in `?token=` on SSE, file and archive URLs (they
@@ -48,7 +49,7 @@ def redact_urls_in_text(message: str) -> str:
 
 
 def redact_log_record(record: Any) -> None:
-    """Loguru patcher: remove URL credential surfaces before any sink."""
+    """Loguru patcher: remove credentials and URL secrets before any sink."""
     message = record.get("message")
     if isinstance(message, str):
-        record["message"] = redact_urls_in_text(message)
+        record["message"] = redact_secrets(redact_urls_in_text(message))

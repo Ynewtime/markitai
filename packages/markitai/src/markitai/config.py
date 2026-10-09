@@ -62,6 +62,7 @@ from markitai.constants import (
     PROVIDER_DEFAULT_MODELS,
 )
 from markitai.utils.errors import ConfigFileError
+from markitai.utils.secret_redaction import register_secret
 
 # Environment variable descriptions for user-friendly error messages. The
 # provider rows are derived so a new provider needs no second edit here, and
@@ -135,7 +136,10 @@ def _resolve_api_key(api_key: str | None, strict: bool = True) -> str | None:
         EnvVarNotFoundError: If strict=True and environment variable not found.
     """
     if api_key:
-        return resolve_env_value(api_key, strict=strict)
+        resolved = resolve_env_value(api_key, strict=strict)
+        # Mask it in provider errors and logs (a 401 may echo it back).
+        register_secret(resolved)
+        return resolved
     return None
 
 
