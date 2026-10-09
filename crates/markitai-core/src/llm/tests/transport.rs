@@ -14,13 +14,13 @@ fn serve(respond: impl FnOnce(TcpStream) + Send + 'static) -> (String, thread::J
     (address, thread)
 }
 
-/// Reads the request head, so the client is waiting for the response.
-fn read_head(stream: &mut TcpStream) {
-    let mut seen = Vec::new();
-    let mut byte = [0; 1];
-    while !seen.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
-        seen.push(byte[0]);
-    }
+/// Closes the write side and reads until the client closes. macOS and
+/// Windows reset a connection closed with unread request bytes, and the
+/// client then sees the reset before the response.
+fn drain(mut stream: TcpStream) {
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+    let _ = std::io::copy(&mut stream, &mut std::io::sink());
 }
 
 fn failure(base: &str, timeout: u64) -> String {
@@ -51,7 +51,7 @@ fn a_failed_tls_handshake_is_named() {
     // HTTP answer instead of a TLS record.
     let (address, server) = serve(|mut stream| {
         let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
-        thread::sleep(Duration::from_millis(200));
+        drain(stream);
     });
     let error = failure(&format!("https://{address}/v1"), 3);
     server.join().unwrap();
@@ -65,7 +65,7 @@ fn a_failed_tls_handshake_is_named() {
 #[test]
 fn a_timeout_names_its_limit() {
     let (address, server) = serve(|mut stream| {
-        read_head(&mut stream);
+        read_request(&mut stream);
         thread::sleep(Duration::from_millis(1500));
     });
     let error = failure(&format!("http://{address}/v1"), 1);
@@ -81,7 +81,7 @@ fn a_timeout_names_its_limit() {
 #[test]
 fn a_connection_closed_before_the_response_is_named() {
     let (address, server) = serve(|mut stream| {
-        read_head(&mut stream);
+        read_request(&mut stream);
         drop(stream);
     });
     let error = failure(&format!("http://{address}/v1"), 3);
@@ -138,7 +138,7 @@ fn http_errors_carry_the_provider_message_without_secrets_or_document_text() {
 fn a_body_that_is_not_json_names_its_type_and_size() {
     let page = "<html><head><title>Sign in</title></head><body>gateway</body></html>";
     let (address, server) = serve(move |mut stream| {
-        read_head(&mut stream);
+        read_request(&mut stream);
         let _ = write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
