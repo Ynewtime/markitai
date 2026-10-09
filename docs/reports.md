@@ -107,7 +107,11 @@ they cannot recover usage that the conversion runtime did not return.
 Timestamps use local-offset ISO strings. Durations are strings: one decimal plus
 `s` below a minute, then `MM:SS` or `HH:MM:SS` using truncated integer seconds.
 Batch duration measures wall time; directory `processing_time` sums item times
-and can exceed wall time when work runs concurrently.
+and can exceed wall time when work runs concurrently. An item's time (and its
+`--json` `duration_s`) is its own conversion and publication work: the time a
+converted item waits for the batch to commit its group of outputs (up to 16
+items or 100 ms) is not counted, so with `-j 1` the item times add up to less
+than the wall time.
 
 ## Publication and intentional differences
 

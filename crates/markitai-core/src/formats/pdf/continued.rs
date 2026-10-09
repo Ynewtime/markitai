@@ -266,6 +266,7 @@ mod tests {
             needs_ocr: false,
             ocr_reason: None,
             asset_names: Vec::new(),
+            image_places: BTreeMap::new(),
             asset_ocr: BTreeMap::new(),
             screenshot_name: None,
             visibility_suspect: false,

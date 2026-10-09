@@ -663,3 +663,206 @@ fn clipped_vector_chart_becomes_an_asset_without_the_screenshot_option() {
             < document.markdown.find("paragraph after").unwrap()
     );
 }
+
+#[test]
+fn text_drawn_outside_the_crop_box_is_left_out_with_a_warning() {
+    // One line inside the CropBox, one sentinel below and left of it: a
+    // viewer shows only the first, upright or turned.
+    let stream = [
+        text_at(500, "Visible line inside the crop box."),
+        "BT /F1 8 Tf 1 0 0 1 5 10 Tm (OUTSIDE CROP MUST NOT APPEAR) Tj ET".into(),
+    ]
+    .join("\n");
+    let (bytes, _) = fixture(&[stream], false);
+    for rotate in [0, 90] {
+        let mut pdf = lopdf::Document::load_mem(&bytes).unwrap();
+        let id = pdf.get_pages()[&1];
+        let page = pdf.get_dictionary_mut(id).unwrap();
+        page.set(
+            "CropBox",
+            vec![30.into(), 60.into(), 580.into(), 760.into()],
+        );
+        page.set("Rotate", rotate);
+        let mut cropped = Vec::new();
+        pdf.save_to(&mut cropped).unwrap();
+        let pages = extract_pages(&cropped).unwrap();
+        let markdown = &pages.pages[0].markdown;
+        assert!(
+            markdown.contains("Visible line inside the crop box."),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("OUTSIDE CROP"), "{rotate}: {markdown}");
+        assert!(
+            pages
+                .document
+                .warnings
+                .iter()
+                .any(|w| w
+                    .starts_with("PDF page 1: 1 text item(s) drawn outside the visible page area")),
+            "{:?}",
+            pages.document.warnings
+        );
+    }
+}
+
+#[test]
+fn images_are_placed_where_they_are_drawn_among_the_lines() {
+    // A banner above the text, a figure between two paragraphs and a
+    // footer image below the text, drawn in the reverse order.
+    let mut pdf = lopdf::Document::with_version("1.7");
+    let tree = pdf.new_object_id();
+    let font = pdf.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+    });
+    let mut xobjects = Dictionary::new();
+    for (index, rgb) in [[255, 0, 0], [0, 255, 0], [0, 0, 255]]
+        .into_iter()
+        .enumerate()
+    {
+        let image = pdf.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 1,
+                "Height" => 1, "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8
+            },
+            rgb.to_vec(),
+        ));
+        xobjects.set(format!("Im{index}"), image);
+    }
+    let stream = [
+        "q 300 0 0 40 40 100 cm /Im2 Do Q".to_owned(),
+        "q 300 0 0 60 40 520 cm /Im1 Do Q".to_owned(),
+        "q 300 0 0 50 40 730 cm /Im0 Do Q".to_owned(),
+        text_at(
+            700,
+            "The opening paragraph starts right below the banner image.",
+        ),
+        text_at(
+            686,
+            "It continues on a second line before the figure is drawn.",
+        ),
+        text_at(
+            480,
+            "The closing paragraph follows the figure in the reading order.",
+        ),
+    ]
+    .join("\n");
+    let content = pdf.add_object(Stream::new(Dictionary::new(), stream.into_bytes()));
+    let page = pdf.add_object(dictionary! {
+        "Type" => "Page", "Parent" => tree, "Contents" => content,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font }, "XObject" => xobjects }
+    });
+    pdf.objects.insert(
+        tree,
+        dictionary! {
+            "Type" => "Pages", "Count" => 1, "Kids" => vec![page.into()],
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+        }
+        .into(),
+    );
+    let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+    pdf.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    let document = extract_pages(&bytes).unwrap().finish().unwrap();
+    let markdown = &document.markdown;
+    let at = |needle: &str| {
+        markdown
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle}\n{markdown}"))
+    };
+    let image = |index: u8| {
+        let names: Vec<_> = document
+            .assets
+            .iter()
+            .map(|asset| asset.name.as_str())
+            .collect();
+        at(&format!(".markitai/assets/{}", names[index as usize]))
+    };
+    // Assets are named in drawing order: footer, figure, banner.
+    assert!(image(2) < at("The opening paragraph"), "{markdown}");
+    assert!(at("before the figure is drawn.") < image(1), "{markdown}");
+    assert!(image(1) < at("The closing paragraph"), "{markdown}");
+    assert!(at("in the reading order.") < image(0), "{markdown}");
+    assert!(
+        !document.warnings.iter().any(|w| w == LIMITATION),
+        "{:?}",
+        document.warnings
+    );
+}
+
+#[test]
+fn a_justified_word_break_is_one_space() {
+    // Justified text widens each break with an offset before its space
+    // glyph; a double space between words is two glyphs and stays.
+    let stream = [
+        "BT /F1 12 Tf 1 0 0 1 40 700 Tm [(Vivamus) -400 ( dapibus) -400 ( sodales) -400 ( ex,)] TJ ET",
+        "BT /F1 12 Tf 1 0 0 1 40 680 Tm [(Two  spaces) ( stay  apart.)] TJ ET",
+    ]
+    .join("\n");
+    let (bytes, _) = fixture(&[stream], false);
+    let pages = extract_pages(&bytes).unwrap();
+    let markdown = &pages.pages[0].markdown;
+    assert!(
+        markdown.contains("Vivamus dapibus sodales ex,"),
+        "{markdown:?}"
+    );
+    assert!(
+        markdown.contains("Two  spaces stay  apart."),
+        "{markdown:?}"
+    );
+}
+
+#[test]
+fn a_photo_the_page_binds_but_never_draws_does_not_make_it_a_scan() {
+    // Every page of a document binds the same large photo; this one shows
+    // only a few lines of text and never draws it.
+    let mut pdf = lopdf::Document::with_version("1.7");
+    let tree = pdf.new_object_id();
+    let font = pdf.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+    });
+    let photo = pdf.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 1000,
+            "Height" => 1000, "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8
+        },
+        vec![128; 1000 * 1000],
+    ));
+    let stream = [
+        text_at(700, "A page of ordinary text that happens to bind a photo."),
+        text_at(686, "Its content never draws that photo anywhere at all."),
+    ]
+    .join("\n");
+    let content = pdf.add_object(Stream::new(Dictionary::new(), stream.into_bytes()));
+    let page = pdf.add_object(dictionary! {
+        "Type" => "Page", "Parent" => tree, "Contents" => content,
+        "Resources" => dictionary! {
+            "Font" => dictionary! { "F1" => font },
+            "XObject" => dictionary! { "Photo" => photo }
+        }
+    });
+    pdf.objects.insert(
+        tree,
+        dictionary! {
+            "Type" => "Pages", "Count" => 1, "Kids" => vec![page.into()],
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+        }
+        .into(),
+    );
+    let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+    pdf.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    let pages = extract_pages(&bytes).unwrap();
+    assert!(!pages.pages[0].needs_ocr);
+    assert!(pages.pages[0].markdown.contains("happens to bind a photo"));
+    assert!(
+        !pages
+            .document
+            .warnings
+            .iter()
+            .any(|w| w.contains("looked like a scan")),
+        "{:?}",
+        pages.document.warnings
+    );
+}

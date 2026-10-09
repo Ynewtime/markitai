@@ -4,6 +4,7 @@ mod callouts;
 mod charset;
 mod code;
 mod facts;
+mod fallbacks;
 mod furniture;
 mod hacker_news;
 mod mail;
@@ -823,8 +824,10 @@ fn compact_table(markdown: &str) -> Option<String> {
 
 /// Where a link wrapped around blocks (a card's heading and summary) is
 /// written, since a Markdown link cannot hold blocks: its first heading, else
-/// its first block with text and no block inside. `None` when the link holds
-/// no block or no such block. (An HTML parser never nests links.)
+/// its first block with text and no block inside, else (blocks holding only
+/// images, such as an avatar beside a name) its first inline element with
+/// text outside those blocks. `None` when the link holds no block or no such
+/// element. (An HTML parser never nests links.)
 fn block_link_target(anchor: ElementRef<'_>) -> Option<ElementRef<'_>> {
     let inside = || {
         anchor
@@ -846,6 +849,17 @@ fn block_link_target(anchor: ElementRef<'_>) -> Option<ElementRef<'_>> {
                         .descendants()
                         .filter_map(ElementRef::wrap)
                         .any(|child| child != *node && block(&child))
+            })
+        })
+        .or_else(|| {
+            inside().find(|node| {
+                !block(node)
+                    && node.text().any(|text| !text.trim().is_empty())
+                    && node
+                        .ancestors()
+                        .filter_map(ElementRef::wrap)
+                        .take_while(|ancestor| *ancestor != anchor)
+                        .all(|ancestor| !block(&ancestor))
             })
         })
 }
@@ -5159,6 +5173,7 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     let source = flatten_shadow_roots(source);
     let mut document = Html::parse_document(&source);
     stream::restore(&mut document)?;
+    fallbacks::recover(&mut document);
     let base = base_url.and_then(|value| Url::parse(value).ok());
     // A reading site's article, read from what the page serves (see `sites`).
     let mut site_metadata = Map::new();
@@ -6456,6 +6471,8 @@ map(callbackFn, thisArg)
             <a href="/card"><div><div>Card name</div><div>Card text</div></div></a>
             <a href="/story"><div>Category</div><h2>Story</h2></a>
             <a href="/media"><div class="thumb"><img src="t.png" alt="Thumb"></div><div>Media title</div></a>
+            <a href="/@alice"><div class="avatar"><div><img src="a.png" alt="alice"></div></div>
+            <span class="name"><bdi><strong>Alice</strong></bdi> <span>@alice</span></span></a>
             <p><a href="/inline">inline</a> stays.</p></article>"#,
             None,
         )
@@ -6478,6 +6495,13 @@ map(callbackFn, thisArg)
             markdown.contains("![Thumb](t.png)\n\n[Media title](/media)"),
             "{markdown}"
         );
+        // An avatar beside a name: the name carries the link, and no blank
+        // line is left inside a link's text.
+        assert!(
+            markdown.contains("![alice](a.png)\n\n[**Alice** @alice](/@alice)"),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("[!["), "{markdown}");
         assert!(
             !markdown.contains("[###") && !markdown.contains("](/post)\n\nSummary text.]"),
             "{markdown}"

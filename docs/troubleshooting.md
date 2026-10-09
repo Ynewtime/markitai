@@ -298,8 +298,11 @@ built-in hayro renderer; it does not need a separately installed PDF program.
 Local OCR uses Paddle and requires prepared model files. Check `markitai doctor`
 and [model preparation](ocr.md#the-portable-engine-windows-and-linux).
 Page-size limits, damaged/encrypted PDFs and unsupported model languages remain
-explicit errors. Office pages additionally need LibreOffice. HEIF/AVIF decoding
-remains macOS-only; convert those images to PNG/JPEG first on other platforms.
+explicit errors. Office pages additionally need LibreOffice. AVIF decoding
+remains macOS-only; convert AVIF images to PNG/JPEG first on other platforms.
+HEIF/HEIC files whose coding the built-in decoder does not read (for example
+an image sequence coded with inter prediction, or 16-bit extended precision)
+fail with an explicit unsupported error.
 
 **`Error: ocr.lang is not supported by the installed macOS Vision text recognizer`.**
 `ocr.lang` must be a language the macOS Vision recognizer supports, such as

@@ -4,6 +4,7 @@
 
 ### Added
 
+- HEIF/HEIC images decode on Windows and Linux with a built-in pure-Rust decoder (heifer), for conversion, vision models and local OCR, as on macOS; they were an unsupported error before. AVIF remains macOS-only.
 - The workbench reads an uploaded `.urls` file as a URL list: each entry becomes a URL item (comments and blank lines skipped, an entry that names its output keeps that name), instead of failing as an unsupported document. A batch — a folder, several chosen files, a drop that reached into a folder, or a `.urls` list — now waits for Convert with one staged line naming it, so its options can be chosen first; a single file still starts at once. Such a submission reads as one expandable group row in the ledger, showing its name, item count and aggregated facts, with the items inside keeping their own actions.
 - `--help` ends with the build identity of the binary: its version, the commit it came from (marked `(local changes)` when the worktree differed, `unknown` outside a checkout), the target and profile, and the time the build ran in the reader's own time zone with its UTC offset. `SOURCE_DATE_EPOCH` fixes that time for reproducible builds; `-h` and the one-line `--version` are unchanged.
 - Native Rust conversion core, standalone CLI, and in-process Python, Node.js and Go bindings. CLI packages need no Python, Node.js or Go runtime.
@@ -24,6 +25,9 @@
 
 ### Changed
 
+- Local OCR of an SVG reads it rendered at twice its own width (at most 2048 pixels), as the reference does, instead of the 2048-pixel vision preview: the corpus's 426-byte SVG takes 0.29 s and 162 MB instead of 1.8 s and 445 MB, with the same text.
+- Local OCR with the portable engine is faster: text detection uses several threads, the classifier and recognizer are prepared while the first image is detected, and a PDF's scanned pages are recognized two at a time. On the benchmark corpus its 7 raster and scanned-PDF OCR inputs took 9.4 s instead of 14.4 s (Python 1.2: 9.4 s), with identical text.
+- Large XLSX worksheets use far less memory: rows are read as the XML parser closes each one instead of from a tree of the whole sheet, and parsed XML keeps no spare capacity. A 20,000-row workbook (9 MB of sheet XML) peaks at 84 MB instead of 384 MB, with the same output.
 - Omit PDF page and slide-number comments from final Markdown by default; `output.page_markers` and `--page-markers` keep them. Internal page alignment, RAG page provenance and literal code examples are preserved.
 - Write line breaks (`<br>`, manual breaks in Word/ODT/RTF/EPUB) as Markdown two-space hard breaks instead of a trailing backslash; normal output keeps them, including inside HTML list items.
 - The batch status line shows the time taken so far instead of a remaining-time estimate, which swung with item size and model requests.
@@ -42,6 +46,17 @@
 
 ### Fixed
 
+- HTML: a lazy-loaded image whose address is in a site's own `data-` attribute (`data-image-loader`) behind an inline placeholder is kept, instead of being dropped with the placeholder.
+- A PDF page that binds a large image in its resources but never draws it is read as the text page it is, without the warning that it was "read as plain text because it looked like a scan" (page 5 of the reference `sample.pdf`).
+- PDF justified text no longer shows two spaces between words where the producer widens each break with a `TJ` offset before the space glyph (the bold run of the reference `sample.pdf`).
+- A batch item's `duration_s` (and report time) is its own conversion and publication work; it no longer includes the time the item waited for its publication group to commit, which made `-j 1` item times add up to several times the wall time.
+- Legacy PPT slides keep their EMF and WMF pictures (the reference `sample.ppt`'s chart preview), decoded completely as legacy DOC pictures are, instead of omitting them as an unsupported format.
+- A frontmatter title taken from the first heading is plain text: Markdown escapes (`ZZZ\_Sheet\_1` from a Numbers sheet), link addresses and emphasis markers around it are no longer kept.
+- HTML: YouTube watch pages have their own reader (title, channel, description, view and date lines, loaded comments; from the rendered page or the server's player response), so the guide links and the like, dislike, share and save buttons no longer leak into the Markdown. A saved Bilibili opus page that names no address is recognized by its `.bili-opus-view` markup, so its reader drops the author avatar and the page chrome.
+- HTML: a link around an image-only block and a name (a Mastodon avatar beside the display name) puts the link on the name, with the avatar before it, instead of writing a link whose text holds a blank line, which Markdown renders as literal brackets.
+- PDF images are placed where they are drawn among their page's text: before it, after the paragraph above them, or after it, instead of always after the page's text, which could split a sentence that continues on the next page. Only images that cannot be located still follow the text, with the existing warning.
+- HTML: a lazy-loading page's `<noscript>` image fallbacks are kept as images instead of being dropped, and a `<picture>` whose `<img>` is only an inline placeholder takes the address of its first `<source>` set.
+- PDF text drawn outside the visible page area (CropBox) is left out of the body with a warning giving the number of items, as a viewer never shows it; a single such line was extracted before, because only neighboring-page paragraphs were clipped.
 - A serve job snapshot's job-level `options` lists only the supported option keys, as each item's `options` already did, instead of echoing everything saved with the job: the stored `remote_processing` consent and CLI history metadata such as `origin` are no longer returned.
 - The workbench's detected models come from the same table and environment as conversions: API keys in `.env` files count, as they do for `MODEL`-less conversions, the list follows the pool's priority (Anthropic, OpenAI, Gemini, DeepSeek, OpenRouter) instead of starting with OpenAI, and `MODEL` is also read from `.env`. Workbench conversions without a `llm.model_list` use that same pool, so with several keys they now try Anthropic first, as CLI conversions do. A key that is only whitespace no longer adds its provider to a conversion's automatic pool.
 - `MARKITAI_NO_REMOTE_FETCH` is read like `MARKITAI_NO_VLM_OCR` and the reference: any value other than an empty one, `0`, `false` or `no` (trimmed, in any case) turns remote extraction off, so ` 1` or `Y` no longer leaves Defuddle, Jina and Cloudflare enabled. `MARKITAI_PURE` accepts `on` and any case, like `MARKITAI_RECORD_HISTORY`.

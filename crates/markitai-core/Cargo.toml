@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 tract-onnx = { version = "=0.23.8", default-features = false, optional = true }
+# tract's own matrix kernels on several threads (rayon), for text detection.
+tract-linalg = { version = "=0.23.8", default-features = false, features = ["multithread-mm"], optional = true }
 base64 = "0.22"
 libc = "0.2"
 tiff = "0.11.3"
@@ -55,12 +57,15 @@ memchr = { version = "2", optional = true }
 # Pure-Rust page rendering (and, with the OCR package, recognition) that
 # Windows and Linux always use; on macOS it is compiled beside the native
 # frameworks for development and comparison.
-portable-media = ["dep:hayro", "dep:memchr", "dep:tract-onnx"]
+portable-media = ["dep:hayro", "dep:memchr", "dep:tract-onnx", "dep:tract-linalg"]
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 hayro = { version = "=0.7.1", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
 memchr = "2"
 tract-onnx = { version = "=0.23.8", default-features = false }
+tract-linalg = { version = "=0.23.8", default-features = false, features = ["multithread-mm"] }
+# Pure-Rust HEIF/HEIC (HEVC) decoding; macOS uses ImageIO.
+heifer = { version = "=0.2.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

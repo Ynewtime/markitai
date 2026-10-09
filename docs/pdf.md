@@ -75,8 +75,11 @@ OCR, containing suspicious hidden text, read from an embedded OCR text layer
 (see [Searchable scans](#searchable-scans)), or having incomplete content
 inspection does not enter refinement. Text size for the hidden-text check is the effective
 size after the text matrix, transformation and Form matrices: Quartz writes
-`1 Tf` and scales with the text matrix, which is ordinary 12pt text. The existing narrowly guarded font-decoded recovery
-for a false scan verdict remains in place. A missing or unreadable page keeps
+`1 Tf` and scales with the text matrix, which is ordinary 12pt text. A large image the page
+binds in its resources but whose completely read content never draws it (a photo
+every page of a document binds and one page shows) no longer makes the page a
+scan. The existing narrowly guarded font-decoded recovery for other false scan
+verdicts remains in place. A missing or unreadable page keeps
 its place, with an explicit warning (and its page marker under `--page-markers`).
 
 The pinned dependency has a small, tracked policy patch under
@@ -120,6 +123,12 @@ dependency's explicit OCR-layer path may still request mode 3; clipping-only
 mode 7 is never treated as an OCR layer. The only mode-3 text the core reads is
 a searchable scan's OCR text layer that passes the checks below; it retains the
 existing guard against plain-text recovery of suspicious pages.
+
+Text drawn outside the visible page area (CropBox intersected with MediaBox) is
+left out of the page body, as a viewer never shows it, and a warning gives the
+number of items left out. A word run counts when its whole extent lies more than
+6 points beyond the area; short glyph fragments and runs that continue an
+on-page line stay, because rotated display text can leave them there.
 
 These rules do not establish complete rendered visibility: transparency,
 blending, soft masks, occlusion, arbitrary clipping and mixed-visibility
@@ -210,6 +219,15 @@ pages, and the `ocr_layer_pages` metadata, are written at assembly for the pages
 still read from their layer, so a page recognized again by OCR drops out.
 Embedded objects shared between pages still produce a single asset, with each
 page retaining its own reference.
+
+At assembly each image of a page read from its text is placed where it is
+drawn: before the text when it lies above every text line, after the paragraph
+holding the nearest line above it that shares its columns, or after the text
+when it lies below every line. The paragraph is found by the last 40 letters and
+digits of that line, which must occur exactly once in the page's Markdown. An
+image drawn inside a form, twice on one page, beside text with no line above it,
+or whose line cannot be found follows the page's text as before, and only then
+does the warning that images are placed after their page's text appear.
 
 The ordinary `extract` entrypoint calls `finish`, which preserves page markers,
 image-reference order, metadata, inspection diagnostics and the final empty-content
@@ -346,7 +364,7 @@ is dropped; any other first row becomes a body row. Other text between the
 parts, another column count, a header of empty cells, a single column or a page
 recognized by OCR keeps the tables apart. A part on its own (per-page
 extraction, or a page recognized by OCR next to it) is headed by its first row,
-so no table has an empty header row. Page images stay after their own page's
+so no table has an empty header row. Page images stay with their own page's
 text.
 
 Before replacing page Markdown, decoded alphanumeric character counts must agree

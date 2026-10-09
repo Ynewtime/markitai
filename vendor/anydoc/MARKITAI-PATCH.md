@@ -510,6 +510,23 @@ upstream files:
   `dotm`, `ott`, `potx`, `potm`, `xlt`, `xltx`, `xltm`, `ots`, `otp`) to their
   documents' formats (content detection already did), and `diagram_data`
   exposes `shared::drawingml::diagram_blocks` for a PPTX's SmartArt.
+- `src/package/xml.rs`, `src/package/archive.rs`,
+  `src/formats/sheet/xlsx.rs`: a closed element's `children` and an element's
+  `attrs` keep no spare capacity; `parse_xml_with` (and
+  `Package::optional_xml_part_with`) hands each closed `child` element of a
+  `parent` to a callback instead of keeping it in the tree, and the XLSX
+  reader reads `sheetData/row` that way, one row at a time, then drops the
+  sheet's tree before building its grid. Output is unchanged; a 20,000-row,
+  9 MB worksheet peaks at 84 MB instead of 384 MB. The node budget still counts
+  every node. `xml.rs` tests the detached records.
+- `src/shared/officeart.rs`, `src/formats/doc/pictures.rs`,
+  `src/formats/ppt/pictures.rs`: the DOC reader's complete picture decode moves
+  to `officeart::complete_blip`, and the PPT picture bank uses it too, so a
+  slide's EMF or WMF picture is kept when it inflates (zlib) or is stored to
+  exactly its declared size, as in DOC, instead of being omitted as an
+  unsupported format; a partial metafile is still omitted with that warning.
+  The unused raw-deflate `fbse_blip` helper is removed. `pictures_tests.rs`
+  covers an FBSE-embedded and a direct EMF and a short one.
 
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
@@ -520,7 +537,7 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (451 tests), and so does its own
+suite passes in an isolated copy (451 tests; 520 with the added ones), and so does its own
 `cargo clippy --all-targets -- -D warnings` after one upstream line in
 `src/formats/docx/numbering.rs` passes `level_value` by value instead of by
 reference (`needless_borrows_for_generic_args`).

@@ -665,6 +665,39 @@ The local changes, each marked `markitai` (or, for sorts, made through
   Run in the isolated copy, the crate's unit tests give 1,716 passed (14
   added) and the same 21 failed.
 
+- `src/extractor/mod.rs`, `src/lib.rs`: besides neighboring-page content (ten
+  or more wordy items off the visible page box), a word run of four or more
+  characters whose whole extent lies more than 6 points outside the box, and
+  that does not continue an on-page line, is left out on its own: a viewer
+  never shows it, and a single such line is a way to hide text. Short glyph
+  fragments stay. `PagesExtractionResult::off_page_text_by_page` reports, per
+  returned page, how many items were left out either way, so the caller can
+  warn. Covered by `crates/markitai-core/src/formats/pdf/page_tests.rs`
+  (`text_drawn_outside_the_crop_box_is_left_out_with_a_warning`, upright and
+  `/Rotate 90`).
+
+  Run in the isolated copy, the crate's unit tests give 1,720 passed and the
+  same 21 failed.
+
+- `src/extractor/content_stream.rs`: in a `TJ` array, a space glyph that starts
+  the string right after an offset wrote a word break (justified text widens
+  each break with an offset before its space glyph, `<73> -130 <20>`) is that
+  break, so the words are joined by one space, not two. Consecutive space glyphs
+  stay. Covered by `crates/markitai-core/src/formats/pdf/page_tests.rs`
+  (`a_justified_word_break_is_one_space`); the crate's unit tests in the isolated
+  copy give 1,720 passed and the same 21 failed.
+
+- `src/detector.rs`, `src/detector/content_scan.rs`: per-page Markdown no
+  longer routes a page to OCR for a template image the page only binds: when
+  the executed content was read completely (`ExecutedContent::complete`) and
+  drew no image, `PageAnalysis::template_image_undrawn` clears
+  `template_image_needs_ocr`. `has_template_image` itself still describes the
+  bound pixels, as upstream's tests require, and whole-document classification
+  is unchanged. Covered by `page_tests.rs`
+  (`a_photo_the_page_binds_but_never_draws_does_not_make_it_a_scan`); the
+  crate's unit tests in the isolated copy give 1,720 passed and the same 21
+  failed.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths, except as listed above. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,
@@ -678,8 +711,8 @@ dependency is added.
 `glyph_names::glyph_to_unicode` and the `MarkdownOptions::heading_tiers`
 field; no optional runtime dependency is added.
 `glyph_names::glyph_to_unicode`, `PageOmittedText`, `PageOcrLayer` and the
-`PagesExtractionResult::omitted_text_by_page` and `ocr_layer_by_page`
-fields; no optional runtime dependency is added.
+`PagesExtractionResult::omitted_text_by_page`, `ocr_layer_by_page` and
+`off_page_text_by_page` fields; no optional runtime dependency is added.
 Opacity, masks, occlusion, full text clipping and mixed-visibility marked content
 are not claimed to be solved by this patch.
 

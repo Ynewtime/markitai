@@ -136,29 +136,12 @@ impl<'a> Bank<'a> {
             self.warn("A drawing refers to an unavailable picture bank slot.".into());
             return Ok(None);
         };
-        // The existing decoder's metafile geometry/compression is outside
-        // this reader's picture contract. Do not turn a partial decode into
-        // an allegedly preserved figure.
+        // markitai: the DOC reader's complete decode, metafiles included: an
+        // EMF or WMF is kept only when it inflates (or is stored) to exactly
+        // its declared size, so a partial decode never stands for a figure.
         let actual = if kind == 0xF007 { embedded_blip(vi, body) } else { Some((vi, kind, body)) };
         let blip = actual.and_then(|(actual_vi, actual_kind, actual_body)| {
-            if actual_vi & 15 != 0
-                || !matches!(
-                    (actual_kind, actual_vi >> 4),
-                    (0xF01D, 0x46A | 0x46B | 0x6E2 | 0x6E3) | (0xF01E, 0x6E0 | 0x6E1)
-                )
-            {
-                return None;
-            }
-            if kind == 0xF007 {
-                officeart::fbse_blip(body, limits::MAX_ENTRY_BYTES as usize)
-            } else {
-                officeart::decode_blip(
-                    actual_vi,
-                    actual_kind,
-                    actual_body,
-                    limits::MAX_ENTRY_BYTES as usize,
-                )
-            }
+            officeart::complete_blip(actual_vi, actual_kind, actual_body)
         });
         let Some(blip) = blip else {
             self.warn(

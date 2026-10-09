@@ -203,6 +203,18 @@ impl<'a> Iterator for DescendantNodes<'a> {
 /// transcoded to UTF-8 before parsing so namespace resolution sees one
 /// consistent encoding.
 pub fn parse_xml(bytes: &[u8]) -> Result<Element, ConvertError> {
+    parse_xml_with(bytes, None, &mut |_| {})
+}
+
+/// markitai: [`parse_xml`], handing each closed `child` element of a `parent`
+/// element (both by local name) to `detached` instead of keeping it in the
+/// tree, so a part made of many such records (a worksheet's `sheetData/row`)
+/// is read one record at a time. The node budget still counts every node.
+pub fn parse_xml_with(
+    bytes: &[u8],
+    detach: Option<(&str, &str)>,
+    detached: &mut dyn FnMut(Element),
+) -> Result<Element, ConvertError> {
     let utf8 = to_utf8(bytes);
     let mut reader = NsReader::from_reader(utf8.as_ref());
     reader.config_mut().check_end_names = false;
@@ -232,14 +244,25 @@ pub fn parse_xml(bytes: &[u8]) -> Result<Element, ConvertError> {
             Event::Empty(e) => {
                 bump_nodes(&mut nodes)?;
                 let elem = start_to_element(&e, &reader, &mut interner);
-                attach(&mut stack, &mut root, Node::Elem(elem));
+                if detaches(detach, &stack, &elem) {
+                    detached(elem);
+                } else {
+                    attach(&mut stack, &mut root, Node::Elem(elem));
+                }
             }
             Event::End(end) => match stack.pop() {
-                Some(elem) => {
+                Some(mut elem) => {
                     if elem.local.as_bytes() != end.local_name().as_ref() {
                         recovered = true;
                     }
-                    attach(&mut stack, &mut root, Node::Elem(elem));
+                    // markitai: a closed element keeps no spare capacity; a
+                    // worksheet's cells each hold one or two children.
+                    elem.children.shrink_to_fit();
+                    if detaches(detach, &stack, &elem) {
+                        detached(elem);
+                    } else {
+                        attach(&mut stack, &mut root, Node::Elem(elem));
+                    }
                 }
                 None => recovered = true,
             },
@@ -328,6 +351,13 @@ fn bump_nodes(nodes: &mut usize) -> Result<(), ConvertError> {
         });
     }
     Ok(())
+}
+
+/// Whether a closed element is a record [`parse_xml_with`] hands out.
+fn detaches(detach: Option<(&str, &str)>, stack: &[Element], elem: &Element) -> bool {
+    detach.is_some_and(|(parent, child)| {
+        elem.local == child && stack.last().is_some_and(|open| open.local == parent)
+    })
 }
 
 fn attach(stack: &mut [Element], root: &mut Element, node: Node) {
@@ -423,6 +453,7 @@ fn start_to_element(
             .collect::<Vec<_>>()
             .join(" ");
     }
+    attrs.shrink_to_fit();
     Element { ns, local, attrs, children: Vec::new() }
 }
 
@@ -501,6 +532,26 @@ fn resolve_entity(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detached_records_leave_the_tree_in_document_order() {
+        let xml = br#"<worksheet><cols><col min="1"/></cols><sheetData><row r="1"><c r="A1"><v>1</v></c></row><row r="2"/><other><row r="9"/></other></sheetData><row r="0"/></worksheet>"#;
+        let mut rows = Vec::new();
+        let tree = parse_xml_with(xml, Some(("sheetData", "row")), &mut |row| {
+            rows.push(row.attr_unqualified("r").unwrap().to_owned());
+        })
+        .unwrap();
+        // Only a `row` directly inside `sheetData` is handed out, empty or not.
+        assert_eq!(rows, ["1", "2"]);
+        let sheet = tree.child_elems().next().unwrap();
+        let data = sheet.child_elems().find(|e| e.local == "sheetData").unwrap();
+        assert_eq!(data.child_elems().map(|e| e.local.as_str()).collect::<Vec<_>>(), ["other"]);
+        assert_eq!(sheet.child_elems().filter(|e| e.local == "row").count(), 1);
+        // Without a record name the tree is the plain parse.
+        let plain = parse_xml(xml).unwrap();
+        let data = plain.child_elems().next().unwrap().child_elems().nth(1).unwrap();
+        assert_eq!(data.child_elems().count(), 3);
+    }
 
     #[test]
     fn resolves_namespaces_regardless_of_prefix() {

@@ -8,8 +8,7 @@ use crate::model::{ImageSource, Inline};
 use crate::package::limits;
 use crate::shared::assets::AssetSink;
 use crate::shared::binary::{get_u16, get_u32};
-use crate::shared::officeart::{Blip, decode_blip, record_at};
-use std::borrow::Cow;
+use crate::shared::officeart::{complete_blip as decode_picture, record_at};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -291,60 +290,6 @@ fn picture_index(shape: &[u8]) -> Option<u32> {
         cursor += 8 + body.len();
     }
     pib
-}
-
-/// Metafiles must decode completely within their declared size, never return
-/// a truncated prefix. Bitmap records are bounded before reaching this point.
-fn decode_picture(version: u16, kind: u16, body: &[u8]) -> Option<Blip<'_>> {
-    let max = limits::MAX_ENTRY_BYTES as usize;
-    if body.len() > max || version & 0xF != 0 {
-        return None;
-    }
-    let instance = version >> 4;
-    match kind {
-        0xF01D if matches!(instance, 0x46A | 0x46B | 0x6E2 | 0x6E3) => {
-            decode_blip(version, kind, body, max)
-        }
-        0xF01E if matches!(instance, 0x6E0 | 0x6E1) => decode_blip(version, kind, body, max),
-        0xF01A | 0xF01B => {
-            let doubled = match (kind, instance) {
-                (0xF01A, 0x3D4) | (0xF01B, 0x216) => false,
-                (0xF01A, 0x3D5) | (0xF01B, 0x217) => true,
-                _ => return None,
-            };
-            let header_offset = if doubled { 32 } else { 16 };
-            let header = body.get(header_offset..)?;
-            let size = get_u32(header, 0)? as usize;
-            let saved = get_u32(header, 28)? as usize;
-            let data = header.get(34..)?;
-            if size > max || data.len() != saved || header[33] != 0xFE {
-                return None;
-            }
-            let bytes = match header[32] {
-                0 => {
-                    // MS-ODRAW compression 0 is RFC1950 (zlib), not raw deflate.
-                    let mut decoder = flate2::Decompress::new(true);
-                    let mut decoded = Vec::with_capacity(size + 1);
-                    let status = decoder
-                        .decompress_vec(data, &mut decoded, flate2::FlushDecompress::Finish)
-                        .ok()?;
-                    if status != flate2::Status::StreamEnd
-                        || decoded.len() != size
-                        || decoder.total_in() != data.len() as u64
-                    {
-                        return None;
-                    }
-                    Cow::Owned(decoded)
-                }
-                0xFE if data.len() == size => Cow::Borrowed(data),
-                _ => return None,
-            };
-            let (media_type, extension) =
-                if kind == 0xF01A { ("image/emf", "emf") } else { ("image/wmf", "wmf") };
-            Some(Blip { media_type, extension, bytes })
-        }
-        _ => None,
-    }
 }
 
 #[cfg(test)]

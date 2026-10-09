@@ -120,6 +120,9 @@ pub(super) struct ExecutedContent {
     /// a transcript of the images drawn (see `ContentScanState::transcript`);
     /// only ever with `shows_only_a_hidden_text_layer`.
     pub(super) transcript: Option<TranscriptLayer>,
+    /// markitai: nothing went unread, so `draws_image` false means the
+    /// page's content draws no image at all.
+    pub(super) complete: bool,
 }
 
 /// The page's content streams read as one — the text render mode and the
@@ -1220,6 +1223,7 @@ impl<'a> ContentScanState<'a> {
             form_bytes: self.executed_form_bytes,
             form_bytes_exceeded: self.form_bytes_exceeded,
             transcript: self.transcript(),
+            complete: !self.incomplete && !self.form_bytes_exceeded,
         }
     }
 }

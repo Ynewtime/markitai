@@ -85,13 +85,17 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
     let mut people = None;
     let mut assets = AssetSink::new();
     for (name, part) in &sheets {
-        let worksheet = pkg.optional_xml_part(part)?;
-        let Some(worksheet) = worksheet.as_ref().and_then(|r| r.find(ns::SML, "worksheet")) else {
+        // markitai: the sheet's rows are read as the parser closes each one,
+        // so its cells never stand as one XML tree.
+        let mut rows = Rows::new(&shared, &styles, date1904);
+        let tree =
+            pkg.optional_xml_part_with(part, ("sheetData", "row"), &mut |row| rows.read(&row))?;
+        let Some(worksheet) = tree.as_ref().and_then(|r| r.find(ns::SML, "worksheet")) else {
             log::warn!("skipping unreadable sheet {name:?}");
             failed += 1;
             continue;
         };
-        let mut content = read_sheet(worksheet, &shared, &styles, date1904);
+        let mut content = read_sheet(worksheet, rows);
         content.checkboxes = read_vml_checkboxes(pkg, part)?;
         // markitai: cell hyperlinks and notes.
         let sheet_rels = read_rels(pkg, &rels_part_for(part))?;
@@ -111,6 +115,8 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
             &mut assets,
             &mut doc.warnings,
         )?;
+        // markitai: the sheet's XML tree is read; the grid is built without it.
+        drop(tree);
         push_sheet_images(&mut doc, name, multi_sheet, build_table(content, &mut slots)?, pictures);
     }
     if !sheets.is_empty() && failed == sheets.len() {
@@ -372,41 +378,31 @@ pub(super) struct SheetContent {
     pub(super) merges: Vec<(u32, u32, u32, u32)>,
 }
 
-fn read_sheet(
-    worksheet: &Element,
-    shared: &[String],
-    styles: &Styles,
+/// markitai: a worksheet's rows, read one `row` element at a time.
+struct Rows<'a> {
+    shared: &'a [String],
+    styles: &'a Styles,
     date1904: bool,
-) -> SheetContent {
-    let mut out = SheetContent::default();
-    for cols in worksheet.find_all(ns::SML, "cols") {
-        for col in cols.find_all(ns::SML, "col") {
-            if !col.attr_unqualified("hidden").is_some_and(bool_attr) {
-                continue;
-            }
-            let bound = |name| {
-                col.attr_unqualified(name)
-                    .and_then(|v| v.parse::<u32>().ok())
-                    .and_then(|v| v.checked_sub(1))
-            };
-            if let (Some(min), Some(max)) = (bound("min"), bound("max"))
-                && min <= max
-            {
-                out.hidden_cols.push((min, max.min(MAX_COLS - 1)));
-            }
-        }
+    next_row: u32,
+    out: SheetContent,
+}
+
+impl<'a> Rows<'a> {
+    fn new(shared: &'a [String], styles: &'a Styles, date1904: bool) -> Self {
+        Rows { shared, styles, date1904, next_row: 0, out: SheetContent::default() }
     }
-    let mut next_row: u32 = 0;
-    for row in worksheet.find_all(ns::SML, "sheetData").flat_map(|sd| sd.find_all(ns::SML, "row")) {
+
+    fn read(&mut self, row: &Element) {
+        let out = &mut self.out;
         let r = row
             .attr_unqualified("r")
             .and_then(|v| v.parse::<u32>().ok())
             .and_then(|v| v.checked_sub(1))
-            .unwrap_or(next_row);
+            .unwrap_or(self.next_row);
         if r >= MAX_ROWS {
-            continue;
+            return;
         }
-        next_row = r + 1;
+        self.next_row = r + 1;
         if row.attr_unqualified("hidden").is_some_and(bool_attr) {
             out.hidden_rows.insert(r);
         }
@@ -454,9 +450,35 @@ fn read_sheet(
                 }
                 continue;
             }
-            let text = cell_text(c, value, shared, styles, date1904);
+            let text = cell_text(c, value, self.shared, self.styles, self.date1904);
             if !text.is_empty() {
                 out.cells.insert((cr, cc), text);
+            }
+        }
+    }
+}
+
+/// A worksheet's hidden columns and merges, around the rows already read
+/// (any `sheetData/row` still in the tree is read here, in order).
+fn read_sheet(worksheet: &Element, mut rows: Rows<'_>) -> SheetContent {
+    for row in worksheet.find_all(ns::SML, "sheetData").flat_map(|sd| sd.find_all(ns::SML, "row")) {
+        rows.read(row);
+    }
+    let mut out = rows.out;
+    for cols in worksheet.find_all(ns::SML, "cols") {
+        for col in cols.find_all(ns::SML, "col") {
+            if !col.attr_unqualified("hidden").is_some_and(bool_attr) {
+                continue;
+            }
+            let bound = |name| {
+                col.attr_unqualified(name)
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .and_then(|v| v.checked_sub(1))
+            };
+            if let (Some(min), Some(max)) = (bound("min"), bound("max"))
+                && min <= max
+            {
+                out.hidden_cols.push((min, max.min(MAX_COLS - 1)));
             }
         }
     }

@@ -607,6 +607,10 @@ pub struct PagesExtractionResult {
     /// markitai: the returned pages whose Markdown is the text of an
     /// invisible OCR layer over their scan, in the order returned.
     pub ocr_layer_by_page: Vec<PageOcrLayer>,
+    /// markitai: `(1-indexed page, text items)` for the returned pages
+    /// whose text drawn outside the visible page box (`CropBox ∩ MediaBox`)
+    /// was left out, in the order returned.
+    pub off_page_text_by_page: Vec<(u32, u32)>,
     /// True if any page has tables or columns.
     pub is_complex: bool,
 }
@@ -769,7 +773,7 @@ impl LoadedPdf {
         page_filter: Option<&HashSet<u32>>,
         options: PositionOptions,
     ) -> Result<(Vec<TextItem>, HashMap<u32, PageRotation>), PdfError> {
-        let ((items, _rects, _lines), _thresholds, _gid_pages, page_rotations, _coverage) =
+        let ((items, _rects, _lines), _thresholds, _gid_pages, page_rotations, _coverage, _off_page) =
             extractor::extract_positioned_text_in_page_box_with_runs(
                 &self.doc,
                 self.font_cmaps(),
@@ -1536,7 +1540,7 @@ fn extract_pages_markdown_from_doc(
         .filter(|(_, signals)| signals.ocr_layer.is_some())
         .map(|(&page, _)| page)
         .collect();
-    let ((all_items, all_rects, all_lines), page_thresholds, gid_pages, _page_rotations, _) =
+    let ((all_items, all_rects, all_lines), page_thresholds, gid_pages, _page_rotations, _, off_page_text) =
         extractor::with_table_cells(table_cells, || {
             extractor::with_invisible_text_pages(transcript_pages.clone(), || {
                 // markitai: a loaded document keeps each page's runs for its
@@ -1613,6 +1617,7 @@ fn extract_pages_markdown_from_doc(
     let mut ocr_reasons_by_page = BTreeMap::new();
     let mut omitted_text_by_page = Vec::new();
     let mut ocr_layer_by_page = Vec::new();
+    let mut off_page_text_by_page = Vec::new();
     #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
     let mut supplemental_ocr_regions = BTreeMap::new();
 
@@ -1630,6 +1635,9 @@ fn extract_pages_markdown_from_doc(
         }
 
         let page_1idx = page_0idx + 1;
+        if let Some(&items) = off_page_text.get(&page_1idx) {
+            off_page_text_by_page.push((page_1idx, items));
+        }
 
         // Partition items, removal decisions, and rects for this page only.
         let (page_items, page_number_removal_mask): (Vec<TextItem>, Vec<bool>) = all_items
@@ -1876,6 +1884,7 @@ fn extract_pages_markdown_from_doc(
             ocr_reasons_by_page: page_ocr_reasons_vec(ocr_reasons_by_page),
             omitted_text_by_page,
             ocr_layer_by_page,
+            off_page_text_by_page,
             is_complex: complexity.is_complex,
         },
         #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
@@ -5711,7 +5720,7 @@ fn process_document(
         // (mostly non-alphanumeric), retry with invisible (Tr=3) text included.
         // This unlocks OCR text layers behind scanned images.
         if pdf_type == PdfType::Mixed {
-            if let Ok((ref items, _, _)) = result.as_ref().map(|(e, _, _, _, _)| e) {
+            if let Ok((ref items, _, _)) = result.as_ref().map(|(e, _, _, _, _, _)| e) {
                 let sample: String = items
                     .iter()
                     .filter(|item| {
@@ -5786,6 +5795,7 @@ fn process_document(
             gid_encoded_pages,
             _page_rotations,
             cmap_coverage,
+            _off_page,
         )) => {
             let mut ocr_reasons_by_page = BTreeMap::new();
 

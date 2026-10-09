@@ -13,7 +13,7 @@ Vision and the portable engine have different language defaults; choose an
 explicit language when the automatic reading is incomplete. Both share bounded
 image preparation and reading-order handling.
 This page covers image inputs, including every page
-of a multi-page TIFF and, on macOS, HEIF/AVIF images; scanned PDF pages use the same
+of a multi-page TIFF and HEIF/HEIC images (AVIF on macOS); scanned PDF pages use the same
 recognizer as described in [PDF page OCR](pdf-ocr.md), and Office page images in
 [Office rendering](office-rendering.md).
 
@@ -47,8 +47,9 @@ error or CLI skip behavior.
 OCR consumes the original raster bytes, independently of preview compression,
 image width settings and embedded-image filters. Static SVG uses the existing
 bounded in-process SVG rasterizer. JPEG, PNG, GIF, BMP, TIFF and WebP use the
-enabled Rust decoders; animation uses its first image. HEIF and AVIF are decoded
-by macOS ImageIO ([images](images.md#heif-and-avif)), and the primary image is
+enabled Rust decoders; animation uses its first image. HEIF/HEIC is decoded by
+macOS ImageIO or, on Windows and Linux, the built-in HEIF decoder; AVIF only by
+macOS ImageIO ([images](images.md#heif-and-avif)). The primary image is
 recognized. A multi-page TIFF is recognized page by page: each page keeps its
 `<!-- Page number: N -->` marker (kept with `--page-markers`) and preview,
 followed by its text, and a page
@@ -271,6 +272,13 @@ still receives the ordinary no-text warning.
 - Spaces between numbers and words, code symbols and small glyphs can change.
 - First recognition and first model loading can be much slower than subsequent
   calls. Download time, cold caches and parallel work are separate costs.
+- Work is spread over the processor's cores: text detection runs its matrix
+  kernels on up to eight threads, the direction classifier and the first
+  recognizer are prepared while the first image's text is detected, lines are
+  read side by side (an image with one or two lines uses the detection threads),
+  and a PDF's scanned pages are recognized two at a time while the next page
+  renders. Results are the same as on one thread; a multi-page scan holds two
+  pages' detection memory at once (about 300 bytes per page pixel each).
 - Model files are additional installed disk space, separate from the CLI binary.
 
 Measured quality and performance have specific source, platform and corpus

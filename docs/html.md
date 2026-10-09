@@ -140,7 +140,8 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   being written as `[](url)`. A link wrapped around blocks (a card's cover,
   heading and summary) cannot be one Markdown link: it is written as its
   content, with the link on its first heading, else on its first block with text
-  and no block inside.
+  and no block inside, else, when its blocks hold only images (an avatar beside
+  a name), on its first inline element with text outside them.
 - Preformatted code keeps indentation and empty lines. A `<code>` element with
   inline `white-space: pre` styling is treated as a code block. Chemical and
   mathematical `<sub>`/`<sup>` text retains those tags.
@@ -171,10 +172,21 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   densities only, the candidate is denser than the address's implicit `1x`.
   Otherwise the address stays (BBC's `src` is 2560 pixels wide and its set ends at
   1920). An inline `data:` candidate is never chosen. `<picture><source>`
-  elements are not read, since their types and media queries choose between
-  formats and crops, not sizes. The lines of an alt text or title are joined with
+  elements are read only when the picture's `<img>` shows nothing but an inline
+  placeholder: the largest candidate of the first source set stands for it.
+  Otherwise their types and media queries choose between formats and crops, not
+  sizes, and the `<img>` stands. An image with no address, or only an inline
+  placeholder, and no usable set takes the first `data-` attribute holding one
+  absolute or root-relative image file address (`data-image-loader`, a site's own
+  lazy-loading name); a relative path or a page address there is not read. The
+  lines of an alt text or title are joined with
   a space, so a figure's description is not cut at its first line, and an empty
   title is left out (`![](a.webp "")` becomes `![](a.webp)`).
+- A lazy-loading page's `<noscript>` fallback stands for its image: a
+  `<noscript>` in the body holding only images (no text, no other elements)
+  replaces itself with them when its parent shows no image of its own, and an
+  inline-placeholder `<img>` beside it is dropped. Hidden images and 1-pixel
+  trackers stay out.
 - Emphasis the page nests with itself (`<b><strong>x</strong></b>`,
   `<em><i>x</i></em>`) is written once (`**x**`, not `****x****`); differently
   nested emphasis keeps both (`***x***`).
@@ -315,7 +327,8 @@ address. A page saved from a browser has none, so it is known by the address it
 names for itself, in this order of appearance: the `<!-- saved from url=… -->`
 comment browsers write, the canonical link, `og:url` and `<base href>`; a saved
 page that names no address at all is known by the site's own markers
-(`#js-initialData`, `#js_content`), and another site's canonical link overrides
+(`#js-initialData`, `#js_content`, Bilibili's `.bili-opus-view`, YouTube's
+`ytd-watch-flexy`), and another site's canonical link overrides
 those markers. When a reader finds none of its markers, or what it builds
 converts to nothing, the generic reader reads the original page. A built page
 carries a marker and is never read a second time.
@@ -329,6 +342,7 @@ carries a marker and is never read a second time.
 | OSCHINA (`oschina.net`) | blog post | `.blog-content .editor` with `h1.blog-content-title` and `.blog-content-info` (the page is rendered by scripts, so this is the local browser's result or a saved page) | title, a line `author · date` and the body, without the AI summary box, the advertisement, tags, comments and recommended posts |
 | Bilibili (`bilibili.com`) | opus and column pages | `.opus-module-content` with `.opus-module-title__text` and `.opus-module-author__*` of the rendered page | title, `author · time` and the body; images as uploaded (the size directive after `@` is removed); without the table of contents, the sidebar, tags, comments and the site menu |
 | Douban (`douban.com`) | book, movie and music review | `.review-content` of `.review-wrapper`, with the `h1` title and `header.main-hd` (reviewer, work, the rating's `title`, `.main-meta` time) | title, a line `reviewer · 评论《work》 · 力荐 · time` and the review, with the site's spoiler notice in italics when it shows one; without the avatar, the work's card, votes, comments and menus |
+| YouTube (`youtube.com`, `youtu.be`) | watch page | the rendered page's `ytd-watch-metadata` (`h1`, `#channel-name a`, `#owner-sub-count`, `#description-inner`), `ytd-watch-info-panel-renderer` and `ytd-comment-thread-renderer` (`#author-text`, `#content-text`, up to 200), else the `ytInitialPlayerResponse` a server-sent page carries (`videoDetails`: title, author, channel, `shortDescription`, `viewCount`; `publishDate`) | title, the channel linked with its subscriber count, the description with its line breaks, the view and date lines, and a `Comments` section of `**author**: text`; without the masthead, the guide and the like, dislike, share and save buttons |
 | 36Kr (`36kr.com`) | article | the `publishTime` the page's own script keeps next to the article | the page's `article:published_time` is the moment the server wrote the page; the frontmatter `published` is the article's own time |
 
 Two changes apply to every page. The redirect page a site wraps its outward
@@ -361,7 +375,10 @@ Zhihu refused every automated client during development, including a browser
 that was not logged in (it redirects to a security check that asks for a login),
 so the Zhihu reader is tested only on fixtures that follow the JSON structure
 documented by projects that read saved Zhihu pages; no live Zhihu page has been
-read. MHTML (`.mht`, `.mhtml`) files are not a supported input; save the page as
+read. The YouTube reader is tested only on fixtures that follow a rendered
+watch page's `ytd-*` markup and the player response's documented fields; no live
+YouTube page was read while it was written.
+MHTML (`.mht`, `.mhtml`) files are not a supported input; save the page as
 "Webpage, HTML Only" or "Webpage, Complete".
 
 ## Mathematical content

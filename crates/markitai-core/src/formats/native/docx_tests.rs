@@ -823,3 +823,22 @@ fn a_paragraph_lined_up_with_an_items_text_continues_the_item() {
          After the list."
     );
 }
+
+#[test]
+fn tracked_insertions_deletions_and_an_equation_read_as_the_accepted_document() {
+    // The accepted view: an insertion's text is kept, a deletion's is not,
+    // and Office Math is written as TeX.
+    let math = r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#;
+    let body = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept text with </w:t></w:r>
+        <w:ins w:id="1" w:author="A"><w:r><w:t>inserted words</w:t></w:r></w:ins>
+        <w:del w:id="2" w:author="A"><w:r><w:delText xml:space="preserve"> and deleted words</w:delText></w:r></w:del>
+        <w:r><w:t xml:space="preserve"> in one sentence.</w:t></w:r></w:p>
+        <w:p {math}><w:r><w:t xml:space="preserve">Energy: </w:t></w:r><m:oMath><m:r><m:t>E</m:t></m:r><m:r><m:t>=</m:t></m:r>
+        <m:r><m:t>m</m:t></m:r><m:sSup><m:e><m:r><m:t>c</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:oMath></w:p>"#
+    );
+    assert_eq!(
+        markdown(&body, &[]),
+        "Kept text with inserted words in one sentence.\n\nEnergy: $E=mc^{2}$"
+    );
+}

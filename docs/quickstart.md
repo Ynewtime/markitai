@@ -127,7 +127,8 @@ untested. Consult [native CI](ci.md) for validation scope and
 | Native text readers, `serve`, CLI and MCP | Available; x86-64 checked under Rosetta 2 | Available | Available |
 | Local OCR | Vision by default; optional portable Paddle build | Paddle; models must be prepared | Paddle; models must be prepared |
 | PDF page rendering | System CoreGraphics; optional portable hayro build | Built-in hayro | Built-in hayro |
-| HEIF / AVIF decoding | System ImageIO | Explicit unsupported error | Explicit unsupported error |
+| HEIF / HEIC decoding | System ImageIO | Built-in decoder | Built-in decoder |
+| AVIF decoding | System ImageIO | Explicit unsupported error | Explicit unsupported error |
 | JavaScript pages / web screenshots | Needs Chrome/Chromium | Needs Chrome/Chromium | Needs Chrome/Chromium |
 | Office page images / OCR | Needs LibreOffice | Needs LibreOffice | Needs LibreOffice |
 | Batch `--resume` | Available | Available | Available |

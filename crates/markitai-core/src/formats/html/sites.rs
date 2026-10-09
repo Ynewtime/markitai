@@ -15,6 +15,7 @@ mod bilibili;
 mod blogs;
 mod douban;
 mod wechat;
+mod youtube;
 mod zhihu;
 
 use super::{Attribute, escaped};
@@ -44,6 +45,7 @@ enum Site {
     Bilibili,
     Oschina,
     Douban,
+    YouTube,
 }
 
 /// The site a host belongs to.
@@ -71,6 +73,8 @@ fn site_of(host: &str) -> Option<Site> {
         Some(Site::Oschina)
     } else if within("douban.com") {
         Some(Site::Douban)
+    } else if within("youtube.com") || host == "youtu.be" {
+        Some(Site::YouTube)
     } else {
         None
     }
@@ -83,6 +87,8 @@ struct Identity {
     addresses: Vec<Url>,
     zhihu_data: bool,
     wechat_content: bool,
+    bilibili_opus: bool,
+    youtube_watch: bool,
 }
 
 fn web_address(value: &str) -> Option<Url> {
@@ -109,6 +115,8 @@ fn identity(document: &Html) -> Identity {
         addresses: Vec::new(),
         zhihu_data: false,
         wechat_content: false,
+        bilibili_opus: false,
+        youtube_watch: false,
     };
     for node in document.tree.nodes() {
         match node.value() {
@@ -151,9 +159,17 @@ fn identity(document: &Html) -> Identity {
                 match (element.name(), element.id()) {
                     ("script", Some("js-initialData")) => found.zhihu_data = true,
                     (_, Some("js_content")) => found.wechat_content = true,
+                    ("ytd-watch-flexy", _) => found.youtube_watch = true,
+                    _ if element.class_names().any(|class| class == "bili-opus-view") => {
+                        found.bilibili_opus = true;
+                    }
                     _ => {}
                 }
-                if found.zhihu_data || found.wechat_content {
+                if found.zhihu_data
+                    || found.wechat_content
+                    || found.bilibili_opus
+                    || found.youtube_watch
+                {
                     break;
                 }
             }
@@ -183,6 +199,12 @@ fn recognize(document: &Html, base: Option<&Url>) -> Option<(Site, Option<Url>)>
         if found.wechat_content {
             return Some((Site::WeChat, None));
         }
+        if found.bilibili_opus {
+            return Some((Site::Bilibili, None));
+        }
+        if found.youtube_watch {
+            return Some((Site::YouTube, None));
+        }
     }
     None
 }
@@ -204,6 +226,7 @@ pub(super) fn read(document: &Html, base: Option<&Url>) -> Option<Reading> {
         Site::Bilibili => bilibili::read(document).map(Article::build),
         Site::Oschina => blogs::oschina(document).map(Article::build),
         Site::Douban => douban::read(document).map(Article::build),
+        Site::YouTube => youtube::read(document).map(Article::build),
     }
 }
 

@@ -483,6 +483,11 @@ cache layout and tested with objects generated from the specifications
 MS Graph or PowerPoint was available, so their real-world layout is not yet
 verified.
 
+Pictures on legacy PPT slides keep their JPEG, PNG, EMF or WMF data, as in
+legacy DOC: a metafile is kept only when it inflates (or is stored) to exactly
+its declared size; other picture formats (PICT, DIB, TIFF) and partial
+metafiles are omitted with a warning.
+
 A PPTX graphic frame holding a `p:oleObj` reads the same way: the object's own
 part (`ppt/embeddings/…`) is a compound file read as above, or a zipped package
 read as an OpenDocument chart or spreadsheet or else as an OOXML workbook (an
@@ -718,9 +723,10 @@ make. XLS, XLSX, XLSM, XLSB and ODS screenshots use
 complete-sheet export, including hidden and empty sheets; this is not printed-page
 pagination. Numbers screenshots and OCR remain unsupported. See the Office guide
 for import fidelity, font handling and resource limits.
-macOS HEIF/AVIF primary images use native
-ImageIO decoding, with the scoped limits in [images](images.md); other platforms
-still return an explicit unsupported error. Local and static/automatic URL PDFs support explicit
+HEIF/HEIC and AVIF primary images use native
+ImageIO decoding on macOS, with the scoped limits in [images](images.md); on
+Windows and Linux HEIF/HEIC uses the built-in pure-Rust decoder and AVIF still
+returns an explicit unsupported error. Local and static/automatic URL PDFs support explicit
 page rendering, screenshots and OCR through the [PDF media pipeline](pdf-ocr.md),
 including its documented accuracy gap. URL media preserves original request
 identity while processing downloaded bytes without a second download.
@@ -810,7 +816,8 @@ the real header is text above the table, as in XLSX (see
 retained. Hidden XLS/XLSX/XLSB worksheets, rows and columns are omitted by the upstream parser
 and reported explicitly. Older XLS code pages other than
 Windows-1252, exact presentation image encoding, PDF table
-layout and PDF image placement require further compatibility work.
+layout and the placement of PDF images that cannot be located among their page's
+text lines require further compatibility work.
 
 ## Error and output principles
 

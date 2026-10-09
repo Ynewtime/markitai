@@ -629,6 +629,10 @@ struct PageAnalysis {
     has_images: bool,
     /// Whether page has a large background/template image (>50% coverage)
     has_template_image: bool,
+    /// markitai: that template image is only bound: the page's content,
+    /// read completely, draws no image at all (a photo every page of a
+    /// document binds and another page shows).
+    template_image_undrawn: bool,
     /// Whether the images the page's content draws — by `Do`, in its own
     /// content and in the forms it invokes, each draw clipped to the
     /// visible page box — cover at least half of the page area, whatever
@@ -1038,6 +1042,7 @@ fn analyze_page_content_from(
         invisible_text_operator_count: hidden_text_ops,
         has_images,
         has_template_image,
+        template_image_undrawn: has_template_image && executed.complete && !executed.draws_image,
         has_covering_image,
         has_invisible_text_layer,
         executed_form_bytes,
@@ -2285,7 +2290,10 @@ pub(crate) fn page_ocr_signals_from(
 ) -> PageOcrSignals {
     let analysis = analyze_page_content_from(doc, page_id, streams);
 
-    let needs_ocr_for_template_image = if !analysis.has_template_image {
+    // markitai: a template image the page never draws backs nothing.
+    let needs_ocr_for_template_image = if !analysis.has_template_image
+        || analysis.template_image_undrawn
+    {
         false
     } else {
         let alphanum_low = analysis.unique_alphanum_chars < 10
