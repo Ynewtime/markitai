@@ -37,6 +37,7 @@ from markitai.json_order import order_report, order_state
 from markitai.notices import UserNoticeCollector
 from markitai.runs.report import build_llm_usage_block, build_report_shell
 from markitai.security import atomic_write_json
+from markitai.types import usage_has_unpriced
 from markitai.utils import term
 from markitai.utils.term import get_stderr_console
 
@@ -1300,6 +1301,11 @@ class BatchProcessor:
                     "cached_input_tokens", 0
                 )
                 models_usage[model]["cost_usd"] += usage.get("cost_usd", 0.0)
+                if usage.get("unpriced_requests"):
+                    models_usage[model]["unpriced_requests"] = (
+                        models_usage[model].get("unpriced_requests", 0)
+                        + usage["unpriced_requests"]
+                    )
 
         # Run cost is summed per item (files + URLs), not per model
         total_cost = sum(f.cost_usd for f in self.state.files.values()) + sum(
@@ -1476,7 +1482,14 @@ class BatchProcessor:
         if url_completed > 0:
             parts.append(f"{url_completed} URLs")
 
-        cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
+        unpriced = any(
+            usage_has_unpriced(item.llm_usage)
+            for item in chain(self.state.files.values(), self.state.urls.values())
+        )
+        if unpriced:
+            cost_str = ", cost unknown"
+        else:
+            cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
         # Nothing converted is still a finished run; say so instead of "Done: ".
         summary_text = f"Done: {', '.join(parts) or 'nothing converted'} ({wall_duration_str}{cost_str})"
         term.summary(summary_text, console=self.console)

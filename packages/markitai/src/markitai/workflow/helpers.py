@@ -414,6 +414,10 @@ def merge_llm_usage(
         target[model]["cost_usd"] = target[model].get("cost_usd", 0.0) + usage.get(
             "cost_usd", 0.0
         )
+        if usage.get("unpriced_requests"):
+            target[model]["unpriced_requests"] = (
+                target[model].get("unpriced_requests", 0) + usage["unpriced_requests"]
+            )
 
 
 # Placeholder description older call sites put on a failed analysis entry

@@ -63,7 +63,7 @@ from markitai.llm.batch_api import (
 from markitai.llm.structured import instructor_mode_for_model
 from markitai.llm.types import ImageAnalysis, ImageAnalysisResult
 from markitai.runs.types import Outcome
-from markitai.types import LLMUsageByModel, ModelUsageStats
+from markitai.types import LLMUsageByModel, request_usage
 from markitai.utils.errors import ConversionError
 from markitai.utils.frontmatter import split_frontmatter
 from markitai.utils.text import format_error_message
@@ -1032,8 +1032,8 @@ async def _run_batch_llm_enhancement(
 
 def _batch_usage(
     body: dict[str, Any], model: str, provider: str
-) -> tuple[int, int, float]:
-    """Token counts and list-price cost for one batch result.
+) -> tuple[int, int, float | None]:
+    """Token counts and list-price cost (None: unknown) for one batch result.
 
     The two providers report usage under different names, and only the
     OpenAI-shaped body can be handed to litellm's cost calculator; an
@@ -1046,7 +1046,8 @@ def _batch_usage(
 
         input_tokens = int(usage.get("input_tokens", 0) or 0)
         output_tokens = int(usage.get("output_tokens", 0) or 0)
-        cost = estimate_model_cost(model, input_tokens, output_tokens).cost_usd
+        estimate = estimate_model_cost(model, input_tokens, output_tokens)
+        cost = None if estimate.source == "none" else estimate.cost_usd
         return input_tokens, output_tokens, cost
 
     import litellm
@@ -1071,7 +1072,7 @@ def _account_batch_usage(
     input_tokens, output_tokens, cost = _batch_usage(
         line.body, state.model, state.provider
     )
-    discounted = cost * BATCH_COST_FACTOR
+    discounted = None if cost is None else cost * BATCH_COST_FACTOR
     processor._track_usage(
         state.model,
         input_tokens,
@@ -1079,14 +1080,7 @@ def _account_batch_usage(
         discounted,
         source,
     )
-    return {
-        state.model: ModelUsageStats(
-            requests=1,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=discounted,
-        )
-    }
+    return {state.model: request_usage(input_tokens, output_tokens, discounted)}
 
 
 async def _collect_image(

@@ -153,15 +153,15 @@ class TestGetResponseCost:
             assert cost == 0.05
 
     def test_cost_returns_none(self) -> None:
-        """Test when completion_cost returns None."""
+        """No cost for a model the price table does not list: unknown."""
         mock_response = MagicMock()
 
         with patch("markitai.llm.models.completion_cost", return_value=None):
             cost = get_response_cost(mock_response)
-            assert cost == 0.0
+            assert cost is None
 
     def test_cost_extraction_exception(self) -> None:
-        """Test that exceptions return 0.0."""
+        """A model litellm cannot price has an unknown cost, not $0."""
         mock_response = MagicMock()
 
         with patch(
@@ -169,7 +169,7 @@ class TestGetResponseCost:
             side_effect=Exception("Cost calculation failed"),
         ):
             cost = get_response_cost(mock_response)
-            assert cost == 0.0
+            assert cost is None
 
     def test_invalid_response_object(self) -> None:
         """Test with invalid response object."""
@@ -178,7 +178,7 @@ class TestGetResponseCost:
             side_effect=AttributeError("No model attribute"),
         ):
             cost = get_response_cost(None)
-            assert cost == 0.0
+            assert cost is None
 
 
 class TestSplitIntoBatches:

@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from loguru import logger
 
 from markitai.fetch_types import FetchError
-from markitai.types import LLMUsageByModel
+from markitai.types import LLMUsageByModel, reported_cost, reported_usage
 from markitai.utils.errors import ConfigFileError, ConversionError
 from markitai.utils.suppress import suppress_parser_noise
 
@@ -114,7 +114,8 @@ class ConversionUsage:
     """Aggregated LLM usage for one conversion (provisional).
 
     Attributes:
-        cost_usd: Total LLM API cost in USD (0.0 without LLM enhancement).
+        cost_usd: Total LLM API cost in USD (0.0 without LLM enhancement),
+            or None when a model's price is unknown (unknown, not free).
         requests: Total number of LLM requests.
         input_tokens: Total input tokens across all models.
         output_tokens: Total output tokens across all models.
@@ -123,7 +124,7 @@ class ConversionUsage:
             cost_usd}}``.
     """
 
-    cost_usd: float = 0.0
+    cost_usd: float | None = 0.0
     requests: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -134,7 +135,10 @@ class ConversionUsage:
         cls, cost_usd: float, by_model: dict[str, dict[str, Any]]
     ) -> ConversionUsage:
         """Build totals from a workflow-layer per-model usage dict."""
-        usage = cls(cost_usd=cost_usd, by_model=by_model)  # type: ignore[arg-type]
+        usage = cls(
+            cost_usd=reported_cost(cost_usd, by_model),
+            by_model=reported_usage(by_model),  # type: ignore[arg-type]
+        )
         for stats in by_model.values():
             usage.requests += int(stats.get("requests", 0))
             usage.input_tokens += int(stats.get("input_tokens", 0))

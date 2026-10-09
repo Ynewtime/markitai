@@ -117,7 +117,7 @@ class TestBatchUsage:
         )
 
         assert (tokens_in, tokens_out) == (1_000_000, 1_000_000)
-        assert cost > 0
+        assert cost is not None and cost > 0
 
     def test_openai_usage_keys_are_read(self) -> None:
         body = {

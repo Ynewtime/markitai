@@ -45,7 +45,7 @@ os.environ["MODEL"] = "openai/gpt-5.6-luna"  # 或配置 llm.model_list
 out = markitai.convert("report.pdf", output_dir="out/", llm=True)
 print(out.llm_markdown)  # 增强后的正文
 print(out.frontmatter["title"])  # 解析后的 YAML frontmatter
-print(out.usage.cost_usd)  # 这次转换的 LLM 花费
+print(out.usage.cost_usd)  # 这次转换的 LLM 花费（None：有模型没有已知价格）
 ```
 
 模型的解析方式和 CLI 一样：先看[配置](/zh/guide/configuration)里的 `llm.model_list`，再看环境变量 `MODEL`，最后[自动检测](/zh/guide/configuration#markitai-自动选用的默认模型)环境里的提供商 API key 和已登录的订阅制提供商。检测到多个提供商时它们共用一个模型池，每个进程会用一条 loguru 警告（默认输出到 stderr）列出一次；想只用一个就设 `MODEL`。默认加载和 CLI 相同的配置文件。和 CLI 不同，库不读取 `.env` 文件，调用前先把 key 导出到环境变量。要完全自己控制，传一个 `markitai.MarkitaiConfig`：

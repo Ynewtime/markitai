@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from collections.abc import Mapping
+from typing import Any, TypedDict
 
 
 class _ModelUsageStatsRequired(TypedDict):
@@ -18,11 +19,62 @@ class ModelUsageStats(_ModelUsageStatsRequired, total=False):
     ``cached_input_tokens`` is present once prompt caching was observed on
     any call (cache-read tokens, billed at the provider's cache rate); older
     aggregators and hand-built dicts may omit it, so readers use ``.get``.
+
+    ``unpriced_requests`` is present once a request's price was unknown (a
+    model LiteLLM has no price for): ``cost_usd`` leaves those requests out,
+    so the model's cost is unknown, not what ``cost_usd`` says.
     """
 
     cached_input_tokens: int
+    unpriced_requests: int
 
 
 # Type alias for LLM usage by model
 # Format: {"model_name": {"requests": N, "input_tokens": N, "output_tokens": N, "cost_usd": F}}
 LLMUsageByModel = dict[str, ModelUsageStats]
+
+
+def request_usage(
+    input_tokens: int, output_tokens: int, cost_usd: float | None
+) -> ModelUsageStats:
+    """Usage of one request; ``cost_usd`` None means its price is unknown."""
+    stats = ModelUsageStats(
+        requests=1,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd or 0.0,
+    )
+    if cost_usd is None:
+        stats["unpriced_requests"] = 1
+    return stats
+
+
+def usage_has_unpriced(usage: Mapping[str, Mapping[str, Any]] | None) -> bool:
+    """Whether any request in *usage* had no known price."""
+    return any(stats.get("unpriced_requests", 0) for stats in (usage or {}).values())
+
+
+def reported_cost(
+    cost_usd: float, usage: Mapping[str, Mapping[str, Any]] | None
+) -> float | None:
+    """The cost to report for *usage*: None (unknown) rather than a partial sum.
+
+    A request with no known price counts as 0 in ``cost_usd``; reporting that
+    sum would show an unpriced model as free.
+    """
+    return None if usage_has_unpriced(usage) else cost_usd
+
+
+def reported_usage(
+    usage: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    """A copy of *usage* whose ``cost_usd`` is None for models with unpriced requests."""
+    return {
+        model: {
+            **stats,
+            "cost_usd": None
+            if stats.get("unpriced_requests", 0)
+            else stats.get("cost_usd", 0.0),
+        }
+        for model, stats in (usage or {}).items()
+    }

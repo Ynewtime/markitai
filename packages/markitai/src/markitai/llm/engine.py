@@ -53,7 +53,7 @@ from markitai.constants import (
     DEFAULT_RETRY_BASE_DELAY,
     DEFAULT_RETRY_MAX_DELAY,
 )
-from markitai.llm.models import get_response_cost
+from markitai.llm.models import format_cost, get_response_cost
 from markitai.llm.router import MODEL_LEVEL_ERROR_PATTERNS, POOL_EXHAUSTED_PATTERN
 from markitai.llm.structured import router_structured_ladder
 from markitai.llm.types import LLMResponse
@@ -693,7 +693,7 @@ class LLMEngine:
         semaphore: asyncio.Semaphore,
         memory_cache: Any,
         persistent_cache: Any,
-        track_usage: Callable[[str, int, int, float, str, int], None],
+        track_usage: Callable[[str, int, int, float | None, str, int], None],
         calculate_max_tokens: Callable[..., int | None],
         get_primary_model: Callable[[Any], str | None],
         max_retries: int = DEFAULT_MAX_RETRIES,
@@ -918,7 +918,7 @@ class LLMEngine:
             actual_model = getattr(raw_response, "model", None) or "default"
             input_tokens = 0
             output_tokens = 0
-            cost = 0.0
+            cost: float | None = 0.0
             if hasattr(raw_response, "usage") and raw_response.usage is not None:
                 input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
                 output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
@@ -935,7 +935,7 @@ class LLMEngine:
             logger.info(
                 f"[LLM:{call_id}] {actual_model} "
                 f"tokens={input_tokens}+{output_tokens} "
-                f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
+                f"time={elapsed_ms:.0f}ms cost={format_cost(cost)}"
             )
 
             # Check for truncation (after accounting, before the cache write:
@@ -1015,7 +1015,7 @@ class LLMEngine:
             actual_model: str,
             input_tokens: int,
             output_tokens: int,
-            cost: float,
+            cost: float | None,
         ) -> LLMResponse:
             # litellm returns Choices (not StreamingChoices) for non-streaming
             content = response.choices[0].message.content or ""
@@ -1106,7 +1106,7 @@ class LLMEngine:
         own_semaphore: bool,
         usage_context: str | None = None,
         budget_context: str | None = None,
-        finalize: Callable[[Any, str, int, int, float], Any] | None = None,
+        finalize: Callable[[Any, str, int, int, float | None], Any] | None = None,
     ) -> Any:
         """Shared transport retry loop behind ``complete_text`` and
         ``_make_retrying_acompletion``.
@@ -1202,7 +1202,7 @@ class LLMEngine:
                     logger.info(
                         f"[LLM:{call_id}] {actual_model} "
                         f"tokens={input_tokens}+{output_tokens} "
-                        f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
+                        f"time={elapsed_ms:.0f}ms cost={format_cost(cost)}"
                     )
 
                     # Detect empty response (0 output tokens with substantial
