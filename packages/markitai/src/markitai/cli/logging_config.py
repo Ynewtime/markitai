@@ -117,6 +117,7 @@ def restore_console_handler(verbose: bool) -> int:
         level="INFO",
         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
         filter=lambda record: _should_show_log(record, verbose),
+        diagnose=False,
     )
 
 
@@ -300,6 +301,8 @@ def setup_logging(
 
     logger.remove()
     logger.configure(patcher=redact_log_record)
+    # Every sink below keeps tracebacks but sets diagnose=False: loguru's
+    # default prints each frame's variable values (API keys, document text).
 
     # Console logging: quiet mode only shows ERROR+, normal mode shows INFO+
     # DEBUG goes to file only; console shows INFO+ (or ERROR+ in quiet) with filter
@@ -313,6 +316,7 @@ def setup_logging(
             format="<level>{message}</level>",
             colorize=True,
             filter=lambda record: _should_show_quiet_log(record, show_notices),
+            diagnose=False,
         )
     else:
         console_handler_id = logger.add(
@@ -321,6 +325,7 @@ def setup_logging(
             format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
             colorize=True,
             filter=lambda record: _should_show_log(record, verbose),
+            diagnose=False,
         )
 
     # Check environment variable overrides
@@ -348,6 +353,7 @@ def setup_logging(
                 rotation=rotation,
                 retention=retention,
                 format=_format_json_log,
+                diagnose=False,
             )
         else:
             # Human-readable format (default)
@@ -357,6 +363,7 @@ def setup_logging(
                 rotation=rotation,
                 retention=retention,
                 format="{time:YYYY-MM-DD HH:mm:ss} | {level: <5} | {module}:{line: <3} | {message}",
+                diagnose=False,
             )
 
     # Intercept standard logging from all third-party dependencies
