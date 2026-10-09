@@ -308,16 +308,38 @@ to the image conversion stage. The orchestrator supplies complete PDF/TIFF page
 sets and screenshots; [image enrichment](image-enrichment.md) adds structured
 caption/description analysis through this same transport.
 
+### Request failures
+
 The client applies configured request timeouts and a connect timeout capped at
 15 seconds. Redirects are rejected so credentials cannot be forwarded to an
 unexpected endpoint. Provider error bodies are inspected for retry classification
-and structured token usage; they are never included in public errors. Public request errors
-omit URLs, authorization headers, document text and response payloads. A refusal
-whose body names a recognized cause gets a fixed phrase after its status instead:
+and structured token usage.
+
+A failed request names its cause in the CLI message, the report and `--json`
+error and the log, and ends with the deployment and its host:
+
+- no response: `LLM request failed: connection refused`, `…: host name not
+  resolved (…)`, `…: TLS handshake failed (…)`, `…: connection closed without a
+  response (…)`, or `LLM request timed out: no response within 120 s`; the
+  parenthesis is the operating system's or TLS library's reason;
+- an HTTP refusal: `LLM returned HTTP 400 (invalid_request_error): Invalid
+  'max_tokens': … (deployment openai/gpt-6-luna at api.openai.com)`, with the
+  provider's error type or code and its message, cut at 200 characters;
+- a response that is not JSON: its status, content type, size and an HTML
+  page's title, never its text.
+
+Provider messages are cleaned before they are shown: the deployment's key and
+other credential-like words (`sk-…`, `Bearer …`, long opaque tokens) become
+`[REDACTED]`, URLs lose userinfo, query and fragment, quotations longer than 40
+characters become `'…'`, and a message that repeats any stretch of the prompts
+or document becomes `[message withheld: it repeats the request]`. Errors never
+contain the endpoint's path or query, authorization headers or response
+payloads. A refusal whose body names a recognized cause gets a fixed phrase
+after its status instead of the provider's message:
 `LLM returned HTTP 403: the model is not available in this region`,
 `…: the account's quota or billing does not allow this request` or
 `…: the model is unavailable`. The model connection test in `serve` words its
-refusals the same way.
+refusals with the same fixed phrases.
 
 ## Retries, budgets and usage
 
@@ -604,7 +626,8 @@ The initial exact capability table is deliberately small:
 | Provider and exact model IDs | Available modes before JSON text |
 |---|---|
 | OpenAI `gpt-4.1`, `gpt-4.1-2025-04-14` | Named tools, JSON schema |
-| Anthropic `claude-haiku-5-5`, `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Native JSON schema; Haiku 4.5's forced tool answers dropped the protected markers in live checks, costing a second request (Haiku 5.5 is treated the same until checked) |
+| Anthropic `claude-haiku-5-5` | Named tools, native JSON schema; in a live check (2026-10-09) its forced tool answer kept every protected marker of the presentation that Haiku 4.5 failed |
+| Anthropic `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Native JSON schema; Haiku 4.5's forced tool answers dropped the protected markers in live checks, costing a second request |
 | Anthropic `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, `claude-mythos-5-1` | Native JSON schema; these models restrict forced named tools |
 | Gemini `gemini-3.8-flash` through its OpenAI-compatible endpoint | JSON schema |
 | Other or unknown IDs, including Azure deployment aliases | JSON text |

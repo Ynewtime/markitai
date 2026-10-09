@@ -446,9 +446,11 @@ const ITEM_SHAPES: Shape[] = [
   ],
   [/^Local OCR models: /, () => ["errOcrModelPreparation"]],
   [/^Local OCR (?:requires|of multi-page)|^PDF OCR is not implemented/, () => ["errOcrUnavailable"]],
-  [/^LLM returned HTTP (\d{3})\b(?:: (.+))?/, modelHttp],
+  // The core may name the provider's error type after the status and ends a
+  // request failure with the deployment that failed.
+  [/^LLM returned HTTP (\d{3})\b(?: \([^()]*\))?(?:: (.+?))?(?: \(deployment [^()]*\))?$/, modelHttp],
   [/^LLM request timed out/, () => ["errModelTimeout"]],
-  [/^LLM request failed$/, () => ["probeUnreachable"]],
+  [/^LLM request failed\b/, () => ["probeUnreachable"]],
   [/^LLM enhancement did not produce/, () => ["errEnhanceNoResult"]],
   [
     /^(?:LLM (?:returned|response|output|document response|per-document|dollar budget)|Cannot read LLM response)/,

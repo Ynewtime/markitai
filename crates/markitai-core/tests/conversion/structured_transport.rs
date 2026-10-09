@@ -216,8 +216,8 @@ fn anthropic_native_schema_uses_native_shapes_and_tokens() {
     }
     let dir = tempfile::tempdir().unwrap();
     let input = source(dir.path());
-    // Every Anthropic entry of the table starts at native JSON schema; the
-    // tool shape is covered by the structured module's unit tests.
+    // These Anthropic entries start at native JSON schema; Haiku 5.5 starts
+    // at a forced tool (below).
     let server = Server::new(|request, _| {
         assert!(request.get("response_format").is_none());
         assert!(request.get("tools").is_none());
@@ -230,14 +230,53 @@ fn anthropic_native_schema_uses_native_shapes_and_tokens() {
     for model in [
         "anthropic/claude-haiku-4-5-20251001",
         "anthropic/claude-sonnet-5-5",
-        "anthropic/claude-haiku-5-5",
     ] {
         let result = run(&input, cfg(&server, dir.path(), model), None).unwrap();
         assert_eq!(result.usage.input_tokens, 5);
         assert_eq!(result.usage.requests, 1);
         assert_eq!(result.frontmatter["tags"], json!(["transport"]));
     }
-    assert_eq!(server.count(), 3);
+    assert_eq!(server.count(), 2);
+}
+
+#[test]
+fn claude_haiku_5_5_starts_with_a_forced_native_tool() {
+    if isolated("claude_haiku_5_5_starts_with_a_forced_native_tool") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let input = source(dir.path());
+    let server = Server::new(|request, _| {
+        assert_eq!(request["model"], "claude-haiku-5-5");
+        assert!(request.get("output_config").is_none());
+        assert_eq!(
+            request["tool_choice"],
+            json!({"type":"tool","name":"MarkitaiDocument","disable_parallel_tool_use":true})
+        );
+        (
+            200,
+            json!({"content":[{"type":"tool_use","id":"toolu_1","name":"MarkitaiDocument","input":document(request)}],"stop_reason":"tool_use","usage":{"input_tokens":5,"output_tokens":4}}),
+        )
+    });
+    let result = run(
+        &input,
+        cfg(&server, dir.path(), "anthropic/claude-haiku-5-5"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(result.usage.requests, 1);
+    assert_eq!(result.frontmatter["tags"], json!(["transport"]));
+    // Accepted at once: no rejection and no second request (the only
+    // warning is the unknown price).
+    assert!(
+        result
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("rejected") && !warning.contains("sent again")),
+        "{:?}",
+        result.warnings
+    );
+    assert_eq!(server.count(), 1);
 }
 
 #[test]
@@ -340,15 +379,15 @@ fn refusals_truncation_unrelated_bad_input_and_auth_never_descend_or_cache() {
                 }
                 "input" => (
                     400,
-                    json!({"error":{"param":"messages","message":"invalid image PRIVATE_PROVIDER_DETAIL"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
+                    json!({"error":{"param":"messages","message":"invalid image sent with key local-fixture"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
                 ),
                 "auth" => (
                     401,
-                    json!({"error":{"message":"PRIVATE_PROVIDER_DETAIL"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
+                    json!({"error":{"message":"Incorrect API key provided: local-fixture"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
                 ),
                 _ => (
                     402,
-                    json!({"error":{"message":"billing PRIVATE_PROVIDER_DETAIL"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
+                    json!({"error":{"message":"billing refused for key local-fixture"},"usage":{"prompt_tokens":7,"completion_tokens":5}}),
                 ),
             }
         });
@@ -362,7 +401,7 @@ fn refusals_truncation_unrelated_bad_input_and_auth_never_descend_or_cache() {
             first
                 .warnings
                 .iter()
-                .all(|value| !value.contains("PRIVATE_PROVIDER_DETAIL"))
+                .all(|value| !value.contains("local-fixture"))
         );
         let second = run(&input, config.clone(), None).unwrap();
         assert!(!second.llm_cache_hit());

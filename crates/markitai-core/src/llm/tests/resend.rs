@@ -232,7 +232,9 @@ fn transport_retries_and_image_analysis_fallbacks_are_warned() {
     run(&plain(), &cfg, &HashMap::new(), &mut |_| {}).unwrap();
     assert_eq!(
         scope.take_warnings(),
-        ["LLM request to openai/test failed (LLM returned HTTP 503) and was sent again"]
+        [
+            "LLM request to openai/test failed (LLM returned HTTP 503: overloaded) and was sent again"
+        ]
     );
     assert_eq!(server.finish().len(), 2);
     drop(scope);

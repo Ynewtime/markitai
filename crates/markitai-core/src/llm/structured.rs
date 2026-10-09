@@ -56,16 +56,17 @@ pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
         entry.protocol,
     ) {
         ("openai", "gpt-4.1" | "gpt-4.1-2025-04-14", Protocol::Chat) => (true, true),
+        // Claude Haiku 5.5's forced tool answer kept all 9 protected markers,
+        // in order, in the live check of 2026-10-09 that Haiku 4.5 failed
+        // (sample.pptx --llm --alt --desc: one document request, no resend). A
+        // tool answer that drops a marker still moves down to schema.
+        ("anthropic", "claude-haiku-5-5", Protocol::Anthropic) => (true, true),
         // Claude Haiku 4.5 supports forced tools, but its tool answers dropped
         // every protected marker in both live runs of 2026-10-09 (a second,
-        // paid JSON-schema request then succeeded), so it starts at schema. Claude
-        // Haiku 5.5 (documented with forced tools and structured outputs on
-        // 2026-10-09) starts there too until a live check shows its tool answers
-        // keep the markers.
+        // paid JSON-schema request then succeeded), so it starts at schema.
         (
             "anthropic",
-            "claude-haiku-5-5"
-            | "claude-haiku-4-5"
+            "claude-haiku-4-5"
             | "claude-haiku-4-5-20251001"
             | "claude-opus-5-5"
             | "claude-sonnet-5-5"
@@ -328,6 +329,7 @@ fn blocked(kind: FailureKind, message: &str) -> Failure {
         fatal: false,
         document_fatal: true,
         retry_after: None,
+        deployment: None,
     }
 }
 
@@ -560,13 +562,18 @@ mod tests {
         );
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
         assert!(body.get("response_format").is_none());
-        // Claude Haiku 4.5 starts at the schema rung.
+        // Claude Haiku 4.5 starts at the schema rung, Haiku 5.5 at named tools.
         let haiku = Deployment {
             model: "claude-haiku-4-5".into(),
             provider: "anthropic".into(),
             ..entry
         };
         assert_eq!(capabilities(&haiku), (false, true));
+        let haiku = Deployment {
+            model: "claude-haiku-5-5".into(),
+            ..haiku
+        };
+        assert_eq!(capabilities(&haiku), (true, true));
     }
     #[test]
     fn parameter_rejection_does_not_reclassify_bad_images() {

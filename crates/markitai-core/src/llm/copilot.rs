@@ -139,6 +139,7 @@ fn failure(error: subscription::Failure) -> Failure {
         fatal,
         document_fatal: true,
         retry_after: None,
+        deployment: None,
     }
 }
 pub(super) fn request(
@@ -157,6 +158,7 @@ pub(super) fn request(
         fatal: false,
         document_fatal: true,
         retry_after: None,
+        deployment: None,
     })?;
     let mut decoded = Vec::new();
     let mut size = 0usize;
