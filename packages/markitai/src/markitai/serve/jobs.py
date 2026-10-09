@@ -29,7 +29,6 @@ from pydantic import ValidationError
 
 from markitai.notices import merge_item_warnings
 from markitai.serve.schemas import JobOptions
-from markitai.types import reported_cost
 from markitai.utils.clock import now_iso
 
 if TYPE_CHECKING:
@@ -856,7 +855,7 @@ async def process_url_item(
 
 def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
     """Map a ProcessResult onto the item (skip strings are non-errors)."""
-    item.cost_usd = reported_cost(result.cost_usd, result.llm_usage)
+    item.cost_usd = result.cost_usd
     if result.output_path:
         try:
             item.output = (

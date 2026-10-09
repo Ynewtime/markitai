@@ -19,7 +19,7 @@
 
 - **`--ocr --llm` 保留扫描页的识别文字**：模型在一页提取文字为空的页面上写出超过 200 个字符时，页面漂移防护会把该页还原成提取出的文字，而扫描页的提取文字总是空的，所以扫描 PDF 虽经模型识别并计费，结果却报告为已完成、正文只有页码标记。现在视觉路径会把空页上的文字作为该页的识别结果保留；如果模型回答中的文字会被防护全部丢弃，该条目会失败，不再以空内容报告完成。
 - **`llm.max_requests_per_document` 限制整份文档**：此前一份文档的文本增强和图片分析各有一份预算，某个阶段结束时还会退回它用掉的请求数，所以上限为 3 时，`sample.pptx --llm --alt --desc` 发出了 6 个请求。现在同一个文件或 URL 的所有请求共用一份预算，`max_cost_per_document_usd` 也一样。
-- **模型价格未知时报告为未知，不再是 $0**：LiteLLM 没有价格的模型，或者配置里只用 `model_info` 描述的模型（这会把它注册成没有价格的条目），此前都报告为 `cost_usd: 0.0`，像是免费的。现在这些请求在 `llm_usage` 里计入 `unpriced_requests`，该模型、条目、运行合计、报告文件以及 Python API 的 `ConversionUsage.cost_usd` 中的 `cost_usd` 都是 `null`，批处理摘要显示 "cost unknown"，每次运行还会对该模型给出一次警告。这类请求不计入 `max_cost_per_document_usd`。价格表里标为 $0 的模型（本地模型）仍按免费计算。
+- **模型价格未知时不再报告为免费**：LiteLLM 没有价格的模型，或者配置里只用 `model_info` 描述的模型（这会把它注册成没有价格的条目），此前都报告为 `cost_usd: 0.0`，像是免费的。现在这些请求在 `llm_usage` 里计入 `unpriced_requests`（`--json`、报告文件以及 Python API 的 `ConversionUsage.by_model` 都有），批处理摘要显示 "cost unknown"，每次运行还会对该模型给出一次警告。`cost_usd` 仍是数字，只含有价格的请求。这类请求不计入 `max_cost_per_document_usd`。价格表里标为 $0 的模型（本地模型）仍按免费计算。
 - **DeepSeek 默认模型恢复可用**：默认的 `deepseek/deepseek-v4-flash` 以思考模式回答，而 DeepSeek 在思考模式下拒绝强制工具调用（HTTP 400 "Thinking mode does not support this tool_choice"）。现在 markitai 对 DeepSeek 的思考模型改为在提示词里要求输出 JSON，不再强制工具调用，每份文档一个请求即可，不会先浪费一个失败请求。另外，请求失败（服务商返回 4xx，或会被重试的错误）而请求上限已不允许再试时，条目会报告服务商的错误，不再只有 "budget exhausted"。
 - **Claude Agent 和 Copilot 提供方不再开放任何工具**：不再自动批准 Bash、写文件和网页抓取，被注入提示词的文档或网页无法以你的身份执行命令。
 - **以相对路径输入目录 `--resume`**：子目录中重试的文件（`docs/sub/a.pdf`）写回 `out/sub/`，不再落到输出根目录（那里可能与其他文件冲突，图片链接也会失效）。
