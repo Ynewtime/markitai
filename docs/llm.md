@@ -49,7 +49,8 @@ With an empty model list, a nonempty `MODEL` selects one model. Otherwise each
 available API credential joins the pool: Anthropic, OpenAI, Gemini, DeepSeek
 and OpenRouter. The model aliases are derived from the reference checkout's
 provider-default table, not an independent assertion about current provider
-availability. Pin `MODEL` or a configured deployment to control which provider
+availability; DeepSeek's is `deepseek/deepseek-flash`, the id DeepSeek's model
+list names (the reference's `deepseek-v4-flash` is an alias of it). Pin `MODEL` or a configured deployment to control which provider
 receives documents. Keys of the [OpenAI-compatible
 prefixes](#openai-compatible-prefixes) do not join this pool, because no default
 model is known for them; name one with `MODEL` (for example

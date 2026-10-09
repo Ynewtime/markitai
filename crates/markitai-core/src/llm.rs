@@ -50,7 +50,8 @@ const DEFAULT_MODELS: [(&str, &str, &str); 5] = [
         "GEMINI_API_KEY",
         "gemini/gemini-flash-lite-latest",
     ),
-    ("deepseek", "DEEPSEEK_API_KEY", "deepseek/deepseek-v4-flash"),
+    // DeepSeek's model list names `deepseek-flash`; `deepseek-v4-flash` is an alias.
+    ("deepseek", "DEEPSEEK_API_KEY", "deepseek/deepseek-flash"),
     (
         "openrouter",
         "OPENROUTER_API_KEY",
@@ -2541,6 +2542,14 @@ mod tests {
                 "openrouter/google/gemini-3.1-flash-lite"
             ]
         );
+        // The DeepSeek default is the id DeepSeek lists, without thinking.
+        let env = HashMap::from([("DEEPSEEK_API_KEY".into(), "fake-test-key".into())]);
+        let entry = deployments(&json!({}), &env).unwrap().remove(0);
+        assert_eq!(
+            (entry.id.as_str(), entry.model.as_str()),
+            ("deepseek/deepseek-flash", "deepseek-flash")
+        );
+        assert_eq!(entry.reasoning_effort.as_deref(), Some("none"));
     }
 
     #[test]
