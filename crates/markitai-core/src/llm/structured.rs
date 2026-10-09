@@ -55,12 +55,17 @@ pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
         entry.protocol,
     ) {
         ("openai", "gpt-4.1" | "gpt-4.1-2025-04-14", Protocol::Chat) => (true, true),
-        ("anthropic", "claude-haiku-4-5" | "claude-haiku-4-5-20251001", Protocol::Anthropic) => {
-            (true, true)
-        }
+        // Claude Haiku 4.5 supports forced tools, but its tool answers dropped
+        // every protected marker in both live runs of 2026-10-09 (a second,
+        // paid JSON-schema request then succeeded), so it starts at schema.
         (
             "anthropic",
-            "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-fable-5-1" | "claude-mythos-5-1",
+            "claude-haiku-4-5"
+            | "claude-haiku-4-5-20251001"
+            | "claude-opus-5-5"
+            | "claude-sonnet-5-5"
+            | "claude-fable-5-1"
+            | "claude-mythos-5-1",
             Protocol::Anthropic,
         ) => (false, true),
         ("gemini", "gemini-3.8-flash", Protocol::Chat) => (false, true),
@@ -523,6 +528,40 @@ mod tests {
                 ..
             })
         ));
+    }
+    #[test]
+    fn anthropic_tools_use_a_forced_native_tool() {
+        let entry = deployments(
+            &config::normalize(&json!({"llm":{"model_list":[{"model_name":"default","litellm_params":{"model":"anthropic/claude-test","api_key":"k"}}]}}))
+                .unwrap(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .remove(0);
+        let prompts = Prompts {
+            system: "system".into(),
+            user: "user".into(),
+            image: None,
+            cache_scope: String::new(),
+        };
+        let body = Wire {
+            mode: Mode::Tools,
+            schema: Schema::Document,
+        }
+        .payload(&entry, &prompts);
+        assert_eq!(
+            body["tool_choice"],
+            json!({"type":"tool","name":"MarkitaiDocument","disable_parallel_tool_use":true})
+        );
+        assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+        assert!(body.get("response_format").is_none());
+        // Claude Haiku 4.5 starts at the schema rung.
+        let haiku = Deployment {
+            model: "claude-haiku-4-5".into(),
+            provider: "anthropic".into(),
+            ..entry
+        };
+        assert_eq!(capabilities(&haiku), (false, true));
     }
     #[test]
     fn parameter_rejection_does_not_reclassify_bad_images() {

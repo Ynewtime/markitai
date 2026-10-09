@@ -175,12 +175,8 @@ fn an_empty_answer_moves_to_a_sibling_deployment_once() {
     assert_ne!(requests[0].1["model"], requests[1].1["model"]);
 }
 
-fn haiku_tool_answer(input: Value) -> Value {
-    json!({"model":"claude-haiku-4-5","content":[{"type":"tool_use","id":"toolu_1","name":"MarkitaiDocument","input":input}],"stop_reason":"tool_use","usage":{"input_tokens":2224,"output_tokens":1338}})
-}
-
-fn haiku_text_answer(text: &str) -> Value {
-    json!({"model":"claude-haiku-4-5","content":[{"type":"text","text":text}],"stop_reason":"end_turn","usage":{"input_tokens":1754,"output_tokens":1374}})
+fn tool_answer(input: &Value) -> Value {
+    json!({"model":"gpt-4.1","choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"MarkitaiDocument","arguments":input.to_string()}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2224,"completion_tokens":1338}})
 }
 
 #[test]
@@ -190,10 +186,10 @@ fn a_discarded_structured_answer_and_its_second_request_are_warned_and_counted()
     let accepted =
         json!({"cleaned_markdown":source,"frontmatter":{"description":"A deck","tags":["deck"]}});
     let server = Mock::new(vec![
-        (200, haiku_tool_answer(rejected.clone())),
-        (200, haiku_text_answer(&accepted.to_string())),
+        (200, tool_answer(&rejected)),
+        (200, success(&accepted.to_string())),
     ]);
-    let cfg = cfg("anthropic/claude-haiku-4-5", &server.base);
+    let cfg = cfg("openai/gpt-4.1", &server.base);
     let enhanced =
         process_document_with_runtime(source, "deck.pptx", "deck.pptx", false, &cfg, None).unwrap();
     assert_eq!(enhanced.usage.requests, 2);
@@ -205,11 +201,16 @@ fn a_discarded_structured_answer_and_its_second_request_are_warned_and_counted()
     );
     let requests = server.finish();
     assert!(requests[0].1.get("tools").is_some());
-    assert!(requests[1].1.pointer("/output_config/format").is_some());
+    assert!(
+        requests[1]
+            .1
+            .pointer("/response_format/json_schema")
+            .is_some()
+    );
 
     // With a budget of one request the discarded answer is the only one.
-    let server = Mock::new(vec![(200, haiku_tool_answer(rejected))]);
-    let mut cfg = super::cfg("anthropic/claude-haiku-4-5", &server.base);
+    let server = Mock::new(vec![(200, tool_answer(&rejected))]);
+    let mut cfg = super::cfg("openai/gpt-4.1", &server.base);
     cfg["llm"]["max_requests_per_document"] = json!(1);
     let scope = DocumentScope::new(&cfg);
     let error = process_document_with_runtime(source, "deck.pptx", "deck.pptx", false, &cfg, None)

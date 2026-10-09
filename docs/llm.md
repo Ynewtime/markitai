@@ -604,7 +604,7 @@ The initial exact capability table is deliberately small:
 | Provider and exact model IDs | Available modes before JSON text |
 |---|---|
 | OpenAI `gpt-4.1`, `gpt-4.1-2025-04-14` | Named tools, JSON schema |
-| Anthropic `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Named tools, native JSON schema |
+| Anthropic `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Native JSON schema; its forced tool answers dropped the protected markers in live checks, costing a second request |
 | Anthropic `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, `claude-mythos-5-1` | Native JSON schema; these models restrict forced named tools |
 | Gemini `gemini-3.8-flash` through its OpenAI-compatible endpoint | JSON schema |
 | Other or unknown IDs, including Azure deployment aliases | JSON text |

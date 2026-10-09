@@ -210,32 +210,22 @@ fn rejected_wire_fields_descend_once_and_keep_all_paid_usage() {
 }
 
 #[test]
-fn anthropic_native_tools_and_schema_use_native_shapes_and_tokens() {
-    if isolated("anthropic_native_tools_and_schema_use_native_shapes_and_tokens") {
+fn anthropic_native_schema_uses_native_shapes_and_tokens() {
+    if isolated("anthropic_native_schema_uses_native_shapes_and_tokens") {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
     let input = source(dir.path());
-    let server = Server::new(|request, index| {
+    // Every Anthropic entry of the table starts at native JSON schema; the
+    // tool shape is covered by the structured module's unit tests.
+    let server = Server::new(|request, _| {
         assert!(request.get("response_format").is_none());
-        if index == 0 {
-            assert_eq!(
-                request["tool_choice"],
-                json!({"type":"tool","name":"MarkitaiDocument","disable_parallel_tool_use":true})
-            );
-            assert_eq!(request["tools"][0]["input_schema"]["type"], "object");
-            (
-                200,
-                json!({"content":[{"type":"text","text":"Returning document data."},{"type":"tool_use","id":"result","name":"MarkitaiDocument","input":document(request)}],"stop_reason":"tool_use","usage":{"input_tokens":3,"cache_read_input_tokens":2,"output_tokens":4}}),
-            )
-        } else {
-            assert!(request.get("tools").is_none());
-            assert_eq!(request["output_config"]["format"]["type"], "json_schema");
-            (
-                200,
-                json!({"content":[{"type":"text","text":document(request).to_string()}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":4}}),
-            )
-        }
+        assert!(request.get("tools").is_none());
+        assert_eq!(request["output_config"]["format"]["type"], "json_schema");
+        (
+            200,
+            json!({"content":[{"type":"text","text":document(request).to_string()}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":4}}),
+        )
     });
     for model in [
         "anthropic/claude-haiku-4-5-20251001",
