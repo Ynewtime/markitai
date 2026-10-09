@@ -471,8 +471,9 @@ const ITEM_SHAPES: Shape[] = [
 /** Provider probe and discovery details, which the core words as fixed phrases. */
 const NOTE_SHAPES: Shape[] = [
   [/^Model connection test timed out$/, () => ["errModelTimeout"]],
-  [/^Model connection request failed$/, () => ["probeUnreachable"]],
-  [/^Model connection returned HTTP (\d{3})(?:: (.+))?$/, modelHttp],
+  // The core may add the cause, or the provider's error type and message.
+  [/^Model connection request failed\b/, () => ["probeUnreachable"]],
+  [/^Model connection returned HTTP (\d{3})\b(?: \([^()]*\))?(?:: (.+))?$/, modelHttp],
   [/^Model credentials or endpoint configuration are invalid or unavailable$/, () => ["probeConfig"]],
   [/^This model provider is not supported by the native runtime$/, () => ["probeUnsupported"]],
   [/^(?:Model connection test failed|Cannot create model connection client)$/, () => ["probeFailed"]],

@@ -339,7 +339,10 @@ after its status instead of the provider's message:
 `LLM returned HTTP 403: the model is not available in this region`,
 `…: the account's quota or billing does not allow this request` or
 `…: the model is unavailable`. The model connection test in `serve` words its
-refusals with the same fixed phrases.
+failures the same way, without the deployment suffix: `Model connection request
+failed: connection refused`, or `Model connection returned HTTP 401
+(invalid_api_key): Incorrect API key provided: [REDACTED].` with the same
+cleaning, or one of the fixed phrases.
 
 ## Retries, budgets and usage
 

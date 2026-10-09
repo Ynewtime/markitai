@@ -1,5 +1,5 @@
 //! A probe uses the conversion protocol but not its retry or fallback router.
-use super::{Deployment, Prompts, Protocol, deployments, payload, refusal_reason};
+use super::{Deployment, Prompts, Protocol, deployments, diagnosis, payload, refusal_reason};
 use crate::{Error, Result, provider_management};
 use reqwest::{blocking::Client, redirect::Policy};
 use serde_json::{Value, json};
@@ -148,22 +148,28 @@ fn perform(entry: &Deployment) -> Result<()> {
     if entry.protocol == Protocol::Anthropic {
         call = call.header("anthropic-version", "2023-06-01");
     }
+    // Failures are worded as conversion's are (diagnosis), without the
+    // endpoint, the key or the probe's prompt.
     let response = call.json(&body).send().map_err(|error| {
-        failure(if error.is_timeout() {
-            "Model connection test timed out"
-        } else {
-            "Model connection request failed"
-        })
+        if error.is_timeout() {
+            return failure("Model connection test timed out");
+        }
+        match diagnosis::cause(error) {
+            Some(cause) => failure(&format!("Model connection request failed: {cause}")),
+            None => failure("Model connection request failed"),
+        }
     })?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
-        // The body only selects a fixed explanation; it is never shown.
         let mut bytes = Vec::new();
         let _ = response.take(64 * 1024).read_to_end(&mut bytes);
         let body = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
         return Err(failure(&match refusal_reason(status, &body) {
             Some(reason) => format!("Model connection returned HTTP {status}: {reason}"),
-            None => format!("Model connection returned HTTP {status}"),
+            None => format!(
+                "Model connection returned HTTP {status}{}",
+                diagnosis::refusal(status, &bytes, entry, &prompts)
+            ),
         }));
     }
     if response
@@ -196,4 +202,61 @@ fn perform(entry: &Deployment) -> Result<()> {
 }
 fn failure(message: &str) -> Error {
     Error::Conversion(message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::provider_management::probe_explicit;
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn detail(base: &str, key: &str) -> String {
+        let result =
+            probe_explicit(&json!({"model":"openai/probe-test","api_key":key,"api_base":base}))
+                .unwrap();
+        assert_eq!(result["ok"], false, "{result}");
+        result["detail"].as_str().unwrap().to_owned()
+    }
+
+    #[test]
+    fn a_failed_connection_test_says_why_without_the_key_or_endpoint() {
+        let refused = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        assert_eq!(
+            detail(&format!("http://{refused}/v1"), "probe-key-must-not-leak"),
+            "Model connection request failed: connection refused"
+        );
+
+        // A provider that quotes the key back in its refusal.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !request.ends_with(b"}") {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            let body = json!({"error":{"type":"invalid_request_error","code":"invalid_api_key",
+                "message":"Incorrect API key provided: probe-key-must-not-leak."}})
+            .to_string();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        let said = detail(&format!("http://{address}/v1"), "probe-key-must-not-leak");
+        server.join().unwrap();
+        assert_eq!(
+            said,
+            "Model connection returned HTTP 401 (invalid_request_error/invalid_api_key): Incorrect API key provided: [REDACTED]."
+        );
+    }
 }
