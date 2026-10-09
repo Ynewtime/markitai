@@ -25,9 +25,10 @@
 
 ### 变更
 
-- 未配置 `llm.model_list` 时的默认模型换成各家当前的小模型：`anthropic/claude-haiku-5-5`、`openai/gpt-6-luna`、`deepseek/deepseek-flash`（DeepSeek 模型列表给出的 ID）和 `openrouter/google/gemini-3.5-flash-lite`；Gemini 仍用 `gemini-flash-lite-latest`。`claude-haiku-5-5` 与 Haiku 4.5 一样从原生 JSON schema 起步；价格快照收录它之前，费用显示为未知。
+- 未配置 `llm.model_list` 时的默认模型换成各家当前的小模型：`anthropic/claude-haiku-5-5`、`openai/gpt-6-luna`、`deepseek/deepseek-flash`（DeepSeek 模型列表给出的 ID）和 `openrouter/google/gemini-3.5-flash-lite`；Gemini 仍用 `gemini-flash-lite-latest`。`claude-haiku-5-5` 与 Haiku 4.5 一样从原生 JSON schema 起步。
 - 内置价格快照改用 LiteLLM 1.106.0.dev2 的数据（`pricing_snapshot` 为 `litellm-1.106.0.dev2-selected-2026-10-09`），并于 2026-10-09 对照各家官方价格重新核对；原有八行价格不变。它是开发预发布版，是 PyPI 上最新的、带有 `claude-haiku-5-5` 行的版本。
 - 默认 OpenAI 模型 `openai/gpt-6-luna` 现在有价格：每百万 token 输入 $0.10、缓存读取 $0.01、缓存写入 $0.125、输出 $0.50；提示超过 272K token 时，整次请求改按 $0.20 / $0.02 / $0.25 / $0.75 计价。缓存写入（`prompt_tokens_details.cache_write_tokens`）按自身单价计费，不再当作普通输入；提示在 272,001 到 278,528 token 之间（278,528 = 272 × 1,024，即“272K”的另一种读法）时价格保持未知，以免误用较低的档位。把提示再按文本与图像拆分计数的响应，也不再被当作未知计费类别拒绝。
+- 默认 Anthropic 模型 `anthropic/claude-haiku-5-5` 现在有价格，不再显示为未知：每百万 token 输入 $0.10、缓存读取 $0.01、5 分钟 / 1 小时缓存写入 $0.125 / $0.20、输出 $0.50；提示（含缓存读取与写入）超过 100,000 token 时，整次请求改按 $0.50 / $0.05 / $0.625 / $1 / $2.50 计价。Messages 响应带有 `output_tokens_details`、服务器工具请求数为零或缓存计数为 null 时照常计价，不再被拒绝；只要有服务器工具请求，费用仍为未知。
 - SVG 的本地 OCR 改为按其自身宽度的两倍渲染（最多 2048 像素，与参考实现一致），不再使用 2048 像素的视觉预览图：语料中 426 字节的 SVG 耗时由 1.8 秒、445 MB 降至 0.29 秒、162 MB，识别文本不变。
 - 便携引擎的本地 OCR 更快：文字检测使用多线程，在检测首张图片时并行准备方向分类器与识别模型，PDF 扫描页两页同时识别。在基准语料的 7 个位图与扫描 PDF 的 OCR 输入上耗时由 14.4 秒降至 9.4 秒（Python 1.2 为 9.4 秒），识别文本不变。
 - 大型 XLSX 工作表的内存占用大幅降低：在 XML 解析器关闭每一行时即读取该行，而不是先构建整张表的树，解析后的 XML 也不再保留多余容量。2 万行的工作簿（9 MB 表格 XML）峰值内存由 384 MB 降至 84 MB，输出不变。

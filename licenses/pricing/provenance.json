@@ -15,7 +15,7 @@
   ],
   "license_file": "LiteLLM-LICENSE",
   "license_sha256": "b170d6bf8e8835dd357e011681db028f4d51e2fb0ea892058f56e01fb39b8273",
-  "source_rows_sha256": "2297b7da092dafc22ca87b750838501ae249ffb2414bcef716f1da9d73c279d3",
+  "source_rows_sha256": "58caf99f2964a950f64ee9024aabae1b8fb4a5ba21eba1b5fa9fa1c1f349c7a1",
   "rows": [
     {
       "model": "gpt-4.1",
@@ -234,6 +234,52 @@
         "cache_read_input_token_cost_batches": 50000,
         "cache_creation_input_token_cost_batches": 625000
       }
+    },
+    {
+      "model": "claude-haiku-5-5",
+      "source_byte_start": 3079189,
+      "source_byte_end": 3081659,
+      "source_object_sha256": "14044ac4b924ec2cdc44ce8e472c32107767be345581e15ff0c211e548289607",
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "1E-7",
+        "output_cost_per_token": "5E-7",
+        "cache_read_input_token_cost": "1E-8",
+        "cache_creation_input_token_cost": "1.25E-7",
+        "cache_creation_input_token_cost_above_1hr": "2E-7",
+        "input_cost_per_token_above_100k_tokens": "5E-7",
+        "output_cost_per_token_above_100k_tokens": "0.0000025",
+        "cache_read_input_token_cost_above_100k_tokens": "5E-8",
+        "cache_creation_input_token_cost_above_100k_tokens": "6.25E-7",
+        "cache_creation_input_token_cost_above_1hr_above_100k_tokens": "0.000001",
+        "input_cost_per_token_batches": "5E-8",
+        "output_cost_per_token_batches": "2.5E-7",
+        "cache_read_input_token_cost_batches": "5E-9",
+        "cache_creation_input_token_cost_batches": "6.25E-8",
+        "input_cost_per_token_above_100k_tokens_batches": "2.5E-7",
+        "output_cost_per_token_above_100k_tokens_batches": "0.00000125",
+        "cache_read_input_token_cost_above_100k_tokens_batches": "2.5E-8",
+        "cache_creation_input_token_cost_above_100k_tokens_batches": "3.125E-7"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 100000,
+        "output_cost_per_token": 500000,
+        "cache_read_input_token_cost": 10000,
+        "cache_creation_input_token_cost": 125000,
+        "cache_creation_input_token_cost_above_1hr": 200000,
+        "input_cost_per_token_above_100k_tokens": 500000,
+        "output_cost_per_token_above_100k_tokens": 2500000,
+        "cache_read_input_token_cost_above_100k_tokens": 50000,
+        "cache_creation_input_token_cost_above_100k_tokens": 625000,
+        "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1000000,
+        "input_cost_per_token_batches": 50000,
+        "output_cost_per_token_batches": 250000,
+        "cache_read_input_token_cost_batches": 5000,
+        "cache_creation_input_token_cost_batches": 62500,
+        "input_cost_per_token_above_100k_tokens_batches": 250000,
+        "output_cost_per_token_above_100k_tokens_batches": 1250000,
+        "cache_read_input_token_cost_above_100k_tokens_batches": 25000,
+        "cache_creation_input_token_cost_above_100k_tokens_batches": 312500
+      }
     }
   ],
   "official_verification": [
@@ -276,6 +322,14 @@
     {
       "url": "https://platform.claude.com/docs/en/about-claude/pricing",
       "checked_date": "2026-10-09"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
+      "checked_date": "2026-10-09"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/api/messages/create",
+      "checked_date": "2026-10-09"
     }
   ],
   "policy": {
@@ -284,8 +338,8 @@
       "https://api.anthropic.com/v1/messages"
     ],
     "unknown": "Anything outside the exact catalog, endpoint, context/tier or token categories is unpriced. No fuzzy model matching.",
-    "anthropic_context": "Claude 4.5 rows: only total input at most 200000 tokens is priced; higher bands remain unknown.",
-    "batch": "OpenAI row-specific batch rates are present in the source data. Anthropic source rows carry batch input, output, cache-read and 5-minute cache-write rates at exactly half of Standard; the 1-hour cache-write batch rate is derived as half, as the official pricing page states the Batch discount combines with prompt caching. Each attempt has its own billing class.",
+    "anthropic_context": "Claude 4.5 rows: only total input at most 200000 tokens is priced; higher bands remain unknown. claude-haiku-5-5: a request whose total input (cache reads and writes included) is at most 100000 tokens uses the base rates, and one above it the higher rates for the whole request, across its full context window.",
+    "batch": "OpenAI row-specific batch rates are present in the source data. Anthropic source rows carry batch input, output, cache-read and 5-minute cache-write rates at exactly half of Standard; the 1-hour cache-write batch rates, which no source row carries, are derived as half, as the official pricing page states the Batch discount combines with prompt caching. Each attempt has its own billing class.",
     "license_scope": "Original distribution notice retained verbatim; no legal sufficiency or invoice verification claim.",
     "aliases": "Only these two separately verified exact Claude aliases are added to the source keys. A different returned model outside the reviewed family remains unpriced; no prefix matching.",
     "source_release": "LiteLLM 1.106.0.dev2 is a PEP 440 development pre-release. On 2026-10-09 it was the newest PyPI release carrying the claude-haiku-5-5 row (the latest final release, 1.104.2, does not). The backup file was taken from litellm-1.106.0.dev2-cp310-abi3-manylinux_2_28_x86_64.whl (sha256 b7624f691050a458102715d9c65e0abd006f275922c10a7ba42da6fc45dc610b); every compiled rate is also checked against the official links.",

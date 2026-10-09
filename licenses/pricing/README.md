@@ -1,6 +1,6 @@
 # Offline token tariff provenance
 
-This catalog contains nine exact model keys from the LiteLLM 1.106.0.dev2
+This catalog contains ten exact model keys from the LiteLLM 1.106.0.dev2
 backup data (a development pre-release: on 2026-10-09 the newest PyPI release
 carrying the claude-haiku-5-5 row; the wheel file and digest are named in
 provenance.json). The source file hash, distribution RECORD entry, exact source-byte

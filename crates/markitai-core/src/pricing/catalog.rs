@@ -125,6 +125,17 @@ pub(super) fn lookup(provider: Provider, model: &str) -> Option<Tariff> {
                 ),
             )
         },
+        (Provider::Anthropic, "claude-haiku-5-5") => Tariff {
+            long: Some(LongContext {
+                short_max: 100_000,
+                long_from: 100_001,
+                rates: Rates::new(500_000, 2_500_000, 50_000, Some(625_000), Some(1_000_000)),
+            }),
+            ..Tariff::flat(
+                "anthropic/claude-haiku-5-5",
+                Rates::new(100_000, 500_000, 10_000, Some(125_000), Some(200_000)),
+            )
+        },
         _ => return None,
     };
     Some(tariff)

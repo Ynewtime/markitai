@@ -8,7 +8,7 @@ when looking up a tariff.
 
 ## Reviewed catalog
 
-Snapshot `litellm-1.106.0.dev2-selected-2026-10-09` derives nine exact source keys
+Snapshot `litellm-1.106.0.dev2-selected-2026-10-09` derives ten exact source keys
 from the backup data in LiteLLM 1.106.0.dev2's wheel. That is a development
 pre-release, chosen because it was the newest PyPI release with the
 `claude-haiku-5-5` row; every rate used is also checked against the provider's
@@ -30,6 +30,8 @@ All prices below are USD per million tokens, Standard class:
 | OpenAI `gpt-6-luna`, prompt > 278,528 | 0.20 | 0.02 | 0.75 | 0.25 (30m) |
 | Anthropic `claude-sonnet-4-5-20250929` | 3 | 0.30 | 15 | 3.75 / 6 |
 | Anthropic `claude-haiku-4-5-20251001` | 1 | 0.10 | 5 | 1.25 / 2 |
+| Anthropic `claude-haiku-5-5`, prompt ≤ 100,000 | 0.10 | 0.01 | 0.50 | 0.125 / 0.20 |
+| Anthropic `claude-haiku-5-5`, prompt > 100,000 | 0.50 | 0.05 | 2.50 | 0.625 / 1 |
 
 Each listed GPT-4.1 ID also accepts its exact `-2025-04-14` snapshot ID;
 `gpt-6-luna` has no other snapshot ID. Its
@@ -40,7 +42,10 @@ boundary could also be read as 272 × 1,024, so a prompt between 272,001 and
 278,528 tokens, cached reads and writes included, stays unpriced rather than
 risk the cheaper band.
 `claude-sonnet-4-5` and `claude-haiku-4-5` are the only added Claude aliases;
-unknown suffixes are not matched. The official
+unknown suffixes are not matched. `claude-haiku-5-5` is itself the API model ID
+on its [model page](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
+which prices a request by its whole prompt: over 100,000 input tokens, cache
+reads and writes included, every token of that request takes the higher rates. The official
 [Haiku page](https://platform.claude.com/docs/en/models/haiku-4-5/overview) and
 [Sonnet page](https://platform.claude.com/docs/zh-CN/models/sonnet-4-5/overview)
 identify their dated snapshots and tariffs. Claude aliases may move; a returned
@@ -60,9 +65,9 @@ providers or models are unpriced. An Anthropic response's `usage.inference_geo` 
 the listed rates only when it is `not_available` or `global`; US-only inference is
 billed at a premium and stays unpriced. An accepted model configuration is not proof
 of pricing coverage. Explicit service tiers other than Standard/default or the
-transport's Batch class are unpriced. The reviewed Claude band is at most
+transport's Batch class are unpriced. The reviewed Claude 4.5 band is at most
 200,000 total input tokens, including cache reads and writes. Larger contexts
-are unpriced. No user-supplied pricing fields are added to configuration.
+are unpriced; `claude-haiku-5-5`'s two bands cover its whole context window. No user-supplied pricing fields are added to configuration.
 
 ## Response accounting
 
@@ -84,6 +89,8 @@ image counts only split the prompt by modality. Reasoning, prediction and text
 output counts are already part of output and are not added again. Anthropic base input excludes
 cache reads and writes. Its cache creation totals and explicit 5m/1h breakdown
 must agree; positive creation without enough TTL detail remains unpriced.
+`output_tokens_details.thinking_tokens` is part of output, and a null counter
+reports nothing; any server tool request leaves the response unpriced.
 Unknown billing categories, audio charges, contradictory counters, missing
 usage, unreviewed response models and arithmetic overflow cannot yield a known
 price. Image requests use reported metered tokens; pixels never become invented

@@ -157,8 +157,11 @@ pub(crate) fn quote(identity: &Identity<'_>, response: &Value, class: BillingCla
     }
 }
 
+// The Messages API documents several counters as "number or null"; null
+// reports nothing, like an absent field.
 fn number(value: Option<&Value>) -> Result<Option<u64>, UnknownPrice> {
     value
+        .filter(|value| !value.is_null())
         .map(|value| value.as_u64().ok_or(UnknownPrice::InvalidUsage))
         .transpose()
 }
@@ -183,6 +186,7 @@ fn object<'a>(
 ) -> Result<Option<&'a Map<String, Value>>, UnknownPrice> {
     usage
         .get(key)
+        .filter(|value| !value.is_null())
         .map(|value| value.as_object().ok_or(UnknownPrice::InvalidUsage))
         .transpose()
 }
@@ -339,6 +343,8 @@ fn calculate(
                     "cache_read_input_tokens",
                     "cache_creation_input_tokens",
                     "cache_creation",
+                    "output_tokens_details",
+                    "server_tool_use",
                     "total_tokens",
                     "service_tier",
                     "inference_geo",
@@ -354,6 +360,22 @@ fn calculate(
             }
             let input = required(usage, "input_tokens", None)?;
             let output = required(usage, "output_tokens", None)?;
+            // Thinking is part of the billed output total, not an addition.
+            if let Some(details) = object(usage, "output_tokens_details")? {
+                allowed_keys(details, &["thinking_tokens"])?;
+                if optional(details, "thinking_tokens")? > output {
+                    return Err(UnknownPrice::InvalidUsage);
+                }
+            }
+            // Server tools are billed per request, outside this catalog.
+            if let Some(tools) = object(usage, "server_tool_use")? {
+                allowed_keys(tools, &["web_fetch_requests", "web_search_requests"])?;
+                if optional(tools, "web_fetch_requests")? != 0
+                    || optional(tools, "web_search_requests")? != 0
+                {
+                    return Err(UnknownPrice::UnsupportedUsage);
+                }
+            }
             let cached = optional(usage, "cache_read_input_tokens")?;
             let total_created = number(usage.get("cache_creation_input_tokens"))?;
             let (write5, write1) = if let Some(details) = object(usage, "cache_creation")? {
@@ -542,6 +564,92 @@ mod tests {
             amount(&luna(), &response(278_529), BillingClass::Batch),
             long / 2
         );
+    }
+
+    fn haiku_5_5() -> Identity<'static> {
+        Identity {
+            model: "claude-haiku-5-5",
+            ..anthropic()
+        }
+    }
+
+    #[test]
+    fn haiku_5_5_prompt_over_100k_tokens_reprices_the_whole_request() {
+        let response = |input: u64| {
+            json!({"model":"claude-haiku-5-5","usage":{"input_tokens":input,"output_tokens":1000,
+                "cache_read_input_tokens":60_000,"cache_creation_input_tokens":30_000,
+                "cache_creation":{"ephemeral_5m_input_tokens":20_000,"ephemeral_1h_input_tokens":10_000}}})
+        };
+        // The prompt counts cache reads and writes: 10,000 + 60,000 + 30,000.
+        let short = 10_000 * 100_000 + 60_000 * 10_000 + 20_000 * 125_000 + 10_000 * 200_000;
+        assert_eq!(
+            amount(&haiku_5_5(), &response(10_000), BillingClass::Standard),
+            short + 1000 * 500_000
+        );
+        let long = 10_001 * 500_000 + 60_000 * 50_000 + 20_000 * 625_000 + 10_000 * 1_000_000;
+        assert_eq!(
+            amount(&haiku_5_5(), &response(10_001), BillingClass::Standard),
+            long + 1000 * 2_500_000
+        );
+        assert_eq!(
+            amount(&haiku_5_5(), &response(10_001), BillingClass::Batch),
+            (long + 1000 * 2_500_000) / 2
+        );
+        // Unlike Claude 4.5, the reviewed bands cover the whole context window.
+        assert!(matches!(
+            quote(&haiku_5_5(), &response(900_000), BillingClass::Standard),
+            Quote::Known { .. }
+        ));
+        let mut other = response(10_000);
+        other["model"] = json!("claude-haiku-4-5-20251001");
+        assert_eq!(
+            quote(&haiku_5_5(), &other, BillingClass::Standard),
+            Quote::Unknown(UnknownPrice::ResponseModel)
+        );
+    }
+
+    #[test]
+    fn messages_usage_breakdowns_and_null_counters_follow_the_api_reference() {
+        // The Messages API reference's usage shape, without server tool use.
+        let mut response = json!({"model":"claude-haiku-5-5","usage":{
+            "cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},
+            "cache_creation_input_tokens":0,"cache_read_input_tokens":2051,
+            "inference_geo":"global","input_tokens":2095,"output_tokens":503,
+            "output_tokens_details":{"thinking_tokens":120},
+            "server_tool_use":{"web_fetch_requests":0,"web_search_requests":0},
+            "service_tier":"standard"}});
+        let listed = 2095 * 100_000 + 2051 * 10_000 + 503 * 500_000;
+        assert_eq!(
+            amount(&haiku_5_5(), &response, BillingClass::Standard),
+            listed
+        );
+        for key in [
+            "cache_creation",
+            "cache_creation_input_tokens",
+            "server_tool_use",
+        ] {
+            response["usage"][key] = Value::Null;
+        }
+        assert_eq!(
+            amount(&haiku_5_5(), &response, BillingClass::Standard),
+            listed
+        );
+        let mut thinking = response.clone();
+        thinking["usage"]["output_tokens_details"]["thinking_tokens"] = json!(504);
+        assert_eq!(
+            quote(&haiku_5_5(), &thinking, BillingClass::Standard),
+            Quote::Unknown(UnknownPrice::InvalidUsage)
+        );
+        for tools in [
+            json!({"web_fetch_requests":2,"web_search_requests":0}),
+            json!({"web_search_requests":0,"code_execution_requests":0}),
+        ] {
+            response["usage"]["server_tool_use"] = tools;
+            assert_eq!(
+                quote(&haiku_5_5(), &response, BillingClass::Standard),
+                Quote::Unknown(UnknownPrice::UnsupportedUsage)
+            );
+        }
     }
 
     #[test]
