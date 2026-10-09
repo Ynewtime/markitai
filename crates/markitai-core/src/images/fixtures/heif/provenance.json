@@ -59,5 +59,25 @@
     "source": "authored generate-quadrants.m; macOS ImageIO two-image HEIC with explicit second primary image",
     "bytes": 1223,
     "sha256": "a32f372a24927a75ad79a3d9b303daa992e4f96b0945734b8fc19c2b0d6a2e20"
+  },
+  {
+    "file": "clop_irot_imor.avif",
+    "source": "https://raw.githubusercontent.com/AOMediaCodec/libavif/v1.3.0/tests/data/clop_irot_imor.avif",
+    "license": "BSD-2-Clause; tests/data/README.md explicitly assigns same license as libavif",
+    "bytes": 653,
+    "sha256": "28e96ad4c913d75a32d66bce116f2963e29d93c01952698c7b33dd893f8bd541"
+  },
+  {
+    "file": "color_grid_alpha_grid_gainmap_nogrid.avif",
+    "source": "https://raw.githubusercontent.com/AOMediaCodec/libavif/v1.3.0/tests/data/color_grid_alpha_grid_gainmap_nogrid.avif",
+    "license": "BSD-2-Clause; tests/data/README.md explicitly assigns same license as libavif",
+    "bytes": 2870,
+    "sha256": "c424c43fe4bab3b8ef37b86c0bab3851b850b94e5d46b9fae979586dae45de0a"
+  },
+  {
+    "file": "quadrants-121x81-orientation6.avif",
+    "source": "authored generate-avif-quadrants.py; Pillow 12.3.0 AVIF encoder (libavif 1.4.2), byte-identical when regenerated",
+    "bytes": 432,
+    "sha256": "a567e5558dfc229b3107242ec5ff4a9533f7932b103b067680caf25e00aa2a1f"
   }
 ]

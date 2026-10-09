@@ -1,0 +1,21 @@
+[package]
+name = "atomig-macro"
+version = "0.4.0"
+authors = ["Lukas Kalbertodt <lukas.kalbertodt@gmail.com>"]
+edition = "2021"
+
+description = """
+Helper crate for `atomig`. Do not use directly, but only through main crate.
+This helper does not follow semantic versioning!
+"""
+repository = "https://github.com/LukasKalbertodt/atomig/"
+license = "MIT/Apache-2.0"
+
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "2"
+quote = "1"
+proc-macro2 = "1"

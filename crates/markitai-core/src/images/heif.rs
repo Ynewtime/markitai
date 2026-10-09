@@ -1,9 +1,11 @@
 //! In-memory HEIF/AVIF primary-image decoding: through the operating system
-//! on macOS, with the pure-Rust HEIF decoder elsewhere.
+//! on macOS, with the pure-Rust HEIF and AV1 decoders elsewhere.
 
 use crate::Result;
 use image::DynamicImage;
 
+#[cfg(not(target_os = "macos"))]
+mod avif;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(not(target_os = "macos"))]

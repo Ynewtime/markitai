@@ -38,6 +38,19 @@ complete terms of both options; the retrievals are listed under
 twenty-five versions, twenty-four raw exact manifest matches and forty-one
 overlay files. Legal review remains not_performed.
 
+## atomig-macro 0.4.0
+
+atomig-macro 0.4.0, a build-time procedural macro of rav1d's atomig dependency
+(the Windows/Linux AVIF decoder), publishes no license file. Its exact
+published manifest declares `license = "MIT/Apache-2.0"` and equals the crate
+manifest of LukasKalbertodt/atomig at the published commit `abd42e50…`; the
+atomig 0.4.3 package comes from the same commit and ships that commit's root
+LICENSE-MIT and LICENSE-APACHE, which are copied unchanged as the complete
+terms of both options. The retrievals are listed under
+`atomig_macro_license_collection` in the manifest. This brings the overlay to
+twenty-six versions, twenty-five raw exact manifest matches and forty-three
+overlay files. Legal review remains not_performed.
+
 ## Original seventeen-version collection and retained history
 
 Packaging validates this directory offline before copying it. Package manifests,

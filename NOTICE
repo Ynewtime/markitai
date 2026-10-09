@@ -30,6 +30,13 @@ which embeds the Foxit standard-14 substitute fonts from PDFium (BSD-3-Clause),
 Adobe's predefined CMaps (BSD-3-Clause) and a CC0 CMYK profile; their notices
 are in licenses/hayro/.
 
+Windows and Linux builds decode AVIF with rav1d (BSD-2-Clause; VideoLAN, the
+dav1d authors and the Internet Security Research Group), vendored from upstream
+commit d3d1cd67 in vendor/rav1d with the changes listed in
+vendor/rav1d/MARKITAI-PATCH.md. Its Rust API derives from dav1d-rs (MIT,
+Luca Barbato); both notices are in vendor/rav1d/COPYING and
+vendor/rav1d/LICENSE-dav1d-rs.
+
 The Numbers reader uses iwork 0.2.1 (MIT), pinned in Cargo.lock. Its independently
 sourced regression documents are from numbers-parser (MIT), with the original
 license and exact source identities in

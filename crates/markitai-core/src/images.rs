@@ -1463,7 +1463,6 @@ mod tests {
         assert!(output.llm_markdown.unwrap().contains("A red rectangle."));
         assert!(output.output_path.unwrap().is_file());
     }
-    #[cfg(target_os = "macos")]
     #[test]
     fn embedded_heif_and_avif_are_real_pngs_with_primary_notice_and_alpha() {
         let mut doc = Document {

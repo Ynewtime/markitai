@@ -4,7 +4,8 @@
 
 ### Added
 
-- HEIF/HEIC images decode on Windows and Linux with a built-in pure-Rust decoder (heifer), for conversion, vision models and local OCR, as on macOS; they were an unsupported error before. AVIF remains macOS-only.
+- HEIF/HEIC images decode on Windows and Linux with a built-in pure-Rust decoder (heifer), for conversion, vision models and local OCR, as on macOS; they were an unsupported error before.
+- AVIF images decode on Windows and Linux with rav1d, the Rust port of the dav1d AV1 decoder (vendored, without assembly), for conversion, embedded images, vision models and local OCR, as on macOS; they were an unsupported error before. Grids, alpha planes, 10/12-bit and the crop, rotation and mirror properties are read; overlays are an explicit unsupported error, and a decoder failure fails only that image.
 - The workbench reads an uploaded `.urls` file as a URL list: each entry becomes a URL item (comments and blank lines skipped, an entry that names its output keeps that name), instead of failing as an unsupported document. A batch — a folder, several chosen files, a drop that reached into a folder, or a `.urls` list — now waits for Convert with one staged line naming it, so its options can be chosen first; a single file still starts at once. Such a submission reads as one expandable group row in the ledger, showing its name, item count and aggregated facts, with the items inside keeping their own actions.
 - `--help` ends with the build identity of the binary: its version, the commit it came from (marked `(local changes)` when the worktree differed, `unknown` outside a checkout), the target and profile, and the time the build ran in the reader's own time zone with its UTC offset. `SOURCE_DATE_EPOCH` fixes that time for reproducible builds; `-h` and the one-line `--version` are unchanged.
 - Native Rust conversion core, standalone CLI, and in-process Python, Node.js and Go bindings. CLI packages need no Python, Node.js or Go runtime.

@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 7191,
-      "sha256": "9ab2ec9432be2294f3650b01a48f2ddfdd1b3449280e3e80633335329c0a3b0c"
+      "bytes": 7933,
+      "sha256": "45a8fb827f73591d9b28a5b5ac97f2ddcec2d800ccc78d8e58bc5407a58dcaab"
     },
     {
       "path": "input-manifest.json",
@@ -30,6 +30,16 @@
       "path": "local-evidence/alloc-stdlib-0.2.4/README.md",
       "bytes": 6776,
       "sha256": "4857caaabcb6eb367687e6671d70fef3b8dcbab1276999612b71f9f4cd6190b0"
+    },
+    {
+      "path": "local-evidence/atomig-macro-0.4.0/.cargo_vcs_info.json",
+      "bytes": 106,
+      "sha256": "f96c4373958f2482c91689a55077b16877cbacf21f916721d4814defeb7e796b"
+    },
+    {
+      "path": "local-evidence/atomig-macro-0.4.0/Cargo.toml.orig",
+      "bytes": 443,
+      "sha256": "376fabdd7a9edbaad7aef35443688f75ad61baa610ee5d4126e5a4a7c65f1db2"
     },
     {
       "path": "local-evidence/defmt-parser-1.0.0/.cargo_vcs_info.json",
@@ -343,8 +353,8 @@
     },
     {
       "path": "manifest.json",
-      "bytes": 99203,
-      "sha256": "0420cfc35ff6297966aa1e9fe1c29a87ab3a5d8da0c7ebbda034420daeaaa077"
+      "bytes": 103833,
+      "sha256": "59cd09d02317e5f2e5595c450e6cbafb3f1bcea6d3b0a7a4e444041a1926c2e1"
     },
     {
       "path": "napi-license-provenance.json",
@@ -355,6 +365,16 @@
       "path": "overlay/licenses/alloc-stdlib-0.2.4/LICENSE",
       "bytes": 1483,
       "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+    },
+    {
+      "path": "overlay/licenses/atomig-macro-0.4.0/LICENSE-APACHE",
+      "bytes": 10850,
+      "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"
+    },
+    {
+      "path": "overlay/licenses/atomig-macro-0.4.0/LICENSE-MIT",
+      "bytes": 1062,
+      "sha256": "6f54826bbf67526f2d41937c1904ae2de63ef5707b80c68deadbf073b5669c40"
     },
     {
       "path": "overlay/licenses/defmt-parser-1.0.0/LICENSE-APACHE",
@@ -715,6 +735,26 @@
       "path": "upstream/HarpeLm/Heifer/515c7a7fd67599c29b4e52e8b77fbc0674f7f24e/crates/heifer/Cargo.toml",
       "bytes": 843,
       "sha256": "890a44aab1c0f3166f0384b92faa130c1817a94fd3b320cb88c75250fb5193dd"
+    },
+    {
+      "path": "upstream/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/Cargo.toml",
+      "bytes": 921,
+      "sha256": "bb15c7d09129c1c5f276a15b61a8d06681718882413e3915208e631a925d9691"
+    },
+    {
+      "path": "upstream/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/LICENSE-APACHE",
+      "bytes": 10850,
+      "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"
+    },
+    {
+      "path": "upstream/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/LICENSE-MIT",
+      "bytes": 1062,
+      "sha256": "6f54826bbf67526f2d41937c1904ae2de63ef5707b80c68deadbf073b5669c40"
+    },
+    {
+      "path": "upstream/LukasKalbertodt/atomig/abd42e50a6a1b0615505189a780fcb5da19d7385/atomig-macro/Cargo.toml",
+      "bytes": 443,
+      "sha256": "376fabdd7a9edbaad7aef35443688f75ad61baa610ee5d4126e5a4a7c65f1db2"
     },
     {
       "path": "upstream/Michael-F-Bryan/include_dir/d742c6fffce99ee89da91b934e7ce6fb2a82680c/Cargo.toml",

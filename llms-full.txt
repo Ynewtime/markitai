@@ -76,9 +76,8 @@ are separate downloads. `markitai doctor --json` checks readiness;
 `doctor --fix` can download missing models and repair safely managed corrupt
 models. Prepare them before going offline; never bypass an unsafe-path error.
 
-HEIF/HEIC decodes on every platform (macOS ImageIO, a built-in pure-Rust decoder
-on Windows/Linux); AVIF decoding uses macOS ImageIO and is unsupported on
-Windows/Linux.
+HEIF/HEIC and AVIF decode on every platform (macOS ImageIO; on Windows/Linux
+built-in decoders: heifer for HEVC, rav1d for AV1).
 JavaScript pages and browser screenshots need Chrome/Chromium. Office page
 images and OCR supplements need LibreOffice; native text readers do not.
 Spreadsheet screenshots include hidden and empty sheets, one page per sheet,
