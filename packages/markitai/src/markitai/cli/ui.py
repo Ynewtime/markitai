@@ -436,7 +436,10 @@ class StageList:
         if self._sink_id is None:
             # DEBUG level because fetch strategy hops log at DEBUG.
             self._sink_id = logger.add(
-                self._on_stage_log, level="DEBUG", filter=_is_stage_entry_record
+                self._on_stage_log,
+                level="DEBUG",
+                filter=_is_stage_entry_record,
+                diagnose=False,
             )
 
     def advance(self, key: str, text: str, *, pin: bool = False) -> None:

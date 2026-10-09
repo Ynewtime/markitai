@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import suppress
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -48,8 +49,38 @@ def redact_urls_in_text(message: str) -> str:
     return _TOKEN_QUERY_PARAM.sub(rf"\1{_REDACTED_PATH_SEGMENT}", message)
 
 
+def _redact_text(text: str) -> str:
+    return redact_secrets(redact_urls_in_text(text))
+
+
+def _redact_exception_text(exc: BaseException | None) -> None:
+    """Clean a logged exception's own text (and its causes') in place.
+
+    A sink prints the exception under its traceback, out of the patcher's
+    reach in ``record["message"]``; a crash may carry a key or a URL secret.
+    """
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        args = tuple(_redact_text(a) if isinstance(a, str) else a for a in exc.args)
+        if args != exc.args:
+            exc.args = args
+        message = getattr(exc, "message", None)
+        if isinstance(message, str) and _redact_text(message) != message:
+            with suppress(AttributeError, TypeError):
+                exc.message = _redact_text(message)  # type: ignore[attr-defined]
+        exc = exc.__cause__ or exc.__context__
+
+
 def redact_log_record(record: Any) -> None:
-    """Loguru patcher: remove credentials and URL secrets before any sink."""
+    """Loguru patcher: remove credentials and URL secrets before any sink.
+
+    Covers the message and the logged exception's text. Variable values in a
+    traceback are kept out by the sinks themselves (``diagnose=False``).
+    """
     message = record.get("message")
     if isinstance(message, str):
-        record["message"] = redact_secrets(redact_urls_in_text(message))
+        record["message"] = _redact_text(message)
+    exception = record.get("exception")
+    if exception is not None:
+        _redact_exception_text(exception.value)

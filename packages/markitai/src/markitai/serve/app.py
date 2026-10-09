@@ -81,6 +81,7 @@ from markitai.serve.schemas import (
     ProviderConnectionList,
     RootInfo,
 )
+from markitai.utils.url_redaction import redact_log_record
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
@@ -1724,7 +1725,10 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if configure_logging:
             logger.remove()
-            logger.add(sys.stderr, level="INFO")
+            # Also when the app is created outside the CLI: mask credentials,
+            # and keep variable values (keys, document text) out of tracebacks
+            logger.configure(patcher=redact_log_record)
+            logger.add(sys.stderr, level="INFO", diagnose=False)
         os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
         from dotenv import load_dotenv

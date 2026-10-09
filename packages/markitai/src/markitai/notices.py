@@ -174,7 +174,11 @@ class UserNoticeCollector:
         """Attach the capture sink (idempotent)."""
         if self._sink_id is None:
             self._sink_id = logger.add(
-                self._sink, level="WARNING", filter=is_user_notice, format="{message}"
+                self._sink,
+                level="WARNING",
+                filter=is_user_notice,
+                format="{message}",
+                diagnose=False,
             )
 
     def stop(self) -> None:
