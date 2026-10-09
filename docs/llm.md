@@ -26,7 +26,7 @@ A pinned model in the configuration file looks like this:
     "enabled": true,
     "model_list": [
       {"model_name": "default",
-       "litellm_params": {"model": "anthropic/claude-haiku-4-5", "api_key": "env:ANTHROPIC_API_KEY"}}
+       "litellm_params": {"model": "anthropic/claude-haiku-5-5", "api_key": "env:ANTHROPIC_API_KEY"}}
     ]
   }
 }
@@ -347,7 +347,7 @@ routing strategy: there is no backoff and `num_retries` is not consumed, while
 each attempt still counts toward `llm.max_requests_per_document` and paid usage
 on the refused response is recorded as usual. Each excluded deployment produces
 one warning per run that names its configured model, never a credential or
-endpoint, for example `LLM deployment openai/gpt-5.6-luna failed authentication
+endpoint, for example `LLM deployment openai/gpt-6-luna failed authentication
 and is skipped for this run`; a deployment refused for a regional block is
 `… is not available in this region and is skipped for this run`, and one
 refused for a missing or unavailable model is `… is unavailable and is skipped
@@ -604,7 +604,7 @@ The initial exact capability table is deliberately small:
 | Provider and exact model IDs | Available modes before JSON text |
 |---|---|
 | OpenAI `gpt-4.1`, `gpt-4.1-2025-04-14` | Named tools, JSON schema |
-| Anthropic `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Native JSON schema; its forced tool answers dropped the protected markers in live checks, costing a second request |
+| Anthropic `claude-haiku-5-5`, `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Native JSON schema; Haiku 4.5's forced tool answers dropped the protected markers in live checks, costing a second request (Haiku 5.5 is treated the same until checked) |
 | Anthropic `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, `claude-mythos-5-1` | Native JSON schema; these models restrict forced named tools |
 | Gemini `gemini-3.8-flash` through its OpenAI-compatible endpoint | JSON schema |
 | Other or unknown IDs, including Azure deployment aliases | JSON text |

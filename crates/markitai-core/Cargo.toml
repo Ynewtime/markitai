@@ -9,13 +9,13 @@ license.workspace = true
 tract-onnx = { version = "=0.23.8", default-features = false, optional = true }
 # tract's own matrix kernels on several threads (rayon), for text detection.
 tract-linalg = { version = "=0.23.8", default-features = false, features = ["multithread-mm"], optional = true }
-base64 = "0.22"
+base64 = "0.23"
 libc = "0.2"
 tiff = "0.11.3"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp"] }
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "raster-images"] }
 # Same version and features as usvg uses, so SVG fallback checks read cmaps as rendering does.
-skrifa = { version = "0.44", default-features = false, features = ["std"] }
+skrifa = { version = "0.48", default-features = false, features = ["std"] }
 lopdf = { version = "0.45", default-features = false }
 png = "0.18"
 serde.workspace = true
@@ -24,7 +24,7 @@ thiserror.workspace = true
 tempfile.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "json", "rustls-tls", "gzip", "brotli"] }
 url = "2"
-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 sha2 = "0.11"
 serde_yaml = "0.9"
 dotenvy = "0.15"
@@ -36,7 +36,7 @@ anydoc = "0.2.4"
 iwork = "=0.2.1"
 pdf-inspector = { version = "1.25.1", default-features = false }
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-cfb = "0.14"
+cfb = "0.15"
 encoding_rs = "0.8"
 csv = "1"
 cssparser = "0.37"

@@ -360,8 +360,8 @@ fn configure_model(
             input,
             out,
             &text!(
-                "Model (for example openai/gpt-5.6-luna or ollama/model): ",
-                "模型（例如 openai/gpt-5.6-luna 或 ollama/model）："
+                "Model (for example openai/gpt-6-luna or ollama/model): ",
+                "模型（例如 openai/gpt-6-luna 或 ollama/model）："
             ),
         )?
         else {

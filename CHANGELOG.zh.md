@@ -25,6 +25,7 @@
 
 ### 变更
 
+- 未配置 `llm.model_list` 时的默认模型换成各家当前的小模型：`anthropic/claude-haiku-5-5`、`openai/gpt-6-luna`、`deepseek/deepseek-flash`（DeepSeek 模型列表给出的 ID）和 `openrouter/google/gemini-3.5-flash-lite`；Gemini 仍用 `gemini-flash-lite-latest`。`claude-haiku-5-5` 与 Haiku 4.5 一样从原生 JSON schema 起步；价格快照收录它之前，费用显示为未知。
 - SVG 的本地 OCR 改为按其自身宽度的两倍渲染（最多 2048 像素，与参考实现一致），不再使用 2048 像素的视觉预览图：语料中 426 字节的 SVG 耗时由 1.8 秒、445 MB 降至 0.29 秒、162 MB，识别文本不变。
 - 便携引擎的本地 OCR 更快：文字检测使用多线程，在检测首张图片时并行准备方向分类器与识别模型，PDF 扫描页两页同时识别。在基准语料的 7 个位图与扫描 PDF 的 OCR 输入上耗时由 14.4 秒降至 9.4 秒（Python 1.2 为 9.4 秒），识别文本不变。
 - 大型 XLSX 工作表的内存占用大幅降低：在 XML 解析器关闭每一行时即读取该行，而不是先构建整张表的树，解析后的 XML 也不再保留多余容量。2 万行的工作簿（9 MB 表格 XML）峰值内存由 384 MB 降至 84 MB，输出不变。

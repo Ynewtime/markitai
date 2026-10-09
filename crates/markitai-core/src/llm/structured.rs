@@ -45,7 +45,8 @@ impl Schema {
     }
 }
 
-// Exact identities verified against official provider contracts on 2026-09-29.
+// Exact identities verified against official provider contracts on 2026-09-29
+// (claude-haiku-5-5 on 2026-10-09: forced tool choice and structured outputs).
 // Sources and exclusions are recorded in the structured-transport planning doc.
 // An OpenAI-compatible endpoint or a vision flag alone establishes neither bit.
 pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
@@ -57,10 +58,14 @@ pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
         ("openai", "gpt-4.1" | "gpt-4.1-2025-04-14", Protocol::Chat) => (true, true),
         // Claude Haiku 4.5 supports forced tools, but its tool answers dropped
         // every protected marker in both live runs of 2026-10-09 (a second,
-        // paid JSON-schema request then succeeded), so it starts at schema.
+        // paid JSON-schema request then succeeded), so it starts at schema. Claude
+        // Haiku 5.5 (documented with forced tools and structured outputs on
+        // 2026-10-09) starts there too until a live check shows its tool answers
+        // keep the markers.
         (
             "anthropic",
-            "claude-haiku-4-5"
+            "claude-haiku-5-5"
+            | "claude-haiku-4-5"
             | "claude-haiku-4-5-20251001"
             | "claude-opus-5-5"
             | "claude-sonnet-5-5"

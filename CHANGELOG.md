@@ -25,6 +25,7 @@
 
 ### Changed
 
+- Default models without `llm.model_list` move to each provider's current small model: `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, `deepseek/deepseek-flash` (the ID DeepSeek's model list reports) and `openrouter/google/gemini-3.5-flash-lite`; Gemini keeps `gemini-flash-lite-latest`. `claude-haiku-5-5` starts at native JSON schema like Haiku 4.5; its price is reported as unknown until the pricing snapshot includes it.
 - Local OCR of an SVG reads it rendered at twice its own width (at most 2048 pixels), as the reference does, instead of the 2048-pixel vision preview: the corpus's 426-byte SVG takes 0.29 s and 162 MB instead of 1.8 s and 445 MB, with the same text.
 - Local OCR with the portable engine is faster: text detection uses several threads, the classifier and recognizer are prepared while the first image is detected, and a PDF's scanned pages are recognized two at a time. On the benchmark corpus its 7 raster and scanned-PDF OCR inputs took 9.4 s instead of 14.4 s (Python 1.2: 9.4 s), with identical text.
 - Large XLSX worksheets use far less memory: rows are read as the XML parser closes each one instead of from a tree of the whole sheet, and parsed XML keeps no spare capacity. A 20,000-row workbook (9 MB of sheet XML) peaks at 84 MB instead of 384 MB, with the same output.
