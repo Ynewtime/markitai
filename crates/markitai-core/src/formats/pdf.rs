@@ -2050,7 +2050,7 @@ mod tests {
     }
 
     #[test]
-    fn real_pdf_recovers_text_despite_unused_image_and_keeps_blank_page_warning() {
+    fn real_pdf_reads_text_despite_unused_image_and_keeps_blank_page_warning() {
         let mut pdf = lopdf::Document::with_version("1.7");
         let pages_id = pdf.new_object_id();
         let font = pdf.add_object(
@@ -2075,15 +2075,22 @@ mod tests {
         pdf.trailer.set("Root", catalog);
         let mut bytes = Vec::new();
         pdf.save_to(&mut bytes).unwrap();
+        // The reader no longer takes the bound, undrawn image for a scan, so
+        // the page needs no plain-text recovery and gets no warning for it.
         let initial = pdf_inspector::extract_pages_markdown_mem(&bytes, Some(&[0])).unwrap();
-        assert!(initial.pages[0].needs_ocr);
-        assert_eq!(initial.pages[0].ocr_reason.as_deref(), Some("scanned"));
+        assert!(!initial.pages[0].needs_ocr);
+        assert_eq!(initial.pages[0].ocr_reason, None);
         let result = extract(&bytes).unwrap();
         assert!(result.markdown.contains("readable native text"));
         assert!(result.assets.is_empty());
-        assert!(result.warnings.iter().any(|warning| {
-            warning.contains("read as plain text because it looked like a scan but draws no image")
-        }));
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("read as plain text")),
+            "{:?}",
+            result.warnings
+        );
         assert!(result.markdown.contains("<!-- Page number: 2 -->"));
         assert!(
             result
