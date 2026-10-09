@@ -30,6 +30,7 @@ import asyncio
 import copy
 import threading
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
@@ -163,7 +164,8 @@ def llm_usage_scope(scope: str) -> Iterator[None]:
     """Keep the usage and request budget of one work item apart.
 
     Scopes nest: an inner scope refines the enclosing one instead of
-    replacing it.
+    replacing it. Each scope is also one document for the request budget
+    (see :func:`llm_document_budget`).
 
     Args:
         scope: Unique id of the item (e.g. its resolved input path).
@@ -171,9 +173,40 @@ def llm_usage_scope(scope: str) -> Iterator[None]:
     outer = _usage_scope.get()
     token = _usage_scope.set(f"{outer}\x00{scope}" if outer else scope)
     try:
-        yield
+        with llm_document_budget():
+            yield
     finally:
         _usage_scope.reset(token)
+
+
+class _BudgetDocument:
+    """Identity of one document for :class:`RequestBudget`."""
+
+    __slots__ = ("__weakref__",)
+
+
+# The document whose request budget the current requests spend. Its
+# stages track usage under different contexts (``a.pptx`` for the text,
+# ``/abs/a.pptx:images`` for image analysis), but llm.max_requests_per_document
+# bounds the document, not each stage.
+_budget_document: ContextVar[_BudgetDocument | None] = ContextVar(
+    "markitai_llm_budget_document", default=None
+)
+
+
+@contextmanager
+def llm_document_budget() -> Iterator[None]:
+    """Count every LLM request made in this block against one budget.
+
+    A nested block starts a new document. The budget lives as long as the
+    block (and the tasks it spawned) does: clearing a stage's context does
+    not give the document its requests back.
+    """
+    token = _budget_document.set(_BudgetDocument())
+    try:
+        yield
+    finally:
+        _budget_document.reset(token)
 
 
 def scoped_usage_key(context: str) -> str:
@@ -187,18 +220,27 @@ def _display_context(key: str) -> str:
     return key.rpartition("\x00")[2]
 
 
+@dataclass
+class _BudgetState:
+    """Requests and cost one budget key has used so far."""
+
+    count: int = 0
+    spent: float = 0.0
+    tripped: bool = False
+
+
 class RequestBudget:
-    """Per-context LLM request circuit breaker.
+    """Per-document LLM request circuit breaker.
 
-    Counts every request attempt (retries included) per usage-tracking
-    context and refuses further requests once the limit is reached. This
-    bounds the retry multiplication of one document: transport retries x
-    instructor validation retries x business-level fallback chains.
+    Counts every request attempt (retries included) per document and
+    refuses further requests once the limit is reached. This bounds the
+    retry multiplication of one document: transport retries x instructor
+    validation retries x business-level fallback chains.
 
-    A budget is kept per tracking context: a document's main enhancement
-    (including its per-batch calls) shares one context, while a separate
-    image-analysis stage tracks under its own ``...:images`` context and
-    gets its own budget — each stage is bounded independently.
+    Inside :func:`llm_document_budget` (every :func:`llm_usage_scope` is
+    one) all stages of the document share one budget: its text enhancement
+    and its image analysis, whatever tracking context each uses. Outside
+    one, each tracking context is its own budget.
     """
 
     def __init__(
@@ -221,17 +263,31 @@ class RequestBudget:
         self._limit = limit
         self._cost_limit = cost_limit
         self._on_exceeded = on_exceeded
-        self._counts: dict[str, int] = {}
-        self._spent: dict[str, float] = {}
-        self._tripped: set[str] = set()
+        self._by_context: dict[str, _BudgetState] = {}
+        # Freed with the document block: no clear() call is needed
+        self._by_document: weakref.WeakKeyDictionary[_BudgetDocument, _BudgetState] = (
+            weakref.WeakKeyDictionary()
+        )
         self._lock = threading.Lock()
 
+    def _state(self, context: str, *, create: bool = True) -> _BudgetState:
+        """The budget *context* (already scoped) spends from. Hold the lock."""
+        document = _budget_document.get()
+        table: Any = self._by_context if document is None else self._by_document
+        key: Any = context if document is None else document
+        state = table.get(key)
+        if state is None:
+            state = _BudgetState()
+            if create:
+                table[key] = state
+        return state
+
     def _trip(self, context: str, reason: str) -> None:
-        """Mark a context tripped, reporting it once however often it refuses."""
+        """Mark a budget tripped, reporting it once however often it refuses."""
         with self._lock:
-            first = context not in self._tripped
-            if first:
-                self._tripped.add(context)
+            state = self._state(context)
+            first = not state.tripped
+            state.tripped = True
         if first:
             logger.warning(
                 f"[LLM:{_display_context(context)}] {reason}: skipping further "
@@ -251,9 +307,10 @@ class RequestBudget:
             return
         context = scoped_usage_key(context)
         with self._lock:
-            spent = self._spent.get(context, 0.0) + cost
-            self._spent[context] = spent
-            over = spent > self._cost_limit and context not in self._tripped
+            state = self._state(context)
+            state.spent += cost
+            spent = state.spent
+            over = spent > self._cost_limit and not state.tripped
         if over:
             self._trip(
                 context,
@@ -266,23 +323,23 @@ class RequestBudget:
         No-op for empty contexts (untracked calls) or a disabled limit.
 
         Raises:
-            LLMRequestBudgetExceededError: When the context already used up
+            LLMRequestBudgetExceededError: When the document already used up
                 its budget. The refused attempt is not counted, so at most
-                ``limit`` requests are ever issued per context.
+                ``limit`` requests are ever issued per document.
         """
         if not context:
             return
         context = scoped_usage_key(context)
         with self._lock:
-            if context in self._tripped:
+            state = self._state(context)
+            if state.tripped:
                 already_tripped = True
             else:
                 already_tripped = False
                 if self._limit <= 0:
                     return
-                count = self._counts.get(context, 0)
-                if count < self._limit:
-                    self._counts[context] = count + 1
+                if state.count < self._limit:
+                    state.count += 1
                     return
         if not already_tripped:
             self._trip(
@@ -296,18 +353,18 @@ class RequestBudget:
         )
 
     def exceeded(self, context: str) -> bool:
-        """Whether the context has tripped the breaker."""
+        """Whether the context's document has tripped the breaker."""
         context = scoped_usage_key(context)
         with self._lock:
-            return context in self._tripped
+            return self._state(context, create=False).tripped
 
     @property
     def limit(self) -> int:
-        """Max requests per context (``<= 0`` means unlimited)."""
+        """Max requests per document (``<= 0`` means unlimited)."""
         return self._limit
 
     def remaining(self, context: str) -> int | None:
-        """Requests the context may still issue, or None when unlimited.
+        """Requests the context's document may still issue, or None when unlimited.
 
         Lets a caller that knows its request count up front (a document
         split into chunks) refuse before spending anything, instead of
@@ -317,17 +374,21 @@ class RequestBudget:
             return None
         context = scoped_usage_key(context)
         with self._lock:
-            if context in self._tripped:
+            state = self._state(context, create=False)
+            if state.tripped:
                 return 0
-            return max(self._limit - self._counts.get(context, 0), 0)
+            return max(self._limit - state.count, 0)
 
     def clear(self, context: str) -> None:
-        """Reset the budget for a context (called between documents)."""
+        """Reset a context's budget outside a document block.
+
+        Inside :func:`llm_document_budget` this is a no-op: the document's
+        other stages may still be running, and a finished stage must not
+        hand its requests back.
+        """
         context = scoped_usage_key(context)
         with self._lock:
-            self._counts.pop(context, None)
-            self._spent.pop(context, None)
-            self._tripped.discard(context)
+            self._by_context.pop(context, None)
 
 
 # Retryable transport exceptions (canonical definition; markitai.llm.processor

@@ -227,45 +227,50 @@ async def convert_url_cascade(
     llm_error: str | None = None
     screenshot_only_mode = uses_screenshot_only(cfg, fetch_result)
     if cfg.llm.enabled:
+        from markitai.llm.engine import llm_document_budget
         from markitai.utils.text import format_error_message
 
         proc = processor if processor is not None else create_llm_processor(cfg)
         try:
-            if llm_stage is not None:
-                (
-                    llm_output_path,
-                    stage_cost,
-                    stage_usage,
-                    stage_error,
-                ) = await llm_stage(markdown, url, cfg, output_file, fetch_result, proc)
-                cost_usd = stage_cost
-                llm_usage = stage_usage
-                llm_error = stage_error
-            elif screenshot_only_mode:
-                (
-                    llm_output_path,
-                    cost_usd,
-                    llm_usage,
-                    llm_error,
-                ) = await _screenshot_only_llm_stage(
-                    markdown, url, cfg, output_file, fetch_result, proc
-                )
-            else:
-                (
-                    llm_output_path,
-                    cost_usd,
-                    llm_usage,
-                    llm_error,
-                ) = await _default_document_stage(
-                    markdown,
-                    url,
-                    cfg,
-                    output_file,
-                    fetch_result,
-                    proc,
-                    extra_meta=extra_meta,
-                    title=title,
-                )
+            # The URL's text and image stages share one request budget
+            with llm_document_budget():
+                if llm_stage is not None:
+                    (
+                        llm_output_path,
+                        stage_cost,
+                        stage_usage,
+                        stage_error,
+                    ) = await llm_stage(
+                        markdown, url, cfg, output_file, fetch_result, proc
+                    )
+                    cost_usd = stage_cost
+                    llm_usage = stage_usage
+                    llm_error = stage_error
+                elif screenshot_only_mode:
+                    (
+                        llm_output_path,
+                        cost_usd,
+                        llm_usage,
+                        llm_error,
+                    ) = await _screenshot_only_llm_stage(
+                        markdown, url, cfg, output_file, fetch_result, proc
+                    )
+                else:
+                    (
+                        llm_output_path,
+                        cost_usd,
+                        llm_usage,
+                        llm_error,
+                    ) = await _default_document_stage(
+                        markdown,
+                        url,
+                        cfg,
+                        output_file,
+                        fetch_result,
+                        proc,
+                        extra_meta=extra_meta,
+                        title=title,
+                    )
         except Exception as e:
             # Same policy as the file pipeline: write the base .md as a
             # fallback below, then surface the failure per the policy.
