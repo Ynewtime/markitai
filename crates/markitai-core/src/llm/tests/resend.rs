@@ -187,8 +187,15 @@ fn transport_retries_and_image_analysis_fallbacks_are_warned() {
     ]);
     let cfg = super::cfg("openai/test", &server.base);
     let scope = DocumentScope::new(&cfg);
-    analyze_images_with_runtime("context", "source", &[("image/png", b"bytes")], &cfg, None)
-        .unwrap();
+    analyze_images_with_runtime(
+        "context",
+        "source",
+        &[("image/png", b"bytes")],
+        &cfg,
+        None,
+        None,
+    )
+    .unwrap();
     let warnings = scope.take_warnings();
     assert_eq!(
         warnings,

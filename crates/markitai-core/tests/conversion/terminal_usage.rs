@@ -265,8 +265,9 @@ fn image_analysis_failure_keeps_main_document_and_image_usage_once() {
         archive.write_all(body).unwrap();
     }
     std::fs::write(&path, archive.finish().unwrap().into_inner()).unwrap();
-    let server = Server::new(|request, index| {
-        if index % 2 == 0 {
+    // Image analysis runs beside enhancement: answer by request kind.
+    let server = Server::new(|request, _| {
+        if request["messages"][1]["content"].is_string() {
             (200, typed(user(request), "A complete authored document"))
         } else {
             (

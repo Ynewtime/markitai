@@ -589,6 +589,29 @@ fn convert_inner(
     if config::enabled(&cfg, "/llm/enabled") {
         result.base_frontmatter = Some(result.frontmatter.clone());
     }
+    // Without a caller runtime, one runtime bounds this document's concurrent
+    // requests by `llm.concurrency`.
+    let local_runtime;
+    let llm_runtime = match context.llm_runtime {
+        Some(runtime) => Some(runtime),
+        None if config::enabled(&cfg, "/llm/enabled") => {
+            let concurrency = cfg
+                .pointer("/llm/concurrency")
+                .and_then(Value::as_u64)
+                .unwrap_or(10);
+            local_runtime = LlmRuntime::new(
+                usize::try_from(concurrency)
+                    .map_err(|_| Error::Config("LLM concurrency is too large".into()))?,
+            )?;
+            Some(&local_runtime)
+        }
+        None => None,
+    };
+    // Image prompts read the base Markdown, so a document's images are
+    // analysed while its text is enhanced, under the same request budget.
+    let pending_analysis = llm_runtime
+        .filter(|_| !image_input)
+        .and_then(|runtime| image_enrichment::start(&doc, &result.markdown, source, &cfg, runtime));
     if config::enabled(&cfg, "/llm/enabled") && !standalone_analysis {
         let source_context = if is_url {
             output::redact_url(source)
@@ -628,7 +651,7 @@ fn convert_inner(
                     &source_context,
                     &image_refs,
                     &cfg,
-                    context.llm_runtime,
+                    llm_runtime,
                 )
                 .map(without_cache)
             } else {
@@ -655,7 +678,7 @@ fn convert_inner(
                         frames: &frames,
                     },
                     &cfg,
-                    context.llm_runtime,
+                    llm_runtime,
                 );
                 // A rendered web page still has an independently extracted body.
                 // Reuse the same document accounting context for a typed text fallback.
@@ -675,7 +698,7 @@ fn convert_inner(
                             doc.metadata.get("content_profile").and_then(Value::as_str)
                                 == Some("social_post"),
                             &cfg,
-                            context.llm_runtime,
+                            llm_runtime,
                         )
                     }
                     outcome => outcome.map_err(|failure| failure.error),
@@ -692,7 +715,7 @@ fn convert_inner(
                     &source_context,
                     &images,
                     &cfg,
-                    context.llm_runtime,
+                    llm_runtime,
                 )
                 .map(without_cache)
             } else {
@@ -714,7 +737,7 @@ fn convert_inner(
                         frames: &frames,
                     },
                     &cfg,
-                    context.llm_runtime,
+                    llm_runtime,
                 )
                 .map_err(|failure| failure.error)
             }
@@ -725,10 +748,10 @@ fn convert_inner(
                 source,
                 doc.metadata.get("content_profile").and_then(Value::as_str) == Some("social_post"),
                 &cfg,
-                context.llm_runtime,
+                llm_runtime,
             )
         } else {
-            llm::enhance_with_source_and_runtime(input, &source_context, &cfg, context.llm_runtime)
+            llm::enhance_with_source_and_runtime(input, &source_context, &cfg, llm_runtime)
                 .map(without_cache)
         };
         match enhanced {
@@ -836,7 +859,8 @@ fn convert_inner(
         source,
         image_input,
         &cfg,
-        context.llm_runtime,
+        llm_runtime,
+        pending_analysis,
     ) {
         if matches!(error, Error::NoModelConfigured | Error::Unsupported(_)) || output_dir.is_none()
         {
