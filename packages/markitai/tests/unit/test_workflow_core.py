@@ -2412,9 +2412,13 @@ class TestConvertDocumentCore:
             return ConversionStepResult(success=True)
 
         flag_at_call: list[bool] = []
+        vision_at_call: list[bool] = []
 
-        def fake_stabilize(ctx_arg: ConversionContext, processor: object) -> bool:
+        def fake_stabilize(
+            ctx_arg: ConversionContext, processor: object, *, vision: bool = False
+        ) -> bool:
             flag_at_call.append(ctx_arg.paged_stabilized)
+            vision_at_call.append(vision)
             return False
 
         with (
@@ -2441,6 +2445,8 @@ class TestConvertDocumentCore:
         # Stabilize must be called while the flag is still False
         assert flag_at_call == [False]
         assert ctx.paged_stabilized is True
+        # The page images were sent: page transcriptions are not drift
+        assert vision_at_call == [True]
 
     @pytest.mark.asyncio
     async def test_image_conversion(self, tmp_path: Path) -> None:

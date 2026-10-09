@@ -729,8 +729,14 @@ def apply_output_profile(ctx: ConversionContext) -> None:
 def stabilize_written_llm_output(
     ctx: ConversionContext,
     processor: Any,
+    *,
+    vision: bool = False,
 ) -> bool:
-    """Re-stabilize a written .llm.md file against its base .md sibling."""
+    """Re-stabilize a written .llm.md file against its base .md sibling.
+
+    ``vision``: the file came from a call that saw the page images, so
+    text on a page whose extraction was empty is its transcription.
+    """
     if ctx.output_file is None or ctx.conversion_result is None:
         return False
     if ctx.paged_stabilized:
@@ -754,7 +760,7 @@ def stabilize_written_llm_output(
     llm_content = llm_output.read_text(encoding="utf-8")
     frontmatter, llm_body = split_frontmatter(llm_content)
     stabilized = maybe_stabilize_markdown(
-        processor, baseline_markdown, llm_body, ctx.input_path.name
+        processor, baseline_markdown, llm_body, ctx.input_path.name, vision=vision
     )
     if stabilized == llm_body:
         return False
@@ -1329,7 +1335,7 @@ async def _run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
                     image_analysis_error_warning(format_error_message(e))
                 )
 
-            stabilize_written_llm_output(ctx, ctx.shared_processor)
+            stabilize_written_llm_output(ctx, ctx.shared_processor, vision=True)
             ctx.paged_stabilized = True
 
             # Apply alt text updates AFTER stabilization — stabilize may rewrite

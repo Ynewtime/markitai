@@ -495,8 +495,16 @@ class DocumentEnhancer:
     def _is_suspicious_page_expansion(
         original_section: str,
         cleaned_section: str,
+        *,
+        vision: bool = False,
     ) -> bool:
-        """Detect page sections that grew far beyond the original extraction."""
+        """Detect page sections that grew far beyond the original extraction.
+
+        With ``vision`` the model saw the page image, and the vision prompt
+        tells it to transcribe a page whose extracted text is empty (a
+        scanned page always is): text on an empty page is then the
+        transcription, not drift.
+        """
         original_body = _STRUCTURED_MARKER_CAPTURE_RE.sub(
             "", original_section, count=1
         ).strip()
@@ -510,7 +518,7 @@ class DocumentEnhancer:
         if cleaned_len <= original_len:
             return False
         if original_len == 0:
-            return cleaned_len > 200
+            return not vision and cleaned_len > 200
         if original_len < 400:
             return cleaned_len > max(original_len * 2, original_len + 80)
         return cleaned_len > max(original_len * 2, original_len + 800)
@@ -547,6 +555,19 @@ class DocumentEnhancer:
         cleaned_text = self._extract_semantic_section_text(cleaned_section)
         return bool(original_text) and not bool(cleaned_text)
 
+    def _lost_all_answer_text(self, answer: str, stabilized: str) -> bool:
+        """Whether stabilizing left an empty body from an answer with text.
+
+        Reverting sections can leave nothing but page markers (a scan whose
+        transcription was reverted). That is not a cleanup and must fail
+        rather than pass an empty body off as the enhanced document. A body
+        that keeps its images (an image-only deck) is not empty.
+        """
+        if not self._extract_semantic_section_text(answer):
+            return False
+        body, _suffix = self._split_reference_suffix(stabilized)
+        return not self._extract_semantic_section_text(body) and "![" not in body
+
     def _is_suspicious_image_only_text_injection(
         self,
         original_section: str,
@@ -566,8 +587,14 @@ class DocumentEnhancer:
         original_markdown: str,
         cleaned_markdown: str,
         source: str,
+        *,
+        vision: bool = False,
     ) -> str:
-        """Protect page-marked documents from LLM structural drift."""
+        """Protect page-marked documents from LLM structural drift.
+
+        ``vision``: the answer comes from a call that saw the page images
+        (see :meth:`_is_suspicious_page_expansion`).
+        """
         if (
             not PAGE_MARKER_RE.search(original_markdown)
             and "<!-- Slide number:" not in original_markdown
@@ -601,7 +628,9 @@ class DocumentEnhancer:
             original_sections, cleaned_sections, strict=False
         ):
             if (
-                self._is_suspicious_page_expansion(original_section, cleaned_section)
+                self._is_suspicious_page_expansion(
+                    original_section, cleaned_section, vision=vision
+                )
                 or self._is_suspicious_section_body_loss(
                     original_section, cleaned_section
                 )
@@ -915,7 +944,15 @@ class DocumentEnhancer:
 
         # Fix malformed image references (e.g., extra closing parentheses)
         result = content_utils.fix_malformed_image_refs(result)
-        result = self._stabilize_paged_markdown(extracted_text, result, context)
+        answer = result
+        result = self._stabilize_paged_markdown(
+            extracted_text, result, context, vision=True
+        )
+        if self._lost_all_answer_text(answer, result):
+            raise LLMEnhancementDegradedError(
+                "LLM answer text was discarded by the page drift guard",
+                cleaned_markdown=extracted_text,
+            )
 
         # Guard against VLM degeneration (repetition loops) in enhanced text
         result, degenerated = truncate_degenerate_tail(
@@ -1279,7 +1316,14 @@ class DocumentEnhancer:
 
             # Fix malformed image references (e.g., extra closing parentheses)
             cleaned = content_utils.fix_malformed_image_refs(cleaned)
-            cleaned = self._stabilize_paged_markdown(extracted_text, cleaned, source)
+            answer = cleaned
+            cleaned = self._stabilize_paged_markdown(
+                extracted_text, cleaned, source, vision=True
+            )
+            if self._lost_all_answer_text(answer, cleaned):
+                raise ValueError(
+                    "LLM answer text was discarded by the page drift guard"
+                )
             rejection = content_utils.implausible_cleaning_reason(
                 extracted_text, cleaned, check_overlap=False
             )
