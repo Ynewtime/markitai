@@ -323,7 +323,8 @@ address. A page saved from a browser has none, so it is known by the address it
 names for itself, in this order of appearance: the `<!-- saved from url=… -->`
 comment browsers write, the canonical link, `og:url` and `<base href>`; a saved
 page that names no address at all is known by the site's own markers
-(`#js-initialData`, `#js_content`), and another site's canonical link overrides
+(`#js-initialData`, `#js_content`, Bilibili's `.bili-opus-view`, YouTube's
+`ytd-watch-flexy`), and another site's canonical link overrides
 those markers. When a reader finds none of its markers, or what it builds
 converts to nothing, the generic reader reads the original page. A built page
 carries a marker and is never read a second time.
@@ -337,6 +338,7 @@ carries a marker and is never read a second time.
 | OSCHINA (`oschina.net`) | blog post | `.blog-content .editor` with `h1.blog-content-title` and `.blog-content-info` (the page is rendered by scripts, so this is the local browser's result or a saved page) | title, a line `author · date` and the body, without the AI summary box, the advertisement, tags, comments and recommended posts |
 | Bilibili (`bilibili.com`) | opus and column pages | `.opus-module-content` with `.opus-module-title__text` and `.opus-module-author__*` of the rendered page | title, `author · time` and the body; images as uploaded (the size directive after `@` is removed); without the table of contents, the sidebar, tags, comments and the site menu |
 | Douban (`douban.com`) | book, movie and music review | `.review-content` of `.review-wrapper`, with the `h1` title and `header.main-hd` (reviewer, work, the rating's `title`, `.main-meta` time) | title, a line `reviewer · 评论《work》 · 力荐 · time` and the review, with the site's spoiler notice in italics when it shows one; without the avatar, the work's card, votes, comments and menus |
+| YouTube (`youtube.com`, `youtu.be`) | watch page | the rendered page's `ytd-watch-metadata` (`h1`, `#channel-name a`, `#owner-sub-count`, `#description-inner`), `ytd-watch-info-panel-renderer` and `ytd-comment-thread-renderer` (`#author-text`, `#content-text`, up to 200), else the `ytInitialPlayerResponse` a server-sent page carries (`videoDetails`: title, author, channel, `shortDescription`, `viewCount`; `publishDate`) | title, the channel linked with its subscriber count, the description with its line breaks, the view and date lines, and a `Comments` section of `**author**: text`; without the masthead, the guide and the like, dislike, share and save buttons |
 | 36Kr (`36kr.com`) | article | the `publishTime` the page's own script keeps next to the article | the page's `article:published_time` is the moment the server wrote the page; the frontmatter `published` is the article's own time |
 
 Two changes apply to every page. The redirect page a site wraps its outward
@@ -369,7 +371,10 @@ Zhihu refused every automated client during development, including a browser
 that was not logged in (it redirects to a security check that asks for a login),
 so the Zhihu reader is tested only on fixtures that follow the JSON structure
 documented by projects that read saved Zhihu pages; no live Zhihu page has been
-read. MHTML (`.mht`, `.mhtml`) files are not a supported input; save the page as
+read. The YouTube reader is tested only on fixtures that follow a rendered
+watch page's `ytd-*` markup and the player response's documented fields; no live
+YouTube page was read while it was written.
+MHTML (`.mht`, `.mhtml`) files are not a supported input; save the page as
 "Webpage, HTML Only" or "Webpage, Complete".
 
 ## Mathematical content
