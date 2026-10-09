@@ -157,8 +157,11 @@ pub(crate) fn quote(identity: &Identity<'_>, response: &Value, class: BillingCla
     }
 }
 
+// The Messages API documents several counters as "number or null"; null
+// reports nothing, like an absent field.
 fn number(value: Option<&Value>) -> Result<Option<u64>, UnknownPrice> {
     value
+        .filter(|value| !value.is_null())
         .map(|value| value.as_u64().ok_or(UnknownPrice::InvalidUsage))
         .transpose()
 }
@@ -183,8 +186,17 @@ fn object<'a>(
 ) -> Result<Option<&'a Map<String, Value>>, UnknownPrice> {
     usage
         .get(key)
+        .filter(|value| !value.is_null())
         .map(|value| value.as_object().ok_or(UnknownPrice::InvalidUsage))
         .transpose()
+}
+// The same counter reported under both Chat Completions and Responses names
+// must agree; an absent one is zero.
+fn agree(values: [Option<u64>; 2]) -> Result<u64, UnknownPrice> {
+    if values[0].zip(values[1]).is_some_and(|(a, b)| a != b) {
+        return Err(UnknownPrice::InvalidUsage);
+    }
+    Ok(values[0].or(values[1]).unwrap_or(0))
 }
 fn add(a: u64, b: u64) -> Result<u64, UnknownPrice> {
     a.checked_add(b).ok_or(UnknownPrice::Overflow)
@@ -236,11 +248,7 @@ fn calculate(
         .ok_or(UnknownPrice::MissingUsage)?;
     tier(response.get("service_tier"), class)?;
     tier(usage.get("service_tier"), class)?;
-    let rates = match class {
-        BillingClass::Standard => tariff.rates,
-        BillingClass::Batch => tariff.rates.batch(),
-    };
-    let (base, cached, write5, write1, output) = match provider {
+    let (base, cached, written, written_1h, output) = match provider {
         Provider::OpenAi => {
             allowed_keys(
                 usage,
@@ -259,24 +267,42 @@ fn calculate(
             )?;
             let input = required(usage, "prompt_tokens", Some("input_tokens"))?;
             let output = required(usage, "completion_tokens", Some("output_tokens"))?;
-            let mut caches = [None, None];
+            let (mut cached, mut written) = ([None, None], [None, None]);
             for (index, key) in ["prompt_tokens_details", "input_tokens_details"]
                 .iter()
                 .enumerate()
             {
                 if let Some(details) = object(usage, key)? {
-                    allowed_keys(details, &["cached_tokens", "audio_tokens"])?;
+                    allowed_keys(
+                        details,
+                        &[
+                            "cached_tokens",
+                            "cache_write_tokens",
+                            "audio_tokens",
+                            "text_tokens",
+                            "image_tokens",
+                        ],
+                    )?;
                     if optional(details, "audio_tokens")? != 0 {
                         return Err(UnknownPrice::UnsupportedUsage);
                     }
-                    caches[index] = number(details.get("cached_tokens"))?;
+                    // Text and image counts split the prompt by modality; image
+                    // input is metered as ordinary input tokens.
+                    let modalities = add(
+                        optional(details, "text_tokens")?,
+                        optional(details, "image_tokens")?,
+                    )?;
+                    if modalities > input {
+                        return Err(UnknownPrice::InvalidUsage);
+                    }
+                    cached[index] = number(details.get("cached_tokens"))?;
+                    written[index] = number(details.get("cache_write_tokens"))?;
                 }
             }
-            if caches[0].zip(caches[1]).is_some_and(|(a, b)| a != b) {
-                return Err(UnknownPrice::InvalidUsage);
-            }
-            let cached = caches[0].or(caches[1]).unwrap_or(0);
-            if cached > input {
+            // OpenAI's prompt caching guide prices the prompt as ordinary
+            // input, cached reads and cache writes, each a disjoint part of it.
+            let (cached, written) = (agree(cached)?, agree(written)?);
+            if add(cached, written)? > input {
                 return Err(UnknownPrice::InvalidUsage);
             }
             for key in ["completion_tokens_details", "output_tokens_details"] {
@@ -286,6 +312,7 @@ fn calculate(
                         &[
                             "reasoning_tokens",
                             "audio_tokens",
+                            "text_tokens",
                             "accepted_prediction_tokens",
                             "rejected_prediction_tokens",
                         ],
@@ -295,6 +322,7 @@ fn calculate(
                     }
                     for counter in [
                         "reasoning_tokens",
+                        "text_tokens",
                         "accepted_prediction_tokens",
                         "rejected_prediction_tokens",
                     ] {
@@ -304,7 +332,7 @@ fn calculate(
                     }
                 }
             }
-            (input - cached, cached, 0, 0, output)
+            (input - cached - written, cached, written, 0, output)
         }
         Provider::Anthropic => {
             allowed_keys(
@@ -315,6 +343,8 @@ fn calculate(
                     "cache_read_input_tokens",
                     "cache_creation_input_tokens",
                     "cache_creation",
+                    "output_tokens_details",
+                    "server_tool_use",
                     "total_tokens",
                     "service_tier",
                     "inference_geo",
@@ -330,6 +360,22 @@ fn calculate(
             }
             let input = required(usage, "input_tokens", None)?;
             let output = required(usage, "output_tokens", None)?;
+            // Thinking is part of the billed output total, not an addition.
+            if let Some(details) = object(usage, "output_tokens_details")? {
+                allowed_keys(details, &["thinking_tokens"])?;
+                if optional(details, "thinking_tokens")? > output {
+                    return Err(UnknownPrice::InvalidUsage);
+                }
+            }
+            // Server tools are billed per request, outside this catalog.
+            if let Some(tools) = object(usage, "server_tool_use")? {
+                allowed_keys(tools, &["web_fetch_requests", "web_search_requests"])?;
+                if optional(tools, "web_fetch_requests")? != 0
+                    || optional(tools, "web_search_requests")? != 0
+                {
+                    return Err(UnknownPrice::UnsupportedUsage);
+                }
+            }
             let cached = optional(usage, "cache_read_input_tokens")?;
             let total_created = number(usage.get("cache_creation_input_tokens"))?;
             let (write5, write1) = if let Some(details) = object(usage, "cache_creation")? {
@@ -352,13 +398,22 @@ fn calculate(
             (input, cached, write5, write1, output)
         }
     };
-    let all_input = add(add(add(base, cached)?, write5)?, write1)?;
+    let all_input = add(add(add(base, cached)?, written)?, written_1h)?;
     if tariff
         .max_priced_input
         .is_some_and(|limit| all_input > limit)
     {
         return Err(UnknownPrice::Context);
     }
+    let rates = match tariff.long {
+        Some(long) if all_input >= long.long_from => long.rates,
+        Some(long) if all_input > long.short_max => return Err(UnknownPrice::Context),
+        _ => tariff.rates,
+    };
+    let rates = match class {
+        BillingClass::Standard => rates,
+        BillingClass::Batch => rates.batch(),
+    };
     if let Some(total) = number(usage.get("total_tokens"))?
         && add(all_input, output)? != total
     {
@@ -374,8 +429,8 @@ fn calculate(
     let amount = terms(&[
         (base, rates.input),
         (cached, rates.cache_read),
-        (write5, write_rate(write5, rates.cache_write_5m)?),
-        (write1, write_rate(write1, rates.cache_write_1h)?),
+        (written, write_rate(written, rates.cache_write)?),
+        (written_1h, write_rate(written_1h, rates.cache_write_1h)?),
         (output, rates.output),
     ])?;
     Ok((amount, tariff.family))
@@ -427,6 +482,174 @@ mod tests {
             amount(&openai(), &response, BillingClass::Batch),
             1_500_000_000
         );
+    }
+
+    fn luna() -> Identity<'static> {
+        Identity {
+            model: "gpt-6-luna",
+            ..openai()
+        }
+    }
+
+    #[test]
+    fn openai_cache_writes_are_a_separately_billed_part_of_the_prompt() {
+        // The usage shape of OpenAI's Chat Completions reference.
+        let response = json!({"model":"gpt-6-luna","service_tier":"default","usage":{
+            "prompt_tokens":10000,"completion_tokens":500,"total_tokens":10500,
+            "prompt_tokens_details":{"audio_tokens":0,"cache_write_tokens":3000,
+                "cached_tokens":4000,"image_tokens":1200,"text_tokens":8800},
+            "completion_tokens_details":{"accepted_prediction_tokens":0,"audio_tokens":0,
+                "reasoning_tokens":300,"rejected_prediction_tokens":0,"text_tokens":200}}});
+        let standard = 3000 * 100_000 + 4000 * 10_000 + 3000 * 125_000 + 500 * 500_000;
+        assert_eq!(amount(&luna(), &response, BillingClass::Standard), standard);
+        assert_eq!(
+            amount(&luna(), &response, BillingClass::Batch),
+            standard / 2
+        );
+
+        let mut both_names = response.clone();
+        both_names["usage"]["input_tokens_details"] = json!({"cache_write_tokens":2999});
+        let mut too_many = response.clone();
+        too_many["usage"]["prompt_tokens_details"]["cache_write_tokens"] = json!(6001);
+        let mut modalities = response.clone();
+        modalities["usage"]["prompt_tokens_details"]["image_tokens"] = json!(1201);
+        let mut text_output = response.clone();
+        text_output["usage"]["completion_tokens_details"]["text_tokens"] = json!(501);
+        for invalid in [both_names, too_many, modalities, text_output] {
+            assert_eq!(
+                quote(&luna(), &invalid, BillingClass::Standard),
+                Quote::Unknown(UnknownPrice::InvalidUsage)
+            );
+        }
+
+        // GPT-4.1 has no reviewed cache-write rate: a write is not guessed.
+        let older = json!({"usage":{"prompt_tokens":10,"completion_tokens":1,
+            "prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0}}});
+        assert_eq!(
+            amount(&openai(), &older, BillingClass::Standard),
+            10 * 2_000_000 + 8_000_000
+        );
+        let mut written = older;
+        written["usage"]["prompt_tokens_details"]["cache_write_tokens"] = json!(4);
+        assert_eq!(
+            quote(&openai(), &written, BillingClass::Standard),
+            Quote::Unknown(UnknownPrice::CacheDetails)
+        );
+    }
+
+    #[test]
+    fn openai_long_context_reprices_the_whole_request_once_certain() {
+        let response = |prompt: u64| {
+            json!({"usage":{"prompt_tokens":prompt,"completion_tokens":1000,
+                "prompt_tokens_details":{"cached_tokens":100_000,"cache_write_tokens":50_000}}})
+        };
+        let short = 122_000 * 100_000 + 100_000 * 10_000 + 50_000 * 125_000 + 1000 * 500_000;
+        assert_eq!(
+            amount(&luna(), &response(272_000), BillingClass::Standard),
+            short
+        );
+        // Between 272,000 and 272 x 1,024 the published "272K" boundary is unclear.
+        for unclear in [272_001, 275_000, 278_528] {
+            assert_eq!(
+                quote(&luna(), &response(unclear), BillingClass::Standard),
+                Quote::Unknown(UnknownPrice::Context)
+            );
+        }
+        let long = 128_529 * 200_000 + 100_000 * 20_000 + 50_000 * 250_000 + 1000 * 750_000;
+        assert_eq!(
+            amount(&luna(), &response(278_529), BillingClass::Standard),
+            long
+        );
+        assert_eq!(
+            amount(&luna(), &response(278_529), BillingClass::Batch),
+            long / 2
+        );
+    }
+
+    fn haiku_5_5() -> Identity<'static> {
+        Identity {
+            model: "claude-haiku-5-5",
+            ..anthropic()
+        }
+    }
+
+    #[test]
+    fn haiku_5_5_prompt_over_100k_tokens_reprices_the_whole_request() {
+        let response = |input: u64| {
+            json!({"model":"claude-haiku-5-5","usage":{"input_tokens":input,"output_tokens":1000,
+                "cache_read_input_tokens":60_000,"cache_creation_input_tokens":30_000,
+                "cache_creation":{"ephemeral_5m_input_tokens":20_000,"ephemeral_1h_input_tokens":10_000}}})
+        };
+        // The prompt counts cache reads and writes: 10,000 + 60,000 + 30,000.
+        let short = 10_000 * 100_000 + 60_000 * 10_000 + 20_000 * 125_000 + 10_000 * 200_000;
+        assert_eq!(
+            amount(&haiku_5_5(), &response(10_000), BillingClass::Standard),
+            short + 1000 * 500_000
+        );
+        let long = 10_001 * 500_000 + 60_000 * 50_000 + 20_000 * 625_000 + 10_000 * 1_000_000;
+        assert_eq!(
+            amount(&haiku_5_5(), &response(10_001), BillingClass::Standard),
+            long + 1000 * 2_500_000
+        );
+        assert_eq!(
+            amount(&haiku_5_5(), &response(10_001), BillingClass::Batch),
+            (long + 1000 * 2_500_000) / 2
+        );
+        // Unlike Claude 4.5, the reviewed bands cover the whole context window.
+        assert!(matches!(
+            quote(&haiku_5_5(), &response(900_000), BillingClass::Standard),
+            Quote::Known { .. }
+        ));
+        let mut other = response(10_000);
+        other["model"] = json!("claude-haiku-4-5-20251001");
+        assert_eq!(
+            quote(&haiku_5_5(), &other, BillingClass::Standard),
+            Quote::Unknown(UnknownPrice::ResponseModel)
+        );
+    }
+
+    #[test]
+    fn messages_usage_breakdowns_and_null_counters_follow_the_api_reference() {
+        // The Messages API reference's usage shape, without server tool use.
+        let mut response = json!({"model":"claude-haiku-5-5","usage":{
+            "cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},
+            "cache_creation_input_tokens":0,"cache_read_input_tokens":2051,
+            "inference_geo":"global","input_tokens":2095,"output_tokens":503,
+            "output_tokens_details":{"thinking_tokens":120},
+            "server_tool_use":{"web_fetch_requests":0,"web_search_requests":0},
+            "service_tier":"standard"}});
+        let listed = 2095 * 100_000 + 2051 * 10_000 + 503 * 500_000;
+        assert_eq!(
+            amount(&haiku_5_5(), &response, BillingClass::Standard),
+            listed
+        );
+        for key in [
+            "cache_creation",
+            "cache_creation_input_tokens",
+            "server_tool_use",
+        ] {
+            response["usage"][key] = Value::Null;
+        }
+        assert_eq!(
+            amount(&haiku_5_5(), &response, BillingClass::Standard),
+            listed
+        );
+        let mut thinking = response.clone();
+        thinking["usage"]["output_tokens_details"]["thinking_tokens"] = json!(504);
+        assert_eq!(
+            quote(&haiku_5_5(), &thinking, BillingClass::Standard),
+            Quote::Unknown(UnknownPrice::InvalidUsage)
+        );
+        for tools in [
+            json!({"web_fetch_requests":2,"web_search_requests":0}),
+            json!({"web_search_requests":0,"code_execution_requests":0}),
+        ] {
+            response["usage"]["server_tool_use"] = tools;
+            assert_eq!(
+                quote(&haiku_5_5(), &response, BillingClass::Standard),
+                Quote::Unknown(UnknownPrice::UnsupportedUsage)
+            );
+        }
     }
 
     #[test]

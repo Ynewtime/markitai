@@ -1,4 +1,5 @@
 """Offline attribution counterexamples; no build, npm, installation or providers."""
+from decimal import Decimal
 from pathlib import Path
 import base64
 import csv
@@ -105,6 +106,31 @@ class PricingAttributionTests(unittest.TestCase):
                 self.assertEqual(records[path], ["sha256=" + digest, str(len(content))])
             self.assertNotEqual(archive.read("markitai-1.dist-info/licenses/licenses/pricing/provenance.json"), archive.read("markitai-1.dist-info/licenses/vendor/web/provenance.json"))
         self.assertEqual(set(pricing_files(self.source)), {"licenses/pricing/" + name for name in NAMES})
+
+
+class RepositoryPricingRowsTests(unittest.TestCase):
+    def test_each_retained_object_matches_its_recorded_source_range_and_rates(self):
+        directory = Path(__file__).resolve().parents[1] / "licenses/pricing"
+        provenance = json.loads((directory / "provenance.json").read_bytes())
+        text = (directory / "source-rows.json").read_bytes().decode()
+        # Recover each retained object's exact bytes, not a re-serialization.
+        decoder, objects, index = json.JSONDecoder(), {}, text.index("{") + 1
+        while (index := text.find('"', index)) != -1:
+            key, index = json.decoder.scanstring(text, index + 1)
+            start = text.index("{", index)
+            _, index = decoder.raw_decode(text, start)
+            objects[key] = text[start:index].encode()
+        self.assertEqual(provenance["snapshot"], "litellm-%s-selected-%s" % (provenance["version"], provenance["captured_date"]))
+        self.assertEqual(list(objects), [row["model"] for row in provenance["rows"]])
+        for row in provenance["rows"]:
+            raw = objects[row["model"]]
+            self.assertEqual(len(raw), row["source_byte_end"] - row["source_byte_start"], row["model"])
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), row["source_object_sha256"], row["model"])
+            source = json.loads(raw, parse_float=Decimal)
+            self.assertEqual(set(row["usd_per_token_decimal"]), set(row["picodollars_per_token"]))
+            for field, decimal in row["usd_per_token_decimal"].items():
+                self.assertEqual(str(source[field]), decimal, (row["model"], field))
+                self.assertEqual(Decimal(decimal) * 10**12, row["picodollars_per_token"][field], (row["model"], field))
 
 
 if __name__ == "__main__":

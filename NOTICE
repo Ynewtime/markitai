@@ -36,7 +36,7 @@ license and exact source identities in
 crates/markitai-core/src/formats/numbers/fixtures/.
 
 The bounded offline token-pricing catalog derives selected rows from LiteLLM
-1.100.1's bundled model data. Its original BerriAI copyright/license notice,
+1.106.0.dev2's bundled model data. Its original BerriAI copyright/license notice,
 exact selected source objects and official tariff/alias provenance are retained
 in licenses/pricing/. This attribution does not assert universal price coverage
 or complete legal review of the dependency bundle.
