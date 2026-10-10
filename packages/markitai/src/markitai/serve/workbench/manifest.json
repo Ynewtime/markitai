@@ -1,0 +1,47 @@
+{
+  "note": "Interim bundle of markitai-rust main's committed workbench dist/ (not a published shared build).",
+  "source_commit": "00d36db044a751c76f25b2a55f3c901ae5763b54",
+  "build_command": "git show 00d36db:crates/markitai-cli/src/server/web/dist/* (committed build.mjs output) + vendor/web/inter-latin-wght-normal.woff2",
+  "files": {
+    "ui/app.css": {
+      "bytes": 62203,
+      "sha256": "2d951c8a346c415f578d4d98982a66ee36af6742be5d92c4a1b334a87771d0a5"
+    },
+    "ui/app.css.gz": {
+      "bytes": 11862,
+      "sha256": "83020190ee333c262da04bf1edf13798e41cfa958b3582f6217778c3514a9433"
+    },
+    "ui/app.js": {
+      "bytes": 259242,
+      "sha256": "b66a204115e851b3082268a2d8cc597adc9f1637c54e857e86295d698eb82b99"
+    },
+    "ui/app.js.gz": {
+      "bytes": 89470,
+      "sha256": "647d6003e46a9a9c32f058002d6a1b882eb428295972ddacbb98e3ed185a0307"
+    },
+    "ui/boot.js": {
+      "bytes": 808,
+      "sha256": "8e0a65ba4d20eef0621654397eb6fb30539742fe87713aff337b5d83e93625c2"
+    },
+    "ui/index.html": {
+      "bytes": 1076,
+      "sha256": "5c8fe5db3a72e310204fc2eabd4f324cd97a4e7931a243c0751427ff8d302f80"
+    },
+    "ui/inter-latin-wght.woff2": {
+      "bytes": 48256,
+      "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+    },
+    "ui/logo.svg": {
+      "bytes": 279,
+      "sha256": "ebf823cffb0fcf221db067238316577ed68eb946da9e86f12d2d1fea82d183b8"
+    },
+    "ui/marked.js.gz": {
+      "bytes": 13954,
+      "sha256": "8e98eabb98c4c85d67c65fe2cf0d16a9697e8d8038aed0690fa358b071edd524"
+    },
+    "ui/purify.js.gz": {
+      "bytes": 23516,
+      "sha256": "07aabadefffb55bb9f74b2d07eb3f1132b370c462f754f388841cc32c3bd76bc"
+    }
+  }
+}

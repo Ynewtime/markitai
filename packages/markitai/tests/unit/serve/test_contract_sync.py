@@ -1,22 +1,15 @@
-"""Contract sync: exported OpenAPI schema vs the webapp mirror types.
+"""Contract sync: exported OpenAPI schema vs the shared workbench's API contract.
 
-``webapp/src/api/types.ts`` is a hand-written mirror of the serve API. These
-tests compare it against the schema exported by
-``markitai.serve.openapi.build_openapi_schema`` (the same document
-``scripts/export_openapi.py`` dumps), so a field added or removed on either
-side fails CI instead of drifting silently.
-
-The TypeScript side is read with a deliberately small parser: it only needs
-the ``export interface`` declarations of the mirror file (field names,
-``?`` optionality and ``extends`` chains) — no node toolchain in the Python
-test suite.
+The response models in ``markitai.serve.schemas`` are this server's half of
+the workbench API contract (the shapes in ``test_workbench_contract``). This
+file compares them, as exported by ``markitai.serve.openapi`` (the document
+``scripts/export_openapi.py`` dumps), with those shapes: a field the contract
+names but the schema lacks, or a schema field the contract does not know,
+fails CI instead of drifting silently. The behavioural checks (real answers
+against the shapes) live in ``test_workbench_contract``.
 """
 
 from __future__ import annotations
-
-import re
-from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 
@@ -24,156 +17,53 @@ pytest.importorskip("fastapi")
 
 from markitai.serve.openapi import SSE_ROUTE_PATH, build_openapi_schema
 from markitai.serve.schemas import SSE_EVENTS
+from tests.unit.serve.test_workbench_contract import OPTION_KEYS, SHAPES
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
-TYPES_TS = REPO_ROOT / "webapp" / "src" / "api" / "types.ts"
-
-#: TS interface name -> OpenAPI component name for response payloads.
-#: Field names and optionality must match exactly in both directions.
-RESPONSE_MIRRORS: dict[str, str] = {
+#: Contract shape -> OpenAPI component of this server.
+COMPONENTS: dict[str, str] = {
     "Capabilities": "Capabilities",
+    "CapabilitiesLLM": "CapabilitiesLLM",
+    "Extras": "CapabilitiesExtras",
+    "Limits": "CapabilitiesLimits",
+    "Features": "CapabilitiesFeatures",
+    "RemoteServices": "RemoteServices",
+    "CloudflareCapability": "CloudflareCapability",
     "PresetFeatures": "PresetFeatures",
-    "CreatedItem": "CreatedItem",
-    "CreateJobResponse": "CreateJobResponse",
+    "Pricing": "Pricing",
     "ItemPayload": "ItemPayload",
-    "JobPayload": "JobPayload",
+    "JobProgress": "JobPayload",
     "JobSnapshot": "JobSnapshot",
-    "ItemResult": "ItemResult",
-    "LLMDeployment": "LLMDeployment",
-    "LLMSettingsPayload": "LLMSettingsPayload",
-    "LLMProviderCredentials": "LLMProviderCredentials",
-    "ProviderConnection": "ProviderConnection",
-    "ModelCandidate": "ModelCandidate",
-    "ModelDiscoveryResult": "ModelDiscoveryResult",
-    "LLMTestResult": "LLMTestResult",
     "HistoryEntry": "HistoryEntry",
+    "CreatedItem": "CreatedItem",
+    "CreatedJob": "CreateJobResponse",
+    "CancelResponse": "CancelResponse",
+    "Artifact": "ItemArtifact",
+    "ItemResult": "ItemResult",
+    "DownloadTicket": "DownloadTicket",
+    "PageBox": "PageBox",
+    "OriginalDescriptor": "OriginalDescriptor",
+    "PageTextLine": "PageTextLine",
+    "PageText": "PageText",
+    "ProviderCredentials": "LLMProviderCredentials",
+    "SettingsView": "LLMSettingsPayload",
 }
 
-#: TS interface name -> OpenAPI component name for request bodies. The client
-#: may omit optional fields it never sends, so the rules are one-directional:
-#: every TS field must exist server-side, and every server-required field must
-#: be required in TS.
-REQUEST_MIRRORS: dict[str, str] = {
-    "JobOptions": "JobOptions",
-    "LLMModelCreate": "LLMModelCreate",
-    "LLMModelUpdate": "LLMModelUpdate",
-    "LLMProviderUpdate": "LLMProviderUpdate",
-    "LLMDeploymentBatch": "LLMDeploymentBatch",
+#: Contract fields only the Rust server sends (the UI treats them as optional).
+RUST_ONLY: dict[str, set[str]] = {
+    "JobSnapshot": {"persistence_error"},
+    "ProviderCredentials": {"api_key_source"},
 }
 
-
-# ---------------------------------------------------------------------------
-# Minimal TypeScript interface parser
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class TSInterface:
-    """One ``export interface``: base names and ``field -> is_optional``."""
-
-    name: str
-    extends: list[str]
-    fields: dict[str, bool]
-
-
-def _strip_comments(source: str) -> str:
-    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
-    return re.sub(r"//[^\n]*", "", source)
-
-
-def _read_braced(source: str, open_index: int) -> str:
-    """Return the text between the brace at *open_index* and its match."""
-    assert source[open_index] == "{"
-    depth = 0
-    for index in range(open_index, len(source)):
-        char = source[index]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return source[open_index + 1 : index]
-    raise ValueError("unbalanced braces in types.ts")
-
-
-def _split_declarations(body: str) -> list[str]:
-    """Split an interface body on top-level ``;`` (inline objects nest)."""
-    declarations: list[str] = []
-    depth = 0
-    current: list[str] = []
-    for char in body:
-        if char in "{[(":
-            depth += 1
-        elif char in ")]}":
-            depth -= 1
-        if char == ";" and depth == 0:
-            declarations.append("".join(current).strip())
-            current = []
-        else:
-            current.append(char)
-    tail = "".join(current).strip()
-    if tail:
-        declarations.append(tail)
-    return [decl for decl in declarations if decl]
-
-
-_FIELD_RE = re.compile(r"^(?:readonly\s+)?([A-Za-z_$][\w$]*)(\?)?\s*:")
-
-
-def parse_interfaces(source: str) -> dict[str, TSInterface]:
-    """Parse every ``export interface`` of *source*."""
-    source = _strip_comments(source)
-    interfaces: dict[str, TSInterface] = {}
-    for match in re.finditer(
-        r"\bexport\s+interface\s+(\w+)(?:\s+extends\s+([\w\s,]+?))?\s*\{", source
-    ):
-        name = match.group(1)
-        extends = [
-            base.strip() for base in (match.group(2) or "").split(",") if base.strip()
-        ]
-        body = _read_braced(source, match.end() - 1)
-        fields: dict[str, bool] = {}
-        for declaration in _split_declarations(body):
-            field = _FIELD_RE.match(declaration)
-            if field is None:
-                raise AssertionError(
-                    f"unparsable field in interface {name}: {declaration!r}"
-                )
-            fields[field.group(1)] = field.group(2) == "?"
-        interfaces[name] = TSInterface(name=name, extends=extends, fields=fields)
-    return interfaces
-
-
-def resolved_fields(interfaces: dict[str, TSInterface], name: str) -> dict[str, bool]:
-    """Fields of *name* including inherited ones (``extends`` chain)."""
-    interface = interfaces[name]
-    fields: dict[str, bool] = {}
-    for base in interface.extends:
-        fields.update(resolved_fields(interfaces, base))
-    fields.update(interface.fields)
-    return fields
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+#: Fields this server sends beyond the contract (the UI ignores them).
+PYTHON_EXTRAS: dict[str, set[str]] = {
+    # Python 1.2's name for the credentials display value, kept for 1.2 clients
+    "ProviderCredentials": {"api_key_masked"},
+}
 
 
 @pytest.fixture(scope="module")
 def openapi() -> dict:
-    """The exported OpenAPI document (built once per module)."""
     return build_openapi_schema()
-
-
-@pytest.fixture(scope="module")
-def ts_source() -> str:
-    assert TYPES_TS.is_file(), TYPES_TS
-    return TYPES_TS.read_text(encoding="utf-8")
-
-
-@pytest.fixture(scope="module")
-def ts_interfaces(ts_source: str) -> dict[str, TSInterface]:
-    return parse_interfaces(ts_source)
 
 
 def _component(openapi: dict, name: str) -> dict:
@@ -182,72 +72,44 @@ def _component(openapi: dict, name: str) -> dict:
     return components[name]
 
 
-# ---------------------------------------------------------------------------
-# Contract tests
-# ---------------------------------------------------------------------------
-
-
-class TestResponseMirrors:
-    """Response payload mirrors must match the schema field-for-field."""
-
-    @pytest.mark.parametrize(("ts_name", "schema_name"), RESPONSE_MIRRORS.items())
-    def test_field_names_and_optionality(
-        self,
-        openapi: dict,
-        ts_interfaces: dict[str, TSInterface],
-        ts_name: str,
-        schema_name: str,
+class TestResponseShapes:
+    @pytest.mark.parametrize(("shape", "component"), COMPONENTS.items())
+    def test_fields_match_the_contract(
+        self, openapi: dict, shape: str, component: str
     ) -> None:
-        assert ts_name in ts_interfaces, f"interface {ts_name} missing from types.ts"
-        ts_fields = resolved_fields(ts_interfaces, ts_name)
-        component = _component(openapi, schema_name)
-        schema_fields = set(component.get("properties", {}))
-        schema_required = set(component.get("required", []))
-
-        missing_in_ts = schema_fields - set(ts_fields)
-        unknown_in_ts = set(ts_fields) - schema_fields
-        assert not missing_in_ts and not unknown_in_ts, (
-            f"{ts_name} drifted from {schema_name}: "
-            f"missing in types.ts: {sorted(missing_in_ts)}; "
-            f"unknown to the server: {sorted(unknown_in_ts)}"
+        schema_fields = set(_component(openapi, component).get("properties", {}))
+        contract_fields = set(SHAPES[shape]) - RUST_ONLY.get(shape, set())
+        missing = contract_fields - schema_fields
+        unknown = schema_fields - contract_fields - PYTHON_EXTRAS.get(shape, set())
+        assert not missing and not unknown, (
+            f"{component} drifted from the contract's {shape}: "
+            f"missing here: {sorted(missing)}; not in the contract: {sorted(unknown)}"
         )
 
-        ts_required = {name for name, optional in ts_fields.items() if not optional}
-        assert ts_required == schema_required, (
-            f"{ts_name} optionality drifted from {schema_name}: "
-            f"required only in schema: {sorted(schema_required - ts_required)}; "
-            f"required only in types.ts: {sorted(ts_required - schema_required)}"
-        )
-
-
-class TestRequestMirrors:
-    """Request body mirrors may narrow, but never invent or under-require."""
-
-    @pytest.mark.parametrize(("ts_name", "schema_name"), REQUEST_MIRRORS.items())
-    def test_fields_are_known_and_required_ones_required(
-        self,
-        openapi: dict,
-        ts_interfaces: dict[str, TSInterface],
-        ts_name: str,
-        schema_name: str,
+    @pytest.mark.parametrize(("shape", "component"), COMPONENTS.items())
+    def test_required_contract_fields_are_required(
+        self, openapi: dict, shape: str, component: str
     ) -> None:
-        assert ts_name in ts_interfaces, f"interface {ts_name} missing from types.ts"
-        ts_fields = resolved_fields(ts_interfaces, ts_name)
-        component = _component(openapi, schema_name)
-        schema_fields = set(component.get("properties", {}))
-        schema_required = set(component.get("required", []))
+        """A key the UI must find is never optional in this server's schema.
 
-        unknown_in_ts = set(ts_fields) - schema_fields
-        assert not unknown_in_ts, (
-            f"{ts_name} sends fields the server does not accept: "
-            f"{sorted(unknown_in_ts)}"
-        )
-        ts_required = {name for name, optional in ts_fields.items() if not optional}
-        under_required = schema_required - ts_required
-        assert not under_required, (
-            f"{ts_name} marks server-required fields as optional or omits "
-            f"them: {sorted(under_required)}"
-        )
+        Keys with a default are always serialized too, so a schema may list a
+        required contract key as optional only when it has a default.
+        """
+        schema = _component(openapi, component)
+        required = set(schema.get("required", []))
+        properties = schema.get("properties", {})
+        for name, field in SHAPES[shape].items():
+            if not field.required or name in RUST_ONLY.get(shape, set()):
+                continue
+            assert name in required or "default" in properties.get(name, {}), (
+                f"{component}.{name} must always be sent"
+            )
+
+
+class TestRequestShapes:
+    def test_job_options_accept_every_contract_key(self, openapi: dict) -> None:
+        fields = set(_component(openapi, "JobOptions").get("properties", {}))
+        assert fields == {*OPTION_KEYS, "remote_processing"}
 
 
 class TestSSEContract:
@@ -263,29 +125,43 @@ class TestSSEContract:
             _component(openapi, model.__name__)  # ref target must exist
 
 
-class TestServerOwnedConstants:
-    """Server-enforced limits reach the UI via capabilities, not copies."""
+class TestRoutes:
+    """Every route the workbench calls is part of the exported API."""
 
-    def test_max_job_items_is_served_via_capabilities(self, openapi: dict) -> None:
-        capabilities = _component(openapi, "Capabilities")
-        assert "limits" in capabilities.get("properties", {}), (
-            "capabilities must expose server limits (limits.max_job_items)"
-        )
-        assert "limits" in capabilities.get("required", [])
-        limits = _component(openapi, "CapabilitiesLimits")
-        assert "max_job_items" in limits.get("properties", {})
-
-    def test_types_ts_does_not_hardcode_max_job_items(self, ts_source: str) -> None:
-        assert not re.search(r"\bMAX_JOB_ITEMS\s*=", ts_source), (
-            "types.ts re-declares MAX_JOB_ITEMS; the webapp must read "
-            "capabilities.limits.max_job_items at runtime instead"
-        )
-
-    def test_types_ts_header_points_at_the_contract_mechanism(
-        self, ts_source: str
-    ) -> None:
-        first_line = ts_source.splitlines()[0]
-        assert "scripts/export_openapi.py" in first_line, (
-            "the types.ts header must reference the OpenAPI export that "
-            "this test validates it against (not a nonexistent document)"
-        )
+    @pytest.mark.parametrize(
+        ("path", "method"),
+        [
+            ("/api/capabilities", "get"),
+            ("/api/jobs", "post"),
+            ("/api/jobs/{job_id}", "get"),
+            ("/api/jobs/{job_id}/events", "get"),
+            ("/api/jobs/{job_id}/cancel", "post"),
+            ("/api/jobs/{job_id}/items/{item_id}/retry", "post"),
+            ("/api/jobs/{job_id}/items/{item_id}", "delete"),
+            ("/api/jobs/{job_id}/items/{item_id}/result", "get"),
+            ("/api/jobs/{job_id}/files/{relpath}", "get"),
+            ("/api/jobs/{job_id}/archive", "get"),
+            ("/api/download-tickets", "post"),
+            ("/api/history", "get"),
+            ("/api/history/archive", "get"),
+            ("/api/history/{job_id}", "delete"),
+            ("/api/jobs/{job_id}/items/{item_id}/original", "get"),
+            ("/api/jobs/{job_id}/items/{item_id}/original/file", "get"),
+            ("/api/jobs/{job_id}/items/{item_id}/original/pages/{page}", "get"),
+            ("/api/jobs/{job_id}/items/{item_id}/original/pages/{page}/text", "get"),
+            ("/api/settings/llm", "get"),
+            ("/api/settings/llm/providers", "get"),
+            ("/api/settings/llm/providers/{provider_id}/credentials", "get"),
+            ("/api/settings/llm/detected", "get"),
+            ("/api/settings/llm/model-discovery", "post"),
+            ("/api/settings/llm/test", "post"),
+            ("/api/settings/llm/deployments/batch", "post"),
+            ("/api/settings/llm/deployments/{deployment_id}", "patch"),
+            ("/api/settings/llm/deployments/{deployment_id}", "delete"),
+            ("/api/settings/llm/providers/{provider_id}", "patch"),
+            ("/api/settings/llm/providers/{provider_id}", "delete"),
+            ("/api/settings/llm/config/open", "post"),
+        ],
+    )
+    def test_route_exists(self, openapi: dict, path: str, method: str) -> None:
+        assert method in openapi["paths"].get(path, {}), f"{method.upper()} {path}"

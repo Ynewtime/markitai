@@ -1,10 +1,10 @@
 """Request and response schemas for the serve API.
 
-The response models double as the machine-readable contract consumed by the
-webapp: ``scripts/export_openapi.py`` dumps them into an OpenAPI document
+The response models are this server's half of the shared web workbench's API
+contract: ``scripts/export_openapi.py`` dumps them into an OpenAPI document
 (including the SSE event payloads via :data:`SSE_EVENTS`) and
 ``tests/unit/serve/test_contract_sync.py`` compares that document against the
-hand-written mirror in ``webapp/src/api/types.ts``.
+contract's shapes (``tests/unit/serve/test_workbench_contract.py``).
 
 Response-model discipline: FastAPI silently drops any response key the model
 does not declare. Models for payloads this package builds itself therefore use
@@ -24,9 +24,13 @@ from markitai.config import ConversionBackend, FetchStrategy, OutputProfile
 
 
 class JobOptions(BaseModel):
-    """Options accepted by ``POST /api/jobs``."""
+    """Options accepted by ``POST /api/jobs``.
 
-    model_config = ConfigDict(extra="forbid")
+    Strict: an unknown key or a value of the wrong type ("yes" for a switch)
+    is refused rather than coerced.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     preset: str | None = None
     llm: bool | None = None
@@ -44,6 +48,9 @@ class JobOptions(BaseModel):
     no_compress: bool | None = None
     strategy: FetchStrategy | None = None
     backend: ConversionBackend | None = None
+    # Consent to Cloudflare processing for this one request (a Cloudflare
+    # strategy or backend in the same options). Never stored or echoed.
+    remote_processing: Literal["cloudflare"] | None = None
 
 
 class JobRetryBody(BaseModel):
@@ -282,6 +289,50 @@ class CapabilitiesLimits(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_job_items: int
+    history_retention_days: int | None = None  # None: kept until deleted
+
+
+class CapabilitiesFeatures(BaseModel):
+    """What this backend implements beyond the base job API."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cancel: bool
+    download_tickets: bool
+    url_lists: bool
+    history_items: bool
+    original: bool
+    result_excerpt: bool
+    job_labels: bool
+
+
+class CloudflareCapability(BaseModel):
+    """Whether this server can process a request with Cloudflare."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    configured: bool
+    available: bool
+    reason: (
+        Literal[
+            "not_configured",
+            "invalid_configuration",
+            "disabled_by_policy",
+            "client_not_trusted",
+        ]
+        | None
+    )
+    browser_rendering: bool
+    file_conversion: bool
+    file_extensions: list[str]
+
+
+class RemoteServices(BaseModel):
+    """Remote services a request may opt into."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cloudflare: CloudflareCapability
 
 
 class PresetFeatures(BaseModel):
@@ -302,11 +353,15 @@ class Capabilities(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: str
+    implementation: Literal["python"]
+    docs_url: str
     llm: CapabilitiesLLM
     presets: list[str]
     preset_options: dict[str, PresetFeatures]
     extras: CapabilitiesExtras
     limits: CapabilitiesLimits
+    features: CapabilitiesFeatures
+    remote_services: RemoteServices
 
 
 class LLMDeployment(BaseModel):
@@ -346,6 +401,8 @@ class LLMProviderCredentials(BaseModel):
 
     # Masked like every other settings response; ``env:`` references verbatim.
     # The editor omits ``api_key`` on save unless the user typed a new one.
+    # ``api_key`` is the same display value under the shared workbench's name.
+    api_key: str | None
     api_key_masked: str | None
     api_base: str | None  # RAW saved base; null when on the provider default
     api_base_placeholder: str | None  # provider default, for the editor only
@@ -455,10 +512,35 @@ class CreateJobResponse(BaseModel):
     items: list[CreatedItem]
 
 
+class Pricing(BaseModel):
+    """Request coverage of a model cost."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    priced_requests: int
+    unpriced_requests: int
+    # complete: every request priced; partial: cost_usd is a lower bound;
+    # unknown: no request was priced, so cost_usd says nothing (never "$0")
+    cost_status: Literal["complete", "partial", "unknown"]
+
+
+class JobOptionsEcho(BaseModel):
+    """Saved options echoed by snapshots, items and history.
+
+    Never carries ``remote_processing``; a CLI-recorded job adds ``origin``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    preset: str | None
+    llm: bool | None
+    ocr: bool | None
+
+
 class ItemPayload(BaseModel):
     """Payload of SSE ``event: item`` (and of items inside the snapshot).
 
-    Mirror of :meth:`markitai.serve.jobs.JobItem.to_payload`.
+    Mirror of :meth:`markitai.serve.jobs.Job.item_payload`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -468,11 +550,15 @@ class ItemPayload(BaseModel):
     kind: str  # "file" | "url"
     status: str  # "queued" | "running" | "done" | "error"
     error: str | None
+    # Stable cause of a failure: unsupported, fetch_error, conversion_error,
+    # no_output, enhancement_failed, cancelled, shutdown, internal_error, ...
+    error_code: str | None = None
     output: str | None
     output_name: str | None  # pre-assigned unique output name (url items)
     duration_ms: int | None
     finished_at: str | None
     cost_usd: float | None
+    pricing: Pricing | None = None  # present whenever a model answered requests
     llm_enhanced: bool
     operation: str  # "convert" | "retry" | "enhance"
     skipped: bool
@@ -482,6 +568,9 @@ class ItemPayload(BaseModel):
     # Actionable notices raised while the item converted (scanned pages,
     # hidden text, OCR found nothing, screenshot not captured, ...)
     warnings: list[str]
+    models: list[str] = Field(default_factory=list)  # models that produced it
+    source_size: int | None = None  # bytes of the uploaded original
+    options: JobOptionsEcho | None = None  # this item's saved selections
 
 
 class JobPayload(BaseModel):
@@ -495,20 +584,6 @@ class JobPayload(BaseModel):
     total: int
 
 
-class JobSnapshotOptions(BaseModel):
-    """Options echoed inside a job snapshot.
-
-    Jobs rehydrated from meta.json carry an extra ``origin`` key ("web" |
-    "cli"); ``extra="allow"`` passes it through untouched.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    preset: str | None
-    llm: bool | None
-    ocr: bool | None
-
-
 class JobSnapshot(JobPayload):
     """Payload of SSE ``event: snapshot`` and ``GET /api/jobs/{job_id}``."""
 
@@ -517,8 +592,9 @@ class JobSnapshot(JobPayload):
     job_id: str
     created_at: str
     finished_at: str | None
-    options: JobSnapshotOptions
+    options: JobOptionsEcho
     items: list[ItemPayload]
+    label: str | None = None  # what the submission is called in the list
 
 
 class ItemArtifact(BaseModel):
@@ -539,6 +615,9 @@ class ItemResult(BaseModel):
     variant: Literal["llm", "base"]
     markdown: str
     artifacts: list[ItemArtifact]
+    # With ``?max_bytes=``: whether the excerpt was cut, and the full size
+    truncated: bool | None = None
+    markdown_bytes: int | None = None
 
 
 class HistoryEntry(BaseModel):
@@ -556,12 +635,90 @@ class HistoryEntry(BaseModel):
     skipped: int
     llm_enhanced: int
     cost_usd: float | None
+    pricing: Pricing | None = None  # job-level coverage of cost_usd
     names_preview: list[str]
     kinds_preview: list[str]
     duration_ms: int | None
     size_bytes: int
     origin: str  # "web" | "cli"
     retryable: bool  # at least one item can be retried/enhanced
+    label: str | None = None
+    # With ``?include=items``
+    options: JobOptionsEcho | None = None
+    items: list[ItemPayload] | None = None
+
+
+class CancelResponse(BaseModel):
+    """Response of ``POST /api/jobs/{job_id}/cancel``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    stopping: int  # queued items that will not start
+
+
+class DownloadTicketRequest(BaseModel):
+    """Body of ``POST /api/download-tickets``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+
+
+class DownloadTicket(BaseModel):
+    """Response of ``POST /api/download-tickets``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticket: str
+    url: str  # "<path>?ticket=<ticket>"
+    expires_in: int  # seconds
+
+
+class PageBox(BaseModel):
+    """Size of one page: points for a PDF, pixels for images."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    width: float
+    height: float
+
+
+class OriginalDescriptor(BaseModel):
+    """Response of ``GET /api/jobs/{job_id}/items/{item_id}/original``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["pdf", "image", "html", "text", "screenshots", "none"]
+    name: str
+    media_type: str | None
+    size: int | None
+    download: str | None  # API path of the stored original
+    pages: list[PageBox]
+    page_count: int
+    text_layer: bool
+    # not_kept | unsupported_format | too_large | render_unavailable
+    reason: str | None
+
+
+class PageTextLine(BaseModel):
+    """One line of a page's text layer; bbox from the page's top-left, in points."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    bbox: tuple[float, float, float, float]
+
+
+class PageText(BaseModel):
+    """Response of ``GET .../original/pages/{n}/text``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int
+    width: float
+    height: float
+    lines: list[PageTextLine]
 
 
 class RootInfo(BaseModel):
@@ -576,7 +733,7 @@ class RootInfo(BaseModel):
 #: SSE event name -> payload model for ``GET /api/jobs/{job_id}/events``.
 #: These models never appear in a route signature, so the OpenAPI export
 #: injects them explicitly — without this the contract test would miss the
-#: most drift-prone surface (the event stream the webapp actually consumes).
+#: most drift-prone surface (the event stream the web UI actually consumes).
 SSE_EVENTS: dict[str, type[BaseModel]] = {
     "snapshot": JobSnapshot,
     "item": ItemPayload,

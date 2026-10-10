@@ -652,6 +652,9 @@ class ProcessResult:
             as reported by the pipeline (not inferred from the file suffix)
         warnings: Problems that did not fail the file (e.g. an image whose
             analysis failed and kept its original alt text)
+        error_code: Stable category of a failure (``unsupported``,
+            ``fetch_error``, ...) when the producer knows it; the web server
+            reports it beside the English ``error``
     """
 
     success: bool
@@ -665,6 +668,7 @@ class ProcessResult:
     cache_hit: bool = False
     llm_enhanced: bool = False
     warnings: list[str] = field(default_factory=list)
+    error_code: str | None = None
 
 
 def _count(n: int, noun: str) -> str:

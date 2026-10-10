@@ -33,7 +33,12 @@ def _all_job_options(**set_values: object) -> dict[str, object]:
     """
     from markitai.serve.schemas import JobOptions
 
-    return {name: set_values.get(name) for name in JobOptions.model_fields}
+    return {
+        name: set_values.get(name)
+        for name in JobOptions.model_fields
+        # Consent for one request: never echoed
+        if name != "remote_processing"
+    }
 
 
 from markitai.config import MarkitaiConfig
@@ -141,8 +146,27 @@ class TestCapabilitiesAndRoot:
         }
         assert set(data["extras"]) == {"browser", "svg"}
         assert all(isinstance(v, bool) for v in data["extras"].values())
-        # The webapp reads server-owned limits from here (no constant copies).
-        assert data["limits"] == {"max_job_items": MAX_JOB_ITEMS}
+        # The web UI reads server-owned limits from here (no constant copies).
+        assert data["limits"] == {
+            "max_job_items": MAX_JOB_ITEMS,
+            "history_retention_days": 7,
+        }
+        assert data["implementation"] == "python"
+        assert data["docs_url"] == "https://markitai.dev"
+        assert data["features"] == {
+            "cancel": True,
+            "download_tickets": True,
+            "url_lists": True,
+            "history_items": True,
+            "original": True,
+            "result_excerpt": True,
+            "job_labels": True,
+        }
+        # Loopback is trusted: Cloudflare's state is reported, not hidden
+        assert data["remote_services"]["cloudflare"]["reason"] in (
+            "not_configured",
+            None,
+        )
 
     async def test_capabilities_exposes_configured_preset_values(
         self, tmp_path: Path
@@ -191,10 +215,16 @@ class TestCapabilitiesAndRoot:
         assert data["markitai"] == __version__
         assert "hint" in data
 
-    async def test_static_dir_is_mounted_as_spa(self, tmp_path: Path) -> None:
+    async def test_a_damaged_bundle_is_not_served(self, tmp_path: Path) -> None:
+        """A bundle whose files differ from its manifest falls back to the
+        JSON hint rather than serving an edited or partial UI."""
         static = tmp_path / "static"
-        static.mkdir()
-        (static / "index.html").write_text("<html>ui</html>", encoding="utf-8")
+        (static / "ui").mkdir(parents=True)
+        (static / "ui" / "index.html").write_text("<html>ui</html>", encoding="utf-8")
+        (static / "manifest.json").write_text(
+            json.dumps({"files": {"ui/index.html": {"bytes": 1, "sha256": "0" * 64}}}),
+            encoding="utf-8",
+        )
         cfg = MarkitaiConfig()
         cfg.cache.enabled = False
         app = create_app(
@@ -205,40 +235,7 @@ class TestCapabilitiesAndRoot:
         )
         async with _serve_client(app) as client:
             root = await client.get("/")
-            spa_route = await client.get("/jobs/some-client-route")
-            api = await client.get("/api/capabilities")
-        assert root.status_code == 200 and "ui" in root.text
-        assert spa_route.status_code == 200 and "ui" in spa_route.text
-        assert api.status_code == 200  # /api keeps priority over the SPA mount
-
-    async def test_hashed_assets_are_cached_and_the_index_revalidated(
-        self, tmp_path: Path
-    ) -> None:
-        static = tmp_path / "static"
-        (static / "assets").mkdir(parents=True)
-        (static / "index.html").write_text("<html>ui</html>", encoding="utf-8")
-        (static / "assets" / "index-abc123.js").write_text(
-            "console.log('ui');" * 200, encoding="utf-8"
-        )
-        cfg = MarkitaiConfig()
-        cfg.cache.enabled = False
-        app = create_app(
-            static_dir=static,
-            jobs_root=tmp_path / "jobs",
-            config=cfg,
-            configure_logging=False,
-        )
-        async with _serve_client(app) as client:
-            asset = await client.get(
-                "/assets/index-abc123.js", headers={"Accept-Encoding": "gzip"}
-            )
-            root = await client.get("/")
-            spa_route = await client.get("/jobs/some-client-route")
-        assert asset.headers["cache-control"] == "public, max-age=31536000, immutable"
-        assert asset.headers["content-encoding"] == "gzip"
-        assert asset.text.startswith("console.log")  # httpx decoded it
-        assert root.headers["cache-control"] == "no-cache"
-        assert spa_route.headers["cache-control"] == "no-cache"
+        assert root.json()["hint"]
 
 
 class TestShutdownStopsPdfWorkers:
@@ -2549,7 +2546,11 @@ class TestKeepBase:
         cfg.llm.model_list = [
             ModelConfig(
                 model_name="default",
-                litellm_params=LiteLLMParams(model="openai/gpt-4o-mini"),
+                # A key makes the model routable: an LLM job without one is
+                # refused before it starts (llm_unavailable)
+                litellm_params=LiteLLMParams(
+                    model="openai/gpt-4o-mini", api_key="sk-test-key-0000"
+                ),
             )
         ]
         return create_app(
@@ -2677,7 +2678,9 @@ class TestValidationErrorContract:
         assert resp.status_code == 422
         body = resp.json()
         assert body["code"] == "invalid_request"
-        assert isinstance(body["detail"], list)
+        assert body["reason"] == "invalid_settings_request"
+        # One sentence naming the fields, never their submitted values
+        assert body["detail"] == "model_name: Field required; model: Field required"
 
 
 class TestItemEnhancedSignal:
