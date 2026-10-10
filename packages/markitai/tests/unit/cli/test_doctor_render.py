@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any
 from unittest.mock import patch
 
@@ -459,3 +459,74 @@ class TestWindowsDoctor:
         with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS):
             out, _ = _run(width)
         assert not [line for line in out.splitlines() if line.endswith(" ")]
+
+
+class TestMissingExtras:
+    """A plain install (setup.ps1 without a terminal) lacks four extras.
+
+    Each hint reinstalls markitai with everything it already has plus one
+    extra, so four of them meant four reinstalls; one command does it.
+    """
+
+    @pytest.fixture
+    def rows(self, tmp_path, monkeypatch) -> dict[str, dict[str, Any]]:
+        from importlib.metadata import PackageNotFoundError
+
+        (tmp_path / "uv-receipt.toml").write_text(
+            '[tool]\nrequirements = [{ name = "markitai", directory = "/src/m" }]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(sys, "prefix", str(tmp_path))
+        with (
+            patch("markitai.serve.is_serve_available", return_value=False),
+            patch("markitai.ocr.is_ocr_available", return_value=False),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available", return_value=False
+            ),
+            patch("importlib.metadata.version", side_effect=PackageNotFoundError("x")),
+        ):
+            return {
+                "_check_playwright": doctor_mod._check_playwright(),
+                "_check_rapidocr": doctor_mod._check_rapidocr(MarkitaiConfig()),
+                "_check_anydoc": doctor_mod._check_anydoc(),
+                "_check_serve": doctor_mod._check_serve(),
+            }
+
+    @contextmanager
+    def _checks(self, rows: dict[str, dict[str, Any]]) -> Iterator[None]:
+        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS), ExitStack() as stack:
+            for name, row in rows.items():
+                stack.enter_context(patch.object(doctor_mod, name, return_value=row))
+            yield
+
+    def _doctor(self, rows: dict[str, dict[str, Any]]) -> str:
+        with self._checks(rows):
+            out, _ = _run(None)
+        return out
+
+    def test_one_command_adds_them_all(self, rows) -> None:
+        out = self._doctor(rows)
+        lines = out.splitlines()
+        hint = lines.index("  • Playwright, RapidOCR, anydoc, Serve:")
+        assert lines[hint + 1] == (
+            '    uv tool install "markitai[browser,legacy,ocr,serve] @ /src/m" --force'
+        )
+        assert out.count("uv tool install") == 1
+
+    def test_one_missing_extra_keeps_its_own_line(self, rows) -> None:
+        out = self._doctor({"_check_serve": rows["_check_serve"]})
+        lines = out.splitlines()
+        hint = lines.index("  • Serve:")
+        assert lines[hint + 1] == (
+            '    uv tool install "markitai[serve] @ /src/m" --force'
+        )
+
+    def test_json_keeps_one_hint_per_check(self, rows) -> None:
+        buf = io.StringIO()
+        with self._checks(rows), patch.object(doctor_mod.click, "echo", buf.write):
+            doctor_mod._doctor_impl(as_json=True)
+        report = json.loads(buf.getvalue())
+        assert report["serve"]["install_extra"] == "serve"
+        assert report["anydoc"]["install_hint"] == (
+            'uv tool install "markitai[legacy] @ /src/m" --force'
+        )

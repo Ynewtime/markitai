@@ -224,6 +224,7 @@ function i18n {
 
             # Info messages
             "info_chatgpt_route"        { 'ChatGPT \u8ba2\u9605\u65e0\u9700 CLI\uff0c\u4e5f\u65e0\u9700 extra\uff08\u9996\u6b21\u4f7f\u7528\u65f6\u767b\u5f55\uff09' }
+            "optional_headless_hint"    { '\u6ca1\u6709\u7ec8\u7aef\uff0c\u53ef\u9009\u7ec4\u4ef6\u5df2\u8df3\u8fc7\uff1b\u8981\u4e00\u5e76\u5b89\u88c5\uff0c\u8bbe\u7f6e\u6b64\u53d8\u91cf\u540e\u91cd\u65b0\u8fd0\u884c\u5b89\u88c5\u811a\u672c' }
             "info_playwright_purpose"   { 'Playwright \u7528\u4e8e\u83b7\u53d6 JavaScript \u6e32\u67d3\u7684\u7f51\u9875\u5185\u5bb9' }
             "info_project_dir"          { '\u9879\u76ee\u76ee\u5f55' }
             "info_docs"                 { '\u6587\u6863' }
@@ -353,6 +354,7 @@ function i18n {
 
         # Info messages
         "info_chatgpt_route"        { return 'ChatGPT subscription needs no CLI and no extra (it signs in on first use)' }
+        "optional_headless_hint"    { return 'No terminal, so optional components were skipped; to install them too, set this and run setup again' }
         "info_playwright_purpose"   { return 'Playwright fetches JavaScript-rendered web pages' }
         "info_project_dir"          { return 'Project directory' }
         "info_docs"                 { return 'Documentation' }
@@ -2208,6 +2210,12 @@ function Print-Summary {
     }
     foreach ($comp in $script:FAILED_COMPONENTS) {
         Clack-Error "$(i18n $comp) $(i18n 'failed')"
+    }
+    # A headless run skips every optional component by default; say how to
+    # get them without a terminal (doctor would list one fix per extra).
+    if ($script:SKIPPED_COMPONENTS.Count -gt 0 -and -not (Test-InteractiveInput) -and
+        -not (Test-OptionalInstallRequested)) {
+        Clack-Hint (i18n "optional_headless_hint") '$env:MARKITAI_INSTALL_OPTIONAL = "1"'
     }
 }
 

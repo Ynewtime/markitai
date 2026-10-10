@@ -220,3 +220,17 @@ class TestExtraInstallKeepsTheInstall:
 
         monkeypatch.setattr(sys, "prefix", str(tmp_path))
         assert extra_install_command("ocr") == 'uv tool install "markitai[ocr]" --force'
+
+    def test_several_extras_make_one_command(self, tmp_path, monkeypatch) -> None:
+        """doctor on a plain install: one reinstall, not one per extra."""
+        prefix = self._receipt(
+            tmp_path, '{ name = "markitai", extras = ["ocr"], directory = "/src/m" }'
+        )
+        monkeypatch.setattr(sys, "prefix", str(prefix))
+        assert extra_install_command("serve", "ocr", "browser", "legacy") == (
+            'uv tool install "markitai[browser,legacy,ocr,serve] @ /src/m" --force'
+        )
+        monkeypatch.setattr(sys, "prefix", str(tmp_path / "pipx" / "venvs" / "m"))
+        assert extra_install_command("serve", "ocr") == (
+            'pipx install "markitai[ocr,serve]" --force'
+        )

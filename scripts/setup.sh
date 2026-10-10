@@ -109,6 +109,7 @@ i18n() {
 
             # Info messages
             info_chatgpt_route)         echo "ChatGPT 订阅无需 CLI，也无需 extra（首次使用时登录）" ;;
+            optional_headless_hint)     echo "没有终端，可选组件已跳过；要一并安装，设置此变量后重新运行安装脚本" ;;
             info_playwright_purpose)    echo "Playwright 用于获取 JavaScript 渲染的网页内容" ;;
             info_project_dir)           echo "项目目录" ;;
             info_docs)                  echo "文档" ;;
@@ -231,6 +232,7 @@ i18n() {
 
             # Info messages
             info_chatgpt_route)         echo "ChatGPT subscription needs no CLI and no extra (it signs in on first use)" ;;
+            optional_headless_hint)     echo "No terminal, so optional components were skipped; to install them too, set this and run setup again" ;;
             info_playwright_purpose)    echo "Playwright fetches JavaScript-rendered web pages" ;;
             info_project_dir)           echo "Project directory" ;;
             info_docs)                  echo "Documentation" ;;
@@ -2048,6 +2050,12 @@ print_summary() {
     print_summary_rows "$INSTALLED_COMPONENTS" installed
     print_summary_rows "$SKIPPED_COMPONENTS" skipped
     print_summary_rows "$FAILED_COMPONENTS" failed
+    # A headless run skips every optional component by default; say how to
+    # get them without a terminal (doctor would list one fix per extra).
+    if [ -n "$SKIPPED_COMPONENTS" ] && ! has_interactive_tty \
+        && ! optional_install_requested; then
+        clack_hint "$(i18n optional_headless_hint)" "export MARKITAI_INSTALL_OPTIONAL=1"
+    fi
 }
 
 # Documentation and issue links close both completion notes.

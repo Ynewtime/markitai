@@ -1031,6 +1031,74 @@ def test_setup_ps1_third_party_clis_default_off_headless(
 
 
 # ============================================================
+# The summary of a headless install
+# ============================================================
+
+# (terminal, MARKITAI_INSTALL_OPTIONAL, components skipped, hint expected)
+_HEADLESS_SUMMARY_CASES = [
+    pytest.param(False, "", True, True, id="headless"),
+    pytest.param(False, "1", True, False, id="opted-in"),
+    pytest.param(True, "", True, False, id="terminal"),
+    pytest.param(False, "", False, False, id="nothing-skipped"),
+]
+_HEADLESS_HINT = (
+    "No terminal, so optional components were skipped; to install them too, "
+    "set this and run setup again:"
+)
+
+
+@pytest.mark.parametrize(
+    ("terminal", "opted_in", "skipped", "shown"), _HEADLESS_SUMMARY_CASES
+)
+def test_setup_sh_headless_summary_says_how_to_get_everything(
+    tmp_path: Path, terminal: bool, opted_in: str, skipped: bool, shown: bool
+) -> None:
+    """Without a terminal only the core goes in; say how to get the rest."""
+    body = (
+        f"has_interactive_tty() {{ return {0 if terminal else 1}; }}\n"
+        'INSTALLED_COMPONENTS="uv|python|markitai|"\n'
+        f'SKIPPED_COMPONENTS="{"serve|ocr|playwright|" if skipped else ""}"\n'
+        'FAILED_COMPONENTS=""\n'
+        f"{_shell_function('print_summary_rows')}{_shell_function('print_summary')}"
+        "print_summary --no-header\n"
+    )
+    result = _run_sh(tmp_path, body, MARKITAI_INSTALL_OPTIONAL=opted_in)
+    assert result.returncode == 0, result.stderr
+    lines = [line.rstrip() for line in result.stdout.splitlines()]
+    if not shown:
+        assert "MARKITAI_INSTALL_OPTIONAL" not in result.stdout
+        return
+    hint = next(i for i, line in enumerate(lines) if _HEADLESS_HINT in line)
+    assert lines[hint + 1].endswith("export MARKITAI_INSTALL_OPTIONAL=1")
+
+
+@_needs_pwsh
+@pytest.mark.parametrize(
+    ("terminal", "opted_in", "skipped", "shown"), _HEADLESS_SUMMARY_CASES
+)
+def test_setup_ps1_headless_summary_says_how_to_get_everything(
+    tmp_path: Path, terminal: bool, opted_in: str, skipped: bool, shown: bool
+) -> None:
+    components = "@('serve', 'ocr', 'playwright')" if skipped else "@()"
+    body = (
+        f"function Test-InteractiveInput {{ return ${str(terminal).lower()} }}\n"
+        "$script:INSTALLED_COMPONENTS = @('uv', 'python', 'markitai')\n"
+        f"$script:SKIPPED_COMPONENTS = {components}\n"
+        "$script:FAILED_COMPONENTS = @()\n"
+        f"{_powershell_function('Print-Summary')}"
+        "Print-Summary -NoHeader\n"
+    )
+    result = _run_ps(tmp_path, body, MARKITAI_INSTALL_OPTIONAL=opted_in)
+    assert result.returncode == 0, result.stderr
+    lines = [line.rstrip() for line in result.stdout.splitlines()]
+    if not shown:
+        assert "MARKITAI_INSTALL_OPTIONAL" not in result.stdout
+        return
+    hint = next(i for i, line in enumerate(lines) if _HEADLESS_HINT in line)
+    assert lines[hint + 1].endswith('$env:MARKITAI_INSTALL_OPTIONAL = "1"')
+
+
+# ============================================================
 # uv's tool command folder
 # ============================================================
 

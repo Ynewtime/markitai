@@ -490,6 +490,7 @@ def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
             "message": "not installed (needed for JavaScript-heavy pages)",
             "install_hint": _playwright_package_install_hint(),
             "install_commands": [_playwright_package_install_hint()],
+            "install_extra": "browser",
         }
 
 
@@ -516,6 +517,7 @@ def _check_serve() -> dict[str, Any]:
         "message": "serve extra not installed",
         "install_hint": extra_install_command("serve"),
         "install_commands": [extra_install_command("serve")],
+        "install_extra": "serve",
     }
 
 
@@ -619,6 +621,7 @@ def _check_anydoc() -> dict[str, Any]:
             "message": "not installed (needed for legacy .doc and .ppt files)",
             "install_hint": extra_install_command("legacy"),
             "install_commands": [extra_install_command("legacy")],
+            "install_extra": "legacy",
         }
 
 
@@ -705,6 +708,7 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
             "message": "not installed: --ocr unavailable (everything else works)",
             "install_hint": OCR_INSTALL_HINT,
             "install_commands": [OCR_INSTALL_HINT],
+            "install_extra": "ocr",
         }
 
 
@@ -1241,18 +1245,27 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     # Render hints and the final outcome only after any requested repair has
     # been rechecked, so one invocation cannot end with a stale pre-fix status.
     # One line per distinct fix: two checks with the same hint (Vision Model
-    # and VLM OCR both asking for a vision-capable model) share it
+    # and VLM OCR both asking for a vision-capable model) share it, and so do
+    # missing extras: each hint reinstalls markitai, so a plain install (a
+    # non-interactive setup.ps1) got four reinstalls where one does
     by_fix: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+    extras: list[str] = []
     for info in results.values():
         if info["status"] not in ("missing", "error", "warning") or not info.get(
             "install_hint"
         ):
             continue
         remedy = (str(info["install_hint"]), tuple(info.get("install_commands") or ()))
+        if info.get("install_extra"):
+            extras.append(info["install_extra"])
+            remedy = ("extras", ())
         if remedy in by_fix:
             by_fix[remedy]["name"] += f", {info['name']}"
         else:
             by_fix[remedy] = {**info}
+    if len(extras) > 1:
+        command = extra_install_command(*extras)
+        by_fix[("extras", ())].update(install_hint=command, install_commands=[command])
     hint_items = list(by_fix.values())
     required_failed = _required_failed_count()
     if hint_items:
