@@ -281,6 +281,58 @@ class TestShutdownStopsPdfWorkers:
             pass
         assert calls == ["pool", "executor"]
 
+    def test_compare_workers_end_with_a_killed_server(self, tmp_path: Path) -> None:
+        """A server killed outright cannot stop its Compare workers.
+
+        Windows' TerminateProcess (``terminate()`` there, or closing the
+        console) kills serve without its lifespan shutdown; the spawned
+        workers used to wait on their queue forever, holding the server's
+        working directory open so that it could not be deleted.
+        """
+        import subprocess
+        import sys
+        import textwrap
+
+        import psutil
+
+        script = textwrap.dedent(
+            """
+            import os, sys
+            from markitai.serve.originals import PdfWorkers
+            workers = PdfWorkers(workers=1)
+            print(workers.run(os.getpid), flush=True)
+            sys.stdin.read()
+            """
+        )
+        server = subprocess.Popen(
+            [sys.executable, "-c", script],
+            cwd=tmp_path,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert server.stdout is not None
+            worker = psutil.Process(int(server.stdout.readline()))
+        finally:
+            server.kill()
+            server.wait(timeout=30)
+
+        def alive() -> bool:
+            try:
+                return worker.status() != psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                return False
+
+        deadline = time.monotonic() + 15
+        while alive() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        try:
+            assert not alive(), "the Compare worker outlived its killed server"
+        finally:
+            if alive():
+                worker.kill()
+
 
 class TestCompression:
     """JSON and Markdown compress; event streams and downloads never do."""

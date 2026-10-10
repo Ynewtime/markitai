@@ -476,7 +476,9 @@ def _init_worker() -> None:
     # when idle, and come back as a busy task's exception, which escapes the
     # parent's error handling. SIGINT and SIG_IGN exist on Windows too.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    _exit_with_parent()
+    from markitai.utils.executor import exit_with_parent
+
+    exit_with_parent()
     import onnxruntime as ort
 
     # parse_document prints its messages; the parent may be writing Markdown
@@ -503,27 +505,6 @@ def _init_worker() -> None:
     ort.InferenceSession = _SingleThreadSession  # type: ignore[misc]
     # Load the layout engine once per worker, not on its first task
     importlib.import_module("pymupdf4llm")
-
-
-def _exit_with_parent() -> None:
-    """End this worker as soon as the process that spawned it is gone.
-
-    The pool's queues hand every worker both ends of their pipes, so a
-    worker whose parent was killed (a signal, a crash, ``os._exit`` without
-    ``shutdown_pool``) never sees EOF and would wait forever. The parent's
-    sentinel does close with it.
-    """
-    import multiprocessing
-
-    parent = multiprocessing.parent_process()
-    if parent is None:
-        return
-
-    def watch() -> None:
-        parent.join()
-        os._exit(0)
-
-    threading.Thread(target=watch, name="markitai-parent-watch", daemon=True).start()
 
 
 def _get_pool(workers: int) -> ProcessPoolExecutor:
