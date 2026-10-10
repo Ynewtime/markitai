@@ -60,6 +60,8 @@ _DISPUTED_RETIREMENT_DATES: frozenset[str] = frozenset(
 _NOT_A_DEFAULT_PICK = frozenset(
     {
         # llm/router.py: Copilot deployment families, for capability routing
+        # ("copilot/auto" is Auto routing, which is also the Copilot default)
+        "copilot/auto",
         "copilot/claude-",
         "copilot/gemini-",
         "copilot/gpt-4.1",

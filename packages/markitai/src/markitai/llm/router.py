@@ -283,6 +283,7 @@ class MarkitaiRouter:
     _IMAGE_CAPABLE_PATTERNS = (
         "claude-agent/",  # All claude-agent models support vision
         "chatgpt/",  # All ChatGPT models support vision (GPT-5.x)
+        "copilot/auto",  # Auto routing: its pool (GPT-5 mini, GPT-5.4, Claude) reads images
         "copilot/claude-",  # All Copilot Claude models
         "copilot/gemini-",  # All Copilot Gemini models
         "copilot/gpt-4.1",  # GPT-4.1 series

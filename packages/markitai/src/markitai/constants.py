@@ -341,7 +341,9 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
 PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     # Subscription / CLI providers (aliases; the CLI resolves the generation)
     "claude-agent": "claude-agent/sonnet",
-    "copilot": "copilot/claude-haiku-5.5",
+    # Auto routing: Copilot Free and Student plans can use no other model
+    # (GitHub, 2026-06-24), and Auto bills at the picked model's rate
+    "copilot": "copilot/auto",
     "chatgpt": "chatgpt/gpt-6-luna",
     # API-key providers
     "anthropic": "anthropic/claude-haiku-5-5",
