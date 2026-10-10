@@ -7,6 +7,9 @@ from markitai.webextract.removals.content_patterns import (
     remove_eyebrow_label,
 )
 from markitai.webextract.removals.hidden import remove_hidden_elements
+from markitai.webextract.removals.language_switchers import (
+    remove_language_switchers,
+)
 from markitai.webextract.removals.scoring import score_and_remove
 from markitai.webextract.removals.selectors import remove_by_selectors
 from markitai.webextract.removals.small_images import remove_small_images
@@ -57,6 +60,11 @@ def apply_removals(
         # matches in the exact phase too (defuddle issue 232).
         skip_hidden_exact=not use_hidden_removal,
     )
+    # Recorded only when it removed something: the other stages' counts stay
+    # what they were on pages without a language switcher
+    switchers = remove_language_switchers(root)
+    if switchers:
+        stats["language_switchers"] = switchers
     if use_scoring:
         stats["scoring"] = score_and_remove(root)
     if use_content_patterns:
