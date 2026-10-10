@@ -1,5 +1,6 @@
 """Pytest configuration and fixtures."""
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,24 @@ def sample_config_dict() -> dict:
             "quality": 90,
         },
     }
+
+
+# Rich and rich-click read the terminal from the environment: FORCE_COLOR
+# (and its kin) forces ANSI colour even into CliRunner's captured output,
+# and the width comes from COLUMNS, else from the terminal pytest runs in,
+# so the same message wrapped differently on a laptop and a CI runner. The
+# CLI modules build their shared Console at import, which fixes both there,
+# so this runs before any test module imports markitai rather than in a
+# fixture. Tests that check colour or wrapping set their own environment.
+# GITHUB_ACTIONS stays, so CI still exercises it (rich-click forces colour
+# under it; assertions on rendered help strip ANSI).
+_FORCED_COLOUR_ENV = ("FORCE_COLOR", "PY_COLORS", "CLICOLOR_FORCE", "TTY_COMPATIBLE")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    for name in _FORCED_COLOUR_ENV:
+        os.environ.pop(name, None)
+    os.environ["COLUMNS"] = "80"
 
 
 @pytest.fixture(autouse=True)
