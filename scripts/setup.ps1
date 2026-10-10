@@ -224,6 +224,7 @@ function i18n {
 
             # Info messages
             "info_chatgpt_route"        { 'ChatGPT \u8ba2\u9605\u65e0\u9700 CLI\uff0c\u4e5f\u65e0\u9700 extra\uff08\u9996\u6b21\u4f7f\u7528\u65f6\u767b\u5f55\uff09' }
+            "info_windows_arm_x64"      { 'Windows on Arm\uff1amarkitai \u8fd0\u884c\u5728 x64 Python \u4e0a\uff08\u7531 Windows \u6a21\u62df\u8fd0\u884c\uff09\uff0c\u5b83\u4f9d\u8d56\u7684\u90e8\u5206\u5e93\u8fd8\u6ca1\u6709 ARM64 \u7248\u672c' }
             "optional_headless_hint"    { '\u6ca1\u6709\u7ec8\u7aef\uff0c\u53ef\u9009\u7ec4\u4ef6\u5df2\u8df3\u8fc7\uff1b\u8981\u4e00\u5e76\u5b89\u88c5\uff0c\u8bbe\u7f6e\u6b64\u53d8\u91cf\u540e\u91cd\u65b0\u8fd0\u884c\u5b89\u88c5\u811a\u672c' }
             "info_playwright_purpose"   { 'Playwright \u7528\u4e8e\u83b7\u53d6 JavaScript \u6e32\u67d3\u7684\u7f51\u9875\u5185\u5bb9' }
             "info_project_dir"          { '\u9879\u76ee\u76ee\u5f55' }
@@ -354,6 +355,7 @@ function i18n {
 
         # Info messages
         "info_chatgpt_route"        { return 'ChatGPT subscription needs no CLI and no extra (it signs in on first use)' }
+        "info_windows_arm_x64"      { return 'Windows on Arm: markitai runs on an x64 Python (emulated by Windows); some of the libraries it needs have no ARM64 build yet' }
         "optional_headless_hint"    { return 'No terminal, so optional components were skipped; to install them too, set this and run setup again' }
         "info_playwright_purpose"   { return 'Playwright fetches JavaScript-rendered web pages' }
         "info_project_dir"          { return 'Project directory' }
@@ -1497,36 +1499,88 @@ function Install-UV {
 }
 
 # Detect/install Python via uv
+# Windows on Arm runs markitai on an x64 Python, under Windows' emulation, as
+# uv itself prefers: several of its dependencies have no ARM64 build.
+# pymupdf-layout, which every PDF conversion needs, has none at all, and
+# litellm needs fastuuid and tiktoken, which would have to be compiled with
+# Rust. A native ARM64 Python (python.org's, or one first on PATH, which uv
+# then picks) fails to install markitai. The machine's architecture is read
+# from the registry: an emulated x64 PowerShell sees AMD64 in its own
+# PROCESSOR_ARCHITECTURE.
+function Test-WindowsOnArm {
+    if (-not $script:OnWindows) { return $false }
+    $arch = $null
+    try {
+        $arch = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" -ErrorAction Stop).PROCESSOR_ARCHITECTURE
+    } catch {}
+    if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
+    return "$arch" -eq "ARM64"
+}
+
+# The interpreter uv finds for a request, or $null. uv reports "not found" on
+# stderr, which Windows PowerShell 5.1 turns into a terminating error under
+# this script's "Stop": a machine with no matching Python ended setup there
+# instead of installing one.
+function Find-UvPython {
+    param([string]$Request)
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $found = $null
+    try {
+        $found = & uv python find $Request 2>$null | Select-Object -First 1
+    } catch {
+        $found = $null
+    } finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+    if ($found -and (Test-Path "$found")) { return "$found".Trim() }
+    return $null
+}
+
+# Use *Path* for markitai when it runs; say which version (and *Note*).
+function Select-Python {
+    param([string]$Path, [string]$Note = "")
+    if (-not $Path) { return $false }
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $version = & $Path -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
+    } catch {
+        $version = $null
+    } finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+    if (-not $version) { return $false }
+    $script:PYTHON_CMD = $Path
+    Clack-Success "$(i18n 'python') $version$Note"
+    return $true
+}
+
 function Install-Python {
     if (-not (Test-CommandExists "uv")) {
         Clack-Error (i18n "error_uv_required")
         return $false
     }
 
-    # Try to find any supported Python (3.11-3.13)
-    $uvPython = & uv python find ">=3.11,<3.14" 2>$null
-    if ($uvPython -and (Test-Path $uvPython)) {
-        $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
-        if ($version) {
-            $script:PYTHON_CMD = $uvPython
-            Clack-Success "$(i18n 'python') $version"
-            return $true
+    if (Test-WindowsOnArm) {
+        Clack-Info (i18n "info_windows_arm_x64")
+        $note = " (x64)"
+        foreach ($minor in @("3.13", "3.12", "3.11")) {
+            if (Select-Python (Find-UvPython "cpython-$minor-windows-x86_64") $note) { return $true }
         }
+        $request = "cpython-3.13-windows-x86_64"
+    } else {
+        # Try to find any supported Python (3.11-3.13)
+        $note = ""
+        if (Select-Python (Find-UvPython ">=3.11,<3.14")) { return $true }
+        $request = "3.13"
     }
 
     # Not found, auto-install (3.13 as default)
-    Clack-Step "$(i18n 'installing') $(i18n 'python') 3.13..."
-    $installResult = Invoke-NativeQuietly { & uv python install 3.13 }
+    Clack-Step "$(i18n 'installing') $(i18n 'python') 3.13$note..."
+    $installResult = Invoke-NativeQuietly { & uv python install $request }
     if ($installResult.Success) {
-        $uvPython = & uv python find 3.13 2>$null
-        if ($uvPython -and (Test-Path $uvPython)) {
-            $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
-            if ($version) {
-                $script:PYTHON_CMD = $uvPython
-                Clack-Success "$(i18n 'python') $version $(i18n 'installed')"
-                return $true
-            }
-        }
+        if (Select-Python (Find-UvPython $request) "$note $(i18n 'installed')") { return $true }
     }
 
     Clack-Error (i18n "error_python_required")

@@ -38,6 +38,10 @@ markitai doctor              # check core and optional capabilities
 markitai init                # config and LLM provider
 ```
 
+On Windows on Arm, add `--python cpython-3.13-windows-x86_64`: some libraries
+markitai needs have no ARM64 build, so it runs on an emulated x64 Python
+(`setup.ps1` does this for you).
+
 Browser rendering needs the `browser` extra, then Chromium:
 
 ```bash

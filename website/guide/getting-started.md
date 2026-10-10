@@ -130,10 +130,12 @@ The output name is the full input name plus `.md`, so `report.pdf` and `report.d
 
 ## Platform-Specific Features
 
-Everything works on Windows, Linux and macOS, with two things to know:
+Everything works on Windows, Linux and macOS, with three things to know:
 
 - **EMF/WMF images** only convert on Windows, because the format itself is Windows-only.
 - **PPTX slide screenshots** need a renderer. Windows uses Microsoft Office or LibreOffice. Linux needs LibreOffice (`apt-get install libreoffice`). macOS prefers LibreOffice (`brew install --cask libreoffice`) and otherwise drives an installed PowerPoint, which pops a one-time permission dialog and needs a desktop session. Recent macOS versions also refuse the terminal's writes to PowerPoint's container (`Operation not permitted`, with no dialog): give the terminal app Full Disk Access in System Settings → Privacy & Security, or install LibreOffice. Set `"office": { "macos_fallback": false }` in the config to disable that on headless Macs.
+
+- **Windows on Arm** (Snapdragon and other ARM64 PCs): markitai runs on an x64 Python, which Windows emulates. Some libraries it needs have no ARM64 build yet: pymupdf-layout, used for every PDF, has none at all, and the LLM library needs packages that would have to be compiled with Rust. `setup.ps1` picks an x64 Python, or installs one with uv, and says so. With uv directly, ask for one: `uv tool install markitai --python cpython-3.13-windows-x86_64`. On a native ARM64 Python the install stops with `pymupdf-layout ... has no wheels with a matching platform tag (e.g., win_arm64)`. Emulation makes markitai slower than on an x64 PC.
 
 Legacy `.doc` and `.ppt` files need `markitai[legacy]` and no Office install on any platform.
 

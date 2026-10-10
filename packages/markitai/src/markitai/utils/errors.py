@@ -56,17 +56,64 @@ def extra_install_command(*extras: str) -> str:
     install), matching what the docs recommend.
 
     Several extras give one command: doctor on a plain install used to print
-    one reinstall per missing extra.
+    one reinstall per missing extra. On Windows on Arm the command keeps the
+    x64 Python markitai runs on (see :func:`_windows_on_arm_python`).
     """
     import sys
     from pathlib import Path
 
     installer = "pipx" if "pipx" in Path(sys.prefix).parts else "uv tool"
     if installer == "uv tool":
+        pin = _windows_on_arm_python()
+        python = f" --python {pin}" if pin else ""
         spec = _uv_tool_spec(Path(sys.prefix), extras)
         if spec is not None:
-            return f'uv tool install "{spec}" --force'
+            return f'uv tool install "{spec}"{python} --force'
+        return f'uv tool install "markitai[{",".join(sorted(set(extras)))}]"{python} --force'
     return f'{installer} install "markitai[{",".join(sorted(set(extras)))}]" --force'
+
+
+def _windows_machine_arch() -> str:
+    """The machine's architecture on Windows (``ARM64``, ``AMD64``).
+
+    From the registry's machine environment: an x64 process emulated on
+    ARM64 sees ``AMD64`` in its own PROCESSOR_ARCHITECTURE (and so does
+    Python 3.11's ``platform.machine()``).
+    """
+    import os
+    import sys
+
+    if sys.platform == "win32":
+        import winreg
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            ) as key:
+                return str(winreg.QueryValueEx(key, "PROCESSOR_ARCHITECTURE")[0])
+        except OSError:
+            pass
+    return os.environ.get("PROCESSOR_ARCHITECTURE", "")
+
+
+def _windows_on_arm_python() -> str | None:
+    """The ``--python`` request that keeps an x64 install on Windows on Arm.
+
+    markitai cannot install on a native ARM64 Python (pymupdf-layout has no
+    ARM64 build; litellm needs fastuuid and tiktoken compiled with Rust), so
+    setup.ps1 puts it on an emulated x64 one. ``uv tool install --force``
+    without ``--python`` builds the tool again on whatever Python uv finds
+    first, which can be a native one that then fails to install.
+    """
+    import sys
+    import sysconfig
+
+    if sys.platform != "win32" or sysconfig.get_platform() != "win-amd64":
+        return None
+    if _windows_machine_arch().upper() != "ARM64":
+        return None
+    return f"cpython-{sys.version_info.major}.{sys.version_info.minor}-windows-x86_64"
 
 
 def _uv_tool_spec(prefix: object, extras: tuple[str, ...]) -> str | None:
