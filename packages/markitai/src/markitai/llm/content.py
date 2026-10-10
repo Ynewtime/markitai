@@ -537,6 +537,145 @@ def restore_image_positions(text: str, mapping: dict[str, str]) -> str:
     return result
 
 
+# What makes two lines "the same line" when a placeholder is put back next to
+# them: case, whitespace and Markdown emphasis/heading/quote marks may change
+# in a cleanup, the words may not.
+_ANCHOR_NOISE_RE = re.compile(r"[\s*_`#>]+")
+_PLACEHOLDER_PARTS_RE = re.compile(r"^__MARKITAI_([A-Z]+)_(\d+)__$")
+
+
+def _anchor_key(line: str) -> str:
+    return _ANCHOR_NOISE_RE.sub("", line).lower()
+
+
+def _mangled_placeholder_re(placeholder: str) -> re.Pattern[str] | None:
+    """A placeholder as a cleanup rewrites Markdown it reads as emphasis.
+
+    ``__MARKITAI_PAGENUM_0__`` is bold syntax, so an answer may come back
+    with ``**MARKITAI_PAGENUM_0**``, escaped underscores or the bare name.
+    """
+    parts = _PLACEHOLDER_PARTS_RE.match(placeholder)
+    if parts is None:
+        return None
+    kind, number = parts.groups()
+    us = r"\\?_"
+    return re.compile(
+        rf"(?<![A-Za-z0-9])(?:{us}{us}|\*\*)?MARKITAI{us}{kind}{us}{number}"
+        rf"(?:{us}{us}|\*\*)?(?![A-Za-z0-9])"
+    )
+
+
+def _neighbours(lines: list[str], at: int) -> tuple[str | None, str | None]:
+    """The non-blank lines right above line ``at`` and from ``at`` on."""
+    above = next((line for line in reversed(lines[:at]) if line.strip()), None)
+    below = next((line for line in lines[at:] if line.strip()), None)
+    return above, below
+
+
+def _same_line(want: str | None, got: str | None) -> bool:
+    """Whether an answer line is the source line (None: start/end of text)."""
+    if want is None or got is None:
+        return want is got
+    return _anchor_key(got) == _anchor_key(want)
+
+
+def restore_dropped_placeholders(
+    source: str,
+    answer: str,
+    placeholders: list[str] | tuple[str, ...],
+    originals: dict[str, str] | None = None,
+) -> tuple[str, list[str]]:
+    """Put back placeholders an answer dropped where only one place fits.
+
+    A cleanup model sometimes drops a structural placeholder it takes for
+    noise (Gemini Flash-Lite and Claude Haiku 4.5 dropped the page marker
+    that opens a one-page PDF) or rewrites it as Markdown. Rejecting the
+    whole answer for that throws away a good cleanup, so a placeholder that
+    stood alone on its line goes back when the lines around it survived as
+    neighbours: the line after it occurs exactly once in the answer, and
+    the line before it (or the start of the text) is still right above
+    that one. An answer that wrote it in another form in that same place
+    (as bold, with escaped underscores, as its bare name, or as the
+    original it stands for, *originals*) gets the placeholder back there.
+
+    Anything else stays missing, so the caller still rejects the answer:
+    the text around the placeholder was rewritten, merged or dropped, the
+    other form sits somewhere else (the model moved it), or the
+    placeholder was inside a line. An answer that lost content next to a
+    placeholder is never repaired into one that looks complete.
+
+    Args:
+        source: The text sent to the model (with its placeholders).
+        answer: The model's answer.
+        placeholders: The placeholders the answer must contain.
+        originals: Placeholder -> the content it stands for.
+
+    Returns:
+        (answer with the placeholders it could put back, the ones still
+        missing).
+    """
+    source_lines = source.split("\n")
+    for placeholder in placeholders:
+        if placeholder in answer or source.count(placeholder) != 1:
+            continue
+        index = next(
+            (i for i, line in enumerate(source_lines) if line.strip() == placeholder),
+            None,
+        )
+        if index is None:
+            continue  # inside a line (an inline image): no line to anchor to
+        before, _ = _neighbours(source_lines, index)
+        _, after = _neighbours(source_lines, index + 1)
+        if before is None and after is None:
+            continue
+        answer_lines = answer.split("\n")
+
+        forms = [
+            form
+            for form in (
+                _mangled_placeholder_re(placeholder),
+                re.compile(re.escape((originals or {}).get(placeholder) or "")),
+            )
+            if form is not None and form.pattern
+        ]
+        rewritten = [
+            i
+            for i, line in enumerate(answer_lines)
+            if any(form.search(line) for form in forms)
+        ]
+        if rewritten:
+            # The model kept it in another form: only where it belongs
+            at = rewritten[0]
+            if (
+                len(rewritten) == 1
+                and any(form.fullmatch(answer_lines[at].strip()) for form in forms)
+                and _same_line(before, _neighbours(answer_lines, at)[0])
+                and _same_line(after, _neighbours(answer_lines, at + 1)[1])
+            ):
+                answer_lines[at] = placeholder
+                answer = "\n".join(answer_lines)
+            continue
+
+        if after is None:
+            at = len(answer_lines)
+        else:
+            key = _anchor_key(after)
+            hits = [
+                i for i, line in enumerate(answer_lines) if _anchor_key(line) == key
+            ]
+            if not key or len(hits) != 1:
+                continue
+            at = hits[0]
+        above, below = _neighbours(answer_lines, at)
+        if not (_same_line(before, above) and _same_line(after, below)):
+            continue
+        head = "\n".join(answer_lines[:at]).rstrip("\n")
+        tail = "\n".join(answer_lines[at:]).lstrip("\n")
+        answer = "\n\n".join(part for part in (head, placeholder, tail) if part)
+
+    return answer, [p for p in placeholders if p not in answer]
+
+
 def clean_frontmatter(frontmatter: str) -> str:
     """Clean frontmatter by removing code block markers and ``---`` markers.
 
