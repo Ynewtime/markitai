@@ -9,6 +9,8 @@
 #
 # Environment:
 #   MARKITAI_SETUP_MODE=install|dev  choose without the question (default: install)
+#   MARKITAI_SETUP_SOURCE=local|pypi in a checkout, install from it (default) or
+#                                    from the PyPI release, without the question
 #   MARKITAI_INSTALL_OPTIONAL=1      install optional components without a terminal
 #   MARKITAI_VERSION=X.Y.Z           pin the markitai release
 #   MARKITAI_USE_MIRROR=1|0          use (or never offer) a PyPI mirror
@@ -239,10 +241,13 @@ function i18n {
 
             # Install source (repo detection)
             "repo_detected"             { '\u68c0\u6d4b\u5230 markitai \u6e90\u7801\u4ed3\u5e93' }
-            "confirm_local_install"     { '\u4ece\u8fd9\u4e2a\u6e90\u7801\u4ed3\u5e93\u5b89\u88c5 markitai\uff0c\u800c\u4e0d\u662f PyPI \u53d1\u5e03\u7248?' }
+            "confirm_local_install"     { '\u4ece\u8fd9\u4e2a\u6e90\u7801\u4ed3\u5e93\u5b89\u88c5 markitai? (n: \u6539\u7528 PyPI \u53d1\u5e03\u7248)' }
             "source_local"              { '\u5b89\u88c5\u6765\u6e90: \u672c\u5730\u6e90\u7801' }
             "source_pypi"               { '\u5b89\u88c5\u6765\u6e90: PyPI' }
-            "info_repo_noninteractive"  { '\u975e\u4ea4\u4e92\u6a21\u5f0f: \u5df2\u68c0\u6d4b\u5230\u6e90\u7801\u4ed3\u5e93, \u5c06\u4f7f\u7528 PyPI \u53d1\u5e03\u7248' }
+            "info_repo_noninteractive"  { '\u65e0\u7ec8\u7aef\u53ef\u8be2\u95ee: \u4ece\u8fd9\u4e2a\u6e90\u7801\u4ed3\u5e93\u5b89\u88c5; \u8bbe\u7f6e MARKITAI_SETUP_SOURCE=pypi \u53ef\u6539\u7528 PyPI \u53d1\u5e03\u7248' }
+            "info_source_pinned"        { '\u5df2\u8bbe\u7f6e MARKITAI_VERSION: \u5b89\u88c5\u8be5 PyPI \u53d1\u5e03\u7248' }
+            "warn_unknown_source"       { '\u5ffd\u7565 MARKITAI_SETUP_SOURCE (\u5e94\u4e3a local \u6216 pypi)' }
+            "error_local_needs_repo"    { 'MARKITAI_SETUP_SOURCE=local \u9700\u8981\u5728 markitai \u6e90\u7801\u4ed3\u5e93\u4e2d\u8fd0\u884c\u672c\u811a\u672c' }
 
             # Network / Mirrors
             "mirror_slow_index"         { 'PyPI \u9ed8\u8ba4\u6e90\u54cd\u5e94\u7f13\u6162\u6216\u4e0d\u53ef\u8fbe' }
@@ -365,10 +370,13 @@ function i18n {
 
         # Install source (repo detection)
         "repo_detected"             { return 'markitai source repo detected' }
-        "confirm_local_install"     { return 'Install markitai from this checkout instead of the PyPI release?' }
+        "confirm_local_install"     { return 'Install markitai from this checkout? (n: the PyPI release instead)' }
         "source_local"              { return 'Install source: local repo' }
         "source_pypi"               { return 'Install source: PyPI' }
-        "info_repo_noninteractive"  { return 'Non-interactive mode: source repo detected, using PyPI release' }
+        "info_repo_noninteractive"  { return 'No terminal to ask: installing from this checkout; set MARKITAI_SETUP_SOURCE=pypi for the PyPI release' }
+        "info_source_pinned"        { return 'MARKITAI_VERSION is set: installing that PyPI release' }
+        "warn_unknown_source"       { return 'Ignoring MARKITAI_SETUP_SOURCE (expected local or pypi)' }
+        "error_local_needs_repo"    { return 'MARKITAI_SETUP_SOURCE=local needs this script to run from a markitai checkout' }
 
         # Network / Mirrors
         "mirror_slow_index"         { return 'The default PyPI index is slow or unreachable from here' }
@@ -1336,23 +1344,51 @@ function Get-MarkitaiRepoRoot {
     return $null
 }
 
-# Ask whether to install markitai from the local repo or PyPI
-# Default (enter / non-interactive / not in repo) = PyPI
+# In a markitai checkout, install markitai from it (default) or from PyPI.
+# Someone running the installer from a checkout expects that code installed;
+# MARKITAI_SETUP_SOURCE chooses without the question, and a pinned
+# MARKITAI_VERSION names a PyPI release.
 # Sets: $script:MARKITAI_SOURCE, $script:MarkitaiLocalPath
 function Select-InstallSource {
-    $repoRoot = Get-MarkitaiRepoRoot
-    if (-not $repoRoot) { return }
+    $requested = ("" + $env:MARKITAI_SETUP_SOURCE).Trim().ToLowerInvariant()
+    $want = ""
+    if ($requested -eq "local" -or $requested -eq "checkout" -or $requested -eq "source") {
+        $want = "local"
+    } elseif ($requested -eq "pypi" -or $requested -eq "release") {
+        $want = "pypi"
+    } elseif ($requested) {
+        Clack-Warn "$(i18n 'warn_unknown_source'): $($env:MARKITAI_SETUP_SOURCE)"
+    }
 
-    # Non-interactive (stdin redirected): never prompt, keep PyPI
-    if (-not (Test-InteractiveInput)) {
-        Clack-Info (i18n "info_repo_noninteractive")
+    $repoRoot = Get-MarkitaiRepoRoot
+    if (-not $repoRoot) {
+        if ($want -eq "local") {
+            Clack-Error (i18n "error_local_needs_repo")
+            Clack-Cancel (i18n "error_setup_failed")
+            exit 1
+        }
         return
     }
 
     if (-not $script:CHECKOUT_ANNOUNCED) {
         Clack-Info "$(i18n 'repo_detected'): $repoRoot"
     }
-    if (Clack-Confirm (i18n "confirm_local_install") "n") {
+    if (-not $want) {
+        if ($script:MarkitaiVersion) {
+            $want = "pypi"
+            Clack-Info (i18n "info_source_pinned")
+        } elseif (-not (Test-InteractiveInput)) {
+            # No terminal: the default without asking
+            $want = "local"
+            Clack-Info (i18n "info_repo_noninteractive")
+        } elseif (Clack-Confirm (i18n "confirm_local_install") "y") {
+            $want = "local"
+        } else {
+            $want = "pypi"
+        }
+    }
+
+    if ($want -eq "local") {
         $script:MARKITAI_SOURCE = "local"
         $script:MarkitaiLocalPath = Join-Path $repoRoot "packages/markitai"
         Clack-Info (i18n "source_local")
