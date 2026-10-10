@@ -15,7 +15,9 @@ uv run pre-commit install --hook-type pre-push   # pyright + tests on push
 The repo is a uv workspace. The published package lives in `packages/markitai`,
 the docs site in `website/` (VitePress + bun), and the install scripts in
 `scripts/`. Dated audit and experiment records go in
-[`process/`](process/README.md).
+[`process/`](process/README.md). The `markitai serve` web UI is built in the
+[markitai-rust](https://github.com/Ynewtime/markitai-rust) repository and
+vendored here with `scripts/sync_workbench.py`; change the UI there.
 
 ## Everyday commands
 

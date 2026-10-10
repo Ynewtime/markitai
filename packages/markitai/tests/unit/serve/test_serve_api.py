@@ -56,8 +56,8 @@ def _make_app(tmp_path: Path, cfg: MarkitaiConfig | None = None) -> FastAPI:
     cfg.cache.enabled = False
     cfg.cache.global_dir = str(tmp_path / "cache")
     return create_app(
-        # A nonexistent static dir disables the SPA mount even when the repo
-        # webapp/dist has been built — keeps these tests hermetic.
+        # A nonexistent bundle dir serves only the API (the vendored web UI
+        # stays out of these tests).
         static_dir=tmp_path / "no-static",
         jobs_root=tmp_path / "jobs",
         config=cfg,
