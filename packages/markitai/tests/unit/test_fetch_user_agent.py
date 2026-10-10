@@ -11,11 +11,11 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib import metadata
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import markitai
 from markitai import fetch_http
 from markitai.config import FetchConfig
 from markitai.fetch_http import (
@@ -36,8 +36,10 @@ ARTICLE = (
     + "</article></body></html>"
 ).encode()
 
+# Installed metadata, as default_user_agent reads it (an editable install's
+# metadata can lag markitai.__version__ until reinstalled)
 EXPECTED_AGENT = (
-    f"markitai/{markitai.__version__} (+https://github.com/Ynewtime/markitai)"
+    f"markitai/{metadata.version('markitai')} (+https://github.com/Ynewtime/markitai)"
 )
 
 

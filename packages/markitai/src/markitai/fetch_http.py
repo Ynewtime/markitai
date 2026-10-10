@@ -43,9 +43,16 @@ def default_user_agent() -> str:
     Generic library agents are refused by many sites (Wikipedia answers
     ``python-httpx/x.y`` with 403), a descriptive one is served.
     """
-    from markitai import __version__
+    # From installed metadata, as output_profiles does: importing the
+    # markitai package root would put the API layer (and everything it
+    # imports) under this foundation module for the import contracts
+    from importlib import metadata
 
-    return f"markitai/{__version__} (+{_USER_AGENT_CONTACT})"
+    try:
+        version = metadata.version("markitai")
+    except metadata.PackageNotFoundError:  # pragma: no cover - not installed
+        version = "0.0.0"
+    return f"markitai/{version} (+{_USER_AGENT_CONTACT})"
 
 
 class ResponseTooLargeError(Exception):
