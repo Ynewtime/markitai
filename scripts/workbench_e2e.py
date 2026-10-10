@@ -619,6 +619,44 @@ class Run:
     api: list[tuple[str, str, int]] = field(default_factory=list)
     jobs: list[str] = field(default_factory=list)
     counter: int = 0
+    current: str = "start"
+    page_errors: list[tuple[str, str]] = field(default_factory=list)
+    cancelled: list[str] = field(default_factory=list)
+    navigation_cancels: list[str] = field(default_factory=list)
+
+    def page_error(self, error: Any) -> None:
+        self.page_errors.append((self.current, str(error)))
+
+    def request_failed(self, request: Any) -> None:
+        # WebKit "Load request cancelled", Chromium net::ERR_ABORTED,
+        # Firefox NS_BINDING_ABORTED: the page went away, nothing refused it
+        failure = str(request.failure or "")
+        if re.search(r"cancel|abort", failure, re.IGNORECASE):
+            self.cancelled.append(request.url)
+
+    def settle_page_errors(self, engine: str) -> None:
+        """Page errors become run errors, except WebKit's cancelled fetches.
+
+        Playwright's WebKit reports every console error of the page as a
+        page error, and WebKit logs a fetch that a navigation cancelled as
+        "Fetch API cannot load <url> due to access control checks", although
+        the app caught it and nothing refused it (Safari only logs it). Such
+        an error counts as a cancellation when that URL's request failed as
+        cancelled; a real access-control failure does not fail that way.
+        """
+        cancelled = list(self.cancelled)
+        for state, message in self.page_errors:
+            match = re.search(r"(/api/\S*) due to access control checks", message)
+            url = (
+                next((u for u in cancelled if u.endswith(match.group(1))), None)
+                if engine == "webkit" and match
+                else None
+            )
+            if url is not None:
+                cancelled.remove(url)
+                self.navigation_cancels.append(f"{state}: {match.group(1)}")
+            else:
+                self.errors.append(f"pageerror during {state}: {message}")
 
     def shot(self, page: Any, state: str) -> str:
         self.counter += 1
@@ -628,6 +666,7 @@ class Run:
 
     def step(self, page: Any, state: str, check: Callable[[], str | None]) -> None:
         started = time.monotonic()
+        self.current = state
         try:
             note = check() or ""
             ok = True
@@ -730,6 +769,19 @@ def _api(page: Any, base: str, method: str, path: str, **kwargs: Any) -> Any:
     return page.request.fetch(f"{base}{path}", method=method, headers=headers, **kwargs)
 
 
+def _open(page: Any, navigate: Callable[[], Any]) -> None:
+    """Navigate (goto, reload) and wait for the app's capabilities answer.
+
+    The app asks for /api/capabilities as it starts; navigating again before
+    that answer cancels the request, which WebKit logs as an error. A user
+    reloading in Safari sees nothing; a run should not cause it.
+    """
+    with page.expect_response(
+        lambda response: response.url.endswith("/api/capabilities"), timeout=30000
+    ):
+        navigate()
+
+
 def browse(
     base: str,
     width: int,
@@ -750,7 +802,8 @@ def browse(
             accept_downloads=True,
         )
         page = context.new_page()
-        page.on("pageerror", lambda error: run.errors.append(f"pageerror: {error}"))
+        page.on("pageerror", run.page_error)
+        page.on("requestfailed", run.request_failed)
 
         def record(response: Any) -> None:
             if "/api/" in response.url:
@@ -772,7 +825,7 @@ def browse(
 
         # 1. The convert page, signed in by the URL fragment
         def home() -> str:
-            page.goto(f"{base}/#token={TOKEN}")
+            _open(page, lambda: page.goto(f"{base}/#token={TOKEN}"))
             page.get_by_role("button", name="Convert").wait_for()
             if "#token" in page.url:
                 raise AssertionError("the token stayed in the address bar")
@@ -907,7 +960,7 @@ def browse(
 
         # 7. Retry a failed item
         def retry() -> str:
-            page.goto(f"{base}/jobs")
+            _open(page, lambda: page.goto(f"{base}/jobs"))
             _dismiss(page)
             _item(page, "damaged.pdf").click()
             _heading(page, "damaged.pdf").wait_for()
@@ -1019,7 +1072,7 @@ def browse(
                 or (item.get("pricing") or {}).get("cost_status") != "unknown"
             ):
                 raise AssertionError(f"LLM item: {item}")
-            page.reload()
+            _open(page, page.reload)
             _dismiss(page)
             _item(page, "page/llm.html").click()
             _heading(page, "llm.html").wait_for()
@@ -1035,7 +1088,7 @@ def browse(
 
         # 11. Settings: test the configured model
         def settings() -> str:
-            page.goto(f"{base}/settings/models")
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
             _click_visible(page.get_by_role("button", name=re.compile(r"^Test ")))
             _wait(
                 page,
@@ -1049,8 +1102,8 @@ def browse(
 
         # 12. History survives a reload
         def history() -> str:
-            page.goto(f"{base}/jobs")
-            page.reload()
+            _open(page, lambda: page.goto(f"{base}/jobs"))
+            _open(page, page.reload)
             _items(page).first.wait_for()
             count = _items(page).count()
             if count < 8:
@@ -1069,11 +1122,10 @@ def browse(
             )
             other = fresh.new_page()
             other.on("response", record)
-            other.on(
-                "pageerror", lambda error: run.errors.append(f"pageerror: {error}")
-            )
+            other.on("pageerror", run.page_error)
+            other.on("requestfailed", run.request_failed)
             try:
-                other.goto(f"{base}/settings/models")
+                _open(other, lambda: other.goto(f"{base}/settings/models"))
                 other.wait_for_timeout(1500)
                 if not run.saw("GET", r"^/api/settings/llm", 401):
                     models = other.get_by_role("link", name="Models")
@@ -1101,6 +1153,7 @@ def browse(
 
         run.step(page, "token-prompt-checked", token_prompt)
         browser.close()
+    run.settle_page_errors(engine)
     return run
 
 
@@ -1159,7 +1212,10 @@ def main(argv: list[str] | None = None) -> int:
                         base, width, args.out, inputs, pages_port, args.browser
                     )
                     entry.update(
-                        steps=run.steps, errors=run.errors, api_calls=len(run.api)
+                        steps=run.steps,
+                        errors=run.errors,
+                        api_calls=len(run.api),
+                        navigation_cancels=run.navigation_cancels,
                     )
             except Exception as error:  # noqa: BLE001 - recorded; the next width runs
                 entry["errors"].append(
@@ -1221,6 +1277,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         for error in data["errors"]:
             lines.append(f"| {width} | error | **FAIL** | {error} | |")
+        if data.get("navigation_cancels"):
+            lines.append(
+                f"| {width} | cancelled | ok | requests a navigation cancelled "
+                f"(WebKit logs them as access-control errors): "
+                f"{', '.join(data['navigation_cancels'])} | |"
+            )
     for key, state in (("cleanup_error", "cleanup"), ("aborted", "aborted")):
         if results.get(key):
             lines.append(f"| | {state} | **FAIL** | {results[key]} | |")
