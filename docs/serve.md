@@ -517,8 +517,12 @@ the Host policy so a remote user can enter a service token. Browser launch place
 the token in the URL fragment; the UI removes it immediately and sends every
 request, event streams and preview images included, with Bearer authentication;
 an archive download uses a ticket, so no URL the workbench requests carries the
-token. Credentials are retrieved only through the explicit connection-edit route
-and are never stored by the browser workbench.
+token. A saved connection's key is never returned: the connection-edit route
+(`GET /api/settings/llm/providers/{id}/credentials`) shows it masked, as the
+reference does (`sk…7890`: the first two and last four characters of a key of 12
+or more, the last two of a shorter one), and an `env:NAME` reference by name. An
+update without `api_key` keeps the saved key; a masked key sent back as the new
+key is refused. The browser workbench never stores credentials.
 
 Host validation accepts localhost, IP literals, and explicit `--allowed-host`
 entries. A state-changing request with an Origin must match the request Host

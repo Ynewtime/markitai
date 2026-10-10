@@ -46,15 +46,18 @@ test("fresh credentials accept literal keys and reject environment expressions i
 });
 
 test("opening stored credentials describes the key without exposing it or an environment reference", () => {
-  const literal = providerDraft({ api_key: "sk-fixture-0000-abcd", api_base: "env:OPENAI_API_BASE", api_base_placeholder: "https://api.openai.com/v1" });
+  // Both backends send the key masked, under both names.
+  const literal = providerDraft({ api_key: "sk\u2026abcd", api_key_masked: "sk\u2026abcd", api_base: "env:OPENAI_API_BASE", api_base_placeholder: "https://api.openai.com/v1" });
   assert.deepEqual(literal.key, { state: "saved", ending: "abcd" });
   assert.equal(literal.configured, true);
   assert.equal(literal.baseRetained, true);
   assert.equal(literal.baseVariable, "OPENAI_API_BASE");
   assert.equal(literal.base, "");
-  assert.ok(!JSON.stringify(literal).includes("sk-fixture-0000-abcd"));
-  // A short key is too revealing to quote even in part.
-  assert.deepEqual(providerDraft({ api_key: "short-key", api_base: null, api_base_placeholder: null }).key, { state: "saved", ending: null });
+  assert.deepEqual(providerDraft({ api_key_masked: "sk\u2026abcd", api_base: null, api_base_placeholder: null }).key, { state: "saved", ending: "abcd" });
+  // A short key is too revealing to quote even in part, and an unmasked value is never quoted.
+  for (const shown of ["\u202690", "\u2026", "short-key", "sk-fixture-0000-abcd"]) {
+    assert.deepEqual(providerDraft({ api_key_masked: shown, api_base: null, api_base_placeholder: null }).key, { state: "saved", ending: null }, shown);
+  }
   const reference = providerDraft({ api_key: " env:OPENAI_API_KEY ", api_base: null, api_base_placeholder: null });
   assert.deepEqual(reference.key, { state: "environment", variable: "OPENAI_API_KEY", stored: true });
   assert.ok(!JSON.stringify(reference).includes("env:"));
@@ -69,7 +72,7 @@ test("opening stored credentials describes the key without exposing it or an env
 });
 
 test("the key is replaced or removed on its own and never left blank", () => {
-  const draft = providerDraft({ api_key: "stored-secret", api_base: "https://api.example.invalid/v1", api_base_placeholder: null });
+  const draft = providerDraft({ api_key: "st\u2026cret", api_base: "https://api.example.invalid/v1", api_base_placeholder: null });
   assert.deepEqual(providerUpdate(draft, { kind: "key", key: " replacement " }, "rev1"), { expected_revision: "rev1", api_key: "replacement" });
   assert.deepEqual(providerUpdate(draft, { kind: "removeKey" }, "rev1"), { expected_revision: "rev1", api_key: null });
   assert.throws(() => providerUpdate(draft, { kind: "key", key: "  " }, "rev1"), rejected("key_required"));

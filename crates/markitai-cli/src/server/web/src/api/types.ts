@@ -284,12 +284,12 @@ export interface ProviderCard {
 }
 
 export interface ProviderCredentials {
-  /** Server-held value/reference: keep out of editable inputs and outgoing writes. */
-  api_key: string | null;
+  /** The saved key masked (`sk…7890`), or an `env:NAME` reference; never the key. Display only. */
+  api_key_masked?: string | null;
+  /** The same display value under its older name. */
+  api_key?: string | null;
   /** "environment" when the key was found in the environment rather than the configuration. */
   api_key_source?: string | null;
-  /** Python 1.2's name for the same display value; read when `api_key` is absent. */
-  api_key_masked?: string | null;
   api_base: string | null;
   api_base_placeholder: string | null;
 }

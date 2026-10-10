@@ -377,10 +377,10 @@
       "get": {
         "tags": ["settings"],
         "operationId": "getProviderCredentials",
-        "summary": "The stored, editable fields of one saved connection",
+        "summary": "The editable fields of one saved connection; the key only masked",
         "parameters": [{ "$ref": "#/components/parameters/SettingsId" }],
         "responses": {
-          "200": { "description": "Stored fields (an `env:NAME` reference stays unresolved)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderCredentials" } } } },
+          "200": { "description": "Stored fields; the API key is never returned, only masked (an `env:NAME` reference stays unresolved)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderCredentials" } } } },
           "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" }
@@ -894,9 +894,11 @@
       },
       "ProviderCredentials": {
         "type": "object",
-        "required": ["api_key", "api_base", "api_base_placeholder"],
+        "required": ["api_key", "api_key_masked", "api_base", "api_base_placeholder"],
         "properties": {
-          "api_key": { "type": ["string", "null"] },
+          "api_key_masked": { "type": ["string", "null"], "description": "The saved key masked: the first two and last four characters of a key of 12 or more (`sk…7890`), the last two of a shorter one (`…90`), `…` under four characters; an `env:NAME` reference as it is. An update without `api_key` keeps the saved key; a masked key sent as `api_key` is refused (422).", "examples": ["sk…7890", "env:OPENAI_API_KEY"] },
+          "api_key": { "type": ["string", "null"], "description": "The same value as `api_key_masked`" },
+          "api_key_source": { "type": ["string", "null"], "enum": ["environment", null], "description": "`environment` when no key is saved and the server found one in its environment (a process variable or a dotenv file); `api_key_masked` then names the variable" },
           "api_base": { "type": ["string", "null"] },
           "api_base_placeholder": { "type": ["string", "null"] }
         }

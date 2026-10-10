@@ -59,23 +59,29 @@ export interface ProviderDraft {
   placeholder: string;
 }
 
-/** Long literal keys show their last four characters; short ones show nothing. */
-const KEY_ENDING_MIN = 12;
+const MASK = "\u2026";
 const variableOf = (value: string) => value.trim().slice("env:".length).trim();
 
+/**
+ * Servers send a saved key masked: `sk…7890` for a long key, `…90` or `…` for
+ * a short one. Long keys show their last four characters; short ones show
+ * nothing, and neither does anything that is not a mask.
+ */
 function savedKey(value: string | null, detected: boolean): SavedKey {
   if (!value) return { state: "none" };
   if (value.trim().startsWith("env:")) return { state: "environment", variable: variableOf(value), stored: !detected };
-  const key = value.trim();
-  return { state: "saved", ending: key.length >= KEY_ENDING_MIN ? key.slice(-4) : null };
+  const masked = value.trim();
+  const at = masked.indexOf(MASK);
+  const ending = masked.slice(at + 1);
+  return { state: "saved", ending: at > 0 && ending.length === 4 ? ending : null };
 }
 
 /** Neither saved literal keys nor environment references become editable input. */
 export function providerDraft(credentials: ProviderCredentials): ProviderDraft {
   const baseRetained = credentials.api_base?.trim().startsWith("env:") === true;
   return {
-    configured: Boolean(credentials.api_key ?? credentials.api_key_masked),
-    key: savedKey(credentials.api_key ?? credentials.api_key_masked ?? null, credentials.api_key_source === "environment"),
+    configured: Boolean(credentials.api_key_masked ?? credentials.api_key),
+    key: savedKey(credentials.api_key_masked ?? credentials.api_key ?? null, credentials.api_key_source === "environment"),
     base: baseRetained ? "" : credentials.api_base ?? "",
     baseRetained,
     baseVariable: baseRetained ? variableOf(credentials.api_base ?? "") : null,

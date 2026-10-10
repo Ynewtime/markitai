@@ -44,7 +44,36 @@ pub(super) fn client_field(body: &Value, field: &str) -> ApiResult<Option<String
             "environment references must be configured on the server",
         ));
     }
+    // The masked form sent back would replace the key with its own mask.
+    if field == "api_key" && value.as_deref().is_some_and(|v| v.contains(MASK)) {
+        return Err(invalid(
+            "api_key is a masked key; send the whole new key, or leave api_key out to keep the saved one",
+        ));
+    }
     Ok(value)
+}
+
+const MASK: char = '\u{2026}';
+
+/// How a stored key is shown, as the reference shows it: the first two and
+/// last four characters of a key of 12 or more, the last two of a shorter
+/// one, nothing of one under four. An `env:` reference names a variable, not
+/// a secret, and is shown as it is.
+pub(super) fn masked_key(key: &str) -> String {
+    if key.starts_with("env:") {
+        return key.to_owned();
+    }
+    let characters = key.chars().collect::<Vec<_>>();
+    let text = |part: &[char]| part.iter().collect::<String>();
+    match characters.len() {
+        length if length >= 12 => format!(
+            "{}{MASK}{}",
+            text(&characters[..2]),
+            text(&characters[length - 4..])
+        ),
+        length if length >= 4 => format!("{MASK}{}", text(&characters[length - 2..])),
+        _ => MASK.to_string(),
+    }
 }
 pub(super) fn environment_connection(id: &str) -> ApiResult<Value> {
     let name = id.strip_prefix("env:").ok_or_else(missing)?;

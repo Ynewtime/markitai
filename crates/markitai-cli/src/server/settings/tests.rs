@@ -171,11 +171,11 @@ fn connection_migration_updates_all_matching_rows_then_delete_keeps_other_connec
             provider
         );
     }
-    assert_eq!(
-        ok(store.credentials(&provider))["api_key"],
-        "fixture-next-key"
-    );
-    assert!(ok(store.credentials(&provider))["api_base"].is_null());
+    let credentials = ok(store.credentials(&provider));
+    assert_eq!(credentials["api_key_masked"], "fi\u{2026}-key");
+    assert_eq!(credentials["api_key"], credentials["api_key_masked"]);
+    assert!(!credentials.to_string().contains("fixture-next-key"));
+    assert!(credentials["api_base"].is_null());
     ok(store.mutate(Mutation::Provider {
         key: provider,
         revision: current(&store),
@@ -954,4 +954,81 @@ fn saved_endpoints_keep_the_openai_and_compatible_cards_on_offer() {
         .map(|card| card["provider"].as_str().unwrap())
         .collect();
     assert_eq!(configured, ["custom", "openai", "anthropic"]);
+}
+
+#[test]
+fn stored_keys_are_shown_masked_as_the_reference_shows_them() {
+    for (key, shown) in [
+        ("sk-fixture-1234567890", "sk\u{2026}7890"),
+        ("twelve-chars", "tw\u{2026}hars"),
+        ("eleven-char", "\u{2026}ar"),
+        ("four", "\u{2026}ur"),
+        ("abc", "\u{2026}"),
+        ("", "\u{2026}"),
+        ("密钥密钥密钥密钥密钥密钥", "密钥\u{2026}密钥密钥"),
+        ("env:OPENAI_API_KEY", "env:OPENAI_API_KEY"),
+    ] {
+        assert_eq!(model::masked_key(key), shown, "{key}");
+    }
+}
+#[test]
+fn a_masked_key_sent_back_is_refused_and_a_missing_one_keeps_the_saved_key() {
+    let (_dir, store) = setup(fixture());
+    let id = format!(
+        "legacy:{}",
+        store.view()["deployments"][0]["deployment_id"]
+            .as_str()
+            .unwrap()
+    );
+    let shown = ok(store.credentials(&id))["api_key_masked"].clone();
+    assert_eq!(shown, "fi\u{2026}cret");
+    let before = fs::read(&store.source.path).unwrap();
+    let error = store
+        .mutate(Mutation::Provider {
+            key: id.clone(),
+            revision: current(&store),
+            body: Some(json!({"expected_revision":current(&store),"api_key":shown})),
+        })
+        .err()
+        .unwrap();
+    assert_eq!(
+        (error.status.as_u16(), error.reason),
+        (422, "invalid_settings_request")
+    );
+    assert_eq!(fs::read(&store.source.path).unwrap(), before);
+    let add = json!({"expected_revision":current(&store),"model":"openai/new","api_key":"sk\u{2026}7890","model_name":"masked"});
+    assert_eq!(
+        store
+            .mutate(Mutation::Add(add))
+            .err()
+            .unwrap()
+            .status
+            .as_u16(),
+        422
+    );
+    assert!(
+        store
+            .resolve_discovery(&json!({"provider":"openai","api_key":"sk\u{2026}7890"}))
+            .is_err()
+    );
+    // Saving only the address it already has keeps the stored key.
+    let base = saved(&store)["llm"]["model_list"][0]["litellm_params"]["api_base"].clone();
+    ok(store.mutate(Mutation::Provider {
+        key: id,
+        revision: current(&store),
+        body: Some(json!({"expected_revision":current(&store),"api_base":base})),
+    }));
+    let raw = saved(&store);
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_key"],
+        "fixture-secret"
+    );
+    let provider = raw["llm"]["providers"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        ok(store.credentials(&provider))["api_key_masked"],
+        "fi\u{2026}cret"
+    );
 }
