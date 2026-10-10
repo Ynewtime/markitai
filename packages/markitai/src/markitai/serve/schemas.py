@@ -355,6 +355,7 @@ class Capabilities(BaseModel):
     version: str
     implementation: Literal["python"]
     docs_url: str
+    source_url: str  # this server's source repository (the UI's GitHub link)
     llm: CapabilitiesLLM
     presets: list[str]
     preset_options: dict[str, PresetFeatures]

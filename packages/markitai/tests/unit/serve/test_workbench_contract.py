@@ -16,6 +16,7 @@ import asyncio
 import gzip
 import io
 import json
+import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -91,6 +92,7 @@ SHAPES: dict[str, dict[str, F]] = {
         "version": F("str"),
         "implementation": opt(frozenset({"rust", "python"}), nullable=False),
         "docs_url": opt("str", nullable=False),
+        "source_url": opt("str", nullable=False),
         "llm": F("@CapabilitiesLLM"),
         "presets": F(["str"]),
         "preset_options": F("obj"),
@@ -615,6 +617,7 @@ class TestCapabilities:
         check_shape("Capabilities", data)
         assert data["implementation"] == "python"
         assert data["docs_url"].startswith("https://")
+        assert data["source_url"] == "https://github.com/Ynewtime/markitai"
         assert all(data["features"].values())
         assert data["limits"]["history_retention_days"] == 7
         for preset in data["presets"]:
@@ -1684,20 +1687,22 @@ class TestSettings:
 
 
 def _bundle(directory: Path, files: dict[str, bytes]) -> Path:
+    """A bundle as published: index.html at the root, the rest under ui/."""
     import hashlib
 
-    (directory / "ui").mkdir(parents=True)
-    for name, data in files.items():
-        (directory / "ui" / name).write_bytes(data)
+    paths = {
+        (name if name == "index.html" or "/" in name else f"ui/{name}"): data
+        for name, data in files.items()
+    }
+    for path, data in paths.items():
+        (directory / path).parent.mkdir(parents=True, exist_ok=True)
+        (directory / path).write_bytes(data)
     manifest = {
         "source_commit": "0" * 40,
         "build_command": "test",
         "files": {
-            f"ui/{name}": {
-                "bytes": len(data),
-                "sha256": hashlib.sha256(data).hexdigest(),
-            }
-            for name, data in files.items()
+            path: {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            for path, data in paths.items()
         },
     }
     (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -1724,6 +1729,7 @@ class TestStaticUi:
                 "app.css": b"body{}",
                 "logo.svg": b"<svg/>",
                 "inter-latin-wght.woff2": b"wOF2",
+                "LICENSES/marked-LICENSE": b"MIT",
             },
         )
         return _make_app(tmp_path, static_dir=bundle)
@@ -1826,3 +1832,9 @@ class TestVendoredBundle:
             assert name in workbench.assets, name
         index = workbench.index.plain.decode()
         assert "/ui/app.js" in index and "/ui/app.css" in index
+        # Every /ui/ name the shell references is in the bundle
+        for name in re.findall(r'"/ui/([^"]+)"', index):
+            assert name in workbench.assets, name
+        # The licences of the libraries and font inside travel with them
+        licences = BUNDLED_DIR / "LICENSES"
+        assert licences.is_dir() and any(licences.iterdir())

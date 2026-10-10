@@ -15,7 +15,7 @@ from pathlib import Path
 
 REQUIRED_FILES = {
     "markitai/serve/workbench/manifest.json",
-    "markitai/serve/workbench/ui/index.html",
+    "markitai/serve/workbench/index.html",
     "markitai/serve/workbench/ui/boot.js",
     "markitai/serve/workbench/ui/app.css",
     "markitai/serve/workbench/ui/logo.svg",
@@ -41,6 +41,9 @@ def check_wheel(wheel_path: Path) -> None:
         "markitai/serve/workbench/ui/app.js.gz",
     }:
         missing.append("markitai/serve/workbench/ui/app.js")
+    # The UI's libraries and font are MIT/OFL: their licences travel with them.
+    if not any(name.startswith("markitai/serve/workbench/LICENSES/") for name in names):
+        missing.append("markitai/serve/workbench/LICENSES/")
     if missing:
         raise SystemExit(f"wheel is missing the web workbench files: {missing}")
     # The retired React build must not ride along next to the workbench.
