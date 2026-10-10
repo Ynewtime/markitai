@@ -167,6 +167,14 @@ _BACKGROUND_SAMPLE_SCALE = 0.5
 _HIDDEN_EXCERPT_MAX_CHARS = 80
 
 
+def _pages_phrases(pages: Sequence[int]) -> tuple[str, str]:
+    """``("1 page", "page 3")`` or ``("2 pages", "pages 1, 4")`` for a notice."""
+    numbers = ", ".join(str(p) for p in pages)
+    if len(pages) == 1:
+        return "1 page", f"page {numbers}"
+    return f"{len(pages)} pages", f"pages {numbers}"
+
+
 def _color_luminance(color: int) -> float:
     """Rec. 601 luminance of a packed sRGB int color, in [0, 1]."""
     r = (color >> 16) & 0xFF
@@ -1169,11 +1177,13 @@ class PdfConverter(BaseConverter):
         )
         # A user notice: the default single-file console only shows errors,
         # and this is the one line that says how to get the missing text.
+        count, listed = _pages_phrases(flagged)
         user_notice(
-            "[PDF] {}: {} page(s) look scanned/garbled (pages {}); {}",
+            "[PDF] {}: {} {} scanned/garbled ({}); {}",
             input_path.name,
-            len(flagged),
-            ", ".join(str(p) for p in flagged),
+            count,
+            "looks" if len(flagged) == 1 else "look",
+            listed,
             remedy,
         )
 
@@ -1627,12 +1637,13 @@ class PdfConverter(BaseConverter):
 
             empty_pages = [i + 1 for i in ocr_pages if not ocr_texts.get(i)]
             if empty_pages:
+                count, listed = _pages_phrases(empty_pages)
                 user_notice(
-                    "[OCR] No text found on {} page(s) of {} (pages {}); "
-                    "they are blank in the output",
-                    len(empty_pages),
+                    "[OCR] No text found on {} of {} ({}); {} blank in the output",
+                    count,
                     input_path.name,
-                    ", ".join(str(p) for p in empty_pages),
+                    listed,
+                    "it is" if len(empty_pages) == 1 else "they are",
                 )
             page_texts.update(ocr_texts)
 

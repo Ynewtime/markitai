@@ -1613,7 +1613,14 @@ class TestScanAdvisoryWarning:
 
         advisories = [m for m in messages if "consider re-running with --ocr" in m]
         assert len(advisories) == 1
-        assert "pages 1" in advisories[0]
+        assert "scanned.pdf: 1 page looks scanned/garbled (page 1); " in advisories[0]
+
+    def test_notices_count_pages_in_words(self) -> None:
+        """Notices say "1 page (page 3)", not "1 page(s) (pages 3)"."""
+        from markitai.converter.pdf import _pages_phrases
+
+        assert _pages_phrases([3]) == ("1 page", "page 3")
+        assert _pages_phrases([1, 4, 7]) == ("3 pages", "pages 1, 4, 7")
 
     @patch("markitai.converter.pdf.pymupdf4llm")
     def test_no_warning_for_text_pdf(
@@ -2381,7 +2388,10 @@ class TestOcrPathMatchesStandardPath:
 
         assert "No text detected" not in result.markdown
         notices = [r for r in records if is_user_notice(r)]
-        assert any("No text found on 1 page(s)" in r["message"] for r in notices)
+        assert any(
+            "No text found on 1 page of mixed.pdf (page 2); it is blank" in r["message"]
+            for r in notices
+        )
 
     def test_page_ocr_error_is_raised_not_written(self, tmp_path: Path) -> None:
         from markitai.ocr import OCRError
@@ -2427,7 +2437,7 @@ class TestAdvisoriesAreUserNotices:
         finally:
             logger.remove(sink_id)
 
-        advisory = [r for r in records if "look scanned" in r["message"]]
+        advisory = [r for r in records if "scanned/garbled" in r["message"]]
         assert len(advisory) == 1
         assert is_user_notice(advisory[0])
         assert "scan.pdf" in advisory[0]["message"]

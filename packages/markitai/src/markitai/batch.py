@@ -1641,8 +1641,10 @@ class BatchProcessor:
         # Skipped file warnings — group by reason for concise output
         from collections import defaultdict
 
+        # A hint continues the line after "; ", like the other warnings
+        # ("...look scanned/garbled (page 1); consider re-running with --ocr")
         skip_hints: dict[str, str] = {
-            "image_only": "Use --llm or --ocr for content extraction.",
+            "image_only": "use --llm or --ocr for content extraction",
         }
         skips_by_reason: dict[str, list[str]] = defaultdict(list)
         for f in self.state.files.values():
@@ -1655,9 +1657,9 @@ class BatchProcessor:
             sorted_names = sorted(names)
             examples = ", ".join(sorted_names[:max_examples])
             if n > max_examples:
-                examples += ", ..."
+                examples += f" and {n - max_examples} more"
             hint = skip_hints.get(reason, "")
-            hint_str = f" {hint}" if hint else ""
+            hint_str = f"; {hint}" if hint else ""
             warnings.append(f"{n} {label} skipped ({reason}): {examples}{hint_str}")
 
         # Actionable notices raised while the progress bar hid the log,
