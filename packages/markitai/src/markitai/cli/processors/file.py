@@ -168,6 +168,7 @@ async def process_single_file(
         transient=stdout_mode,
     )
 
+    ctx: ConversionContext | None = None
     try:
         # Show verbose title
         if verbose and not quiet and not stdout_mode:
@@ -426,6 +427,9 @@ async def process_single_file(
                     source=input_path.name,
                     status="failed",
                     error=error_msg,
+                    # A failed LLM stage was still paid for
+                    cost_usd=ctx.llm_cost if ctx is not None else 0.0,
+                    llm_usage=ctx.llm_usage if ctx is not None else {},
                     duration=time.time() - start_time,
                 )
             )

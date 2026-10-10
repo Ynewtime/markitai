@@ -1434,7 +1434,11 @@ Slide body
         prompts_config: PromptsConfig,
         mock_instructor_result_factory,
     ) -> None:
-        """When LLM drops an image the item fails; nothing is appended to the end."""
+        """An image the LLM dropped goes back where it was, not to the end.
+
+        The image stood alone before the first paragraph, which the answer
+        kept as its first line: that position is unambiguous, so the
+        cleanup is kept with the image restored in place."""
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
@@ -1457,13 +1461,14 @@ Slide body
             )
             mock_instructor.return_value = mock_client
 
-            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
-                await processor.process_document(original, "article.md")
+            cleaned, _frontmatter = await processor.process_document(
+                original, "article.md"
+            )
 
         # Image must be at start, not end
-        cleaned = exc_info.value.cleaned_markdown
         assert cleaned.splitlines()[0].startswith("![cover]")
         assert cleaned.rstrip().endswith("第二段。")
+        assert cleaned.count("![cover]") == 1
 
 
 class TestEnhanceDocumentWithVisionAsync:

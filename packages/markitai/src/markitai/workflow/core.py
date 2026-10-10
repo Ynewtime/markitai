@@ -7,6 +7,7 @@ single-file and batch processing modes.
 from __future__ import annotations
 
 import asyncio
+import copy
 import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
@@ -1265,19 +1266,29 @@ async def run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
 
         ctx.shared_processor = create_llm_processor(ctx.config)
 
-    from markitai.llm.engine import llm_usage_scope
+    from markitai.llm.engine import llm_usage_scope, track_llm_spend
 
+    cost_before = ctx.llm_cost
+    usage_before = copy.deepcopy(ctx.llm_usage)
     # Usage and request budgets are tracked under the basename (also the
     # display/frontmatter source); scope them to this file so same-named
     # files of a batch on the shared processor stay apart
-    try:
-        with llm_usage_scope(str(ctx.input_path.resolve())):
-            return await _run_llm_enhancement(ctx)
-    finally:
-        # The image cache only pays off within a document (its keys are
-        # this file's pages and images); free it so a batch's shared
-        # processor does not hold up to 500 MB of finished documents.
-        ctx.shared_processor.clear_image_cache()
+    with track_llm_spend() as spend:
+        try:
+            with llm_usage_scope(str(ctx.input_path.resolve())):
+                return await _run_llm_enhancement(ctx)
+        finally:
+            # The image cache only pays off within a document (its keys are
+            # this file's pages and images); free it so a batch's shared
+            # processor does not hold up to 500 MB of finished documents.
+            ctx.shared_processor.clear_image_cache()
+            # Every request the stage paid for, also when it failed or its
+            # answer was rejected: a failing stage clears its usage without
+            # handing it on, and the item must not report that spend as free
+            if spend.usage:
+                ctx.llm_cost = cost_before + spend.cost
+                ctx.llm_usage = usage_before
+                merge_llm_usage(ctx.llm_usage, spend.usage)
 
 
 async def _run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:

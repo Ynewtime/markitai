@@ -127,6 +127,53 @@ def get_model_max_output_tokens(model: str) -> int:
     return get_model_info_cached(model)["max_output_tokens"]
 
 
+def cleanup_reasoning_params(model_id: str) -> dict[str, Any]:
+    """Request parameters that keep a reasoning model from thinking.
+
+    Every markitai request is a cleanup, a transcription or an image
+    description: work without a reasoning step, which a reasoning model
+    still bills as output. ``deepseek/deepseek-flash`` thought before every
+    answer (70,393 output tokens for a 33k-token PDF, $0.049), and
+    ``openai/gpt-6-luna`` spent up to half of its output on reasoning.
+
+    - DeepSeek thinking models: ``thinking: {"type": "disabled"}``.
+    - OpenAI models LiteLLM lists as accepting ``reasoning_effort="none"``.
+    - Claude Haiku 5.5 thinks adaptively unless told not to and accepts
+      ``thinking: {"type": "disabled"}`` at its default effort. Not other
+      Claude models: Opus 5.5, Sonnet 5.5 and Fable reject it (HTTP 400),
+      and older ones do not think unless asked.
+    - Gemini and OpenRouter get nothing: the defaults answer without
+      thinking (no thought tokens in their usage), and LiteLLM 1.104 would
+      send Gemini 3's ``thinkingLevel`` field to a model alias it cannot
+      verify, and refuses ``reasoning_effort`` for OpenRouter.
+
+    Args:
+        model_id: Deployment id (e.g. ``"deepseek/deepseek-flash"``).
+
+    Returns:
+        LiteLLM parameters to add to the deployment (empty when none apply).
+    """
+    try:
+        _, provider, _, _ = litellm.get_llm_provider(model_id)
+    except Exception:
+        return {}
+    name = model_id.split("/", 1)[1] if "/" in model_id else model_id
+    try:
+        if provider == "deepseek":
+            if "reasoner" not in name and litellm.supports_reasoning(model_id):
+                return {"thinking": {"type": "disabled"}}
+        elif provider == "openai":
+            from litellm.utils import supports_none_reasoning_effort
+
+            if supports_none_reasoning_effort(model_id):
+                return {"reasoning_effort": "none"}
+        elif provider == "anthropic" and name.startswith("claude-haiku-5-5"):
+            return {"thinking": {"type": "disabled"}}
+    except Exception:
+        logger.trace(f"[ModelInfo] No reasoning metadata for {model_id}")
+    return {}
+
+
 def get_response_cost(response: Any) -> float | None:
     """Get cost from a LiteLLM ModelResponse.
 

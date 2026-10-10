@@ -305,6 +305,23 @@ class TestVisionCleaning:
         engine.persistent_cache.set.assert_not_called()
 
     def test_vision_plan_rejects_lost_page_boundaries(self, tmp_path: Path) -> None:
+        """A boundary whose neighbours were merged cannot be put back."""
+        text = "<!-- Page number: 1 -->\n\nAlpha\n\n<!-- Page number: 2 -->\n\nBeta"
+        plan = _enhancer(_FakeEngine()).prepare_vision_plan(
+            text, [tmp_path / "p1.png", tmp_path / "p2.png"], "doc.pdf"
+        )
+        answer = EnhancedDocumentResult(
+            cleaned_markdown="Alpha Beta",
+            frontmatter=Frontmatter(description="d", tags=["t"]),
+        )
+        assert plan.call.validate is not None
+        with pytest.raises(ValueError, match="page/slide boundaries"):
+            plan.call.validate(answer)
+
+    def test_vision_plan_puts_back_unambiguous_page_boundaries(
+        self, tmp_path: Path
+    ) -> None:
+        """Markers dropped between paragraphs the answer kept go back there."""
         text = "<!-- Page number: 1 -->\n\nAlpha\n\n<!-- Page number: 2 -->\n\nBeta"
         plan = _enhancer(_FakeEngine()).prepare_vision_plan(
             text, [tmp_path / "p1.png", tmp_path / "p2.png"], "doc.pdf"
@@ -314,8 +331,8 @@ class TestVisionCleaning:
             frontmatter=Frontmatter(description="d", tags=["t"]),
         )
         assert plan.call.validate is not None
-        with pytest.raises(ValueError, match="page/slide boundaries"):
-            plan.call.validate(answer)
+        cleaned = plan.call.validate(answer).cleaned_markdown
+        assert cleaned.split() == text.split()
 
     def test_vision_plan_rejects_a_refusal(self, tmp_path: Path) -> None:
         plan = _enhancer(_FakeEngine()).prepare_vision_plan(
@@ -351,8 +368,9 @@ class TestDocumentPlanFallbacks:
     )
 
     def _lossy(self) -> DocumentProcessResult:
+        # Page 2's heading is gone with its marker: no place to put it back
         return DocumentProcessResult(
-            cleaned_markdown="# One\n\nAlpha\n\n# Two\n\nBeta",
+            cleaned_markdown="# One\n\nAlpha\n\nBeta",
             frontmatter=Frontmatter(description="d", tags=["t"]),
         )
 
@@ -362,11 +380,24 @@ class TestDocumentPlanFallbacks:
         with pytest.raises(ValueError, match="structural placeholders"):
             plan.call.validate(self._lossy())
 
-    def test_call_validate_rejects_dropped_image(self) -> None:
+    def test_call_validate_puts_back_boundaries_between_kept_lines(self) -> None:
+        plan = _enhancer(_FakeEngine())._prepare_document_plan(self.PAGED, "a.pdf")
+        answer = DocumentProcessResult(
+            cleaned_markdown="# One\n\nAlpha\n\n# Two\n\nBeta",
+            frontmatter=Frontmatter(description="d", tags=["t"]),
+        )
+        assert plan.call.validate is not None
+        validated = plan.call.validate(answer)
+        cleaned, _ = _enhancer(_FakeEngine()).finalize_document_plan(
+            plan, validated, strict=True
+        )
+        assert cleaned.split() == self.PAGED.split()
+
+    def test_call_validate_rejects_a_moved_image(self) -> None:
         markdown = "![chart](.markitai/assets/a.png)\n\n" + LONG_TEXT
         plan = _enhancer(_FakeEngine())._prepare_document_plan(markdown, "a.md")
         answer = DocumentProcessResult(
-            cleaned_markdown=LONG_TEXT,
+            cleaned_markdown=LONG_TEXT + "\n\n![chart](.markitai/assets/a.png)",
             frontmatter=Frontmatter(description="d", tags=["t"]),
         )
         assert plan.call.validate is not None

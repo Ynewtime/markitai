@@ -312,6 +312,13 @@ async def process_url(
     # Track cache hit for reporting
     fetch_cache_hit = False
 
+    # Every LLM request this URL pays for, also those of a stage that failed
+    # or whose answer was rejected (the stages clear their own usage then)
+    from markitai.llm.engine import track_llm_spend
+
+    spend_scope = track_llm_spend()
+    url_spend = spend_scope.__enter__()
+
     def record_failure(message: str) -> None:
         """Append a failed history outcome for this URL (best effort)."""
         if history is not None:
@@ -321,6 +328,8 @@ async def process_url(
                     source=url,
                     status="failed",
                     error=message,
+                    cost_usd=url_spend.cost,
+                    llm_usage=copy.deepcopy(url_spend.usage),
                     duration=(datetime.now() - started_at).total_seconds(),
                 )
             )
@@ -791,6 +800,10 @@ async def process_url(
         # After the stage list, so the warning survives its transient frame;
         # stderr, so stdout stays the Markdown payload.
         _print_warnings(url_warnings, quiet=quiet, console=diag_console)
+        if url_spend.usage:
+            # The whole spend, a failed (fallback) stage's included
+            llm_cost = url_spend.cost
+            llm_usage = copy.deepcopy(url_spend.usage)
 
         if stdout_mode:
             assert temp_dir is not None  # guaranteed when stdout_mode is True
@@ -967,6 +980,7 @@ async def process_url(
         _print_url_error(url, str(e), diag_console)
         raise SystemExit(resolve_exit_code(1, batch=False))
     finally:
+        spend_scope.__exit__(None, None, None)
         # Safety net: ensure the stage list is stopped on every exit path
         stages.stop()
         # Cleanup temp directory for stdout mode
@@ -1338,6 +1352,10 @@ async def process_url_batch(
             else:
                 url_state.status = FileStatus.FAILED
                 url_state.error = error or (result.error if result else None)
+                if result is not None:
+                    # A failed LLM stage was still paid for
+                    url_state.cost_usd = result.cost_usd
+                    url_state.llm_usage = result.llm_usage
             batch._dirty_keys.add(key)
 
         async with semaphore:
