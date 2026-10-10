@@ -1299,3 +1299,32 @@ def test_ci_runs_the_guards_when_only_a_setup_script_changes() -> None:
         paths = triggers[event]["paths"]
         assert "scripts/setup.sh" in paths, event
         assert "scripts/setup.ps1" in paths, event
+
+
+@_needs_pwsh
+@pytest.mark.parametrize(
+    ("modern", "code_page", "unicode"),
+    [
+        pytest.param("$true", 1252, False, id="ssh-to-a-1252-file"),
+        pytest.param("$false", 437, False, id="console-to-a-437-file"),
+        pytest.param("$true", 65001, True, id="utf8-code-page"),
+    ],
+)
+def test_setup_ps1_redirected_on_windows_uses_the_shells_code_page(
+    tmp_path: Path, modern: str, code_page: int, unicode: bool
+) -> None:
+    """`setup.ps1 > setup.log` over SSH wrote UTF-8 box drawing that
+    Get-Content (ANSI in 5.1) showed as mojibake: the script had already
+    switched the console to UTF-8, and SSH counted as a modern terminal."""
+    body = (
+        "$script:OnWindows = $true\n"
+        f"$script:ModernTerminal = {modern}\n"
+        f"$script:OriginalOutputEncoding = [pscustomobject]@{{ CodePage = {code_page} }}\n"
+        f"{_powershell_function('Test-OutputRedirected')}"
+        f"{_powershell_function('Test-UnicodeMarks')}"
+        '"unicode=$(Test-UnicodeMarks)"\n'
+    )
+    result = _run_ps(tmp_path, body, runtime=False)
+    assert result.stdout.rstrip().endswith(f"unicode={unicode}"), (
+        result.stdout + result.stderr
+    )
