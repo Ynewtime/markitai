@@ -261,9 +261,54 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        # Should show "1/3 ✓" (only 1 truly completed) and mention 2 skipped
-        assert "1/3" in captured.err
-        assert "2 skipped" in captured.err
+        # Only 1 truly completed, and the 2 skipped are counted apart
+        assert "✓ Done: 1 file (" in captured.err
+        assert "• Files: 1 of 3 converted, 2 skipped" in captured.err
+
+    def test_failures_are_errors_and_the_summary_says_so(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """A failed item is a red cross, not a warning; a run with failures
+        does not end on a plain checkmark (terminal style guide)."""
+        config = BatchConfig()
+        processor = BatchProcessor(config, tmp_path)
+        processor.state = BatchState(
+            started_at="2026-01-15T10:00:00Z",
+            input_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+        )
+        processor.state.files = {
+            "/path/ok.pdf": FileState(path="/path/ok.pdf", status=FileStatus.COMPLETED),
+            "/path/bad.pdf": FileState(
+                path="/path/bad.pdf", status=FileStatus.FAILED, error="broken xref"
+            ),
+        }
+
+        processor.print_summary()
+
+        err = capsys.readouterr().err
+        assert "! Done: 1 file, 1 failed (" in err
+        assert "• Files: 1 of 2 converted, 1 failed" in err
+        assert "  ✗ bad.pdf: broken xref" in err
+        assert "✓" not in err
+
+    def test_everything_failed_is_an_error(self, tmp_path: Path, capsys) -> None:
+        config = BatchConfig()
+        processor = BatchProcessor(config, tmp_path)
+        processor.state = BatchState(
+            started_at="2026-01-15T10:00:00Z",
+            input_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+        )
+        processor.state.files = {
+            "/path/bad.pdf": FileState(
+                path="/path/bad.pdf", status=FileStatus.FAILED, error="broken xref"
+            ),
+        }
+
+        processor.print_summary()
+
+        assert "✗ Done: 1 failed (" in capsys.readouterr().err
 
     def test_skip_warnings_show_two_example_filenames(
         self, tmp_path: Path, capsys

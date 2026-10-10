@@ -18,7 +18,6 @@ from urllib.parse import urlparse
 
 from loguru import logger
 from rich.live import Live
-from rich.markup import escape
 from rich.progress import (
     BarColumn,
     Progress,
@@ -662,6 +661,10 @@ class ProcessResult:
     cache_hit: bool = False
     llm_enhanced: bool = False
     warnings: list[str] = field(default_factory=list)
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
 class BatchProcessor:
@@ -1584,18 +1587,22 @@ class BatchProcessor:
             except ValueError:
                 wall_duration = 0.0
 
-        # Collect warnings (failed files and URLs)
+        # Failed files and URLs (printed as errors), then warnings
+        failures: list[str] = []
         warnings: list[str] = []
         for f in self.state.files.values():
             if f.status == FileStatus.FAILED and f.error:
-                warnings.append(f"{Path(f.path).name}: {f.error}")
+                failures.append(f"{Path(f.path).name}: {f.error}")
         for u in self.state.urls.values():
             if u.status == FileStatus.FAILED and u.error:
                 # Extract domain for display
                 from urllib.parse import urlparse
 
                 domain = urlparse(u.url).netloc
-                warnings.append(f"{domain}: {u.error}")
+                failures.append(f"{domain}: {u.error}")
+        files_failed = sum(
+            1 for f in self.state.files.values() if f.status == FileStatus.FAILED
+        )
 
         # Format wall duration for display
         wall_duration_str = format_duration(wall_duration)
@@ -1609,33 +1616,55 @@ class BatchProcessor:
         # Build summary parts
         parts: list[str] = []
         if files_actually_converted > 0:
-            parts.append(f"{files_actually_converted} files")
+            parts.append(_count(files_actually_converted, "file"))
         if url_completed > 0:
-            parts.append(f"{url_completed} URLs")
+            parts.append(_count(url_completed, "URL"))
 
         cost_str = self._cost_text()
+        failed_total = files_failed + url_failed
+        if failed_total:
+            parts.append(f"{failed_total} failed")
         # Nothing converted is still a finished run; say so instead of "Done: ".
         summary_text = f"Done: {', '.join(parts) or 'nothing converted'} ({wall_duration_str}{cost_str})"
-        term.summary(summary_text, console=self.console)
+        # The mark matches the outcome: a run with failures is not a plain
+        # success, and one where everything failed is an error
+        if not failed_total:
+            outcome: bool | None = True
+        elif files_actually_converted or url_completed:
+            outcome = None
+        else:
+            outcome = False
+        term.summary(summary_text, ok=outcome, console=self.console)
 
-        # Detail lines
-        if files_completed > 0:
+        # Detail lines: counts in words; the ✓ that used to follow them
+        # showed even when items had failed
+        if files_completed > 0 or files_failed:
             cache_hits = sum(
                 1
                 for f in self.state.files.values()
                 if f.status == FileStatus.COMPLETED and f.cache_hit
             )
-            cache_str = f"  Cache: {cache_hits}" if cache_hits > 0 else ""
-            skip_str = f"  {files_skipped} skipped" if files_skipped > 0 else ""
-            self.console.print(
-                f"  {term.MARK_INFO} Files: {files_actually_converted}/{self.state.total} "
-                f"[green]{term.MARK_SUCCESS}[/]{cache_str}{skip_str}"
+            details = [f"{files_actually_converted} of {self.state.total} converted"]
+            if files_skipped:
+                details.append(f"{files_skipped} skipped")
+            if files_failed:
+                details.append(f"{files_failed} failed")
+            if cache_hits:
+                details.append(f"{cache_hits} from cache")
+            term.print_marked(
+                f"Files: {', '.join(details)}",
+                mark=term.MARK_INFO,
+                console=self.console,
             )
         if url_completed > 0 or url_failed > 0:
             total_urls = url_completed + url_failed
-            self.console.print(
-                f"  {term.MARK_INFO} URLs:  {url_completed}/{total_urls} "
-                f"[green]{term.MARK_SUCCESS}[/]"
+            details = [f"{url_completed} of {total_urls} converted"]
+            if url_failed:
+                details.append(f"{url_failed} failed")
+            term.print_marked(
+                f"URLs:  {', '.join(details)}",
+                mark=term.MARK_INFO,
+                console=self.console,
             )
 
         # Skipped file warnings — group by reason for concise output
@@ -1672,18 +1701,16 @@ class BatchProcessor:
             )
         )
 
-        # Warnings (failed and skipped items). Never truncated: the useful
-        # part of a warning is usually its tail (the install command, the
-        # flag that would have read the file), and rich wraps long lines.
-        if warnings:
+        # Failures (red), then warnings (skipped items, notices). Never
+        # truncated: the useful part is usually the tail (the install
+        # command, the flag that would have read the file); on a terminal
+        # long lines wrap under their text.
+        if failures or warnings:
             self.console.print()
+            for failure in failures:
+                term.print_marked(failure, mark=term.MARK_ERROR, console=self.console)
             for warning in warnings:
-                self.console.print(
-                    f"  [yellow]{term.MARK_WARNING}[/] {escape(warning)}"
-                )
+                term.print_marked(warning, mark=term.MARK_WARNING, console=self.console)
 
         self.console.print()
-        out_max = max(term.term_width(self.console) - 10, 20)
-        self.console.print(
-            f"  Output: {term.truncate(str(self.output_dir) + '/', out_max)}"
-        )
+        term.print_marked(f"Output: {self.output_dir}/", mark="", console=self.console)
