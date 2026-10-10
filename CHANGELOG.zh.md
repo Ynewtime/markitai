@@ -7,8 +7,21 @@
 
 ## [1.2.1] - 2026-10-10
 
+### 新增
+
+- **新的 `markitai serve` 工作台。** 网页界面换成了 markitai Rust 实现同样使用的工作台，此后两者共用一套界面。侧栏有**转换**、**转换任务**和**系统设置**（模型、外观与语言、访问令牌；手机上改为底部栏）。文件和文件夹先暂存并显示上传进度，按下**转换**才提交，可以和粘贴的 URL 合成一次提交。**转换任务**是一个列出所有条目的列表，按提交分组，以来源文件夹或 `.urls` 列表命名，可按名称和状态筛选。检查面板显示条目的状态、原件与输出大小、模型、费用、选项、提示、保留期限和结果开头。预览在列表旁打开，**对照**会把原件放在 Markdown 旁边：PDF 页面（鼠标指向的标题或表格会在页面上框出）、图片、HTML 和文本文档，或转换时保存的页面截图。界面在中英文之外新增日文。大结果依然流畅：两万行的表格 0.1 秒打开，先显示前 500 行（**显示全部行**加载其余）；1.2 的界面要 3.2 秒，期间页面卡住 2.7 秒，并生成 16 万个页面元素。页面首次绘制约 0.1 秒，原来约 0.2 秒。
+- **停止剩余**：正在运行的提交里尚未开始的条目可以停下；已在转换的条目照常完成，被停下的条目之后可以重试（`POST /api/jobs/{job_id}/cancel`）。
+- **网页界面支持 `.urls` 列表**：上传的 `.urls` 文件会展开为 URL 条目，读法与命令行一致（每行一个 URL，可附输出名，`#` 注释，或 JSON 列表）。此前 `markitai serve` 会把它当作不支持的格式拒绝。
+- 为工作台新增的 serve API：条目原件（`GET /api/jobs/{job_id}/items/{item_id}/original`、它的 `/file`、用 PyMuPDF 和 Pillow 渲染的页面图片 `/pages/{n}?width=`，以及 PDF 页面带位置的文字行 `/pages/{n}/text`）、一次性下载票据（`POST /api/download-tickets`）、`GET /api/history?include=items`、结果节选（`?max_bytes=`）、任务 `label`，以及每个条目上的 `error_code`、`pricing`、`models`、`source_size` 和保存的 `options`。`GET /api/capabilities` 会列出服务实现的 `features`、`docs_url` 与 `source_url`、历史保留期限，以及能否使用 Cloudflare。
+
 ### 变更
 
+- **React 网页应用退役。** `webapp/` 及其在 `markitai/serve/static/` 的构建产物已从仓库和安装包中移除；工作台在 markitai-rust 仓库构建，连同记录每个文件摘要的清单一起放在 `markitai/serve/workbench/`（`scripts/sync_workbench.py` 负责更新和校验），构建 markitai 不需要 Node 或 Rust。你会注意到：上面描述的新布局；设置是独立页面（`/settings/models` 等），不再是弹窗；预览在列表旁打开，不再盖住列表；1.2 界面的 `/assets/…` 地址不再存在。wheel 从 1.51 MB 变为 1.64 MB：工作台的每个脚本同时附带原文和 gzip 压缩版，服务端直接发送压缩版，不用在请求时压缩。
+- **没有可用模型时拒绝 LLM 请求**：`POST /api/jobs` 要求 LLM 处理（`llm: true`，或开启 LLM 的预设）而没有任何已配置模型可用时，现在返回 422 `llm_unavailable`，不保存任何内容。此前会不用模型直接转换并报告成功。服务端配置开启了 LLM 却没有模型时，仍和以前一样不用模型转换。
+- **`serve` 中的 Cloudflare 需要逐次确认**：选用 Cloudflare 抓取策略或文件后端的任务，必须在同一请求的选项里带上 `"remote_processing": "cloudflare"`（工作台会先征得你的确认）；没有令牌的调用方会被拒绝（费用记在服务端的 Cloudflare 账户上）；Cloudflare 未配置时返回 `cloudflare_unavailable`。确认不会被保存，所以重试这类条目要再次确认。
+- `markitai serve` 的错误在 `detail`、`code` 之外带上稳定的 `reason`（`llm_unavailable`、`file_too_large`、`ticket_invalid` 等），工作台据此显示本地化的说明。被请求结构拒绝的请求，`detail` 改为一句点名字段的说明，不再是 pydantic 的列表，也不会回显提交的值。任务选项严格校验（此前 `"llm": "yes"` 会被当成 true）；URL 在提交时就校验（`invalid_url`、`unsupported_url_scheme`），不再变成失败条目；超过 120 个字符或含控制字符的标签会被拒绝（`invalid_label`）。
+- 仍在等待提供商批处理（`--llm-batch`）的条目不能再从网页重试或增强（409 `batch_pending`），否则同一份增强会付两次费。
+- 凭据接口在 `api_key_masked` 之外，也以工作台读取的 `api_key` 字段返回同一个打码后的 key。
 - PyYAML、beautifulsoup4、soupsieve、defusedxml、PyMuPDF、openpyxl、numpy 和 olefile 改为声明的依赖。markitai 直接导入它们，此前只是随其他包间接安装，上游某次发布去掉其中一个就可能让 `import markitai` 失败。
 - **DeepSeek 默认模型改为 `deepseek/deepseek-flash`**（DeepSeek V4.1-Flash），`markitai init` 和检测到 `DEEPSEEK_API_KEY` 时都用它。DeepSeek 已于 2026-09-10 下线 V4-Flash，`deepseek-v4-flash` 和 `deepseek-v4-flash-vision-exp` 只是暂时转到 V4.1-Flash。配置里仍写着它们的（1.2.0 的 `markitai init` 写入的是 `deepseek/deepseek-v4-flash`）会在启动时收到警告，并给出新的默认模型；markitai 不会改写你的配置。
 - **其他提供商的默认模型更新为当前型号**：只找到某个提供商的 key 或订阅时，`markitai init` 和自动检测现在选用 OpenAI `openai/gpt-6-luna`（原为 `gpt-5.6-luna`；每百万 token $0.10/$0.50，原为 $0.20/$1.20）、Anthropic `anthropic/claude-haiku-5-5`（原为 `claude-haiku-4-5`；提示不超过 10 万 token 时 $0.10/$0.50，原为 $1/$5）、ChatGPT `chatgpt/gpt-6-luna`（原为 `gpt-5.6`）、GitHub Copilot `copilot/auto`（原为 `claude-haiku-4.5`；即 Copilot 的自动选择模型 Auto，自 2026 年 6 月起是 Copilot Free 和 Student 套餐唯一可用的选项，按它选中的模型计费）、OpenRouter `openrouter/~anthropic/claude-haiku-latest`（原为 `google/gemini-3.1-flash-lite`；即 OpenRouter 指向最新 Claude Haiku 的别名。它的目录写的是 Claude Haiku 5.5，$0.10/$0.50，但 2026-10-10 发往它的请求实际仍由 Claude Haiku 4.5 应答并按 $1/$5 计费；要固定使用更便宜的模型，请设 `openrouter/anthropic/claude-haiku-5.5`）和 Claude Code `claude-agent/haiku`（原为 `claude-agent/sonnet`；即 Claude Code 指向其当前最便宜模型的别名，Claude Code 2.1.29x 中为 Claude Haiku 5.5，也更省订阅额度）。Gemini 和 DeepSeek 的默认模型不变。配置里写着旧默认模型的照常可用，也不会收到警告，因为它们都没有被弃用。LiteLLM 1.104.2 没有 `claude-haiku-5-5` 的价格，所以在 LiteLLM 收录之前由 markitai 自带这一条：它的请求会按价格计费并计入 `max_cost_per_document_usd`，不再记为价格未知。OpenRouter 的请求按 OpenRouter 自己报告的金额计费，因为别名背后实际是哪个模型要看回答才知道，而 LiteLLM 1.104.2 没有 `anthropic/claude-haiku-5.5` 的价格。
@@ -21,6 +34,9 @@
 
 ### 修复
 
+- **`serve` 不再把未知的 LLM 费用显示为 `$0`**：提供商没有给模型定价时，网页界面在每个条目和合计里显示「$0」，而条目自己的提示却说费用未知。现在条目和历史带有 `pricing`（有价格和无价格的请求数、`cost_status`），工作台显示「未知」或「至少 $x」。
+- **网页下载不再把访问令牌放进 URL**：「全部下载」等浏览器下载打开的是 `…?token=…`，会留在浏览历史和下载列表里。现在改用一分钟内有效、只能用一次的链接（`?ticket=`，与 `?token=` 一样在请求日志中遮蔽）。
+- `serve` 曾为无法转换的文件（`unknown.bin`）提供重试；条目现在带 `error_code`（`unsupported`、`fetch_error`、`cancelled` 等），工作台只在重试有用时提供。没有令牌的标签页现在会提示输入令牌，不再显示一段原始的请求头语法说明。
 - **Claude Code 的请求不再按 `ANTHROPIC_API_KEY` 计费而不走你的订阅。** Agent SDK 以非交互模式运行 Claude Code，只要设置了 `ANTHROPIC_API_KEY`，即使已登录 Claude 订阅，Claude Code 也会用这个 key，所以加载了各提供商 key 时，每个 `claude-agent/` 请求都按 token 计入这个 key，而且是按当时默认的 `claude-agent/sonnet` 的价格。现在已登录订阅时（`claude login` 或 `CLAUDE_CODE_OAUTH_TOKEN`），markitai 运行 Claude Code 时会对它隐藏这个变量。只靠这个 key 登录的 Claude Code 不再被 `markitai init` 和自动检测当成订阅，也不再因此略过 Anthropic API 模型：`anthropic/claude-haiku-5-5` 直接用同一个 key，不必每个请求都启动一个 Claude Code 进程。
 - **终端输出折行时缩进对齐正文。** 较长的状态、警告或摘要行会在短语中间折回第 0 列（`markitai doctor` 的 VLM OCR 一行、预算警告 "…leaves 10 of 10. Nothing" / "was sent: …"）；现在按词折行并悬挂缩进到正文下方，不会拆开路径、URL 或命令。不在终端时，`doctor` 和 `init` 的输出也不再按 80 列硬折行（每条消息一行，和 stderr 一样）。输出流不是 UTF-8 时（`PYTHONIOENCODING=ascii`、Latin-1 locale），每个命令都会在第一个状态符号处以 `UnicodeEncodeError` 失败；现在改用 ASCII 符号。
 - **`markitai serve` 的登录 URL 完整打印**：80 列时局域网 URL 会在访问令牌中间折行，复制下来的链接无法登录。
