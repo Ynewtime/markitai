@@ -175,3 +175,49 @@ class TestPlaywrightErrors:
         assert "-m playwright install chromium" in block
         # Dev checkout command (also asserted by fetch_playwright launch test)
         assert "uv run playwright install chromium" in block
+
+
+class TestExtraInstallKeepsTheInstall:
+    """`uv tool install --force` replaces the tool with exactly its argument.
+
+    A hint of `uv tool install "markitai[legacy]" --force` on a setup.sh
+    install (local checkout, extras browser/serve/ocr) dropped those extras
+    and swapped the checkout for the PyPI release.
+    """
+
+    def _receipt(self, tmp_path, requirement: str):
+        (tmp_path / "uv-receipt.toml").write_text(
+            f"[tool]\nrequirements = [{requirement}]\n", encoding="utf-8"
+        )
+        return tmp_path
+
+    def test_keeps_extras_and_local_source(self, tmp_path, monkeypatch) -> None:
+        import sys
+
+        prefix = self._receipt(
+            tmp_path,
+            '{ name = "markitai", extras = ["browser", "serve", "ocr"], '
+            'directory = "/src/markitai" }',
+        )
+        monkeypatch.setattr(sys, "prefix", str(prefix))
+        assert extra_install_command("legacy") == (
+            'uv tool install "markitai[browser,legacy,ocr,serve] @ /src/markitai" '
+            "--force"
+        )
+
+    def test_keeps_a_pinned_version(self, tmp_path, monkeypatch) -> None:
+        import sys
+
+        prefix = self._receipt(
+            tmp_path, '{ name = "markitai", extras = ["ocr"], specifier = "==1.2.1" }'
+        )
+        monkeypatch.setattr(sys, "prefix", str(prefix))
+        assert extra_install_command("serve") == (
+            'uv tool install "markitai[ocr,serve]==1.2.1" --force'
+        )
+
+    def test_without_a_receipt(self, tmp_path, monkeypatch) -> None:
+        import sys
+
+        monkeypatch.setattr(sys, "prefix", str(tmp_path))
+        assert extra_install_command("ocr") == 'uv tool install "markitai[ocr]" --force'
