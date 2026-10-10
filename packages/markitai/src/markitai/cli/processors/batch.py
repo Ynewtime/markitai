@@ -91,6 +91,8 @@ def _file_state_to_outcome(file_state: FileState, input_dir: Path) -> Outcome:
         llm_cache_hit=file_state.cache_hit,
         duration=file_state.duration,
         warnings=list(file_state.warnings),
+        earlier_run=file_state.earlier_run,
+        usage_unknown=file_state.usage_unknown,
     )
 
 
@@ -114,6 +116,8 @@ def _url_state_to_outcome(url_state: UrlState) -> Outcome:
         fetch_strategy=url_state.fetch_strategy,
         duration=url_state.duration,
         warnings=list(url_state.warnings),
+        earlier_run=url_state.earlier_run,
+        usage_unknown=url_state.usage_unknown,
     )
 
 
@@ -847,6 +851,7 @@ async def process_batch(
     glob_patterns: tuple[str, ...] = (),
     quiet: bool = False,
     history: list[Outcome] | None = None,
+    earlier: list[Outcome] | None = None,
 ) -> None:
     """Process directory in batch mode.
 
@@ -856,6 +861,9 @@ async def process_batch(
             whether to record). Only items processed in this run are
             collected — a resumed batch does not re-record items that
             completed earlier.
+        earlier: Optional list collecting the Outcomes of the items an
+            earlier run of a resumed batch completed, with the cost and
+            usage recorded then (for ``--json``, which lists every item).
     """
     # Batch output must be a directory; reject file-like -o values early
     if output_dir.suffix == ".md" and not output_dir.is_dir():
@@ -1255,6 +1263,8 @@ async def process_batch(
                 end_time = asyncio.get_running_loop().time()
                 url_state.completed_at = datetime.now(UTC).astimezone().isoformat()
                 url_state.duration = end_time - start_time
+                # A save between the result and here wrote it without these
+                batch._dirty_keys.add(key)
 
                 # Update progress
                 batch.update_url_status(url, completed=True, key=key)
@@ -1347,6 +1357,8 @@ async def process_batch(
                 end_time = asyncio.get_running_loop().time()
                 file_state.completed_at = datetime.now(UTC).astimezone().isoformat()
                 file_state.duration = end_time - start_time
+                # A save between the result and here wrote it without these
+                batch._dirty_keys.add(file_key)
 
                 # Update progress
                 batch.advance_progress(current_item=file_key)
@@ -1452,6 +1464,19 @@ async def process_batch(
             # Still persist state for resume capability
             batch.save_state(force=True, log=True)
             logger.debug("Report generation disabled (output.report=false)")
+
+    # Items an earlier run completed: reported, never re-recorded
+    if earlier is not None and state is not None:
+        earlier.extend(
+            _file_state_to_outcome(file_state, input_dir)
+            for file_state in state.files.values()
+            if file_state.earlier_run
+        )
+        earlier.extend(
+            _url_state_to_outcome(url_state)
+            for url_state in state.urls.values()
+            if url_state.earlier_run
+        )
 
     # Collect this run's per-item outcomes for serve history recording.
     # Only files/URLs processed in this run — a resumed batch does not

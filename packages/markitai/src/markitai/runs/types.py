@@ -43,6 +43,10 @@ class Outcome:
         source_file: The .urls list the URL came from, or "cli" for
             single-URL runs (URL paths only).
         duration: Processing time in seconds.
+        earlier_run: Completed by an earlier run of a resumed batch; this
+            run reports it with what that run recorded, but did not redo it.
+        usage_unknown: The earlier run's state did not record the item's
+            cost and usage (an older markitai): unknown, not zero.
     """
 
     kind: Literal["file", "url"]
@@ -62,3 +66,5 @@ class Outcome:
     fetch_strategy: str | None = None
     source_file: str | None = None
     duration: float | None = None
+    earlier_run: bool = False
+    usage_unknown: bool = False
