@@ -1363,11 +1363,12 @@ main:focus {
   align-items: flex-end;
   padding: 0;
 }
+/* One height whatever the content, so the sheet never jumps as its content arrives. */
 .sheet {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-height: calc(100dvh - 40px);
+  height: min(86dvh, calc(100dvh - 40px));
   border-radius: var(--r-panel) var(--r-panel) 0 0;
   background: var(--surface);
   box-shadow: var(--shadow-modal);
@@ -1393,6 +1394,9 @@ main:focus {
   padding: 16px 8px 8px 18px;
   border-bottom: 1px solid transparent;
   border-radius: var(--r-panel) var(--r-panel) 0 0;
+  /* The header is a drag handle: selecting its text would turn a drag into a drag-and-drop. */
+  -webkit-user-select: none;
+  user-select: none;
   touch-action: none;
   transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }

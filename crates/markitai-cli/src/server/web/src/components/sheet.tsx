@@ -42,6 +42,8 @@ export function Sheet({
   const [scrolled, setScrolled] = useState(false);
   const [drag, setDrag] = useState(0);
   const start = useRef<{ y: number; at: number } | null>(null);
+  /** The distance of the drag in progress; state lags the last pointer move. */
+  const distance = useRef(0);
 
   const close = useCallback(() => {
     if (leaving) return;
@@ -62,19 +64,22 @@ export function Sheet({
 
   const begin = (y: number) => {
     start.current = { y, at: performance.now() };
+    distance.current = 0;
   };
   const moveTo = (y: number): boolean => {
     if (!start.current) return false;
-    const distance = Math.max(0, y - start.current.y);
-    setDrag(distance);
-    return distance > 0;
+    distance.current = Math.max(0, y - start.current.y);
+    setDrag(distance.current);
+    return distance.current > 0;
   };
   const end = () => {
     if (!start.current) return;
+    const moved = distance.current;
     const elapsed = performance.now() - start.current.at;
-    const flick = drag > 24 && drag / Math.max(elapsed, 1) > 0.6;
+    const flick = moved > 24 && moved / Math.max(elapsed, 1) > 0.6;
     start.current = null;
-    if (drag > CLOSE_DISTANCE || flick) close();
+    distance.current = 0;
+    if (moved > CLOSE_DISTANCE || flick) close();
     setDrag(0);
   };
 
@@ -86,7 +91,11 @@ export function Sheet({
       begin(event.clientY);
     },
     onPointerMove: (event: PointerEvent) => void moveTo(event.clientY),
-    onPointerUp: end,
+    // The release carries the final position, even when no move preceded it in this frame.
+    onPointerUp: (event: PointerEvent) => {
+      moveTo(event.clientY);
+      end();
+    },
     onPointerCancel: end,
   };
 

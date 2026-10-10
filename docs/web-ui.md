@@ -92,7 +92,7 @@ elements. An original that cannot be shown (a DOCX, a page the server did not
 keep) says why and offers its download.
 
 **On phones** the inspector is a bottom sheet: it slides up over the dimmed
-page with rounded top corners, a header with the name, previous, next and close,
+page to a fixed height with rounded top corners, a header with the name, previous, next and close,
 a body that scrolls inside the sheet, and a pinned action bar clear of the home
 indicator. Swiping it down (on the header, or on the body scrolled to its top),
 tapping the dimmed page and Escape close it. Preview and Compare are full-screen
@@ -228,7 +228,7 @@ request Host's hostname and effective port, or an operator-configured
 The interface speaks English, Chinese and Japanese. Without a stored choice, a
 browser whose first language starts with `zh` gets Chinese and one with `ja`
 Japanese. English is part of the application; each other language is its own
-file (`/ui/i18n-zh.js`, `/ui/i18n-ja.js`, about 14 KB compressed), which the
+file (`/ui/i18n-zh.js`, `/ui/i18n-ja.js`, about 13 KB compressed), which the
 classic script `/ui/boot.js` asks for beside the application, so a reader
 downloads only their language. `boot.js` also applies the stored theme, the
 sidebar's collapsed state and the language before first paint (the Content
