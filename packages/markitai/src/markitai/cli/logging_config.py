@@ -220,6 +220,32 @@ def _console_sink(message: Any) -> None:
     )
 
 
+def _marked_console_sink(message: Any) -> None:
+    """Console sink for the bare-message format: warnings and errors marked.
+
+    A run's warnings (a scanned page, an LLM fallback, a model left out of
+    the pool) used to be bare yellow text at column 0 that a terminal
+    wrapped mid-word. They now read like every other status line: "  ! …"
+    for a warning, "  ✗ …" for an error, wrapping under their text on a
+    terminal and one line when piped.
+    """
+    from rich.text import Text
+
+    from markitai.cli.console import get_stderr_console
+    from markitai.utils import term
+
+    level = message.record["level"].no
+    text = Text.from_ansi(str(message).rstrip("\n")).plain
+    if level >= logging.ERROR:
+        mark = term.MARK_ERROR
+    elif level >= logging.WARNING:
+        mark = term.MARK_WARNING
+    else:
+        get_stderr_console().print(Text(text), soft_wrap=True, highlight=False)
+        return
+    term.print_marked(text, mark=mark, console=get_stderr_console())
+
+
 def _should_show_quiet_log(record: Any, show_notices: bool = False) -> bool:
     """Filter for the quiet-mode console sink (ERROR+, plus user notices).
 
@@ -317,7 +343,7 @@ def setup_logging(
         # In quiet mode, still surface errors so LLM failures aren't invisible,
         # and (unless --quiet) the actionable user notices
         console_handler_id = logger.add(
-            _console_sink,
+            _marked_console_sink,
             level="WARNING" if show_notices else "ERROR",
             format="<level>{message}</level>",
             colorize=True,
