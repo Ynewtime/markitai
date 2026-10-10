@@ -787,19 +787,21 @@ async def process_url_item(
     """
     from markitai.batch import ProcessResult
     from markitai.fetch import FetchError, JinaRateLimitError
+    from markitai.llm.engine import track_llm_spend
     from markitai.utils.text import format_error_message
     from markitai.workflow.url import convert_url_cascade
 
     try:
-        result = await convert_url_cascade(
-            url,
-            cfg,
-            out_dir,
-            processor=shared_processor,
-            cache=url_ctx.cache,
-            screenshot_dir=url_ctx.screenshot_dir,
-            output_name=output_name,
-        )
+        with track_llm_spend() as spend:
+            result = await convert_url_cascade(
+                url,
+                cfg,
+                out_dir,
+                processor=shared_processor,
+                cache=url_ctx.cache,
+                screenshot_dir=url_ctx.screenshot_dir,
+                output_name=output_name,
+            )
     except JinaRateLimitError:
         return ProcessResult(
             success=False, error="Jina Reader rate limit exceeded (20 RPM)"
@@ -807,8 +809,15 @@ async def process_url_item(
     except FetchError as e:
         return ProcessResult(success=False, error=format_error_message(e))
     except Exception as e:
-        # ConversionError (no content) and anything unexpected.
-        return ProcessResult(success=False, error=format_error_message(e))
+        # ConversionError (no content, or a failed LLM stage under
+        # llm.on_failure "fail", whose requests were still paid for) and
+        # anything unexpected.
+        return ProcessResult(
+            success=False,
+            error=format_error_message(e),
+            cost_usd=spend.cost,
+            llm_usage=spend.usage,
+        )
 
     # A failed LLM enhancement follows llm.on_failure, as for files: under
     # "fail" the cascade raised (ConversionError, caught above); under

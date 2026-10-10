@@ -2744,6 +2744,35 @@ class TestItemEnhancedSignal:
         assert result.error is not None and "invalid api key" in result.error
         assert result.llm_enhanced is False
 
+    async def test_failed_url_item_keeps_what_its_llm_stage_paid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rejected answer was billed: the failed item reports its cost."""
+        from markitai.llm.engine import record_llm_spend
+        from markitai.serve.jobs import UrlJobContext, process_url_item
+        from markitai.utils.errors import ConversionError
+
+        async def cascade(*_args: Any, **_kwargs: Any) -> Any:
+            record_llm_spend("gemini-flash-lite-latest", 1400, 300, 0.0012)
+            raise ConversionError(
+                "LLM processing failed: LLM answer dropped 1/1 structural placeholders"
+            )
+
+        monkeypatch.setattr("markitai.workflow.url.convert_url_cascade", cascade)
+        cfg = MarkitaiConfig()
+        cfg.llm.on_failure = "fail"
+        result = await process_url_item(
+            "https://example.com/page",
+            cfg,
+            tmp_path,
+            None,
+            UrlJobContext(strategy=None, cache=None, screenshot_dir=None),
+        )
+
+        assert result.success is False
+        assert result.cost_usd == pytest.approx(0.0012)
+        assert result.llm_usage["gemini-flash-lite-latest"]["requests"] == 1
+
     async def test_file_item_reports_the_pipeline_signal(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
