@@ -30,6 +30,11 @@ from typing import Any
 
 from loguru import logger
 
+from markitai.constants import PROVIDER_API_KEY_ENV
+
+# The key Claude Code bills instead of a subscription whenever it is set
+_ANTHROPIC_KEY_ENV = PROVIDER_API_KEY_ENV["anthropic"]
+
 
 def _email_from_jwt(id_token: str) -> str | None:
     """Extract email from a JWT id_token without external libraries.
@@ -283,17 +288,23 @@ def _claude_cli_auth_status() -> dict[str, Any] | None:
     dict on success, or ``None`` if the CLI is unavailable / fails /
     emits invalid JSON.
     """
+    import os
     import subprocess
 
     cli_path = _resolve_cli_path("claude")
     if not cli_path:
         return None
+    # Ask about Claude Code's own login: with ANTHROPIC_API_KEY set the CLI
+    # reports that key (authMethod "api_key") even when a subscription is
+    # signed in, which says nothing about the subscription
+    env = {k: v for k, v in os.environ.items() if k != _ANTHROPIC_KEY_ENV}
     try:
         proc = subprocess.run(
             [cli_path, "auth", "status"],
             capture_output=True,
             text=True,
             timeout=10,
+            env=env,
         )
         if proc.returncode != 0:
             return None
@@ -349,6 +360,13 @@ def _check_claude_cli_login() -> AuthStatus | None:
             "source": "cli",
             "subscription": subscription,
             "auth_method": auth_method if isinstance(auth_method, str) else None,
+            # "claude.ai" / "oauth_token": a subscription login; anything
+            # else (an apiKeyHelper, a Console login) bills per token
+            "billing": (
+                "subscription"
+                if auth_method in ("claude.ai", "oauth_token")
+                else "api_key"
+            ),
         },
     )
 
@@ -470,7 +488,7 @@ def _check_claude_credentials_auth() -> AuthStatus:
                 user=f"cloud: {cloud_name}",
                 expires_at=None,
                 error=None,
-                details={"source": "env"},
+                details={"source": "env", "billing": "cloud"},
             )
 
     file_status = _check_claude_credentials_file()
@@ -484,7 +502,50 @@ def _check_claude_credentials_auth() -> AuthStatus:
     if cli_status is not None:
         return cli_status
 
+    # Not signed in, but Claude Code runs on ANTHROPIC_API_KEY when it is
+    # set: claude-agent/ models work, billed per token to that key
+    if os.environ.get(_ANTHROPIC_KEY_ENV):
+        return AuthStatus(
+            provider="claude-agent",
+            authenticated=True,
+            user=_ANTHROPIC_KEY_ENV,
+            expires_at=None,
+            error=None,
+            details={"source": "anthropic-api-key", "billing": "api_key"},
+        )
+
     return file_status
+
+
+def claude_code_subscription_login() -> bool:
+    """Whether Claude Code has a subscription login of its own.
+
+    An OAuth token from ``claude login`` (credentials file or macOS
+    Keychain) or ``CLAUDE_CODE_OAUTH_TOKEN`` (``claude setup-token``).
+    """
+    import os
+
+    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return True
+    return _claude_oauth_credentials() is not None
+
+
+def claude_code_env() -> dict[str, str]:
+    """Environment overrides that keep Claude Code on the subscription.
+
+    In non-interactive mode, which the Agent SDK uses, Claude Code sends
+    ANTHROPIC_API_KEY whenever it is set, even with a subscription signed
+    in: every claude-agent/ request was billed per token to that key. The
+    claude-agent/ provider exists to use the subscription (anthropic/ models
+    use the key directly), so with a subscription login the key is hidden
+    from Claude Code. Without one, the key is Claude Code's only credential
+    and stays.
+    """
+    import os
+
+    if os.environ.get(_ANTHROPIC_KEY_ENV) and claude_code_subscription_login():
+        return {_ANTHROPIC_KEY_ENV: ""}
+    return {}
 
 
 def _check_claude_credentials_file() -> AuthStatus:
@@ -547,6 +608,7 @@ def _check_claude_credentials_file() -> AuthStatus:
                     "subscription": (
                         subscription if isinstance(subscription, str) else None
                     ),
+                    "billing": "subscription",
                 },
             )
         else:

@@ -52,8 +52,21 @@ def _provider_authenticated(provider: str) -> bool:
 
 
 def _check_claude_auth() -> bool:
-    """Check if Claude CLI is authenticated."""
-    return _provider_authenticated("claude-agent")
+    """Check if Claude Code runs on a login of its own.
+
+    Claude Code also runs on ANTHROPIC_API_KEY alone, billed per token to
+    that key: that counts as the Anthropic API (``anthropic/``, the same
+    key used directly, without a CLI process per request), not as Claude
+    Code.
+    """
+    from markitai.providers.auth import AuthManager
+
+    try:
+        status = asyncio.run(AuthManager().check_auth("claude-agent"))
+    except Exception:
+        return False
+    details = status.details or {}
+    return status.authenticated and details.get("source") != "anthropic-api-key"
 
 
 def _check_copilot_auth() -> bool:

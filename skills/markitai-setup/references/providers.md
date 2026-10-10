@@ -35,7 +35,7 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 | DeepSeek | `deepseek/deepseek-flash` | `DEEPSEEK_API_KEY` |
 | OpenRouter | `openrouter/~anthropic/claude-haiku-latest` (moving alias; any `openrouter/<vendor>/<model>`) | `OPENROUTER_API_KEY` |
 | Ollama (local server) | `ollama/llama3.2` + `"api_base": "http://localhost:11434"` | none |
-| Claude subscription | `claude-agent/sonnet` (aliases: `sonnet` `opus` `haiku` `inherit`, or full model strings) | Claude Code CLI login; extra: `claude-agent` |
+| Claude subscription | `claude-agent/haiku` (aliases: `sonnet` `opus` `haiku` `inherit`, or full model strings) | Claude Code CLI login; extra: `claude-agent` |
 | Copilot subscription | `copilot/auto` (Auto model selection; the only choice on Copilot Free), `copilot/claude-haiku-5.5`, … (named models on paid plans; no o1/o3) | Copilot CLI login; extra: `copilot` |
 | ChatGPT subscription | `chatgpt/gpt-6-luna`, `chatgpt/gpt-6.1-sol` (plan-dependent) | OAuth device flow on first use; no SDK needed |
 
@@ -57,7 +57,7 @@ Retired upstream (rejected on request): `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4
 
 ## Vision (`--alt` / `--desc`)
 
-Image analysis needs a vision-capable model. litellm auto-detects this for remote API models; local providers pass images as file attachments, so pick a vision-capable model there too (e.g. `copilot/auto`, `chatgpt/gpt-6-luna`, `claude-agent/sonnet`). `markitai doctor` reports which vision model it detected.
+Image analysis needs a vision-capable model. litellm auto-detects this for remote API models; local providers pass images as file attachments, so pick a vision-capable model there too (e.g. `copilot/auto`, `chatgpt/gpt-6-luna`, `claude-agent/haiku`). `markitai doctor` reports which vision model it detected.
 
 ## Local provider errors
 

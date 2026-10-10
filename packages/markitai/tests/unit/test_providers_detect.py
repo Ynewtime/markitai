@@ -49,7 +49,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "claude-agent"
-            assert results[0].model == "claude-agent/sonnet"
+            assert results[0].model == "claude-agent/haiku"
             assert results[0].authenticated is True
             assert results[0].source == "cli"
 
