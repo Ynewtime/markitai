@@ -33,7 +33,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import litellm
 from litellm.router import Router
@@ -41,6 +41,9 @@ from loguru import logger
 
 from markitai.providers.common import has_images
 from markitai.utils.text import format_error_message
+
+if TYPE_CHECKING:
+    from markitai.providers.api_keys import APIKeyRejectedError
 
 # Minimum system-message length worth an Anthropic cache breakpoint
 # (Anthropic's smallest cacheable prefix is 1024 tokens ~= 4k chars).
@@ -362,6 +365,14 @@ class MarkitaiRouter:
         self._cooldowns: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
 
+        # Standard models whose API key the provider refused (model id ->
+        # the error). A key does not change during a run: once every
+        # standard model has been refused, a call that would reach them
+        # fails at once with the same message, instead of sending the key
+        # again, or getting LiteLLM's "No deployments available" while the
+        # refused deployment cools down.
+        self._refused_keys: dict[str, APIKeyRejectedError] = {}
+
         logger.debug(
             "[Router] MarkitaiRouter: {} standard + {} local models",
             len(self._standard_entries),
@@ -451,20 +462,66 @@ class MarkitaiRouter:
             LiteLLM ModelResponse.
         """
         from markitai.providers import is_local_provider_model
+        from markitai.providers.api_keys import api_key_rejection
 
         selected = self._select(model, has_images(messages))
+        standard = selected == STANDARD_POOL_ID or not is_local_provider_model(selected)
+        refused = self._all_keys_refused() if standard else None
+        if refused is not None:
+            raise refused.again()
 
-        if selected == STANDARD_POOL_ID:
-            logger.debug("[Router] Routing group '{}' to LiteLLM Router", model)
-            return await self._standard_acompletion(model, messages, **kwargs)
+        try:
+            if selected == STANDARD_POOL_ID:
+                logger.debug("[Router] Routing group '{}' to LiteLLM Router", model)
+                return await self._standard_acompletion(model, messages, **kwargs)
 
-        if is_local_provider_model(selected) or self._standard_router is None:
-            logger.debug("[Router] Routing to local provider: {}", selected)
-            return await self._local_acompletion(selected, messages, **kwargs)
+            if is_local_provider_model(selected) or self._standard_router is None:
+                logger.debug("[Router] Routing to local provider: {}", selected)
+                return await self._local_acompletion(selected, messages, **kwargs)
 
-        # Pass-through: a concrete standard deployment id was requested
-        logger.debug("[Router] Routing to LiteLLM Router: {}", selected)
-        return await self._standard_acompletion(selected, messages, **kwargs)
+            # Pass-through: a concrete standard deployment id was requested
+            logger.debug("[Router] Routing to LiteLLM Router: {}", selected)
+            return await self._standard_acompletion(selected, messages, **kwargs)
+        except Exception as e:
+            # A refused API key, said once in words the user can act on
+            # (which model, which variable, how to set it) and never
+            # retried: every caller, instructor's staircase included, sees
+            # a non-retryable error instead of LiteLLM's 401
+            rejected = api_key_rejection(e, self.model_list, messages)
+            if rejected is not None:
+                self._record_refused_key(rejected)
+                if rejected is e:
+                    raise
+                raise rejected from None
+            refused = self._all_keys_refused() if standard else None
+            if refused is not None:
+                # LiteLLM cooling the refused deployment down ("No
+                # deployments available") is the refusal again
+                raise refused.again() from None
+            raise
+
+    def _record_refused_key(self, error: APIKeyRejectedError) -> None:
+        """Remember a refused key; route away from a fully refused pool."""
+        with self._cooldown_lock:
+            self._refused_keys[error.model] = error
+        if self._all_keys_refused() is not None and self._local_entries:
+            # A mixed pool keeps serving from its local providers
+            self.record_cooldown(STANDARD_POOL_ID, MODEL_LEVEL_COOLDOWN_SECONDS)
+
+    def _all_keys_refused(self) -> APIKeyRejectedError | None:
+        """A refusal to repeat, when the key of every standard model was refused."""
+        with self._cooldown_lock:
+            if not self._refused_keys:
+                return None
+            refused = [
+                self._refused_keys.get(
+                    str(entry.get("litellm_params", {}).get("model", ""))
+                )
+                for entry in self._standard_entries
+            ]
+        if not refused or any(error is None for error in refused):
+            return None
+        return refused[0]
 
     async def _standard_acompletion(
         self,

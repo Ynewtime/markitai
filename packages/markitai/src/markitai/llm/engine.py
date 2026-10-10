@@ -1364,7 +1364,12 @@ class LLMEngine:
                             )
                             raise
 
-                    # Check for authentication errors and provide friendly hints
+                    # Authentication failures: one line in the log only. The
+                    # item that made the call reports the failure (its error
+                    # or its fallback warning), and for a refused API key
+                    # the router's APIKeyRejectedError already names the
+                    # variable to set; printing it here too made the console
+                    # repeat the provider's 401 once per layer.
                     status_code = getattr(e, "status_code", "N/A")
                     auth_patterns = (
                         "authentication",
@@ -1377,14 +1382,9 @@ class LLMEngine:
                         "incorrect api key",
                     )
                     if any(p in error_msg_lower for p in auth_patterns):
-                        target = self._get_primary_model(active_router)
-                        logger.error(
-                            f"[LLM:{call_id}] Authentication failed for model "
-                            f"'{target}':\n"
-                            f"  {format_error_message(e)}\n\n"
-                            f"  Hint: Use MODEL=<provider/model> with the "
-                            f"corresponding API key env var,\n"
-                            f"  or run 'markitai init' to configure interactively."
+                        logger.warning(
+                            f"[LLM:{call_id}] Authentication failed: "
+                            f"{format_error_message(e)} time={elapsed_ms:.0f}ms"
                         )
                     else:
                         logger.error(

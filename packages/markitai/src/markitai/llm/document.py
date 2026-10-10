@@ -1437,11 +1437,11 @@ class DocumentEnhancer:
             fetch_strategy=fetch_strategy,
             extra_meta=extra_meta,
         )
-        # Mark degraded output and log at ERROR level: quiet/stdout mode only
-        # shows ERROR+, and without both signals a failed enhancement is
-        # indistinguishable from a successful one.
+        # Mark degraded output. The failure itself reaches the user once,
+        # from the item (its error, or its llm.on_failure fallback warning,
+        # which a default console shows): an ERROR here repeated it.
         frontmatter_dict["llm_enhanced"] = False
-        logger.error(f"[{source}] LLM enhancement failed; using fallback frontmatter")
+        logger.warning(f"[{source}] LLM enhancement failed; using fallback frontmatter")
         return frontmatter_to_yaml(frontmatter_dict).strip()
 
     @staticmethod

@@ -1126,6 +1126,36 @@ def app(
 
             prewarm_litellm()
 
+        # API keys, checked before anything converts: LiteLLM sends a request
+        # without a key when it finds none, and the provider's 401 then came
+        # back once per item and per layer. A model whose key is not set is
+        # left out of the pool (said once here, not again by the router);
+        # with none left the run stops with the variable to set.
+        if cfg.llm.enabled and cfg.llm.model_list and not dry_run:
+            from rich.markup import escape
+
+            from markitai.cli import ui
+            from markitai.providers.api_keys import (
+                left_out_message,
+                mark_reported,
+                no_usable_model_message,
+                split_by_api_key,
+            )
+
+            usable_models, missing_keys = split_by_api_key(cfg.llm.model_list)
+            if missing_keys:
+                mark_reported(missing_keys)
+                if not usable_models:
+                    message = no_usable_model_message(missing_keys, dotenv=True)
+                    stderr_console.print(f"[red]Error: {escape(message)}[/red]")
+                    abort_with_json(message)
+                if not user_quiet:
+                    for missing_key in missing_keys:
+                        ui.warning(
+                            left_out_message(missing_key, dotenv=True),
+                            console=stderr_console,
+                        )
+
         # Now that parameter validation passed, check auth for local providers.
         # Skip when dry-run: no network operations needed for preview.
         if cfg.llm.enabled and cfg.llm.model_list and not dry_run:

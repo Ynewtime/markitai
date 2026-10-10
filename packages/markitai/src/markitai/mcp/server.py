@@ -239,8 +239,9 @@ async def _convert_source(
             profile=profile,
         )
     except NoModelConfiguredError as e:
-        # "LLM enabled but no model configured" — keep the guidance readable
-        raise ToolError(f"{e} {_LLM_MCP_HINT}") from e
+        # "LLM enabled but no model configured" (or none has its API key)
+        # — keep the guidance readable
+        raise ToolError(f"{str(e).rstrip('.')}. {_LLM_MCP_HINT}") from e
     except _EXPECTED_ERRORS as e:
         raise ToolError(str(e) or type(e).__name__) from e
     return _to_result(out, workdir)

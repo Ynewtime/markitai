@@ -36,9 +36,12 @@ _KEY_PATTERNS = (
     re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"),
 )
 _BEARER = re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=\-]{8,}")
+# The value may not be an env: reference or a "your_key"-style placeholder:
+# a hint saying how to set a key ("export OPENAI_API_KEY=your_key") is not one
 _NAMED_CREDENTIAL = re.compile(
     r"(?i)((?:x-)?api[_-]?key|authorization|access[_-]?token|api[_-]?token"
-    r"|secret|password)(['\"]?\s*[:=]\s*['\"]?)(?!bearer\s|env:)([^\s'\",;}&]{6,})"
+    r"|secret|password)(['\"]?\s*[:=]\s*['\"]?)(?!bearer\s|env:|your[_-])"
+    r"([^\s'\",;}&]{6,})"
 )
 
 

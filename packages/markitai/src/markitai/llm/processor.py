@@ -319,10 +319,7 @@ class LLMProcessor:
         main pool scope when the vision router falls back to the main router.
         """
         if self._vision_cache_model_scope is None:
-            vision_models = [
-                m for m in self.config.model_list if self._is_vision_model(m)
-            ]
-            enabled_vision = [m for m in vision_models if m.litellm_params.weight > 0]
+            _, enabled_vision = self._vision_pool()
             if enabled_vision:
                 self._vision_cache_model_scope = model_list_fingerprint(enabled_vision)
             else:
@@ -548,7 +545,10 @@ class LLMProcessor:
         """Build LiteLLM-Router-format entries from model configurations.
 
         Resolves ``env:`` API keys/bases and filters out unusable models
-        (SDK unavailable, ``weight <= 0``, missing environment variables).
+        (SDK unavailable, ``weight <= 0``, missing environment variables,
+        an API-key provider with no key anywhere: LiteLLM would send its
+        requests without one). Models left out for a missing variable are
+        named in a user notice, once per process.
         By default all entries are normalized into the single ``"default"``
         balancing pool; with ``preserve_groups`` (fallbacks configured),
         standard models keep their configured ``model_name`` so LiteLLM
@@ -565,16 +565,22 @@ class LLMProcessor:
 
         Raises:
             ValueError: If no usable models remain, with a message naming
-                the dominant cause (all disabled / missing env vars / no
-                SDKs).
+                the dominant cause (all disabled / missing env vars or API
+                keys, as ``MissingAPIKeyError`` / no SDKs).
         """
-        from markitai.config import EnvVarNotFoundError
         from markitai.providers import is_local_provider_available
+        from markitai.providers.api_keys import (
+            MissingAPIKeyError,
+            MissingKey,
+            missing_api_key,
+            no_usable_model_message,
+            report_left_out,
+        )
 
         model_list: list[dict[str, Any]] = []
         skipped_models: list[str] = []
         disabled_models: list[str] = []
-        skipped_env_vars: list[str] = []
+        missing_keys: list[MissingKey] = []
         for model_config in models:
             model_id = model_config.litellm_params.model
 
@@ -595,30 +601,22 @@ class LLMProcessor:
                 },
             }
 
-            # Add optional params — skip model if env var is missing
-            try:
-                api_key = model_config.litellm_params.get_resolved_api_key()
-            except EnvVarNotFoundError as e:
-                skipped_env_vars.append(e.var_name)
-                logger.warning(
+            # Skip a model an unset variable leaves without its key or
+            # endpoint (an env: reference, or an API-key provider's key)
+            lacking = missing_api_key(model_config.litellm_params)
+            if lacking is not None:
+                missing_keys.append(lacking)
+                logger.debug(
                     f"[Router] Skipping model {model_id}: "
-                    f"environment variable {e.var_name} not set"
+                    f"environment variable {lacking.env_var} not set"
                 )
                 continue
 
+            api_key = model_config.litellm_params.get_resolved_api_key()
             if api_key:
                 model_entry["litellm_params"]["api_key"] = api_key
 
-            try:
-                api_base = model_config.litellm_params.get_resolved_api_base()
-            except EnvVarNotFoundError as e:
-                skipped_env_vars.append(e.var_name)
-                logger.warning(
-                    f"[Router] Skipping model {model_id}: "
-                    f"environment variable {e.var_name} not set"
-                )
-                continue
-
+            api_base = model_config.litellm_params.get_resolved_api_base()
             if api_base:
                 model_entry["litellm_params"]["api_base"] = api_base
 
@@ -666,16 +664,16 @@ class LLMProcessor:
                     f"All {disabled_count} configured models have weight=0 (disabled). "
                     "Set weight > 0 on at least one model to enable it."
                 )
-            if skipped_env_vars:
-                vars_str = ", ".join(skipped_env_vars)
-                raise ValueError(
-                    f"No available models: missing environment variable(s): {vars_str}. "
-                    "Set them via 'export VAR=value' or add to .env file."
+            if missing_keys:
+                raise MissingAPIKeyError(
+                    no_usable_model_message(missing_keys), missing_keys
                 )
             raise ValueError(
                 "No available models after filtering. "
                 "Check that required SDKs are installed for configured models."
             )
+        # The others still run; say once which ones sit out, and why
+        report_left_out(missing_keys)
 
         if preserve_groups:
             self._normalize_fallback_groups(model_list)
@@ -748,6 +746,24 @@ class LLMProcessor:
         info = get_model_info_cached(model_id)
         return info.get("supports_vision", False)
 
+    def _vision_pool(self) -> tuple[list[ModelConfig], list[ModelConfig]]:
+        """The vision-capable models, and those of them the router can use.
+
+        Usable means enabled (``weight > 0``) and not missing a variable
+        (see ``markitai.providers.api_keys.missing_api_key``): a vision
+        subset made only of models without their key would fail the whole
+        processor, although the main pool can still serve the images.
+        """
+        from markitai.providers.api_keys import missing_api_key
+
+        vision_models = [m for m in self.config.model_list if self._is_vision_model(m)]
+        enabled_vision = [
+            m
+            for m in vision_models
+            if m.litellm_params.weight > 0 and missing_api_key(m.litellm_params) is None
+        ]
+        return vision_models, enabled_vision
+
     @property
     def vision_router(self) -> MarkitaiRouter:
         """Get or create the router restricted to vision-capable models (lazy).
@@ -759,19 +775,14 @@ class LLMProcessor:
             MarkitaiRouter with vision-capable models only
         """
         if self._vision_router is None:
-            vision_models = [
-                m for m in self.config.model_list if self._is_vision_model(m)
-            ]
-
-            # Also check that at least one vision model is enabled (weight > 0)
-            enabled_vision = [m for m in vision_models if m.litellm_params.weight > 0]
+            vision_models, enabled_vision = self._vision_pool()
 
             if not enabled_vision:
                 # No enabled vision models - fall back to main router
                 reason = (
                     "no vision-capable models configured"
                     if not vision_models
-                    else "all vision models disabled (weight=0)"
+                    else "no vision model is enabled with its API key set"
                 )
                 logger.warning(
                     f"[Router] {reason}, falling back to main router for vision"

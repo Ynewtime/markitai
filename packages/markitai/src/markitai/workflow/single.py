@@ -155,7 +155,9 @@ class SingleFileWorkflow:
             return markdown, cost, usage
 
         except Exception as e:
-            logger.error(f"LLM processing failed: {format_error_message(e)}")
+            # A warning, not an error: the caller reports the failure once,
+            # as the item's error or its llm.on_failure fallback warning
+            logger.warning(f"LLM processing failed: {format_error_message(e)}")
             raise
         finally:
             # Clear the context on every exit, failures included: the key is
@@ -191,7 +193,7 @@ class SingleFileWorkflow:
             usage = self.processor.get_context_usage(source)
             return markdown, cost, usage
         except Exception as e:
-            logger.error(f"Pure LLM processing failed: {format_error_message(e)}")
+            logger.warning(f"Pure LLM processing failed: {format_error_message(e)}")
             raise
         finally:
             # Same as process_document_with_llm: never leave a failed file's
@@ -383,7 +385,9 @@ class SingleFileWorkflow:
             return (markdown, cost, usage, analysis_result)
 
         except Exception as e:
-            logger.error(f"Image analysis failed: {format_error_message(e)}")
+            # The caller reports it (the item's error or fallback warning, or
+            # an image-analysis warning); an ERROR here printed it twice
+            logger.warning(f"Image analysis failed: {format_error_message(e)}")
             # Drop partial usage so a later file reusing the context is clean
             self.processor.clear_context_usage(context)
             raise
@@ -438,7 +442,7 @@ class SingleFileWorkflow:
             return (cleaned_content, frontmatter, cost, usage)
 
         except Exception as e:
-            logger.error(f"Document enhancement failed: {format_error_message(e)}")
+            logger.warning(f"Document enhancement failed: {format_error_message(e)}")
 
             # Drop any partial usage so it isn't attributed to the next
             # file that reuses this context key. The failure propagates: the
@@ -528,7 +532,7 @@ class SingleFileWorkflow:
             return (merged_content, frontmatter, cost, usage)
 
         except Exception as e:
-            logger.error(
+            logger.warning(
                 f"Screenshot-only extraction failed: {format_error_message(e)}"
             )
 
