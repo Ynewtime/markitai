@@ -180,6 +180,7 @@ mod tests {
             include_str!("files.rs"),
             include_str!("jobs.rs"),
             include_str!("rerun.rs"),
+            include_str!("original.rs"),
             include_str!("security.rs"),
             include_str!("store.rs"),
             include_str!("tickets.rs"),

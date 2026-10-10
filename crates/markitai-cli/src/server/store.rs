@@ -530,7 +530,7 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
 
 pub(super) fn measure(folder: &Path) -> std::io::Result<u64> {
     let mut size = 0u64;
-    for name in ["out", "uploads"] {
+    for name in ["out", "uploads", "snapshots"] {
         let path = folder.join(name);
         if !path.try_exists()? {
             continue;

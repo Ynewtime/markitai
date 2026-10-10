@@ -233,9 +233,8 @@ pub fn image_size(bytes: &[u8]) -> Result<PageSize> {
 pub fn image_png(bytes: &[u8], width: u32) -> Result<Vec<u8>> {
     let image = images::decode_preview(bytes)?;
     let image = if image.width() > width.max(1) {
-        let height = (u64::from(image.height()) * u64::from(width.max(1)))
-            .div_ceil(u64::from(image.width()))
-            .max(1) as u32;
+        let (shown, wide) = (u64::from(image.height()), u64::from(image.width()));
+        let height = ((shown * u64::from(width.max(1)) + wide / 2) / wide).max(1) as u32;
         image.resize_exact(width.max(1), height, image::imageops::FilterType::Triangle)
     } else {
         image

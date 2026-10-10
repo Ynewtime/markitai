@@ -4,6 +4,7 @@ use super::{
 };
 use crate::diagnostics::{AttemptDiagnostics, Operation};
 use futures_util::{StreamExt, stream::FuturesUnordered};
+use markitai_core::output::create_private_dir;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -325,23 +326,30 @@ async fn convert_one(
     };
     let mut cfg = cfg;
     cfg["output"]["filename"] = json!(format!("{base}.md"));
+    // A URL item keeps the HTML it was converted from, for Compare.
+    let snapshots = job.folder.join("snapshots");
+    let snapshot =
+        (item.kind == "url").then(|| snapshots.join(super::original::snapshot_name(&item.item_id)));
     let result = crate::task::blocking(move || {
         let _permit = permit;
-        markitai_core::convert_with_context_detailed(
-            &target,
-            markitai_core::ConvertOptions {
-                output_dir: Some(out),
-                config: Some(cfg),
-                ..Default::default()
-            },
-            markitai_core::ConvertContext {
-                explicit_fetch_strategy: explicit.as_deref(),
-                llm_runtime: Some(&runtime),
-                browser_runtime: Some(&browser_runtime),
-                // Jobs always publish into their own folder.
-                stdout_assets: None,
-            },
-        )
+        let options = markitai_core::ConvertOptions {
+            output_dir: Some(out),
+            config: Some(cfg),
+            ..Default::default()
+        };
+        let context = markitai_core::ConvertContext {
+            explicit_fetch_strategy: explicit.as_deref(),
+            llm_runtime: Some(&runtime),
+            browser_runtime: Some(&browser_runtime),
+            // Jobs always publish into their own folder.
+            stdout_assets: None,
+        };
+        match snapshot.filter(|_| create_private_dir(&snapshots).is_ok()) {
+            Some(snapshot) => {
+                markitai_core::convert_with_html_snapshot(&target, options, context, &snapshot)
+            }
+            None => markitai_core::convert_with_context_detailed(&target, options, context),
+        }
     })
     .await;
     let mut data = job.data.lock().unwrap();

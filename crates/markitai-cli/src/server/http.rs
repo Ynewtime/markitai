@@ -66,7 +66,7 @@ pub(super) async fn capabilities(
         "extras":{"browser":markitai_core::browser_available(),"svg":true},
         "limits":{"max_job_items":MAX_ITEMS,"history_retention_days":super::retention::DAYS},
         "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
-            "original":false,"result_excerpt":true,"job_labels":true},
+            "original":true,"result_excerpt":true,"job_labels":true},
     }))
 }
 
@@ -801,6 +801,7 @@ mod error_code_tests {
             token: None,
             allowed_hosts: HashSet::new(),
             tickets: Default::default(),
+            previews: Default::default(),
         });
         let router = Router::new()
             .route("/api/jobs", post(create))

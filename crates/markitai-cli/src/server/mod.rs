@@ -18,6 +18,7 @@ mod http;
 mod jobs;
 mod launch;
 mod openapi;
+mod original;
 mod providers;
 mod rerun;
 mod retention;
@@ -68,6 +69,7 @@ struct State {
     token: Option<String>,
     allowed_hosts: HashSet<String>,
     tickets: tickets::Tickets,
+    previews: original::Previews,
 }
 
 api_routes! {
@@ -81,6 +83,10 @@ api_routes! {
     post "/api/jobs/{job_id}/items/{item_id}/retry" => rerun::retry;
     delete "/api/jobs/{job_id}/items/{item_id}" => rerun::delete;
     get "/api/jobs/{job_id}/items/{item_id}/result" => files::result;
+    get "/api/jobs/{job_id}/items/{item_id}/original" => original::descriptor;
+    get "/api/jobs/{job_id}/items/{item_id}/original/file" => original::file;
+    get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}" => original::page_image;
+    get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text" => original::page_text;
     get "/api/jobs/{job_id}/files/{*relpath}" => files::download;
     get "/api/jobs/{job_id}/archive" => files::job_archive;
     get "/api/history" => http::history;
@@ -148,6 +154,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         token,
         allowed_hosts,
         tickets: tickets::Tickets::default(),
+        previews: original::Previews::default(),
     });
     store::rehydrate(&state.root, &state.jobs).map_err(|e| e.to_string())?;
     // Under the lifetime lock: no other server sweeps this history.

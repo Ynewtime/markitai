@@ -277,6 +277,7 @@ mod router_tests {
             token: token.map(str::to_owned),
             allowed_hosts: HashSet::from(["trusted.example".into()]),
             tickets: Default::default(),
+            previews: Default::default(),
         });
         Router::new()
             .route(

@@ -22,12 +22,12 @@ use std::{
 use tokio::io::AsyncReadExt;
 
 const MAX_RESULT: u64 = 64 * 1024 * 1024;
-fn encoded(value: &str) -> String {
+pub(super) fn encoded(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes())
         .collect::<String>()
         .replace('+', "%20")
 }
-fn body(
+pub(super) fn body(
     file: File,
     temporary: Option<tempfile::NamedTempFile>,
     content_type: &str,

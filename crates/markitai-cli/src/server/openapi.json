@@ -201,6 +201,77 @@
         }
       }
     },
+    "/api/jobs/{job_id}/items/{item_id}/original": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "describeOriginal",
+        "summary": "What the Compare view can show of the item's source",
+        "description": "Chooses, in order: a kept upload of a PDF (`pdf`), of a raster image (`image`: png, jpeg, gif, webp, avif, bmp, tiff, heic/heif), of HTML (`html`) or of a text format (`text`: md, markdown, txt, csv, tsv, json, xml, yaml, yml, log); a URL item's kept page snapshot (`html`); the item's page screenshots (`screenshots`); otherwise `none` with a `reason`. Page boxes come from the PDF's pages or the image headers (HEIF and AVIF are decoded); no page is drawn. Every original response carries `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`.",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "Descriptor", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OriginalDescriptor" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/items/{item_id}/original/file": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "downloadOriginal",
+        "summary": "The stored original bytes: the kept upload, or a URL item's page snapshot",
+        "description": "Sent as an attachment with the original's media type, except that HTML and SVG are sent as `text/plain; charset=utf-8`, so a direct visit never renders them; also `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. 404 `original_unavailable` when nothing is kept. Its path may be named by a download ticket.",
+        "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "Original bytes", "content": { "application/octet-stream": { "schema": { "type": "string", "contentMediaType": "application/octet-stream" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "getOriginalPage",
+        "summary": "One page of the original as an image",
+        "description": "`pdf`: page `n` drawn on white, `width` pixels wide (narrower when the 32-megapixel limit requires). `image` (`n` = 1): the stored image when browsers show its type (png, jpeg, gif, webp, avif, bmp) and it is not wider than `width`, otherwise a PNG scaled to `width`. `screenshots`: screenshot `n`, scaled to a PNG when wider than `width`. At most two pages are drawn at a time; another request is refused with 429 `render_busy` and `Retry-After`. Responses carry `Cache-Control: private, max-age=86400` and an ETag (answered with 304), and drawn pages are kept briefly in memory.",
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" },
+          { "$ref": "#/components/parameters/ItemId" },
+          { "$ref": "#/components/parameters/PageNumber" },
+          { "name": "width", "in": "query", "required": false, "description": "Image width in pixels, clamped to 160–2400; 1200 when omitted. Not a whole number: 422 `invalid_page_request`.", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Page image", "content": { "image/png": { "schema": { "type": "string", "contentMediaType": "image/png" } } } },
+          "304": { "description": "The client's copy (If-None-Match) is current" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "getOriginalPageText",
+        "summary": "A PDF page's text as positioned lines",
+        "description": "Only for `pdf` originals (404 `original_unavailable` otherwise). Text runs on one baseline that follow each other within an em form a line, so a table row may be several lines, one per cell. Lines are in reading order, at most 5000, with boxes in points from the page's top-left corner. Drawn under the same two-at-a-time limit as page images (429 `render_busy`).",
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" },
+          { "$ref": "#/components/parameters/ItemId" },
+          { "$ref": "#/components/parameters/PageNumber" }
+        ],
+        "responses": {
+          "200": { "description": "Page text", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PageText" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/jobs/{job_id}/files/{relpath}": {
       "get": {
         "tags": ["jobs"],
@@ -459,6 +530,13 @@
       "JobId": { "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } },
       "ItemId": { "name": "item_id", "in": "path", "required": true, "schema": { "type": "string", "examples": ["i1"] } },
       "SettingsId": { "name": "id", "in": "path", "required": true, "description": "A deployment or provider identity from the settings views", "schema": { "type": "string" } },
+      "PageNumber": {
+        "name": "n",
+        "in": "path",
+        "required": true,
+        "description": "1-based page number; not a whole number: 422 `invalid_page_request`; past the last page: 404 `page_not_found`",
+        "schema": { "type": "integer", "minimum": 1 }
+      },
       "ExpectedRevision": { "name": "expected_revision", "in": "query", "required": true, "description": "The revision the change was drafted against", "schema": { "type": "string" } }
     },
     "responses": {
@@ -475,7 +553,7 @@
           "reason": {
             "type": "string",
             "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
-            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_history_query", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "output_conflict", "output_identity_conflict", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_history_query", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
           }
         }
       },
@@ -538,7 +616,7 @@
         "type": "object",
         "required": ["path"],
         "additionalProperties": false,
-        "properties": { "path": { "type": "string", "description": "`/api/jobs/{job_id}/files/{relpath}`, `/api/jobs/{job_id}/archive` or `/api/history/archive`, exactly as it will be requested (percent-encoded ASCII, no query)", "examples": ["/api/jobs/0123456789ab/archive"] } }
+        "properties": { "path": { "type": "string", "description": "`/api/jobs/{job_id}/files/{relpath}`, `/api/jobs/{job_id}/archive`, `/api/jobs/{job_id}/items/{item_id}/original/file` or `/api/history/archive`, exactly as it will be requested (percent-encoded ASCII, no query)", "examples": ["/api/jobs/0123456789ab/archive"] } }
       },
       "Ticket": {
         "type": "object",
@@ -688,6 +766,31 @@
             }
           }
         ]
+      },
+      "OriginalDescriptor": {
+        "type": "object",
+        "required": ["kind", "name", "media_type", "size", "download", "pages", "page_count", "text_layer", "reason"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["pdf", "image", "html", "text", "screenshots", "none"] },
+          "name": { "type": "string", "description": "The upload name or URL" },
+          "media_type": { "type": ["string", "null"], "description": "Of the stored original bytes" },
+          "size": { "type": ["integer", "null"], "description": "Bytes of the stored original" },
+          "download": { "type": ["string", "null"], "description": "API path of the stored original bytes (also a download ticket path); null when none is kept" },
+          "pages": { "type": "array", "description": "Page boxes, in order, at most 2000: points of the visible page box after rotation for a PDF, pixels for an image or screenshot; empty for html, text and none", "items": { "type": "object", "required": ["width", "height"], "properties": { "width": { "type": "number" }, "height": { "type": "number" } } } },
+          "page_count": { "type": "integer", "description": "PDF pages, 1 for an image, the number of screenshots, else 0" },
+          "text_layer": { "type": "boolean", "description": "`…/pages/{n}/text` answers (PDF only)" },
+          "reason": { "type": ["string", "null"], "enum": [null, "not_kept", "unsupported_format", "too_large", "render_unavailable"], "description": "Why `kind` is `none`: no original kept (a CLI-recorded job, a URL page not converted from HTML here, or a removed upload), a format without a browser view and no screenshots, or a PDF or image this build cannot open" }
+        }
+      },
+      "PageText": {
+        "type": "object",
+        "required": ["page", "width", "height", "lines"],
+        "properties": {
+          "page": { "type": "integer" },
+          "width": { "type": "number", "description": "Points; the descriptor's box of this page" },
+          "height": { "type": "number" },
+          "lines": { "type": "array", "items": { "type": "object", "required": ["text", "bbox"], "properties": { "text": { "type": "string" }, "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } }
+        }
       },
       "Artifact": {
         "type": "object",
