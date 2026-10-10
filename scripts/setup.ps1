@@ -50,15 +50,19 @@ function Test-OutputRedirected {
     try { return [Console]::IsOutputRedirected } catch { return $false }
 }
 
-# Unicode marks on any modern terminal, off Windows, and in redirected UTF-8
-# output; ASCII in the legacy console host and for TERM=dumb.
+# Unicode marks on any modern terminal and off Windows; ASCII in the legacy
+# console host and for TERM=dumb. Redirected output on Windows is read back in
+# the shell's code page (Get-Content in Windows PowerShell 5.1 reads ANSI), so
+# it gets Unicode marks only when that code page is UTF-8: the one the shell
+# had, since this script switches the console to UTF-8 for uv's output. An
+# SSH session counts as a modern terminal, but not for a file it writes.
 function Test-UnicodeMarks {
     if ($env:TERM -eq "dumb") { return $false }
-    if (-not $script:OnWindows -or $script:ModernTerminal) { return $true }
+    if (-not $script:OnWindows) { return $true }
     if (Test-OutputRedirected) {
-        try { return ([Console]::OutputEncoding.CodePage -eq 65001) } catch { return $false }
+        try { return ($script:OriginalOutputEncoding.CodePage -eq 65001) } catch { return $false }
     }
-    return $false
+    return $script:ModernTerminal
 }
 
 # Colour is off for NO_COLOR, TERM=dumb and redirected output (unless
