@@ -286,7 +286,11 @@ still receives the ordinary no-text warning.
   shorter side for detection, with the reference's lower thresholds for the
   retry (region 0.35, line 0.45); a line two tiles both found is kept once.
   A caption a few pixels high on a large, mostly empty picture is found this
-  way. A blank page or a picture without text costs those extra detections.
+  way. A tile without sharp edges (a gradient, a blank margin) cannot hold
+  text and is skipped, so a blank page costs no retry; the other tiles are
+  searched two at a time, each enlarged at most so that the two hold no more
+  pixels than the full-image pass did, which keeps the retry within about
+  that pass's memory.
 - Model files are additional installed disk space, separate from the CLI binary.
 
 Measured quality and performance have specific source, platform and corpus

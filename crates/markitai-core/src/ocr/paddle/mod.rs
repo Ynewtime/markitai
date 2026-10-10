@@ -818,8 +818,10 @@ fn tiled(engine: &Engine, image: &RgbImage, choice: Choice) -> Result<Option<(Re
         .collect();
     let budget = if tiles.len() > 1 {
         let full = detect::Layout::of(image.width(), image.height());
-        let [x0, y0, x1, y1] = tiles[0];
-        let window = f64::from(x1 - x0) * f64::from(y1 - y0);
+        let window = tiles
+            .iter()
+            .map(|[x0, y0, x1, y1]| f64::from(x1 - x0) * f64::from(y1 - y0))
+            .fold(1.0, f64::max);
         (f64::from(full.width) * f64::from(full.height) / (2.0 * window)).sqrt() as f32
     } else {
         f32::INFINITY
