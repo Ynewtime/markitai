@@ -182,7 +182,9 @@ class TestEngineRedaction:
             )
         error = caught.value
         assert getattr(error, "status_code", None) == 401
-        assert type(error).__name__ == "AuthenticationError"
+        # The router turns the provider's 401 into one actionable error
+        assert type(error).__name__ == "APIKeyRejectedError"
+        assert "rejected the api_key configured for it" in str(error)
         assert f"Incorrect API key provided: {REDACTED}" in str(error)
         _assert_clean(str(error))
         _assert_clean(format_error_message(error))
@@ -315,7 +317,11 @@ class TestCliRedaction:
 
         item = json.loads(single.stdout)["items"][0]
         assert item["status"] == "failed"
-        expected = "AuthenticationError" if mode == "key" else "BadRequestError"
+        expected = (
+            "rejected the api_key configured for it in llm.model_list with HTTP 401"
+            if mode == "key"
+            else "BadRequestError"
+        )
         assert expected in single.stderr
         written = [
             path.read_text(encoding="utf-8", errors="replace")

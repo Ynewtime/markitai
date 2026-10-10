@@ -43,7 +43,8 @@ def llm_fallback_warning(source: str, error: str) -> str:
 
     The warning is also raised as a user notice (stderr in default mode, the
     batch summary, serve/API/MCP warnings). The first one of a process adds
-    how to make such items fail instead.
+    how to make such items fail instead, unless it is a refused API key
+    (its message already names the variable to set).
 
     Args:
         source: The file name or URL, as the user knows it.
@@ -55,7 +56,11 @@ def llm_fallback_warning(source: str, error: str) -> str:
         reason = reason.removeprefix(prefix)
     warning = _FALLBACK_WARNING.format(reason)
     user_notice("{}: {}", source, warning)
-    if not _hinted:
+    # A refused API key's message already says what to do; the policy hint
+    # next to it would be a second, less useful one
+    from markitai.providers.api_keys import is_api_key_problem
+
+    if not _hinted and not is_api_key_problem(reason):
         _hinted = True
         user_notice(
             "Items whose LLM enhancement fails keep their unenhanced output; "

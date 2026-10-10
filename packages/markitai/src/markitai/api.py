@@ -105,9 +105,11 @@ class NoModelConfiguredError(ValueError):
     """LLM enhancement is enabled but no model could be resolved.
 
     Raised when ``llm.model_list`` is empty, ``MODEL`` is unset and provider
-    auto-detection found nothing. A ``ValueError`` subclass, so callers
-    catching the documented ``ValueError`` keep working; the distinct type
-    lets hosts (the MCP server) add setup guidance to exactly this error.
+    auto-detection found nothing, or when no configured model has the API
+    key it needs (the message names the variable to set; nothing is sent).
+    A ``ValueError`` subclass, so callers catching the documented
+    ``ValueError`` keep working; the distinct type lets hosts (the MCP
+    server) add setup guidance to exactly this error.
     """
 
 
@@ -244,7 +246,7 @@ def _resolve_config(
 
     Raises:
         NoModelConfiguredError: If LLM is enabled but no model can be
-            resolved (a ``ValueError``).
+            resolved, or none has its API key (a ``ValueError``).
     """
     from markitai.config import ConfigManager
 
@@ -296,6 +298,18 @@ def _resolve_config(
                 _POOLED_NOTICES_SHOWN.add(models)
                 message, fix = pooled_providers_notice(resolution.detected)
                 logger.warning("[API] {}. {}", message, fix)
+
+    # A configured model whose API key is not set would be sent without one
+    # (the router leaves it out): with no model left, fail before converting
+    if cfg.llm.enabled and cfg.llm.model_list:
+        from markitai.providers.api_keys import (
+            no_usable_model_message,
+            split_by_api_key,
+        )
+
+        usable, missing = split_by_api_key(cfg.llm.model_list)
+        if missing and not usable:
+            raise NoModelConfiguredError(no_usable_model_message(missing))
 
     return cfg
 
@@ -661,8 +675,8 @@ async def aconvert(
         FileNotFoundError: The source path does not exist.
         IsADirectoryError: The source is a directory (batch conversion is
             CLI-only for now).
-        NoModelConfiguredError: LLM was enabled with no resolvable model
-            (a ``ValueError``).
+        NoModelConfiguredError: LLM was enabled with no resolvable model,
+            or with no model whose API key is set (a ``ValueError``).
     """
     # Native noise suppression must precede converter imports; run it off
     # the loop because it may import pymupdf (a slow C extension import)

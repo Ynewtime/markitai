@@ -499,6 +499,8 @@ class TestModelResolutionParity:
         (the CLI's documented quick path) failed with "no models"."""
         from markitai.providers.detect import ProviderDetectionResult
 
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")  # what detection found
+
         captured: dict[str, object] = {}
 
         async def fake_core(ctx, _max_size):  # type: ignore[no-untyped-def]
@@ -602,6 +604,7 @@ class TestBatchSharesOneLlmProcessor:
 
         server_module._JOBS.clear()
         monkeypatch.setenv("MODEL", "openai/gpt-4o-mini")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         created: list[object] = []
 
         def fake_create_llm_processor(cfg: object, runtime: object = None) -> object:

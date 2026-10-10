@@ -221,6 +221,8 @@ Any string value can reference an environment variable with `env:VAR_NAME`. mark
 | `CLOUDFLARE_API_TOKEN` | Cloudflare (Browser Rendering, Workers AI) |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
 
+LiteLLM also takes Gemini's key from `GOOGLE_API_KEY` (ahead of `GEMINI_API_KEY`), OpenRouter's from `OR_API_KEY` and Anthropic's from `ANTHROPIC_AUTH_TOKEN`; markitai counts those as set too.
+
 ### Markitai Settings
 
 | Variable | Description |

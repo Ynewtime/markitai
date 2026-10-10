@@ -134,10 +134,14 @@ def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # test into the env branch: `GH_TOKEN` or `GITHUB_TOKEN` is set on any
     # machine with the gh CLI configured, and in CI. A test that exercises the
     # env branch sets the variable itself, after this fixture.
-    from markitai.constants import PROVIDER_API_KEY_ENV
+    from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_API_KEY_ENV_NAMES
 
     for key in {
         *PROVIDER_API_KEY_ENV.values(),
+        # The other names LiteLLM reads the same keys from (GOOGLE_API_KEY,
+        # OR_API_KEY, ANTHROPIC_AUTH_TOKEN): a model with one of them set
+        # is not held back for a missing key
+        *(name for names in PROVIDER_API_KEY_ENV_NAMES.values() for name in names),
         "MISTRAL_API_KEY",
         "CLOUDFLARE_API_TOKEN",
         # Copilot: `copilot login --help`'s own precedence order.

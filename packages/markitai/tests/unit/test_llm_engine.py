@@ -627,16 +627,26 @@ class TestMaxTokens:
         assert harness.router.calls[0]["max_tokens"] == 555
 
 
-class TestAuthErrorHint:
-    async def test_auth_error_logs_friendly_hint(self) -> None:
-        """Auth failures name the model and point at `markitai init`."""
+class TestAuthErrorLog:
+    async def test_auth_error_is_one_warning_line(self) -> None:
+        """An auth failure is logged once, on one line, as a warning.
+
+        The item that made the call reports the failure to the user; an
+        ERROR here (with a generic multi-line hint) made the console print
+        the provider's 401 once per layer.
+        """
         from loguru import logger
 
         harness = Harness(
             FakeRouter([Exception("AuthenticationError: Incorrect API key provided")])
         )
-        log_messages: list[str] = []
-        handler_id = logger.add(lambda msg: log_messages.append(str(msg)))
+        records: list[tuple[str, str]] = []
+        handler_id = logger.add(
+            lambda msg: records.append(
+                (msg.record["level"].name, msg.record["message"])
+            ),
+            level="WARNING",
+        )
         try:
             with pytest.raises(Exception, match="AuthenticationError"):
                 await harness.engine.complete_text(
@@ -648,7 +658,8 @@ class TestAuthErrorHint:
         finally:
             logger.remove(handler_id)
 
-        combined = "\n".join(log_messages)
-        assert "Authentication failed" in combined
-        assert "markitai init" in combined
-        assert "openai/gpt-test" in combined
+        [(level, message)] = records
+        assert level == "WARNING"
+        assert message.startswith("[LLM:test-hint] Authentication failed: ")
+        assert "Incorrect API key provided" in message
+        assert "\n" not in message
