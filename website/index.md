@@ -18,14 +18,14 @@ hero:
 <section class="home-shot" aria-labelledby="shot-title">
   <p class="eyebrow">Web workspace</p>
   <h2 id="shot-title">A web workspace, when you would rather not type</h2>
-  <p><code>markitai serve</code> puts the same conversion core behind a local web UI. Drop files in, paste URLs, watch progress, download results.</p>
+  <p><code>markitai serve</code> puts the same conversion core behind a local web UI. Drop files in, paste URLs, watch progress, check each result next to its original, download everything.</p>
   <picture class="home-shot-light">
     <source srcset="/workbench.webp" type="image/webp" />
-    <img src="/workbench.png" alt="The markitai web workspace: a composer card with a URL field, a Convert button, and Options, CLI, and Upload toggles." width="1440" height="700" loading="lazy" />
+    <img src="/workbench.png" alt="The markitai web workbench: a sidebar with Convert, Conversions and Settings, the list of converted files grouped by submission, and an inspector showing the selected file's status, sizes, cost and options." width="1440" height="700" loading="lazy" />
   </picture>
   <picture class="home-shot-dark">
     <source srcset="/workbench.dark.webp" type="image/webp" />
-    <img src="/workbench.dark.png" alt="The markitai web workspace: a composer card with a URL field, a Convert button, and Options, CLI, and Upload toggles." width="1440" height="700" loading="lazy" />
+    <img src="/workbench.dark.png" alt="The markitai web workbench: a sidebar with Convert, Conversions and Settings, the list of converted files grouped by submission, and an inspector showing the selected file's status, sizes, cost and options." width="1440" height="700" loading="lazy" />
   </picture>
   <p class="home-shot-link"><a href="/guide/serve">Read about the web workspace <span aria-hidden="true">→</span></a></p>
 </section>
