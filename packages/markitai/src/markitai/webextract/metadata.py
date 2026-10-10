@@ -77,7 +77,18 @@ def extract_metadata(soup: BeautifulSoup, url: str) -> WebMetadata:
         soup, name="application-name"
     )
     jsonld_docs = _jsonld_documents(soup)
-    title = clean_title(_jsonld_value(jsonld_docs, "headline"), site=site)
+    headline = _jsonld_value(jsonld_docs, "headline")
+    if headline and _headline_describes_instead(
+        headline,
+        _first_heading_text(soup),
+        (
+            _title_text(soup),
+            _meta_content(soup, property_name="og:title")
+            or _meta_content(soup, name="twitter:title"),
+        ),
+    ):
+        headline = None
+    title = clean_title(headline, site=site)
     if not title:
         title = clean_title(_jsonld_value(jsonld_docs, "name"), site=site)
     if not title:
@@ -95,6 +106,46 @@ def extract_metadata(soup: BeautifulSoup, url: str) -> WebMetadata:
         description=_meta_content(soup, name="description")
         or _meta_content(soup, property_name="og:description"),
         canonical_url=_page_canonical_url(soup, url),
+    )
+
+
+def _comparable(value: str) -> str:
+    """A title's letters and digits in lower case: what two spellings of one
+    title share ("Markdown - Wikipedia", "Markdown")."""
+    return "".join(ch.lower() for ch in value if ch.isalnum())
+
+
+def _first_heading_text(soup: BeautifulSoup) -> str | None:
+    h1 = soup.find("h1")
+    if isinstance(h1, Tag):
+        return " ".join(h1.get_text(" ", strip=True).split()) or None
+    return None
+
+
+def _headline_describes_instead(
+    headline: str, heading: str | None, titles: tuple[str | None, ...]
+) -> bool:
+    """Whether a JSON-LD ``headline`` is no title of this page.
+
+    True when it names nothing the first heading, the document title and the
+    Open Graph title say, while the heading and one of the titles agree with
+    each other. Wikipedia's ``headline`` is the article's short description
+    ("lightweight markup language with plain-text formatting syntax").
+    Same rule as the Rust implementation.
+    """
+    head = _comparable(headline)
+    heading_key = _comparable(heading or "")
+    title_keys = [key for key in (_comparable(t) for t in titles if t) if key]
+
+    def related(a: str, b: str) -> bool:
+        return a in b or b in a
+
+    return (
+        bool(head)
+        and bool(heading_key)
+        and any(related(heading_key, key) for key in title_keys)
+        and not related(head, heading_key)
+        and all(not related(head, key) for key in title_keys)
     )
 
 

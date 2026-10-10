@@ -527,7 +527,7 @@ The X/Twitter enrichment path (FxTwitter, Twitter oEmbed) follows the same conse
 |---------|---------|-------------|
 | `timeout` | `30000` | Page load timeout in ms. The same budget (plus the auto-scroll time) bounds the work on the loaded page, so a page stuck in a script loop fails instead of hanging the run |
 | `wait_for` | `domcontentloaded` | `load`, `domcontentloaded` or `networkidle` |
-| `extra_wait_ms` | `3000` | Extra wait for JavaScript after the load event |
+| `extra_wait_ms` | `3000` | Longest wait for JavaScript after the load event. It ends as soon as the page has settled: no script, XHR or fetch request in flight and no DOM change for 0.5 s |
 | `session_mode` | `isolated` | `isolated` (fresh context per request) or `domain_persistent` (reuse per domain) |
 | `session_ttl_seconds` | `600` | Lifetime of a persistent session |
 | `wait_for_selector` | `null` | CSS selector to wait for |

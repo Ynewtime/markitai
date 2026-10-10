@@ -110,7 +110,10 @@ async def test_only_successful_selector_wait_gets_stabilization(
             "_try_enricher_fallback_async",
             AsyncMock(return_value=("", None, "")),
         ),
-        patch("markitai.fetch_playwright.asyncio.sleep", AsyncMock()) as sleep,
+        patch(
+            "markitai.fetch_playwright._wait_until_settled",
+            AsyncMock(return_value=True),
+        ) as settle,
     ):
         result = await renderer.fetch(
             URL, wait_for_selector="article", extra_wait_ms=500, skip_auto_scroll=True
@@ -118,9 +121,11 @@ async def test_only_successful_selector_wait_gets_stabilization(
     assert "Real content" in result.content
     page.wait_for_selector.assert_awaited_once_with("article", timeout=10000)
     if selector_found:
-        sleep.assert_awaited_once_with(0.5)
+        # Waits for the page to settle, at most extra_wait_ms
+        settle.assert_awaited_once()
+        assert settle.await_args.args[2] == 0.5
     else:
-        sleep.assert_not_awaited()
+        settle.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

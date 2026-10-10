@@ -190,13 +190,13 @@ DEFAULT_PLAYWRIGHT_WAIT_FOR = (
     "domcontentloaded"  # load | domcontentloaded | networkidle
 )
 DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS = (
-    3000  # Extra wait after load state (for JS rendering)
+    3000  # Longest wait for JS rendering after load state; ends once settled
 )
 
 # Playwright auto-scroll settings (inspired by baoyu-skills url-to-markdown)
 DEFAULT_PLAYWRIGHT_AUTO_SCROLL_STEPS = 8  # Max scroll iterations
 DEFAULT_PLAYWRIGHT_AUTO_SCROLL_DELAY_MS = 600  # Delay between scroll steps
-DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS = 800  # Wait after scrolling completes
+DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS = 800  # Pause after scrolling (screenshots)
 
 # DOM noise selectors to remove before content extraction
 # Based on baoyu-skills url-to-markdown's proven selector set

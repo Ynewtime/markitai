@@ -45,7 +45,7 @@ Read this when a URL conversion fails, returns junk (login wall, CAPTCHA, empty 
 |---|---|
 | `wait_for_selector` | CSS selector to await before extraction |
 | `wait_for` | Load event: `load` / `domcontentloaded` (global default) / `networkidle` |
-| `extra_wait_ms` | Extra wait after the load event (global default 3000) |
+| `extra_wait_ms` | Longest extra wait after the load event, ends once the page settles (global default 3000) |
 | `prefer_strategy` | First-choice strategy for this domain |
 | `strategy_priority` | Full custom order for this domain (overrides `prefer_strategy` and global order) |
 | `skip_auto_scroll` | Skip auto-scroll on single-content pages (tweets, issues) |
