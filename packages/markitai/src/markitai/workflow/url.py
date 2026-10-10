@@ -343,7 +343,7 @@ async def convert_url_cascade(
         and downloaded_images
         and llm_error is None
     ):
-        from markitai.llm.engine import track_llm_spend
+        from markitai.utils.llm_spend import track_llm_spend
 
         image_cost = 0.0
         image_usage: dict[str, dict[str, Any]] = {}

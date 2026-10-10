@@ -62,6 +62,41 @@ assert 'markitai.image' not in sys.modules, 'Text conversion initialized image p
     )
 
 
+def test_url_without_llm_does_not_load_the_llm_stack(tmp_path):
+    """A plain URL conversion never imports LiteLLM.
+
+    Its import takes about a second on Linux and several on Windows; it once
+    crept into every single-URL run through the spend tracking.
+    """
+    page = tmp_path / "page.html"
+    page.write_text(
+        "<html><head><title>Note</title></head><body><article><h1>Note</h1>"
+        "<p>A complete page for the URL performance contract. "
+        * 20
+        + "</p></article></body></html>",
+        encoding="utf-8",
+    )
+    run_isolated(
+        """
+import functools, sys, threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from click.testing import CliRunner
+from markitai.cli.main import app
+
+handler = functools.partial(SimpleHTTPRequestHandler, directory=sys.argv[1])
+server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+url = f"http://127.0.0.1:{server.server_address[1]}/page.html"
+result = CliRunner().invoke(app, [url, '-s', 'static', '--preset', 'minimal', '--no-cache', '--no-remote-fetch'])
+server.shutdown()
+assert result.exit_code == 0, (result.output, result.exception)
+assert 'A complete page' in result.output, result.output
+assert 'litellm' not in sys.modules, 'A URL without LLM imported the LLM stack'
+""",
+        str(tmp_path),
+    )
+
+
 def test_html_file_converter_does_not_load_office_or_detection_models(tmp_path):
     path = tmp_path / "note.html"
     path.write_text(
