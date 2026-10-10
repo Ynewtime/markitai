@@ -30,6 +30,7 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.converter.pdf_parallel import map_page_runs, to_markdown_chunks
+from markitai.converter.pdf_tables import restore_flattened_tables
 from markitai.image import ImageProcessor
 from markitai.notices import user_notice
 from markitai.ocr import (
@@ -743,6 +744,12 @@ class PdfConverter(BaseConverter):
             page_texts = self._sanitize_hidden_text(
                 input_path, page_numbers, page_texts, prescanned=hidden_scan
             )
+
+            # Tables without ruling lines that the extraction flattened into
+            # one paragraph. After the sanitization: a paragraph that lost
+            # hidden text no longer matches its table's words, so no hidden
+            # text is split across cells where "remove" could not find it.
+            page_texts = restore_flattened_tables(input_path, page_numbers, page_texts)
 
             markdown_parts = [
                 f"{page_marker(page_num)}\n\n{page_text}"
