@@ -313,6 +313,14 @@ pub(super) fn persist(folder: &Path, data: &JobData) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Whether `name` is a job folder's name: twelve lowercase hex digits.
+pub(super) fn job_id(name: &str) -> bool {
+    name.len() == 12
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 pub(super) fn rehydrate(
     root: &Path,
     known: &Mutex<HashMap<String, Arc<Job>>>,
@@ -320,11 +328,7 @@ pub(super) fn rehydrate(
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let id = entry.file_name().to_string_lossy().into_owned();
-        if id.len() != 12
-            || !id
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
+        if !job_id(&id) {
             continue;
         }
         if known.lock().unwrap().contains_key(&id) {

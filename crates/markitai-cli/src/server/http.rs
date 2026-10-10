@@ -64,7 +64,7 @@ pub(super) async fn capabilities(
         "presets":presets,
         "preset_options":options,
         "extras":{"browser":markitai_core::browser_available(),"svg":true},
-        "limits":{"max_job_items":MAX_ITEMS},
+        "limits":{"max_job_items":MAX_ITEMS,"history_retention_days":super::retention::DAYS},
         "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
             "original":false,"result_excerpt":true,"job_labels":true},
     }))
@@ -613,7 +613,11 @@ pub(super) async fn refresh(state: &Arc<State>) -> ApiResult<()> {
 /// The registered jobs, copied out so that locking each one never holds the
 /// registry that every job route needs.
 pub(super) fn registered_jobs(state: &State) -> Vec<Arc<Job>> {
-    state.jobs.lock().unwrap().values().cloned().collect()
+    let jobs: Vec<_> = state.jobs.lock().unwrap().values().cloned().collect();
+    let now = std::time::SystemTime::now();
+    jobs.into_iter()
+        .filter(|job| !super::retention::expired(job, now))
+        .collect()
 }
 /// A registered job, else one another local process saved since the last
 /// scan; a known job needs no scan of every job folder.
@@ -1129,10 +1133,17 @@ mod error_code_tests {
         let temp = tempfile::tempdir().unwrap();
         let (_state, router) = service(temp.path());
         // A CLI history records local time with its offset, the server UTC.
+        // Recent times: history expires seven days after a job finished.
+        let base = chrono::Utc::now() - chrono::Duration::days(1);
+        let at = |minutes: i64, hours: i32| {
+            (base + chrono::Duration::minutes(minutes))
+                .with_timezone(&chrono::FixedOffset::east_opt(hours * 3600).unwrap())
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        };
         for (id, created) in [
-            ("00000000000a", "2026-10-09T09:30:00.000+08:00"),
-            ("00000000000b", "2026-10-09T02:00:00.000Z"),
-            ("00000000000c", "2026-10-08T23:00:00.000-05:00"),
+            ("00000000000a", at(0, 8)),
+            ("00000000000b", at(30, 0)),
+            ("00000000000c", at(150, -5)),
         ] {
             let folder = temp.path().join(id);
             create_private_dir(&folder.join("out")).unwrap();
@@ -1155,7 +1166,7 @@ mod error_code_tests {
             .iter()
             .map(|entry| entry["job_id"].as_str().unwrap())
             .collect();
-        // 04:00Z, 02:00Z, 01:30Z: text order would put the +08:00 job first.
+        // Newest instant first; text order would put the +08:00 job first.
         assert_eq!(order, ["00000000000c", "00000000000b", "00000000000a"]);
         // The archive names same-named jobs oldest first.
         let response = router
@@ -1206,7 +1217,7 @@ mod error_code_tests {
         };
         std::fs::write(
             folder.join("meta.json"),
-            json!({"job_id":id,"created_at":"2026-10-09T02:00:00.000Z","finished_at":"2026-10-09T02:00:01.000Z",
+            json!({"job_id":id,"created_at":now(),"finished_at":now(),
                 "status":"done","version":2,"options":{},"items":[item("1","a"),item("2","b")],
                 "native_bases":{"1":"a","2":"b"}})
             .to_string(),

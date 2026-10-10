@@ -340,3 +340,72 @@ fn an_endpoint_saved_as_custom_converts_through_its_own_address() {
     assert_eq!(item["source_size"], NOTES.len());
     legacy.stop();
 }
+
+#[test]
+fn history_is_kept_for_seven_days_after_a_job_finished() {
+    let temp = tempfile::tempdir().unwrap();
+    configure(temp.path());
+    let jobs = temp.path().join("home/serve/jobs");
+    let saved = |id: &str, status: &str, finished: Option<String>| {
+        let folder = jobs.join(id);
+        std::fs::create_dir_all(folder.join("out")).unwrap();
+        std::fs::write(folder.join("out/a.md"), id).unwrap();
+        let item = json!({"item_id":"i1","name":"a.txt","kind":"file","output":"a.md","output_name":"a.md",
+            "status":if status == "running" { "queued" } else { "done" }});
+        let meta = json!({"job_id":id,"created_at":hours_ago(30 * 24),"finished_at":finished,
+            "status":status,"version":2,"options":{},"items":[item]});
+        std::fs::write(folder.join("meta.json"), meta.to_string()).unwrap();
+        folder
+    };
+    let expired = saved("00000000000a", "done", Some(hours_ago(8 * 24)));
+    let kept = saved("00000000000b", "done", Some(hours_ago(6 * 24)));
+    // Interrupted by a stop a month ago: it finishes when the server starts.
+    let interrupted = saved("00000000000c", "running", None);
+    let server = Server::start(temp.path());
+    assert_eq!(
+        server.json("/api/capabilities")["limits"]["history_retention_days"],
+        7
+    );
+    assert!(!expired.exists());
+    assert!(kept.exists() && interrupted.exists());
+    let listed = |server: &Server| -> Vec<String> {
+        let mut ids: Vec<String> = server
+            .json("/api/history")
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["job_id"].as_str().unwrap().to_owned())
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(listed(&server), ["00000000000b", "00000000000c"]);
+    let reply = server.request("GET", "/api/jobs/00000000000a", &[], &[]);
+    assert_eq!(
+        (reply.status, reply.json()["reason"].clone()),
+        (404, json!("job_not_found"))
+    );
+    // A job that is already past its retention when it appears is never
+    // listed, served or archived, even before a sweep removes it.
+    let late = saved("00000000000d", "done", Some(hours_ago(8 * 24)));
+    assert_eq!(listed(&server), ["00000000000b", "00000000000c"]);
+    for path in [
+        "/api/jobs/00000000000d",
+        "/api/jobs/00000000000d/archive",
+        "/api/jobs/00000000000d/items/i1/result",
+    ] {
+        assert_eq!(server.request("GET", path, &[], &[]).status, 404, "{path}");
+    }
+    let archive = server.request("GET", "/api/history/archive", &[], &[]);
+    assert_eq!(archive.status, 200);
+    let contents = zip_contents(&archive.body);
+    assert_eq!(contents.len(), 2);
+    assert!(!contents.values().any(|bytes| bytes == b"00000000000d"));
+    assert!(late.exists());
+    server.stop();
+    // The next start sweeps it.
+    let restarted = Server::start(temp.path());
+    assert!(!late.exists());
+    assert_eq!(listed(&restarted), ["00000000000b", "00000000000c"]);
+    restarted.stop();
+}

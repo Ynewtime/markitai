@@ -20,6 +20,7 @@ mod launch;
 mod openapi;
 mod providers;
 mod rerun;
+mod retention;
 mod security;
 mod settings;
 mod sidecar;
@@ -149,6 +150,12 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         tickets: tickets::Tickets::default(),
     });
     store::rehydrate(&state.root, &state.jobs).map_err(|e| e.to_string())?;
+    // Under the lifetime lock: no other server sweeps this history.
+    let _ = &service_lock;
+    if let Err(error) = retention::sweep(&state.root, &state.jobs, std::time::SystemTime::now()) {
+        eprintln!("Serve: history retention sweep failed: {error}");
+    }
+    retention::start(&state);
     let router = Router::new()
         .merge(web::routes())
         .merge(settings::routes())

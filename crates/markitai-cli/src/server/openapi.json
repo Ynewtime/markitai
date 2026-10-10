@@ -108,6 +108,7 @@
         "tags": ["jobs"],
         "operationId": "getJob",
         "summary": "The job's current snapshot",
+        "description": "A saved job is kept for `limits.history_retention_days` (7) days after it finished; after that every job route answers 404 `job_not_found`, before the startup or hourly sweep deletes its folder.",
         "parameters": [{ "$ref": "#/components/parameters/JobId" }],
         "responses": {
           "200": { "description": "Snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobSnapshot" } } } },
@@ -238,6 +239,7 @@
         "tags": ["history"],
         "operationId": "listHistory",
         "summary": "Saved jobs, newest first, including jobs other local processes added",
+        "description": "Only finished jobs within their retention: a job is deleted 7 days after its `finished_at` (or, without one, its folder's modification time), at server start and hourly; running jobs and jobs with queued retries are never expired.",
         "parameters": [
           { "name": "include", "in": "query", "required": false, "description": "`items` adds each job's `options` and its full item list, as the job snapshot shows them, to its entry. Other values are ignored.", "schema": { "type": "string", "enum": ["items"] } }
         ],
@@ -490,7 +492,7 @@
           "presets": { "type": "array", "items": { "type": "string" } },
           "preset_options": { "type": "object", "additionalProperties": { "type": "object", "properties": { "llm": { "type": "boolean" }, "ocr": { "type": "boolean" }, "alt": { "type": "boolean" }, "desc": { "type": "boolean" }, "screenshot": { "type": "boolean" } } } },
           "extras": { "type": "object", "properties": { "browser": { "type": "boolean" }, "svg": { "type": "boolean" } } },
-          "limits": { "type": "object", "properties": { "max_job_items": { "type": "integer" } } }
+          "limits": { "type": "object", "properties": { "max_job_items": { "type": "integer" }, "history_retention_days": { "type": ["integer", "null"], "description": "Days a finished job is kept; null when it is kept until deleted" } } }
         }
       },
       "Features": {

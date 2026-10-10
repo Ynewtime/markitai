@@ -26,6 +26,7 @@
 
 ### 变更
 
+- `markitai serve` 的历史记录保留七天，与参考服务一致：任务在完成七天后删除（启动时和每小时清理一次），并从那一刻起不再出现在历史、任务接口和归档中；运行中的任务和待处理的重试永不过期。此前历史会一直保留到手动删除。能力接口报告 `limits.history_retention_days: 7`。
 - 未配置 `llm.model_list` 时的默认模型换成各家当前的小模型：`anthropic/claude-haiku-5-5`、`openai/gpt-6-luna`、`deepseek/deepseek-flash`（DeepSeek 模型列表给出的 ID）和 `openrouter/google/gemini-3.5-flash-lite`；Gemini 仍用 `gemini-flash-lite-latest`。`claude-haiku-5-5` 从强制命名工具起步：在 Haiku 4.5 的工具回答出错的那份演示文稿上实测，它的工具回答按顺序保留了全部 9 个受保护的文档标记，因此该文档只需一个请求，而 Haiku 4.5 还需要第二个 JSON schema 请求；工具回答若丢失标记，仍会带警告退回 JSON schema。
 - 内置价格快照改用 LiteLLM 1.106.0.dev2 的数据（`pricing_snapshot` 为 `litellm-1.106.0.dev2-selected-2026-10-09`），并于 2026-10-09 对照各家官方价格重新核对；原有八行价格不变。它是开发预发布版，是 PyPI 上最新的、带有 `claude-haiku-5-5` 行的版本。
 - 默认 OpenAI 模型 `openai/gpt-6-luna` 现在有价格：每百万 token 输入 $0.10、缓存读取 $0.01、缓存写入 $0.125、输出 $0.50；提示超过 272K token 时，整次请求改按 $0.20 / $0.02 / $0.25 / $0.75 计价。缓存写入（`prompt_tokens_details.cache_write_tokens`）按自身单价计费，不再当作普通输入；提示在 272,001 到 278,528 token 之间（278,528 = 272 × 1,024，即“272K”的另一种读法）时价格保持未知，以免误用较低的档位。把提示再按文本与图像拆分计数的响应，也不再被当作未知计费类别拒绝。

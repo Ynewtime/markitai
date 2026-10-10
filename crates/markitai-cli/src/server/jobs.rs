@@ -263,13 +263,10 @@ pub(super) fn reserve_outputs(items: &[Item]) -> HashMap<String, String> {
     result
 }
 
+/// A registered job; one whose retention has ended is already gone.
 pub(super) fn get(state: &State, id: &str) -> ApiResult<Arc<Job>> {
-    state
-        .jobs
-        .lock()
-        .unwrap()
-        .get(id)
-        .cloned()
+    let job = state.jobs.lock().unwrap().get(id).cloned();
+    job.filter(|job| !super::retention::expired(job, std::time::SystemTime::now()))
         .ok_or_else(|| ApiError::new(404, "job_not_found", "job not found"))
 }
 

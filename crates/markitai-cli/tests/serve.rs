@@ -22,6 +22,14 @@ fn until(label: &str, mut predicate: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+/// A saved job's time `hours` before now, written with an offset as the CLI
+/// writes it. History expires seven days after a job finished.
+fn hours_ago(hours: i64) -> String {
+    let offset = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+    (chrono::Utc::now() - chrono::Duration::hours(hours))
+        .with_timezone(&offset)
+        .to_rfc3339()
+}
 fn configure(root: &Path) {
     std::fs::write(root.join("config.json"),json!({"llm":{"enabled":false},"ocr":{"enabled":false},"screenshot":{"enabled":false},"image":{"alt_enabled":false,"desc_enabled":false,"compress":false,"filter":{"min_width":1,"min_height":1,"min_area":1}},"cache":{"enabled":false},"history":{"record":false},"prompts":{"dir":root.join("prompts")},"log":{"dir":null},"fetch":{"strategy":"static","remote_consent":"never"},"batch":{"concurrency":2,"url_concurrency":1},"output":{"on_conflict":"rename","report":false}}).to_string()).unwrap();
 }
@@ -890,7 +898,7 @@ fn late_cli_history_is_imported_without_following_external_symlinks() {
         "Legacy uploaded notes.llm body.\n",
     )
     .unwrap();
-    std::fs::write(folder.join("meta.json"),json!({"job_id":id,"created_at":"2026-01-01T00:00:00Z","finished_at":"2026-01-01T00:00:01Z","status":"done","options":{"origin":"cli"},"items":[{"item_id":"i1","name":"notes.llm","kind":"file","status":"done","error":null,"output":"notes.llm.md","output_name":null,"duration_ms":1000,"cost_usd":null,"llm_enhanced":false,"operation":"convert","skipped":false,"skip_reason":null,"retryable":false,"warnings":[]}]}).to_string()).unwrap();
+    std::fs::write(folder.join("meta.json"),json!({"job_id":id,"created_at":hours_ago(2),"finished_at":hours_ago(1),"status":"done","options":{"origin":"cli"},"items":[{"item_id":"i1","name":"notes.llm","kind":"file","status":"done","error":null,"output":"notes.llm.md","output_name":null,"duration_ms":1000,"cost_usd":null,"llm_enhanced":false,"operation":"convert","skipped":false,"skip_reason":null,"retryable":false,"warnings":[]}]}).to_string()).unwrap();
     let history = server.json("/api/history");
     assert_eq!(history[0]["origin"], "cli");
     assert_eq!(history[0]["cost_usd"], Value::Null);
@@ -959,8 +967,8 @@ fn legacy_visible_assets_and_multi_history_zip_names_follow_the_saved_contract()
     let server = Server::start(temp.path());
     // Creation order is deliberately opposite to the UUID lexical order.
     for (id, created, text) in [
-        ("ffffffffffff", "2026-01-01T00:00:00Z", "earlier"),
-        ("000000000000", "2026-01-02T00:00:00Z", "later"),
+        ("ffffffffffff", hours_ago(48), "earlier"),
+        ("000000000000", hours_ago(24), "later"),
     ] {
         let folder = server.jobdir(id);
         std::fs::create_dir_all(folder.join("out/assets")).unwrap();

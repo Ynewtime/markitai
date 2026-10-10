@@ -381,8 +381,19 @@ existing summaries in reverse creation order. A job folder that cannot be read
 place; startup, history and the other jobs are unaffected, and the folder is
 tried again on the next scan. `GET /api/history/archive` streams
 a ZIP of completed histories. `DELETE /api/history/{job_id}` removes a terminal
-job and its files; running jobs return 409. This implementation does not apply
-an automatic age-based deletion policy.
+job and its files; running jobs return 409.
+
+History is kept for seven days (`limits.history_retention_days: 7` in the
+capabilities), as in the reference service. A job is deleted seven days after its
+`finished_at`; a folder without a readable one, such as a damaged record, is aged
+by its modification time. The service sweeps at startup, after recovery and while
+holding the lifetime lock, and then every hour until shutdown; CLI-recorded
+archives in the same directory are swept too. An expired job is no longer listed,
+served by any job route (404 `job_not_found`) or included in an archive, even
+before the sweep removes it. Running jobs and jobs with a queued or running retry
+are never expired; a retry's completion starts the seven days again. A sweep
+deletes a job the way `DELETE /api/history/{job_id}` does; a failure is logged and
+retried at the next sweep.
 
 Metadata is flushed and atomically published before reporting durable terminal
 completion. If inventory or final metadata publication fails, the live snapshot
