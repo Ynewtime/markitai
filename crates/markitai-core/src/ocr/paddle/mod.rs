@@ -791,6 +791,9 @@ fn recognize(choice: Choice, cuts: &[Cut]) -> Result<Reading> {
 /// The reference's detection side: RapidOCR scales an input's shorter side
 /// to this. A tile is scaled up toward it (by at most [`TILE_UPSCALE`]), so
 /// text a few pixels high on a mostly empty page is large enough to find.
+/// When several tiles are searched, two at a time, each is enlarged at most
+/// so that the two hold no more pixels than the full-image pass did: the
+/// retry then needs about that pass's memory, not twice it.
 const TILE_SHORT_SIDE: f32 = 736.0;
 const TILE_UPSCALE: f32 = 2.0;
 /// The reference's thresholds for its tiled retry: a region, and a line,
@@ -813,11 +816,22 @@ fn tiled(engine: &Engine, image: &RgbImage, choice: Choice) -> Result<Option<(Re
         .into_iter()
         .filter(|tile| detect::has_edges(image, *tile))
         .collect();
+    let budget = if tiles.len() > 1 {
+        let full = detect::Layout::of(image.width(), image.height());
+        let [x0, y0, x1, y1] = tiles[0];
+        let window = f64::from(x1 - x0) * f64::from(y1 - y0);
+        (f64::from(full.width) * f64::from(full.height) / (2.0 * window)).sqrt() as f32
+    } else {
+        f32::INFINITY
+    };
     let found = spread(tiles.len(), |index| {
         let [x0, y0, x1, y1] = tiles[index];
         let tile = image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image();
         let short = tile.width().min(tile.height()).max(1) as f32;
-        let factor = (TILE_SHORT_SIDE / short).clamp(1.0, TILE_UPSCALE);
+        let factor = (TILE_SHORT_SIDE / short)
+            .min(TILE_UPSCALE)
+            .min(budget)
+            .max(1.0);
         let scaled = if factor > 1.0 {
             let side = |n: u32| ((n as f32 * factor).round() as u32).max(1);
             resize(&tile, side(tile.width()), side(tile.height()))

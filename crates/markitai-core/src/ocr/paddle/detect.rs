@@ -103,9 +103,12 @@ impl Layout {
 }
 
 /// Tiles of a sparse image, as the reference retries a full-image pass that
-/// found no text: overlapping rectangles near 800 by 600 pixels (at most four
-/// per side), each `[x0, y0, x1, y1]`. A small image, or one that is a single
-/// tile, has none.
+/// found no text: overlapping windows near 800 by 600 pixels (at most four
+/// per side, overlapping by 6 %), each `[x0, y0, x1, y1]`. The reference
+/// clips its edge tiles; here they are shifted inward instead, so every
+/// window has one size and one detection plan serves them all (each new input
+/// shape costs a tenth of a second and its own memory to prepare). A small
+/// image, or one that is a single tile, has none.
 pub(super) fn tiles(width: u32, height: u32) -> Vec<[u32; 4]> {
     const TILE_WIDTH: u32 = 800;
     const TILE_HEIGHT: u32 = 600;
@@ -118,20 +121,25 @@ pub(super) fn tiles(width: u32, height: u32) -> Vec<[u32; 4]> {
     if columns == 1 && rows == 1 {
         return Vec::new();
     }
-    let (tile_width, tile_height) = (width.div_ceil(columns), height.div_ceil(rows));
-    // Six percent of a tile, at least 16 pixels, on every inner edge.
-    // In f64, as the reference computes it, so the rounding agrees.
-    let overlap = |side: u32| ((f64::from(side) * 0.06).round() as u32).max(16);
-    let (overlap_x, overlap_y) = (overlap(tile_width), overlap(tile_height));
+    // A step of the reference's tiles, and its window: the step with six
+    // percent of it (at least 16 pixels) on both sides, computed in f64 as
+    // the reference does so the rounding agrees.
+    let window = |side: u32, count: u32| {
+        let step = side.div_ceil(count);
+        let overlap = ((f64::from(step) * 0.06).round() as u32).max(16);
+        (step, overlap, (step + 2 * overlap).min(side))
+    };
+    let (step_x, overlap_x, window_x) = window(width, columns);
+    let (step_y, overlap_y, window_y) = window(height, rows);
+    let start = |index: u32, step: u32, overlap: u32, window: u32, side: u32| {
+        (index * step).saturating_sub(overlap).min(side - window)
+    };
     let mut found = Vec::new();
     for row in 0..rows {
         for column in 0..columns {
-            found.push([
-                (column * tile_width).saturating_sub(overlap_x),
-                (row * tile_height).saturating_sub(overlap_y),
-                ((column + 1) * tile_width + overlap_x).min(width),
-                ((row + 1) * tile_height + overlap_y).min(height),
-            ]);
+            let x0 = start(column, step_x, overlap_x, window_x, width);
+            let y0 = start(row, step_y, overlap_y, window_y, height);
+            found.push([x0, y0, x0 + window_x, y0 + window_y]);
         }
     }
     found
@@ -807,24 +815,31 @@ mod tests {
         // Small images and single tiles are not retried.
         assert!(tiles(300, 300).is_empty());
         assert!(tiles(800, 600).is_empty());
-        // 1024 by 768: two by two tiles of 512 by 384, overlapping by
-        // max(16, 6 %) = 31 and 23 pixels.
+        // 1024 by 768: two by two steps of 512 by 384 with max(16, 6 %) = 31
+        // and 23 pixels on each side; edge windows shift inward.
         assert_eq!(
             tiles(1024, 768),
             vec![
-                [0, 0, 543, 407],
-                [481, 0, 1024, 407],
-                [0, 361, 543, 768],
-                [481, 361, 1024, 768],
+                [0, 0, 574, 430],
+                [450, 0, 1024, 430],
+                [0, 338, 574, 768],
+                [450, 338, 1024, 768],
             ]
         );
         // A narrow tall strip is tiled by rows alone, and a large scan at most
-        // four by four.
-        assert_eq!(tiles(330, 1300).len(), 3);
-        assert_eq!(tiles(330, 1300)[1], [0, 408, 330, 894]);
+        // four by four; every window has one size and stays inside.
+        assert_eq!(
+            tiles(330, 1300),
+            vec![[0, 0, 330, 486], [0, 408, 330, 894], [0, 814, 330, 1300]]
+        );
         assert_eq!(tiles(9000, 9000).len(), 16);
-        for [x0, y0, x1, y1] in tiles(4000, 3000) {
-            assert!(x0 < x1 && y0 < y1 && x1 <= 4000 && y1 <= 3000);
+        for (width, height) in [(4000, 3000), (1024, 768), (330, 1300), (2481, 3508)] {
+            let found = tiles(width, height);
+            let [a0, b0, a1, b1] = found[0];
+            for [x0, y0, x1, y1] in found {
+                assert!(x1 <= width && y1 <= height);
+                assert_eq!((x1 - x0, y1 - y0), (a1 - a0, b1 - b0));
+            }
         }
     }
 
