@@ -553,6 +553,56 @@ def test_shutdown_pool_marks_the_stop_and_enable_lifts_it(
     assert pdf_parallel._get_pool(2) is pdf_parallel._pool
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows semaphores are unnamed: no resource tracker to report them",
+)
+def test_shutdown_pool_releases_the_pools_semaphores_before_returning(
+    workers: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI leaves through os._exit right after shutdown_pool (serve by
+    re-raising its stop signal). A semaphore of the pool's queues still
+    open then is never unlinked, and the resource tracker reports it once
+    the process is gone ("There appear to be 3 leaked semaphore objects").
+
+    The pool's manager thread holds the queues until it ends; here it is
+    slow to end, as on a loaded machine, which made the old stop return
+    before the queues were released."""
+    import concurrent.futures.process as process_pool
+    from multiprocessing import resource_tracker
+
+    manager_run = process_pool._ExecutorManagerThread.run
+
+    def slow_to_end(self: Any) -> None:
+        manager_run(self)
+        time.sleep(0.3)
+
+    monkeypatch.setattr(process_pool._ExecutorManagerThread, "run", slow_to_end)
+    registered: list[str] = []
+    released: list[str] = []
+    register, unregister = resource_tracker.register, resource_tracker.unregister
+
+    def track(name: str, rtype: str) -> None:
+        registered.append(name)
+        register(name, rtype)
+
+    def untrack(name: str, rtype: str) -> None:
+        released.append(name)
+        unregister(name, rtype)
+
+    monkeypatch.setattr(resource_tracker, "register", track)
+    monkeypatch.setattr(resource_tracker, "unregister", untrack)
+
+    pool = pdf_parallel._get_pool(2)
+    pool.submit(os.getpid).result(timeout=60)
+    del pool
+    assert registered  # the queues' locks and semaphore (spawn context)
+
+    pdf_parallel.shutdown_pool()
+
+    assert set(registered) <= set(released)
+
+
 def test_a_bad_worker_override_is_reported_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
