@@ -498,7 +498,11 @@ class Run:
             ok = True
         except Exception as error:  # noqa: BLE001 - a failed check is recorded, the run goes on
             note, ok = f"{type(error).__name__}: {error}"[:400], False
-        shot = self.shot(page, state)
+        try:
+            shot = self.shot(page, state)
+        except Exception as error:  # noqa: BLE001 - a lost page is a failed step
+            shot, ok = "", False
+            note = f"{note} (screenshot failed: {type(error).__name__}: {error})"[:400]
         self.steps.append(
             {
                 "state": state,
