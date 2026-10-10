@@ -286,6 +286,18 @@ class TestSummary:
         assert "export DEEPSEEK_API_KEY=" in out
         assert out.splitlines()[-1] == "✗ Not ready: fix LLM API first (see above)"
 
+    def test_some_keys_missing_leaves_those_models_out(self) -> None:
+        """The run uses the models that have keys, so doctor is not red."""
+        with _doctor_env(_config(*OWNER_MODELS), env={}):
+            out, code = _run(None)
+        assert code == 0
+        assert (
+            "  ! LLM API: not set: DEEPSEEK_API_KEY, GEMINI_API_KEY, "
+            "OPENAI_API_KEY; 3 models left out, 1 still used"
+        ) in out.splitlines()
+        assert "    export GEMINI_API_KEY=your_key" in out.splitlines()
+        assert out.splitlines()[-1].endswith("Playwright, LibreOffice, 3 LLM models")
+
     def test_gemini_accepts_google_api_key(self) -> None:
         with _doctor_env(
             _config("gemini/gemini-flash-lite-latest"),

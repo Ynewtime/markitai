@@ -750,10 +750,13 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     from markitai.providers.api_keys import missing_api_key
 
     missing_llm_env_vars: set[str] = set()
+    left_out = 0
     for model in active_api_models:
         lacking = missing_api_key(model.litellm_params)
         if lacking is not None:
             missing_llm_env_vars.add(lacking.env_var)
+            left_out += 1
+    llm_extra: dict[str, Any] = {}
 
     if configured_models:
         used_providers = {_provider_of(m.litellm_params.model) for m in active_models}
@@ -762,15 +765,30 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             message = "Models are configured, but all have weight 0 (disabled)"
             install_hint = "Set weight > 0 on at least one model to enable LLM use"
         elif missing_llm_env_vars:
-            missing = ", ".join(sorted(missing_llm_env_vars))
-            status = "error"
-            message = f"not set: {missing} (an active model needs it)"
-            install_hint = (
-                "; ".join(
-                    get_env_set_command(name) for name in sorted(missing_llm_env_vars)
+            names = sorted(missing_llm_env_vars)
+            missing = ", ".join(names)
+            usable = len(active_models) - left_out
+            if usable:
+                # The run leaves these models out and uses the others
+                # (markitai.providers.api_keys), so it is not blocked
+                status = "warning"
+                message = (
+                    f"not set: {missing}; {_count(left_out, 'model')} left out, "
+                    f"{usable} still used"
                 )
-                + " (or add it to ~/.markitai/.env)"
-            )
+                llm_extra["blocking"] = False
+                llm_extra["summary_name"] = _count(left_out, "LLM model")
+            else:
+                status = "error"
+                message = (
+                    f"not set: {missing}; no model can be used without {_them(names)}"
+                )
+            commands = [get_env_set_command(name) for name in names]
+            install_hint = "; ".join(commands) + " (or add to ~/.markitai/.env)"
+            llm_extra["install_commands"] = [
+                *commands,
+                f"# or add {_them(names)} to ~/.markitai/.env",
+            ]
         else:
             status = "ok"
             labels = ", ".join(
@@ -786,6 +804,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "status": status,
             "message": message,
             "install_hint": install_hint,
+            **llm_extra,
             # Provider keys set in the environment that no active model uses
             # (markitai init leaves out a key whose default model another
             # configured route already serves)
@@ -1040,7 +1059,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         required_checks.add("chatgpt-auth")
 
     def _is_blocking_failure(key: str, info: dict[str, Any]) -> bool:
-        if key not in required_checks:
+        if key not in required_checks or info.get("blocking") is False:
             return False
         status = info.get("status")
         if status in {"missing", "error"}:
@@ -1206,7 +1225,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     # listed as missing either
     shown = set(optional_deps + llm_keys + auth_keys)
     missing_names = [
-        info["name"]
+        info.get("summary_name", info["name"])
         for key, info in results.items()
         if key in shown
         and info.get("status") != "ok"
