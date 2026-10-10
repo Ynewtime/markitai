@@ -16,6 +16,7 @@
 //! [`read_default`].
 
 mod classify;
+mod depthwise;
 mod detect;
 pub(crate) mod models;
 mod recognize;
@@ -91,7 +92,8 @@ fn parse(name: &str, role: models::Role) -> Result<InferenceModel> {
 }
 
 /// `model` optimized for inputs of `shape`, where `None` is a dimension that
-/// varies from run to run.
+/// varies from run to run, with its depthwise convolutions spread over the
+/// OCR threads ([`depthwise`]).
 fn plan(mut model: InferenceModel, shape: [Option<usize>; 4], name: &str) -> Result<Plan> {
     let dims: TVec<TDim> = shape
         .iter()
@@ -103,7 +105,12 @@ fn plan(mut model: InferenceModel, shape: [Option<usize>; 4], name: &str) -> Res
         .collect();
     let built = model
         .set_input_fact(0, f32::fact(dims).into())
-        .and_then(|_| model.into_optimized())
+        .and_then(|_| model.into_typed())
+        .and_then(|typed| typed.into_decluttered())
+        .and_then(|mut typed| {
+            depthwise::split(&mut typed)?;
+            typed.into_optimized()
+        })
         .and_then(|typed| typed.into_runnable());
     built.map_err(|error| engine_error(&format!("cannot prepare the model {name}"), error))
 }
@@ -430,6 +437,32 @@ struct Cut {
     flagged: bool,
 }
 
+/// `region` of `image`, cut out upright.
+fn cut_of(image: &RgbImage, region: &detect::Region) -> Result<Cut> {
+    let [tl, tr, _, bl] = region.corners;
+    let mut cut = recognize::cut(image, &region.corners)?;
+    let mut direction = [tr[0] - tl[0], tr[1] - tl[1]];
+    if cut.height() as f32 >= recognize::UPRIGHT_RATIO * cut.width() as f32 {
+        cut = recognize::turn_counter_clockwise(&cut);
+        direction = [bl[0] - tl[0], bl[1] - tl[1]];
+    }
+    let xs = region.corners.map(|p| p[0]);
+    let ys = region.corners.map(|p| p[1]);
+    let (w, h) = (image.width() as f32, image.height() as f32);
+    let bounds = [
+        xs.iter().copied().fold(f32::MAX, f32::min).clamp(0.0, w),
+        ys.iter().copied().fold(f32::MAX, f32::min).clamp(0.0, h),
+        xs.iter().copied().fold(f32::MIN, f32::max).clamp(0.0, w),
+        ys.iter().copied().fold(f32::MIN, f32::max).clamp(0.0, h),
+    ];
+    Ok(Cut {
+        image: cut,
+        bounds,
+        direction,
+        flagged: false,
+    })
+}
+
 /// The text lines of `image`, cut out upright, and whether it had more than
 /// [`detect::MAX_REGIONS`]. The classifier and the recognizer `reader` load
 /// on their own threads while the detector reads the image, the first time
@@ -448,35 +481,17 @@ fn cuts(engine: &Engine, image: &RgbImage, reader: &'static str) -> Result<(Vec<
     });
     let (regions, capped) = detected?;
     let classifier = classifier?;
-    let mut cuts = Vec::with_capacity(regions.len());
-    for region in &regions {
-        let [tl, tr, _, bl] = region.corners;
-        let mut cut = recognize::cut(image, &region.corners)?;
-        let mut direction = [tr[0] - tl[0], tr[1] - tl[1]];
-        if cut.height() as f32 >= recognize::UPRIGHT_RATIO * cut.width() as f32 {
-            cut = recognize::turn_counter_clockwise(&cut);
-            direction = [bl[0] - tl[0], bl[1] - tl[1]];
-        }
-        let xs = region.corners.map(|p| p[0]);
-        let ys = region.corners.map(|p| p[1]);
-        let (w, h) = (image.width() as f32, image.height() as f32);
-        let bounds = [
-            xs.iter().copied().fold(f32::MAX, f32::min).clamp(0.0, w),
-            ys.iter().copied().fold(f32::MAX, f32::min).clamp(0.0, h),
-            xs.iter().copied().fold(f32::MIN, f32::max).clamp(0.0, w),
-            ys.iter().copied().fold(f32::MIN, f32::max).clamp(0.0, h),
-        ];
-        cuts.push(Cut {
-            image: cut,
-            bounds,
-            direction,
-            flagged: false,
-        });
-    }
-    let size = classify::BATCH * 3 * (classify::HEIGHT * classify::WIDTH) as usize;
-    for batch in cuts.chunks_mut(classify::BATCH) {
+    // Batches of lines are cut out and classified side by side.
+    let batches = spread(regions.len().div_ceil(classify::BATCH), |batch| {
+        let start = batch * classify::BATCH;
+        let regions = &regions[start..(start + classify::BATCH).min(regions.len())];
+        let mut cuts = regions
+            .iter()
+            .map(|region| cut_of(image, region))
+            .collect::<Result<Vec<Cut>>>()?;
+        let size = classify::BATCH * 3 * (classify::HEIGHT * classify::WIDTH) as usize;
         let mut data = Vec::with_capacity(size);
-        for cut in batch.iter() {
+        for cut in &cuts {
             data.extend(classify::input(&cut.image));
         }
         data.resize(size, 0.0);
@@ -487,11 +502,13 @@ fn cuts(engine: &Engine, image: &RgbImage, reader: &'static str) -> Result<(Vec<
             classify::WIDTH as usize,
         ];
         let (answers, _) = run(&classifier, &shape, data, CLASSIFIER)?;
-        let turned = classify::upside_down(&answers, batch.len())?;
-        for (cut, over) in batch.iter_mut().zip(turned) {
+        let turned = classify::upside_down(&answers, cuts.len())?;
+        for (cut, over) in cuts.iter_mut().zip(turned) {
             cut.flagged = over;
         }
-    }
+        Ok(cuts)
+    })?;
+    let cuts = batches.into_iter().flatten().collect();
     Ok((cuts, capped))
 }
 
@@ -538,20 +555,8 @@ fn read_cut(recognizer: &Recognizer, cut: &Cut) -> Result<Line> {
     })
 }
 
-/// Read each cut-out line with `recognizer`, on this thread and up to
-/// [`MAX_HELPERS_PER_IMAGE`] more; one line per cut, in order.
+/// Read each cut-out line with `recognizer`; one line per cut, in order.
 fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
-    let next = AtomicUsize::new(0);
-    let work = || -> Result<Vec<(usize, Line)>> {
-        let mut done = Vec::new();
-        loop {
-            let index = next.fetch_add(1, Ordering::Relaxed);
-            let Some(cut) = cuts.get(index) else {
-                return Ok(done);
-            };
-            done.push((index, read_cut(recognizer, cut)?));
-        }
-    };
     // One or two lines (a label, a caption) share the detector's threads;
     // more are read side by side, one thread each.
     if cuts.len() <= 2 {
@@ -559,10 +564,27 @@ fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
             cuts.iter().map(|cut| read_cut(recognizer, cut)).collect()
         });
     }
-    let helpers = take_helpers(MAX_HELPERS_PER_IMAGE.min(cuts.len().saturating_sub(1)));
-    let results: Vec<Result<Vec<(usize, Line)>>> = std::thread::scope(|scope| {
-        let spawned: Vec<_> = (0..helpers).map(|_| scope.spawn(work)).collect();
-        let mut results = vec![work()];
+    spread(cuts.len(), |index| read_cut(recognizer, cuts[index]))
+}
+
+/// `work` of each index below `count`, in order, computed on this thread and
+/// up to [`MAX_HELPERS_PER_IMAGE`] more, each taking the next index.
+fn spread<T: Send>(count: usize, work: impl Fn(usize) -> Result<T> + Sync) -> Result<Vec<T>> {
+    let next = AtomicUsize::new(0);
+    let worker = || -> Result<Vec<(usize, T)>> {
+        let mut done = Vec::new();
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            if index >= count {
+                return Ok(done);
+            }
+            done.push((index, work(index)?));
+        }
+    };
+    let helpers = take_helpers(MAX_HELPERS_PER_IMAGE.min(count.saturating_sub(1)));
+    let results: Vec<Result<Vec<(usize, T)>>> = std::thread::scope(|scope| {
+        let spawned: Vec<_> = (0..helpers).map(|_| scope.spawn(worker)).collect();
+        let mut results = vec![worker()];
         for handle in spawned {
             results.push(
                 handle
@@ -573,15 +595,15 @@ fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
         results
     });
     HELPERS.fetch_sub(helpers, Ordering::AcqRel);
-    let mut lines: Vec<Option<Line>> = (0..cuts.len()).map(|_| None).collect();
+    let mut values: Vec<Option<T>> = (0..count).map(|_| None).collect();
     for result in results {
-        for (index, line) in result? {
-            lines[index] = Some(line);
+        for (index, value) in result? {
+            values[index] = Some(value);
         }
     }
-    lines
+    values
         .into_iter()
-        .map(|line| line.ok_or_else(|| failure("a line was not read")))
+        .map(|value| value.ok_or_else(|| failure("a line was not read")))
         .collect()
 }
 
