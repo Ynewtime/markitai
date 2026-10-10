@@ -1051,19 +1051,23 @@ def _saved_options(opts: JobOptions) -> dict[str, Any]:
 
 
 def _parse_label(raw: str | None) -> str | None:
-    """A submission label: plain text, at most ``MAX_LABEL_CHARS`` long."""
+    """A submission label: trimmed plain text of at most ``MAX_LABEL_CHARS``.
+
+    A longer one, or one with a control character (a newline, a tab, ...),
+    is refused; an empty one means no label.
+    """
     if raw is None:
         return None
-    label = " ".join(
-        "".join(
-            " " if char.isspace() or ord(char) < 0x20 else char for char in raw
-        ).split()
-    )
-    if len(label) > MAX_LABEL_CHARS:
+    import unicodedata
+
+    label = raw.strip()
+    if len(label) > MAX_LABEL_CHARS or any(
+        unicodedata.category(char) == "Cc" for char in label
+    ):
         raise ApiError(
             422,
-            "invalid_request",
-            f"label is longer than {MAX_LABEL_CHARS} characters",
+            "invalid_label",
+            f"label must be plain text of at most {MAX_LABEL_CHARS} characters",
         )
     return label or None
 
@@ -3624,7 +3628,7 @@ def create_app(
         response_model=ItemResult,
     )
     async def get_item_result(
-        request: Request, job_id: str, item_id: str, max_bytes: int | None = None
+        request: Request, job_id: str, item_id: str, max_bytes: str | None = None
     ) -> dict[str, Any]:
         """The item's selected Markdown, its variant and every artifact.
 
@@ -3632,8 +3636,15 @@ def create_app(
         that many bytes, cut at a line end when one is near and never inside
         a UTF-8 sequence, with ``truncated`` and the full ``markdown_bytes``.
         """
-        if max_bytes is not None and max_bytes < 1024:
-            raise ApiError(422, "invalid_request", "max_bytes must be at least 1024")
+        limit: int | None = None
+        if max_bytes is not None:
+            if not max_bytes.isdigit() or int(max_bytes) < 1024:
+                raise ApiError(
+                    422,
+                    "invalid_max_bytes",
+                    "max_bytes must be an integer of at least 1024",
+                )
+            limit = int(max_bytes)
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)
         if item.status != "done" or item.output is None:
@@ -3690,15 +3701,15 @@ def create_app(
             ):
                 add_artifact(artifact)
             total = markdown_path.stat().st_size
-            if max_bytes is None and total > MAX_RESULT_BYTES:
+            if limit is None and total > MAX_RESULT_BYTES:
                 raise ApiError(
                     413,
                     "result_too_large",
                     "result is too large for JSON; use the file download endpoint",
                 )
             with markdown_path.open("rb") as fh:
-                data = fh.read(max_bytes + 1 if max_bytes is not None else -1)
-            text, truncated = _markdown_excerpt(data, max_bytes)
+                data = fh.read(limit + 1 if limit is not None else -1)
+            text, truncated = _markdown_excerpt(data, limit)
             return text, total, truncated, artifacts
 
         markdown, total, truncated, artifacts = await asyncio.to_thread(collect)

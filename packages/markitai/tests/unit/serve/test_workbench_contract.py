@@ -337,8 +337,8 @@ REASONS: dict[int, set[str]] = {
         "invalid_provider_request",
         "render_failed",
         "invalid_page_request",
-        # Python answers an over-long label with the contract's generic reason
-        "invalid_request",
+        "invalid_label",
+        "invalid_max_bytes",
     },
     429: {"too_many_tickets", "provider_busy", "render_busy"},
     500: {"internal_error", "settings_io_failed", "settings_durability_unknown"},
@@ -664,7 +664,7 @@ class TestCreateJob:
                 files=_form(
                     files=[("b.txt", b"b"), ("list.URLS", url_list), ("a.txt", b"a")],
                     urls=["https://example.com/c"],
-                    label="  my\tfolder  ",
+                    label="  my folder  ",
                 ),
             )
             assert created.status_code == 201
@@ -714,7 +714,8 @@ class TestCreateJob:
                 422,
                 "unknown_preset",
             ),
-            ({"label": "x" * 121, "urls": ["https://e.x/"]}, 422, "invalid_request"),
+            ({"label": "x" * 121, "urls": ["https://e.x/"]}, 422, "invalid_label"),
+            ({"label": "two\nlines", "urls": ["https://e.x/"]}, 422, "invalid_label"),
         ],
     )
     async def test_refusals(
@@ -1263,6 +1264,9 @@ class TestResultAndFiles:
                 await client.get(f"/api/jobs/{job_id}/items/i1/result?max_bytes=16384")
             ).json()
             small = await client.get(f"/api/jobs/{job_id}/items/i1/result?max_bytes=10")
+            words = await client.get(
+                f"/api/jobs/{job_id}/items/i1/result?max_bytes=lots"
+            )
         check_shape("ItemResult", excerpt)
         assert excerpt["truncated"] is True
         assert excerpt["markdown_bytes"] == len(lines.encode())
@@ -1270,7 +1274,8 @@ class TestResultAndFiles:
         assert len(cut) <= 16384 and len(cut) >= 16384 * 3 // 4
         assert excerpt["markdown"].endswith("|\n")
         assert lines.startswith(excerpt["markdown"])
-        check_error(small, 422, "invalid_request")
+        check_error(small, 422, "invalid_max_bytes")
+        check_error(words, 422, "invalid_max_bytes")
 
     async def test_excerpt_of_one_long_line(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1838,3 +1843,8 @@ class TestVendoredBundle:
         # The licences of the libraries and font inside travel with them
         licences = BUNDLED_DIR / "LICENSES"
         assert licences.is_dir() and any(licences.iterdir())
+        # The bundle was built for the policy this server sends
+        serve = workbench.manifest.get("serve")
+        if isinstance(serve, dict) and "content_security_policy" in serve:
+            assert serve["content_security_policy"] == CSP
+            assert set(serve["page_paths"]) <= set(workbench.page_paths)
