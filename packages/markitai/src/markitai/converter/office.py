@@ -28,7 +28,11 @@ from markitai.ocr import (
 )
 from markitai.utils import office_mac
 from markitai.utils.mime import get_mime_type, normalize_image_extension
-from markitai.utils.office import find_libreoffice, has_ms_office
+from markitai.utils.office import (
+    find_libreoffice,
+    has_ms_office,
+    libreoffice_linux_install_commands,
+)
 from markitai.utils.paths import create_tracked_temp_dir, ensure_screenshots_dir
 from markitai.vision_consent import ensure_vlm_ocr_disclosed, vlm_ocr_allowed
 
@@ -566,11 +570,14 @@ class PptxConverter(OfficeConverter):
                     )
                 return [], []
             else:
+                install = "; ".join(
+                    f"{command} ({label})" if label else command
+                    for label, command in libreoffice_linux_install_commands()
+                )
                 user_notice(
                     f"[PPTX] Cannot render slides of {input_path.name}: "
-                    "LibreOffice not found. Install "
-                    "LibreOffice (e.g. apt-get install libreoffice / dnf install "
-                    "libreoffice) to enable slide rendering."
+                    f"LibreOffice not found. Install it to render slides: "
+                    f"{install}"
                 )
                 return [], []
 

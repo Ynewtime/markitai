@@ -131,16 +131,14 @@ class TestTranslate:
     def test_translate_with_format_args(self) -> None:
         """Should support format arguments."""
         i18n.set_language("en")
-        result = i18n.t("doctor.summary", passed=3, degraded=1)
-        assert "3 required/configured checks passed" in result
-        assert "1 non-blocking warnings" in result
+        result = i18n.t("doctor.ready_missing", names="Playwright, LibreOffice")
+        assert result == "Ready. Not available (optional): Playwright, LibreOffice"
 
     def test_translate_with_format_args_chinese(self) -> None:
         """Should support format arguments in Chinese."""
         i18n.set_language("zh")
-        result = i18n.t("doctor.summary", passed=3, degraded=1)
-        assert "3 项必需或已配置检查通过" in result
-        assert "1 项非阻断警告" in result
+        result = i18n.t("doctor.ready_missing", names="Playwright")
+        assert result == "已就绪。以下可选功能不可用：Playwright"
 
     def test_unknown_key_returns_key(self) -> None:
         """Should return key itself for unknown translations."""
@@ -181,7 +179,9 @@ class TestTextsCompleteness:
             "doctor.title",
             "doctor.optional",
             "doctor.auth",
-            "doctor.summary",
+            "doctor.ready_missing",
+            "doctor.not_ready",
+            "doctor.enable_hint",
             "doctor.summary_repair_failed",
             "doctor.all_good",
             "doctor.fix_hint",

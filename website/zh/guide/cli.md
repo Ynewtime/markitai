@@ -482,7 +482,7 @@ markitai doctor --json
 markitai doctor --suggest-extras   # 列出这台机器能用上的 extras
 ```
 
-你配置了但跑不起来的东西会让命令以非零退出：无法启动的 Playwright 策略、API key 环境变量缺失的模型、没登录的本地提供商。脚本和 CI 可以依赖这一点。
+你配置了但跑不起来的东西会让命令以非零退出：无法启动的 Playwright 策略、没有设置 API key 的模型（`llm.model_list` 条目里没写，提供商的变量如 `DEEPSEEK_API_KEY` 也没设）、没登录的本地提供商。脚本和 CI 可以依赖这一点。最后一行写 `Ready`（并列出不可用的可选功能）或 `Not ready`（并列出要修复的项）。每条提示都是适用于这台机器的命令：Chromium 用 markitai 自己的 Python 安装，LibreOffice 用你所用发行版的包管理器安装。已设置、但没有任何已配置模型用到的提供商 key，会在 LLM 一节列出。
 
 `--fix` 不会安装任何 Python 包。Playwright 本身缺失时，它会提示你带 `markitai[browser]` 重装。`--json` 和 `--fix` 不能同时用。
 

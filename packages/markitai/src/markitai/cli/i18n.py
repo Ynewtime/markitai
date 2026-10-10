@@ -37,29 +37,33 @@ TEXTS: dict[str, dict[str, str]] = {
     "doctor.title": {"en": "System Check", "zh": "系统检查"},
     "doctor.optional": {"en": "Optional Capabilities", "zh": "可选能力"},
     "doctor.auth": {"en": "Authentication", "zh": "认证状态"},
-    "doctor.summary": {
-        "en": "Core check passed ({passed} required/configured checks passed, {degraded} non-blocking warnings)",
-        "zh": "核心检查通过（{passed} 项必需或已配置检查通过，{degraded} 项非阻断警告）",
-    },
-    "doctor.summary_failed": {
-        "en": "Health check failed ({failed} required/configured checks failed, {passed} passed, {degraded} non-blocking warnings)",
-        "zh": "健康检查未通过（{failed} 项必需或已配置检查失败，{passed} 项通过，{degraded} 项非阻断警告）",
+    "doctor.not_ready": {
+        "en": "Not ready: fix {names} first (see above)",
+        "zh": "未就绪：请先修复 {names}（见上文）",
     },
     "doctor.summary_repair_failed": {
-        "en": "Requested repair failed ({degraded} non-blocking warnings remain)",
-        "zh": "请求的修复未成功（仍有 {degraded} 项非阻断警告）",
+        "en": "Repair failed: {names}",
+        "zh": "修复失败：{names}",
+    },
+    "doctor.ready_missing": {
+        "en": "Ready. Not available (optional): {names}",
+        "zh": "已就绪。以下可选功能不可用：{names}",
     },
     "doctor.all_good": {
-        "en": "All checks passed; dependencies and capabilities configured correctly",
-        "zh": "所有检查均通过，依赖与能力配置正确",
+        "en": "Ready. Everything is available.",
+        "zh": "已就绪，所有功能均可用。",
     },
     "doctor.fix_hint": {
-        "en": "To resolve unavailable checks and capabilities:",
-        "zh": "解决不可用的检查项与能力：",
+        "en": "To fix",
+        "zh": "修复方法",
+    },
+    "doctor.enable_hint": {
+        "en": "To enable what is missing",
+        "zh": "启用缺失的功能",
     },
     "doctor.fix_attempting": {
-        "en": "Attempting safe automatic repairs...",
-        "zh": "正在尝试安全的自动修复……",
+        "en": "Repairing",
+        "zh": "自动修复",
     },
     "doctor.fix_installing": {
         "en": "Installing {component}...",
@@ -167,15 +171,15 @@ def t(key: str, **kwargs: str | int) -> str:
     """Get translated text for a key.
 
     Args:
-        key: Translation key (e.g., "doctor.summary")
+        key: Translation key (e.g., "doctor.ready_missing")
         **kwargs: Format arguments for string interpolation
 
     Returns:
         Translated text, or the key itself if not found
 
     Example:
-        >>> t("doctor.summary", passed=3, degraded=1)
-        "Check complete (3 required passed, 1 optional missing)"
+        >>> t("doctor.ready_missing", names="Playwright")
+        "Ready. Not available (optional): Playwright"
     """
     lang = get_language()
     translations = TEXTS.get(key)

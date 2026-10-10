@@ -77,6 +77,67 @@ def has_ms_office() -> bool:
         return _ms_office_available
 
 
+# LibreOffice per Linux package manager: (os-release IDs, label, command).
+# The first family whose ID matches ID or ID_LIKE wins.
+_LIBREOFFICE_LINUX: tuple[tuple[frozenset[str], str, str], ...] = (
+    (
+        frozenset({"debian", "ubuntu"}),
+        "Debian, Ubuntu",
+        "sudo apt install libreoffice",
+    ),
+    (
+        frozenset({"fedora", "rhel", "centos"}),
+        "Fedora, RHEL",
+        "sudo dnf install libreoffice",
+    ),
+    (frozenset({"arch"}), "Arch", "sudo pacman -S libreoffice-fresh"),
+    (
+        frozenset({"suse", "opensuse"}),
+        "openSUSE",
+        "sudo zypper install libreoffice",
+    ),
+    (frozenset({"alpine"}), "Alpine", "sudo apk add libreoffice"),
+)
+
+
+def _linux_distro_ids(os_release: str | None = None) -> set[str]:
+    """IDs from /etc/os-release (``ID`` plus ``ID_LIKE``), lowercased."""
+    if os_release is None:
+        try:
+            with open("/etc/os-release", encoding="utf-8") as f:
+                os_release = f.read()
+        except OSError:
+            return set()
+    ids: set[str] = set()
+    for line in os_release.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() in ("ID", "ID_LIKE"):
+            ids.update(value.strip().strip("\"'").lower().split())
+    # openSUSE reports opensuse-leap / opensuse-tumbleweed
+    if any(i.startswith("opensuse") for i in ids):
+        ids.add("opensuse")
+    return ids
+
+
+def libreoffice_linux_install_commands(
+    os_release: str | None = None,
+) -> list[tuple[str, str]]:
+    """The command that installs LibreOffice on this Linux distribution.
+
+    Args:
+        os_release: /etc/os-release text (tests); read from disk if None.
+
+    Returns:
+        One ``("", command)`` pair for a recognised distribution, otherwise
+        every ``(label, command)`` alternative.
+    """
+    ids = _linux_distro_ids(os_release)
+    for family, _label, command in _LIBREOFFICE_LINUX:
+        if ids & family:
+            return [("", command)]
+    return [(label, command) for _family, label, command in _LIBREOFFICE_LINUX]
+
+
 @lru_cache(maxsize=1)
 def find_libreoffice() -> str | None:
     """Find LibreOffice soffice executable (cached).
