@@ -1347,6 +1347,7 @@ async def process_url_batch(
                 results[key] = {
                     "status": "completed",
                     "error": None,
+                    "warnings": list(extra_info.get("warnings") or []),
                     "output": result.output_path,
                     "fetch_strategy": url_fetch_strategy,
                     "images": result.images,

@@ -10,6 +10,7 @@ from markitai.batch import (
     BatchState,
     FileState,
     FileStatus,
+    UrlState,
 )
 from markitai.config import BatchConfig
 
@@ -122,6 +123,34 @@ class TestBatchState:
         # documents keys are now relative paths (renamed from 'files')
         assert "test.pdf" in data["documents"]
         assert data["documents"]["test.pdf"]["status"] == "completed"
+        assert data["documents"]["test.pdf"]["warnings"] == []
+
+    def test_to_dict_lists_item_warnings(self) -> None:
+        """A completed item whose LLM step failed says so in the report.
+
+        Regression: ``--json`` listed the item's warnings, but the report
+        file showed the item ``completed`` with ``error: null`` and nothing
+        else, as clean a success as an enhanced one.
+        """
+        warning = "LLM enhancement failed (boom); kept the unenhanced output"
+        state = BatchState(input_dir="/input", output_dir="/output")
+        state.files["/input/a.md"] = FileState(
+            path="/input/a.md",
+            status=FileStatus.COMPLETED,
+            output="/output/a.md.md",
+            warnings=[warning],
+        )
+        state.urls["https://example.com/"] = UrlState(
+            url="https://example.com/",
+            source_file="links.urls",
+            status=FileStatus.COMPLETED,
+            warnings=[warning],
+        )
+
+        data = state.to_dict()
+
+        assert data["documents"]["a.md"]["warnings"] == [warning]
+        assert data["urls"]["https://example.com/"]["warnings"] == [warning]
 
     def test_from_dict(self, tmp_path: Path) -> None:
         """Test creating state from dictionary."""
