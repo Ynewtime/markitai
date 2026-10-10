@@ -105,9 +105,10 @@ class Workbench:
         """Load and verify a bundle directory; None when absent or damaged.
 
         The directory holds the bundle as published: ``manifest.json``,
-        ``index.html``, ``ui/<file>`` and ``LICENSES/``. Every file must match
-        the manifest's size and digest and the manifest must list every file:
-        a partial or edited copy is not served.
+        ``index.html``, ``ui/<file>`` and ``LICENSES/``. Every file the manifest
+        lists must be there with its size and digest: a partial or edited copy
+        is not served. A file it does not list (a ``.DS_Store`` left by a file
+        manager) is ignored, never served.
         """
         manifest_path = directory / "manifest.json"
         if not manifest_path.is_file():
@@ -162,10 +163,12 @@ def _verified_files(directory: Path, manifest: object) -> dict[str, bytes]:
         if not path.is_file():
             raise ValueError(f"unexpected entry {name}")
         files[name] = path.read_bytes()
-    if set(listed) != set(files):
-        missing = sorted(set(listed) - set(files))
-        extra = sorted(set(files) - set(listed))
-        raise ValueError(f"bundle files differ from the manifest: {missing} {extra}")
+    missing = sorted(set(listed) - set(files))
+    if missing:
+        raise ValueError(f"bundle files missing: {missing}")
+    for extra in sorted(set(files) - set(listed)):
+        logger.debug("[Serve] Ignoring {} (not in the bundle manifest)", extra)
+        del files[extra]
     for name, data in files.items():
         entry = listed[name]
         if (

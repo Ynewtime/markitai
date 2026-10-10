@@ -1848,3 +1848,77 @@ class TestVendoredBundle:
         if isinstance(serve, dict) and "content_security_policy" in serve:
             assert serve["content_security_policy"] == CSP
             assert set(serve["page_paths"]) <= set(workbench.page_paths)
+
+
+class TestReviewFixes:
+    """Compare's PDF work runs in killable workers; numbers are bounded."""
+
+    def test_a_runaway_page_is_killed_and_the_next_one_works(self) -> None:
+        from markitai.serve.originals import PdfWorkers, RenderError
+
+        workers = PdfWorkers(workers=1, timeout=0.5)
+        try:
+            started = time.monotonic()
+            with pytest.raises(RenderError):
+                workers.run(time.sleep, 30)
+            assert time.monotonic() - started < 10
+            assert workers.run(abs, -3) == 3  # a fresh pool
+        finally:
+            workers.close()
+
+    async def test_pages_are_drawn_once_then_cached(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", _converter())
+        app = _make_app(tmp_path)
+        async with _client(app) as client:
+            job_id, _ = await _job(client, files=[("doc.pdf", _pdf_bytes(1))])
+            workers = app.state.pdf_workers
+            calls: list[str] = []
+            original_run = workers.run
+
+            def counting(function: Any, *args: Any) -> Any:
+                calls.append(function.__name__)
+                return original_run(function, *args)
+
+            workers.run = counting
+            url = f"/api/jobs/{job_id}/items/i1/original/pages/1?width=400"
+            first = await client.get(url)
+            second = await client.get(url)
+        assert first.content == second.content
+        assert calls.count("render_pdf_page") == 1
+        assert app.state.pdf_workers._pool is None  # closed with the server
+
+    async def test_numbers_are_ascii_and_bounded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", _converter(markdown="# x\n")
+        )
+        async with _client(_make_app(tmp_path)) as client:
+            job_id, _ = await _job(client, files=[("doc.pdf", _pdf_bytes(1))])
+            base = f"/api/jobs/{job_id}/items/i1"
+            huge = await client.get(f"{base}/result?max_bytes={10**15}")
+            superscript = await client.get(f"{base}/result?max_bytes=2%C2%B2")
+            page = await client.get(f"{base}/original/pages/%C2%B2")
+            width = await client.get(f"{base}/original/pages/1?width=%C2%B2")
+        assert huge.status_code == 200 and huge.json()["truncated"] is False
+        check_error(superscript, 422, "invalid_max_bytes")
+        check_error(page, 422, "invalid_page_request")
+        check_error(width, 422, "invalid_page_request")
+
+    async def test_a_stray_file_in_the_bundle_is_ignored(self, tmp_path: Path) -> None:
+        bundle = _bundle(
+            tmp_path / "bundle", {"index.html": b"<html></html>", "app.js": b"x"}
+        )
+        (bundle / "ui" / ".DS_Store").write_bytes(b"\0")
+        async with _client(_make_app(tmp_path, static_dir=bundle)) as client:
+            shell = await client.get("/")
+            stray = await client.get("/ui/.DS_Store")
+        assert shell.text == "<html></html>"
+        assert stray.status_code == 404
+
+    def test_stored_options_load_leniently(self) -> None:
+        from markitai.serve.jobs import normalize_job_options
+
+        assert normalize_job_options({"llm": "true", "profile": "rag"})["llm"] is True

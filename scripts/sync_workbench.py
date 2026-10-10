@@ -38,6 +38,7 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "packages" / "markitai" / "src" / "markitai" / "serve" / "workbench"
 MAX_FILE_BYTES = 32 * 1024 * 1024
+MAX_BUNDLE_BYTES = 128 * 1024 * 1024
 #: Top-level folders a bundle may carry, and how deep their files sit.
 FOLDERS = {"ui": 1, "LICENSES": 1}
 
@@ -94,6 +95,7 @@ def _read_tarball(data: bytes) -> tuple[dict[str, object], dict[str, bytes]]:
     """The manifest and files of a bundle archive; anything unexpected fails."""
     manifest: object = None
     files: dict[str, bytes] = {}
+    total = 0
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
         for member in archive.getmembers():
             name = PurePosixPath(member.name).as_posix().removeprefix("./")
@@ -103,6 +105,9 @@ def _read_tarball(data: bytes) -> tuple[dict[str, object], dict[str, bytes]]:
                 raise BundleError(f"non-file tar entry: {member.name!r}")
             if member.size > MAX_FILE_BYTES:
                 raise BundleError(f"tar entry too large: {member.name!r}")
+            total += member.size
+            if total > MAX_BUNDLE_BYTES:
+                raise BundleError("archive too large for a workbench bundle")
             handle = archive.extractfile(member)
             assert handle is not None
             content = handle.read()

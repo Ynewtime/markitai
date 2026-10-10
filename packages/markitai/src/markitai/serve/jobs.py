@@ -51,7 +51,8 @@ def normalize_job_options(options: dict[str, Any]) -> dict[str, Any]:
         key: value for key, value in options.items() if key in JobOptions.model_fields
     }
     try:
-        normalized = JobOptions.model_validate(values).model_dump()
+        # Lax for what is already stored: strictness guards new requests
+        normalized = JobOptions.model_validate(values, strict=False).model_dump()
     except ValidationError:
         logger.warning("[Serve] Invalid persisted job options; using defaults")
         normalized = JobOptions().model_dump()
@@ -1244,15 +1245,20 @@ async def run_job(
             registry.publish_job(job)
 
         async def run_gated(item: JobItem) -> None:
-            if stoppable(item):
-                stop(item)
-                return
-            gate: AbstractAsyncContextManager[object | None] = (
-                file_slots.slot(llm=run_cfg.llm.enabled)
-                if item.kind == "file"
-                else url_semaphore
-            )
+            # Registered here, inside the try below, so a stop request can
+            # only cancel this task where the handler catches it.
+            task = asyncio.current_task()
             try:
+                if item.operation == "convert" and task is not None:
+                    job.waiting[item.item_id] = task
+                if stoppable(item):
+                    stop(item)
+                    return
+                gate: AbstractAsyncContextManager[object | None] = (
+                    file_slots.slot(llm=run_cfg.llm.enabled)
+                    if item.kind == "file"
+                    else url_semaphore
+                )
                 async with gate:
                     job.waiting.pop(item.item_id, None)
                     # A stop that arrives together with the slot still wins:
@@ -1276,23 +1282,39 @@ async def run_job(
                     finally:
                         public_network_only.reset(token)
             except asyncio.CancelledError:
-                # Cancelled while waiting for its slot by a stop request (not
-                # by shutdown, which cancels the whole run): end it here so
-                # the rest of the job carries on.
-                if item.status == "queued" and stoppable(item) and not registry.closing:
+                # Cancelled while waiting for its slot by a stop request: end
+                # it here so the rest of the job carries on. A shutdown
+                # cancels this whole run, which gather passes on below.
+                if item.status == "queued" and stoppable(item):
                     stop(item)
                     return
                 raise
             finally:
                 job.waiting.pop(item.item_id, None)
 
-        tasks: list[asyncio.Task[None]] = []
-        for item in targets:
-            task = asyncio.ensure_future(run_gated(item))
-            if item.operation == "convert" and item.status == "queued":
-                job.waiting[item.item_id] = task
-            tasks.append(task)
-        await asyncio.gather(*tasks)
+        # return_exceptions: one item's failure or stop never abandons its
+        # siblings; a cancellation of this run itself still propagates.
+        outcomes = await asyncio.gather(
+            *(run_gated(item) for item in targets), return_exceptions=True
+        )
+        for item, outcome in zip(targets, outcomes, strict=True):
+            if item.status == "queued" and stoppable(item):
+                stop(item)
+            elif isinstance(outcome, BaseException) and item.status in (
+                "queued",
+                "running",
+            ):
+                logger.error(
+                    "[Serve] Job {} item {} crashed: {!r}",
+                    job.job_id,
+                    item.item_id,
+                    outcome,
+                )
+                item.status = "error"
+                item.error = f"internal error: {outcome!r}"
+                item.error_code = "internal_error"
+                item.finished_at = now_iso()
+                registry.publish_item(job, item)
     except asyncio.CancelledError:
         for item in targets:
             if item.status in ("queued", "running"):
