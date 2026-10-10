@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from markitai.cli.main import app
@@ -54,6 +55,99 @@ def test_openrouter_is_skipped_where_claude_haiku_is_reached_directly() -> None:
         openrouter,
     ]
     assert _models([("OpenRouter API", True)]) == [openrouter]
+
+
+# The owner's devbox: Claude Code signed in, all five provider keys set
+_ALL_DETECTED = [
+    ("Claude CLI", True),
+    ("GitHub Copilot CLI", False),
+    ("ChatGPT", False),
+    ("DeepSeek API", True),
+    ("Google Gemini API", True),
+    ("OpenAI API", True),
+    ("Anthropic API", True),
+    ("OpenRouter API", True),
+]
+
+
+class TestUnusedKeysAreExplained:
+    """init says which detected keys it leaves out, and why."""
+
+    def test_plan_with_claude_code_and_every_key(self) -> None:
+        from markitai.cli.commands.init import _plan_providers
+
+        chosen, skipped = _plan_providers(_ALL_DETECTED)
+
+        assert chosen == ["claude-agent", "deepseek", "gemini", "openai"]
+        reasons = dict(skipped)
+        assert set(reasons) == {"ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"}
+        assert "Claude Code" in reasons["ANTHROPIC_API_KEY"]
+        assert "subscription" in reasons["ANTHROPIC_API_KEY"]
+        assert "Claude Code" in reasons["OPENROUTER_API_KEY"]
+
+    def test_plan_without_claude_code_keeps_anthropic(self) -> None:
+        from markitai.cli.commands.init import _plan_providers
+
+        detected = [(n, ok and n != "Claude CLI") for n, ok in _ALL_DETECTED]
+        chosen, skipped = _plan_providers(detected)
+
+        assert "anthropic" in chosen
+        assert dict(skipped) == {
+            "OPENROUTER_API_KEY": (
+                "its default model (Claude Haiku) is already served by "
+                "the Anthropic API key"
+            )
+        }
+
+    def test_yes_prints_the_reasons(self, tmp_path: Path) -> None:
+        target = tmp_path / "config.json"
+        with (
+            patch(
+                "markitai.cli.commands.init._detect_providers",
+                return_value=_ALL_DETECTED,
+            ),
+            patch("markitai.cli.commands.init._ensure_env_template", return_value=None),
+            patch(
+                "markitai.cli.commands.init._claude_code_key_only_note",
+                return_value=None,
+            ),
+        ):
+            result = CliRunner().invoke(app, ["init", "-y", "-o", str(target)])
+
+        assert result.exit_code == 0, result.output
+        out = " ".join(result.output.split())
+        assert "ANTHROPIC_API_KEY is not used: Claude Code serves the same model" in out
+        assert "OPENROUTER_API_KEY is not used: its default model" in out
+        models = [
+            e["litellm_params"]["model"]
+            for e in json.loads(target.read_text(encoding="utf-8"))["llm"]["model_list"]
+        ]
+        assert models[0] == "claude-agent/haiku"
+
+    def test_key_only_claude_code_is_explained(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib
+
+        init_mod = importlib.import_module("markitai.cli.commands.init")
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        for name in (
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch(
+                "markitai.providers.auth.claude_code_subscription_login",
+                return_value=False,
+            ),
+        ):
+            note = init_mod._claude_code_key_only_note()
+        assert note is not None
+        assert note.startswith("Claude Code is not used: it is signed in only")
 
 
 class TestInitAtomicWrites:
@@ -172,7 +266,10 @@ class TestMergeNewModels:
 
         added = _merge_new_models(existing, _build_config(_DETECTED))
 
-        assert added == ["claude-agent/sonnet", PROVIDER_DEFAULT_MODELS["chatgpt"]]
+        assert added == [
+            PROVIDER_DEFAULT_MODELS["claude-agent"],
+            PROVIDER_DEFAULT_MODELS["chatgpt"],
+        ]
         assert existing["llm"]["enabled"] is False
 
 
@@ -333,4 +430,7 @@ class TestWizardExistingConfig:
         assert data["output"] == {"dir": "./output"}
         assert data["llm"]["enabled"] is False
         models = [e["litellm_params"]["model"] for e in data["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", PROVIDER_DEFAULT_MODELS["chatgpt"]]
+        assert models == [
+            PROVIDER_DEFAULT_MODELS["claude-agent"],
+            PROVIDER_DEFAULT_MODELS["chatgpt"],
+        ]
