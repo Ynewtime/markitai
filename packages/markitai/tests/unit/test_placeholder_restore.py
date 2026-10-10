@@ -154,7 +154,7 @@ class TestDocumentCall:
         ):
             await processor.process_document(TWO_PAGES, "two.pdf")
 
-        assert "1/2 structural placeholders" in str(exc_info.value)
+        assert "1/2 structural placeholders (page 2 marker)" in str(exc_info.value)
         assert "the one retry lost them too" in str(exc_info.value)
         assert exc_info.value.cleaned_markdown == TWO_PAGES
         assert spend.usage["deepseek-flash"]["requests"] == 2
