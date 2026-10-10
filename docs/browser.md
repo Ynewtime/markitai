@@ -15,8 +15,10 @@ are not forwarded. The implementation keeps the browser sandbox enabled.
 fails discovery instead of falling back to another installation. Otherwise the
 reader checks a completed private [managed installation](browser-installation.md),
 then executable names in `PATH`, common macOS/Windows application
-locations, then known Playwright Chromium cache layouts. Cache discovery honors
-`PLAYWRIGHT_BROWSERS_PATH`; only executable paths are inspected. It never loads
+locations, then the Chromium and headless-shell builds in a Playwright browser
+cache, newest revision first, in the layout Playwright installs for each
+platform (Linux and macOS on x64 and arm64, Windows on x64). Cache discovery
+honors `PLAYWRIGHT_BROWSERS_PATH`; only executable paths are inspected. It never loads
 stored browser state, installs a browser or opens the user's normal browser.
 Availability checks do not launch a process.
 
