@@ -11,6 +11,7 @@ from markitai.utils.guidance import (
     config_location_hint,
     format_actionable_error,
     jina_api_key_hint,
+    markitai_python_command,
     playwright_browser_missing_error,
     playwright_package_missing_error,
 )
@@ -166,15 +167,16 @@ class TestPlaywrightErrors:
         # Root cause explanation: package vs browser download
         assert "separate one-time download" in block
         assert "markitai doctor --fix" in block
-        # Exact command for the running environment
-        assert f'"{sys.executable}" -m playwright install chromium' in block
-        # uv tool environment command (verified invocation)
-        # The 'uv tool run --from markitai[all]' hint was removed: it triggers
-        # a uv warning and resolves an ephemeral env whose playwright version
-        # may differ from the tool env; the python -m form targets it exactly
-        assert "-m playwright install chromium" in block
-        # Dev checkout command (also asserted by fetch_playwright launch test)
-        assert "uv run playwright install chromium" in block
+        # Exact command for the running environment: markitai's own Python,
+        # never a bare `python` (on Windows possibly the Store alias) or
+        # `uv run`, which only works inside a checkout
+        from markitai.utils.guidance import playwright_install_command
+
+        assert playwright_install_command() in block
+        assert playwright_install_command().startswith(
+            markitai_python_command() + " -m playwright install"
+        )
+        assert "uv run" not in block
 
 
 class TestExtraInstallKeepsTheInstall:
@@ -192,7 +194,6 @@ class TestExtraInstallKeepsTheInstall:
         return tmp_path
 
     def test_keeps_extras_and_local_source(self, tmp_path, monkeypatch) -> None:
-        import sys
 
         prefix = self._receipt(
             tmp_path,
@@ -206,7 +207,6 @@ class TestExtraInstallKeepsTheInstall:
         )
 
     def test_keeps_a_pinned_version(self, tmp_path, monkeypatch) -> None:
-        import sys
 
         prefix = self._receipt(
             tmp_path, '{ name = "markitai", extras = ["ocr"], specifier = "==1.2.1" }'
@@ -217,7 +217,6 @@ class TestExtraInstallKeepsTheInstall:
         )
 
     def test_without_a_receipt(self, tmp_path, monkeypatch) -> None:
-        import sys
 
         monkeypatch.setattr(sys, "prefix", str(tmp_path))
         assert extra_install_command("ocr") == 'uv tool install "markitai[ocr]" --force'

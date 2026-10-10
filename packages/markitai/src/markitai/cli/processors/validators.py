@@ -15,6 +15,7 @@ from markitai.cli import ui
 from markitai.cli.console import get_console, get_stderr_console
 from markitai.notices import user_notice
 from markitai.utils.errors import extra_install_command
+from markitai.utils.guidance import playwright_install_command
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -248,10 +249,7 @@ def check_playwright_for_urls(cfg: Any, console: Console) -> None:
         "  markitai doctor --fix   (installs Chromium automatically)", console=console
     )
     ui.step(f"  or: {extra_install_command('browser')}", console=console)
-    ui.step(
-        "  Linux: also run 'uv run playwright install-deps chromium' for system deps",
-        console=console,
-    )
+    ui.step(f"  then: {playwright_install_command()}", console=console)
 
 
 def warn_case_sensitivity_mismatches(

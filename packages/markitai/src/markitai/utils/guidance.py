@@ -93,6 +93,36 @@ def cloudflare_credentials_error() -> str:
     )
 
 
+def markitai_python_command() -> str:
+    """markitai's own interpreter, as a command the user can paste.
+
+    A bare ``python`` is usually not markitai's environment: setup.sh,
+    setup.ps1 and ``uv tool install`` put markitai in an isolated tool venv,
+    and on Windows ``python`` may be only the Microsoft Store alias ("Python
+    was not found"). The interpreter running this process is the one that
+    has Playwright.
+    """
+    exe = sys.executable or "python"
+    if sys.platform == "win32":
+        # PowerShell (the Windows 11 default shell) runs a quoted path only
+        # with the call operator
+        return f'& "{exe}"' if " " in exe else exe
+    import shlex
+
+    return shlex.quote(exe)
+
+
+def playwright_install_command(platform: str | None = None) -> str:
+    """The command that downloads Chromium for markitai's own Playwright.
+
+    On Linux ``--with-deps`` also installs the system libraries Chromium
+    needs (Playwright asks for sudo itself).
+    """
+    platform = sys.platform if platform is None else platform
+    deps = " --with-deps" if platform.startswith("linux") else ""
+    return f"{markitai_python_command()} -m playwright install{deps} chromium"
+
+
 def jina_api_key_hint() -> str:
     """Hint for lifting Jina Reader anonymous-access blocks / rate limits."""
     return (
@@ -112,8 +142,7 @@ def playwright_package_missing_error() -> str:
             f"Install the package:\n{extra_install_command('browser')}",
             "Then download the browser (a separate one-time step):\n"
             "markitai doctor --fix\n"
-            "(or: playwright install chromium; "
-            "Linux: also 'playwright install-deps chromium')",
+            f"(or: {playwright_install_command()})",
         ],
         include_config_hint=False,
     )
@@ -133,11 +162,9 @@ def playwright_browser_missing_error() -> str:
         "binaries are a separate one-time download.)",
         [
             "markitai doctor --fix   (detects and installs Chromium automatically)",
-            f'or run: "{sys.executable}" -m playwright install chromium\n'
-            "(targets the exact Python environment markitai runs in;\n"
-            "in a uv project checkout: uv run playwright install chromium)",
-            "Linux only: also run 'playwright install-deps chromium' "
-            "for system libraries",
+            f"or run: {playwright_install_command()}\n"
+            "(markitai's own Python, so the browser lands where markitai "
+            "looks for it)",
         ],
         include_config_hint=False,
     )
