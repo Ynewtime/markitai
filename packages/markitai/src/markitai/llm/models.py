@@ -147,6 +147,15 @@ def get_response_cost(response: Any) -> float | None:
         provider_cost = hidden_params.get("total_cost_usd")
         if provider_cost is not None:
             return float(provider_cost)
+        # OpenRouter bills every request itself and returns the amount
+        # (usage.cost, kept by LiteLLM as response_cost). The response names
+        # the routed model, not the alias asked for (anthropic/claude-haiku-5.5
+        # for ~anthropic/claude-haiku-latest), and LiteLLM's table may not
+        # list it, so the provider's own figure is the one to charge.
+        if hidden_params.get("custom_llm_provider") == "openrouter":
+            reported = hidden_params.get("response_cost")
+            if isinstance(reported, int | float) and reported >= 0:
+                return float(reported)
 
     # Fall back to litellm's cost calculation
     try:

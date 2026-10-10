@@ -394,7 +394,8 @@ def _build_config(
 
     Deduplication rules to avoid redundant Router entries:
     - Skip Anthropic API when Claude CLI is available (same model family)
-    - Skip OpenRouter Gemini when direct Gemini API is available
+    - Skip OpenRouter, whose default is Claude Haiku too, when the Anthropic
+      API or the Claude CLI is available
     """
     model_list = []
 
@@ -422,10 +423,10 @@ def _build_config(
                     break
 
         # Deduplicate: skip redundant provider routes
+        if "OpenRouter" in available_keys and available_keys & {"Claude", "Anthropic"}:
+            available_keys.discard("OpenRouter")
         if "Claude" in available_keys and "Anthropic" in available_keys:
             available_keys.discard("Anthropic")
-        if "Gemini" in available_keys and "OpenRouter" in available_keys:
-            available_keys.discard("OpenRouter")
 
         # Build model_list preserving provider_ids order
         for key, provider_id in provider_ids.items():

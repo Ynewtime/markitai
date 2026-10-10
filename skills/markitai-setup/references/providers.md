@@ -33,7 +33,7 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 | OpenAI | `openai/gpt-6-luna` | `OPENAI_API_KEY` |
 | Anthropic | `anthropic/claude-haiku-5-5` | `ANTHROPIC_API_KEY` |
 | DeepSeek | `deepseek/deepseek-flash` | `DEEPSEEK_API_KEY` |
-| OpenRouter | `openrouter/google/gemini-3.5-flash-lite` | `OPENROUTER_API_KEY` |
+| OpenRouter | `openrouter/~anthropic/claude-haiku-latest` (moving alias; any `openrouter/<vendor>/<model>`) | `OPENROUTER_API_KEY` |
 | Ollama (local server) | `ollama/llama3.2` + `"api_base": "http://localhost:11434"` | none |
 | Claude subscription | `claude-agent/sonnet` (aliases: `sonnet` `opus` `haiku` `inherit`, or full model strings) | Claude Code CLI login; extra: `claude-agent` |
 | Copilot subscription | `copilot/auto` (Auto model selection; the only choice on Copilot Free), `copilot/claude-haiku-5.5`, … (named models on paid plans; no o1/o3) | Copilot CLI login; extra: `copilot` |

@@ -74,6 +74,10 @@ _NOT_A_DEFAULT_PICK = frozenset(
         "copilot/o3",
         # providers/discovery.py: an HTTP path under the OpenAI base url
         "openai/models",
+        # model_catalog.py: keys of the price entries markitai ships, which
+        # name the exact model they price (one is the default's alias)
+        "openrouter/anthropic/claude-haiku-5.5",
+        "openrouter/~anthropic/claude-haiku-latest",
     }
 )
 
