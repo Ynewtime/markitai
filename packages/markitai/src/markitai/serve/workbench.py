@@ -1,9 +1,10 @@
 """The shared browser workbench, served from the vendored bundle.
 
 The UI is built in the markitai-rust repository (one frontend for both
-backends) and vendored here unchanged: ``serve/workbench/manifest.json`` names
+backends) and vendored here unchanged, as published: ``manifest.json`` names
 its source commit, build command and every file with its size and SHA-256;
-``serve/workbench/ui/`` holds the files. ``scripts/sync_workbench.py``
+``index.html`` is the page shell, ``ui/`` holds the files it loads and
+``LICENSES/`` the licences of the libraries and font inside. ``scripts/sync_workbench.py``
 refreshes the copy and checks the digests, so neither Node nor Rust is needed
 to install or build this package.
 
@@ -80,15 +81,19 @@ def _etag(data: bytes) -> str:
 
 
 class Workbench:
-    """The loaded bundle: name -> asset, plus provenance from the manifest."""
+    """The loaded bundle: the shell, ``/ui/`` assets and the manifest."""
 
-    def __init__(self, assets: dict[str, Asset], manifest: dict[str, object]) -> None:
+    def __init__(
+        self,
+        index: Asset,
+        assets: dict[str, Asset],
+        manifest: dict[str, object],
+        page_paths: tuple[str, ...],
+    ) -> None:
+        self.index = index
         self.assets = assets
         self.manifest = manifest
-
-    @property
-    def index(self) -> Asset:
-        return self.assets["index.html"]
+        self.page_paths = page_paths
 
     @property
     def source_commit(self) -> str | None:
@@ -99,56 +104,97 @@ class Workbench:
     def load(cls, directory: Path) -> Workbench | None:
         """Load and verify a bundle directory; None when absent or damaged.
 
-        Every file must match the manifest's size and digest and the manifest
-        must list every file: a partial or edited copy is not served.
+        The directory holds the bundle as published: ``manifest.json``,
+        ``index.html``, ``ui/<file>`` and ``LICENSES/``. Every file must match
+        the manifest's size and digest and the manifest must list every file:
+        a partial or edited copy is not served.
         """
         manifest_path = directory / "manifest.json"
-        ui_dir = directory / "ui"
-        if not manifest_path.is_file() or not (ui_dir / "index.html").is_file():
+        if not manifest_path.is_file():
             return None
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            listed = manifest["files"]
-            if not isinstance(listed, dict):
-                raise ValueError("manifest 'files' is not an object")
-            files: dict[str, bytes] = {}
-            for path in sorted(ui_dir.iterdir()):
-                if not path.is_file():
-                    raise ValueError(f"unexpected entry {path.name}")
-                files[path.name] = path.read_bytes()
-            expected = {
-                str(name).removeprefix("ui/"): entry for name, entry in listed.items()
+            files = _verified_files(directory, manifest)
+            # The shell sits at the bundle root (an older layout kept it in ui/)
+            shell = files.get("index.html", files.get("ui/index.html"))
+            if shell is None:
+                raise ValueError("the bundle has no index.html")
+            ui = {
+                name.removeprefix("ui/"): data
+                for name, data in files.items()
+                if name.startswith("ui/") and "/" not in name.removeprefix("ui/")
             }
-            if set(expected) != set(files):
-                raise ValueError("bundle files differ from the manifest")
-            for name, data in files.items():
-                entry = expected[name]
-                if (
-                    not isinstance(entry, dict)
-                    or entry.get("bytes") != len(data)
-                    or entry.get("sha256") != hashlib.sha256(data).hexdigest()
-                ):
-                    raise ValueError(f"{name} does not match the manifest")
             assets: dict[str, Asset] = {}
-            for name, data in files.items():
+            for name, data in ui.items():
                 if name.endswith(".gz"):
                     base = name.removesuffix(".gz")
-                    if base in files:
+                    if base in ui:
                         continue  # a twin; picked up with its plain file
                     plain, compressed = gzip.decompress(data), data
                 else:
                     base, plain = name, data
-                    compressed = files.get(f"{name}.gz")
+                    compressed = ui.get(f"{name}.gz")
                     if compressed is not None and gzip.decompress(compressed) != plain:
                         raise ValueError(f"{name}.gz is not a gzip copy of {name}")
                 content_type = _CONTENT_TYPES.get(
                     Path(base).suffix.lower(), "application/octet-stream"
                 )
                 assets[base] = Asset(plain, compressed, content_type, _etag(plain))
+            index = Asset(shell, None, _CONTENT_TYPES[".html"], _etag(shell))
         except (OSError, ValueError, KeyError, TypeError, EOFError) as e:
             logger.warning("[Serve] Web UI bundle in {} not served: {}", directory, e)
             return None
-        return cls(assets, manifest)
+        return cls(index, assets, manifest, _page_paths(manifest))
+
+
+def _verified_files(directory: Path, manifest: object) -> dict[str, bytes]:
+    """Every file of the bundle by archive path, checked against the manifest."""
+    listed = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(listed, dict) or not listed:
+        raise ValueError("manifest 'files' is missing")
+    files: dict[str, bytes] = {}
+    for path in sorted(directory.rglob("*")):
+        if path.is_dir():
+            continue
+        name = path.relative_to(directory).as_posix()
+        if name == "manifest.json":
+            continue
+        if not path.is_file():
+            raise ValueError(f"unexpected entry {name}")
+        files[name] = path.read_bytes()
+    if set(listed) != set(files):
+        missing = sorted(set(listed) - set(files))
+        extra = sorted(set(files) - set(listed))
+        raise ValueError(f"bundle files differ from the manifest: {missing} {extra}")
+    for name, data in files.items():
+        entry = listed[name]
+        if (
+            not isinstance(entry, dict)
+            or entry.get("bytes") != len(data)
+            or entry.get("sha256") != hashlib.sha256(data).hexdigest()
+        ):
+            raise ValueError(f"{name} does not match the manifest")
+    return files
+
+
+def _page_paths(manifest: dict[str, object]) -> tuple[str, ...]:
+    """The app's addresses: the contract's, plus any the bundle adds.
+
+    Only plain paths outside ``/api/`` and ``/ui/`` qualify.
+    """
+    paths: list[str] = list(APP_PATHS)
+    serve = manifest.get("serve")
+    listed = serve.get("page_paths") if isinstance(serve, dict) else None
+    for path in listed if isinstance(listed, list) else []:
+        if (
+            isinstance(path, str)
+            and path.startswith("/")
+            and not path.startswith(("/api/", "/ui/", "//"))
+            and all(char.isalnum() or char in "/-_" for char in path)
+            and path not in paths
+        ):
+            paths.append(path)
+    return tuple(paths)
 
 
 def _accepts_gzip(header: str | None) -> bool:
@@ -212,7 +258,7 @@ def mount_workbench(app: FastAPI, workbench: Workbench) -> None:
     async def shell(request: Request) -> Response:
         return serve_asset(workbench.index, request)
 
-    for path in APP_PATHS:
+    for path in workbench.page_paths:
         app.add_api_route(path, shell, methods=["GET", "HEAD"], include_in_schema=False)
 
     async def ui_file(request: Request, name: str) -> Response:

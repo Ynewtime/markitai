@@ -133,6 +133,7 @@ _LLM_TEST_TIMEOUT_S = 15
 _LLM_TEST_BACKSTOP_S = 30.0
 ROOT_HINT = "web UI not bundled; POST /api/jobs or see /api/capabilities"
 DOCS_URL = "https://markitai.dev"
+SOURCE_URL = "https://github.com/Ynewtime/markitai"
 # A Markdown result larger than this is not sent as JSON; the file download
 # endpoint serves it instead.
 MAX_RESULT_BYTES = 64 * 1024 * 1024
@@ -2266,6 +2267,7 @@ def create_app(
             "version": __version__,
             "implementation": "python",
             "docs_url": DOCS_URL,
+            "source_url": SOURCE_URL,
             "llm": {
                 "configured": bool(state.configured_models),
                 "routable": routable,
