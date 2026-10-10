@@ -11,6 +11,17 @@ from click.testing import CliRunner
 from markitai.cli.commands.doctor import doctor
 
 
+@pytest.fixture(autouse=True)
+def _keys_present():
+    """These configs are MagicMocks, which the API key check cannot read.
+
+    What doctor says about a missing or unused key is tested with real
+    configs in tests/unit/cli/test_doctor_render.py.
+    """
+    with patch("markitai.providers.api_keys.missing_api_key", return_value=None):
+        yield
+
+
 class TestDoctorDepsCommand:
     """Tests for doctor CLI command - dependency checking."""
 

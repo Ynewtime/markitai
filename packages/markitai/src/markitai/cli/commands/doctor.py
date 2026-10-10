@@ -304,7 +304,11 @@ from markitai.cli.framework import root_config_options
 from markitai.cli.hints import get_env_set_command
 from markitai.cli.i18n import t
 from markitai.config import ConfigManager
-from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_DEFAULT_MODELS
+from markitai.constants import (
+    PROVIDER_API_KEY_ENV,
+    PROVIDER_API_KEY_ENV_NAMES,
+    PROVIDER_DEFAULT_MODELS,
+)
 from markitai.providers.auth import AuthManager, get_auth_resolution_hint
 from markitai.providers.discovery import provider_label
 from markitai.utils.errors import extra_install_command
@@ -698,32 +702,6 @@ def _ordered_providers(providers: set[str]) -> list[str]:
     return sorted(providers, key=lambda p: (order.index(p) if p in order else 99, p))
 
 
-# Environment variables LiteLLM reads a provider's key from, when the model
-# entry has no api_key of its own
-_PROVIDER_KEY_ALIASES: dict[str, tuple[str, ...]] = {
-    "gemini": ("GOOGLE_API_KEY",),
-    "anthropic": ("ANTHROPIC_AUTH_TOKEN",),
-}
-
-
-def _missing_provider_key(model_config: Any) -> str | None:
-    """The key variable an API model needs and the environment lacks.
-
-    Only for the built-in providers markitai configures by key, used with
-    their own endpoint: a model with an ``api_key`` (literal or ``env:``) or
-    its own ``api_base`` (a local server, a gateway) is not judged here.
-    """
-    params = model_config.litellm_params
-    if getattr(params, "api_key", None) or getattr(params, "api_base", None):
-        return None
-    provider = _provider_of(params.model)
-    env = PROVIDER_API_KEY_ENV.get(provider)
-    if env is None:
-        return None
-    names = (env, *_PROVIDER_KEY_ALIASES.get(provider, ()))
-    return None if any(os.environ.get(name) for name in names) else env
-
-
 def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     """Implementation of the doctor command.
 
@@ -767,17 +745,15 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         for m in active_models
         if not any(m.litellm_params.model.startswith(p) for p in local_prefixes)
     ]
+    # The run's own check (markitai.providers.api_keys): a model doctor
+    # passes is a model the run sends to
+    from markitai.providers.api_keys import missing_api_key
+
     missing_llm_env_vars: set[str] = set()
     for model in active_api_models:
-        for field in ("api_key", "api_base"):
-            value = getattr(model.litellm_params, field, None)
-            if isinstance(value, str) and value.startswith("env:"):
-                env_name = value[4:]
-                if env_name and os.environ.get(env_name) is None:
-                    missing_llm_env_vars.add(env_name)
-        missing_key = _missing_provider_key(model)
-        if missing_key:
-            missing_llm_env_vars.add(missing_key)
+        lacking = missing_api_key(model.litellm_params)
+        if lacking is not None:
+            missing_llm_env_vars.add(lacking.env_var)
 
     if configured_models:
         used_providers = {_provider_of(m.litellm_params.model) for m in active_models}
@@ -814,9 +790,11 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             # (markitai init leaves out a key whose default model another
             # configured route already serves)
             "unused_api_keys": [
-                env
-                for provider, env in PROVIDER_API_KEY_ENV.items()
-                if os.environ.get(env) and provider not in used_providers
+                name
+                for provider, names in PROVIDER_API_KEY_ENV_NAMES.items()
+                if provider not in used_providers
+                for name in names
+                if os.environ.get(name)
             ],
         }
     else:
