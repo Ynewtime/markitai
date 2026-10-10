@@ -314,7 +314,7 @@ async def process_url(
 
     # Every LLM request this URL pays for, also those of a stage that failed
     # or whose answer was rejected (the stages clear their own usage then)
-    from markitai.llm.engine import track_llm_spend
+    from markitai.utils.llm_spend import track_llm_spend
 
     spend_scope = track_llm_spend()
     url_spend = spend_scope.__enter__()

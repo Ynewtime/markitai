@@ -979,7 +979,7 @@ async def process_url_item(
     """
     from markitai.batch import ProcessResult
     from markitai.fetch import FetchError, JinaRateLimitError
-    from markitai.llm.engine import track_llm_spend
+    from markitai.utils.llm_spend import track_llm_spend
     from markitai.utils.text import format_error_message
     from markitai.workflow.url import convert_url_cascade
 
