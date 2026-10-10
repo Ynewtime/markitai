@@ -819,16 +819,24 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     else:
         # Point at the actually-loaded config file (matches the header line),
         # not a hardcoded generic filename.
-        if manager.config_path is not None:
-            llm_hint = f"Configure llm.model_list in {manager.config_path}"
-        else:
-            llm_hint = (
-                "Set a provider API key (DEEPSEEK_API_KEY, GEMINI_API_KEY, ...) "
-                "or sign in to Claude Code, then run 'markitai init'"
-            )
         detected_env = [
             env for env in PROVIDER_API_KEY_ENV.values() if os.environ.get(env)
         ]
+        # markitai init writes the detected providers into the config file,
+        # updating one that exists, so it is the fix either way
+        target = (
+            f" (it adds them to {manager.config_path})"
+            if manager.config_path is not None
+            else ""
+        )
+        if detected_env:
+            llm_hint = f"Run 'markitai init' to configure models for {', '.join(detected_env)}{target}"
+        else:
+            llm_hint = (
+                "Set a provider API key (DEEPSEEK_API_KEY, GEMINI_API_KEY, ...) "
+                f"or sign in to Claude Code, then run 'markitai init'{target}; "
+                "or configure llm.model_list by hand"
+            )
         results["llm-api"] = {
             "name": "LLM API",
             "description": "Content enhancement and image analysis",
