@@ -52,6 +52,7 @@ from markitai.llm.engine import (
     scoped_usage_key,
 )
 from markitai.llm.models import (
+    cleanup_reasoning_params,
     get_model_info_cached,
     model_list_fingerprint,
 )
@@ -575,7 +576,10 @@ class LLMProcessor:
                 SDKs).
         """
         from markitai.config import EnvVarNotFoundError
-        from markitai.providers import is_local_provider_available
+        from markitai.providers import (
+            is_local_provider_available,
+            is_local_provider_model,
+        )
 
         model_list: list[dict[str, Any]] = []
         skipped_models: list[str] = []
@@ -648,6 +652,11 @@ class LLMProcessor:
                 model_entry["litellm_params"]["max_tokens"] = (
                     model_config.litellm_params.max_tokens
                 )
+
+            # Cleanup, transcription and image descriptions need no
+            # reasoning step, which a reasoning model bills as output
+            if not is_local_provider_model(model_id):
+                model_entry["litellm_params"].update(cleanup_reasoning_params(model_id))
 
             if model_config.model_info:
                 model_entry["model_info"] = model_config.model_info.model_dump()
