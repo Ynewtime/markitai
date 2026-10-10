@@ -11,7 +11,7 @@ Usage:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-agent/sonnet"
+                        "model": "claude-agent/haiku"
                     }
                 }
             ]

@@ -339,8 +339,10 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
 #     may be configured by hand but are never chosen here.
 # Reviewed 2026-10-10 against each provider's own model and pricing pages.
 PROVIDER_DEFAULT_MODELS: dict[str, str] = {
-    # Subscription / CLI providers (aliases; the CLI resolves the generation)
-    "claude-agent": "claude-agent/sonnet",
+    # Subscription / CLI providers (aliases; the CLI resolves the generation).
+    # Claude Code's "haiku" alias is its cheapest model (Claude Haiku 5.5 in
+    # CLI 2.1.29x), and it uses up a subscription's limits more slowly too
+    "claude-agent": "claude-agent/haiku",
     # Auto routing: Copilot Free and Student plans can use no other model
     # (GitHub, 2026-06-24), and Auto bills at the picked model's rate
     "copilot": "copilot/auto",

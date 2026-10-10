@@ -530,7 +530,7 @@ class TestProviderConnections:
         assert claude[0]["kind"] == "local_cli"
         assert claude[0]["status"] == "ready"
         assert discovery.startup_model_candidates(claude)[0]["model"] == (
-            "claude-agent/sonnet"
+            "claude-agent/haiku"
         )
 
     async def test_authenticated_cli_without_sdk_is_not_ready(

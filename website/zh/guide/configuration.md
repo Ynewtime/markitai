@@ -272,7 +272,7 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 - `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-flash`
 - `ollama/llama3.2`
-- `claude-agent/sonnet`、`copilot/auto`、`copilot/claude-haiku-5.5`、`chatgpt/gpt-6-luna`（订阅制提供商）
+- `claude-agent/haiku`、`copilot/auto`、`copilot/claude-haiku-5.5`、`chatgpt/gpt-6-luna`（订阅制提供商）
 
 #### markitai 自动选用的默认模型
 
@@ -280,7 +280,7 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 
 | 提供商 | 默认模型 |
 |---|---|
-| Claude Code | `claude-agent/sonnet` |
+| Claude Code | `claude-agent/haiku` |
 | GitHub Copilot | `copilot/auto` |
 | ChatGPT | `chatgpt/gpt-6-luna` |
 | Anthropic | `anthropic/claude-haiku-5-5` |
@@ -290,6 +290,8 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 | OpenRouter | `openrouter/~anthropic/claude-haiku-latest` |
 
 想用别的就设 `model_list`。`copilot/auto` 是 Copilot 的自动选择模型（Auto），也是 Copilot Free 和 Student 套餐唯一可用的选项，按它选中的模型计费。付费套餐可以写明具体模型来固定（例如 `copilot/claude-haiku-5.5`）。`openrouter/~anthropic/claude-haiku-latest` 是 OpenRouter 指向其最新 Claude Haiku 的别名，按实际应答模型的 OpenRouter 收费计费；要固定模型，请设 `openrouter/anthropic/claude-haiku-5.5`。配了已被提供商下线的模型只会在启动时警告一句，markitai 不会替你改。
+
+`markitai init` 会略过默认模型已由另一条找到的途径提供的 key，并说明略过了哪个、为什么：已登录 Claude Code 订阅时，略过 Anthropic 和 OpenRouter 的 key（三者默认都是 Claude Haiku，而订阅不按 token 收费）；有 Anthropic key 时，略过 OpenRouter 的 key。`markitai doctor` 会列出已设置、但 `llm.model_list` 里没有模型用到的提供商 key。只要设置了 `ANTHROPIC_API_KEY`，Claude Code 就会按这个 key 计费，而不用你的订阅；所以已登录订阅时，markitai 运行 `claude-agent/` 模型时会对 Claude Code 隐藏这个变量。如果 Claude Code 只靠这个 key 登录，就不会被选用（`anthropic/claude-haiku-5-5` 直接用同一个 key）。
 
 检测到不止一个提供商时，markitai 不会只挑一个。找到的提供商都进同一个模型池，请求分摊到池里各个模型，所以一次运行里不同文档、甚至同一篇长文档的不同分块，可能交给不同厂商处理。启动时 markitai 会在 stderr 列出这些模型，不加 `-v` 也能看到，只有 `--quiet` 会隐藏。想只用一个模型，设 `MODEL=<provider/model>` 或 `llm.model_list`。
 

@@ -272,7 +272,7 @@ Model names follow LiteLLM's `provider/model` form:
 - `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-flash`
 - `ollama/llama3.2`
-- `claude-agent/sonnet`, `copilot/auto`, `copilot/claude-haiku-5.5`, `chatgpt/gpt-6-luna` (subscription providers)
+- `claude-agent/haiku`, `copilot/auto`, `copilot/claude-haiku-5.5`, `chatgpt/gpt-6-luna` (subscription providers)
 
 #### Defaults markitai picks for you
 
@@ -280,7 +280,7 @@ Model names follow LiteLLM's `provider/model` form:
 
 | Provider | Default model |
 |---|---|
-| Claude Code | `claude-agent/sonnet` |
+| Claude Code | `claude-agent/haiku` |
 | GitHub Copilot | `copilot/auto` |
 | ChatGPT | `chatgpt/gpt-6-luna` |
 | Anthropic | `anthropic/claude-haiku-5-5` |
@@ -290,6 +290,8 @@ Model names follow LiteLLM's `provider/model` form:
 | OpenRouter | `openrouter/~anthropic/claude-haiku-latest` |
 
 Set `model_list` to use anything else. `copilot/auto` is Copilot's Auto model selection, the only choice on Copilot Free and Student plans; it is billed at the rate of the model it picks. On a paid plan, name a model to pin it (for example `copilot/claude-haiku-5.5`). `openrouter/~anthropic/claude-haiku-latest` is OpenRouter's alias for its newest Claude Haiku and is billed at what OpenRouter charges for the model that answers; set `openrouter/anthropic/claude-haiku-5.5` to pin one. A model the provider has retired only produces a startup warning; markitai never rewrites your choice.
+
+`markitai init` leaves out a key whose default model another route it found already serves, and says which and why: with Claude Code signed in to a subscription, the Anthropic and OpenRouter keys (all three default to Claude Haiku, and the subscription has no per-token charge); with the Anthropic key, the OpenRouter key. `markitai doctor` lists provider keys that are set but used by no model in `llm.model_list`. Claude Code bills `ANTHROPIC_API_KEY` instead of your subscription whenever that variable is set, so with a subscription signed in markitai runs `claude-agent/` models with the variable hidden from Claude Code; signed in with nothing but that key, Claude Code is not offered at all (`anthropic/claude-haiku-5-5` uses the same key directly).
 
 When the detection finds more than one provider, markitai does not pick one. Every provider it finds joins one pool, and requests are spread across the pool, so one run can send documents, or chunks of a long document, to different vendors. markitai lists the models on stderr at startup, even without `-v`; only `--quiet` hides that notice. To use a single model, set `MODEL=<provider/model>` or `llm.model_list`.
 

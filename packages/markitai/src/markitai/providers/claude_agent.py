@@ -13,7 +13,7 @@ Usage:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "claude-agent/sonnet"
+                        "model": "claude-agent/haiku"
                     }
                 }
             ]
@@ -51,7 +51,10 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.constants import DEFAULT_ROUTER_TIMEOUT
-from markitai.providers.auth import _is_claude_agent_sdk_available
+from markitai.providers.auth import (
+    _is_claude_agent_sdk_available,
+    claude_code_env,
+)
 from markitai.providers.common import (
     UNSUPPORTED_PARAMS,
     has_images,
@@ -394,6 +397,12 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                 # and counted in output_tokens, but never used.
                 "thinking": {"type": "disabled"},
             }
+
+            # Keep Claude Code on the subscription when ANTHROPIC_API_KEY is
+            # also set (it would bill the key instead; see claude_code_env)
+            env_overrides = claude_code_env()
+            if env_overrides:
+                options_kwargs["env"] = env_overrides
 
             # Pass system prompt via SDK's dedicated parameter
             if system_prompt:
