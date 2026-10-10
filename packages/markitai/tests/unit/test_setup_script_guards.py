@@ -350,7 +350,11 @@ def test_setup_scripts_only_select_supported_python_versions() -> None:
     powershell_text = _SETUP_PS1.read_text(encoding="utf-8")
 
     assert "uv python find '>=3.11,<3.14'" in shell_text
-    assert 'uv python find ">=3.11,<3.14"' in powershell_text
+    assert 'Find-UvPython ">=3.11,<3.14"' in powershell_text
+    # Windows on Arm: x64 Pythons of the same versions only
+    for minor in ("3.13", "3.12", "3.11"):
+        assert minor in powershell_text
+    assert '"cpython-$minor-windows-x86_64"' in powershell_text
     assert ">=3.11,<3.15" not in shell_text
     assert ">=3.11,<3.15" not in powershell_text
 

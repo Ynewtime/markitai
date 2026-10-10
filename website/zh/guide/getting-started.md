@@ -130,10 +130,12 @@ output/
 
 ## 平台特定功能
 
-Windows、Linux、macOS 功能一致，只有两点要留意：
+Windows、Linux、macOS 功能一致，只有三点要留意：
 
 - **EMF/WMF 图片**只在 Windows 上转换，这个格式本身就是 Windows 专有的。
 - **PPTX 幻灯片截图**需要渲染器。Windows 用 Microsoft Office 或 LibreOffice；Linux 需要 LibreOffice（`apt-get install libreoffice`）；macOS 优先 LibreOffice（`brew install --cask libreoffice`），否则调用已装的 PowerPoint，首次会弹一次授权对话框，且需要桌面会话。较新的 macOS 还会直接拒绝终端写入 PowerPoint 的容器（`Operation not permitted`，不弹窗）：在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」中为终端 App 授权，或安装 LibreOffice。无头 Mac 上在配置里设 `"office": { "macos_fallback": false }` 关掉。
+
+- **Windows on Arm**（骁龙等 ARM64 电脑）：markitai 运行在 x64 Python 上，由 Windows 模拟运行。它依赖的部分库还没有 ARM64 版本：每个 PDF 都要用的 pymupdf-layout 完全没有，LLM 库依赖的几个包则需要用 Rust 编译。`setup.ps1` 会选用 x64 Python（没有就用 uv 安装一个）并给出说明。直接用 uv 安装时请指定：`uv tool install markitai --python cpython-3.13-windows-x86_64`。在原生 ARM64 Python 上安装会停在 `pymupdf-layout ... has no wheels with a matching platform tag (e.g., win_arm64)`。模拟运行时 markitai 比在 x64 电脑上慢。
 
 旧版 `.doc`、`.ppt` 需要 `markitai[legacy]`，任何平台都不用装 Office。
 

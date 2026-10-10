@@ -23,6 +23,7 @@ Four contracts are guarded here.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -1133,6 +1134,153 @@ def test_setup_sh_finds_markitai_where_uv_put_it(tmp_path: Path) -> None:
         assert "$HOME/.local/bin" not in body
         assert "use_uv_tool_bin_dir" in body
     assert "warn_if_tool_bin_off_path" in _shell_function("print_user_completion")
+
+
+# ============================================================
+# Windows on Arm: markitai on an x64 Python
+# ============================================================
+
+
+def _run_install_python(
+    tmp_path: Path, *, on_arm: bool, available: list[str]
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Install-Python against a stub uv that finds *available* requests.
+
+    The stub is a real program on PATH, so "not found" reaches PowerShell as
+    native stderr: Windows PowerShell 5.1 turns that into a terminating error
+    under setup.ps1's "Stop" unless the call guards against it.
+    """
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    state = tmp_path / "uv-state.json"
+    state.write_text(json.dumps({"available": available, "calls": []}), "utf-8")
+    script = stub_dir / "uv_stub.py"
+    script.write_text(
+        "import json, sys\n"
+        f"state_path = {str(state)!r}\n"
+        "state = json.load(open(state_path, encoding='utf-8'))\n"
+        "args = sys.argv[1:]\n"
+        "state['calls'].append(' '.join(args))\n"
+        "code = 0\n"
+        "if args[:2] == ['python', 'install']:\n"
+        "    state['available'].append(args[2])\n"
+        "elif args[:2] == ['python', 'find'] and args[2] in state['available']:\n"
+        "    print(sys.executable)\n"
+        "else:\n"
+        "    print('error: No interpreter found', file=sys.stderr)\n"
+        "    code = 2\n"
+        "json.dump(state, open(state_path, 'w', encoding='utf-8'))\n"
+        "sys.exit(code)\n",
+        encoding="utf-8",
+    )
+    if sys.platform == "win32":
+        (stub_dir / "uv.cmd").write_text(
+            f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8"
+        )
+    else:
+        launcher = stub_dir / "uv"
+        launcher.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8"
+        )
+        launcher.chmod(0o755)
+    body = (
+        f"function Test-WindowsOnArm {{ return ${str(on_arm).lower()} }}\n"
+        "function Test-CommandExists { return $true }\n"
+        f"{_powershell_function('Invoke-NativeQuietly')}"
+        f"{_powershell_function('Find-UvPython')}"
+        f"{_powershell_function('Select-Python')}"
+        f"{_powershell_function('Install-Python')}"
+        '"result=$(Install-Python) python=$($script:PYTHON_CMD)"\n'
+    )
+    result = _run_ps(
+        tmp_path, body, PATH=f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    )
+    calls = json.loads(state.read_text("utf-8"))["calls"]
+    return result, calls
+
+
+_X64 = "cpython-{}-windows-x86_64"
+
+
+@_needs_pwsh
+def test_setup_ps1_uses_an_x64_python_on_windows_on_arm(tmp_path: Path) -> None:
+    """A native ARM64 Python cannot install markitai (pymupdf-layout has no
+    ARM64 build); the x64 one uv finds is used, and the run says why."""
+    result, calls = _run_install_python(
+        tmp_path, on_arm=True, available=[_X64.format("3.12"), ">=3.11,<3.14"]
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"result=True python={sys.executable}" in result.stdout
+    assert calls == [
+        f"python find {_X64.format('3.13')}",
+        f"python find {_X64.format('3.12')}",
+    ]
+    assert "Windows on Arm: markitai runs on an x64 Python" in result.stdout
+    assert "(x64)" in result.stdout
+
+
+@_needs_pwsh
+def test_setup_ps1_installs_an_x64_python_on_a_fresh_arm_machine(
+    tmp_path: Path,
+) -> None:
+    """Nothing found (uv says so on stderr, which must not end setup): uv
+    installs CPython 3.13 x64, not the native ARM64 build."""
+    result, calls = _run_install_python(tmp_path, on_arm=True, available=[])
+    assert result.returncode == 0, result.stderr
+    assert f"result=True python={sys.executable}" in result.stdout
+    assert calls == [
+        f"python find {_X64.format('3.13')}",
+        f"python find {_X64.format('3.12')}",
+        f"python find {_X64.format('3.11')}",
+        f"python install {_X64.format('3.13')}",
+        f"python find {_X64.format('3.13')}",
+    ]
+
+
+@_needs_pwsh
+def test_setup_ps1_keeps_any_supported_python_elsewhere(tmp_path: Path) -> None:
+    result, calls = _run_install_python(
+        tmp_path, on_arm=False, available=[">=3.11,<3.14"]
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"result=True python={sys.executable}" in result.stdout
+    assert calls == ["python find >=3.11,<3.14"]
+    assert "Windows on Arm" not in result.stdout
+
+
+@_needs_pwsh
+def test_setup_ps1_installs_python_when_none_is_found(tmp_path: Path) -> None:
+    result, calls = _run_install_python(tmp_path, on_arm=False, available=[])
+    assert result.returncode == 0, result.stderr
+    assert calls == [
+        "python find >=3.11,<3.14",
+        "python install 3.13",
+        "python find 3.13",
+    ]
+
+
+@_needs_pwsh
+def test_setup_ps1_reads_the_machine_architecture(tmp_path: Path) -> None:
+    """The registry's machine value wins over the process's own (an emulated
+    x64 PowerShell sees AMD64); the variable is the fallback."""
+    function = _powershell_function("Test-WindowsOnArm")
+    body = (
+        "$script:OnWindows = $true\n"
+        "function Get-ItemProperty { [CmdletBinding()] param([string]$Path) "
+        "return [pscustomobject]@{ PROCESSOR_ARCHITECTURE = $env:TEST_MACHINE_ARCH } }\n"
+        f"{function}"
+        '"arm=$(Test-WindowsOnArm)"\n'
+    )
+    arm = _run_ps(
+        tmp_path, body, TEST_MACHINE_ARCH="ARM64", PROCESSOR_ARCHITECTURE="AMD64"
+    )
+    assert arm.stdout.rstrip().endswith("arm=True"), arm.stdout + arm.stderr
+    x64 = _run_ps(tmp_path, body, TEST_MACHINE_ARCH="AMD64")
+    assert x64.stdout.rstrip().endswith("arm=False"), x64.stdout + x64.stderr
+    off = _run_ps(
+        tmp_path, body.replace("$true", "$false", 1), TEST_MACHINE_ARCH="ARM64"
+    )
+    assert off.stdout.rstrip().endswith("arm=False"), off.stdout + off.stderr
 
 
 def test_setup_ps1_finds_markitai_where_uv_put_it() -> None:

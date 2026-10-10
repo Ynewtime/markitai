@@ -234,3 +234,34 @@ class TestExtraInstallKeepsTheInstall:
         assert extra_install_command("serve", "ocr") == (
             'pipx install "markitai[ocr,serve]" --force'
         )
+
+    def test_windows_on_arm_keeps_the_x64_python(self, tmp_path, monkeypatch) -> None:
+        """A reinstall without --python may pick a native ARM64 Python, on
+        which markitai does not install (pymupdf-layout has no ARM64 build)."""
+        import sysconfig
+
+        from markitai.utils import errors
+
+        prefix = self._receipt(
+            tmp_path, '{ name = "markitai", extras = ["ocr"], specifier = "==1.2.1" }'
+        )
+        monkeypatch.setattr(sys, "prefix", str(prefix))
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(sysconfig, "get_platform", lambda: "win-amd64")
+        monkeypatch.setattr(errors, "_windows_machine_arch", lambda: "ARM64")
+        minor = f"{sys.version_info.major}.{sys.version_info.minor}"
+        assert extra_install_command("serve") == (
+            f'uv tool install "markitai[ocr,serve]==1.2.1" '
+            f"--python cpython-{minor}-windows-x86_64 --force"
+        )
+        monkeypatch.setattr(sys, "prefix", str(tmp_path / "no-receipt"))
+        assert extra_install_command("ocr") == (
+            f'uv tool install "markitai[ocr]" --python cpython-{minor}-windows-x86_64 '
+            "--force"
+        )
+        # An x64 machine, or an ARM64 Python, needs no pin
+        monkeypatch.setattr(errors, "_windows_machine_arch", lambda: "AMD64")
+        assert "--python" not in extra_install_command("ocr")
+        monkeypatch.setattr(errors, "_windows_machine_arch", lambda: "ARM64")
+        monkeypatch.setattr(sysconfig, "get_platform", lambda: "win-arm64")
+        assert "--python" not in extra_install_command("ocr")
