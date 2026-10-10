@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ import rich_click as click
 from click import Context
 
 from markitai.config import ConfigFileError
+from markitai.utils.term import is_terminal
 
 # Mapping of command name -> (module_path, attribute_name, short_help)
 # This allows list_commands() and get_command() to work without importing
@@ -148,6 +150,41 @@ _REMOVED_OPTIONS: dict[str, str | None] = {
 }
 
 
+class MarkitaiHelpFormatter(click.RichHelpFormatter):
+    """Rich help, with usage errors kept on one line off a terminal.
+
+    rich-click draws a usage error as a panel hard-wrapped at 80 columns
+    when stderr is a pipe, log file or CI log, which splits the message
+    across lines between border characters. There it is written the way
+    click writes it (``Error: <message>`` on one line), so it stays readable
+    and greppable; a terminal still gets the panel.
+    """
+
+    def write_error(self, e: click.ClickException) -> None:
+        if is_terminal(sys.stderr):
+            super().write_error(e)
+            return
+        lines: list[str] = []
+        ctx = getattr(e, "ctx", None)
+        if ctx is not None:
+            pieces = ctx.command.collect_usage_pieces(ctx)
+            lines.append(f"Usage: {ctx.command_path} {' '.join(pieces)}")
+            if ctx.command.get_help_option(ctx) is not None:
+                help_option = ctx.help_option_names[0]
+                lines.append(f"Try '{ctx.command_path} {help_option}' for help.")
+            lines.append("")
+        lines.append(f"Error: {e.format_message()}")
+        self.console.print(
+            "\n".join(lines), soft_wrap=True, markup=False, highlight=False
+        )
+
+
+class MarkitaiContext(click.RichContext):
+    """Context whose formatter keeps usage errors unwrapped off a terminal."""
+
+    formatter_class = MarkitaiHelpFormatter
+
+
 class MarkitaiGroup(click.RichGroup):
     """Custom Group that supports main command with arguments and subcommands.
 
@@ -160,6 +197,8 @@ class MarkitaiGroup(click.RichGroup):
         markitai config list                  # Subcommand
         markitai --preset rich document.pdf   # Options before INPUT
     """
+
+    context_class = MarkitaiContext
 
     # Options that take a value argument (so we skip their values when looking for INPUT)
     _OPTIONS_WITH_VALUES = {

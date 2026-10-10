@@ -8,7 +8,18 @@ for their existing callers.
 
 from __future__ import annotations
 
+from typing import IO
+
 from rich.console import Console
+
+
+def is_terminal(stream: IO[str]) -> bool:
+    """Whether ``stream`` is an interactive terminal (False when closed)."""
+    isatty = getattr(stream, "isatty", None)
+    try:
+        return isatty is not None and bool(isatty())
+    except ValueError:  # closed stream
+        return False
 
 
 class _StderrConsole(Console):
@@ -21,13 +32,7 @@ class _StderrConsole(Console):
 
     @property
     def soft_wrap(self) -> bool:
-        if self._soft_wrap:
-            return True
-        isatty = getattr(self.file, "isatty", None)
-        try:
-            return not (isatty is not None and isatty())
-        except ValueError:  # closed stream
-            return True
+        return self._soft_wrap or not is_terminal(self.file)
 
     @soft_wrap.setter
     def soft_wrap(self, value: bool) -> None:
