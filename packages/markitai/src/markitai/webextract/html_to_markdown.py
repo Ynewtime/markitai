@@ -343,6 +343,16 @@ def _mo_replace(text: str) -> str:
 _FENCE_RUN_RE = re.compile(r"^ {0,3}`{3,}", re.MULTILINE)
 
 
+def _svg_has_labels(svg: Any) -> bool:
+    """Whether an inline SVG draws text (``<text>``, ``<foreignObject>``)."""
+    if not isinstance(svg, Tag):
+        return True
+    return any(
+        label.get_text(strip=True)
+        for label in svg.find_all(("text", "foreignobject", "foreignObject"))
+    )
+
+
 def _tight_inline(tag: str, text: str) -> str:
     """Keep sub/sup as inline HTML, hugging their neighbours.
 
@@ -418,11 +428,17 @@ class WebExtractMarkdownConverter(CompatibleMarkdownConverter):
         return text
 
     def convert_svg(self, el: Any, text: str, parent_tags: set) -> str:
-        """Keep inline SVGs as raw HTML (mirrors defuddle's turndown keep).
+        """Keep inline SVG charts and diagrams as raw HTML (mirrors
+        defuddle's turndown keep).
 
         Charts and diagrams carry meaning only as markup — flattening
-        them to text produces loose axis-label lines.
+        them to text produces loose axis-label lines. A drawing without
+        any text label is a logo, an icon or a picture: its markup says
+        nothing in Markdown and can be huge (cnbc.com wraps a 1.4 MB PNG
+        in one), so it is dropped, as the browser fetch already does.
         """
+        if not _svg_has_labels(el):
+            return ""
         if "_inline" in parent_tags:
             return str(el)
         return f"\n\n{el}\n\n"
