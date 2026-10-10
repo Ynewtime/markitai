@@ -121,6 +121,38 @@ def _is_deepseek_thinking_model(model_id: str) -> bool:
         return False
 
 
+def _refuses_live_function_tools(model_id: str) -> bool:
+    """An OpenAI reasoning model, which refuses function tools on live calls.
+
+    OpenAI answers a chat-completions request that carries function tools at
+    the model's default reasoning effort with HTTP 400 ("Function tools with
+    reasoning_effort are not supported for gpt-5.6-luna in
+    /v1/chat/completions. To use function tools, use /v1/responses or set
+    reasoning_effort to 'none'."), so every structured call to the default
+    OpenAI model spent one failed request before the JSON_SCHEMA rung. Only
+    the live ladder skips TOOLS: batches keep it and send
+    ``reasoning_effort="none"`` (see ``markitai.llm.batch_api``).
+    """
+    try:
+        _, provider, _, _ = litellm.get_llm_provider(model_id)
+        return provider == "openai" and bool(litellm.supports_reasoning(model_id))
+    except Exception:
+        return False
+
+
+def live_structured_mode(model_id: str) -> str:
+    """The best mode one model accepts on a live (non-batch) request."""
+    mode = model_structured_mode(model_id)
+    if mode != MODE_TOOLS or not _refuses_live_function_tools(model_id):
+        return mode
+    try:
+        if litellm.supports_response_schema(model_id):
+            return MODE_JSON_SCHEMA
+    except Exception:
+        logger.trace("[Structured] No response-schema metadata for {}", model_id)
+    return MODE_MD_JSON
+
+
 def structured_mode_ladder(model_ids: Iterable[str]) -> tuple[instructor.Mode, ...]:
     """Build the fallback staircase for a model pool.
 
@@ -137,7 +169,7 @@ def structured_mode_ladder(model_ids: Iterable[str]) -> tuple[instructor.Mode, .
         if not model_id:
             continue
         known = True
-        start = max(start, MODE_ORDER.index(model_structured_mode(model_id)))
+        start = max(start, MODE_ORDER.index(live_structured_mode(model_id)))
         if start == len(MODE_ORDER) - 1:
             break
     if not known:

@@ -44,6 +44,7 @@ from markitai.llm.structured import (
     MODE_JSON_SCHEMA,
     MODE_MD_JSON,
     MODE_TOOLS,
+    instructor_mode_for_model,
     model_structured_mode,
     router_structured_ladder,
     structured_mode_ladder,
@@ -639,6 +640,68 @@ class TestDeepSeekThinkingModels:
 
     def test_deepseek_model_without_thinking_keeps_tools(self):
         assert model_structured_mode("deepseek/deepseek-chat") == MODE_TOOLS
+
+
+# =============================================================================
+# OpenAI reasoning models: no function tools on live calls
+# =============================================================================
+
+
+class TestOpenAIReasoningModels:
+    """The shipped OpenAI default answered the TOOLS rung with HTTP 400
+    "Function tools with reasoning_effort are not supported for gpt-5.6-luna
+    in /v1/chat/completions", so every structured call spent a failed request
+    (and half of a small request cap) before JSON_SCHEMA."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_cache(self):
+        import markitai.llm.structured as structured_mod
+
+        structured_mod._model_mode_cache.clear()
+        yield
+        structured_mod._model_mode_cache.clear()
+
+    @pytest.mark.parametrize(
+        "model", ["openai/gpt-5.6-luna", "gpt-5.6-luna", "openai/gpt-5.6"]
+    )
+    def test_live_ladder_starts_at_json_schema(self, model):
+        assert litellm.supports_function_calling(model)
+        assert structured_mode_ladder([model]) == (
+            instructor.Mode.JSON_SCHEMA,
+            instructor.Mode.MD_JSON,
+        )
+
+    def test_batch_keeps_tools_with_reasoning_off(self):
+        """--llm-batch sends reasoning_effort="none", which allows tools."""
+        assert instructor_mode_for_model("openai/gpt-5.6-luna") == instructor.Mode.TOOLS
+
+    @pytest.mark.parametrize(
+        "model", ["openai/gpt-4o-mini", "anthropic/claude-haiku-4-5"]
+    )
+    def test_models_without_the_restriction_keep_tools(self, model):
+        assert structured_mode_ladder([model])[0] == instructor.Mode.TOOLS
+
+    def test_a_pool_with_one_starts_at_json_schema(self):
+        pool = ["anthropic/claude-haiku-4-5", "openai/gpt-5.6-luna"]
+        assert structured_mode_ladder(pool)[0] == instructor.Mode.JSON_SCHEMA
+
+    @pytest.mark.asyncio
+    async def test_default_openai_model_completes_in_one_request(self):
+        from markitai.constants import PROVIDER_DEFAULT_MODELS
+
+        model = PROVIDER_DEFAULT_MODELS["openai"]
+        router = _ScriptedRouter(
+            model, [_good_response(model, MODE_JSON_SCHEMA, FRONTMATTER_PAYLOAD)]
+        )
+
+        result, _ = await _engine(router, RequestBudget(limit=1)).complete_structured(
+            _frontmatter_call()
+        )
+
+        assert len(router.calls) == 1
+        assert router.wire_format() == MODE_JSON_SCHEMA
+        assert "tools" not in router.calls[0]
+        assert result.description == "A doc"
 
 
 class TestRejectedRungThenBudget:
