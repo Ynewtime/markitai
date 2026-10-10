@@ -16,6 +16,8 @@ Clean up formatting and generate frontmatter with an LLM. By default markitai wr
 
 If enhancement fails (an invalid key, a provider error, a timeout, a refusal, a result that fell back to unenhanced text), markitai keeps the plain `.md` as the item's output and warns on stderr and in the item's `warnings`; the run still succeeds. Set [`llm.on_failure`](/guide/configuration#router-settings) to `"fail"` to report such items `failed` instead: a single input then exits with `1`, a batch with `10`, and `--json` reports `ok: false` with the error. The plain `.md` is written either way. A document too long for one LLM call is enhanced in chunks, so the whole text is cleaned.
 
+Before converting anything, markitai checks that each model in `llm.model_list` has its API key: a key in its entry (`api_key`, a literal or `env:VAR_NAME`) or the provider's variable (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, ...). A model without one is left out, and a warning names the variable to set; when no model has a key, the run stops with that message and exits `1`, and nothing is sent. A DeepSeek or OpenRouter model with its own `api_base` (a local server, a gateway) is never held back. A key the provider refuses (HTTP 401) is reported once on the item, naming the variable it came from; once every model's key has been refused, the rest of the run sends no more requests.
+
 ```bash
 markitai document.docx --llm
 ```

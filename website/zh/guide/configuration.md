@@ -221,6 +221,8 @@ markitai config validate
 | `CLOUDFLARE_API_TOKEN` | Cloudflare（Browser Rendering、Workers AI） |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 账户 ID |
 
+LiteLLM 也会从 `GOOGLE_API_KEY` 读取 Gemini 的 key（优先于 `GEMINI_API_KEY`），从 `OR_API_KEY` 读取 OpenRouter 的 key，从 `ANTHROPIC_AUTH_TOKEN` 读取 Anthropic 的 key；markitai 同样认为这些变量已设置。
+
 ### Markitai 设置
 
 | 变量 | 说明 |

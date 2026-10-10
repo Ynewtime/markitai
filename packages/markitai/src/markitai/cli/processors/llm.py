@@ -173,7 +173,9 @@ async def process_with_llm(
         return markdown, cost, usage  # Return original for base .md file
 
     except Exception as e:
-        logger.error(f"LLM processing failed: {format_error_message(e)}")
+        # A warning, not an error: the caller reports the failure once, as
+        # the URL's error or its llm.on_failure fallback warning
+        logger.warning(f"LLM processing failed: {format_error_message(e)}")
         # Drop the failed call's usage and request budget, so the next item
         # sharing this context key does not inherit a tripped breaker
         if processor is not None:
@@ -403,7 +405,8 @@ async def analyze_images_with_llm(
         )
 
     except Exception as e:
-        logger.error(f"Image analysis failed: {format_error_message(e)}")
+        # The caller reports it (the URL's image-analysis warning)
+        logger.warning(f"Image analysis failed: {format_error_message(e)}")
         raise
 
 

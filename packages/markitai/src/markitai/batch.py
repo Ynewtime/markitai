@@ -494,6 +494,9 @@ class BatchState:
                 "status": state.status.value,
                 "output": state.output,
                 "error": state.error,
+                # What --json lists too: a completed item whose LLM step
+                # failed (and kept its unenhanced output) says so here
+                "warnings": list(state.warnings),
                 "started_at": state.started_at,
                 "completed_at": state.completed_at,
                 "duration": state.duration,
@@ -510,6 +513,7 @@ class BatchState:
                 "status": state.status.value,
                 "output": state.output,
                 "error": state.error,
+                "warnings": list(state.warnings),
                 "fetch_strategy": state.fetch_strategy,
                 "images": state.images,
                 "screenshots": state.screenshots,

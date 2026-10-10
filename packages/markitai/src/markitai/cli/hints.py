@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-
 
 def get_env_set_command(var: str, value: str = "your_key") -> str:
     """Get the appropriate environment variable set command for current OS.
@@ -18,11 +16,8 @@ def get_env_set_command(var: str, value: str = "your_key") -> str:
         - Windows CMD: set VAR=value
         - Linux/macOS: export VAR=value
     """
-    if sys.platform == "win32":
-        # Check if running in PowerShell or CMD
-        import os
+    # One copy, shared with the LLM layer's missing-key messages (which
+    # must not import the CLI package)
+    from markitai.providers.api_keys import env_set_command
 
-        if os.environ.get("PSModulePath"):  # noqa: SIM112 - Windows uses mixed case
-            return f'$env:{var}="{value}"'
-        return f"set {var}={value}"
-    return f"export {var}={value}"
+    return env_set_command(var, value)

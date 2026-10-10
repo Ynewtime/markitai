@@ -16,6 +16,8 @@ markitai <input> [options]
 
 增强失败时（key 无效、服务端报错、超时、模型拒答、结果退回了未增强文本），markitai 把原始 `.md` 作为该条目的输出，并在 stderr 和条目的 `warnings` 里给出警告，运行仍然算成功。把 [`llm.on_failure`](/zh/guide/configuration#路由设置) 设为 `"fail"` 可以改为把这类条目记为 `failed`：单个输入以 `1` 退出，批量以 `10` 退出，`--json` 给出 `ok: false` 和错误信息。两种设置下都会写出原始 `.md`。一次 LLM 调用装不下的长文档会分块增强，全文都会被清洗。
 
+开始转换之前，markitai 会检查 `llm.model_list` 里每个模型是否有 API key：条目里的 `api_key`（明文或 `env:VAR_NAME`），或该提供商的环境变量（`DEEPSEEK_API_KEY`、`OPENAI_API_KEY` 等）。没有 key 的模型不参与这次运行，警告里会写明要设置哪个变量；所有模型都没有 key 时，运行直接停在这条提示上，以 `1` 退出，不会发出任何请求。自带 `api_base` 的 DeepSeek 或 OpenRouter 模型（本地服务、网关）不受此限制。提供商拒绝 key（HTTP 401）时，该条目只报一次，写明 key 来自哪个变量；所有模型的 key 都被拒绝后，本次运行不再发出请求。
+
 ```bash
 markitai document.docx --llm
 ```
