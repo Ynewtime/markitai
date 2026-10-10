@@ -230,6 +230,30 @@ class MockVisionProcessor(VisionAnalyzer):
         )
 
 
+def _instructor_sending_through(
+    mock_instructor: MagicMock, router: MagicMock, result: Any, raw: Any
+) -> None:
+    """Patch instructor to send one request through the adapter it gets.
+
+    Like the real client, the request goes through the acompletion handed
+    to ``from_litellm`` (where markitai tracks each answer's usage as it
+    arrives); the router answers with *raw* and instructor returns *result*.
+    """
+    router.acompletion.return_value = raw
+
+    def from_litellm(acompletion: Any, mode: Any = None) -> MagicMock:
+        client = MagicMock()
+
+        async def create(*args: Any, **kwargs: Any) -> Any:
+            await acompletion(model="default", messages=kwargs.get("messages", []))
+            return result, raw
+
+        client.chat.completions.create_with_completion = create
+        return client
+
+    mock_instructor.from_litellm.side_effect = from_litellm
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -840,10 +864,9 @@ class TestAnalyzeBatch:
             mock_raw.choices = [MagicMock(finish_reason="length")]
             mock_raw._hidden_params = {"total_cost_usd": 0.25}
 
-            async def mock_create(*args, **kwargs):
-                return mock_response, mock_raw
-
-            mock_client.chat.completions.create_with_completion = mock_create
+            _instructor_sending_through(
+                mock_instructor, mock_processor.vision_router, mock_response, mock_raw
+            )
 
             with patch.object(
                 mock_processor, "analyze_image", new_callable=AsyncMock
@@ -1313,10 +1336,9 @@ class TestAnalyzeWithInstructor:
             mock_raw.choices = [MagicMock(finish_reason="stop")]
             mock_raw._hidden_params = {"total_cost_usd": 0.002}
 
-            async def mock_create(*args, **kwargs):
-                return mock_response, mock_raw
-
-            mock_client.chat.completions.create_with_completion = mock_create
+            _instructor_sending_through(
+                mock_instructor, mock_processor.vision_router, mock_response, mock_raw
+            )
 
             await mock_processor._analyze_with_instructor(
                 messages, "default", context="file.pdf"
@@ -1701,10 +1723,9 @@ class TestUsageTracking:
             mock_raw.choices = [MagicMock(finish_reason="stop")]
             mock_raw._hidden_params = {"total_cost_usd": 0.05}
 
-            async def mock_create(*args, **kwargs):
-                return mock_response, mock_raw
-
-            mock_client.chat.completions.create_with_completion = mock_create
+            _instructor_sending_through(
+                mock_instructor, mock_processor.vision_router, mock_response, mock_raw
+            )
 
             await mock_processor.analyze_batch([sample_png_file], context="test.pdf")
 
@@ -1755,3 +1776,43 @@ class TestUsageTracking:
                 assert r.llm_usage is not None
                 assert r.llm_usage["test/model"]["input_tokens"] == 1000  # 3000/3
                 assert r.llm_usage["test/model"]["output_tokens"] == 100  # 300/3
+
+
+class TestRejectedAnswerUsage:
+    """An answer the structured ladder rejects was billed all the same."""
+
+    @pytest.mark.asyncio
+    async def test_batch_answer_that_is_not_json_is_still_accounted(
+        self, mock_processor: MockVisionProcessor, sample_png_file: Path
+    ):
+        mock_raw = MagicMock()
+        mock_raw.model = "gpt-4-vision"
+        mock_raw.usage = MagicMock(prompt_tokens=1000, completion_tokens=200)
+        mock_raw.choices = [MagicMock(finish_reason="stop")]
+        mock_raw._hidden_params = {"total_cost_usd": 0.05}
+        mock_processor.vision_router.acompletion.return_value = mock_raw
+
+        def from_litellm(acompletion: Any, mode: Any = None) -> MagicMock:
+            client = MagicMock()
+
+            async def create(*args: Any, **kwargs: Any) -> Any:
+                await acompletion(model="default", messages=kwargs.get("messages", []))
+                raise ValueError("answer is not JSON")
+
+            client.chat.completions.create_with_completion = create
+            return client
+
+        with (
+            patch("markitai.llm.engine.instructor") as mock_instructor,
+            patch.object(
+                mock_processor, "analyze_image", new_callable=AsyncMock
+            ) as mock_single,
+        ):
+            mock_instructor.from_litellm.side_effect = from_litellm
+            mock_single.return_value = ImageAnalysis(caption="c", description="d")
+
+            await mock_processor.analyze_batch([sample_png_file], context="a.pdf")
+
+        usage = mock_processor._usage["gpt-4-vision"]
+        assert usage["requests"] == 1
+        assert usage["cost_usd"] == pytest.approx(0.05)

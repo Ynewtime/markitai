@@ -34,7 +34,7 @@ import weakref
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import instructor
@@ -150,6 +150,97 @@ def track_cache_hits() -> Iterator[CacheTally]:
         yield tally
     finally:
         _cache_tally.reset(token)
+
+
+@dataclass
+class SpendTally:
+    """Every LLM request a work item paid for, per model.
+
+    The per-context usage of the processor is cleared by each stage, and a
+    stage that fails clears it without handing it on, so a rejected answer
+    (dropped placeholders, a refusal, unparseable JSON, a truncation) was
+    paid for but reported as free. This tally sees every answer the moment
+    it is accounted, whatever happens to it afterwards, in the shape of
+    ``LLMProcessor.get_context_usage``.
+    """
+
+    usage: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    @property
+    def cost(self) -> float:
+        """USD of the priced requests (unpriced ones are counted apart)."""
+        return sum(stats.get("cost_usd", 0.0) for stats in self.usage.values())
+
+
+# The spend tallies of the work items enclosing the current task (a URL list
+# inside a batch nests). Context variables for the same reason as
+# _cache_tally: the tasks an item spawns inherit its context.
+_spend_tallies: ContextVar[tuple[SpendTally, ...]] = ContextVar(
+    "markitai_llm_spend_tallies", default=()
+)
+_spend_lock = threading.Lock()
+
+
+@contextmanager
+def track_llm_spend() -> Iterator[SpendTally]:
+    """Collect the LLM spend of one work item, failed stages included.
+
+    Yields:
+        The tally, updated in place until the block exits.
+    """
+    tally = SpendTally()
+    token = _spend_tallies.set((*_spend_tallies.get(), tally))
+    try:
+        yield tally
+    finally:
+        _spend_tallies.reset(token)
+
+
+def record_llm_spend(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost: float | None,
+    cached_tokens: int = 0,
+) -> None:
+    """Add one answered request to the enclosing spend tallies (if any).
+
+    ``cost`` None is an unknown price: counted in ``unpriced_requests``.
+    """
+    tallies = _spend_tallies.get()
+    if not tallies:
+        return
+    with _spend_lock:
+        for tally in tallies:
+            stats = _usage_entry(tally, model)
+            stats["requests"] += 1
+            stats["input_tokens"] += input_tokens
+            stats["output_tokens"] += output_tokens
+            stats["cached_input_tokens"] += cached_tokens
+            if cost is None:
+                stats["unpriced_requests"] = stats.get("unpriced_requests", 0) + 1
+            else:
+                stats["cost_usd"] += cost
+
+
+def record_llm_spend_marker(name: str) -> None:
+    """Add an all-zero pseudo-model entry (a tripped budget) to the tallies."""
+    with _spend_lock:
+        for tally in _spend_tallies.get():
+            _usage_entry(tally, name)
+
+
+def _usage_entry(tally: SpendTally, model: str) -> dict[str, Any]:
+    return tally.usage.setdefault(
+        model,
+        {
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cost_usd": 0.0,
+        },
+    )
 
 
 # The work item whose usage and request budget a tracking context belongs to.
@@ -784,16 +875,30 @@ class LLMEngine:
 
         Used where a router's ``acompletion`` is handed to instructor
         directly (bypassing the engine loop), so those requests still
-        count against — and are stopped by — the document's budget.
+        count against — and are stopped by — the document's budget. Each
+        answer's usage is tracked as it arrives: instructor may still
+        reject it (unparseable JSON, a schema mismatch), and a rejected
+        answer was billed like any other.
         """
 
         async def guarded(*args: Any, **kwargs: Any) -> Any:
             self._spend_request_budget(context)
             try:
-                return await acompletion(*args, **kwargs)
+                response = await acompletion(*args, **kwargs)
             except Exception as e:
                 redact_provider_exception(e, kwargs.get("messages"))
                 raise
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                self.track_usage(
+                    getattr(response, "model", None) or kwargs.get("model", "default"),
+                    getattr(usage, "prompt_tokens", 0) or 0,
+                    getattr(usage, "completion_tokens", 0) or 0,
+                    get_response_cost(response),
+                    context,
+                    extract_cached_tokens(response),
+                )
+            return response
 
         return guarded
 
@@ -938,32 +1043,19 @@ class LLMEngine:
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-            # Track usage from the raw API response (once per structured
-            # call; instructor accumulates usage across its own retries).
-            # This runs BEFORE the truncation check on purpose: a truncated
-            # generation was billed like any other, and truncation hits the
-            # longest (priciest) calls, so raising first hid real spend.
+            # Usage was tracked per answer by the adapter, as each one
+            # arrived: an answer instructor rejected (unparseable JSON, a
+            # failed rung) or that the checks below reject (truncation,
+            # validate) was billed like any other. The raw response's usage
+            # is instructor's total over its attempts, logged here.
             actual_model = getattr(raw_response, "model", None) or "default"
-            input_tokens = 0
-            output_tokens = 0
-            cost: float | None = 0.0
-            if hasattr(raw_response, "usage") and raw_response.usage is not None:
-                input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
-                cost = get_response_cost(raw_response)
-                self.track_usage(
-                    actual_model,
-                    input_tokens,
-                    output_tokens,
-                    cost,
-                    call.context,
-                    extract_cached_tokens(raw_response),
-                )
-
+            usage = getattr(raw_response, "usage", None)
+            input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+            output_tokens = getattr(usage, "completion_tokens", 0) or 0
             logger.info(
                 f"[LLM:{call_id}] {actual_model} "
                 f"tokens={input_tokens}+{output_tokens} "
-                f"time={elapsed_ms:.0f}ms cost={format_cost(cost)}"
+                f"time={elapsed_ms:.0f}ms"
             )
 
             # Check for truncation (after accounting, before the cache write:
@@ -1096,17 +1188,18 @@ class LLMEngine:
         (``model=..., messages=..., **kwargs``) and returns the raw
         ModelResponse, so it can be handed to ``instructor.from_litellm``.
 
-        Two deliberate differences from ``complete_text`` (both expressed
-        as parameters of the shared ``_acompletion_with_retries`` loop):
+        One deliberate difference from ``complete_text`` (a parameter of
+        the shared ``_acompletion_with_retries`` loop): it does NOT acquire
+        the engine semaphore, since instructor invokes the adapter while
+        ``complete_structured`` already holds a slot ("one structured call
+        = one concurrency slot").
 
-        - It does NOT acquire the engine semaphore: instructor invokes the
-          adapter while ``complete_structured`` already holds a slot
-          ("one structured call = one concurrency slot").
-        - It does NOT call ``track_usage``: usage is tracked once per
-          structured call from the final raw response, which instructor
-          accumulates across its own retries. The request *budget* is
-          still spent per attempt (``budget_context``), so instructor
-          retries cannot escape the per-document breaker.
+        Usage is tracked per answer, like the request budget is spent per
+        attempt (``budget_context``): instructor may reject an answer
+        (unparseable JSON, a rung the provider answered in the wrong
+        shape) and ask again, and every answer was billed. The final raw
+        response instructor returns carries the total of its attempts, so
+        ``complete_structured`` does not track it again.
         """
 
         async def retrying_acompletion(*args: Any, **kwargs: Any) -> Any:
@@ -1117,7 +1210,7 @@ class LLMEngine:
                 kwargs=kwargs,
                 max_retries=max_retries,
                 own_semaphore=False,
-                usage_context=None,
+                usage_context=budget_context or "",
                 budget_context=budget_context,
             )
 
@@ -1139,8 +1232,7 @@ class LLMEngine:
         """Shared transport retry loop behind ``complete_text`` and
         ``_make_retrying_acompletion``.
 
-        The two call modes differ on exactly three axes, expressed as
-        parameters:
+        The two call modes differ on these axes, expressed as parameters:
 
         - ``own_semaphore``: when True (text calls), each attempt acquires
           the engine semaphore and backoff sleeps happen OUTSIDE it —
@@ -1148,10 +1240,9 @@ class LLMEngine:
           a rate-limit burst. When False (instructor adapter), no slot is
           acquired here: the caller (``complete_structured``) holds one for
           the whole structured call, so backoff sleeps keep it.
-        - ``usage_context``: when not None (text calls), every successful
-          attempt is recorded via ``track_usage``. None for the instructor
-          adapter: usage is tracked once per structured call from the final
-          raw response, which instructor accumulates across its own retries.
+        - ``usage_context``: when not None, every answered attempt is
+          recorded via ``track_usage`` (both modes pass one: an answer the
+          caller rejects afterwards was billed all the same).
         - ``finalize``: maps the successful raw response (plus derived
           model/tokens/cost) to the return value; None returns the raw
           ModelResponse (instructor needs the raw object).

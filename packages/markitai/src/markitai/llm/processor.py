@@ -44,7 +44,13 @@ from markitai.constants import (
 from markitai.llm import content
 from markitai.llm.cache import ContentCache, PersistentCache
 from markitai.llm.document import DocumentEnhancer
-from markitai.llm.engine import LLMEngine, RequestBudget, scoped_usage_key
+from markitai.llm.engine import (
+    LLMEngine,
+    RequestBudget,
+    record_llm_spend,
+    record_llm_spend_marker,
+    scoped_usage_key,
+)
 from markitai.llm.models import (
     get_model_info_cached,
     model_list_fingerprint,
@@ -974,6 +980,9 @@ class LLMProcessor:
             cached_tokens: Cache-read input tokens (prompt caching hits);
                 a subset of input_tokens billed at the provider's cache rate
         """
+        # The work item's own tally sees every paid answer, also the ones
+        # a failing stage clears from its context below
+        record_llm_spend(model, input_tokens, output_tokens, cost, cached_tokens)
         if not context:
             return
         with self._usage_lock:
@@ -1070,6 +1079,7 @@ class LLMProcessor:
         with self._usage_lock:
             # Touching the defaultdict creates the all-zero entry
             _ = self._context_usage[context][REQUEST_BUDGET_EXCEEDED_MARKER]
+        record_llm_spend_marker(REQUEST_BUDGET_EXCEEDED_MARKER)
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics (delegates to the engine's counters).
