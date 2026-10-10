@@ -32,7 +32,7 @@ fn configuration_warnings_are_advisory_explicit_and_separate_from_errors() {
     let root = tempfile::tempdir().unwrap();
     let defaults = output(root.path(), &["config", "validate"]);
     assert!(defaults.status.success());
-    assert_eq!(defaults.stdout, b"Configuration is valid\n");
+    assert_eq!(defaults.stdout, "✓ Configuration is valid\n".as_bytes());
     assert!(defaults.stderr.is_empty());
     std::fs::write(
         root.path().join("explicit.json"),
@@ -54,7 +54,7 @@ fn configuration_warnings_are_advisory_explicit_and_separate_from_errors() {
         "image.stdout_fetch_external",
     ] {
         assert!(
-            warnings.contains(&format!("Warning: {key} has no effect")),
+            warnings.contains(&format!("  ! {key} has no effect")),
             "{warnings}"
         );
     }
@@ -64,10 +64,10 @@ fn configuration_warnings_are_advisory_explicit_and_separate_from_errors() {
         .output()
         .unwrap();
     assert!(chinese.status.success());
-    assert_eq!(chinese.stdout, "配置有效\n".as_bytes());
+    assert_eq!(chinese.stdout, "✓ 配置有效\n".as_bytes());
     assert!(
         String::from_utf8_lossy(&chinese.stderr)
-            .contains("Warning: batch.heavy_task_limit 没有运行效果")
+            .contains("  ! batch.heavy_task_limit 没有运行效果")
     );
     std::fs::write(
         root.path().join("invalid.json"),
@@ -77,8 +77,8 @@ fn configuration_warnings_are_advisory_explicit_and_separate_from_errors() {
     let invalid = output(root.path(), &["config", "validate", "invalid.json"]);
     assert_eq!(invalid.status.code(), Some(1));
     assert!(invalid.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&invalid.stderr).starts_with("Error:"));
-    assert!(!String::from_utf8_lossy(&invalid.stderr).contains("Warning:"));
+    assert!(String::from_utf8_lossy(&invalid.stderr).starts_with("✗ "));
+    assert!(!String::from_utf8_lossy(&invalid.stderr).contains("  ! "));
 }
 
 #[test]

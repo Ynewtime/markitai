@@ -382,7 +382,7 @@ fn turning_persistence_off_keeps_relative_references_and_says_so() {
     );
     let stderr = text(&output.stderr);
     assert!(
-        stderr.contains("Warning: 2 image references point to files that stdout mode does not write because image.stdout_persist is false"),
+        stderr.contains("  ! 2 image references point to files that stdout mode does not write because image.stdout_persist is false"),
         "{stderr}"
     );
     assert!(!sandbox.root.join("home/assets").exists());
@@ -432,7 +432,7 @@ fn a_symlinked_store_is_not_written_through() {
     );
     let stderr = text(&output.stderr);
     assert!(
-        stderr.contains("Warning: 2 images could not be saved to "),
+        stderr.contains("  ! 2 images could not be saved to "),
         "{stderr}"
     );
     assert!(stderr.contains("Symlink access is disabled"), "{stderr}");

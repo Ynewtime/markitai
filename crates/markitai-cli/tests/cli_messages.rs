@@ -165,14 +165,14 @@ fn single_inputs_name_the_written_file_and_explain_skips() {
     assert!(first.status.success(), "{}", stderr(&first));
     assert_eq!(
         stderr(&first).trim(),
-        format!("Wrote {}", native("out/note.txt.md"))
+        format!("✓ Wrote {}", native("out/note.txt.md"))
     );
     // The renamed result is the one the user has to know about.
     let second = invoke(root.path(), &["note.txt", "-o", "out"]);
     assert_eq!(
         stderr(&second).trim(),
         format!(
-            "Wrote {} (note.txt.md already exists)",
+            "✓ Wrote {} (note.txt.md already exists)",
             native("out/note.txt.v2.md")
         )
     );
@@ -222,7 +222,7 @@ fn single_inputs_name_the_written_file_and_explain_skips() {
     let absolute = root.path().join("scan.png");
     let named = invoke(root.path(), &[absolute.to_str().unwrap()]);
     assert!(
-        stderr(&named).starts_with("Skipped scan.png: "),
+        stderr(&named).starts_with("  ! Skipped scan.png: "),
         "{}",
         stderr(&named)
     );
@@ -308,7 +308,7 @@ fn unusable_output_locations_are_named_before_any_conversion_state() {
     // A preview reports the problem but still lists its targets.
     let preview = invoke(root.path(), &["batch", "-o", "taken", "--dry-run"]);
     assert!(preview.status.success());
-    assert!(stderr(&preview).contains("Warning: Output path taken exists"));
+    assert!(stderr(&preview).starts_with("  ! Output path taken exists"));
     assert!(stdout(&preview).contains("a.txt -> taken"));
     assert_eq!(
         std::fs::read_to_string(root.path().join("taken")).unwrap(),
@@ -433,13 +433,16 @@ fn batch_summary_names_failures_and_where_results_went() {
     let output = invoke(root.path(), &["docs", "-o", "out"]);
     assert_eq!(output.status.code(), Some(10));
     let message = stderr(&output);
-    assert!(message.contains("Error: broken.docx: "), "{message}");
-    assert!(message.contains("Done: 1/2 files ("), "{message}");
+    assert!(message.contains("  ✗ broken.docx: "), "{message}");
+    assert!(message.contains("\n! Done: 1/2 files ("), "{message}");
     assert!(
-        message.contains("Failed 1 item: broken.docx. See the errors above."),
+        message.contains("\n  ✗ Failed 1 item: broken.docx. See the errors above."),
         "{message}"
     );
-    assert!(message.trim_end().ends_with("Output: out"), "{message}");
+    assert!(
+        message.trim_end().ends_with("\n\n  Output: out"),
+        "{message}"
+    );
 
     // Every item failing for want of a model gets one remedy line.
     let output = invoke(root.path(), &["docs", "-o", "llm-out", "--llm"]);
@@ -452,7 +455,7 @@ fn batch_summary_names_failures_and_where_results_went() {
     );
     let single = invoke(root.path(), &["docs/good.txt", "--llm"]);
     assert_eq!(single.status.code(), Some(1));
-    assert!(stderr(&single).contains("Hint: set a provider API key such as OPENAI_API_KEY"));
+    assert!(stderr(&single).contains("  → Set a provider API key such as OPENAI_API_KEY"));
 }
 
 #[test]
@@ -467,11 +470,11 @@ fn url_list_warnings_locate_rejected_entries_without_echoing_them() {
     assert_eq!(output.status.code(), Some(1));
     let message = stderr(&output);
     assert!(
-        message.contains("skipping line 3 in links.urls: not an HTTP(S) URL"),
+        message.contains("  ! Skipping line 3 in links.urls: not an HTTP(S) URL"),
         "{message}"
     );
     assert!(!message.contains("entry-secret"), "{message}");
-    assert!(message.contains("No valid URLs found in links.urls."));
+    assert!(message.contains("\n✗ No valid URLs found in links.urls."));
 
     std::fs::write(
         root.path().join("list.urls"),
@@ -480,11 +483,11 @@ fn url_list_warnings_locate_rejected_entries_without_echoing_them() {
     .unwrap();
     let message = stderr(&invoke(root.path(), &["list.urls", "-o", "out"]));
     assert!(
-        message.contains("skipping entry 1 in list.urls"),
+        message.contains("Skipping entry 1 in list.urls"),
         "{message}"
     );
     assert!(
-        message.contains("skipping entry 2 in list.urls: expected a URL string"),
+        message.contains("Skipping entry 2 in list.urls: expected a URL string"),
         "{message}"
     );
     assert!(!message.contains("entry-secret"), "{message}");
@@ -543,9 +546,13 @@ fn configuration_mistakes_point_at_the_available_choices() {
     assert!(stdout(&path).contains("Create one with `markitai init`"));
     let init = invoke(root.path(), &["init", "-y", "--local"]);
     assert!(init.status.success());
-    assert!(stdout(&init).starts_with("Configuration created: "));
+    assert!(stdout(&init).starts_with("✓ Configuration created: "));
     assert_eq!(stdout(&init).lines().count(), 1);
-    assert!(stderr(&init).contains("Next steps:"), "{}", stderr(&init));
+    assert!(
+        stderr(&init).contains("\nNext steps\n"),
+        "{}",
+        stderr(&init)
+    );
     assert!(
         stderr(&init).contains("No API model was detected"),
         "{}",

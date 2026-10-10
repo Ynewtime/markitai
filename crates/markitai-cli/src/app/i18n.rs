@@ -12,6 +12,12 @@
 //! Variables come from the process first
 //! and then from the same `.env` files that configuration selection reads.
 //!
+//! Chinese chosen by the locale or the system falls back to English where the
+//! output cannot draw it: a locale with another character set than UTF-8
+//! (`zh_CN.GBK`; a GBK terminal would print mojibake), or the legacy Windows
+//! console with a code page that is neither CJK nor UTF-8. `MARKITAI_LANG=zh`
+//! is taken as asked.
+//!
 //! Only sentences meant for a person change. JSON, values shared with JSON
 //! (check names, messages and hints), usage errors from the argument parser,
 //! the file log and exit codes stay as they are in every language.
@@ -29,8 +35,18 @@ pub(crate) fn lang() -> Lang {
     static LANG: OnceLock<Lang> = OnceLock::new();
     *LANG.get_or_init(|| {
         let fallback = system_locale();
-        detect_with_locale(&markitai_core::config::environment(), fallback.as_deref())
+        let vars = markitai_core::config::environment();
+        match detect_with_locale(&vars, fallback.as_deref()) {
+            Lang::Zh if !explicit(&vars) && !crate::term::cjk_capable() => Lang::En,
+            lang => lang,
+        }
     })
+}
+
+/// Whether `MARKITAI_LANG` chose the language.
+fn explicit(vars: &HashMap<String, String>) -> bool {
+    vars.get("MARKITAI_LANG")
+        .is_some_and(|value| !value.is_empty())
 }
 
 #[cfg(windows)]

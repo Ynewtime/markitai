@@ -235,16 +235,22 @@ fn environment_models_and_text_summary_match_what_a_conversion_uses() {
     let output = command(dir.path(), json!({})).output().unwrap();
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
+    // The title, then the version and where the configuration came from.
     assert!(
-        text.lines()
-            .nth(1)
-            .is_some_and(|line| line.starts_with("Configuration: built-in defaults")),
+        text.starts_with("◆ System Check\n\n  • Version: markitai "),
         "{text}"
     );
     assert!(
-        text.trim_end().lines().last().is_some_and(
-            |line| line.starts_with("Summary: nothing the configuration requires is blocked")
-        ),
+        text.lines()
+            .nth(3)
+            .is_some_and(|line| line.starts_with("  • Config: defaults (no config file found")),
+        "{text}"
+    );
+    assert!(
+        text.trim_end()
+            .lines()
+            .last()
+            .is_some_and(|line| line.starts_with("! Ready. Not available (optional): ")),
         "{text}"
     );
     let output = command(dir.path(), json!({"fetch":{"strategy":"playwright"}}))
@@ -253,9 +259,7 @@ fn environment_models_and_text_summary_match_what_a_conversion_uses() {
     assert_eq!(output.status.code(), Some(1));
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(
-        text.contains(
-            "Summary: 1 check required by the configuration is not ready: Chromium (native CDP)."
-        ),
+        text.contains("\n\n✗ Not ready: fix Chromium (native CDP) first (see above)\n"),
         "{text}"
     );
 }

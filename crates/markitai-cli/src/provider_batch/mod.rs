@@ -4,6 +4,7 @@ mod store;
 pub(super) use resume::resume;
 use resume::{advance_frozen, reconciliation_handoff};
 
+use super::logging::Shape;
 use super::*;
 use crate::output_claims::{Claim, MemberLeases, Owner, Policy};
 use markitai_core::output::Publication;
@@ -113,13 +114,18 @@ fn handoff(cli: &Cli, store: &store::Store) -> Value {
         .as_ref()
         .expect("submitted job has batch identity");
     let command = collect_command(cli, &batch.id, &store.state().output_root);
-    eprintln!(
-        "Provider batch {} is retained. Collect with: {}",
-        batch.id, command
+    logging::shaped(
+        Shape::item(Mark::Info),
+        &format!(
+            "Provider batch {} is retained. Collect it later with:",
+            batch.id
+        ),
+        None,
     );
+    logging::shaped(Shape::COMMAND, &command, None);
     if cli.config_json.is_some() {
         eprintln!(
-            "Re-supply the original model configuration when collecting; inline configuration is not written into this command."
+            "Warning: Re-supply the original model configuration when collecting; inline configuration is not written into this command."
         );
     }
     json!({"id":batch.id,"status":batch.status,"collect_command":command})
@@ -368,7 +374,7 @@ fn wait_and_finish(
         match poll.retrieve(id) {
             Ok(batch) => store.bind_batch(batch).map_err(runtime)?,
             Err(error) => {
-                eprintln!("Provider status could not be read: {error}");
+                eprintln!("Warning: Provider status could not be read: {error}");
                 pending_job = true;
                 break;
             }
@@ -442,7 +448,11 @@ pub(super) fn collect(cli: &Cli, id: &str, cfg: Value) -> CliResult<i32> {
         Err(error) => return Err(runtime(error)),
     };
     if store.state().phase == store::Phase::Collected {
-        eprintln!("Provider batch {id} was already collected.");
+        logging::shaped(
+            Shape::item(Mark::Info),
+            &format!("Provider batch {id} was already collected."),
+            None,
+        );
         return Ok(0);
     }
     let session = provider::Session::for_collection(&cfg).map_err(runtime)?;
@@ -467,9 +477,13 @@ pub(super) fn collect(cli: &Cli, id: &str, cfg: Value) -> CliResult<i32> {
         clock,
     )?;
     let usage = store.usage().map_err(runtime)?;
-    eprintln!(
-        "Collected provider batch {id}: {} observed requests; known priced subtotal ${:.6}.",
-        usage.requests, usage.cost_usd
+    logging::shaped(
+        Shape::item(Mark::Success),
+        &format!(
+            "Collected provider batch {id}: {} observed requests; known priced subtotal ${:.6}.",
+            usage.requests, usage.cost_usd
+        ),
+        None,
     );
     Ok(code)
 }
@@ -563,7 +577,7 @@ fn collect_ready(
         Ok(result) => Ok(result),
         Err((_, message)) => {
             eprintln!(
-                "Provider Batch collection stopped; previously recorded observations are retained: {message}"
+                "Error: Provider Batch collection stopped; previously recorded observations are retained: {message}"
             );
             Ok((1, collection_failure_records(store, &message)))
         }
@@ -611,7 +625,7 @@ fn collect_ready_inner(
         }
         if let Some(error) = error {
             eprintln!(
-                "Provider Batch collection stopped; recorded usage and result evidence are retained: {error}"
+                "Error: Provider Batch collection stopped; recorded usage and result evidence are retained: {error}"
             );
             return Ok((1, collection_failure_records(store, &error.to_string())));
         }

@@ -1,4 +1,5 @@
 //! The CLI owns its sinks; core and language bindings do not install global loggers.
+use crate::term::{Mark, Style, Tone};
 use chrono::Local;
 use markitai_core::config;
 use serde_json::{Value, json};
@@ -196,18 +197,120 @@ pub(super) fn event(level: Level, message: impl AsRef<str>) {
     }
 }
 
+/// How a diagnostic sits on the terminal: its mark, the columns before it
+/// and the tone of its text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Shape {
+    pub(crate) mark: Option<Mark>,
+    pub(crate) indent: usize,
+    pub(crate) tone: Option<Tone>,
+    /// Whether a long line wraps on the terminal; a command to copy or a line
+    /// scripts read does not.
+    pub(crate) wrap: bool,
+}
+
+impl Shape {
+    /// A run's item line: `  <mark> text`.
+    pub(crate) const fn item(mark: Mark) -> Self {
+        Self {
+            mark: Some(mark),
+            indent: 2,
+            tone: None,
+            wrap: true,
+        }
+    }
+    /// A command's closing line: the mark at column 0.
+    pub(crate) const fn verdict(mark: Mark) -> Self {
+        Self {
+            mark: Some(mark),
+            indent: 0,
+            tone: None,
+            wrap: true,
+        }
+    }
+    /// Text under an item's text, without a mark.
+    pub(crate) const fn under(indent: usize) -> Self {
+        Self {
+            mark: None,
+            indent,
+            tone: None,
+            wrap: true,
+        }
+    }
+    /// A section header: bold at column 0.
+    pub(crate) const SECTION: Self = Self {
+        mark: None,
+        indent: 0,
+        tone: Some(Tone::Structure),
+        wrap: true,
+    };
+    /// A command to copy under an item: its own line, the accent colour,
+    /// never wrapped.
+    pub(crate) const COMMAND: Self = Self {
+        mark: None,
+        indent: 4,
+        tone: Some(Tone::Accent),
+        wrap: false,
+    };
+    /// A line printed as it is.
+    pub(crate) const PLAIN: Self = Self {
+        mark: None,
+        indent: 0,
+        tone: None,
+        wrap: true,
+    };
+}
+
+/// The labels a diagnostic's English text starts with, the file log level
+/// each stands for and the mark the terminal shows instead. The file log
+/// keeps the label so it can be searched; `Interrupted:` and `Note:` stay in
+/// the text on the terminal too.
+fn labelled(english: &str) -> (Level, Shape, usize) {
+    for (label, level, mark, keep) in [
+        ("Error: ", Level::Error, Mark::Error, false),
+        ("Warning: ", Level::Warning, Mark::Warning, false),
+        ("Hint: ", Level::Info, Mark::Action, false),
+        ("Interrupted: ", Level::Warning, Mark::Warning, true),
+        ("Note: ", Level::Info, Mark::Info, true),
+    ] {
+        if english.starts_with(label) {
+            return (level, Shape::item(mark), if keep { 0 } else { label.len() });
+        }
+    }
+    (Level::Info, Shape::PLAIN, 0)
+}
+
 /// All existing CLI diagnostics keep their console policy and gain redaction.
-pub(super) fn diagnostic(args: std::fmt::Arguments<'_>) {
-    emit(args.to_string(), None);
+/// A leading `Error:`, `Warning:` or `Hint:` label becomes the matching mark
+/// on the terminal (see [`labelled`]).
+pub(crate) fn diagnostic(args: std::fmt::Arguments<'_>) {
+    emit(args.to_string(), None, None);
 }
 
 /// A diagnostic whose console text is in the terminal language while the file
 /// log keeps `english`: log lines read the same in every language.
 pub(super) fn diagnostic_as(english: std::fmt::Arguments<'_>, console: std::fmt::Arguments<'_>) {
-    emit(english.to_string(), Some(console.to_string()));
+    emit(english.to_string(), Some(console.to_string()), None);
 }
 
-fn emit(original: String, console: Option<String>) {
+/// A diagnostic in an explicit shape. The file log gets `english` as it is,
+/// at the level its label stands for (see [`labelled`]); a label is left off
+/// the terminal, where the mark says it.
+pub(crate) fn shaped(shape: Shape, english: &str, console: Option<&str>) {
+    emit(english.to_owned(), console.map(str::to_owned), Some(shape));
+}
+
+/// The error that ends a command, at column 0: `✗ message`. The file log
+/// keeps `Error: message`.
+pub(super) fn fatal(message: &str) {
+    emit(
+        format!("Error: {message}"),
+        None,
+        Some(Shape::verdict(Mark::Error)),
+    );
+}
+
+fn emit(original: String, console: Option<String>, shape: Option<Shape>) {
     let message = {
         let active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
         redact(
@@ -215,17 +318,59 @@ fn emit(original: String, console: Option<String>) {
             active.as_ref().map(|s| s.secrets.as_slice()).unwrap_or(&[]),
         )
     };
-    let level = if original.starts_with("Error:") {
-        Level::Error
-    } else if original.starts_with("Warning:") || original.starts_with("Interrupted:") {
-        Level::Warning
-    } else {
-        Level::Info
-    };
+    // The file log's level and text come from the English line alone; the
+    // shape only places the line on the terminal.
+    let (level, label_shape, label) = labelled(&original);
+    let shape = shape.unwrap_or(label_shape);
+    // The console text carries the same label as the English one.
+    let body = message.strip_prefix(&original[..label]).unwrap_or(&message);
     event(level, &original);
     // A status line on the terminal gives way to the line that follows it.
     super::progress::clear();
-    let _ = writeln!(io::stderr().lock(), "{message}");
+    let line = render(shape, body);
+    write_line(&line);
+}
+
+/// A line for the terminal alone, as it is: neither redacted nor logged.
+/// For the service's startup lines, whose addresses carry the access token
+/// the person who started it needs to copy.
+pub(crate) fn console(shape: Shape, text: &str) {
+    super::progress::clear();
+    write_line(&render(shape, text));
+}
+
+/// `text` in `shape` as stderr shows it.
+fn render(shape: Shape, text: &str) -> String {
+    let style = Style::stderr();
+    if shape.wrap {
+        return style.line(shape.indent, shape.mark, text, shape.tone);
+    }
+    let mut line = " ".repeat(shape.indent);
+    if let Some(mark) = shape.mark {
+        line.push_str(&style.mark(mark));
+        line.push(' ');
+    }
+    match shape.tone {
+        Some(tone) => line.push_str(&style.paint(tone, text)),
+        None => line.push_str(text),
+    }
+    line
+}
+
+/// An empty line on stderr between blocks; the file log does not record it.
+pub(crate) fn blank() {
+    super::progress::clear();
+    write_line("");
+}
+
+/// One line on stderr. A failed write is ignored: the run's outcome does not
+/// depend on its diagnostics. Unit tests print through the test harness,
+/// which captures the lines of passing tests.
+fn write_line(line: &str) {
+    #[cfg(test)]
+    std::eprintln!("{line}");
+    #[cfg(not(test))]
+    let _ = writeln!(io::stderr().lock(), "{line}");
 }
 
 pub(super) fn finish(code: i32) -> io::Result<()> {

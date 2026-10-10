@@ -114,10 +114,7 @@ fn a_reader_that_has_gone_changes_neither_the_work_done_nor_a_failing_status() {
     // Without --json the error is printed on stderr as usual.
     let output = run_into_closed_pipe(root.path(), &["missing.txt"]);
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stderr(&output),
-        "Error: Input file not found: missing.txt\n"
-    );
+    assert_eq!(stderr(&output), "  ✗ Input file not found: missing.txt\n");
 }
 
 /// A regular file that may grow only to `limit` bytes: further writes fail with
@@ -171,7 +168,7 @@ fn dev_full_fails_with_a_message_naming_standard_output() {
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
     assert_eq!(
         stderr(&output),
-        "Error: Cannot write to standard output: No space left on device (os error 28)\n"
+        "✗ Cannot write to standard output: No space left on device (os error 28)\n"
     );
 }
 
@@ -185,11 +182,11 @@ fn a_stream_that_cannot_be_written_fails_with_a_message_naming_standard_output()
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
     let text = stderr(&output);
     assert!(
-        text.starts_with("Error: Cannot write to standard output: "),
+        text.starts_with("✗ Cannot write to standard output: "),
         "{text}"
     );
     assert!(text.contains("File too large"), "{text}");
-    assert_eq!(text.matches("Error:").count(), 1, "{text}");
+    assert_eq!(text.matches("Cannot write").count(), 1, "{text}");
     assert!(size <= limit, "the limit did not apply: {size} bytes");
 
     // Output that fits is unaffected by the same limit.

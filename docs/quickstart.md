@@ -284,7 +284,7 @@ uses an API key from the environment:
 ```sh
 export OPENAI_API_KEY=...   # or ANTHROPIC_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, OPENROUTER_API_KEY
 markitai init --yes         # saves the detected model to the user config; LLM stays off
-markitai doctor             # "LLM API: ok"; no model request is sent
+markitai doctor             # "✓ LLM API: …"; no model request is sent
 markitai report.pdf --llm -o out/   # writes out/report.pdf.llm.md
 ```
 

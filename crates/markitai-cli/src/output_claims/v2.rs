@@ -325,7 +325,7 @@ impl Drop for Epoch {
         // Nonblocking gate avoids recursion when acquisition fails in-gate;
         // recovery on the next open handles those safe retained probes.
         if let Err(error) = self.parent.cleanup() {
-            eprintln!("Output coordination cleanup incomplete: {error}");
+            eprintln!("Warning: Output coordination cleanup incomplete: {error}");
         }
     }
 }
@@ -452,7 +452,7 @@ impl Drop for Lease {
             }
         };
         if let Err(error) = cleanup {
-            eprintln!("Output coordination cleanup incomplete: {error}");
+            eprintln!("Warning: Output coordination cleanup incomplete: {error}");
         }
     }
 }

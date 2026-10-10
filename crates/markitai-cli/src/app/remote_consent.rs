@@ -10,6 +10,7 @@
 //! conversions wait for the answer.
 
 use super::i18n::{self, Lang};
+use crate::term::{Mark, Style};
 use markitai_core::{ConsentRequest, RemoteFallback, RemoteNotice};
 use serde_json::Value;
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -41,7 +42,13 @@ pub(super) fn install(raw: &Value, quiet: bool) {
             super::progress::clear();
             let stdin = io::stdin();
             let mut input = stdin.lock();
-            question(request, &mut input, &mut stderr, i18n::lang())
+            question(
+                request,
+                &mut input,
+                &mut stderr,
+                i18n::lang(),
+                Style::stderr(),
+            )
         }) as Ask
     });
     let notify = Box::new(move |notice: &RemoteNotice| {
@@ -80,17 +87,39 @@ fn names(services: &[&str], lang: Lang) -> String {
 
 /// Ask on `output`, read one line from `input`: yes only for `y`, `yes` (or
 /// `是`, `好`, `允许`); an empty line, anything else or the end of input is no.
+/// The question sits among a run's item lines: what failed as a warning, what
+/// the answer allows under it, then the prompt.
 pub(super) fn question(
     request: &ConsentRequest,
     input: &mut dyn BufRead,
     output: &mut dyn Write,
     lang: Lang,
+    style: Style,
 ) -> bool {
     let url = &request.url;
     let services = names(&request.services, lang);
-    let text = text!(lang =>
-        "Local fetching could not read {url}.\nThis run can send public URLs that local fetching cannot read to remote extraction services, one at a time until one succeeds: {services}.\nAllow that for this run? [y/N] ",
-        "本地抓取无法读取 {url}。\n本次运行可以把本地无法读取的公开 URL 依次发送给远程抽取服务，直到其中一个成功：{services}。\n本次运行允许吗？[y/N] ",
+    let text = format!(
+        "{}\n{}\n{}",
+        style.item(
+            Mark::Warning,
+            &text!(lang =>
+                "Local fetching could not read {url}.",
+                "本地抓取无法读取 {url}。",
+            )
+        ),
+        style.line(
+            4,
+            None,
+            &text!(lang =>
+                "This run can send public URLs that local fetching cannot read to remote extraction services, one at a time until one succeeds: {services}.",
+                "本次运行可以把本地无法读取的公开 URL 依次发送给远程抽取服务，直到其中一个成功：{services}。",
+            ),
+            None
+        ),
+        style.prompt(
+            2,
+            &text!(lang => "Allow that for this run? [y/N]", "本次运行允许吗？[y/N]")
+        ),
     );
     let _ = output.write_all(text.as_bytes());
     let _ = output.flush();
@@ -154,7 +183,13 @@ mod tests {
 
     fn answer(typed: &str, lang: Lang) -> (bool, String) {
         let mut output = Vec::new();
-        let yes = question(&request(), &mut typed.as_bytes(), &mut output, lang);
+        let yes = question(
+            &request(),
+            &mut typed.as_bytes(),
+            &mut output,
+            lang,
+            Style::PLAIN,
+        );
         (yes, String::from_utf8(output).unwrap())
     }
 
@@ -169,7 +204,11 @@ mod tests {
         let (yes, shown) = answer("", Lang::En);
         assert!(!yes);
         assert!(shown.ends_with("[y/N] \n"), "{shown}");
-        assert!(shown.starts_with("Local fetching could not read https://example.com/a."));
+        assert!(shown.starts_with("  ! Local fetching could not read https://example.com/a.\n"));
+        assert!(
+            shown.contains("\n  ? Allow that for this run? [y/N] \n"),
+            "{shown}"
+        );
         assert!(
             shown.contains("defuddle.md, Jina Reader, Cloudflare (your account)"),
             "{shown}"

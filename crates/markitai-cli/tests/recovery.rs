@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 mod interrupt;
 
 const WAIT: Duration = Duration::from_secs(20);
-const INTERRUPTED: &str = "Interrupted: stopping new work and waiting for active conversions.";
+const INTERRUPTED: &str = "  ! Interrupted: stopping new work and waiting for active conversions.";
 
 // Processes receive only an isolated configuration/home. Gates are ordinary HTTP
 // responses, so these tests exercise production dispatch without hidden flags.

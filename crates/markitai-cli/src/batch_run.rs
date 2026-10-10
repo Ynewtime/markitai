@@ -740,6 +740,7 @@ fn run_with_namespace(
             LoadOutcome::Missing => {
                 if !cli.quiet {
                     say!(
+                        logging::Shape::item(Mark::Info);
                         "No recovery state matches these paths and options; starting a fresh batch.",
                         "没有与这些路径和选项匹配的恢复状态，将开始全新的批处理。"
                     );
@@ -748,7 +749,7 @@ fn run_with_namespace(
             }
             LoadOutcome::Corrupt { reason } => {
                 say!(
-                    "Warning: recovery state could not be loaded ({reason}); preserving it before a fresh checkpoint",
+                    "Warning: Recovery state could not be loaded ({reason}); preserving it before a fresh checkpoint",
                     "Warning: 无法加载恢复状态（{reason}）；将先保留它，再建立新的检查点"
                 );
                 Snapshot::default()
@@ -922,6 +923,7 @@ fn run_with_namespace(
             let done = resumed.converted + resumed.skipped;
             let remaining = pending.len();
             say!(
+                logging::Shape::item(Mark::Action);
                 "Resuming: {done} already done, {remaining} remaining",
                 "继续：已完成 {done} 项，剩余 {remaining} 项"
             );
@@ -968,6 +970,7 @@ fn run_with_namespace(
     {
         let backup = backup.display();
         say!(
+            logging::Shape::item(Mark::Info);
             "Preserved original legacy recovery files at {backup}. This backup does not undo output or model work.",
             "已把原有的旧版恢复文件保留在 {backup}。该备份不会撤销已写出的输出或已完成的模型请求。"
         );
@@ -1426,11 +1429,12 @@ fn run_with_namespace(
             Ok(publication) if cli.verbose && !cli.quiet => match publication {
                 crate::report_store::Publication::Written(path) => {
                     let path = path.display();
-                    say!("Report: {path}", "报告：{path}")
+                    say!(logging::Shape::item(Mark::Info); "Report: {path}", "报告：{path}")
                 }
                 crate::report_store::Publication::SkippedExisting(path) => {
                     let path = path.display();
                     say!(
+                        logging::Shape::item(Mark::Info);
                         "Existing report preserved: {path}",
                         "已保留现有报告：{path}"
                     )

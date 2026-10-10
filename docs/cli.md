@@ -84,7 +84,9 @@ OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 `MARKITAI_LANG=zh` 选中文，其他非空值选英文；未设置时依次读
 `LC_ALL`、`LC_MESSAGES`、`LANG`，跳过 `C`/`POSIX`。没有可用值时，Windows
 读系统显示语言再回退用户区域语言，其他系统默认英文。变量来自进程环境、
-当前目录 `.env`、`MARKITAI_HOME/.env`，前者优先。
+当前目录 `.env`、`MARKITAI_HOME/.env`，前者优先。由 locale 或系统选中的中文
+在输出无法显示中文时回退为英文：字符集不是 UTF-8 的 locale（如 `zh_CN.GBK`），
+或代码页既非 CJK 也非 UTF-8 的旧版 Windows 控制台；`MARKITAI_LANG=zh` 照常生效。
 
 ```sh
 MARKITAI_LANG=zh markitai --help
@@ -92,8 +94,28 @@ MARKITAI_LANG=zh markitai doctor
 ```
 
 帮助、主要诊断与批处理摘要有中英文；参数名、JSON 字段、路径、核心原始错误、
-文件日志保持原文。`Error:`、`Warning:` 等标签固定，方便检索。
+文件日志保持原文。文件日志里的 `Error:`、`Warning:` 等标签固定，方便检索；
+终端上由标记代替（见下文）。
 交互编辑器、向导、订阅认证及部分服务输出仍为英文；工作台独立切换语言。
+
+## 终端样式
+
+终端输出与 Python markitai 1.2.1 使用同一套样式。标记说明每行的含义，颜色只是
+重复它：`✓` 成功（绿）、`!` 警告（黄）、`✗` 错误（红）、`→` 下一步或正在进行
+的操作（青）、`•` 事实或列表项（灰）、`○` 有意跳过（灰）、`?` 等待输入（青）、
+`◆` 标题（青）；节标题加粗不着色，要复制的命令单独一行、青色、不折行。条目缩进
+两列，结论行（如 `doctor` 与批处理的最后一行）从第 0 列开始，前面空一行。
+
+- 终端上长行在正文下方缩进折行；管道、文件与 CI 输出每条消息一行，没有状态行。
+- `NO_COLOR`（任意非空值）关闭颜色，标记保留；`FORCE_COLOR` 在管道中也输出颜色；
+  `TERM=dumb` 既无颜色也不折行，并改用 ASCII 标记。
+- 无法显示这些标记的输出改用 `+ ! x > - o ? *`：字符集不是 UTF-8 的 locale
+  （`C`/`POSIX` 或未设置按 UTF-8 处理，与 Python 相同），以及 Windows 的旧版
+  控制台主机（Windows Terminal、VS Code、ConEmu、mintty 与 SSH 会话显示 Unicode）。
+  Windows 上重定向的输出只在控制台代码页为 65001 时使用 Unicode 标记：PowerShell
+  按该代码页解码程序的输出。
+- 只用 8 种普通颜色加灰色 90，浅色与深色主题都清晰；经典蓝底 Windows PowerShell
+  窗口把暗黄显示成近白色，在那里警告、错误、成功与青色改用亮色槽。
 
 ### 中文帮助
 
