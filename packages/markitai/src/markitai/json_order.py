@@ -85,6 +85,8 @@ LLM_USAGE_FIELD_ORDER = [
     "input_tokens",
     "output_tokens",
     "cost_usd",
+    "usage_unknown_items",
+    "this_run",
 ]
 
 # llm_usage.models.{model} fields
@@ -98,6 +100,7 @@ LLM_MODEL_USAGE_FIELD_ORDER = [
 # documents.{path} fields (document entry)
 FILE_ENTRY_FIELD_ORDER = [
     "status",
+    "earlier_run",
     "cache_hit",
     "output",
     "error",
@@ -113,6 +116,7 @@ FILE_ENTRY_FIELD_ORDER = [
 # url_sources.{file}.urls.{url} fields (URL entry)
 URL_ENTRY_FIELD_ORDER = [
     "status",
+    "earlier_run",
     "cache_hit",
     "cache_details",
     "output",
@@ -235,6 +239,10 @@ def _order_llm_usage(llm_usage: dict[str, Any]) -> dict[str, Any]:
                 result["models"][model], LLM_MODEL_USAGE_FIELD_ORDER
             )
         result["models"] = ordered_models
+
+    # A resumed batch's own part of the totals has the same shape
+    if isinstance(result.get("this_run"), dict):
+        result["this_run"] = _order_llm_usage(result["this_run"])
 
     return result
 

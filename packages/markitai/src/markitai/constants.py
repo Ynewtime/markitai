@@ -15,7 +15,10 @@ import re
 # File Size Limits
 # =============================================================================
 
-MAX_STATE_FILE_SIZE = 10 * 1024 * 1024  # 10 MB - batch state file
+# Batch state file. A completed item keeps its cost, usage and timestamps
+# (about 650 bytes each), so 10,000 items (batch.scan_max_files) of an
+# LLM batch need about 7 MB; a state over the limit is not resumed.
+MAX_STATE_FILE_SIZE = 64 * 1024 * 1024  # 64 MB
 MAX_DOCUMENT_SIZE = 500 * 1024 * 1024  # 500 MB - input document
 
 # =============================================================================

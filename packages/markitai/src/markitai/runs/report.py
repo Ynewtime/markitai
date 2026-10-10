@@ -59,6 +59,8 @@ def build_llm_usage_block(
     models: dict[str, dict[str, Any]],
     *,
     cost_usd: float,
+    this_run: dict[str, Any] | None = None,
+    usage_unknown_items: int = 0,
 ) -> dict[str, Any]:
     """Build the ``llm_usage`` report block shared by every report shape.
 
@@ -67,16 +69,26 @@ def build_llm_usage_block(
             ``{model: {requests, input_tokens, output_tokens, ...}}``.
         cost_usd: Total run cost (summed per item, not per model, so it is
             supplied by the caller rather than derived from ``models``).
+        this_run: A resumed batch's block covers the whole batch; this is
+            the same block for the items this run processed.
+        usage_unknown_items: Items an earlier run completed without its
+            state recording their usage; left out of the totals.
 
     Returns:
         ``{"models": ..., "requests": ..., "input_tokens": ...,
-        "output_tokens": ..., "cost_usd": ...}``
+        "output_tokens": ..., "cost_usd": ...}``, plus
+        ``usage_unknown_items`` and ``this_run`` when given.
     """
-    return {
+    block: dict[str, Any] = {
         "models": models,
         **_llm_usage_totals(models),
         "cost_usd": cost_usd,
     }
+    if usage_unknown_items:
+        block["usage_unknown_items"] = usage_unknown_items
+    if this_run is not None:
+        block["this_run"] = this_run
+    return block
 
 
 def build_single_report(
@@ -171,6 +183,8 @@ def build_url_batch_report(
     llm_usage: dict[str, dict[str, Any]],
     cost_usd: float,
     log_file_path: Path | None = None,
+    this_run: dict[str, Any] | None = None,
+    usage_unknown_items: int = 0,
 ) -> dict[str, Any]:
     """Build the report dict for a URL-batch run.
 
@@ -184,6 +198,10 @@ def build_url_batch_report(
         llm_usage: Aggregated per-model usage stats for the whole batch.
         cost_usd: Total LLM API cost for the whole batch.
         log_file_path: Path to the run's log file, if any.
+        this_run: For a resumed batch, the ``llm_usage`` block of the URLs
+            this run processed (see ``build_llm_usage_block``).
+        usage_unknown_items: URLs an earlier run completed whose usage its
+            state did not record.
 
     Returns:
         Report dict ready for ``atomic_write_json(..., order_func=order_report)``.
@@ -201,7 +219,12 @@ def build_url_batch_report(
             "failed_urls": failed_urls,
             "duration": duration,
         },
-        "llm_usage": build_llm_usage_block(llm_usage, cost_usd=cost_usd),
+        "llm_usage": build_llm_usage_block(
+            llm_usage,
+            cost_usd=cost_usd,
+            this_run=this_run,
+            usage_unknown_items=usage_unknown_items,
+        ),
         "urls": results,
     }
 

@@ -36,6 +36,7 @@ class TestEnvelope:
             "skipped": 0,
             "pending": 0,
             "cost_usd": 0.0,
+            "this_run_cost_usd": 0.0,
             "duration_s": 1.234,
         }
         item = envelope["items"][0]
@@ -444,6 +445,7 @@ class TestCliContract:
             "skipped": 0,
             "pending": 0,
             "cost_usd": 0.0,
+            "this_run_cost_usd": 0.0,
             "duration_s": body["totals"]["duration_s"],
         }
 
