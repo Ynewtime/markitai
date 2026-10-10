@@ -210,3 +210,50 @@ class TestCanonicalUrl:
             url="https://example.com/",
         )
         assert metadata.canonical_url == "https://example.com/"
+
+
+def _wiki_style_page(headline: str, h1: str = "Markdown") -> str:
+    return f"""
+        <html>
+          <head>
+            <title>Markdown - Wikipedia</title>
+            <meta property="og:title" content="Markdown - Wikipedia" />
+            <script type="application/ld+json">
+              {{"@type":"Article","name":"Markdown","headline":"{headline}",
+                "author":{{"@type":"Organization","name":"Contributors"}}}}
+            </script>
+          </head>
+          <body><h1>{h1}</h1></body>
+        </html>
+        """
+
+
+def test_a_headline_that_describes_the_page_is_not_its_title() -> None:
+    """Wikipedia's JSON-LD headline is the article's short description.
+
+    Static fetches of Wikipedia now succeed (descriptive User-Agent), so the
+    raw HTML's JSON-LD reaches the extractor; the title must stay "Markdown",
+    as the Rust implementation and the rendered-page path give.
+    """
+    from markitai.webextract.dom import parse_html
+    from markitai.webextract.metadata import extract_metadata
+
+    soup = parse_html(
+        _wiki_style_page("a lightweight markup language for plain-text formatting")
+    )
+
+    metadata = extract_metadata(soup, "https://en.wikipedia.org/wiki/Markdown")
+
+    assert metadata.title == "Markdown"
+    assert metadata.author == "Contributors"
+
+
+def test_a_headline_naming_the_page_still_wins() -> None:
+    from markitai.webextract.dom import parse_html
+    from markitai.webextract.metadata import extract_metadata
+
+    soup = parse_html(_wiki_style_page("Markdown syntax, explained"))
+
+    metadata = extract_metadata(soup, "https://example.com/markdown")
+
+    assert metadata.title == "Markdown syntax, explained"

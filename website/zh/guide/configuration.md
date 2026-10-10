@@ -527,7 +527,7 @@ X/Twitter 的补充抓取（FxTwitter、Twitter oEmbed）和其他远程服务�
 |------|--------|------|
 | `timeout` | `30000` | 页面加载超时（毫秒）。加载后的页面操作也受同一预算约束（外加自动滚动时间），卡在脚本死循环里的页面会报错，而不是让整次运行挂住 |
 | `wait_for` | `domcontentloaded` | `load`、`domcontentloaded` 或 `networkidle` |
-| `extra_wait_ms` | `3000` | 加载事件后再等 JavaScript 的时间 |
+| `extra_wait_ms` | `3000` | 加载事件后等 JavaScript 的最长时间。页面稳定后（0.5 秒内没有进行中的脚本、XHR 或 fetch 请求，DOM 也没有变化）立即结束 |
 | `session_mode` | `isolated` | `isolated`（每个请求新上下文）或 `domain_persistent`（按域名复用） |
 | `session_ttl_seconds` | `600` | 持久会话的寿命 |
 | `wait_for_selector` | `null` | 等待的 CSS 选择器 |

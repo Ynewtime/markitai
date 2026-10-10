@@ -96,7 +96,7 @@ Clash 等代理返回 `198.18.0.0/15` 或 `2001:2::/48` 中的 Fake-IP 地址时
 |------|------|--------|------|
 | `wait_for_selector` | string | `null` | 抽取前等待的 CSS 选择器 |
 | `wait_for` | string | `null` | 页面加载事件：`load`、`domcontentloaded`、`networkidle`。不设则继承 `fetch.playwright.wait_for` |
-| `extra_wait_ms` | integer | `null` | 加载事件后的额外等待。不设则继承 `fetch.playwright.extra_wait_ms` |
+| `extra_wait_ms` | integer | `null` | 加载事件后额外等待的上限，页面稳定后提前结束。不设则继承 `fetch.playwright.extra_wait_ms` |
 | `prefer_strategy` | string | `null` | 这个域名优先尝试的策略 |
 | `strategy_priority` | list | `null` | 这个域名的完整策略顺序（覆盖全局顺序和 `prefer_strategy`） |
 | `skip_auto_scroll` | boolean | `false` | 单内容页面（推文、issue、文档）跳过自动滚动 |
@@ -127,7 +127,7 @@ markitai 内置了 `x.com`、`twitter.com` 和 `github.com` 的配置。只有�
 
 ## 静态 HTTP 适配器
 
-静态策略用 httpx，绝大多数站点都没问题。若站点因为 TLS 指纹检测返回 403 或空内容，`auto` 会自己回退到 Playwright 或 Cloudflare。想不开浏览器就绕过指纹检测，换成 curl-cffi：
+静态策略用 httpx，绝大多数站点都没问题。它以 `markitai/<版本> (+https://github.com/Ynewtime/markitai)` 表明身份：维基百科等站点拒绝通用库的 User-Agent，但会响应这种说明来源的标识。站点仍然返回 401 或 403 时，会先用桌面浏览器的请求头重试一次，再交给 `auto` 的下一个策略。若站点因为 TLS 指纹检测返回 403 或空内容，`auto` 会自己回退到 Playwright 或 Cloudflare。想不开浏览器就绕过指纹检测，换成 curl-cffi（它发送所模拟 Chrome 自己的 User-Agent）：
 
 ```bash
 uv pip install markitai[extra-fetch]

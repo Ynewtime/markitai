@@ -682,7 +682,9 @@ class PlaywrightConfig(BaseModel):
     )
     extra_wait_ms: int = Field(
         default=DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
-        description="Extra wait after page load (ms)",
+        description=(
+            "Longest extra wait after page load (ms); ends once the page settles"
+        ),
     )
 
     session_mode: Literal["isolated", "domain_persistent"] = Field(

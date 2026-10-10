@@ -944,14 +944,19 @@ class TestPlaywrightRenderer:
         renderer = PlaywrightRenderer()
         renderer._browser = mock_browser
 
-        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch(
+            "markitai.fetch_playwright._wait_until_settled",
+            AsyncMock(return_value=True),
+        ) as settle:
             await renderer.fetch(
                 "https://example.com",
                 extra_wait_ms=1000,
             )
 
-            # First call is extra_wait (1000ms = 1.0s), second is post-scroll delay
-            assert mock_sleep.call_args_list[0].args == (1.0,)
+            # The render wait ends once the page settles, at most 1.0s
+            settle.assert_awaited_once()
+            assert settle.await_args.args[0] is mock_page
+            assert settle.await_args.args[2] == 1.0
 
     @pytest.mark.asyncio
     async def test_fetch_no_extra_wait_when_zero(self):
@@ -976,18 +981,22 @@ class TestPlaywrightRenderer:
         renderer = PlaywrightRenderer()
         renderer._browser = mock_browser
 
-        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with (
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch(
+                "markitai.fetch_playwright._wait_until_settled",
+                AsyncMock(return_value=True),
+            ) as settle,
+        ):
             await renderer.fetch(
                 "https://example.com",
                 extra_wait_ms=0,
             )
 
-            # extra_wait sleep should not be called (extra_wait_ms=0)
-            # but post-scroll delay may still be called
-            if mock_sleep.call_count > 0:
-                # Only post-scroll delay should be present, not extra_wait
-                for call in mock_sleep.call_args_list:
-                    assert call.args[0] != 0  # No zero-sleep call
+            # No render wait at all, and without a screenshot no pause
+            # after the auto-scroll either
+            settle.assert_not_awaited()
+            mock_sleep.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_fetch_with_screenshot_config(self):
