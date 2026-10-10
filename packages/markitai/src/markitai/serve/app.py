@@ -1729,7 +1729,10 @@ def create_app(
             # and keep variable values (keys, document text) out of tracebacks
             logger.configure(patcher=redact_log_record)
             logger.add(sys.stderr, level="INFO", diagnose=False)
-        os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+        # Before the prewarm thread imports LiteLLM while requests are logged
+        from markitai.utils.litellm_import import prepare_litellm_import
+
+        prepare_litellm_import()
 
         from dotenv import load_dotenv
 

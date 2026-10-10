@@ -16,12 +16,13 @@ calls only; report through thread-safe logging).
 from __future__ import annotations
 
 import importlib
-import os
 import sys
 import threading
 from collections.abc import Callable
 
 from loguru import logger
+
+from markitai.utils.litellm_import import prepare_litellm_import
 
 _lock = threading.Lock()
 _thread: threading.Thread | None = None
@@ -43,8 +44,9 @@ def prewarm_litellm(after: Callable[[], None] | None = None) -> None:
         if _thread is not None and not _done:
             return  # the running thread picks the callback up
         if _thread is None and "litellm" not in sys.modules:
-            # Same default as the CLI: no model cost map fetched over the network
-            os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+            # Same as the CLI: no cost-map fetch, and other threads may log
+            # on LiteLLM's filtered loggers while this one imports it
+            prepare_litellm_import()
         elif not _callbacks:
             return
         _thread = threading.Thread(

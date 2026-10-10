@@ -21,8 +21,11 @@ if sys.platform == "win32":
 # Suppress noisy messages before imports
 # Note: Most warning filters are now centralized in logging_config.setup_logging()
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
-# Avoid LiteLLM startup network fetches and fallback warnings in normal CLI use.
-os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+# Before anything can import LiteLLM: no cost-map fetch over the network, and
+# no logging race with its import on another thread (see litellm_import).
+from markitai.utils.litellm_import import prepare_litellm_import  # noqa: E402
+
+prepare_litellm_import()
 
 import rich_click as click
 from dotenv import load_dotenv

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 # Import version for print_version
 from markitai import __version__
 from markitai.notices import is_user_notice
+from markitai.utils import litellm_import
 from markitai.utils.suppress import suppress_parser_noise
 from markitai.utils.url_redaction import redact_log_record
 
@@ -162,6 +163,9 @@ class LoggingContext:
             self._suspended = False
 
 
+_LOGGING_FILES = frozenset({logging.__file__, litellm_import.__file__})
+
+
 class InterceptHandler(logging.Handler):
     """Intercept standard logging and forward to loguru.
 
@@ -183,8 +187,10 @@ class InterceptHandler(logging.Handler):
         # whoever logged it. Binding the record's own fields is not enough:
         # loguru's default format reads its native name/function/line, so
         # every intercepted line used to be stamped with this very method.
+        # The LiteLLM import guard also counts: it hands records to the
+        # handlers itself while LiteLLM is being imported.
         frame, depth = inspect.currentframe(), 0
-        while frame and (depth == 0 or frame.f_code.co_filename == logging.__file__):
+        while frame and (depth == 0 or frame.f_code.co_filename in _LOGGING_FILES):
             frame = frame.f_back
             depth += 1
 
