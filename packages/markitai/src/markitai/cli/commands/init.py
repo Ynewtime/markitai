@@ -93,7 +93,7 @@ def _quick_init(target: Path) -> None:
 
     config_data = _build_config(providers)
     _write_config(target, config_data)
-    _print_created_summary(target, config_data)
+    _print_created_summary(target, config_data, providers)
 
 
 def _read_config_dict(target: Path) -> dict | None:
@@ -105,11 +105,17 @@ def _read_config_dict(target: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _provider_prefix(model: object) -> str:
+    """Provider part of a model id (``deepseek`` in ``deepseek/deepseek-flash``)."""
+    text = model if isinstance(model, str) else ""
+    return text.split("/", 1)[0].lower() if "/" in text else text.lower()
+
+
 def _merge_new_models(existing: dict, detected: dict) -> list[str]:
     """Append detected model_list entries missing from *existing* (in place).
 
-    Non-destructive: only appends ``llm.model_list`` entries whose model id
-    is not already configured. Existing model entries and all other settings
+    Non-destructive: only appends ``llm.model_list`` entries whose provider
+    has no model configured yet. Existing model entries and all other settings
     are preserved untouched.
 
     Args:
@@ -127,13 +133,18 @@ def _merge_new_models(existing: dict, detected: dict) -> list[str]:
     if not isinstance(model_list, list):
         model_list = []
 
+    # By provider, not by model id: a config that names another model of a
+    # provider (its own pick, or an earlier default such as
+    # claude-agent/sonnet) already has that provider's route
     have = {
-        entry.get("litellm_params", {}).get("model", "")
+        _provider_prefix(entry.get("litellm_params", {}).get("model", ""))
         for entry in model_list
         if isinstance(entry, dict)
     }
     new_entries = [
-        entry for entry in detected_list if entry["litellm_params"]["model"] not in have
+        entry
+        for entry in detected_list
+        if _provider_prefix(entry["litellm_params"]["model"]) not in have
     ]
     if not new_entries:
         return []
@@ -158,13 +169,15 @@ def _apply_config_update(target: Path, providers: list[tuple[str, bool]]) -> Non
     if not added:
         ui.summary(f"Config already up to date: {target}")
         console.print("  [dim]No newly detected providers to add.[/dim]")
+        _print_skipped(providers)
         return
 
     _write_config(target, existing)
     ui.summary(f"Configuration updated: {target}")
     console.print("  [dim]Added newly detected providers:[/dim]")
     for model in added:
-        console.print(f"  {ui.MARK_LINE} {model}")
+        ui.print_marked(model, mark=ui.MARK_LINE, console=console)
+    _print_skipped(providers)
 
 
 def _prompt_existing_config_action(target: Path) -> str:
@@ -181,18 +194,27 @@ def _prompt_existing_config_action(target: Path) -> str:
     return {1: "update", 2: "overwrite", 3: "keep"}[choice]
 
 
-def _print_created_summary(target: Path, config_data: dict) -> None:
+def _print_created_summary(
+    target: Path,
+    config_data: dict,
+    providers: list[tuple[str, bool]] | None = None,
+) -> None:
     """Print the created-config summary with detected models and next steps."""
     ui.summary(f"Configuration created: {target}")
     model_list = config_data.get("llm", {}).get("model_list", [])
     for m in model_list:
         model = m.get("litellm_params", {}).get("model", "")
-        console.print(f"  {ui.MARK_LINE} {model}")
+        ui.print_marked(model, mark=ui.MARK_LINE, console=console)
+    _print_skipped(providers)
 
     console.print()
-    console.print("  [bold]Next steps:[/bold]")
-    console.print("  [dim]•[/dim] Convert a file:  [cyan]markitai <file> --llm[/cyan]")
-    console.print("  [dim]•[/dim] Full diagnostics: [cyan]markitai doctor[/cyan]")
+    ui.section("Next steps", console=console)
+    console.print(
+        f"  [dim]{ui.MARK_INFO}[/dim] Convert a file:   [cyan]markitai <file> --llm[/cyan]"
+    )
+    console.print(
+        f"  [dim]{ui.MARK_INFO}[/dim] Full diagnostics: [cyan]markitai doctor[/cyan]"
+    )
 
 
 def _check_playwright_dep() -> tuple[str, str, bool]:
@@ -366,7 +388,7 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
 
     _write_config(target, config_data)
 
-    _print_created_summary(target, config_data)
+    _print_created_summary(target, config_data, providers)
 
 
 def _detect_providers() -> list[tuple[str, bool]]:
@@ -387,58 +409,127 @@ def _detect_providers() -> list[tuple[str, bool]]:
     return [(label, provider in detected) for label, provider in provider_rows]
 
 
+# Display name -> provider id, in priority order; the model each one
+# defaults to comes from the single PROVIDER_DEFAULT_MODELS table.
+_PROVIDER_IDS = {
+    "Claude": "claude-agent",
+    "ChatGPT": "chatgpt",
+    "Copilot": "copilot",
+    "DeepSeek": "deepseek",
+    "Gemini": "gemini",
+    "OpenAI": "openai",
+    "Anthropic": "anthropic",
+    "OpenRouter": "openrouter",
+}
+
+
+def _plan_providers(
+    providers: list[tuple[str, bool]] | None,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Pick the providers a new config uses, and say why others are left out.
+
+    Deduplication rules to avoid redundant Router entries (each would split
+    the requests with a route to the same model):
+    - Skip the Anthropic API when Claude Code is signed in to a subscription:
+      both default to Claude Haiku, and the subscription has no per-token
+      charge
+    - Skip OpenRouter, whose default is Claude Haiku too, when the Anthropic
+      API or Claude Code is available
+
+    Returns:
+        ``(provider ids in priority order, [(key variable, reason), ...])``.
+    """
+    available: set[str] = set()
+    for name, ok in providers or []:
+        if not ok:
+            continue
+        for key in _PROVIDER_IDS:
+            if key in name:
+                available.add(key)
+                break
+
+    skipped: list[tuple[str, str]] = []
+    if "Claude" in available and "Anthropic" in available:
+        available.discard("Anthropic")
+        skipped.append(
+            (
+                PROVIDER_API_KEY_ENV["anthropic"],
+                "Claude Code serves the same model (Claude Haiku) on your "
+                "subscription, with no per-token charge",
+            )
+        )
+    if "OpenRouter" in available and available & {"Claude", "Anthropic"}:
+        available.discard("OpenRouter")
+        route = "Claude Code" if "Claude" in available else "the Anthropic API key"
+        skipped.append(
+            (
+                PROVIDER_API_KEY_ENV["openrouter"],
+                f"its default model (Claude Haiku) is already served by {route}",
+            )
+        )
+    chosen = [pid for key, pid in _PROVIDER_IDS.items() if key in available]
+    return chosen, skipped
+
+
+def _claude_code_key_only_note() -> str | None:
+    """Why a Claude Code CLI on PATH was not offered, when the key is why.
+
+    Signed in with nothing but ANTHROPIC_API_KEY, Claude Code bills that key
+    per token through a CLI process per request; ``anthropic/`` uses the
+    same key directly.
+    """
+    import os
+    import shutil
+
+    from markitai.providers.auth import claude_code_subscription_login
+
+    if not shutil.which("claude") or not os.environ.get(
+        PROVIDER_API_KEY_ENV["anthropic"]
+    ):
+        return None
+    if claude_code_subscription_login() or any(
+        os.environ.get(v)
+        for v in (
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+        )
+    ):
+        return None
+    return (
+        "Claude Code is not used: it is signed in only through "
+        "ANTHROPIC_API_KEY, which anthropic/ models use directly "
+        "(run 'claude login' to use a Claude subscription)"
+    )
+
+
+def _skipped_notes(providers: list[tuple[str, bool]] | None) -> list[str]:
+    """One line per detected credential the config leaves out, with why."""
+    _chosen, skipped = _plan_providers(providers)
+    notes = [f"{env} is not used: {reason}" for env, reason in skipped]
+    claude_note = _claude_code_key_only_note()
+    if claude_note:
+        notes.append(claude_note)
+    return notes
+
+
+def _print_skipped(providers: list[tuple[str, bool]] | None) -> None:
+    for note in _skipped_notes(providers):
+        ui.info(note)
+
+
 def _build_config(
     providers: list[tuple[str, bool]] | None = None,
 ) -> dict:
-    """Build config data with all detected providers.
-
-    Deduplication rules to avoid redundant Router entries:
-    - Skip Anthropic API when Claude CLI is available (same model family)
-    - Skip OpenRouter, whose default is Claude Haiku too, when the Anthropic
-      API or the Claude CLI is available
-    """
-    model_list = []
-
-    # Display name -> provider id, in priority order; the model each one
-    # defaults to comes from the single PROVIDER_DEFAULT_MODELS table.
-    provider_ids = {
-        "Claude": "claude-agent",
-        "ChatGPT": "chatgpt",
-        "Copilot": "copilot",
-        "DeepSeek": "deepseek",
-        "Gemini": "gemini",
-        "OpenAI": "openai",
-        "Anthropic": "anthropic",
-        "OpenRouter": "openrouter",
-    }
-
-    if providers:
-        available_keys: set[str] = set()
-        for name, available in providers:
-            if not available:
-                continue
-            for key in provider_ids:
-                if key in name:
-                    available_keys.add(key)
-                    break
-
-        # Deduplicate: skip redundant provider routes
-        if "OpenRouter" in available_keys and available_keys & {"Claude", "Anthropic"}:
-            available_keys.discard("OpenRouter")
-        if "Claude" in available_keys and "Anthropic" in available_keys:
-            available_keys.discard("Anthropic")
-
-        # Build model_list preserving provider_ids order
-        for key, provider_id in provider_ids.items():
-            if key in available_keys:
-                model_list.append(
-                    {
-                        "model_name": "default",
-                        "litellm_params": {
-                            "model": PROVIDER_DEFAULT_MODELS[provider_id]
-                        },
-                    }
-                )
+    """Build config data with all detected providers (see _plan_providers)."""
+    chosen, _skipped = _plan_providers(providers)
+    model_list = [
+        {
+            "model_name": "default",
+            "litellm_params": {"model": PROVIDER_DEFAULT_MODELS[provider_id]},
+        }
+        for provider_id in chosen
+    ]
 
     config_data: dict = {
         "output": {"dir": "./output"},
