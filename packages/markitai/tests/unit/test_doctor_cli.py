@@ -124,7 +124,7 @@ class TestDoctorCommand:
             assert result.exit_code in (0, 1)
             vlm = json.loads(result.output)["vlm-ocr"]
             assert vlm["status"] == "ok"
-            assert "claude-agent/sonnet" in vlm["message"]
+            assert vlm["models"] == ["claude-agent/sonnet"]
 
     def test_doctor_json_vlm_ocr_missing_without_vision_model(
         self, runner: CliRunner, mock_config: MagicMock

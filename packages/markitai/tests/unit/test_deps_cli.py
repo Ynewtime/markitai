@@ -152,7 +152,7 @@ class TestPlaywrightDependency:
             assert result.exit_code in (0, 1)  # exit reflects host dep state
             data = json.loads(result.output)
             assert data["playwright"]["status"] == "warning"
-            assert "browser not found" in data["playwright"]["message"]
+            assert "Chromium browser is not downloaded" in data["playwright"]["message"]
 
     def test_playwright_not_installed(
         self, runner: CliRunner, mock_config: MagicMock
@@ -712,9 +712,8 @@ class TestOutputFormatting:
             assert result.exit_code in (0, 1)  # exit reflects host dep state
             # Support both English and Chinese success messages (i18n) and new unified UI
             assert (
-                "properly configured" in result.output
-                or "configured correctly" in result.output
-                or "所有依赖配置正确" in result.output
+                "Ready. Everything is available." in result.output
+                or "已就绪，所有功能均可用。" in result.output
             )
 
 

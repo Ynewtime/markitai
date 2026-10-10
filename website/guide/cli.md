@@ -482,7 +482,7 @@ markitai doctor --json
 markitai doctor --suggest-extras   # extras to add for the capabilities this machine could use
 ```
 
-The command exits non-zero when something you configured cannot work: a Playwright strategy that cannot launch, a model whose API key variable is missing, or a local provider that is not signed in. Scripts and CI can rely on that.
+The command exits non-zero when something you configured cannot work: a Playwright strategy that cannot launch, a model whose API key is not set (neither in its `llm.model_list` entry nor in the provider's variable, such as `DEEPSEEK_API_KEY`), or a local provider that is not signed in. Scripts and CI can rely on that. The last line says `Ready` (and names the optional capabilities that are not available) or `Not ready` (and names what to fix). Each hint is a command for this machine: Chromium is installed with markitai's own Python, LibreOffice with your distribution's package manager. Provider keys that are set but used by no configured model are listed under LLM.
 
 `--fix` never adds a Python package. If Playwright itself is missing, it tells you to reinstall with `markitai[browser]`. `--json` and `--fix` cannot be combined.
 

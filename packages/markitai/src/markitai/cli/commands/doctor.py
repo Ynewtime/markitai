@@ -17,19 +17,14 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 import rich_click as click
-from rich.markup import escape
 
-# Cross-platform installation hints
+# Cross-platform installation hints for system tools. LibreOffice on Linux
+# and Playwright's browser are resolved per machine (distro, interpreter):
+# see get_install_commands.
 INSTALL_HINTS: dict[str, dict[str, str]] = {
     "libreoffice": {
         "darwin": "brew install --cask libreoffice",
-        "linux": "sudo apt install libreoffice  # Ubuntu/Debian\nsudo dnf install libreoffice  # Fedora\nsudo pacman -S libreoffice-fresh  # Arch",
         "win32": "winget install TheDocumentFoundation.LibreOffice",
-    },
-    "playwright": {
-        "darwin": "python -m playwright install chromium",
-        "linux": "python -m playwright install chromium  # system libraries may also require: python -m playwright install-deps chromium",
-        "win32": "python -m playwright install chromium",
     },
     "claude-cli": {
         "darwin": "curl -fsSL https://claude.ai/install.sh | bash",
@@ -44,27 +39,129 @@ INSTALL_HINTS: dict[str, dict[str, str]] = {
 }
 
 
-def get_install_hint(component: str, platform: str | None = None) -> str:
-    """Get platform-specific installation hint for a component.
+def _normalize_platform(platform: str | None) -> str:
+    platform = sys.platform if platform is None else platform
+    return "linux" if platform.startswith("linux") else platform
+
+
+def _markitai_python() -> str:
+    """markitai's own interpreter, as a command the user can paste.
+
+    ``python`` on PATH is usually not markitai's environment: setup.sh and
+    ``uv tool install`` put markitai in an isolated tool venv, so the
+    interpreter running this process is the one that has Playwright.
+    """
+    exe = sys.executable or "python"
+    if sys.platform == "win32":
+        # PowerShell runs a quoted path only with the call operator
+        return f'& "{exe}"' if " " in exe else exe
+    import shlex
+
+    return shlex.quote(exe)
+
+
+def get_install_commands(
+    component: str,
+    platform: str | None = None,
+    *,
+    os_release: str | None = None,
+) -> list[tuple[str, str]]:
+    """Commands that install a component on this machine.
+
+    Args:
+        component: Component name (e.g., "libreoffice", "playwright").
+        platform: Target platform. If None, uses current sys.platform.
+        os_release: /etc/os-release text (tests); read from disk if None.
+
+    Returns:
+        ``(label, command)`` pairs. One pair with an empty label when the
+        command is known for this machine; several labelled alternatives
+        when it depends on a Linux distribution that was not recognised.
+    """
+    platform = _normalize_platform(platform)
+    if component == "playwright":
+        python = _markitai_python()
+        if platform == "linux":
+            # --with-deps also installs the system libraries Chromium needs
+            # (Playwright asks for sudo itself)
+            return [("", f"{python} -m playwright install --with-deps chromium")]
+        return [("", f"{python} -m playwright install chromium")]
+    if component == "libreoffice" and platform == "linux":
+        from markitai.utils.office import libreoffice_linux_install_commands
+
+        return libreoffice_linux_install_commands(os_release)
+    hints = INSTALL_HINTS.get(component, {})
+    hint = hints.get(platform, hints.get("linux"))
+    if hint is None:
+        return [("", f"Install {component} using your package manager")]
+    return [("", hint)]
+
+
+def get_install_hint(
+    component: str, platform: str | None = None, *, os_release: str | None = None
+) -> str:
+    """Get the installation hint for a component as one line.
 
     Args:
         component: Component name (e.g., "libreoffice", "playwright")
         platform: Target platform. If None, uses current sys.platform.
+        os_release: /etc/os-release text (tests); read from disk if None.
 
     Returns:
-        Installation command(s) for the platform.
+        The command, or labelled alternatives joined with "; " (for --json
+        and one-line messages; the terminal report lists them one per line).
     """
-    if platform is None:
-        platform = sys.platform
-
-    # Normalize platform
-    if platform.startswith("linux"):
-        platform = "linux"
-
-    hints = INSTALL_HINTS.get(component, {})
-    return hints.get(
-        platform, hints.get("linux", f"Install {component} using your package manager")
+    return "; ".join(
+        f"{command} ({label})" if label else command
+        for label, command in get_install_commands(
+            component, platform, os_release=os_release
+        )
     )
+
+
+def _install_fields(component: str) -> dict[str, Any]:
+    """``install_hint`` (one line) plus ``install_commands`` (one per line).
+
+    The terminal report prints each command on its own line so it can be
+    copied; ``install_hint`` keeps the one-line form --json always had.
+    """
+    commands = get_install_commands(component)
+    return {
+        "install_hint": get_install_hint(component),
+        "install_commands": [
+            f"{command}  # {label}" if label else command for label, command in commands
+        ],
+    }
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _them(items: list[str]) -> str:
+    return "it" if len(items) == 1 else "them"
+
+
+def _render_hint(info: dict[str, Any]) -> None:
+    """One check's fix: commands on their own lines, prose with a bullet.
+
+    Hints were printed as one raw string, so a multi-line one (an install
+    command per distribution, the login instructions) lost its bullet and
+    indentation from the second line on.
+    """
+    commands = info.get("install_commands")
+    if commands:
+        ui.print_marked(f"{info['name']}:", mark=ui.MARK_INFO)
+        for command in commands:
+            ui.print_command(command)
+        return
+    lines = [line for line in str(info["install_hint"]).splitlines() if line.strip()]
+    ui.print_marked(f"{info['name']}: {lines[0]}", mark=ui.MARK_INFO)
+    for line in lines[1:]:
+        if line.startswith("  "):
+            ui.print_command(line.strip(), indent=6)
+        else:
+            ui.print_marked(line, mark="", indent=4)
 
 
 # Components for which --fix has a safe, scoped repair path. Keys not in this
@@ -130,7 +227,7 @@ def _smoke_test_playwright_browser() -> tuple[bool, str]:
     if sys.platform.startswith("linux"):
         detail += (
             "; install system libraries with "
-            f"'{sys.executable} -m playwright install-deps chromium'"
+            f"'{_markitai_python()} -m playwright install-deps chromium'"
         )
     return False, f"headless launch failed: {detail}"
 
@@ -147,14 +244,16 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
         True if installation succeeded.
     """
     console = get_console()
-    hint = get_install_hint(component)
 
     # Only auto-install safe components
     safe_components = {"playwright"}
 
     if component not in safe_components:
-        console.print(f"[yellow]{t('doctor.manual_install')}[/yellow]")
-        console.print(f"  {hint}")
+        ui.warning(t("doctor.manual_install"), console=console)
+        for label, command in get_install_commands(component):
+            ui.print_command(
+                f"{command}  # {label}" if label else command, console=console
+            )
         return False
 
     if component == "playwright":
@@ -162,19 +261,19 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
             # Installing a Python package into the caller's current project is
             # unsafe. Tell tool users how to replace their isolated install.
             if package_missing:
-                console.print(
-                    f"[red]\u2717[/red] {t('doctor.playwright_package_manual')}"
-                )
-                # escape(): rich reads the `[browser]` in an extras name
-                # as a style tag and drops it, leaving the user a command
-                # that reinstalls exactly what they already have.
-                console.print(escape(_playwright_package_install_hint()))
+                ui.error(t("doctor.playwright_package_manual"), console=console)
+                # Printed as plain text: rich would read the `[browser]` in
+                # an extras name as a style tag and drop it, leaving the user
+                # a command that reinstalls exactly what they already have.
+                ui.print_command(_playwright_package_install_hint(), console=console)
                 return False
 
             # Use the same interpreter that imports Markitai/Playwright, and
             # isolate cwd so no project metadata can be discovered or changed.
-            console.print(
-                f"[yellow]{t('doctor.fix_installing', component=component)}[/yellow]"
+            ui.print_marked(
+                t("doctor.fix_installing", component=component),
+                mark=ui.MARK_ARROW,
+                console=console,
             )
             with TemporaryDirectory(prefix="markitai-doctor-") as workdir:
                 result = subprocess.run(
@@ -187,13 +286,13 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
             if result.returncode == 0:
                 return True
             else:
-                console.print(
-                    f"[red]\u2717[/red] "
-                    f"{t('doctor.fix_failed', detail=result.stderr.strip())}"
+                ui.error(
+                    t("doctor.fix_failed", detail=result.stderr.strip()),
+                    console=console,
                 )
                 return False
         except Exception as e:
-            console.print(f"[red]\u2717[/red] {t('doctor.fix_error', detail=str(e))}")
+            ui.error(t("doctor.fix_error", detail=str(e)), console=console)
             return False
 
     return False
@@ -202,9 +301,12 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
 from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.cli.framework import root_config_options
+from markitai.cli.hints import get_env_set_command
 from markitai.cli.i18n import t
 from markitai.config import ConfigManager
+from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_DEFAULT_MODELS
 from markitai.providers.auth import AuthManager, get_auth_resolution_hint
+from markitai.providers.discovery import provider_label
 from markitai.utils.errors import extra_install_command
 
 console = get_console()
@@ -274,13 +376,44 @@ def _check_copilot_auth() -> dict[str, str]:
 
 
 def _check_claude_auth() -> dict[str, str]:
-    """Check Claude Agent authentication status."""
-    return _check_provider_auth(
+    """Check Claude Agent authentication status, and what it bills."""
+    result = _check_provider_auth(
         "claude-agent",
         "Claude Agent Auth",
         "Claude Code CLI authentication status",
-        ok_message="Authenticated (claude doctor passed)",
     )
+    if result["status"] != "ok":
+        return result
+    try:
+        status = asyncio.run(AuthManager().check_auth("claude-agent"))
+    except Exception:
+        return result
+    details = status.details or {}
+    if details.get("source") == "anthropic-api-key":
+        # Works, billed per token to the key: same as anthropic/ models,
+        # plus a CLI process per request
+        result.update(
+            status="warning",
+            message=(
+                "not signed in; Claude Code would use ANTHROPIC_API_KEY, "
+                "billed per token"
+            ),
+            install_hint=(
+                "Run 'claude login' to use a Claude subscription, or use "
+                "anthropic/claude-haiku-5-5 (the same key, directly)"
+            ),
+        )
+    elif details.get("billing") == "cloud":
+        result["message"] = f"signed in ({status.user})"
+    elif details.get("billing") == "subscription":
+        plan = details.get("subscription")
+        plan_str = f" ({plan})" if plan and plan != "unknown" else ""
+        result["message"] = f"signed in with a Claude subscription{plan_str}"
+        if os.environ.get(PROVIDER_API_KEY_ENV["anthropic"]):
+            result["message"] += ", used instead of ANTHROPIC_API_KEY"
+    else:
+        result["message"] = f"signed in ({status.user}), billed per token"
+    return result
 
 
 def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
@@ -304,7 +437,7 @@ def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
                         "description": "Browser automation for dynamic URLs",
                         "status": "warning",
                         "message": f"Chromium installed but unusable: {runtime_detail}",
-                        "install_hint": get_install_hint("playwright"),
+                        **_install_fields("playwright"),
                     }
             return {
                 "name": "Playwright",
@@ -318,16 +451,17 @@ def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
                 "name": "Playwright",
                 "description": "Browser automation for dynamic URLs",
                 "status": "warning",
-                "message": "Playwright installed but browser not found",
-                "install_hint": get_install_hint("playwright"),
+                "message": "installed, but its Chromium browser is not downloaded",
+                **_install_fields("playwright"),
             }
     else:
         return {
             "name": "Playwright",
             "description": "Browser automation for dynamic URLs",
             "status": "missing",
-            "message": "Playwright not installed",
+            "message": "not installed (needed for JavaScript-heavy pages)",
             "install_hint": _playwright_package_install_hint(),
+            "install_commands": [_playwright_package_install_hint()],
         }
 
 
@@ -398,7 +532,7 @@ def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
                             "not found; PowerPoint fallback blocked: "
                             f"{office_mac.CONTAINER_BLOCKED_HINT}"
                         ),
-                        "install_hint": get_install_hint("libreoffice"),
+                        **_install_fields("libreoffice"),
                     }
                 return {
                     "name": "LibreOffice",
@@ -408,14 +542,14 @@ def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
                         "not found; PowerPoint fallback available "
                         "(via AppleScript, needs one-time Automation permission)"
                     ),
-                    "install_hint": get_install_hint("libreoffice"),
+                    **_install_fields("libreoffice"),
                 }
         return {
             "name": "LibreOffice",
             "description": "PPTX slide rendering",
             "status": "missing",
-            "message": "soffice/libreoffice command not found",
-            "install_hint": get_install_hint("libreoffice"),
+            "message": "not found (needed to render PPTX slides as images)",
+            **_install_fields("libreoffice"),
         }
 
 
@@ -505,7 +639,7 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
         }
 
         try:
-            rec_lang, _ = resolve_ocr_language(configured_lang)
+            rec_lang, needs_v5 = resolve_ocr_language(configured_lang)
         except OCRLanguageError as e:
             return {
                 "name": "RapidOCR",
@@ -515,12 +649,21 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
                 "message": f"v{rapidocr_version}, {e}",
                 "install_hint": "Set ocr.lang to one of: en, zh, ja, ko, ar, th, latin",
             }
+        if needs_v5:
+            reads = lang_display.get(rec_lang, rec_lang)
+        else:
+            # PP-OCRv6 has one multilingual recognizer: ocr.lang en, zh and
+            # ja load the same model, so "lang: en (English)" read as if
+            # Chinese and Japanese scans would not work
+            reads = "Chinese, English, Japanese and Latin-script"
         return {
             "name": "RapidOCR",
             "description": "OCR for scanned documents (--ocr)",
             "status": "ok",
             "optional": True,
-            "message": f"v{rapidocr_version}, lang: {configured_lang} ({lang_display.get(rec_lang, rec_lang)})",
+            "message": (
+                f"v{rapidocr_version}, reads {reads} text (ocr.lang: {configured_lang})"
+            ),
             "install_hint": "",
         }
     except ImportError:
@@ -539,6 +682,43 @@ def _is_active_model(model_config: Any) -> bool:
     litellm_params = getattr(model_config, "litellm_params", None)
     weight = getattr(litellm_params, "weight", 1)
     return not isinstance(weight, int | float) or weight > 0
+
+
+def _provider_of(model: str) -> str:
+    """Provider prefix of a model id (``openai`` when it has none)."""
+    return model.split("/", 1)[0].lower() if "/" in model else "openai"
+
+
+def _ordered_providers(providers: set[str]) -> list[str]:
+    """Providers in markitai's own order (subscriptions, then API keys)."""
+    order = list(PROVIDER_DEFAULT_MODELS)
+    return sorted(providers, key=lambda p: (order.index(p) if p in order else 99, p))
+
+
+# Environment variables LiteLLM reads a provider's key from, when the model
+# entry has no api_key of its own
+_PROVIDER_KEY_ALIASES: dict[str, tuple[str, ...]] = {
+    "gemini": ("GOOGLE_API_KEY",),
+    "anthropic": ("ANTHROPIC_AUTH_TOKEN",),
+}
+
+
+def _missing_provider_key(model_config: Any) -> str | None:
+    """The key variable an API model needs and the environment lacks.
+
+    Only for the built-in providers markitai configures by key, used with
+    their own endpoint: a model with an ``api_key`` (literal or ``env:``) or
+    its own ``api_base`` (a local server, a gateway) is not judged here.
+    """
+    params = model_config.litellm_params
+    if getattr(params, "api_key", None) or getattr(params, "api_base", None):
+        return None
+    provider = _provider_of(params.model)
+    env = PROVIDER_API_KEY_ENV.get(provider)
+    if env is None:
+        return None
+    names = (env, *_PROVIDER_KEY_ALIASES.get(provider, ()))
+    return None if any(os.environ.get(name) for name in names) else env
 
 
 def _doctor_impl(as_json: bool, fix: bool = False) -> None:
@@ -592,16 +772,12 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 env_name = value[4:]
                 if env_name and os.environ.get(env_name) is None:
                     missing_llm_env_vars.add(env_name)
+        missing_key = _missing_provider_key(model)
+        if missing_key:
+            missing_llm_env_vars.add(missing_key)
 
     if configured_models:
-        api_providers = {
-            (
-                m.litellm_params.model.split("/")[0]
-                if "/" in m.litellm_params.model
-                else "openai"
-            )
-            for m in active_api_models
-        }
+        used_providers = {_provider_of(m.litellm_params.model) for m in active_models}
         if not active_models:
             status = "warning"
             message = "Models are configured, but all have weight 0 (disabled)"
@@ -609,20 +785,20 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         elif missing_llm_env_vars:
             missing = ", ".join(sorted(missing_llm_env_vars))
             status = "error"
-            message = (
-                f"Missing environment variable(s) used by active models: {missing}"
+            message = f"not set: {missing} (an active model needs it)"
+            install_hint = (
+                "; ".join(
+                    get_env_set_command(name) for name in sorted(missing_llm_env_vars)
+                )
+                + " (or add it to ~/.markitai/.env)"
             )
-            install_hint = f"Set the missing environment variable(s): {missing}"
         else:
             status = "ok"
-            if api_providers:
-                providers_str = ", ".join(sorted(api_providers))
-                message = (
-                    f"{len(active_models)} active model(s), "
-                    f"API provider(s): {providers_str}"
-                )
-            else:
-                message = f"{len(active_models)} active model(s) configured"
+            labels = ", ".join(
+                "Claude Code" if p == "claude-agent" else provider_label(p)
+                for p in _ordered_providers(used_providers)
+            )
+            message = f"{len(active_models)} active model(s): {labels}"
             install_hint = ""
 
         results["llm-api"] = {
@@ -631,6 +807,14 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "status": status,
             "message": message,
             "install_hint": install_hint,
+            # Provider keys set in the environment that no active model uses
+            # (markitai init leaves out a key whose default model another
+            # configured route already serves)
+            "unused_api_keys": [
+                env
+                for provider, env in PROVIDER_API_KEY_ENV.items()
+                if os.environ.get(env) and provider not in used_providers
+            ],
         }
     else:
         # Point at the actually-loaded config file (matches the header line),
@@ -639,15 +823,22 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             llm_hint = f"Configure llm.model_list in {manager.config_path}"
         else:
             llm_hint = (
-                "Configure llm.model_list (no config file found; run "
-                "'markitai init' to create ~/.markitai/config.json "
-                "or ./markitai.json)"
+                "Set a provider API key (DEEPSEEK_API_KEY, GEMINI_API_KEY, ...) "
+                "or sign in to Claude Code, then run 'markitai init'"
             )
+        detected_env = [
+            env for env in PROVIDER_API_KEY_ENV.values() if os.environ.get(env)
+        ]
         results["llm-api"] = {
             "name": "LLM API",
             "description": "Content enhancement and image analysis",
             "status": "missing",
-            "message": "No models configured in llm.model_list",
+            "message": (
+                "no models in llm.model_list; --llm picks from the keys it "
+                f"finds ({', '.join(detected_env)})"
+                if detected_env
+                else "no models in llm.model_list and no provider key set"
+            ),
             "install_hint": llm_hint,
         }
 
@@ -800,9 +991,18 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "name": "Vision Model",
             "description": "Image analysis (alt text, descriptions)",
             "status": "warning",
-            "message": "No vision model detected (auto-detect or set model_info.supports_vision)",
+            "message": (
+                "none of the active models reads images "
+                "(or set model_info.supports_vision)"
+                if active_models
+                else "needs an LLM model (see LLM API)"
+            ),
             "models": [],  # Empty list for JSON output
-            "install_hint": "Use vision-capable models like gemini-*, gpt-6*, claude-*",
+            "install_hint": (
+                "Use vision-capable models like gemini-*, gpt-6*, claude-*"
+                if active_models
+                else ""
+            ),
         }
 
     # 6b. VLM OCR (--ocr --llm): the OCR path that sends page images to the
@@ -812,18 +1012,16 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     # model means that path is unavailable, not that the install is broken.
     if vision_models:
         vlm_names = [m.litellm_params.model for m in vision_models]
-        vlm_display = ", ".join(vlm_names[:2])
-        if len(vlm_names) > 2:
-            vlm_display += f" (+{len(vlm_names) - 2} more)"
         results["vlm-ocr"] = {
             "name": "VLM OCR",
             "description": "OCR for scanned documents (--ocr --llm)",
             "status": "ok",
             "optional": True,
             "message": (
-                f"available — {vlm_display} reads page images "
-                "(MARKITAI_NO_VLM_OCR=1 forces local RapidOCR)"
+                f"--ocr --llm sends page images to {_count(len(vlm_names), 'vision model')} "
+                "(MARKITAI_NO_VLM_OCR=1 keeps RapidOCR)"
             ),
+            "models": vlm_names,  # Structured list for JSON output
             "install_hint": "",
         }
     else:
@@ -832,8 +1030,8 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "description": "OCR for scanned documents (--ocr --llm)",
             "status": "warning",
             "optional": True,
-            "message": "unavailable — no vision model configured",
-            "install_hint": "Use vision-capable models like gemini-*, gpt-6*, claude-*",
+            "message": "unavailable: needs a vision model (see Vision Model)",
+            "install_hint": "",
         }
 
     # Define dependency groups.
@@ -887,7 +1085,14 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Unified UI output
     ui.title(t("doctor.title"))
-    optional_deps = ["rapidocr", "playwright", "libreoffice", "serve", "vlm-ocr"]
+    optional_deps = [
+        "rapidocr",
+        "vlm-ocr",
+        "playwright",
+        "libreoffice",
+        "anydoc",
+        "serve",
+    ]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
     auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth"]
 
@@ -906,6 +1111,12 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             ui.error(line)
         else:
             ui.warning(line)
+        unused = info.get("unused_api_keys")
+        if unused:
+            ui.info(
+                f"Not used: {', '.join(unused)} "
+                f"(set, but no model in llm.model_list uses {_them(unused)})"
+            )
 
     def render_section(header: str, keys: list[str]) -> None:
         """Render a section preceded by exactly one blank line."""
@@ -933,7 +1144,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     # Attempt to fix missing components if --fix flag is set
     # Only fixable components (defined in FIXABLE_COMPONENTS) are attempted.
     # Non-fixable items (auth, vision-model, llm-api) are skipped.
-    repair_failed = False
+    repair_failed_names: list[str] = []
     if fix and not as_json:
         fixable = [
             key
@@ -942,7 +1153,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         ]
         if fixable:
             console.print()
-            console.print(f"[bold]{t('doctor.fix_attempting')}[/bold]")
+            ui.section(t("doctor.fix_attempting"))
             for component in fixable:
                 # For playwright, detect whether the package itself is missing
                 pkg_missing = (
@@ -950,7 +1161,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                     and results[component].get("status") == "missing"
                 )
                 if not _install_component(component, package_missing=pkg_missing):
-                    repair_failed = True
+                    repair_failed_names.append(results[component]["name"])
                     continue
 
                 # A successful installer exit only means the command ran. The
@@ -967,7 +1178,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                                 detail=verification["message"],
                             )
                         )
-                        repair_failed = True
+                        repair_failed_names.append(results[component]["name"])
                     else:
                         runtime_ok, runtime_detail = _smoke_test_playwright_browser()
                         if not runtime_ok:
@@ -975,9 +1186,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                             verification["message"] = (
                                 f"Chromium installed but unusable: {runtime_detail}"
                             )
-                            verification["install_hint"] = get_install_hint(
-                                "playwright"
-                            )
+                            verification.update(_install_fields("playwright"))
                             ui.error(
                                 t(
                                     "doctor.fix_verification_failed",
@@ -985,7 +1194,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                                     detail=runtime_detail,
                                 )
                             )
-                            repair_failed = True
+                            repair_failed_names.append(results[component]["name"])
                         else:
                             ui.success(
                                 t(
@@ -996,56 +1205,47 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Render hints and the final outcome only after any requested repair has
     # been rechecked, so one invocation cannot end with a stale pre-fix status.
-    hints = [
-        (info["name"], info["install_hint"])
+    hint_items = [
+        info
         for info in results.values()
         if info["status"] in ("missing", "error", "warning")
         and info.get("install_hint")
     ]
-    if hints:
-        console.print()
-        console.print(f"[yellow]{t('doctor.fix_hint')}[/yellow]")
-        for name, hint in hints:
-            # Escape at the render site, not in the strings themselves: hints
-            # contain extras like `markitai[ocr]`, which Rich would otherwise
-            # read as a style tag and drop \u2014 printing an install command that
-            # installs the wrong thing. The unescaped text still has to reach
-            # --json consumers verbatim.
-            console.print(f"  [dim]\u2022[/dim] {escape(name)}: {escape(hint)}")
-
-    passed = sum(
-        1 for key in required_checks if results.get(key, {}).get("status") == "ok"
-    )
     required_failed = _required_failed_count()
-    degraded_checks = sum(
-        1
+    if hint_items:
+        console.print()
+        ui.section(t("doctor.fix_hint" if required_failed else "doctor.enable_hint"))
+        for info in hint_items:
+            _render_hint(info)
+
+    failed_names = [
+        info["name"] for key, info in results.items() if _is_blocking_failure(key, info)
+    ]
+    # Shown and counted alike: a check the report does not show is not
+    # listed as missing either
+    shown = set(optional_deps + llm_keys + auth_keys)
+    missing_names = [
+        info["name"]
         for key, info in results.items()
-        if info.get("status") != "ok" and not _is_blocking_failure(key, info)
-    )
+        if key in shown
+        and info.get("status") != "ok"
+        and not _is_blocking_failure(key, info)
+    ]
     if required_failed:
+        ui.summary(t("doctor.not_ready", names=", ".join(failed_names)), ok=False)
+    elif repair_failed_names:
         ui.summary(
-            t(
-                "doctor.summary_failed",
-                failed=required_failed,
-                passed=passed,
-                degraded=degraded_checks,
-            ),
+            t("doctor.summary_repair_failed", names=", ".join(repair_failed_names)),
             ok=False,
         )
-    elif repair_failed:
-        ui.summary(
-            t("doctor.summary_repair_failed", degraded=degraded_checks), ok=False
-        )
-    elif degraded_checks:
-        ui.summary(
-            t("doctor.summary", passed=passed, degraded=degraded_checks), ok=None
-        )
+    elif missing_names:
+        ui.summary(t("doctor.ready_missing", names=", ".join(missing_names)))
     else:
         ui.summary(t("doctor.all_good"))
 
     # Scripts rely on the exit code: --fix must not turn an unresolved core
     # dependency into a successful health check.
-    if required_failed or repair_failed:
+    if required_failed or repair_failed_names:
         raise SystemExit(1)
 
 

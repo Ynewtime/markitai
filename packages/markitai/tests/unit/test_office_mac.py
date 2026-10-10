@@ -397,7 +397,7 @@ class TestDoctorFallbackMessage:
             result = _check_libreoffice()
 
         assert result["status"] == "missing"
-        assert result["message"] == "soffice/libreoffice command not found"
+        assert result["message"] == "not found (needed to render PPTX slides as images)"
 
     def test_disabled_fallback_does_not_claim_office_is_available(self) -> None:
         from markitai.cli.commands.doctor import _check_libreoffice

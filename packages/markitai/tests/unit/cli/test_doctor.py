@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner, Result
+from rich.console import Console
 
 from markitai.cli.commands.doctor import (
     FIXABLE_COMPONENTS,
@@ -392,9 +394,9 @@ class TestDoctorSummaryAllGood:
 
         # The all-green summary should NOT appear.
         assert result.exit_code == 1
-        assert "Health check failed" in result.output
-        assert "All checks passed" not in result.output
-        assert "\u6240\u6709\u68c0\u67e5\u5747\u901a\u8fc7" not in result.output
+        assert "Not ready: fix Copilot Auth first" in result.output
+        assert "Ready." not in result.output
+        assert "\u5df2\u5c31\u7eea" not in result.output
 
 
 class TestDoctorFixFiltering:
@@ -522,7 +524,7 @@ class TestPlaywrightInstallFix:
             patch("markitai.cli.commands.doctor.get_console") as mock_gc,
             patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
         ):
-            mock_gc.return_value = MagicMock()
+            mock_gc.return_value = Console(file=io.StringIO(), width=80)
             mock_run.return_value = MagicMock(returncode=0, stderr="")
 
             result = _install_component("playwright", package_missing=True)
@@ -536,7 +538,7 @@ class TestPlaywrightInstallFix:
             patch("markitai.cli.commands.doctor.get_console") as mock_gc,
             patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
         ):
-            mock_gc.return_value = MagicMock()
+            mock_gc.return_value = Console(file=io.StringIO(), width=80)
             mock_run.return_value = MagicMock(returncode=0, stderr="")
 
             result = _install_component("playwright", package_missing=False)
@@ -699,8 +701,8 @@ class TestDoctorCapabilityContract:
         result, _ = self._invoke(cli_runner, mock_config, playwright_status="ok")
 
         assert result.exit_code == 0
-        assert "! LLM API: No models configured" in result.output
-        assert "✗ LLM API: No models configured" not in result.output
+        assert "! LLM API: no models in llm.model_list" in result.output
+        assert "✗ LLM API:" not in result.output
 
     @pytest.mark.parametrize("configured_by", ["strategy", "screenshot"])
     def test_configured_playwright_capability_is_blocking(
@@ -764,14 +766,21 @@ class TestDoctorCapabilityContract:
     def test_unavailable_optional_checks_use_warning_summary(
         self, cli_runner: CliRunner, mock_config: object
     ) -> None:
-        """A healthy core with degraded optional checks must not end in green."""
+        """A ready install says so, and names the optional parts it lacks.
+
+        It used to end "! Core check passed (… non-blocking warnings)": a
+        warning mark next to "passed" read as a contradiction. Ready is a
+        success; what is missing is listed by name.
+        """
         result, _ = self._invoke(cli_runner, mock_config)
 
         summary_lines = [
-            line for line in result.output.splitlines() if "Core check passed" in line
+            line for line in result.output.splitlines() if "Ready." in line
         ]
         assert summary_lines, result.output
-        assert all("!" in line and "✓" not in line for line in summary_lines)
+        assert summary_lines[-1].startswith("✓ Ready. Not available (optional): ")
+        assert "Playwright" in summary_lines[-1]
+        assert "Core check passed" not in result.output
 
     def test_missing_rapidocr_exits_zero(
         self, cli_runner: CliRunner, mock_config: object
@@ -834,7 +843,7 @@ class TestDoctorCapabilityContract:
         assert os.path.isabs(smoke_call.kwargs["cwd"])
         assert smoke_call.kwargs["cwd"] != os.getcwd()
         assert result.output.count("Playwright capability verified") == 1
-        assert result.output.rfind("Core check passed") > result.output.rfind(
+        assert result.output.rfind("Ready.") > result.output.rfind(
             "Playwright capability verified"
         )
 
@@ -982,7 +991,7 @@ class TestDoctorOutputFormat:
         summary_lines = [
             line
             for line in result.output.splitlines()
-            if "Health check failed" in line or "健康检查未通过" in line
+            if "Not ready" in line or "未就绪" in line
         ]
         assert summary_lines, result.output
         for line in summary_lines:
@@ -995,7 +1004,10 @@ class TestDoctorOutputFormat:
         """Failing dependency items render 'Name: detail' on a single line."""
         result = self._invoke_doctor_failing(cli_runner, mock_config)
 
-        assert "! LibreOffice: soffice/libreoffice command not found" in result.output
+        assert (
+            "! LibreOffice: not found (needed to render PPTX slides as images)"
+            in result.output
+        )
         # No continuation-line format in dependency sections
         assert "│ soffice" not in result.output
 
@@ -1052,7 +1064,7 @@ class TestDoctorOutputFormat:
         result = self._invoke_doctor_failing(cli_runner, mock_config, config_path=None)
 
         flat = " ".join(result.output.split())
-        assert "Configure llm.model_list (no config file found" in flat
+        assert "or sign in to Claude Code, then run 'markitai init'" in flat
 
 
 class TestDoctorPerformance:
