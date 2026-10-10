@@ -66,6 +66,50 @@ fn decode(bytes: &[u8]) -> Result<(DynamicImage, DecodedFormat)> {
     Ok((image, DecodedFormat::Raster(format)))
 }
 
+/// Whether an orientation exchanges width and height.
+fn turned(orientation: image::metadata::Orientation) -> bool {
+    use image::metadata::Orientation::{Rotate90, Rotate90FlipH, Rotate270, Rotate270FlipH};
+    matches!(
+        orientation,
+        Rotate90 | Rotate90FlipH | Rotate270 | Rotate270FlipH
+    )
+}
+
+/// The image a preview shows: a TIFF's first page or a HEIF/AVIF container's
+/// primary image, oriented, under the decoding limits.
+pub(crate) fn decode_preview(bytes: &[u8]) -> Result<DynamicImage> {
+    if tiff::signature(bytes) {
+        return tiff::Pages::new(bytes)?.decode(0);
+    }
+    decode(bytes).map(|(image, _)| image)
+}
+
+/// The displayed size of that image. Raster headers suffice; HEIF and AVIF
+/// are decoded, since their crop and rotation properties decide it.
+pub(crate) fn preview_size(bytes: &[u8]) -> Result<(u32, u32)> {
+    if heif::signature(bytes) {
+        let image = heif::decode(bytes)?.image;
+        return Ok((image.width(), image.height()));
+    }
+    if tiff::signature(bytes) {
+        return tiff::Pages::new(bytes)?.size(0);
+    }
+    let reader = ImageReader::new(ImageBytes::new(bytes)).with_guessed_format()?;
+    if reader.format().is_none() {
+        return Err(error("unrecognized image format"));
+    }
+    let mut decoder = reader.into_decoder().map_err(error)?;
+    let (width, height) = decoder.dimensions();
+    if u64::from(width) * u64::from(height) > MAX_PIXELS {
+        return Err(error("decoded image exceeds 32 million pixels"));
+    }
+    Ok(if turned(decoder.orientation().map_err(error)?) {
+        (height, width)
+    } else {
+        (width, height)
+    })
+}
+
 fn dimension(cfg: &Value, key: &str, fallback: u32) -> u32 {
     cfg.pointer(key)
         .and_then(Value::as_u64)

@@ -131,6 +131,16 @@ impl PdfRasterSession {
         }
     }
 
+    /// The visible page box (CropBox ∩ MediaBox) after rotation, in points.
+    pub(crate) fn page_size(&self, page_1_based: usize) -> Result<(f64, f64)> {
+        match self {
+            #[cfg(target_os = "macos")]
+            Self::CoreGraphics(session) => session.page_size(page_1_based),
+            #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+            Self::Portable(session) => session.page_size(page_1_based),
+        }
+    }
+
     /// Checks the complete page geometry without allocating its pixel buffers.
     pub(crate) fn dimensions(&self, page_1_based: usize, dpi: f64) -> Result<(u32, u32)> {
         match self {

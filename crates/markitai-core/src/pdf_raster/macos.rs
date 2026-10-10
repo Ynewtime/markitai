@@ -22,6 +22,8 @@ pub(crate) struct PdfRasterSession {
 struct PageFrame {
     page: CFRetained<CGPDFPage>,
     crop: CGRect,
+    /// The visible box after rotation, in points.
+    points: (f64, f64),
     size: RasterSize,
     target: CGRect,
     transform: CGAffineTransform,
@@ -148,10 +150,16 @@ impl PdfRasterSession {
         Ok(PageFrame {
             page,
             crop,
+            points: (width, height),
             size,
             target,
             transform,
         })
+    }
+
+    /// The visible page box after rotation, in points.
+    pub(crate) fn page_size(&self, page_1_based: usize) -> Result<(f64, f64)> {
+        self.frame(page_1_based, 72.).map(|frame| frame.points)
     }
 
     /// Checks the complete page geometry without allocating its pixel buffers.
@@ -167,6 +175,7 @@ impl PdfRasterSession {
             size,
             target,
             transform,
+            ..
         } = self.frame(page_1_based, dpi)?;
         let mut pixels = Vec::new();
         pixels

@@ -36,6 +36,7 @@ fn stub(markdown: &str) -> FetchOutcome {
         }),
         cache_hit: false,
         screenshots: Vec::new(),
+        html: None,
     }
 }
 

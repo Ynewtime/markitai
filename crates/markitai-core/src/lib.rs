@@ -26,6 +26,7 @@ mod pdf_raster;
 #[doc(hidden)]
 pub mod platform;
 mod preparation;
+pub mod preview;
 mod pricing;
 mod private_install;
 mod process_groups;
@@ -190,8 +191,41 @@ pub fn convert_with_publication_detailed(
     context: ConvertContext<'_>,
     publication: Option<&dyn output::Publication>,
 ) -> DetailedResult<ConversionOutput> {
+    convert_scoped(source, options, context, publication, None)
+}
+
+/// [`convert_with_context_detailed`] that also keeps, at `html_snapshot`, the
+/// HTML a URL's page content was converted from in this process by the static
+/// or browser fetch (at most 10 MiB), for showing the page beside its
+/// Markdown. Nothing is written for a file, a PDF, a remote service's
+/// Markdown or a page-cache hit; a snapshot that cannot be written is skipped.
+#[doc(hidden)]
+pub fn convert_with_html_snapshot(
+    source: &str,
+    options: ConvertOptions,
+    context: ConvertContext<'_>,
+    html_snapshot: &Path,
+) -> DetailedResult<ConversionOutput> {
+    convert_scoped(source, options, context, None, Some(html_snapshot))
+}
+
+fn convert_scoped(
+    source: &str,
+    options: ConvertOptions,
+    context: ConvertContext<'_>,
+    publication: Option<&dyn output::Publication>,
+    html_snapshot: Option<&Path>,
+) -> DetailedResult<ConversionOutput> {
     let mut scope = None;
-    let result = convert_inner(source, options, context, publication, &mut scope, None);
+    let result = convert_inner(
+        source,
+        options,
+        context,
+        publication,
+        &mut scope,
+        None,
+        html_snapshot,
+    );
     result.map_err(|error| ConversionFailure {
         error,
         usage: scope
@@ -208,6 +242,7 @@ fn convert_inner(
     publication: Option<&dyn output::Publication>,
     document_scope: &mut Option<llm::DocumentScope>,
     mut prepared: Option<&mut output::PreparedOutput>,
+    html_snapshot: Option<&Path>,
 ) -> Result<ConversionOutput> {
     let start = Instant::now();
     if source.trim().is_empty() {
@@ -410,7 +445,12 @@ fn convert_inner(
         fetch_cache_hit = fetched.cache_hit;
         screenshots = fetched.screenshots;
         match fetched.content {
-            fetch::FetchContent::Document(document) => document,
+            fetch::FetchContent::Document(document) => {
+                if let (Some(path), Some(html)) = (html_snapshot, &fetched.html) {
+                    keep_html(path, html);
+                }
+                document
+            }
             fetch::FetchContent::Pdf(downloaded) => {
                 pdf_input = true;
                 pdf_media_requested = config::enabled(&cfg, "/ocr/enabled")
@@ -953,6 +993,20 @@ fn prepare_pdf_media(
     }
     let (document, screenshots) = prepared.finish()?;
     Ok((document, screenshots, reliable))
+}
+
+/// Write a page snapshot privately and atomically; a failure only means the
+/// page is not kept.
+fn keep_html(path: &Path, html: &str) {
+    use std::io::Write;
+    let written = path.parent().ok_or(()).and_then(|parent| {
+        let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|_| ())?;
+        file.write_all(html.as_bytes()).map_err(|_| ())?;
+        file.persist(path).map(drop).map_err(|_| ())
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 pub fn is_url(source: &str) -> bool {

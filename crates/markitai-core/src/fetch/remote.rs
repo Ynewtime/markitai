@@ -359,6 +359,7 @@ pub(crate) fn outcome(document: Document) -> FetchOutcome {
         content: FetchContent::Document(document),
         cache_hit: false,
         screenshots: Vec::new(),
+        html: None,
     }
 }
 
