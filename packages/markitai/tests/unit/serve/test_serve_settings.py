@@ -1801,7 +1801,7 @@ class TestClientCredentialBoundary:
     async def test_discovery_accepts_environment_card_reference(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The webapp sends an environment card's ``env:OPENAI_API_KEY``."""
+        """The web UI sends an environment card's ``env:OPENAI_API_KEY``."""
         monkeypatch.setenv("OPENAI_API_KEY", "sk-env-card-123456")
         calls = self._record_discovery(monkeypatch)
         async with _serve_client(_make_app(tmp_path)) as client:

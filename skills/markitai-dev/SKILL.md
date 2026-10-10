@@ -27,18 +27,21 @@ uv run bandit -c pyproject.toml -r packages/markitai/src -q   # security lint
 
 CI runs the same five over `packages/markitai/src` and `packages/markitai/tests`. Frontend dependencies use tracked `bun.lock` files; install with `--frozen-lockfile`.
 
-For webapp or documentation changes, also run:
+For documentation changes, also run:
 
 ```bash
-bun install --cwd webapp --frozen-lockfile
-bun run --cwd webapp test
-bun run --cwd webapp lint
-bun run --cwd webapp typecheck
-bun run --cwd webapp check:css
-scripts/sync_webapp_static.sh --check             # use --sync first when app assets changed
 bun install --cwd website --frozen-lockfile
 bun run --cwd website docs:build
 ```
+
+The `markitai serve` web UI is not built here: it is the shared workbench from the markitai-rust repository (`crates/markitai-cli/src/server/web/`), vendored under `packages/markitai/src/markitai/serve/workbench/` with its manifest. UI changes go to that repository; to ship a newer build, vendor its published bundle and check it:
+
+```bash
+uv run python scripts/sync_workbench.py --from <bundle dir or .tar.gz>
+uv run python scripts/sync_workbench.py --check   # CI runs this
+```
+
+The server's half of the workbench API contract is tested by `tests/unit/serve/test_workbench_contract.py` (shapes and reasons) and `test_workbench_security.py`.
 
 Treat `website/guide`, `website/zh/guide`, `skills/`, and CLI `--help` as one documentation surface. `test_website_docs_sync.py` checks option coverage, removed flags, extras, and bilingual links; you still have to compare descriptions and defaults against the code yourself. Keep Unreleased changelog entries concise and synchronized between languages. Generated website changelogs and installer copies come from the root files during docs builds.
 

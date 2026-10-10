@@ -14,9 +14,11 @@ import zipfile
 from pathlib import Path
 
 REQUIRED_FILES = {
-    "markitai/serve/static/index.html",
-    "markitai/serve/static/favicon.ico",
-    "markitai/serve/static/logo.svg",
+    "markitai/serve/workbench/manifest.json",
+    "markitai/serve/workbench/ui/index.html",
+    "markitai/serve/workbench/ui/boot.js",
+    "markitai/serve/workbench/ui/app.css",
+    "markitai/serve/workbench/ui/logo.svg",
 }
 
 
@@ -33,10 +35,18 @@ def check_wheel(wheel_path: Path) -> None:
         entry_points = wheel_file.read(entry_points_path).decode()
 
     missing = sorted(REQUIRED_FILES - names)
-    if not any(name.startswith("markitai/serve/static/assets/") for name in names):
-        missing.append("markitai/serve/static/assets/")
+    # The app script ships plain, gzip-only, or both (the bundle decides).
+    if not names & {
+        "markitai/serve/workbench/ui/app.js",
+        "markitai/serve/workbench/ui/app.js.gz",
+    }:
+        missing.append("markitai/serve/workbench/ui/app.js")
     if missing:
-        raise SystemExit(f"wheel is missing packaged webapp files: {missing}")
+        raise SystemExit(f"wheel is missing the web workbench files: {missing}")
+    # The retired React build must not ride along next to the workbench.
+    stale = sorted(name for name in names if name.startswith("markitai/serve/static/"))
+    if stale:
+        raise SystemExit(f"wheel still carries the retired web UI: {stale[:5]}")
 
     # MIT requires the licence to travel with every copy, and Apache-2.0
     # section 4(d) requires the NOTICE; both land in dist-info/licenses/

@@ -5,9 +5,9 @@ name: Release
 #      version in the root pyproject.toml and in server.json (both versions
 #      and the `markitai[mcp]==X.Y.Z` pin of `--from`)
 #   2. add a `## [X.Y.Z]` section to CHANGELOG.md
-#   3. if the webapp changed, run scripts/sync_webapp_static.sh so the packaged
-#      serve/static matches webapp/src (the `webapp` job below re-checks this
-#      and fails the release if it is stale)
+#   3. if a newer shared web workbench build should ship, vendor it with
+#      scripts/sync_workbench.py --from <bundle> (the `lint` job below checks
+#      the vendored files against their manifest)
 #   4. commit + push to main
 #   5. git tag vX.Y.Z && git push origin vX.Y.Z
 # Pushing the tag runs this workflow: tests -> build -> tag/version check ->
@@ -28,35 +28,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The wheel packages the committed serve/static as-is (no rebuild at publish
-  # time), so a release must verify that snapshot matches webapp/src — else a
-  # frontend change committed without scripts/sync_webapp_static.sh ships stale
-  # assets. This mirrors ci.yml's webapp job and gates `publish` below.
-  webapp:
-    name: Webapp test & packaged-asset check
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6.1.0
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref_name }}
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.0"
-
-      - name: Install dependencies
-        run: bun install --cwd webapp --frozen-lockfile
-
-      - name: Run tests
-        run: bun run --cwd webapp test
-
-      - name: Build webapp and verify packaged assets are in sync
-        run: scripts/sync_webapp_static.sh --check
-
   lint:
     runs-on: ubuntu-latest
     permissions:
@@ -79,6 +50,11 @@ jobs:
 
       - name: Run lint
         run: uv run ruff check packages/markitai/src
+
+      # The wheel ships the vendored web workbench as committed (no rebuild
+      # at publish time): every file must match the bundle's manifest.
+      - name: Verify the vendored web workbench
+        run: uv run python scripts/sync_workbench.py --check
 
   # Releases gate on the same OS/Python matrix as ci.yml: a platform-only
   # test failure (e.g. Windows) must block PyPI publishing, not just CI.
@@ -127,7 +103,7 @@ jobs:
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --help >/dev/null
 
   publish:
-    needs: [webapp, lint, test]
+    needs: [lint, test]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # create the GitHub Release

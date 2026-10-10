@@ -99,8 +99,6 @@ website/.vitepress/cache/
 website/.vitepress/dist/
 website/changelog.md
 
-webapp/node_modules/
-
 # Track each project's bun.lock for reproducible --frozen-lockfile installs.
 # Ignore lockfiles produced by other package managers and legacy Bun versions.
 bun.lockb
