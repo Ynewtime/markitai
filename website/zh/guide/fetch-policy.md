@@ -96,7 +96,7 @@ Clash 等代理返回 `198.18.0.0/15` 或 `2001:2::/48` 中的 Fake-IP 地址时
 |------|------|--------|------|
 | `wait_for_selector` | string | `null` | 抽取前等待的 CSS 选择器 |
 | `wait_for` | string | `null` | 页面加载事件：`load`、`domcontentloaded`、`networkidle`。不设则继承 `fetch.playwright.wait_for` |
-| `extra_wait_ms` | integer | `null` | 加载事件后的额外等待。不设则继承 `fetch.playwright.extra_wait_ms` |
+| `extra_wait_ms` | integer | `null` | 加载事件后额外等待的上限，页面稳定后提前结束。不设则继承 `fetch.playwright.extra_wait_ms` |
 | `prefer_strategy` | string | `null` | 这个域名优先尝试的策略 |
 | `strategy_priority` | list | `null` | 这个域名的完整策略顺序（覆盖全局顺序和 `prefer_strategy`） |
 | `skip_auto_scroll` | boolean | `false` | 单内容页面（推文、issue、文档）跳过自动滚动 |
