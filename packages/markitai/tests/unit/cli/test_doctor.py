@@ -1054,8 +1054,8 @@ class TestDoctorOutputFormat:
 
         flat = " ".join(result.output.split())
         # str(Path) differs across platforms (backslashes on Windows)
-        assert f"Configure llm.model_list in {config_path}" in flat
-        assert "Configure llm.model_list in markitai.json" not in flat
+        assert f"then run 'markitai init' (it adds them to {config_path})" in flat
+        assert "markitai.json" not in flat
 
     def test_llm_hint_suggests_init_when_no_config(
         self, cli_runner: CliRunner, mock_config: object
