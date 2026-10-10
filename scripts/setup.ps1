@@ -1,270 +1,418 @@
 # Markitai Setup Script - Unified installer with i18n support
 # PowerShell 5.1+
-# Auto-detects: language (en/zh), mode (user/dev)
+# Auto-detects the language (en/zh). Run from the root of a markitai checkout,
+# it asks whether to install markitai or set up a development environment.
 #
 # Usage:
-#   powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"   # User install
-#   .\scripts\setup.ps1                                                               # Dev setup (in repo)
-# Full failure logs use a private temp file; set MARKITAI_SETUP_LOG to override.
+#   powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"   # Install markitai
+#   .\scripts\setup.ps1                                     # In a checkout: install or dev setup
+#
+# Environment:
+#   MARKITAI_SETUP_MODE=install|dev  choose without the question (default: install)
+#   MARKITAI_INSTALL_OPTIONAL=1      install optional components without a terminal
+#   MARKITAI_VERSION=X.Y.Z           pin the markitai release
+#   MARKITAI_USE_MIRROR=1|0          use (or never offer) a PyPI mirror
+#   MARKITAI_SETUP_LOG=PATH          full failure log (default: a private temp file)
+#   NO_COLOR=1                       no colours; the marks stay
+#
+# Keep this file ASCII-only (a test enforces it): Windows PowerShell 5.1 reads
+# a script without a BOM in the ANSI code page, and irm decodes the download
+# as ISO-8859-1, so any other byte arrives as mojibake.
 
 $ErrorActionPreference = "Stop"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# Native tools (uv, markitai) print UTF-8. Remember the console's encoding so
+# it can be restored at the end: under irm | iex this is the user's own shell.
+$script:OriginalOutputEncoding = $null
+try {
+    $script:OriginalOutputEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+} catch {}
+
+# ============================================================
+# Terminal capabilities
+# ============================================================
+
+# Windows PowerShell 5.1 has no $IsWindows; it only runs on Windows.
+$script:OnWindows = ($PSVersionTable.PSEdition -ne "Core") -or $IsWindows
+
+# Windows Terminal, VS Code, ConEmu and SSH clients draw Unicode and CJK with
+# font fallback. The legacy console host does not: its font (Consolas, or
+# NSimSun on Chinese systems) lacks the check and rounded-corner glyphs.
+$script:ModernTerminal = [bool](
+    $env:WT_SESSION -or $env:TERM_PROGRAM -or ($env:ConEmuANSI -eq "ON") -or
+    $env:SSH_CONNECTION -or $env:SSH_CLIENT
+)
+
+function Test-OutputRedirected {
+    try { return [Console]::IsOutputRedirected } catch { return $false }
+}
+
+# Unicode marks on any modern terminal, off Windows, and in redirected UTF-8
+# output; ASCII in the legacy console host and for TERM=dumb.
+function Test-UnicodeMarks {
+    if ($env:TERM -eq "dumb") { return $false }
+    if (-not $script:OnWindows -or $script:ModernTerminal) { return $true }
+    if (Test-OutputRedirected) {
+        try { return ([Console]::OutputEncoding.CodePage -eq 65001) } catch { return $false }
+    }
+    return $false
+}
+
+# Colour is off for NO_COLOR, TERM=dumb and redirected output (unless
+# FORCE_COLOR is set); the marks carry the meaning either way.
+function Test-UseColor {
+    if ($env:NO_COLOR) { return $false }
+    if ($env:TERM -eq "dumb") { return $false }
+    if ($env:FORCE_COLOR -and $env:FORCE_COLOR -notmatch '^(0|false)$') { return $true }
+    return -not (Test-OutputRedirected)
+}
+
+# The legacy console host can only draw Chinese with a CJK or UTF-8 code page
+# (its font follows the code page); everywhere else it can.
+function Test-CjkCapableOutput {
+    if (-not $script:OnWindows -or $script:ModernTerminal) { return $true }
+    if (Test-OutputRedirected) { return $true }
+    $codePage = 0
+    try { $codePage = $script:OriginalOutputEncoding.CodePage } catch {}
+    return (@(932, 936, 949, 950, 54936, 65001) -contains $codePage)
+}
+
+# The classic "Windows PowerShell" shortcut repaints two console slots: the
+# DarkMagenta background is navy and DarkYellow, its default text colour, is
+# near-white. A DarkYellow warning would look like plain text there, so that
+# palette alone uses the bright slots, which read well on its dark navy.
+function Test-ClassicPowerShellPalette {
+    if (-not $script:OnWindows -or $script:ModernTerminal) { return $false }
+    try {
+        $ui = $Host.UI.RawUI
+        return ($ui.BackgroundColor -eq "DarkMagenta" -and $ui.ForegroundColor -eq "DarkYellow")
+    } catch {
+        return $false
+    }
+}
+
+# Wrap width of the console, or 0 for redirected output (one line per
+# message). COLUMNS overrides the measured width.
+function Get-SetupWrapWidth {
+    if ($env:TERM -eq "dumb" -or (Test-OutputRedirected)) { return 0 }
+    if ($env:COLUMNS -match '^\d+$') { return [int]$env:COLUMNS }
+    try { return [int][Console]::WindowWidth } catch {}
+    try { return [int]$Host.UI.RawUI.WindowSize.Width } catch {}
+    return 0
+}
+
+$script:UseColor = Test-UseColor
+$script:WrapWidth = Get-SetupWrapWidth
+
+# One colour per role (console slots matching ANSI 90/36/32/33/31, which
+# terminal themes tune for light and dark backgrounds alike).
+$script:C_GUIDE = "DarkGray"
+$script:C_DIM = "DarkGray"
+$script:C_ACCENT = "DarkCyan"
+$script:C_OK = "DarkGreen"
+$script:C_WARN = "DarkYellow"
+$script:C_ERR = "DarkRed"
+if (Test-ClassicPowerShellPalette) {
+    $script:C_ACCENT = "Cyan"
+    $script:C_OK = "Green"
+    $script:C_WARN = "Yellow"
+    $script:C_ERR = "Red"
+}
 
 # ============================================================
 # Internationalization (i18n) System
 # ============================================================
 
-# Detect language from environment
+# Detect language from the culture. Chinese also needs output that can draw
+# it (see Test-CjkCapableOutput); otherwise English is used.
 # Returns: "zh" for Chinese, "en" for English (default)
 function Get-Lang {
-    $culture = (Get-Culture).Name
-    if ($culture -match "^zh") {
+    $culture = ""
+    try { $culture = (Get-Culture).Name } catch {}
+    if ($culture -match "^zh" -and (Test-CjkCapableOutput)) {
         return "zh"
     }
     return "en"
+}
+
+# Decode the \uXXXX escapes of the Chinese table. A plain loop (no script
+# block delegate) keeps it identical on PowerShell 5.1 and 7.
+function ConvertFrom-CodePointEscape {
+    param([string]$Text)
+
+    $builder = New-Object System.Text.StringBuilder
+    $position = 0
+    foreach ($match in [regex]::Matches($Text, '\\u([0-9a-fA-F]{4})')) {
+        [void]$builder.Append($Text.Substring($position, $match.Index - $position))
+        [void]$builder.Append([char][Convert]::ToInt32($match.Groups[1].Value, 16))
+        $position = $match.Index + $match.Length
+    }
+    [void]$builder.Append($Text.Substring($position))
+    return $builder.ToString()
 }
 
 $script:LANG_CODE = Get-Lang
 
 # Internationalization function
 # Usage: i18n "key"
-# Returns localized string for the given key
+# Returns localized string for the given key. The script must stay ASCII:
+# Windows PowerShell 5.1 reads a file without a BOM in the ANSI code page, so
+# literal Chinese text turned into mojibake and parse errors under -File, and
+# into garbled prompts under irm | iex. The Chinese table is written as \uXXXX
+# escapes and decoded at run time; it matches setup.sh's strings (a test
+# compares the two).
 function i18n {
     param([string]$Key)
 
     if ($script:LANG_CODE -eq "zh") {
-        switch ($Key) {
+        $text = switch ($Key) {
             # Intro/Outro
-            "welcome"                   { return "欢迎使用 Markitai 安装程序!" }
-            "setup_complete"            { return "安装完成!" }
-            "setup_complete_with_warnings" { return "安装完成，但有部分组件失败" }
-            "dev_setup_complete"        { return "开发环境设置完成!" }
-            "dev_setup_complete_with_warnings" { return "开发环境设置完成，但有部分组件失败" }
+            "welcome"                   { 'Markitai \u5b89\u88c5' }
+            "setup_complete"            { 'markitai \u5df2\u5c31\u7eea' }
+            "setup_complete_with_warnings" { 'markitai \u5df2\u5c31\u7eea\uff0c\u4f46\u6709\u90e8\u5206\u7ec4\u4ef6\u5931\u8d25' }
+            "dev_setup_complete"        { '\u5f00\u53d1\u73af\u5883\u5df2\u5c31\u7eea' }
+            "dev_setup_complete_with_warnings" { '\u5f00\u53d1\u73af\u5883\u5df2\u5c31\u7eea\uff0c\u4f46\u6709\u90e8\u5206\u7ec4\u4ef6\u5931\u8d25' }
+            "setup_cancelled"           { '\u5df2\u53d6\u6d88\u5b89\u88c5' }
 
             # Mode
-            "mode_user"                 { return "模式: 用户安装" }
-            "mode_dev"                  { return "模式: 开发环境" }
+            "mode_user"                 { '\u6a21\u5f0f\uff1a\u5b89\u88c5 markitai' }
+            "mode_dev"                  { '\u6a21\u5f0f\uff1a\u5f00\u53d1\u73af\u5883' }
+            "repo_root_detected"        { '\u5f53\u524d\u76ee\u5f55\u662f markitai \u6e90\u7801\u4ed3\u5e93' }
+            "confirm_dev_mode"          { '\u5728\u8fd9\u91cc\u8bbe\u7f6e\u5f00\u53d1\u73af\u5883\uff0c\u800c\u4e0d\u662f\u5b89\u88c5 markitai?' }
+            "info_mode_default"         { '\u5c06\u5b89\u88c5 markitai\uff1b\u8bbe\u7f6e MARKITAI_SETUP_MODE=dev \u53ef\u6539\u4e3a\u8bbe\u7f6e\u5f00\u53d1\u73af\u5883' }
+            "warn_unknown_mode"         { '\u5ffd\u7565 MARKITAI_SETUP_MODE (\u5e94\u4e3a install \u6216 dev)' }
+            "error_dev_needs_repo"      { '\u5f00\u53d1\u73af\u5883\u9700\u8981 markitai \u6e90\u7801\u4ed3\u5e93\uff1b\u8bf7\u5728\u4ed3\u5e93\u6839\u76ee\u5f55\u8fd0\u884c\u5b89\u88c5\u811a\u672c' }
 
             # Sections
-            "section_prerequisites"     { return "前置条件" }
-            "section_core"              { return "核心组件" }
-            "section_optional"          { return "可选组件" }
-            "section_dev_env"           { return "开发环境" }
-            "section_llm_cli"           { return "LLM CLI 工具" }
-            "section_summary"           { return "安装摘要" }
+            "section_prerequisites"     { '\u524d\u7f6e\u6761\u4ef6' }
+            "section_core"              { '\u6838\u5fc3\u7ec4\u4ef6' }
+            "section_optional"          { '\u53ef\u9009\u7ec4\u4ef6' }
+            "section_dev_env"           { '\u5f00\u53d1\u73af\u5883' }
+            "section_llm_cli"           { 'LLM CLI \u5de5\u5177' }
+            "section_summary"           { '\u5b89\u88c5\u6458\u8981' }
 
             # Status
-            "installed"                 { return "已安装" }
-            "installing"                { return "正在安装" }
-            "skipped"                   { return "已跳过" }
-            "failed"                    { return "失败" }
-            "already_installed"         { return "已经安装" }
-            "not_found"                 { return "未找到" }
+            "installed"                 { '\u5df2\u5b89\u88c5' }
+            "installing"                { '\u6b63\u5728\u5b89\u88c5' }
+            "skipped"                   { '\u5df2\u8df3\u8fc7' }
+            "failed"                    { '\u5931\u8d25' }
+            "already_installed"         { '\u5df2\u7ecf\u5b89\u88c5' }
+            "not_found"                 { '\u672a\u627e\u5230' }
 
             # Components
-            "uv"                        { return "uv 包管理器" }
-            "python"                    { return "Python" }
-            "markitai"                  { return "markitai" }
-            "serve"                     { return "Web UI (markitai serve)" }
-            "ocr"                       { return "OCR (扫描件文字识别)" }
-            "playwright"                { return "Playwright 浏览器" }
-            "claude_cli"                { return "Claude Code CLI" }
-            "copilot_cli"               { return "Copilot CLI" }
-            "precommit"                 { return "pre-commit hooks" }
-            "python_deps"               { return "Python 依赖" }
+            "uv"                        { 'uv \u5305\u7ba1\u7406\u5668' }
+            "python"                    { 'Python' }
+            "markitai"                  { 'markitai' }
+            "serve"                     { 'Web UI (markitai serve)' }
+            "ocr"                       { 'OCR (\u626b\u63cf\u4ef6\u6587\u5b57\u8bc6\u522b)' }
+            "playwright"                { 'Playwright \u6d4f\u89c8\u5668' }
+            "claude_cli"                { 'Claude Code CLI' }
+            "copilot_cli"               { 'Copilot CLI' }
+            "precommit"                 { 'pre-commit hooks' }
+            "python_deps"               { 'Python \u4f9d\u8d56' }
 
             # Confirmations
-            "confirm_serve"             { return "安装 Web UI 依赖? (启用 markitai serve)" }
-            "confirm_ocr"               { return "安装 OCR 支持? (识别扫描件和图片中的文字, 约 150MB)" }
-            "confirm_playwright"        { return "安装 Playwright 浏览器? (用于 JS 渲染页面)" }
-            "confirm_claude_cli"        { return "安装 Claude Code CLI? (使用 Claude 订阅)" }
-            "confirm_copilot_cli"       { return "安装 Copilot CLI? (使用 GitHub Copilot 订阅)" }
-            "confirm_uv"                { return "安装 uv 包管理器?" }
-            "confirm_continue_as_admin" { return "以管理员身份继续?" }
+            "confirm_serve"             { '\u5b89\u88c5 Web UI \u4f9d\u8d56? (\u542f\u7528 markitai serve)' }
+            "confirm_ocr"               { '\u5b89\u88c5 OCR \u652f\u6301? (\u8bc6\u522b\u626b\u63cf\u4ef6\u548c\u56fe\u7247\u4e2d\u7684\u6587\u5b57, \u7ea6 150MB)' }
+            "confirm_playwright"        { '\u5b89\u88c5 Playwright \u6d4f\u89c8\u5668? (\u7528\u4e8e JS \u6e32\u67d3\u9875\u9762)' }
+            "confirm_claude_cli"        { '\u5b89\u88c5 Claude Code CLI? (\u4f7f\u7528 Claude \u8ba2\u9605)' }
+            "confirm_copilot_cli"       { '\u5b89\u88c5 Copilot CLI? (\u4f7f\u7528 GitHub Copilot \u8ba2\u9605)' }
+            "confirm_uv"                { '\u5b89\u88c5 uv \u5305\u7ba1\u7406\u5668?' }
 
             # Info messages
-            "info_chatgpt_route"        { return "ChatGPT 订阅无需 CLI，也无需 extra（首次使用时登录）" }
-            "info_playwright_purpose"   { return "Playwright 用于获取 JavaScript 渲染的网页内容" }
-            "info_project_dir"          { return "项目目录" }
-            "info_docs"                 { return "文档" }
-            "info_issues"               { return "问题反馈" }
-            "info_syncing_deps"         { return "正在同步依赖..." }
-            "info_deps_synced"          { return "依赖同步完成" }
-            "info_precommit_installed"  { return "pre-commit hooks 已安装" }
-            "info_error_log"            { return "完整错误日志" }
+            "info_chatgpt_route"        { 'ChatGPT \u8ba2\u9605\u65e0\u9700 CLI\uff0c\u4e5f\u65e0\u9700 extra\uff08\u9996\u6b21\u4f7f\u7528\u65f6\u767b\u5f55\uff09' }
+            "info_playwright_purpose"   { 'Playwright \u7528\u4e8e\u83b7\u53d6 JavaScript \u6e32\u67d3\u7684\u7f51\u9875\u5185\u5bb9' }
+            "info_project_dir"          { '\u9879\u76ee\u76ee\u5f55' }
+            "info_docs"                 { '\u6587\u6863' }
+            "info_issues"               { '\u95ee\u9898\u53cd\u9988' }
+            "info_syncing_deps"         { '\u6b63\u5728\u540c\u6b65\u4f9d\u8d56...' }
+            "info_deps_synced"          { '\u4f9d\u8d56\u540c\u6b65\u5b8c\u6210' }
+            "info_precommit_installed"  { 'pre-commit hooks \u5df2\u5b89\u88c5' }
+            "info_error_log"            { '\u5b8c\u6574\u9519\u8bef\u65e5\u5fd7' }
 
             # Error messages
-            "error_uv_required"         { return "需要安装 uv 包管理器" }
-            "error_python_required"     { return "需要安装 Python 3.11-3.13" }
-            "error_unexpected"          { return "发生意外错误" }
-            "error_setup_failed"        { return "安装失败" }
+            "error_uv_required"         { '\u9700\u8981\u5b89\u88c5 uv \u5305\u7ba1\u7406\u5668' }
+            "error_python_required"     { '\u9700\u8981\u5b89\u88c5 Python 3.11-3.13' }
+            "error_unexpected"          { '\u53d1\u751f\u610f\u5916\u9519\u8bef' }
+            "error_setup_failed"        { '\u5b89\u88c5\u5931\u8d25' }
 
             # Install source (repo detection)
-            "repo_detected"             { return "检测到 markitai 源码仓库" }
-            "confirm_local_install"     { return "从本地源码安装 markitai? (默认使用 PyPI 发布版)" }
-            "source_local"              { return "安装来源: 本地源码" }
-            "source_pypi"               { return "安装来源: PyPI" }
-            "info_repo_noninteractive"  { return "非交互模式: 已检测到源码仓库, 将使用 PyPI 发布版" }
+            "repo_detected"             { '\u68c0\u6d4b\u5230 markitai \u6e90\u7801\u4ed3\u5e93' }
+            "confirm_local_install"     { '\u4ece\u8fd9\u4e2a\u6e90\u7801\u4ed3\u5e93\u5b89\u88c5 markitai\uff0c\u800c\u4e0d\u662f PyPI \u53d1\u5e03\u7248?' }
+            "source_local"              { '\u5b89\u88c5\u6765\u6e90: \u672c\u5730\u6e90\u7801' }
+            "source_pypi"               { '\u5b89\u88c5\u6765\u6e90: PyPI' }
+            "info_repo_noninteractive"  { '\u975e\u4ea4\u4e92\u6a21\u5f0f: \u5df2\u68c0\u6d4b\u5230\u6e90\u7801\u4ed3\u5e93, \u5c06\u4f7f\u7528 PyPI \u53d1\u5e03\u7248' }
 
             # Network / Mirrors
-            "mirror_slow_index"         { return "PyPI 默认源响应缓慢或不可达" }
-            "mirror_confirm"            { return "使用镜像源加速安装?" }
-            "mirror_select"             { return "选择镜像源" }
-            "mirror_tuna"               { return "清华 TUNA (推荐)" }
-            "mirror_aliyun"             { return "阿里云" }
-            "mirror_tencent"            { return "腾讯云" }
-            "mirror_huawei"             { return "华为云" }
-            "mirror_enabled"            { return "已启用镜像加速" }
-            "mirror_skipped"            { return "继续使用默认源" }
-            "mirror_pypi"               { return "PyPI 镜像" }
-            "mirror_playwright"         { return "Playwright 镜像" }
-            "mirror_npm"                { return "npm 镜像" }
+            "mirror_slow_index"         { 'PyPI \u9ed8\u8ba4\u6e90\u54cd\u5e94\u7f13\u6162\u6216\u4e0d\u53ef\u8fbe' }
+            "mirror_confirm"            { '\u4f7f\u7528\u955c\u50cf\u6e90\u52a0\u901f\u5b89\u88c5?' }
+            "mirror_select"             { '\u9009\u62e9\u955c\u50cf\u6e90' }
+            "mirror_tuna"               { '\u6e05\u534e TUNA (\u63a8\u8350)' }
+            "mirror_aliyun"             { '\u963f\u91cc\u4e91' }
+            "mirror_tencent"            { '\u817e\u8baf\u4e91' }
+            "mirror_huawei"             { '\u534e\u4e3a\u4e91' }
+            "mirror_enabled"            { '\u5df2\u542f\u7528\u955c\u50cf\u52a0\u901f' }
+            "mirror_skipped"            { '\u7ee7\u7eed\u4f7f\u7528\u9ed8\u8ba4\u6e90' }
+            "mirror_pypi"               { 'PyPI \u955c\u50cf' }
+            "mirror_playwright"         { 'Playwright \u955c\u50cf' }
+            "mirror_npm"                { 'npm \u955c\u50cf' }
 
             # Warnings
-            "warn_admin"                { return "警告: 以管理员身份运行" }
-            "warn_admin_risk"           { return "以管理员运行安装脚本存在安全风险" }
-            "warn_wsl"                  { return "警告: 检测到 WSL 环境" }
-            "warn_wsl_tip"              { return "建议使用 shell 脚本: ./scripts/setup.sh" }
+            "warn_admin"                { '\u6b63\u5728\u4ee5\u7ba1\u7406\u5458\u8eab\u4efd\u8fd0\u884c' }
+            "warn_admin_risk"           { 'markitai \u6309\u7528\u6237\u5b89\u88c5\uff0c\u4ece\u4e0d\u9700\u8981\u7ba1\u7406\u5458\u6743\u9650\u3002\u4ee5\u7ba1\u7406\u5458\u8fd0\u884c\u65f6\uff0c\u4e0b\u8f7d\u7684\u5b89\u88c5\u7a0b\u5e8f\u90fd\u62e5\u6709\u8fd9\u53f0\u7535\u8111\u7684\u5b8c\u5168\u63a7\u5236\u6743\uff1b\u5982\u679c\u7ba1\u7406\u5458\u662f\u53e6\u4e00\u4e2a\u8d26\u6237\uff0cmarkitai \u4f1a\u88c5\u5230\u90a3\u4e2a\u8d26\u6237\u4e0b\uff0c\u800c\u4e0d\u662f\u4f60\u7684\u8d26\u6237\u3002' }
+            "confirm_continue_as_admin" { '\u4ecd\u4ee5\u7ba1\u7406\u5458\u8eab\u4efd\u7ee7\u7eed?' }
+            "info_admin_noninteractive" { '\u6ca1\u6709\u53ef\u4f9b\u786e\u8ba4\u7684\u7ec8\u7aef\uff0c\u7ee7\u7eed\u4ee5\u7ba1\u7406\u5458\u8eab\u4efd\u8fd0\u884c' }
+            "warn_wsl"                  { '\u68c0\u6d4b\u5230 WSL \u73af\u5883' }
+            "warn_wsl_tip"              { '\u5728 WSL \u91cc\u8bf7\u6539\u7528 shell \u5b89\u88c5\u811a\u672c:' }
+            "confirm_continue"          { '\u4ecd\u7136\u7ee7\u7eed?' }
+            "warn_exec_policy"          { '\u4f60\u7684 PowerShell \u6267\u884c\u7b56\u7565 ({0}) \u53ef\u80fd\u4f1a\u963b\u6b62\u811a\u672c\u8fd0\u884c\uff1b\u5982\u9700\u4e3a\u4f60\u7684\u8d26\u6237\u5141\u8bb8\u811a\u672c\uff0c\u8bf7\u8fd0\u884c:' }
+            "warn_uv_restart"           { 'uv \u5df2\u5b89\u88c5\uff0c\u4f46\u5f53\u524d PowerShell \u8fd8\u627e\u4e0d\u5230\u5b83\uff1b\u8bf7\u6253\u5f00\u65b0\u7684 PowerShell \u7a97\u53e3\u540e\u91cd\u65b0\u8fd0\u884c\u5b89\u88c5\u811a\u672c' }
+            "warn_bin_off_path"         { '\u5f53\u524d shell \u7684 PATH \u4e0d\u5305\u542b markitai \u7684\u547d\u4ee4\u76ee\u5f55' }
+            "info_bin_off_path_fix"     { '\u8bf7\u6253\u5f00\u65b0\u7684\u7ec8\u7aef\uff1b\u5982\u679c\u4ecd\u627e\u4e0d\u5230 markitai\uff0c\u8bf7\u8fd0\u884c:' }
 
             # Getting started
-            "getting_started"           { return "开始使用" }
-            "quick_start"               { return "快速开始" }
-            "run_tests"                 { return "运行测试" }
-            "run_cli"                   { return "运行 CLI" }
-            "interactive_mode"          { return "交互模式" }
-            "start_web_ui"              { return "启动 Web UI" }
-            "configure_llm"             { return "配置 LLM" }
-            "configure_env"             { return "配置环境变量" }
-            "convert_file"              { return "转换文件" }
-            "show_help"                 { return "显示帮助" }
-            "short_alias"               { return "提示：mkai 是 markitai 的简写，两个命令等价" }
-            "mkai_conflict"             { return "系统已有 mkai 命令，会遮蔽 markitai 的别名；请使用完整命令 markitai" }
-
-            # Summary
-            "summary_installed"         { return "已安装" }
-            "summary_skipped"           { return "已跳过" }
-            "summary_failed"            { return "安装失败" }
+            "getting_started"           { '\u5f00\u59cb\u4f7f\u7528' }
+            "quick_start"               { '\u5feb\u901f\u5f00\u59cb' }
+            "run_tests"                 { '\u8fd0\u884c\u6d4b\u8bd5' }
+            "run_cli"                   { '\u8fd0\u884c CLI' }
+            "interactive_mode"          { '\u4ea4\u4e92\u6a21\u5f0f' }
+            "start_web_ui"              { '\u542f\u52a8 Web UI' }
+            "configure_llm"             { '\u914d\u7f6e LLM' }
+            "configure_env"             { '\u914d\u7f6e\u73af\u5883\u53d8\u91cf' }
+            "convert_file"              { '\u8f6c\u6362\u6587\u4ef6' }
+            "show_help"                 { '\u663e\u793a\u5e2e\u52a9' }
+            "short_alias"               { '\u63d0\u793a\uff1amkai \u662f markitai \u7684\u7b80\u5199\uff0c\u4e24\u4e2a\u547d\u4ee4\u7b49\u4ef7' }
+            "mkai_conflict"             { '\u7cfb\u7edf\u5df2\u6709 mkai \u547d\u4ee4\uff0c\u4f1a\u906e\u853d markitai \u7684\u522b\u540d\uff1b\u8bf7\u4f7f\u7528\u5b8c\u6574\u547d\u4ee4 markitai' }
 
             # Default fallback
-            default                     { return $Key }
+            default                     { $Key }
         }
-    } else {
-        # English (default)
-        switch ($Key) {
-            # Intro/Outro
-            "welcome"                   { return "Welcome to Markitai Setup!" }
-            "setup_complete"            { return "Setup complete!" }
-            "setup_complete_with_warnings" { return "Setup complete with warnings" }
-            "dev_setup_complete"        { return "Development environment ready!" }
-            "dev_setup_complete_with_warnings" { return "Development environment ready with warnings" }
+        return (ConvertFrom-CodePointEscape $text)
+    }
 
-            # Mode
-            "mode_user"                 { return "Mode: User Install" }
-            "mode_dev"                  { return "Mode: Development" }
+    # English (default)
+    switch ($Key) {
+        # Intro/Outro
+        "welcome"                   { return 'Markitai Setup' }
+        "setup_complete"            { return 'Markitai is ready' }
+        "setup_complete_with_warnings" { return 'Markitai is ready, but some components failed' }
+        "dev_setup_complete"        { return 'Development environment ready' }
+        "dev_setup_complete_with_warnings" { return 'Development environment ready, but some components failed' }
+        "setup_cancelled"           { return 'Setup cancelled' }
 
-            # Sections
-            "section_prerequisites"     { return "Prerequisites" }
-            "section_core"              { return "Core Components" }
-            "section_optional"          { return "Optional Components" }
-            "section_dev_env"           { return "Development Environment" }
-            "section_llm_cli"           { return "LLM CLI Tools" }
-            "section_summary"           { return "Installation Summary" }
+        # Mode
+        "mode_user"                 { return 'Mode: install markitai' }
+        "mode_dev"                  { return 'Mode: development environment' }
+        "repo_root_detected"        { return 'This folder is a markitai source checkout' }
+        "confirm_dev_mode"          { return 'Set up a development environment here instead of installing markitai?' }
+        "info_mode_default"         { return 'Installing markitai; set MARKITAI_SETUP_MODE=dev for a development environment instead' }
+        "warn_unknown_mode"         { return 'Ignoring MARKITAI_SETUP_MODE (expected install or dev)' }
+        "error_dev_needs_repo"      { return 'A development environment needs a markitai checkout; run setup from its root folder' }
 
-            # Status
-            "installed"                 { return "installed" }
-            "installing"                { return "installing" }
-            "skipped"                   { return "skipped" }
-            "failed"                    { return "failed" }
-            "already_installed"         { return "already installed" }
-            "not_found"                 { return "not found" }
+        # Sections
+        "section_prerequisites"     { return 'Prerequisites' }
+        "section_core"              { return 'Core components' }
+        "section_optional"          { return 'Optional components' }
+        "section_dev_env"           { return 'Development environment' }
+        "section_llm_cli"           { return 'LLM CLI tools' }
+        "section_summary"           { return 'Summary' }
 
-            # Components
-            "uv"                        { return "uv package manager" }
-            "python"                    { return "Python" }
-            "markitai"                  { return "markitai" }
-            "serve"                     { return "Web UI (markitai serve)" }
-            "ocr"                       { return "OCR (scanned-document text recognition)" }
-            "playwright"                { return "Playwright browser" }
-            "claude_cli"                { return "Claude Code CLI" }
-            "copilot_cli"               { return "Copilot CLI" }
-            "precommit"                 { return "pre-commit hooks" }
-            "python_deps"               { return "Python dependencies" }
+        # Status
+        "installed"                 { return 'installed' }
+        "installing"                { return 'Installing' }
+        "skipped"                   { return 'skipped' }
+        "failed"                    { return 'failed' }
+        "already_installed"         { return 'already installed' }
+        "not_found"                 { return 'not found' }
 
-            # Confirmations
-            "confirm_serve"             { return "Install Web UI dependencies? (enables markitai serve)" }
-            "confirm_ocr"               { return "Install OCR support? (text recognition in scanned PDFs and images, ~150MB)" }
-            "confirm_playwright"        { return "Install Playwright browser? (for JS-rendered pages)" }
-            "confirm_claude_cli"        { return "Install Claude Code CLI? (use your Claude subscription)" }
-            "confirm_copilot_cli"       { return "Install Copilot CLI? (use your GitHub Copilot subscription)" }
-            "confirm_uv"                { return "Install uv package manager?" }
-            "confirm_continue_as_admin" { return "Continue as administrator?" }
+        # Components
+        "uv"                        { return 'uv package manager' }
+        "python"                    { return 'Python' }
+        "markitai"                  { return 'markitai' }
+        "serve"                     { return 'Web UI (markitai serve)' }
+        "ocr"                       { return 'OCR (scanned-document text recognition)' }
+        "playwright"                { return 'Playwright browser' }
+        "claude_cli"                { return 'Claude Code CLI' }
+        "copilot_cli"               { return 'Copilot CLI' }
+        "precommit"                 { return 'pre-commit hooks' }
+        "python_deps"               { return 'Python dependencies' }
 
-            # Info messages
-            "info_chatgpt_route"        { return "ChatGPT subscription needs no CLI and no extra (it signs in on first use)" }
-            "info_playwright_purpose"   { return "Playwright fetches JavaScript-rendered web pages" }
-            "info_project_dir"          { return "Project directory" }
-            "info_docs"                 { return "Documentation" }
-            "info_issues"               { return "Issues" }
-            "info_syncing_deps"         { return "Syncing dependencies..." }
-            "info_deps_synced"          { return "Dependencies synced" }
-            "info_precommit_installed"  { return "pre-commit hooks installed" }
-            "info_error_log"            { return "Full error log" }
+        # Confirmations
+        "confirm_serve"             { return 'Install Web UI dependencies? (enables markitai serve)' }
+        "confirm_ocr"               { return 'Install OCR support? (text recognition in scanned PDFs and images, ~150MB)' }
+        "confirm_playwright"        { return 'Install Playwright browser? (for JS-rendered pages)' }
+        "confirm_claude_cli"        { return 'Install Claude Code CLI? (use your Claude subscription)' }
+        "confirm_copilot_cli"       { return 'Install Copilot CLI? (use your GitHub Copilot subscription)' }
+        "confirm_uv"                { return 'Install uv package manager?' }
 
-            # Error messages
-            "error_uv_required"         { return "uv package manager is required" }
-            "error_python_required"     { return "Python 3.11-3.13 is required" }
-            "error_unexpected"          { return "Unexpected error" }
-            "error_setup_failed"        { return "Setup failed" }
+        # Info messages
+        "info_chatgpt_route"        { return 'ChatGPT subscription needs no CLI and no extra (it signs in on first use)' }
+        "info_playwright_purpose"   { return 'Playwright fetches JavaScript-rendered web pages' }
+        "info_project_dir"          { return 'Project directory' }
+        "info_docs"                 { return 'Documentation' }
+        "info_issues"               { return 'Issues' }
+        "info_syncing_deps"         { return 'Syncing dependencies...' }
+        "info_deps_synced"          { return 'Dependencies synced' }
+        "info_precommit_installed"  { return 'pre-commit hooks installed' }
+        "info_error_log"            { return 'Full error log' }
 
-            # Install source (repo detection)
-            "repo_detected"             { return "markitai source repo detected" }
-            "confirm_local_install"     { return "Install markitai from the local repo? (default: PyPI release)" }
-            "source_local"              { return "Install source: local repo" }
-            "source_pypi"               { return "Install source: PyPI" }
-            "info_repo_noninteractive"  { return "Non-interactive mode: source repo detected, using PyPI release" }
+        # Error messages
+        "error_uv_required"         { return 'uv package manager is required' }
+        "error_python_required"     { return 'Python 3.11-3.13 is required' }
+        "error_unexpected"          { return 'Unexpected error' }
+        "error_setup_failed"        { return 'Setup failed' }
 
-            # Network / Mirrors
-            "mirror_slow_index"         { return "The default PyPI index is slow or unreachable from here" }
-            "mirror_confirm"            { return "Use a mirror to speed up the install?" }
-            "mirror_select"             { return "Select mirror source" }
-            "mirror_tuna"               { return "Tsinghua TUNA (Recommended)" }
-            "mirror_aliyun"             { return "Alibaba Cloud" }
-            "mirror_tencent"            { return "Tencent Cloud" }
-            "mirror_huawei"             { return "Huawei Cloud" }
-            "mirror_enabled"            { return "Mirror acceleration enabled" }
-            "mirror_skipped"            { return "Keeping the default index" }
-            "mirror_pypi"               { return "PyPI mirror" }
-            "mirror_playwright"         { return "Playwright mirror" }
-            "mirror_npm"                { return "npm mirror" }
+        # Install source (repo detection)
+        "repo_detected"             { return 'markitai source repo detected' }
+        "confirm_local_install"     { return 'Install markitai from this checkout instead of the PyPI release?' }
+        "source_local"              { return 'Install source: local repo' }
+        "source_pypi"               { return 'Install source: PyPI' }
+        "info_repo_noninteractive"  { return 'Non-interactive mode: source repo detected, using PyPI release' }
 
-            # Warnings
-            "warn_admin"                { return "Warning: Running as administrator" }
-            "warn_admin_risk"           { return "Running setup scripts as administrator carries security risks" }
-            "warn_wsl"                  { return "Warning: WSL environment detected" }
-            "warn_wsl_tip"              { return "Consider using the shell script: ./scripts/setup.sh" }
+        # Network / Mirrors
+        "mirror_slow_index"         { return 'The default PyPI index is slow or unreachable from here' }
+        "mirror_confirm"            { return 'Use a mirror to speed up the install?' }
+        "mirror_select"             { return 'Select mirror source' }
+        "mirror_tuna"               { return 'Tsinghua TUNA (Recommended)' }
+        "mirror_aliyun"             { return 'Alibaba Cloud' }
+        "mirror_tencent"            { return 'Tencent Cloud' }
+        "mirror_huawei"             { return 'Huawei Cloud' }
+        "mirror_enabled"            { return 'Mirror acceleration enabled' }
+        "mirror_skipped"            { return 'Keeping the default index' }
+        "mirror_pypi"               { return 'PyPI mirror' }
+        "mirror_playwright"         { return 'Playwright mirror' }
+        "mirror_npm"                { return 'npm mirror' }
 
-            # Getting started
-            "getting_started"           { return "Getting Started" }
-            "quick_start"               { return "Quick Start" }
-            "run_tests"                 { return "Run tests" }
-            "run_cli"                   { return "Run CLI" }
-            "interactive_mode"          { return "Interactive mode" }
-            "start_web_ui"              { return "Start Web UI" }
-            "configure_llm"             { return "Configure LLM" }
-            "configure_env"             { return "Configure environment" }
-            "convert_file"              { return "Convert a file" }
-            "show_help"                 { return "Show help" }
-            "short_alias"               { return "Tip: mkai is a short alias for markitai (both work)" }
-            "mkai_conflict"             { return "An existing 'mkai' command shadows markitai's alias; use the full 'markitai' command" }
+        # Warnings
+        "warn_admin"                { return 'Running as administrator' }
+        "warn_admin_risk"           { return 'markitai installs per user and never needs administrator rights. Elevated, every downloaded installer gets full control of this computer, and if the administrator is a different account, markitai is installed for that account instead of yours.' }
+        "confirm_continue_as_admin" { return 'Continue as administrator anyway?' }
+        "info_admin_noninteractive" { return 'No terminal to ask; continuing as administrator' }
+        "warn_wsl"                  { return 'WSL detected' }
+        "warn_wsl_tip"              { return 'Inside WSL, use the shell installer instead:' }
+        "confirm_continue"          { return 'Continue anyway?' }
+        "warn_exec_policy"          { return 'Your PowerShell execution policy ({0}) may block scripts; to allow them for your account, run:' }
+        "warn_uv_restart"           { return 'uv package manager installed, but this PowerShell cannot find it yet; open a new PowerShell window and run setup again' }
+        "warn_bin_off_path"         { return 'This shell''s PATH does not include markitai''s command folder' }
+        "info_bin_off_path_fix"     { return 'Open a new terminal; if markitai is still not found, run:' }
 
-            # Summary
-            "summary_installed"         { return "Installed" }
-            "summary_skipped"           { return "Skipped" }
-            "summary_failed"            { return "Failed" }
+        # Getting started
+        "getting_started"           { return 'Getting started' }
+        "quick_start"               { return 'Quick start' }
+        "run_tests"                 { return 'Run tests' }
+        "run_cli"                   { return 'Run CLI' }
+        "interactive_mode"          { return 'Interactive mode' }
+        "start_web_ui"              { return 'Start Web UI' }
+        "configure_llm"             { return 'Configure LLM' }
+        "configure_env"             { return 'Configure environment' }
+        "convert_file"              { return 'Convert a file' }
+        "show_help"                 { return 'Show help' }
+        "short_alias"               { return 'Tip: mkai is a short alias for markitai (both work)' }
+        "mkai_conflict"             { return 'An existing ''mkai'' command shadows markitai''s alias; use the full ''markitai'' command' }
 
-            # Default fallback
-            default                     { return $Key }
-        }
+        # Default fallback
+        default                     { return $Key }
     }
 }
 
@@ -274,16 +422,39 @@ function i18n {
 # The one-column guide follows the `withGuide` visual grammar popularized by
 # @clack/prompts. Keeping this renderer inline preserves PowerShell 5.1 support
 # and lets the bootstrap run before Node or Python is installed.
+#
+# One terminal style for everything markitai prints, the CLI included: the
+# guide is gray, structure keeps the default colour, the accent marks prompts,
+# actions and commands, green is only success, yellow only warnings, red only
+# errors. A guide-only row precedes each section header and none sits inside a
+# section; items are "<bar>  <mark> <text>", details and commands sit two
+# columns further in. Marks: check success, ! warning, cross error, arrow
+# action, bullet info, circle skipped, ? prompt (ASCII + ! x > - o ? where
+# the console cannot draw them).
 
-$S_BAR = [char]0x2502           # │
-$S_BAR_H = [char]0x2500         # ─
-$S_BRANCH = [char]0x251C        # ├
-$S_CORNER_TOP = [char]0x256D    # ╭
-$S_CORNER_BOT = [char]0x2570    # ╰
-$S_CHECK = [char]0x2713         # ✓
-$S_CROSS = [char]0x2717         # ✗
-$S_ARROW = [char]0x2192         # →
-$S_CIRCLE = [char]0x25CB        # ○
+if (Test-UnicodeMarks) {
+    $S_BAR = [string][char]0x2502
+    $S_TOP = [string][char]0x256D + [char]0x2500
+    $S_BRANCH = [string][char]0x251C + [char]0x2500
+    $S_BOTTOM = [string][char]0x2570 + [char]0x2500
+    $S_CHECK = [string][char]0x2713
+    $S_CROSS = [string][char]0x2717
+    $S_ARROW = [string][char]0x2192
+    $S_DOT = [string][char]0x2022
+    $S_CIRCLE = [string][char]0x25CB
+} else {
+    $S_BAR = "|"
+    $S_TOP = "+-"
+    $S_BRANCH = "+-"
+    $S_BOTTOM = "+-"
+    $S_CHECK = "+"
+    $S_CROSS = "x"
+    $S_ARROW = ">"
+    $S_DOT = "-"
+    $S_CIRCLE = "o"
+}
+$S_WARN = "!"
+$S_ASK = "?"
 
 # Session state lets the global catch close an interrupted tree exactly once.
 $script:CLACK_SESSION_ACTIVE = $false
@@ -292,32 +463,150 @@ $script:SETUP_LOG_FILE = $env:MARKITAI_SETUP_LOG
 $script:SETUP_LOG_AUTO = $false
 $script:SETUP_LOG_SHOWN = $false
 
-# Print an empty row while preserving the session guide.
-function Write-GuideLine {
-    Write-Host $S_BAR -ForegroundColor DarkGray
-}
-
-# Print a branch connected to the session guide.
-function Write-TreeBranch {
+# Write text in a role colour (or plain when colour is off).
+function Write-Styled {
     param(
         [string]$Text,
-        [ConsoleColor]$Color = [ConsoleColor]::DarkGray
+        [string]$Color = ""
     )
-    Write-Host $S_BRANCH -ForegroundColor DarkGray -NoNewline
-    Write-Host $S_BAR_H -ForegroundColor $Color -NoNewline
-    Write-Host " $Text"
+    if ([string]::IsNullOrEmpty($Text)) { return }
+    if ($script:UseColor -and $Color) {
+        Write-Host $Text -ForegroundColor $Color -NoNewline
+    } else {
+        Write-Host $Text -NoNewline
+    }
 }
 
-# Session intro - start of CLI flow
+# Display columns of a string: CJK and full-width characters take two.
+function Get-DisplayWidth {
+    param([string]$Text)
+
+    $width = 0
+    foreach ($ch in $Text.ToCharArray()) {
+        $code = [int]$ch
+        if (($code -ge 0x1100 -and $code -le 0x115F) -or
+            ($code -ge 0x2E80 -and $code -le 0xA4CF) -or
+            ($code -ge 0xAC00 -and $code -le 0xD7A3) -or
+            ($code -ge 0xF900 -and $code -le 0xFAFF) -or
+            ($code -ge 0xFE30 -and $code -le 0xFE4F) -or
+            ($code -ge 0xFF00 -and $code -le 0xFF60) -or
+            ($code -ge 0xFFE0 -and $code -le 0xFFE6)) {
+            $width += 2
+        } else {
+            $width += 1
+        }
+    }
+    return $width
+}
+
+# Word-wrap text to a number of display columns (0: no wrapping). A run of
+# CJK characters longer than a line may break between characters; other long
+# words (paths, URLs) are never split.
+function Split-WrappedText {
+    param(
+        [string]$Text,
+        [int]$Width
+    )
+
+    if ($Width -le 0) { return ,@($Text) }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $line = ""
+    $lineWidth = 0
+    foreach ($word in ($Text -split ' ')) {
+        if ($word -eq "") { continue }
+        $wordWidth = Get-DisplayWidth $word
+        if ($line -ne "" -and $lineWidth + 1 + $wordWidth -le $Width) {
+            $line += " $word"
+            $lineWidth += 1 + $wordWidth
+            continue
+        }
+        if ($line -ne "") {
+            $lines.Add($line)
+            $line = ""
+            $lineWidth = 0
+        }
+        if ($wordWidth -le $Width -or $wordWidth -eq $word.Length) {
+            $line = $word
+            $lineWidth = $wordWidth
+            continue
+        }
+        foreach ($ch in $word.ToCharArray()) {
+            $charWidth = Get-DisplayWidth ([string]$ch)
+            if ($line -ne "" -and $lineWidth + $charWidth -gt $Width) {
+                $lines.Add($line)
+                $line = ""
+                $lineWidth = 0
+            }
+            $line += $ch
+            $lineWidth += $charWidth
+        }
+    }
+    $lines.Add($line)
+    return ,$lines.ToArray()
+}
+
+# One row on the guide: "<bar>  <indent><mark> <text>[ <suffix>]". On a
+# console, long text wraps at word boundaries with a hanging indent under its
+# first character; redirected output keeps one line per message.
+function Write-GuideRow {
+    param(
+        [string]$Mark = "",
+        [string]$MarkColor = "",
+        [string]$Text = "",
+        [string]$TextColor = "",
+        [string]$Indent = "",
+        [string]$Suffix = "",
+        [string]$SuffixColor = "",
+        [int]$Reserve = 0,
+        [switch]$NoNewline
+    )
+
+    $pad = if ($Mark) { "$Indent  " } else { $Indent }
+    $width = 0
+    if ($script:WrapWidth -gt 0) {
+        # Bar and two spaces, plus one column so the legacy console host does
+        # not wrap a line that fills the window exactly.
+        $width = $script:WrapWidth - 4 - $pad.Length - $Reserve
+        if ($width -lt 16) { $width = 0 }
+    }
+    $lines = Split-WrappedText -Text $Text -Width $width
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        Write-Styled $S_BAR $script:C_GUIDE
+        Write-Host "  " -NoNewline
+        if ($i -eq 0) {
+            Write-Styled $Indent
+            if ($Mark) {
+                Write-Styled $Mark $MarkColor
+                Write-Host " " -NoNewline
+            }
+        } else {
+            Write-Styled $pad
+        }
+        Write-Styled $lines[$i] $TextColor
+        if ($i -lt $lines.Count - 1) { Write-Host "" }
+    }
+    if ($Suffix) {
+        Write-Host " " -NoNewline
+        Write-Styled $Suffix $SuffixColor
+    }
+    if (-not $NoNewline) { Write-Host "" }
+}
+
+# Print an empty row while preserving the session guide.
+function Write-GuideLine {
+    Write-Styled $S_BAR $script:C_GUIDE
+    Write-Host ""
+}
+
+# Session intro - start of CLI flow. Items may follow directly; each section
+# adds its own guide row above its header.
 function Clack-Intro {
     param([string]$Title)
     $script:CLACK_SESSION_ACTIVE = $true
     $script:CLACK_SESSION_CLOSED = $false
     Write-Host ""
-    Write-Host $S_CORNER_TOP -ForegroundColor DarkGray -NoNewline
-    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
+    Write-Styled $S_TOP $script:C_GUIDE
     Write-Host " $Title"
-    Write-GuideLine
 }
 
 # Session outro - end of CLI flow
@@ -329,9 +618,9 @@ function Clack-Outro {
         $script:SETUP_LOG_FILE = $null
     }
     Write-GuideLine
-    Write-Host $S_CORNER_BOT -ForegroundColor DarkGray -NoNewline
-    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
-    Write-Host " $Message" -ForegroundColor Green
+    Write-Styled $S_BOTTOM $script:C_GUIDE
+    Write-Styled " $Message" $script:C_OK
+    Write-Host ""
     Write-Host ""
 }
 
@@ -342,73 +631,81 @@ function Clack-OutroWarning {
     Show-SetupErrorLog
     $script:CLACK_SESSION_CLOSED = $true
     Write-GuideLine
-    Write-Host $S_CORNER_BOT -ForegroundColor DarkGray -NoNewline
-    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
-    Write-Host " $Message" -ForegroundColor Yellow
+    Write-Styled $S_BOTTOM $script:C_GUIDE
+    Write-Styled " $Message" $script:C_WARN
+    Write-Host ""
     Write-Host ""
 }
 
-# Section header connected to the session guide
+# Section header connected to the session guide. Structure is never coloured:
+# a coloured header reads as a status.
 function Clack-Section {
     param([string]$Title)
     Write-GuideLine
-    Write-TreeBranch -Text $Title -Color Magenta
+    Write-Styled $S_BRANCH $script:C_GUIDE
+    Write-Host " $Title"
 }
 
 # Log with guide line - success
 function Clack-Success {
     param([string]$Message)
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  " -NoNewline
-    Write-Host $S_CHECK -ForegroundColor Green -NoNewline
-    Write-Host " $Message"
+    Write-GuideRow -Mark $S_CHECK -MarkColor $script:C_OK -Text $Message
 }
 
 # Log with guide line - error
 function Clack-Error {
     param([string]$Message)
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  " -NoNewline
-    Write-Host $S_CROSS -ForegroundColor Red -NoNewline
-    Write-Host " $Message"
+    Write-GuideRow -Mark $S_CROSS -MarkColor $script:C_ERR -Text $Message
 }
 
 # Log with guide line - warning
 function Clack-Warn {
     param([string]$Message)
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  " -NoNewline
-    Write-Host "!" -ForegroundColor Yellow -NoNewline
-    Write-Host " $Message"
+    Write-GuideRow -Mark $S_WARN -MarkColor $script:C_WARN -Text $Message
 }
 
-# Log with guide line - info
+# Log with guide line - a neutral fact (paths, choices, what a step is for)
 function Clack-Info {
     param([string]$Message)
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  " -NoNewline
-    Write-Host $S_ARROW -ForegroundColor Cyan -NoNewline
-    Write-Host " $Message"
+    Write-GuideRow -Mark $S_DOT -MarkColor $script:C_DIM -Text $Message
 }
 
-# Log with guide line - skipped
+# Log with guide line - an action in progress
+function Clack-Step {
+    param([string]$Message)
+    Write-GuideRow -Mark $S_ARROW -MarkColor $script:C_ACCENT -Text $Message
+}
+
+# Log with guide line - skipped on purpose
 function Clack-Skip {
     param([string]$Message)
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  " -NoNewline
-    Write-Host $S_CIRCLE -ForegroundColor DarkGray -NoNewline
-    Write-Host " $Message" -ForegroundColor DarkGray
+    Write-GuideRow -Mark $S_CIRCLE -MarkColor $script:C_DIM -Text $Message -TextColor $script:C_DIM
 }
 
-# Log with guide line - plain text
-function Clack-Log {
+# Gray detail under the item above it, two columns further in.
+function Clack-DetailRow {
     param([string]$Message)
-    if ([string]::IsNullOrEmpty($Message)) {
-        Write-GuideLine
-        return
-    }
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  $Message"
+    Write-GuideRow -Indent "  " -Text $Message -TextColor $script:C_DIM
+}
+
+# A command to copy: accent colour, its own row, never wrapped, so a console
+# narrower than the command still copies it back as one line.
+function Clack-Command {
+    param([string]$Command)
+    Write-Styled $S_BAR $script:C_GUIDE
+    Write-Host "    " -NoNewline
+    Write-Styled $Command $script:C_ACCENT
+    Write-Host ""
+}
+
+# A label and the command it describes.
+function Clack-Hint {
+    param(
+        [string]$Label,
+        [string]$Command
+    )
+    Clack-Info "${Label}:"
+    Clack-Command $Command
 }
 
 function Initialize-SetupLog {
@@ -493,12 +790,29 @@ function Clack-Detail {
         } else {
             $line
         }
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "    $bounded" -ForegroundColor DarkGray
+        Clack-DetailRow $bounded
     }
 }
 
-# Confirm prompt connected to the session guide
+# Read one answer, or take the default without interactive input (the default
+# is then printed so a log shows what was chosen).
+function Read-ClackAnswer {
+    param([string]$Default)
+
+    Write-Host " " -NoNewline
+    if (Test-InteractiveInput) {
+        $answer = Read-Host
+    } else {
+        Write-Host $Default
+        $answer = $Default
+    }
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        $answer = $Default
+    }
+    return $answer
+}
+
+# Yes/no question on the guide: "<bar>  ? Question [y/N] ".
 function Clack-Confirm {
     param(
         [string]$Prompt,
@@ -506,25 +820,14 @@ function Clack-Confirm {
     )
 
     if ($Default -eq "y") {
-        $hint = "Y/n"
+        $hint = "[Y/n]"
     } else {
-        $hint = "y/N"
+        $hint = "[y/N]"
     }
 
-    Write-GuideLine
-    Write-Host $S_BRANCH -ForegroundColor DarkGray -NoNewline
-    Write-Host $S_BAR_H -ForegroundColor Cyan -NoNewline
-    if (Test-InteractiveInput) {
-        $answer = Read-Host " $Prompt [$hint]"
-    } else {
-        Write-Host " $Prompt [$hint] $Default"
-        $answer = $Default
-    }
-
-    if ([string]::IsNullOrWhiteSpace($answer)) {
-        $answer = $Default
-    }
-
+    Write-GuideRow -Mark $S_ASK -MarkColor $script:C_ACCENT -Text $Prompt `
+        -Suffix $hint -SuffixColor $script:C_DIM -Reserve 7 -NoNewline
+    $answer = Read-ClackAnswer -Default $Default
     return $answer -match "^[Yy]"
 }
 
@@ -556,33 +859,15 @@ function Confirm-OptionalInstall {
     return (Clack-Confirm $Prompt $Default)
 }
 
-# Compact note block. Content stays on the single outer guide instead of
-# drawing a second, competing box down the left side.
-function Clack-Note {
-    param(
-        [Parameter(Position=0)]
-        [string]$Title,
-        [Parameter(Position=1, ValueFromRemainingArguments=$true)]
-        [string[]]$Lines
-    )
-
-    Write-GuideLine
-    Write-TreeBranch -Text $Title -Color Green
-
-    foreach ($line in $Lines) {
-        Clack-Log $line
-    }
-}
-
 # Cancel message
 function Clack-Cancel {
     param([string]$Message)
     Show-SetupErrorLog
     $script:CLACK_SESSION_CLOSED = $true
     Write-GuideLine
-    Write-Host $S_CORNER_BOT -ForegroundColor DarkGray -NoNewline
-    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
-    Write-Host " $Message" -ForegroundColor Red
+    Write-Styled $S_BOTTOM $script:C_GUIDE
+    Write-Styled " $Message" $script:C_ERR
+    Write-Host ""
     Write-Host ""
 }
 
@@ -597,7 +882,8 @@ function Complete-UnexpectedFailure {
         return
     }
 
-    Write-Host (i18n "error_setup_failed") -ForegroundColor Red
+    Write-Styled (i18n "error_setup_failed") $script:C_ERR
+    Write-Host ""
 }
 
 # ============================================================
@@ -666,6 +952,9 @@ function Invoke-BestEffortStep {
 $script:MarkitaiVersion = $env:MARKITAI_VERSION
 $script:UvVersion = $env:UV_VERSION
 $script:PYTHON_CMD = $null
+# PATH as setup found it, and the folder uv puts tool commands in.
+$script:OriginalPath = $env:PATH
+$script:UvToolBin = $null
 
 # ============================================================
 # Utility Functions
@@ -732,30 +1021,59 @@ function Invoke-PowerShellInstallerQuietly {
     }
 }
 
-# Get project root directory
-function Get-ProjectRoot {
-    $script:ScriptDir = $PSScriptRoot
-    if (-not $script:ScriptDir -and $MyInvocation.MyCommand.Path) {
-        $script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    }
-    if ($script:ScriptDir) {
-        return Split-Path -Parent $script:ScriptDir
-    }
-    return $PWD.Path
+# Return true when a folder is the root of a markitai checkout.
+function Test-MarkitaiCheckout {
+    param([string]$Path)
+
+    if (-not $Path) { return $false }
+    $pyproject = Join-Path $Path "pyproject.toml"
+    if (-not (Test-Path $pyproject)) { return $false }
+    if (-not (Test-Path (Join-Path $Path "packages/markitai"))) { return $false }
+    $content = Get-Content $pyproject -Raw -ErrorAction SilentlyContinue
+    return ($content -match "markitai")
 }
 
-# Check if running as administrator and warn
+# Get project root directory for a development setup: the checkout this script
+# lives in, else the current directory when it is one; $null otherwise.
+function Get-ProjectRoot {
+    if ($PSScriptRoot) {
+        $root = Split-Path -Parent $PSScriptRoot
+        if (Test-MarkitaiCheckout $root) { return $root }
+    }
+    if (Test-MarkitaiCheckout $PWD.Path) { return $PWD.Path }
+    return $null
+}
+
+# Return true when this session is elevated (root under PowerShell 7 on
+# Linux or macOS).
+function Test-IsAdministrator {
+    if (-not $script:OnWindows) {
+        try { return ((& id -u 2>$null) -eq "0") } catch { return $false }
+    }
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        return $false
+    }
+}
+
+# Warn when running elevated and say why it matters. An interactive user is
+# asked (default no); without interactive input (an SSH command, CI) there is
+# nobody to ask, so setup continues after the warning.
 function Test-AdminWarning {
-    $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not (Test-IsAdministrator)) { return }
 
-    if ($isAdmin) {
-        Clack-Warn (i18n "warn_admin")
-        Clack-Log (i18n "warn_admin_risk")
-
-        if (-not (Clack-Confirm (i18n "confirm_continue_as_admin") "n")) {
-            Clack-Cancel (i18n "error_setup_failed")
-            exit 1
-        }
+    Clack-Warn (i18n "warn_admin")
+    Clack-DetailRow (i18n "warn_admin_risk")
+    if (-not (Test-InteractiveInput)) {
+        Clack-Info (i18n "info_admin_noninteractive")
+        return
+    }
+    if (-not (Clack-Confirm (i18n "confirm_continue_as_admin") "n")) {
+        Clack-Cancel (i18n "setup_cancelled")
+        exit 1
     }
 }
 
@@ -763,10 +1081,11 @@ function Test-AdminWarning {
 function Test-WSLWarning {
     if ($env:WSL_DISTRO_NAME) {
         Clack-Warn (i18n "warn_wsl")
-        Clack-Log (i18n "warn_wsl_tip")
+        Clack-DetailRow (i18n "warn_wsl_tip")
+        Clack-Command "curl -fsSL https://markitai.dev/setup.sh | sh"
 
-        if (-not (Clack-Confirm (i18n "confirm_continue_as_admin") "n")) {
-            Clack-Cancel (i18n "error_setup_failed")
+        if (-not (Clack-Confirm (i18n "confirm_continue") "n")) {
+            Clack-Cancel (i18n "setup_cancelled")
             exit 1
         }
     }
@@ -832,8 +1151,8 @@ function Test-DefaultIndexReachable {
 # Offer China mirrors only when this machine has an actual problem reaching
 # the default index.
 #
-# The previous rule was "no proxy variable set" — which is true for most of
-# the planet, so the very first thing a user in Berlin or São Paulo saw was a
+# The previous rule was "no proxy variable set", which is true for most of
+# the planet, so the very first thing a user in Berlin or Sao Paulo saw was a
 # warning about Chinese mirrors that had nothing to do with them. Locale and
 # timezone are no better: they misfire on travellers, expats and CI runners.
 # Measured reachability is the only evidence that actually predicts the
@@ -858,7 +1177,7 @@ function Configure-Mirrors {
     Clack-Warn (i18n "mirror_slow_index")
 
     if (-not (Clack-Confirm (i18n "mirror_confirm") "y")) {
-        Clack-Log (i18n "mirror_skipped")
+        Clack-Info (i18n "mirror_skipped")
         return
     }
 
@@ -868,20 +1187,14 @@ function Configure-Mirrors {
 # Pick a mirror and export it. Reached from an accepted prompt or from an
 # explicit MARKITAI_USE_MIRROR=1.
 function Select-MirrorSource {
-    # Show mirror source selection on the same continuous tree guide.
-    Write-GuideLine
-    Write-TreeBranch -Text "$(i18n 'mirror_select') [1]" -Color Cyan
-    Clack-Log "1. $(i18n 'mirror_tuna')"
-    Clack-Log "2. $(i18n 'mirror_aliyun')"
-    Clack-Log "3. $(i18n 'mirror_tencent')"
-    Clack-Log "4. $(i18n 'mirror_huawei')"
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    if (Test-InteractiveInput) {
-        $choice = Read-Host "  >"
-    } else {
-        Write-Host "  > 1"
-        $choice = "1"
-    }
+    # The choices first, then the question, so the cursor waits after it.
+    Clack-DetailRow "1. $(i18n 'mirror_tuna')"
+    Clack-DetailRow "2. $(i18n 'mirror_aliyun')"
+    Clack-DetailRow "3. $(i18n 'mirror_tencent')"
+    Clack-DetailRow "4. $(i18n 'mirror_huawei')"
+    Write-GuideRow -Mark $S_ASK -MarkColor $script:C_ACCENT -Text (i18n "mirror_select") `
+        -Suffix "[1]" -SuffixColor $script:C_DIM -Reserve 5 -NoNewline
+    $choice = Read-ClackAnswer -Default "1"
 
     if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
 
@@ -908,17 +1221,18 @@ function Select-MirrorSource {
     $env:PLAYWRIGHT_DOWNLOAD_HOST = "https://cdn.npmmirror.com/binaries/playwright"
 
     Clack-Success (i18n "mirror_enabled")
-    Clack-Log "  $(i18n 'mirror_pypi'): $env:UV_INDEX_URL"
-    Clack-Log "  $(i18n 'mirror_npm'): $env:NPM_CONFIG_REGISTRY"
-    Clack-Log "  $(i18n 'mirror_playwright'): $env:PLAYWRIGHT_DOWNLOAD_HOST"
+    Clack-DetailRow "$(i18n 'mirror_pypi'): $env:UV_INDEX_URL"
+    Clack-DetailRow "$(i18n 'mirror_npm'): $env:NPM_CONFIG_REGISTRY"
+    Clack-DetailRow "$(i18n 'mirror_playwright'): $env:PLAYWRIGHT_DOWNLOAD_HOST"
 }
 
 # Check execution policy
 function Test-ExecutionPolicy {
+    if (-not $script:OnWindows) { return $true }
     $policy = Get-ExecutionPolicy -Scope CurrentUser
     if ($policy -eq "Restricted" -or $policy -eq "AllSigned") {
-        Clack-Warn "Execution policy: $policy"
-        Clack-Log "Scripts may be blocked. Run: Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned"
+        Clack-Warn ((i18n "warn_exec_policy") -f $policy)
+        Clack-Command "Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned"
         return $false
     }
     return $true
@@ -928,17 +1242,61 @@ function Test-ExecutionPolicy {
 # Mode Detection
 # ============================================================
 
-# Check if running in development mode
+# Check whether the current directory is the root of a markitai checkout,
+# where a development environment can be set up.
 function Test-DevMode {
-    # Check if we're in the markitai project directory
     # Note: .git can be a directory (normal repo) or file (worktree)
-    if ((Test-Path ".\pyproject.toml") -and (Test-Path ".\.git") -and (Test-Path ".\scripts")) {
-        $content = Get-Content ".\pyproject.toml" -Raw -ErrorAction SilentlyContinue
+    if ((Test-Path "./pyproject.toml") -and (Test-Path "./.git") -and (Test-Path "./scripts")) {
+        $content = Get-Content "./pyproject.toml" -Raw -ErrorAction SilentlyContinue
         if ($content -match "markitai") {
             return $true
         }
     }
     return $false
+}
+
+# What setup does: "install" (markitai for this user) or "dev" (sync the
+# checkout, pre-commit hooks). Someone who cloned the repo and runs the
+# installer from its root most likely wants markitai installed, so a checkout
+# root no longer switches to dev mode silently: it asks, defaulting to install.
+$script:SETUP_MODE = "install"
+$script:CHECKOUT_ANNOUNCED = $false
+
+# Sets: $script:SETUP_MODE (from MARKITAI_SETUP_MODE or the question)
+function Select-SetupMode {
+    $requested = ("" + $env:MARKITAI_SETUP_MODE).Trim().ToLowerInvariant()
+    if ($requested -eq "install" -or $requested -eq "user") {
+        $script:SETUP_MODE = "install"
+    } elseif ($requested -eq "dev" -or $requested -eq "development") {
+        $script:SETUP_MODE = "dev"
+    } else {
+        if ($requested) {
+            Clack-Warn "$(i18n 'warn_unknown_mode'): $($env:MARKITAI_SETUP_MODE)"
+        }
+        if (Test-DevMode) {
+            $script:CHECKOUT_ANNOUNCED = $true
+            Clack-Info (i18n "repo_root_detected")
+            if (-not (Test-InteractiveInput)) {
+                Clack-Info (i18n "info_mode_default")
+                return
+            }
+            if (Clack-Confirm (i18n "confirm_dev_mode") "n") {
+                $script:SETUP_MODE = "dev"
+            }
+        }
+    }
+
+    if ($script:SETUP_MODE -eq "dev" -and -not (Get-ProjectRoot)) {
+        Clack-Error (i18n "error_dev_needs_repo")
+        Clack-Cancel (i18n "error_setup_failed")
+        exit 1
+    }
+
+    if ($script:SETUP_MODE -eq "dev") {
+        Clack-Info (i18n "mode_dev")
+    } else {
+        Clack-Info (i18n "mode_user")
+    }
 }
 
 # ============================================================
@@ -986,12 +1344,14 @@ function Select-InstallSource {
     if (-not $repoRoot) { return }
 
     # Non-interactive (stdin redirected): never prompt, keep PyPI
-    if ([Console]::IsInputRedirected) {
+    if (-not (Test-InteractiveInput)) {
         Clack-Info (i18n "info_repo_noninteractive")
         return
     }
 
-    Clack-Info "$(i18n 'repo_detected'): $repoRoot"
+    if (-not $script:CHECKOUT_ANNOUNCED) {
+        Clack-Info "$(i18n 'repo_detected'): $repoRoot"
+    }
     if (Clack-Confirm (i18n "confirm_local_install") "n") {
         $script:MARKITAI_SOURCE = "local"
         $script:MarkitaiLocalPath = Join-Path $repoRoot "packages/markitai"
@@ -1046,18 +1406,18 @@ function Test-UV {
 function Install-UV {
     if (Test-UV) {
         $version = (& uv --version 2>$null).Split(' ')[1]
-        Clack-Success "$(i18n 'uv'): $version $(i18n 'already_installed')"
+        Clack-Success "uv $version ($(i18n 'already_installed'))"
         Track-Install -Component "uv" -Status "installed"
         return $true
     }
 
     if (-not (Clack-Confirm (i18n "confirm_uv") "y")) {
-        Clack-Skip (i18n "uv")
+        Clack-Skip "$(i18n 'uv') $(i18n 'skipped')"
         Track-Install -Component "uv" -Status "skipped"
         return $false
     }
 
-    Clack-Info "$(i18n 'installing') $(i18n 'uv')..."
+    Clack-Step "$(i18n 'installing') $(i18n 'uv')..."
 
     # Build install URL (with optional version)
     if ($script:UvVersion) {
@@ -1081,13 +1441,13 @@ function Install-UV {
         # Check if uv command exists after PATH refresh
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
         if (-not $uvCmd) {
-            Clack-Warn "$(i18n 'uv') $(i18n 'installed') - restart PowerShell"
+            Clack-Warn (i18n "warn_uv_restart")
             Track-Install -Component "uv" -Status "installed"
             return $false
         }
 
         $version = (& uv --version 2>$null).Split(' ')[1]
-        Clack-Success "$(i18n 'uv'): $version $(i18n 'installed')"
+        Clack-Success "uv $version ($(i18n 'installed'))"
         Track-Install -Component "uv" -Status "installed"
         return $true
     } catch {
@@ -1117,7 +1477,7 @@ function Install-Python {
     }
 
     # Not found, auto-install (3.13 as default)
-    Clack-Info "$(i18n 'installing') $(i18n 'python') 3.13..."
+    Clack-Step "$(i18n 'installing') $(i18n 'python') 3.13..."
     $installResult = Invoke-NativeQuietly { & uv python install 3.13 }
     if ($installResult.Success) {
         $uvPython = & uv python find 3.13 2>$null
@@ -1142,6 +1502,40 @@ function Get-MarkitaiToolsDir {
     if ($uvToolsDir) { return $uvToolsDir }
     if ($env:WSL_DISTRO_NAME) { return "$HOME/.local/share/uv/tools" }
     return "$env:APPDATA\uv\tools"
+}
+
+# Put the folder uv installs tool commands into on PATH for the rest of the
+# run. UV_TOOL_BIN_DIR or XDG_BIN_HOME can move it, and the version check,
+# `doctor --suggest-extras` and `init` all run markitai.
+function Add-UvToolBinToPath {
+    $binDir = $null
+    try { $binDir = & uv tool dir --bin 2>$null | Select-Object -First 1 } catch {}
+    if (-not $binDir) { return }
+    $script:UvToolBin = "$binDir".Trim()
+    $separator = [IO.Path]::PathSeparator
+    $entries = @($env:PATH -split [regex]::Escape([string]$separator))
+    if ($entries -notcontains $script:UvToolBin) {
+        $env:PATH = "$($script:UvToolBin)$separator$env:PATH"
+    }
+}
+
+# Say so when markitai's command folder is not on the PATH a new shell gets
+# (on Windows the saved user and machine PATH): otherwise "Getting started"
+# recommends commands the shell cannot find.
+function Show-UvToolBinPathWarning {
+    if (-not $script:UvToolBin) { return }
+    $separator = [IO.Path]::PathSeparator
+    $pathText = $script:OriginalPath
+    if ($script:OnWindows) {
+        $pathText = [Environment]::GetEnvironmentVariable("Path", "User") + ";" +
+            [Environment]::GetEnvironmentVariable("Path", "Machine")
+    }
+    $entries = @("$pathText" -split [regex]::Escape([string]$separator) |
+        ForEach-Object { $_.TrimEnd('\', '/') })
+    if ($entries -contains $script:UvToolBin.TrimEnd('\', '/')) { return }
+    Clack-Warn "$(i18n 'warn_bin_off_path'): $($script:UvToolBin)"
+    Clack-DetailRow (i18n "info_bin_off_path_fix")
+    Clack-Command "uv tool update-shell"
 }
 
 # Install markitai (User mode)
@@ -1170,7 +1564,7 @@ function Install-Markitai {
     if (Test-Path $markitaiToolDir) {
         # Say something before a step that can take a minute: the sh script
         # spins here, and this branch was the only silent one.
-        Clack-Info "$(i18n 'installing') $(i18n 'markitai')..."
+        Clack-Step "$(i18n 'installing') $(i18n 'markitai')..."
         # Only an unpinned PyPI install can use the receipt-based upgrade path.
         # Explicit versions and local sources must apply the exact spec below.
         if (
@@ -1192,7 +1586,7 @@ function Install-Markitai {
         }
     } else {
         # Fresh install
-        Clack-Info "$(i18n 'installing') $(i18n 'markitai')..."
+        Clack-Step "$(i18n 'installing') $(i18n 'markitai')..."
         try {
             $lastOutput = @(& uv tool install $pkg --python $pythonArg 2>&1)
             $exitCode = $LASTEXITCODE
@@ -1203,7 +1597,10 @@ function Install-Markitai {
 
     if ($exitCode -eq 0) {
         # Refresh PATH
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
+        if ($script:OnWindows) {
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
+        }
+        Add-UvToolBinToPath
 
         $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
         $version = if ($markitaiCmd) { (& markitai --version 2>&1 | Select-Object -First 1).Split(' ')[-1] } else { (i18n "installed") }
@@ -1301,7 +1698,7 @@ function Deny-MarkitaiExtra {
 # raw receipt too: retired entries require a reinstall even with no additions.
 function Import-MarkitaiReceiptExtras {
     $uvToolsDir = Get-MarkitaiToolsDir
-    $receiptFile = Join-Path $uvToolsDir "markitai\uv-receipt.toml"
+    $receiptFile = Join-Path $uvToolsDir "markitai/uv-receipt.toml"
     $script:MARKITAI_RECEIPT_EXTRAS = @()
     if (-not (Test-Path $receiptFile)) { return }
 
@@ -1411,14 +1808,18 @@ function Finalize-MarkitaiExtras {
     # Reinstall with all extras (progressive fallback on failure)
     $pkg = Get-MarkitaiPkgSpec -Extras $script:MARKITAI_EXTRAS
 
+    Clack-Step "$(i18n 'installing') $(i18n 'markitai') extras..."
     $primaryResult = Invoke-NativeQuietly {
         & uv tool install $pkg --python $script:PYTHON_CMD --force
     }
     $installOk = $primaryResult.Success
+    if ($installOk) {
+        Clack-Success "$(i18n 'markitai') extras: $($script:MARKITAI_EXTRAS -replace ',', ', ')"
+    }
     $fallbackResult = $null
 
     if (-not $installOk) {
-        # Full install failed — retry without SDK-dependent extras
+        # Full install failed: retry without SDK-dependent extras
         $sdkExtras = @("claude-agent", "copilot")
         $safeExtras = @()
         $skipped = @()
@@ -1439,6 +1840,7 @@ function Finalize-MarkitaiExtras {
                 & uv tool install $pkg --python $script:PYTHON_CMD --force
             }
             if ($fallbackResult.Success) {
+                Clack-Success "$(i18n 'markitai') extras: $($safeList -replace ',', ', ')"
                 if ($skipped.Count -gt 0) {
                     Clack-Warn "$(i18n 'skipped') extras: $($skipped -join ', ') (SDK $(i18n 'not_found'))"
                 }
@@ -1462,7 +1864,7 @@ function Sync-Dependencies {
     Push-Location $projectRoot
 
     try {
-        Clack-Info (i18n "info_syncing_deps")
+        Clack-Step (i18n "info_syncing_deps")
         $oldErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         $syncResult = & uv sync --all-groups --all-extras --python $script:PYTHON_CMD 2>&1
@@ -1506,7 +1908,7 @@ function Install-PreCommit {
                 }
             }
         } else {
-            Clack-Skip (i18n "precommit")
+            Clack-Skip "$(i18n 'precommit') $(i18n 'skipped')"
             return $false
         }
     } finally {
@@ -1548,12 +1950,12 @@ function Install-OptionalPlaywright {
     Clack-Info (i18n "info_playwright_purpose")
 
     if (-not (Confirm-OptionalInstall (i18n "confirm_playwright") "y")) {
-        Clack-Skip (i18n "playwright")
+        Clack-Skip "$(i18n 'playwright') $(i18n 'skipped')"
         Track-Install -Component "playwright" -Status "skipped"
         return $false
     }
 
-    Clack-Info "$(i18n 'installing') $(i18n 'playwright')..."
+    Clack-Step "$(i18n 'installing') $(i18n 'playwright')..."
 
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -1619,12 +2021,12 @@ function Install-OptionalClaudeCLI {
     }
 
     if (-not (Confirm-OptionalInstall (i18n "confirm_claude_cli") "n")) {
-        Clack-Skip (i18n "claude_cli")
+        Clack-Skip "$(i18n 'claude_cli') $(i18n 'skipped')"
         Track-Install -Component "claude_cli" -Status "skipped"
         return $false
     }
 
-    Clack-Info "$(i18n 'installing') $(i18n 'claude_cli')..."
+    Clack-Step "$(i18n 'installing') $(i18n 'claude_cli')..."
 
     # Prefer official install script (PowerShell)
     $claudeUrl = "https://claude.ai/install.ps1"
@@ -1697,12 +2099,12 @@ function Install-OptionalCopilotCLI {
     }
 
     if (-not (Confirm-OptionalInstall (i18n "confirm_copilot_cli") "n")) {
-        Clack-Skip (i18n "copilot_cli")
+        Clack-Skip "$(i18n 'copilot_cli') $(i18n 'skipped')"
         Track-Install -Component "copilot_cli" -Status "skipped"
         return $false
     }
 
-    Clack-Info "$(i18n 'installing') $(i18n 'copilot_cli')..."
+    Clack-Step "$(i18n 'installing') $(i18n 'copilot_cli')..."
 
     # Prefer WinGet on Windows
     $lastResult = $null
@@ -1757,50 +2159,24 @@ function Install-OptionalCopilotCLI {
     return $false
 }
 
-# Print one compact summary group on the shared outer guide.
-function Write-SummaryGroup {
-    param(
-        [string]$Title,
-        [string[]]$Components,
-        [string]$Symbol,
-        [ConsoleColor]$Color
-    )
-
-    if (@($Components).Count -eq 0) { return }
-
-    Write-GuideLine
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  $Title"
-    foreach ($comp in $Components) {
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "    " -NoNewline
-        Write-Host $Symbol -ForegroundColor $Color -NoNewline
-        Write-Host " $(i18n $comp)"
+# Print installation summary: one row per component, its mark saying what
+# happened (installed, skipped on purpose, failed).
+function Print-Summary {
+    param([switch]$NoHeader)
+    if (-not $NoHeader) { Clack-Section (i18n "section_summary") }
+    foreach ($comp in $script:INSTALLED_COMPONENTS) {
+        Clack-Success (i18n $comp)
+    }
+    foreach ($comp in $script:SKIPPED_COMPONENTS) {
+        Clack-Skip "$(i18n $comp) $(i18n 'skipped')"
+    }
+    foreach ($comp in $script:FAILED_COMPONENTS) {
+        Clack-Error "$(i18n $comp) $(i18n 'failed')"
     }
 }
 
-# Print installation summary
-function Print-Summary {
-    Clack-Section (i18n "section_summary")
-
-    Write-SummaryGroup `
-        -Title (i18n "summary_installed") `
-        -Components $script:INSTALLED_COMPONENTS `
-        -Symbol $S_CHECK `
-        -Color Green
-    Write-SummaryGroup `
-        -Title (i18n "summary_skipped") `
-        -Components $script:SKIPPED_COMPONENTS `
-        -Symbol $S_CIRCLE `
-        -Color Yellow
-    Write-SummaryGroup `
-        -Title (i18n "summary_failed") `
-        -Components $script:FAILED_COMPONENTS `
-        -Symbol $S_CROSS `
-        -Color Red
-
-    # Empty line before docs link
-    Clack-Log ""
+# Documentation and issue links close both completion notes.
+function Print-HelpLinks {
     Clack-Info "$(i18n 'info_docs'): https://markitai.dev"
     Clack-Info "$(i18n 'info_issues'): https://github.com/Ynewtime/markitai/issues"
 }
@@ -1819,53 +2195,33 @@ function Test-MkaiAlias {
 }
 
 function Print-UserCompletion {
-    $lines = @(
-        "$(i18n 'interactive_mode'):",
-        "  markitai -I"
-    )
+    $mkaiUsable = Test-MkaiAlias
+    Clack-Section (i18n "getting_started")
+    Show-UvToolBinPathWarning
+    Clack-Hint (i18n "convert_file") "markitai file.pdf"
+    Clack-Hint (i18n "interactive_mode") "markitai -I"
     # Only advertise the serve command when its dependencies were selected.
     if (Test-MarkitaiExtraEnabled -ExtraName "serve") {
-        $lines += @(
-            "",
-            "$(i18n 'start_web_ui'):",
-            "  markitai serve"
-        )
+        Clack-Hint (i18n "start_web_ui") "markitai serve"
     }
-    $lines += @(
-        "",
-        "$(i18n 'configure_llm'):",
-        "  markitai init",
-        "",
-        "$(i18n 'convert_file'):",
-        "  markitai file.pdf",
-        "",
-        "$(i18n 'show_help'):",
-        "  markitai --help"
-    )
+    Clack-Hint (i18n "configure_llm") "markitai init"
+    Clack-Hint (i18n "show_help") "markitai --help"
     # Only advertise the short alias when it actually resolves to markitai.
-    if (Test-MkaiAlias) {
-        $lines += @("", (i18n 'short_alias'))
+    if ($mkaiUsable) {
+        Clack-Info (i18n "short_alias")
     }
-    Clack-Note (i18n "getting_started") @lines
+    Print-HelpLinks
 }
 
 # Print dev mode completion message
 function Print-DevCompletion {
-    Clack-Note (i18n "quick_start") `
-        "$(i18n 'configure_env'):" `
-        "  copy .env.example .env" `
-        "" `
-        "$(i18n 'interactive_mode'):" `
-        "  uv run markitai -I" `
-        "" `
-        "$(i18n 'start_web_ui'):" `
-        "  uv run markitai serve" `
-        "" `
-        "$(i18n 'run_tests'):" `
-        "  uv run pytest" `
-        "" `
-        "$(i18n 'run_cli'):" `
-        "  uv run markitai --help"
+    Clack-Section (i18n "quick_start")
+    Clack-Hint (i18n "configure_env") "copy .env.example .env"
+    Clack-Hint (i18n "interactive_mode") "uv run markitai -I"
+    Clack-Hint (i18n "start_web_ui") "uv run markitai serve"
+    Clack-Hint (i18n "run_tests") "uv run pytest"
+    Clack-Hint (i18n "run_cli") "uv run markitai --help"
+    Print-HelpLinks
 }
 
 # Initialize markitai config (silent, first install only)
@@ -1890,11 +2246,6 @@ function Initialize-Config {
 
 # User mode main flow
 function Run-UserSetup {
-    Clack-Intro (i18n "welcome")
-    Clack-Info (i18n "mode_user")
-    Test-ExecutionPolicy | Out-Null
-    Test-AdminWarning
-    Test-WSLWarning
     Configure-Mirrors
     Select-InstallSource
 
@@ -1918,13 +2269,15 @@ function Run-UserSetup {
     # without this line it looks absent rather than already satisfied.
     Clack-Info (i18n "info_chatgpt_route")
 
+    # The extras step reports in the summary, not under the last section.
+    Clack-Section (i18n "section_summary")
     Invoke-BestEffortStep `
         -FailureMessage "$(i18n 'markitai') extras update $(i18n 'failed')" `
         -Action { Finalize-MarkitaiExtras }
 
     Initialize-Config 2>$null | Out-Null
 
-    Print-Summary
+    Print-Summary -NoHeader
     Print-UserCompletion
     if ($script:FAILED_COMPONENTS.Count -gt 0) {
         Clack-OutroWarning (i18n "setup_complete_with_warnings")
@@ -1935,11 +2288,6 @@ function Run-UserSetup {
 
 # Dev mode main flow
 function Run-DevSetup {
-    Clack-Intro (i18n "welcome")
-    Clack-Info (i18n "mode_dev")
-    Test-ExecutionPolicy | Out-Null
-    Test-AdminWarning
-    Test-WSLWarning
     Configure-Mirrors
 
     Clack-Section (i18n "section_prerequisites")
@@ -1971,7 +2319,12 @@ function Run-DevSetup {
 
 # Main entry point
 function Main {
-    if (Test-DevMode) {
+    Clack-Intro (i18n "welcome")
+    Test-ExecutionPolicy | Out-Null
+    Test-AdminWarning
+    Test-WSLWarning
+    Select-SetupMode
+    if ($script:SETUP_MODE -eq "dev") {
         Run-DevSetup
     } else {
         Run-UserSetup
@@ -1987,11 +2340,15 @@ try {
     exit 1
 } finally {
     # Pipeline cancellation (for example Ctrl+C) can bypass catch, but
-    # PowerShell still runs finally. Best-effort closure avoids a dangling │.
+    # PowerShell still runs finally. Best-effort closure avoids a dangling guide.
     if ($script:CLACK_SESSION_ACTIVE -and -not $script:CLACK_SESSION_CLOSED) {
         try {
             Clack-Error (i18n "error_unexpected")
             Clack-Cancel (i18n "error_setup_failed")
         } catch {}
+    }
+    # Under irm | iex this is the user's own console: give its encoding back.
+    if ($script:OriginalOutputEncoding) {
+        try { [Console]::OutputEncoding = $script:OriginalOutputEncoding } catch {}
     }
 }
