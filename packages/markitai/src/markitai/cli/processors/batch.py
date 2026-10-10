@@ -456,16 +456,27 @@ def create_url_processor(
         if not cfg.llm.enabled:
             return await _process_url(url, custom_name, None)
 
-        from markitai.llm.engine import llm_usage_scope, track_cache_hits
+        from markitai.llm.engine import (
+            llm_usage_scope,
+            track_cache_hits,
+            track_llm_spend,
+        )
 
         # This URL's own cache lookups, usage and request budget: the
         # processor is shared by the batch, and the same URL may be listed
         # under two output names
         with (
             track_cache_hits() as cache_tally,
+            track_llm_spend() as spend,
             llm_usage_scope(url_state_key(url, custom_name)),
         ):
-            return await _process_url(url, custom_name, cache_tally)
+            result, extra_info = await _process_url(url, custom_name, cache_tally)
+        if spend.usage:
+            # Every request the URL paid for, a failed or fallen-back LLM
+            # stage's included (the stages clear their own usage then)
+            result.cost_usd = spend.cost
+            result.llm_usage = spend.usage
+        return result, extra_info
 
     async def _process_url(
         url: str,
@@ -1240,6 +1251,9 @@ async def process_batch(
                 else:
                     url_state.status = FileStatus.FAILED
                     url_state.error = result.error
+                    # A failed LLM stage was still paid for
+                    url_state.cost_usd = result.cost_usd
+                    url_state.llm_usage = result.llm_usage
                     batch._dirty_keys.add(key)
 
             except Exception as e:
@@ -1334,6 +1348,9 @@ async def process_batch(
                 else:
                     file_state.status = FileStatus.FAILED
                     file_state.error = result.error
+                    # A failed LLM stage was still paid for
+                    file_state.cost_usd = result.cost_usd
+                    file_state.llm_usage = result.llm_usage
                     batch._dirty_keys.add(file_key)
 
             except Exception as e:
