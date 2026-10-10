@@ -444,7 +444,14 @@ def _remove_empty_elements(root: Tag) -> None:
         if next(el.stripped_strings, None) is None and not el.find(
             list(ALLOWED_EMPTY_ELEMENTS)
         ):
-            el.decompose()
+            whitespace = el.get_text()
+            if whitespace and el.name not in BLOCK_LEVEL_ELEMENTS:
+                # The space between two words ("before<span class="widont">
+                # &nbsp;</span>hashing", MediaWiki's mw:Entity spans): removing
+                # the element glued them into "beforehashing"
+                el.replace_with(NavigableString(whitespace))
+            else:
+                el.decompose()
 
 
 _KEEP_EMPTY_INSIDE = frozenset({"pre", "code", "svg"})

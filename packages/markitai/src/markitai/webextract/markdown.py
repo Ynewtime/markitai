@@ -214,6 +214,10 @@ def _embed_src_to_canonical(src: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+# Paragraph wrappers inside a caption: unwrapped into the one <em> line
+_CAPTION_BLOCKS = ["p", "div"]
+
+
 def preserve_figure_captions(root: Tag | BeautifulSoup) -> None:
     """Ensure ``<figcaption>`` text survives MarkItDown conversion.
 
@@ -238,18 +242,25 @@ def preserve_figure_captions(root: Tag | BeautifulSoup) -> None:
         figcaption = figure.find("figcaption")
         if figcaption is None or not isinstance(figcaption, Tag):
             continue
-        caption_text = figcaption.get_text(strip=True)
-        if not caption_text:
+        if not figcaption.get_text(strip=True):
             continue
 
-        # Remove the figcaption from its current position
-        figcaption.decompose()
-
-        # Append an <em><p> after the figure's image (or at end of figure)
+        # Append an <em><p> after the figure's image (or at end of figure),
+        # holding the caption's own inline content. Its text alone,
+        # get_text(strip=True), glued the words around inline code and links
+        # ("Initially,MyApp’scountstate is0and") and dropped their markup.
         caption_tag = tag_factory.new_tag("p")
         em_tag = tag_factory.new_tag("em")
-        em_tag.string = caption_text
+        for child in list(figcaption.contents):
+            em_tag.append(child.extract())
+        for index, block in enumerate(em_tag.find_all(_CAPTION_BLOCKS)):
+            if index:
+                block.insert_before(" ")
+            block.unwrap()
         caption_tag.append(em_tag)
+
+        # Remove the (now empty) figcaption from its current position
+        figcaption.decompose()
 
         # Insert after figure, or at end of figure if no parent
         parent = figure.parent

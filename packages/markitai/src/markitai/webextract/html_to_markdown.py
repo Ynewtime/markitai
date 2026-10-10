@@ -517,6 +517,11 @@ class WebExtractMarkdownConverter(CompatibleMarkdownConverter):
 
         language = _detect_language(code_el) or ""
 
+        # A <br> is a line break in a code block too (Hexo writes every line
+        # as <span class="line">...</span><br>); get_text() alone glued the
+        # lines together
+        for br in code_el.find_all("br"):
+            br.replace_with("\n")
         code_text = code_el.get_text()
         if code_text.startswith("\n"):
             code_text = code_text[1:]

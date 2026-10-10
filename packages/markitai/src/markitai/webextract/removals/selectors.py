@@ -20,7 +20,7 @@ from markitai.webextract.constants import (
 from markitai.webextract.selectors import matches as _css_matches
 from markitai.webextract.selectors import select
 from markitai.webextract.selectors import select_one as _css_select_one
-from markitai.webextract.utils import has_responsive_show_class
+from markitai.webextract.utils import count_words, has_responsive_show_class
 
 _ID_DELIMITER_RE = re.compile(r"[\s_\-:.]")
 _HEADING_NAMES = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
@@ -61,6 +61,8 @@ def remove_by_selectors(
                 continue
             if _should_protect(el, main_content):
                 continue
+            if _is_article_aside(el):
+                continue
             to_remove.append(el)
             seen_ids.add(eid)
     except Exception:
@@ -74,6 +76,8 @@ def remove_by_selectors(
                     if _skip_hidden_match(el, skip_hidden_exact):
                         continue
                     if _should_protect(el, main_content):
+                        continue
+                    if _is_article_aside(el):
                         continue
                     to_remove.append(el)
                     seen_ids.add(eid)
@@ -100,6 +104,7 @@ def remove_by_selectors(
     # Remove in reverse document order to avoid parent-before-child issues
     removed = 0
     decomposed: set[int] = set()
+    abstract = _article_abstract(root) if to_remove else None
     for el in to_remove:
         eid = id(el)
         if eid in decomposed:
@@ -107,11 +112,68 @@ def remove_by_selectors(
         # Check if any ancestor was already decomposed
         if any(id(p) in decomposed for p in el.parents if isinstance(p, Tag)):
             continue
-        el.decompose()
+        if abstract is not None and any(p is el for p in abstract.parents):
+            # A removed block never takes the article's abstract with it
+            # (martinfowler.com's "frontMatter": abstract, date, author bios)
+            el.replace_with(abstract.extract())
+            abstract = None
+        else:
+            el.decompose()
         decomposed.add(eid)
         removed += 1
 
     return removed
+
+
+_ABSTRACT_SELECTOR = '[class~="abstract"], [itemprop="abstract"], [role="doc-abstract"]'
+
+
+def _prose_words(el: Tag) -> tuple[int, int]:
+    """(words, words inside links) of an element's text."""
+    words = count_words(el.get_text(" ", strip=True))
+    link_words = sum(count_words(a.get_text(" ", strip=True)) for a in el.find_all("a"))
+    return words, link_words
+
+
+def _article_abstract(root: Tag) -> Tag | None:
+    """The first element marked as the abstract that reads as one.
+
+    Marked by class ``abstract``, ``itemprop="abstract"`` or
+    ``role="doc-abstract"``; prose (at least 15 words, few of them links).
+    Only the first: later ones are more likely other articles' teasers.
+    """
+    for candidate in select(root, _ABSTRACT_SELECTOR):
+        words, link_words = _prose_words(candidate)
+        if words >= 15 and link_words <= 0.3 * words:
+            return candidate
+        return None
+    return None
+
+
+def _is_article_aside(el: Tag) -> bool:
+    """Whether an aside is a pull-out box of the article, not page chrome.
+
+    The aside and sidebar selectors are for a page's side column, which
+    stands beside the article and is mostly links. An aside set among the
+    article's own paragraphs and written as prose belongs to the article
+    (martinfowler.com's sidebars: "How big is a microservice?", ...).
+    """
+    classes = el.get("class")
+    class_list = classes if isinstance(classes, list) else str(classes or "").split()
+    if el.name != "aside" and "sidebar" not in (c.lower() for c in class_list):
+        return False
+    parent = el.parent
+    if not isinstance(parent, Tag):
+        return False
+    prose_siblings = sum(
+        1
+        for child in parent.find_all("p", recursive=False)
+        if count_words(child.get_text(" ", strip=True)) >= 15
+    )
+    if prose_siblings < 2:
+        return False
+    words, link_words = _prose_words(el)
+    return words >= 30 and link_words <= 0.3 * words
 
 
 def _skip_hidden_match(el: Tag, skip_hidden_exact: bool) -> bool:

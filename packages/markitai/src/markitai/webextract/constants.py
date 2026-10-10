@@ -204,6 +204,10 @@ EXACT_SELECTORS: list[str] = [
     "#Sidebar",
     "#side-bar",
     "#sitesub",
+    # MediaWiki: the "[edit]" link beside each section heading, and the print
+    # footer under the article ("Retrieved from" its permanent link)
+    ".mw-editsection",
+    ".printfooter",
     # skip links
     "[data-link-name*='skip']",
     "[aria-label*='skip']",
