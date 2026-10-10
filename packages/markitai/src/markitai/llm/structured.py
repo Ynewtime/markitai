@@ -107,7 +107,7 @@ def _resolve_model_structured_mode(model_id: str) -> str:
 def _is_deepseek_thinking_model(model_id: str) -> bool:
     """A DeepSeek model that answers in thinking mode by default.
 
-    LiteLLM marks ``deepseek/deepseek-v4-flash`` as tool- and schema-capable,
+    LiteLLM marks ``deepseek/deepseek-flash`` as tool- and schema-capable,
     but in thinking mode DeepSeek rejects a forced ``tool_choice`` with HTTP
     400 ("Thinking mode does not support this tool_choice"), and its API has
     no ``json_schema`` response format, so every document would spend one

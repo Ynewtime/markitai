@@ -346,7 +346,7 @@ PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     "anthropic": "anthropic/claude-haiku-4-5",
     "openai": "openai/gpt-5.6-luna",
     "gemini": "gemini/gemini-flash-lite-latest",
-    "deepseek": "deepseek/deepseek-v4-flash",
+    "deepseek": "deepseek/deepseek-flash",
     "openrouter": "openrouter/google/gemini-3.1-flash-lite",
 }
 

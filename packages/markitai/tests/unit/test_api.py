@@ -225,7 +225,7 @@ class TestResolveConfig:
             MarkitaiConfig(), llm=True, ocr=None, screenshot=None, alt=None, desc=None
         )
         assert [m.litellm_params.model for m in cfg.llm.model_list] == [
-            "deepseek/deepseek-v4-flash"
+            "deepseek/deepseek-flash"
         ]
 
     def test_model_env_beats_detection(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -258,7 +258,7 @@ class TestLiveDiscovery:
             def json(self) -> dict[str, Any]:
                 return {
                     "data": [
-                        {"id": "deepseek-v4-flash"},
+                        {"id": "deepseek-flash"},
                         {"id": "deepseek-v4-pro"},
                     ]
                 }
@@ -289,7 +289,7 @@ class TestLiveDiscovery:
         )
         assert captured["url"] == "https://api.deepseek.com/models"
         assert [model["model"] for model in result["models"]] == [
-            "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-flash",
             "deepseek/deepseek-v4-pro",
         ]
         assert result["authoritative"] is True

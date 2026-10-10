@@ -270,7 +270,7 @@ Model names follow LiteLLM's `provider/model` form:
 - `openai/gpt-5.6`
 - `anthropic/claude-sonnet-4-6`
 - `gemini/gemini-flash-lite-latest`
-- `deepseek/deepseek-v4-flash`
+- `deepseek/deepseek-flash`
 - `ollama/llama3.2`
 - `claude-agent/sonnet`, `copilot/gpt-5.6`, `chatgpt/gpt-5.6` (subscription providers)
 
@@ -286,7 +286,7 @@ Model names follow LiteLLM's `provider/model` form:
 | Anthropic | `anthropic/claude-haiku-4-5` |
 | OpenAI | `openai/gpt-5.6-luna` |
 | Gemini | `gemini/gemini-flash-lite-latest` |
-| DeepSeek | `deepseek/deepseek-v4-flash` |
+| DeepSeek | `deepseek/deepseek-flash` |
 | OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
 
 Set `model_list` to use anything else. A model the provider has retired only produces a startup warning; markitai never rewrites your choice.

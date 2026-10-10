@@ -270,7 +270,7 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 - `openai/gpt-5.6`
 - `anthropic/claude-sonnet-4-6`
 - `gemini/gemini-flash-lite-latest`
-- `deepseek/deepseek-v4-flash`
+- `deepseek/deepseek-flash`
 - `ollama/llama3.2`
 - `claude-agent/sonnet`、`copilot/gpt-5.6`、`chatgpt/gpt-5.6`（订阅制提供商）
 
@@ -286,7 +286,7 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 | Anthropic | `anthropic/claude-haiku-4-5` |
 | OpenAI | `openai/gpt-5.6-luna` |
 | Gemini | `gemini/gemini-flash-lite-latest` |
-| DeepSeek | `deepseek/deepseek-v4-flash` |
+| DeepSeek | `deepseek/deepseek-flash` |
 | OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
 
 想用别的就设 `model_list`。配了已被提供商下线的模型只会在启动时警告一句，markitai 不会替你改。
@@ -709,7 +709,7 @@ $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
 
 | 提供商 | 可用性 | 说明 |
 |--------|--------|------|
-| **DeepSeek** | 直连 | 直接用 `deepseek/deepseek-v4-flash` |
+| **DeepSeek** | 直连 | 直接用 `deepseek/deepseek-flash` |
 | **Ollama** | 离线 | 本地模型，如 `ollama/llama3.2` |
 | **API 中转** | 通过中转 | 用 `api_base` 指向第三方中转服务，写法见[自定义 API 端点](#自定义-api-端点) |
 | **OpenAI / Claude / Gemini** | 需代理 | 走代理或 `api_base` 中转 |

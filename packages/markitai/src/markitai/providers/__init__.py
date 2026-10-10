@@ -345,6 +345,11 @@ RETIRED_MODELS: dict[str, str] = {
     "gpt-5": "openai",
     "gpt-5.1": "openai",
     "gpt-5.2": "openai",
+    # Retired 2026-09-10 (V4.1-Flash, ``deepseek-flash``, replaced them);
+    # DeepSeek routes the old ids to V4.1-Flash only for now. markitai 1.2.0
+    # wrote ``deepseek-v4-flash`` into configs as its default.
+    "deepseek-v4-flash": "deepseek",
+    "deepseek-v4-flash-vision-exp": "deepseek",
 }
 
 

@@ -624,6 +624,18 @@ class TestDeepSeekThinkingModels:
         assert model_structured_mode(model) == MODE_MD_JSON
         assert structured_mode_ladder([model]) == (instructor.Mode.MD_JSON,)
 
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "deepseek/deepseek-flash",
+            # Older configs: both ids now route to V4.1-Flash, in thinking mode
+            "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-pro",
+        ],
+    )
+    def test_deepseek_thinking_models_answer_in_json_mode(self, model):
+        assert model_structured_mode(model) == MODE_MD_JSON
+
     def test_deepseek_model_without_thinking_keeps_tools(self):
         assert model_structured_mode("deepseek/deepseek-chat") == MODE_TOOLS
 
@@ -635,7 +647,7 @@ class TestRejectedRungThenBudget:
         rejected = BadRequestError(
             message='DeepseekException - {"error": {"message": "Thinking mode '
             'does not support this tool_choice"}}',
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             llm_provider="deepseek",
         )
         router = _ScriptedRouter(TOOLS_MODEL, [rejected])
