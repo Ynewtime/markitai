@@ -487,6 +487,7 @@ def _check_serve() -> dict[str, Any]:
         "status": "missing",
         "message": "serve extra not installed",
         "install_hint": extra_install_command("serve"),
+        "install_commands": [extra_install_command("serve")],
     }
 
 
@@ -587,8 +588,9 @@ def _check_anydoc() -> dict[str, Any]:
             "description": "Legacy Office conversion (.doc/.ppt)",
             "status": "missing",
             "optional": True,
-            "message": "not installed",
+            "message": "not installed (needed for legacy .doc and .ppt files)",
             "install_hint": extra_install_command("legacy"),
+            "install_commands": [extra_install_command("legacy")],
         }
 
 
@@ -672,8 +674,9 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
             "description": "OCR for scanned documents (--ocr)",
             "status": "missing",
             "optional": True,
-            "message": "not installed — --ocr unavailable (everything else works)",
+            "message": "not installed: --ocr unavailable (everything else works)",
             "install_hint": OCR_INSTALL_HINT,
+            "install_commands": [OCR_INSTALL_HINT],
         }
 
 

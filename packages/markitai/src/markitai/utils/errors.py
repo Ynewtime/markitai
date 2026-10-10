@@ -59,7 +59,46 @@ def extra_install_command(extra: str) -> str:
     from pathlib import Path
 
     installer = "pipx" if "pipx" in Path(sys.prefix).parts else "uv tool"
+    if installer == "uv tool":
+        spec = _uv_tool_spec(Path(sys.prefix), extra)
+        if spec is not None:
+            return f'uv tool install "{spec}" --force'
     return f'{installer} install "markitai[{extra}]" --force'
+
+
+def _uv_tool_spec(prefix: object, extra: str) -> str | None:
+    """markitai's requirement from this uv tool install, plus ``extra``.
+
+    ``uv tool install --force`` replaces the tool with exactly what it is
+    given, so "markitai[legacy]" alone drops every extra already installed
+    (setup.sh installs several) and, for an install from a checkout, swaps
+    it for the PyPI release. uv's receipt records the original requirement.
+    """
+    import tomllib
+    from pathlib import Path
+
+    try:
+        receipt = tomllib.loads(
+            (Path(str(prefix)) / "uv-receipt.toml").read_text(encoding="utf-8")
+        )
+        requirement = next(
+            r
+            for r in receipt["tool"]["requirements"]
+            if str(r.get("name", "")).lower() == "markitai"
+        )
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+    extras = sorted({*requirement.get("extras", []), extra})
+    spec = f"markitai[{','.join(extras)}]"
+    if requirement.get("directory"):
+        return f"{spec} @ {requirement['directory']}"
+    if requirement.get("path"):
+        return f"{spec} @ {requirement['path']}"
+    if requirement.get("git"):
+        return f"{spec} @ git+{requirement['git']}"
+    if requirement.get("url"):
+        return f"{spec} @ {requirement['url']}"
+    return spec + str(requirement.get("specifier", ""))
 
 
 class MissingDependencyError(SelfExplanatoryError, ImportError):
