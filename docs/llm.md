@@ -665,9 +665,11 @@ failures stop the ladder; authentication failures first move to unexcluded
 sibling deployments and then configured routing fallbacks before stopping.
 Transport retries stay inside the router. Exhausted network/HTTP transport errors
 stop the ladder in every mode and do not trigger image caption/description fallback.
-The final JSON-text mode gets three validation attempts total; each attempt
-after a rejected answer adds the rejection to the system prompt, and a response
-without any text ends the ladder after that one request. Response-size
+The final JSON-text mode gets at most three validation attempts; each attempt
+after a rejected answer adds the rejection to the system prompt, so the
+attempts end early when the same rejection repeats (the next request would be
+the one just answered), and a response without any text ends the ladder after
+that one request. Response-size
 limits are terminal resource errors, not invalid JSON to retry or downgrade. All actual HTTP attempts
 use the same document budget, runtime permit and paid-usage accounting. Structured
 fatal responses publish cancellation before releasing their permit.

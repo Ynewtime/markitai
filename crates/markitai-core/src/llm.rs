@@ -2290,8 +2290,9 @@ mod tests {
 
     #[test]
     fn image_fallback_usage_includes_paid_invalid_structured_response() {
+        // The second rejection repeats the first, so the separate requests
+        // follow without a third, identical structured request.
         let mock = Mock::new(vec![
-            (200, success("not structured JSON")),
             (200, success("not structured JSON")),
             (200, success("not structured JSON")),
             (200, success(" Caption \nwith whitespace ")),
@@ -2311,10 +2312,10 @@ mod tests {
         assert_eq!(analysis.caption, "Caption with whitespace");
         assert_eq!(analysis.description, "## Details\n\nFaithful content.");
         assert_eq!(analysis.extracted_text, "");
-        assert_eq!(analysis.usage.requests, 5);
-        assert_eq!(analysis.usage.input_tokens, 55);
-        assert_eq!(scope.usage().output_tokens, 35);
-        assert_eq!(mock.finish().len(), 5);
+        assert_eq!(analysis.usage.requests, 4);
+        assert_eq!(analysis.usage.input_tokens, 44);
+        assert_eq!(scope.usage().output_tokens, 28);
+        assert_eq!(mock.finish().len(), 4);
     }
 
     #[test]

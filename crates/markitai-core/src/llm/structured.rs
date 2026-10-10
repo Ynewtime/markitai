@@ -417,8 +417,17 @@ pub(super) fn run<T>(
                     last = error;
                 }
             }
+            // The follow-up names this rejection; the same rejection again
+            // would make it the very request that was just answered, so the
+            // mode ends here instead.
+            let next = (mode == Mode::JsonText).then(|| super::corrected(request.prompts, &last));
+            let repeated = next.as_ref().is_some_and(|next| {
+                corrected
+                    .as_ref()
+                    .is_some_and(|sent: &super::Prompts| sent.system == next.system)
+            });
             if mode == Mode::JsonText
-                && attempt + 1 == attempts
+                && (attempt + 1 == attempts || repeated)
                 && let Some(value) = repair(&text)
                 && let Ok(answer) = validate(&value)
             {
@@ -432,8 +441,11 @@ pub(super) fn run<T>(
                     "{last}; LLM per-document request budget exhausted during structured validation"
                 ))));
             }
-            if mode == Mode::JsonText {
-                corrected = Some(super::corrected(request.prompts, &last));
+            if repeated {
+                break;
+            }
+            if let Some(next) = next {
+                corrected = Some(next);
             }
         }
     }
