@@ -768,6 +768,29 @@ class TestBatchConvert:
         assert "No supported files" in result.output
 
 
+# The markitai CLI, with every ProcessPoolExecutor manager thread lingering
+# after its work (a loaded machine: it gets the CPU late).
+_SLOW_POOL_MANAGER_CLI = """
+import sys
+import time
+import concurrent.futures.process as process_pool
+
+manager_run = process_pool._ExecutorManagerThread.run
+
+def slow_to_end(self):
+    sys.stderr.write("[test] pool manager started\\n")
+    manager_run(self)
+    time.sleep(0.3)
+
+process_pool._ExecutorManagerThread.run = slow_to_end
+
+from markitai.cli import main
+
+sys.argv[0] = "markitai"
+main()
+"""
+
+
 class TestCLIWithSubprocess:
     """Tests using subprocess for more realistic CLI testing."""
 
@@ -801,6 +824,55 @@ class TestCLIWithSubprocess:
         )
         assert result.returncode == 0
         assert "markitai" in result.stdout
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows semaphores are unnamed: no resource tracker to report them",
+    )
+    def test_batch_exit_leaves_no_leaked_semaphores(self, tmp_path: Path) -> None:
+        """A batch with several PDFs starts the PDF extraction workers, and
+        the CLI leaves through os._exit. Their pool's semaphores must be
+        released by then: the resource tracker printed "There appear to be 3
+        leaked semaphore objects to clean up at shutdown" after the summary.
+
+        The pool's manager thread is made slow to end, as on a loaded
+        machine, so the race the warning came from is lost every time."""
+        pymupdf = pytest.importorskip("pymupdf")
+        from markitai.converter import pdf_parallel
+
+        if not pdf_parallel.layout_engine_active():
+            pytest.skip("PyMuPDF-Layout is not installed: no extraction workers")
+        source = tmp_path / "in"
+        source.mkdir()
+        for name in ("a", "b"):
+            doc = pymupdf.open()
+            doc.new_page().insert_text((72, 72), f"Document {name}")
+            doc.save(source / f"{name}.pdf")
+            doc.close()
+        home = tmp_path / "home"
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "MARKITAI_HOME": str(home / ".markitai"),
+            "MARKITAI_PDF_WORKERS": "2",
+        }
+
+        result = subprocess.run(
+            [sys.executable, "-c", _SLOW_POOL_MANAGER_CLI, str(source)]
+            + ["-o", str(tmp_path / "out")],
+            capture_output=True,  # waits for the tracker, which writes last
+            text=True,
+            env=env,
+            timeout=300,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "[test] pool manager started" in result.stderr  # workers ran
+        assert "leaked semaphore" not in result.stderr
+        assert "resource_tracker" not in result.stderr
+        assert (tmp_path / "out" / "a.pdf.md").is_file()
 
 
 class TestCaseSensitivityWarning:

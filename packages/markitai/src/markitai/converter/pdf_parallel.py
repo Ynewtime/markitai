@@ -618,6 +618,9 @@ def shutdown_pool() -> None:
     if pool is None:
         return
     processes = list((getattr(pool, "_processes", None) or {}).values())
+    # Taken before shutdown(), which drops the pool's reference to it (a
+    # second shutdown(wait=True) then returns without waiting)
+    manager: threading.Thread | None = getattr(pool, "_executor_manager_thread", None)
     pool.shutdown(wait=False, cancel_futures=True)
     for process in processes:
         try:
@@ -629,12 +632,16 @@ def shutdown_pool() -> None:
             process.join(timeout=1)
         except Exception:
             pass
-    # With its workers gone the pool's manager thread ends and releases the
-    # queues; their semaphores would otherwise be reported leaked at exit.
-    # Bounded: a stop must never hang on it.
-    closer = threading.Thread(target=pool.shutdown, kwargs={"wait": True}, daemon=True)
-    closer.start()
-    closer.join(timeout=2)
+    # With its workers gone the pool's manager thread ends. It holds the
+    # pool's queues, whose semaphores are unlinked only when the queues are
+    # freed: wait for it, then drop the last reference to it so they are
+    # freed here, before the caller leaves (the CLI through os._exit, serve
+    # by re-raising its stop signal). A semaphore still open then is
+    # reported leaked by the resource tracker ("There appear to be 3 leaked
+    # semaphore objects"). Bounded: a stop must never hang on it.
+    if manager is not None:
+        manager.join(timeout=2)
+    del manager
 
 
 atexit.register(shutdown_pool)
