@@ -637,10 +637,8 @@ pub(super) async fn history(
     ExtractState(state): ExtractState<Arc<State>>,
     query: Result<Query<HistoryQuery>, QueryRejection>,
 ) -> ApiResult<Json<Value>> {
-    let include = query
-        .map_err(|_| ApiError::new(422, "invalid_history_query", "invalid history query"))?
-        .0
-        .include;
+    // Anything but `include=items` keeps the plain summaries.
+    let include = query.ok().and_then(|query| query.0.include);
     let items = include
         .as_deref()
         .is_some_and(|include| include.split(',').any(|part| part.trim() == "items"));

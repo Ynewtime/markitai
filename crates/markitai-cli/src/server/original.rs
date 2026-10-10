@@ -249,8 +249,8 @@ fn resolve(job: &Job, item_id: &str) -> ApiResult<Original> {
             .and_then(|path| stored(path, &item.name, item.name.clone()))
     } else {
         let base = files::item_base(&data, &item).unwrap_or_else(|_| "page".into());
-        store::safe_file(&job.folder.join("snapshots"), &snapshot_name(item_id))
-            .ok()
+        snapshot_name(item_id)
+            .and_then(|name| store::safe_file(&job.folder.join("snapshots"), &name).ok())
             .and_then(|path| stored(path, "page.html", format!("{base}.html")))
     };
     let out = job.folder.join("out");
@@ -293,9 +293,15 @@ fn resolve(job: &Job, item_id: &str) -> ApiResult<Original> {
     })
 }
 
-/// A URL item's page snapshot inside the job's `snapshots/`.
-pub(super) fn snapshot_name(item_id: &str) -> String {
-    format!("{item_id}.html")
+/// A URL item's page snapshot inside the job's `snapshots/`; none for an
+/// item ID (from an older record) that is not a plain file name.
+pub(super) fn snapshot_name(item_id: &str) -> Option<String> {
+    let plain = !item_id.is_empty()
+        && item_id.len() <= 64
+        && item_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+    plain.then(|| format!("{item_id}.html"))
 }
 
 fn read(path: &FsPath, limit: u64) -> ApiResult<Vec<u8>> {
@@ -730,6 +736,14 @@ mod tests {
         }
         let (format, media) = format("notes.md");
         assert_eq!(sent_type(format, media), "text/markdown; charset=utf-8");
+    }
+
+    #[test]
+    fn only_plain_item_ids_name_a_page_snapshot() {
+        assert_eq!(snapshot_name("i12").as_deref(), Some("i12.html"));
+        for unsafe_id in ["", "..", "../meta", "a/b", "a\\b", ".hidden", "i1.html"] {
+            assert_eq!(snapshot_name(unsafe_id), None, "{unsafe_id}");
+        }
     }
 
     #[test]

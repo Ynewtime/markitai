@@ -328,8 +328,9 @@ async fn convert_one(
     cfg["output"]["filename"] = json!(format!("{base}.md"));
     // A URL item keeps the HTML it was converted from, for Compare.
     let snapshots = job.folder.join("snapshots");
-    let snapshot =
-        (item.kind == "url").then(|| snapshots.join(super::original::snapshot_name(&item.item_id)));
+    let snapshot = super::original::snapshot_name(&item.item_id)
+        .filter(|_| item.kind == "url")
+        .map(|name| snapshots.join(name));
     let result = crate::task::blocking(move || {
         let _permit = permit;
         let options = markitai_core::ConvertOptions {
