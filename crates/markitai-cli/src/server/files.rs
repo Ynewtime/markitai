@@ -7,7 +7,7 @@ use super::{
 use axum::{
     Json,
     body::Body,
-    extract::{Path, State as ExtractState},
+    extract::{Path, Query, State as ExtractState, rejection::QueryRejection},
     http::{HeaderValue, header},
     response::Response,
 };
@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
+    io::Read,
     sync::Arc,
 };
 use tokio::io::AsyncReadExt;
@@ -112,10 +113,61 @@ pub(super) async fn download(
     )
 }
 
+#[derive(serde::Deserialize)]
+pub(super) struct ResultQuery {
+    max_bytes: Option<String>,
+}
+/// The smallest Markdown excerpt a caller may ask for.
+const MIN_EXCERPT: u64 = 1024;
+
+fn excerpt_limit(query: Result<Query<ResultQuery>, QueryRejection>) -> ApiResult<Option<u64>> {
+    let invalid = || {
+        ApiError::new(
+            422,
+            "invalid_max_bytes",
+            format!("max_bytes must be an integer of at least {MIN_EXCERPT}"),
+        )
+    };
+    match query.map_err(|_| invalid())?.0.max_bytes {
+        None => Ok(None),
+        Some(text) => text
+            .parse::<u64>()
+            .ok()
+            .filter(|limit| *limit >= MIN_EXCERPT)
+            .map(Some)
+            .ok_or_else(invalid),
+    }
+}
+
+/// The start of `bytes` as text, at most `limit` bytes: never inside a UTF-8
+/// sequence, and after the last line break in its final quarter when there
+/// is one. `None` when the bytes are not UTF-8 text.
+fn excerpt(bytes: &[u8], limit: usize) -> Option<&str> {
+    let bytes = &bytes[..bytes.len().min(limit)];
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => text,
+        // Only a sequence the cut split is acceptable.
+        Err(error) if error.error_len().is_none() => {
+            std::str::from_utf8(&bytes[..error.valid_up_to()]).ok()?
+        }
+        Err(_) => return None,
+    };
+    let floor = text.len() - text.len() / 4;
+    match text.as_bytes()[floor..]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+    {
+        Some(position) => Some(&text[..floor + position + 1]),
+        None => Some(text),
+    }
+}
+
 pub(super) async fn result(
     ExtractState(state): ExtractState<Arc<State>>,
     Path((id, item_id)): Path<(String, String)>,
+    query: Result<Query<ResultQuery>, QueryRejection>,
 ) -> ApiResult<Json<Value>> {
+    let limit = excerpt_limit(query)?;
     let job = jobs::get(&state, &id)?;
     crate::task::blocking(move||{
         let _guard=job.access.lock().unwrap();
@@ -132,8 +184,19 @@ pub(super) async fn result(
         let base_name=format!("{base}.md");let enhanced_name=format!("{base}.llm.md");
         let base_path=store::safe_file(&out,&base_name).ok();let enhanced_path=store::safe_file(&out,&enhanced_name).ok();
         let (variant,path)=if item.llm_enhanced&&enhanced_path.is_some(){("llm",enhanced_path.clone().unwrap())}else if let Some(path)=base_path.clone(){("base",path)}else if let Some(path)=enhanced_path.clone(){("llm",path)}else{return Err(ApiError::new(404,"result_unavailable","item result not available"));};
-        if fs::metadata(&path).map_err(ApiError::internal)?.len()>MAX_RESULT{return Err(ApiError::new(413,"result_too_large","result is too large for JSON; use the file download endpoint"));}
-        let markdown=fs::read_to_string(&path).map_err(ApiError::internal)?;
+        let size=fs::metadata(&path).map_err(ApiError::internal)?.len();
+        // Older histories find their artifacts in the whole text; an indexed
+        // item's excerpt needs only its first bytes.
+        let excerpted=limit.filter(|limit|size>*limit&&assets.is_some());
+        if size>MAX_RESULT&&excerpted.is_none(){return Err(ApiError::new(413,"result_too_large","result is too large for JSON; use the file download endpoint"));}
+        let markdown=match excerpted {
+            Some(limit)=>{
+                let mut bytes=Vec::new();
+                File::open(&path).map_err(ApiError::internal)?.take(limit).read_to_end(&mut bytes).map_err(ApiError::internal)?;
+                excerpt(&bytes,limit as usize).ok_or_else(||ApiError::internal("result is not UTF-8 text"))?.to_owned()
+            }
+            None=>fs::read_to_string(&path).map_err(ApiError::internal)?,
+        };
         let mut artifacts=Vec::new();let mut seen=HashSet::new();
         let mut add=|relative:String|->ApiResult<()> {
             if public_member(&relative)&&seen.insert(relative.clone())&&let Ok(path)=store::safe_file(&out,&relative){artifacts.push(json!({"relpath":relative,"size":fs::metadata(path).map_err(ApiError::internal)?.len()}));}Ok(())
@@ -156,7 +219,11 @@ pub(super) async fn result(
             let rewritten=markitai_core::output::rewrite_asset_references(&text,&replacements);
             for (index,name) in candidates.into_iter().enumerate(){if rewritten.contains(&format!("{marker}{index}-END")){add(name)?;}}
         }
-        Ok(Json(json!({"name":item.name,"variant":variant,"markdown":markdown,"artifacts":artifacts})))
+        let (markdown,truncated)=match limit {
+            Some(limit) if markdown.len() as u64>limit => (excerpt(markdown.as_bytes(),limit as usize).unwrap_or_default().to_owned(),true),
+            _ => {let truncated=excerpted.is_some();(markdown,truncated)}
+        };
+        Ok(Json(json!({"name":item.name,"variant":variant,"markdown":markdown,"artifacts":artifacts,"truncated":truncated,"markdown_bytes":size})))
     }).await.map_err(ApiError::internal)?
 }
 
@@ -461,4 +528,30 @@ fn legacy_asset(base: &str, name: &str) -> bool {
 
 pub(super) fn public_member(name: &str) -> bool {
     name.rsplit('/').next() != Some(".images.lock")
+}
+
+#[cfg(test)]
+mod excerpt_tests {
+    use super::*;
+
+    #[test]
+    fn an_excerpt_ends_at_a_line_in_its_last_quarter_and_never_inside_a_character() {
+        // A line break in the final quarter ends the excerpt.
+        let text = format!("{}\n{}", "a".repeat(900), "b".repeat(500));
+        assert_eq!(excerpt(text.as_bytes(), 1024), Some(&text[..901]));
+        // One earlier than that does not: the cut falls on a whole character.
+        let text = format!("{}\n{}", "a".repeat(100), "€".repeat(400));
+        let cut = excerpt(text.as_bytes(), 1024).unwrap();
+        assert_eq!(cut.len(), 1022);
+        assert!(text.starts_with(cut) && cut.ends_with('€'));
+        // A sequence the read itself split is dropped, not rejected.
+        assert_eq!(
+            excerpt(&"€".repeat(400).as_bytes()[..1024], 1024)
+                .unwrap()
+                .len(),
+            1023
+        );
+        assert_eq!(excerpt(b"short\n", 1024), Some("short\n"));
+        assert_eq!(excerpt(b"ab\xffcd", 1024), None);
+    }
 }

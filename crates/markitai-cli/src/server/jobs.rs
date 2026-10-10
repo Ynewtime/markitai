@@ -30,6 +30,8 @@ pub(super) struct JobData {
     pub assets: HashMap<String, Vec<String>>,
     pub item_options: HashMap<String, Value>,
     pub transactions: Vec<String>,
+    /// What the submission is called in the history list, if it was named.
+    pub label: Option<String>,
 }
 impl JobData {
     pub fn progress(&self) -> Value {
@@ -46,20 +48,24 @@ impl JobData {
         item
     }
 
+    fn item_payloads(&self) -> Value {
+        self.items
+            .iter()
+            .map(|item| self.with_item_options(json!(item)))
+            .collect()
+    }
+
     pub fn snapshot(&self) -> Value {
         let mut value = self.progress();
         value["job_id"] = json!(self.id);
         value["created_at"] = json!(self.created_at);
         value["finished_at"] = json!(self.finished_at);
         value["options"] = public_options(&self.options);
-        value["items"] = self
-            .items
-            .iter()
-            .map(|item| self.with_item_options(json!(item)))
-            .collect();
+        value["items"] = self.item_payloads();
         if let Some(error) = &self.persistence_error {
             value["persistence_error"] = json!(error);
         }
+        value["label"] = json!(self.label);
         value
     }
     // Output totals must not silently omit old observations or price a failed
@@ -157,6 +163,16 @@ impl JobData {
         value["size_bytes"] = json!(self.size);
         value["origin"] = json!(self.options["origin"].as_str().unwrap_or("web"));
         value["retryable"] = json!(self.items.iter().any(|i| i.retryable));
+        value["label"] = json!(self.label);
+        value
+    }
+
+    /// A history entry with the job's options and every item, as the
+    /// snapshot shows them, so a list needs no request per job.
+    pub fn history_with_items(&self) -> Value {
+        let mut value = self.history();
+        value["options"] = public_options(&self.options);
+        value["items"] = self.item_payloads();
         value
     }
 }
@@ -349,6 +365,7 @@ async fn convert_one(
             item.llm_enhanced = result.llm_output_path.is_some();
             item.cost_usd = Some(result.usage.cost_usd);
             item.pricing = crate::pricing::Pricing::from_usage(&result.usage);
+            item.models = super::types::models(&result.usage);
             item.diagnostics = AttemptDiagnostics::completed(Operation::Convert, result.usage);
             item.warnings = result.warnings;
             item.output = result.llm_output_path.or(result.output_path).and_then(|p| {
@@ -506,6 +523,7 @@ mod pricing_tests {
             assets: HashMap::new(),
             item_options: HashMap::new(),
             transactions: Vec::new(),
+            label: None,
         };
         let history = data.history();
         assert_eq!(history["cost_usd"], 0.5);
@@ -533,6 +551,7 @@ mod pricing_tests {
             assets: HashMap::new(),
             item_options: HashMap::new(),
             transactions: Vec::new(),
+            label: None,
         }
     }
     #[test]

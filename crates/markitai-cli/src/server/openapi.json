@@ -73,7 +73,8 @@
                 "properties": {
                   "files": { "type": "array", "items": { "type": "string", "contentMediaType": "application/octet-stream" }, "description": "Repeated file fields; at most 100 MiB each" },
                   "urls": { "type": "string", "description": "A JSON array of http(s) URLs" },
-                  "options": { "type": "string", "description": "A JSON object of JobOptions" }
+                  "options": { "type": "string", "description": "A JSON object of JobOptions" },
+                  "label": { "type": "string", "description": "What the submission is called in the history list (a folder or `.urls` file name): plain text without control characters, at most 120 characters after trimming; blank means none. Otherwise 422 `invalid_label`." }
                 }
               },
               "encoding": { "files": { "contentType": "application/octet-stream" } }
@@ -83,7 +84,8 @@
                 "type": "object",
                 "properties": {
                   "urls": { "type": "string", "description": "A JSON array of http(s) URLs" },
-                  "options": { "type": "string", "description": "A JSON object of JobOptions" }
+                  "options": { "type": "string", "description": "A JSON object of JobOptions" },
+                  "label": { "type": "string", "description": "As for multipart/form-data" }
                 }
               }
             }
@@ -183,12 +185,18 @@
         "tags": ["jobs"],
         "operationId": "getItemResult",
         "summary": "The item's Markdown (at most 64 MiB) and its downloadable files",
-        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "description": "With `max_bytes`, `markdown` is the start of the document: at most that many bytes, never cut inside a UTF-8 sequence, and ending at a line break when one falls in the excerpt's last quarter. `artifacts` is complete either way. An excerpt of an indexed item reads only its first bytes, so it is also served when the whole document exceeds 64 MiB.",
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" },
+          { "$ref": "#/components/parameters/ItemId" },
+          { "name": "max_bytes", "in": "query", "required": false, "description": "Return at most this many bytes of Markdown; an integer of at least 1024, otherwise 422 `invalid_max_bytes`", "schema": { "type": "integer", "minimum": 1024 } }
+        ],
         "responses": {
           "200": { "description": "Result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemResult" } } } },
           "401": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
-          "413": { "$ref": "#/components/responses/Error" }
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -230,9 +238,13 @@
         "tags": ["history"],
         "operationId": "listHistory",
         "summary": "Saved jobs, newest first, including jobs other local processes added",
+        "parameters": [
+          { "name": "include", "in": "query", "required": false, "description": "`items` adds each job's `options` and its full item list, as the job snapshot shows them, to its entry. Other values are ignored.", "schema": { "type": "string", "enum": ["items"] } }
+        ],
         "responses": {
           "200": { "description": "Summaries", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/HistoryEntry" } } } } },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -461,7 +473,7 @@
           "reason": {
             "type": "string",
             "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
-            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_json", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "output_conflict", "output_identity_conflict", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_history_query", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "output_conflict", "output_identity_conflict", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
           }
         }
       },
@@ -470,12 +482,29 @@
         "required": ["version", "llm", "presets", "preset_options", "extras", "limits"],
         "properties": {
           "version": { "type": "string" },
+          "implementation": { "type": "string", "enum": ["rust", "python"], "description": "Which backend answers" },
+          "docs_url": { "type": "string", "format": "uri", "description": "The user guides" },
+          "features": { "$ref": "#/components/schemas/Features" },
           "llm": { "type": "object", "required": ["routable"], "properties": { "configured": { "type": "boolean" }, "effective": { "type": "boolean" }, "routable": { "type": "boolean" }, "models": { "type": "array", "items": { "type": "string" } } } },
           "remote_services": { "type": "object", "properties": { "cloudflare": { "$ref": "#/components/schemas/CloudflareCapabilities" } } },
           "presets": { "type": "array", "items": { "type": "string" } },
           "preset_options": { "type": "object", "additionalProperties": { "type": "object", "properties": { "llm": { "type": "boolean" }, "ocr": { "type": "boolean" }, "alt": { "type": "boolean" }, "desc": { "type": "boolean" }, "screenshot": { "type": "boolean" } } } },
           "extras": { "type": "object", "properties": { "browser": { "type": "boolean" }, "svg": { "type": "boolean" } } },
           "limits": { "type": "object", "properties": { "max_job_items": { "type": "integer" } } }
+        }
+      },
+      "Features": {
+        "type": "object",
+        "description": "What this service implements beyond the base job API, for a client shared with other backends",
+        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels"],
+        "properties": {
+          "cancel": { "type": "boolean", "description": "POST /api/jobs/{job_id}/cancel" },
+          "download_tickets": { "type": "boolean", "description": "POST /api/download-tickets" },
+          "url_lists": { "type": "boolean", "description": "Uploaded `.urls` files expand into URL items" },
+          "history_items": { "type": "boolean", "description": "GET /api/history?include=items" },
+          "original": { "type": "boolean", "description": "The /original routes of an item" },
+          "result_excerpt": { "type": "boolean", "description": "GET …/result?max_bytes=" },
+          "job_labels": { "type": "boolean", "description": "`label` on POST /api/jobs, echoed in snapshots and history" }
         }
       },
       "CloudflareCapabilities": {
@@ -613,7 +642,9 @@
           "skipped": { "type": "boolean" },
           "skip_reason": { "type": ["string", "null"] },
           "retryable": { "type": "boolean" },
-          "warnings": { "type": "array", "items": { "type": "string" } }
+          "warnings": { "type": "array", "items": { "type": "string" } },
+          "models": { "type": "array", "items": { "type": "string" }, "description": "The models whose requests produced the retained result, in name order; absent when none did" },
+          "source_size": { "type": ["integer", "null"], "description": "Bytes of the uploaded original; absent for URLs and CLI records" }
         }
       },
       "RerunFailure": {
@@ -644,13 +675,14 @@
           { "$ref": "#/components/schemas/JobProgress" },
           {
             "type": "object",
-            "required": ["job_id", "created_at", "finished_at", "options", "items"],
+            "required": ["job_id", "created_at", "finished_at", "options", "items", "label"],
             "properties": {
               "job_id": { "type": "string" },
               "created_at": { "type": "string" },
               "finished_at": { "type": ["string", "null"] },
               "options": { "$ref": "#/components/schemas/JobOptions" },
-              "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" } }
+              "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" } },
+              "label": { "type": ["string", "null"], "description": "The label the job was submitted with; null when none" }
             }
           }
         ]
@@ -662,17 +694,19 @@
       },
       "ItemResult": {
         "type": "object",
-        "required": ["name", "variant", "markdown", "artifacts"],
+        "required": ["name", "variant", "markdown", "artifacts", "truncated", "markdown_bytes"],
         "properties": {
           "name": { "type": "string" },
           "variant": { "type": "string", "enum": ["base", "llm"] },
           "markdown": { "type": "string" },
-          "artifacts": { "type": "array", "items": { "$ref": "#/components/schemas/Artifact" } }
+          "artifacts": { "type": "array", "items": { "$ref": "#/components/schemas/Artifact" } },
+          "truncated": { "type": "boolean", "description": "`markdown` was cut to `max_bytes`" },
+          "markdown_bytes": { "type": "integer", "description": "Size of the whole selected Markdown" }
         }
       },
       "HistoryEntry": {
         "type": "object",
-        "required": ["job_id", "created_at", "status", "total", "done", "failed", "skipped", "names_preview", "kinds_preview", "size_bytes", "origin", "retryable"],
+        "required": ["job_id", "created_at", "status", "total", "done", "failed", "skipped", "names_preview", "kinds_preview", "size_bytes", "origin", "retryable", "label"],
         "properties": {
           "job_id": { "type": "string" },
           "created_at": { "type": "string" },
@@ -691,7 +725,10 @@
           "duration_ms": { "type": ["integer", "null"] },
           "size_bytes": { "type": "integer" },
           "origin": { "type": "string", "enum": ["web", "cli"] },
-          "retryable": { "type": "boolean" }
+          "retryable": { "type": "boolean" },
+          "label": { "type": ["string", "null"], "description": "The label the job was submitted with; null when none" },
+          "options": { "$ref": "#/components/schemas/JobOptions", "description": "With `include=items`" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" }, "description": "With `include=items`: every item as the job snapshot shows it" }
         }
       },
       "Deployment": {

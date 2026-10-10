@@ -1013,3 +1013,6 @@ mod legacy_history;
 
 #[path = "serve/gates.rs"]
 mod gates;
+
+#[path = "serve/workbench.rs"]
+mod workbench;

@@ -363,8 +363,11 @@ mod tests {
             assets: HashMap::new(),
             item_options: HashMap::new(),
             transactions: Vec::new(),
+            label: None,
         };
         full.status = "done".into();
+        full.models = vec!["m".into()];
+        full.source_size = Some(5);
         let priced = full.clone();
         let mut complete = job(vec![priced], Some("history could not be persisted".into()));
         complete
@@ -382,7 +385,15 @@ mod tests {
         assert_eq!(complete.snapshot()["items"][0], full_payload);
         assert_eq!(plain.snapshot()["items"][0], minimal_payload);
         agree("JobSnapshot", &complete.snapshot(), &plain.snapshot());
-        agree("HistoryEntry", &complete.history(), &plain.history());
+        agree(
+            "HistoryEntry",
+            &complete.history_with_items(),
+            &plain.history(),
+        );
+        assert_eq!(
+            complete.history_with_items()["items"][0],
+            complete.snapshot()["items"][0]
+        );
     }
 
     #[test]
@@ -405,7 +416,7 @@ mod tests {
             );
         }
         // Nested llm fields must not be mistaken for top-level capabilities.
-        assert_eq!(interface("Capabilities").len(), 7);
+        assert_eq!(interface("Capabilities").len(), 10);
         assert_eq!(interface("CloudflareCapability").len(), 6);
     }
 }

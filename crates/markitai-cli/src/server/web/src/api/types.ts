@@ -111,6 +111,10 @@ export interface ItemPayload {
   skip_reason: string | null;
   retryable: boolean;
   warnings: string[];
+  /** Model names that produced the retained result. */
+  models?: string[];
+  /** Bytes of the uploaded original; null for URLs or when unknown. */
+  source_size?: number | null;
 }
 
 /** `event: job`. */
@@ -129,6 +133,8 @@ export interface JobSnapshot extends JobProgress {
   options: Record<string, unknown>;
   items: ItemPayload[];
   persistence_error?: string;
+  /** What the submission is called in the list, if it was named. */
+  label?: string | null;
 }
 
 export interface Artifact {
@@ -141,6 +147,10 @@ export interface ItemResult {
   variant: "llm" | "base";
   markdown: string;
   artifacts: Artifact[];
+  /** `markdown` was cut to the requested `max_bytes`. */
+  truncated?: boolean;
+  /** Size of the whole selected Markdown. */
+  markdown_bytes?: number;
 }
 
 export interface PresetFeatures {
@@ -181,7 +191,21 @@ export interface Capabilities {
   presets: string[];
   preset_options: Record<string, PresetFeatures>;
   extras: { browser: boolean; svg: boolean };
-  limits: { max_job_items: number };
+  limits: { max_job_items: number; history_retention_days?: number | null };
+  implementation?: "rust" | "python";
+  docs_url?: string;
+  features?: Features;
+}
+
+/** What a backend implements beyond the base job API; absent or false hides it. */
+export interface Features {
+  cancel: boolean;
+  download_tickets: boolean;
+  url_lists: boolean;
+  history_items: boolean;
+  original: boolean;
+  result_excerpt: boolean;
+  job_labels: boolean;
 }
 
 /** One entry of `GET /api/history`, newest first. */
@@ -204,6 +228,11 @@ export interface HistoryEntry {
   size_bytes: number;
   origin: "web" | "cli";
   retryable: boolean;
+  label?: string | null;
+  /** With `?include=items`. */
+  options?: JobOptions;
+  /** With `?include=items`. */
+  items?: ItemPayload[];
 }
 
 export interface Deployment {
@@ -293,4 +322,44 @@ export interface NewDeployment {
   /** Saved connection ID, or an environment card reference such as env:openai. */
   credential_provider_id?: string;
   credential_deployment_id?: string;
+}
+
+/** `GET /api/jobs/{job_id}/items/{item_id}/original`. */
+export interface OriginalDescriptor {
+  /** What the UI can show:
+   *  "pdf"         uploaded PDF; page images and a text layer
+   *  "image"       uploaded raster image; one page image
+   *  "html"        an HTML document (uploaded .html/.htm/.xhtml, or a URL item's fetched page snapshot)
+   *  "text"        plain text (uploaded .md/.markdown/.txt/.csv/.tsv/.json/.xml/.yaml/.yml/.log)
+   *  "screenshots" no renderable original, but the conversion saved page screenshots (Office files, web pages)
+   *  "none"        nothing to show; see `reason` */
+  kind: "pdf" | "image" | "html" | "text" | "screenshots" | "none";
+  name: string;                 // upload name or URL
+  media_type: string | null;    // of the stored original bytes
+  size: number | null;          // bytes of the stored original
+  /** API path for downloading the stored original bytes (also allowed as a ticket path); null when none is kept. */
+  download: string | null;
+  /** Page boxes, in order. pdf: points (1/72 in) of the visible page box after rotation; image, screenshots:
+   *  pixels. At most 2000 entries (the first pages); `page_count` is the total. Empty for html/text/none. */
+  pages: { width: number; height: number }[];
+  page_count: number;           // pdf: total pages; image: 1; screenshots: number of images; else 0
+  /** pdf only: GET .../pages/{n}/text answers. */
+  text_layer: boolean;
+  /** Set when kind is "none" (and MAY explain a fallback):
+   *  "not_kept"          no original stored: a CLI-recorded job, a URL page that was not kept as HTML
+   *                      (for example Jina/Cloudflare/Defuddle results or a page-cache hit), or an upload removed
+   *  "unsupported_format" the format has no browser view (docx, pptx, xlsx, epub, eml, msg, ipynb, …) and no
+   *                      screenshots were saved; the UI offers "Download original"
+   *  "too_large"         the stored original exceeds the backend's preview limit (UI still offers the download)
+   *  "render_unavailable" this backend build cannot render the format */
+  reason: string | null;
+}
+
+/** `GET /api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text`. */
+export interface PageText {
+  page: number;
+  width: number;   // points, same box as the descriptor's pages[n-1]
+  height: number;
+  /** Reading-order lines; bbox = [x0, y0, x1, y1] in points from the page's TOP-left corner, y growing down. */
+  lines: { text: string; bbox: [number, number, number, number] }[];
 }

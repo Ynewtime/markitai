@@ -414,6 +414,12 @@ pub(super) struct Item {
     pub retryable: bool,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// The models whose requests produced the retained result, by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+    /// Bytes of the uploaded original; unknown for URLs and CLI records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_size: Option<u64>,
 }
 fn convert_operation() -> String {
     "convert".into()
@@ -445,11 +451,31 @@ impl Item {
             skip_reason: None,
             retryable: true,
             warnings: Vec::new(),
+            models: Vec::new(),
+            source_size: None,
         }
     }
     pub fn created(&self) -> Value {
         json!({"item_id":self.item_id,"name":self.name,"kind":self.kind})
     }
+}
+
+/// The models a conversion's recorded usage names, in the record's order.
+pub(super) fn models(usage: &markitai_core::ConversionUsage) -> Vec<String> {
+    usage.by_model.keys().cloned().collect()
+}
+
+/// The longest job label, in characters, after trimming.
+pub(super) const MAX_LABEL: usize = 120;
+
+/// A job's optional label: plain text without control characters, trimmed,
+/// at most `MAX_LABEL` characters; empty means none.
+pub(super) fn label(text: &str) -> Option<Option<String>> {
+    let text = text.trim();
+    if text.chars().count() > MAX_LABEL || text.chars().any(char::is_control) {
+        return None;
+    }
+    Some((!text.is_empty()).then(|| text.to_owned()))
 }
 
 pub(super) type ApiResult<T> = Result<T, ApiError>;
@@ -657,6 +683,19 @@ mod error_tests {
         // A model-free request is accepted whatever the model state is.
         let cfg = options("{}").config(&base).unwrap();
         assert!(options("{}").require_model(&base, &cfg).is_ok());
+    }
+
+    #[test]
+    fn labels_are_trimmed_single_line_text_of_at_most_120_characters() {
+        assert_eq!(label("  Reports  "), Some(Some("Reports".into())));
+        assert_eq!(label(" \t "), Some(None));
+        assert_eq!(label(""), Some(None));
+        let longest = "界".repeat(MAX_LABEL);
+        assert_eq!(label(&longest), Some(Some(longest.clone())));
+        assert_eq!(label(&format!("{longest}x")), None);
+        for refused in ["a\nb", "a\u{7}b", "a\tb"] {
+            assert_eq!(label(refused), None, "{refused:?}");
+        }
     }
 
     #[test]
