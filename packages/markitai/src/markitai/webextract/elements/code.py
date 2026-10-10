@@ -92,7 +92,7 @@ def _strip_inline_numeric_gutters(root: Tag) -> None:
     ``extractStructuredText``; without it the text concatenates as
     ``"1p = 61"``.
     """
-    for el in _css_select(root, "pre span, pre div, code span, code div"):
+    for el in _spans_and_divs_in_code(root):
         children = el.find_all(True, recursive=False)
         if len(children) != 2:
             continue
@@ -103,6 +103,26 @@ def _strip_inline_numeric_gutters(root: Tag) -> None:
         # announce themselves as line rows lose their first child.
         if _looks_like_line_row(el, children[0]):
             children[0].decompose()
+
+
+def _spans_and_divs_in_code(root: Tag) -> list[Tag]:
+    """``select(root, "pre span, pre div, code span, code div")``.
+
+    As a descendant selector it sent every span and div of the page to
+    SoupSieve to look for a pre/code ancestor; this walks up from each one
+    (to the document, as the selector does) and keeps document order.
+    """
+    found: list[Tag] = []
+    for el in root.descendants:
+        if not isinstance(el, Tag) or el.name.lower() not in ("span", "div"):
+            continue
+        parent = el.parent
+        while parent is not None:
+            if parent.name.lower() in ("pre", "code"):
+                found.append(el)
+                break
+            parent = parent.parent
+    return found
 
 
 _LINE_ROW_CLASS_RE = re.compile(

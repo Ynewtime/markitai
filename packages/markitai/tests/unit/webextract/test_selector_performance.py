@@ -323,3 +323,16 @@ def test_plain_attrs_never_admits_what_soupsieve_must_normalize():
             assert reference(attrs), attrs
     assert _plain_attrs({"class": ["a", "b"], "href": "#x"})
     assert _plain_attrs({"content": Text("text/html; charset=utf-8")})
+
+
+@pytest.mark.parametrize("path", sorted(FIXTURES.glob("*.html")), ids=lambda p: p.stem)
+def test_code_row_walk_matches_its_css_selector(path):
+    from markitai.webextract.elements.code import _spans_and_divs_in_code
+
+    root = BeautifulSoup(path.read_text(encoding="utf-8"), "lxml")
+    selector = "pre span, pre div, code span, code div"
+    scopes = [root, *root.find_all(["pre", "code"])[:3]]
+    for scope in scopes:
+        assert [id(e) for e in _spans_and_divs_in_code(scope)] == [
+            id(e) for e in scope.select(selector)
+        ]
