@@ -807,9 +807,14 @@ fn tiled(engine: &Engine, image: &RgbImage, choice: Choice) -> Result<Option<(Re
     if tiles.is_empty() {
         return Ok(None);
     }
-    let mut regions = Vec::new();
-    let mut capped = false;
-    for [x0, y0, x1, y1] in tiles {
+    // Tiles without a sharp edge (a gradient, a blank margin) hold no text;
+    // the others are searched side by side, two detections at a time.
+    let tiles: Vec<[u32; 4]> = tiles
+        .into_iter()
+        .filter(|tile| detect::has_edges(image, *tile))
+        .collect();
+    let found = spread(tiles.len(), |index| {
+        let [x0, y0, x1, y1] = tiles[index];
         let tile = image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image();
         let short = tile.width().min(tile.height()).max(1) as f32;
         let factor = (TILE_SHORT_SIDE / short).clamp(1.0, TILE_UPSCALE);
@@ -820,19 +825,25 @@ fn tiled(engine: &Engine, image: &RgbImage, choice: Choice) -> Result<Option<(Re
             tile
         };
         let (found, more) = engine.detector.regions(&scaled, TILE_BOX_THRESHOLD)?;
-        capped |= more;
         let (scale_x, scale_y) = (
             scaled.width() as f32 / (x1 - x0) as f32,
             scaled.height() as f32 / (y1 - y0) as f32,
         );
-        regions.extend(found.into_iter().map(|region| {
-            detect::Region {
+        let regions: Vec<detect::Region> = found
+            .into_iter()
+            .map(|region| detect::Region {
                 corners: region
                     .corners
                     .map(|[x, y]| [x / scale_x + x0 as f32, y / scale_y + y0 as f32]),
                 score: region.score,
-            }
-        }));
+            })
+            .collect();
+        Ok((regions, more))
+    })?;
+    let capped = found.iter().any(|(_, more)| *more);
+    let regions: Vec<detect::Region> = found.into_iter().flat_map(|(regions, _)| regions).collect();
+    if regions.is_empty() {
+        return Ok(None);
     }
     let cuts = classified(&*classifier()?, image, &regions)?;
     let (lines, language, unread) = recognize(choice, &cuts)?;

@@ -137,6 +137,39 @@ pub(super) fn tiles(width: u32, height: u32) -> Vec<[u32; 4]> {
     found
 }
 
+/// Whether the `[x0, y0, x1, y1]` part of `image` has sharp edges: at least
+/// [`EDGE_PIXELS`] neighbouring pixel pairs that differ in brightness by
+/// [`EDGE_STEP`] or more. Strokes of legible text always do; a gradient, a
+/// blank page or a smooth background does not, and needs no tiled retry.
+pub(super) fn has_edges(image: &RgbImage, [x0, y0, x1, y1]: [u32; 4]) -> bool {
+    let luma = |x: u32, y: u32| {
+        let [r, g, b] = image.get_pixel(x, y).0;
+        (299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)) / 1000
+    };
+    let mut edges = 0;
+    for y in y0..y1 {
+        let mut left = luma(x0, y);
+        for x in x0..x1 {
+            let here = if x == x0 { left } else { luma(x, y) };
+            let below = if y + 1 < y1 { luma(x, y + 1) } else { here };
+            if here.abs_diff(left) >= EDGE_STEP || here.abs_diff(below) >= EDGE_STEP {
+                edges += 1;
+                if edges >= EDGE_PIXELS {
+                    return true;
+                }
+            }
+            left = here;
+        }
+    }
+    false
+}
+
+/// A brightness step of a text stroke's edge, out of 255; JPEG noise and
+/// gradients stay well below it.
+const EDGE_STEP: u32 = 32;
+/// Edge pixels in a tile that can hold a legible character.
+const EDGE_PIXELS: u32 = 12;
+
 /// The detection input: the image scaled into `layout` on its background,
 /// as BGR planes normalized to [-1, 1], the order and range the model was
 /// trained on.
@@ -793,5 +826,26 @@ mod tests {
         for [x0, y0, x1, y1] in tiles(4000, 3000) {
             assert!(x0 < x1 && y0 < y1 && x1 <= 4000 && y1 <= 3000);
         }
+    }
+
+    #[test]
+    fn only_tiles_with_sharp_edges_are_searched_again() {
+        let all = |image: &RgbImage| [0, 0, image.width(), image.height()];
+        let gradient = RgbImage::from_fn(300, 200, |x, y| {
+            image::Rgb([(x / 2) as u8, (y / 2) as u8, 128])
+        });
+        assert!(!has_edges(&gradient, all(&gradient)));
+        let blank = RgbImage::from_pixel(300, 200, image::Rgb([255; 3]));
+        assert!(!has_edges(&blank, all(&blank)));
+        // One short light stroke on the dark part of the gradient.
+        let mut stroke = gradient.clone();
+        for y in 20..24 {
+            for x in 20..26 {
+                stroke.put_pixel(x, y, image::Rgb([255; 3]));
+            }
+        }
+        assert!(has_edges(&stroke, all(&stroke)));
+        // Only the part that holds it counts.
+        assert!(!has_edges(&stroke, [100, 100, 300, 200]));
     }
 }
