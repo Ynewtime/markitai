@@ -1,12 +1,20 @@
 #!/bin/sh
 # Markitai Setup Script - Unified installer with i18n support
 # Supports bash/zsh/dash and other POSIX-compatible shells
-# Auto-detects: language (en/zh), mode (user/dev)
+# Auto-detects the language (en/zh). Run from the root of a markitai checkout,
+# it asks whether to install markitai or set up a development environment.
 #
 # Usage:
-#   curl -fsSL https://markitai.dev/setup.sh | sh    # User install
-#   ./scripts/setup.sh                               # Dev setup (in repo)
-# Full failure logs use a private temp file; set MARKITAI_SETUP_LOG to override.
+#   curl -fsSL https://markitai.dev/setup.sh | sh    # Install markitai
+#   ./scripts/setup.sh                               # In a checkout: install or dev setup
+#
+# Environment:
+#   MARKITAI_SETUP_MODE=install|dev  choose without the question (default: install)
+#   MARKITAI_INSTALL_OPTIONAL=1      install optional components without a terminal
+#   MARKITAI_VERSION=X.Y.Z           pin the markitai release
+#   MARKITAI_USE_MIRROR=1|0          use (or never offer) a PyPI mirror
+#   MARKITAI_SETUP_LOG=PATH          full failure log (default: a private temp file)
+#   NO_COLOR=1                       no colours; the marks stay
 
 # -e: exit on error; -u: error on unset variables (pipefail is not POSIX sh)
 set -eu
@@ -15,12 +23,14 @@ set -eu
 # Internationalization (i18n) System
 # ============================================================
 
-# Detect language from environment
+# Detect language from the locale that governs messages
+# (LC_ALL, then LC_MESSAGES, then LANG). Chinese needs a UTF-8 locale: on a
+# GBK or C terminal the UTF-8 text would print as mojibake.
 # Returns: "zh" for Chinese, "en" for English (default)
 detect_lang() {
-    _lang_env="${LANG:-}${LC_ALL:-}${LC_MESSAGES:-}"
+    _lang_env="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
     case "$_lang_env" in
-        zh_CN*|zh_TW*|zh_HK*|zh_SG*|zh.*)
+        zh*.[Uu][Tt][Ff]-8*|zh*.[Uu][Tt][Ff]8*)
             echo "zh"
             ;;
         *)
@@ -33,22 +43,30 @@ LANG_CODE=$(detect_lang)
 
 # Internationalization function
 # Usage: i18n "key"
-# Returns localized string for the given key
+# Returns localized string for the given key. setup.ps1 carries the same
+# Chinese strings as \uXXXX escapes (it must stay ASCII for Windows
+# PowerShell 5.1); a test checks that the shared keys match.
 i18n() {
     _key="$1"
 
     if [ "$LANG_CODE" = "zh" ]; then
         case "$_key" in
             # Intro/Outro
-            welcome)                    echo "欢迎使用 Markitai 安装程序!" ;;
-            setup_complete)             echo "安装完成!" ;;
-            setup_complete_with_warnings) echo "安装完成，但有部分组件失败" ;;
-            dev_setup_complete)         echo "开发环境设置完成!" ;;
-            dev_setup_complete_with_warnings) echo "开发环境设置完成，但有部分组件失败" ;;
+            welcome)                    echo "Markitai 安装" ;;
+            setup_complete)             echo "markitai 已就绪" ;;
+            setup_complete_with_warnings) echo "markitai 已就绪，但有部分组件失败" ;;
+            dev_setup_complete)         echo "开发环境已就绪" ;;
+            dev_setup_complete_with_warnings) echo "开发环境已就绪，但有部分组件失败" ;;
+            setup_cancelled)            echo "已取消安装" ;;
 
             # Mode
-            mode_user)                  echo "模式: 用户安装" ;;
-            mode_dev)                   echo "模式: 开发环境" ;;
+            mode_user)                  echo "模式：安装 markitai" ;;
+            mode_dev)                   echo "模式：开发环境" ;;
+            repo_root_detected)         echo "当前目录是 markitai 源码仓库" ;;
+            confirm_dev_mode)           echo "在这里设置开发环境，而不是安装 markitai?" ;;
+            info_mode_default)          echo "将安装 markitai；设置 MARKITAI_SETUP_MODE=dev 可改为设置开发环境" ;;
+            warn_unknown_mode)          echo "忽略 MARKITAI_SETUP_MODE (应为 install 或 dev)" ;;
+            error_dev_needs_repo)       echo "开发环境需要 markitai 源码仓库；请在仓库根目录运行安装脚本" ;;
 
             # Sections
             section_prerequisites)      echo "前置条件" ;;
@@ -85,7 +103,7 @@ i18n() {
             confirm_claude_cli)         echo "安装 Claude Code CLI? (使用 Claude 订阅)" ;;
             confirm_copilot_cli)        echo "安装 Copilot CLI? (使用 GitHub Copilot 订阅)" ;;
             confirm_uv)                 echo "安装 uv 包管理器?" ;;
-            confirm_continue_as_root)   echo "以 root 身份继续?" ;;
+            confirm_continue_as_root)   echo "仍以 root 身份继续?" ;;
 
             # Info messages
             info_chatgpt_route)         echo "ChatGPT 订阅无需 CLI，也无需 extra（首次使用时登录）" ;;
@@ -106,7 +124,7 @@ i18n() {
 
             # Install source (repo detection)
             repo_detected)              echo "检测到 markitai 源码仓库" ;;
-            confirm_local_install)      echo "从本地源码安装 markitai? (默认使用 PyPI 发布版)" ;;
+            confirm_local_install)      echo "从这个源码仓库安装 markitai，而不是 PyPI 发布版?" ;;
             source_local)               echo "安装来源: 本地源码" ;;
             source_pypi)                echo "安装来源: PyPI" ;;
             info_repo_noninteractive)   echo "非交互模式: 已检测到源码仓库, 将使用 PyPI 发布版" ;;
@@ -126,8 +144,11 @@ i18n() {
             mirror_npm)                 echo "npm 镜像" ;;
 
             # Warnings
-            warn_root)                  echo "警告: 以 root 身份运行" ;;
-            warn_root_risk)             echo "以 root 运行安装脚本存在安全风险" ;;
+            warn_root)                  echo "正在以 root 身份运行" ;;
+            warn_root_risk)             echo "markitai 按用户安装，从不需要 root 权限。以 root 运行时，它可能装进 root 的主目录，或留下你自己的账户无法更新的文件；下载的安装程序也都拥有这个系统的完全权限。" ;;
+            info_root_noninteractive)   echo "没有可供确认的终端，继续以 root 身份运行" ;;
+            warn_bin_off_path)          echo "当前 shell 的 PATH 不包含 markitai 的命令目录" ;;
+            info_bin_off_path_fix)      echo "请打开新的终端；如果仍找不到 markitai，请运行:" ;;
 
             # Getting started
             getting_started)            echo "开始使用" ;;
@@ -143,11 +164,6 @@ i18n() {
             short_alias)                echo "提示：mkai 是 markitai 的简写，两个命令等价" ;;
             mkai_conflict)              echo "系统已有 mkai 命令，会遮蔽 markitai 的别名；请使用完整命令 markitai" ;;
 
-            # Summary
-            summary_installed)          echo "已安装" ;;
-            summary_skipped)            echo "已跳过" ;;
-            summary_failed)             echo "安装失败" ;;
-
             # Default fallback
             *)                          echo "$_key" ;;
         esac
@@ -155,27 +171,33 @@ i18n() {
         # English (default)
         case "$_key" in
             # Intro/Outro
-            welcome)                    echo "Welcome to Markitai Setup!" ;;
-            setup_complete)             echo "Setup complete!" ;;
-            setup_complete_with_warnings) echo "Setup complete with warnings" ;;
-            dev_setup_complete)         echo "Development environment ready!" ;;
-            dev_setup_complete_with_warnings) echo "Development environment ready with warnings" ;;
+            welcome)                    echo "Markitai Setup" ;;
+            setup_complete)             echo "Markitai is ready" ;;
+            setup_complete_with_warnings) echo "Markitai is ready, but some components failed" ;;
+            dev_setup_complete)         echo "Development environment ready" ;;
+            dev_setup_complete_with_warnings) echo "Development environment ready, but some components failed" ;;
+            setup_cancelled)            echo "Setup cancelled" ;;
 
             # Mode
-            mode_user)                  echo "Mode: User Install" ;;
-            mode_dev)                   echo "Mode: Development" ;;
+            mode_user)                  echo "Mode: install markitai" ;;
+            mode_dev)                   echo "Mode: development environment" ;;
+            repo_root_detected)         echo "This folder is a markitai source checkout" ;;
+            confirm_dev_mode)           echo "Set up a development environment here instead of installing markitai?" ;;
+            info_mode_default)          echo "Installing markitai; set MARKITAI_SETUP_MODE=dev for a development environment instead" ;;
+            warn_unknown_mode)          echo "Ignoring MARKITAI_SETUP_MODE (expected install or dev)" ;;
+            error_dev_needs_repo)       echo "A development environment needs a markitai checkout; run setup from its root folder" ;;
 
             # Sections
             section_prerequisites)      echo "Prerequisites" ;;
-            section_core)               echo "Core Components" ;;
-            section_optional)           echo "Optional Components" ;;
-            section_dev_env)            echo "Development Environment" ;;
-            section_llm_cli)            echo "LLM CLI Tools" ;;
-            section_summary)            echo "Installation Summary" ;;
+            section_core)               echo "Core components" ;;
+            section_optional)           echo "Optional components" ;;
+            section_dev_env)            echo "Development environment" ;;
+            section_llm_cli)            echo "LLM CLI tools" ;;
+            section_summary)            echo "Summary" ;;
 
             # Status
             installed)                  echo "installed" ;;
-            installing)                 echo "installing" ;;
+            installing)                 echo "Installing" ;;
             skipped)                    echo "skipped" ;;
             failed)                     echo "failed" ;;
             already_installed)          echo "already installed" ;;
@@ -200,7 +222,7 @@ i18n() {
             confirm_claude_cli)         echo "Install Claude Code CLI? (use your Claude subscription)" ;;
             confirm_copilot_cli)        echo "Install Copilot CLI? (use your GitHub Copilot subscription)" ;;
             confirm_uv)                 echo "Install uv package manager?" ;;
-            confirm_continue_as_root)   echo "Continue as root?" ;;
+            confirm_continue_as_root)   echo "Continue as root anyway?" ;;
 
             # Info messages
             info_chatgpt_route)         echo "ChatGPT subscription needs no CLI and no extra (it signs in on first use)" ;;
@@ -221,7 +243,7 @@ i18n() {
 
             # Install source (repo detection)
             repo_detected)              echo "markitai source repo detected" ;;
-            confirm_local_install)      echo "Install markitai from the local repo? (default: PyPI release)" ;;
+            confirm_local_install)      echo "Install markitai from this checkout instead of the PyPI release?" ;;
             source_local)               echo "Install source: local repo" ;;
             source_pypi)                echo "Install source: PyPI" ;;
             info_repo_noninteractive)   echo "Non-interactive mode: source repo detected, using PyPI release" ;;
@@ -241,12 +263,15 @@ i18n() {
             mirror_npm)                 echo "npm mirror" ;;
 
             # Warnings
-            warn_root)                  echo "Warning: Running as root" ;;
-            warn_root_risk)             echo "Running setup scripts as root carries security risks" ;;
+            warn_root)                  echo "Running as root" ;;
+            warn_root_risk)             echo "markitai installs per user and never needs root. As root, it can end up in root's home or leave files your own account cannot update, and every downloaded installer runs with full access to this system." ;;
+            info_root_noninteractive)   echo "No terminal to ask; continuing as root" ;;
+            warn_bin_off_path)          echo "This shell's PATH does not include markitai's command folder" ;;
+            info_bin_off_path_fix)      echo "Open a new terminal; if markitai is still not found, run:" ;;
 
             # Getting started
-            getting_started)            echo "Getting Started" ;;
-            quick_start)                echo "Quick Start" ;;
+            getting_started)            echo "Getting started" ;;
+            quick_start)                echo "Quick start" ;;
             run_tests)                  echo "Run tests" ;;
             run_cli)                    echo "Run CLI" ;;
             interactive_mode)           echo "Interactive mode" ;;
@@ -258,11 +283,6 @@ i18n() {
             short_alias)                echo "Tip: mkai is a short alias for markitai (both work)" ;;
             mkai_conflict)              echo "An existing 'mkai' command shadows markitai's alias; use the full 'markitai' command" ;;
 
-            # Summary
-            summary_installed)          echo "Installed" ;;
-            summary_skipped)            echo "Skipped" ;;
-            summary_failed)             echo "Failed" ;;
-
             # Default fallback
             *)                          echo "$_key" ;;
         esac
@@ -272,15 +292,35 @@ i18n() {
 # ============================================================
 # Color Definitions
 # ============================================================
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-GRAY='\033[0;90m'
-NC='\033[0m'
-BOLD='\033[1m'
-DIM='\033[2m'
+# One terminal style for everything markitai prints, the CLI included:
+# structure is bold, the guide gray, cyan marks prompts, actions and commands,
+# green is only success, yellow only warnings, red only errors. Only the
+# normal eight colours plus gray 90 are used, because terminal themes tune
+# those for light and dark backgrounds alike (bright yellow vanishes on white).
+# Colour is off for NO_COLOR, TERM=dumb and output that is not a terminal
+# (unless FORCE_COLOR is set); the marks carry the meaning either way.
+
+setup_use_color() {
+    [ -n "${NO_COLOR:-}" ] && return 1
+    [ "${TERM:-}" = "dumb" ] && return 1
+    case "${FORCE_COLOR:-}" in
+        ''|0|false) ;;
+        *) return 0 ;;
+    esac
+    [ -t 1 ]
+}
+
+if setup_use_color; then
+    RED='\033[31m'
+    GREEN='\033[32m'
+    YELLOW='\033[33m'
+    CYAN='\033[36m'
+    GRAY='\033[90m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' CYAN='' GRAY='' BOLD='' NC=''
+fi
 
 # ============================================================
 # Compact tree-style visual components
@@ -289,16 +329,50 @@ DIM='\033[2m'
 # @clack/prompts. Shell installers cannot rely on Node being present (or redraw
 # completed prompts like Clack), so the tiny renderer stays inline and uses
 # tree branches to keep the guide visibly connected in static terminal output.
+#
+# Layout: a guide-only row before each section header and none inside a
+# section; items are "│  <mark> <text>", details and commands sit two columns
+# further in. Marks: ✓ success, ! warning, ✗ error, → action, • info,
+# ○ skipped, ? prompt.
 
-S_BAR="│"
-S_BAR_H="─"
-S_CORNER_TOP="╭"
-S_CORNER_BOTTOM="╰"
-S_BRANCH="├"
-S_CHECK="✓"
-S_CROSS="✗"
-S_ARROW="→"
-S_CIRCLE="○"
+# Unicode marks need a UTF-8 locale; LANG=C or TERM=dumb get the ASCII set so
+# a terminal never shows replacement boxes.
+setup_use_unicode() {
+    [ "${TERM:-}" = "dumb" ] && return 1
+    case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+        *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) return 0 ;;
+    esac
+    return 1
+}
+
+if setup_use_unicode; then
+    S_BAR="│"
+    S_TOP="╭─"
+    S_BRANCH="├─"
+    S_BOTTOM="╰─"
+    S_CHECK="✓"
+    S_CROSS="✗"
+    S_ARROW="→"
+    S_DOT="•"
+    S_CIRCLE="○"
+    S_SPIN_FRAMES="◒ ◐ ◓ ◑"
+else
+    S_BAR="|"
+    S_TOP="+-"
+    S_BRANCH="+-"
+    S_BOTTOM="+-"
+    S_CHECK="+"
+    S_CROSS="x"
+    S_ARROW=">"
+    S_DOT="-"
+    S_CIRCLE="o"
+    # shellcheck disable=SC1003 # a literal backslash frame, not an escape
+    S_SPIN_FRAMES='| / - \'
+fi
+S_WARN="!"
+S_ASK="?"
+NEWLINE='
+'
 
 # Session state lets the global exit guard close an interrupted tree exactly
 # once. Spinner state is also global so signals cannot leave it running.
@@ -311,19 +385,125 @@ SETUP_LOG_FILE="${MARKITAI_SETUP_LOG:-}"
 SETUP_LOG_AUTO=false
 SETUP_LOG_SHOWN=false
 
+# Terminal width used to wrap long rows. Output that is not a terminal is
+# never wrapped: piped and logged output keeps one line per message.
+setup_terminal_columns() {
+    case "${COLUMNS:-}" in
+        ''|*[!0-9]*) ;;
+        *) echo "$COLUMNS"; return 0 ;;
+    esac
+    _stc=$( (stty size </dev/tty) 2>/dev/null | awk '{print $2}') || _stc=""
+    case "$_stc" in
+        ''|0|*[!0-9]*) _stc=$(tput cols 2>/dev/null) || _stc="" ;;
+    esac
+    case "$_stc" in
+        ''|*[!0-9]*) echo 0 ;;
+        *) echo "$_stc" ;;
+    esac
+}
+
+SETUP_WRAP_WIDTH=0
+if [ -t 1 ] && [ "${TERM:-}" != "dumb" ]; then
+    SETUP_WRAP_WIDTH=$(setup_terminal_columns)
+fi
+
+# Word-wrap stdin to $1 display columns. CJK characters count two columns and
+# a run of them longer than a line may break between characters; other long
+# words (paths, URLs) are never split. Bytes are decoded by hand so the result
+# does not depend on the awk implementation's locale support.
+clack_wrap() {
+    LC_ALL=C awk -v width="$1" '
+        BEGIN { for (i = 128; i < 256; i++) ord[sprintf("%c", i)] = i }
+        function byteat(s, i,    c) { c = substr(s, i, 1); return (c in ord) ? ord[c] : 0 }
+        function clen(b) { return b < 192 ? 1 : (b < 224 ? 2 : (b < 240 ? 3 : 4)) }
+        function cwidth(s, i, b,    b2) {
+            if (b >= 227 && b <= 237) return 2
+            if (b == 239) { b2 = byteat(s, i + 1); return (b2 == 188 || b2 == 189) ? 2 : 1 }
+            if (b >= 240) return 2
+            return 1
+        }
+        function swidth(s,    i, n, b, w) {
+            w = 0; n = length(s); i = 1
+            while (i <= n) { b = byteat(s, i); w += cwidth(s, i, b); i += clen(b) }
+            return w
+        }
+        {
+            n = split($0, words, " "); line = ""; lw = 0
+            for (k = 1; k <= n; k++) {
+                word = words[k]; ww = swidth(word)
+                if (line != "" && lw + 1 + ww <= width) { line = line " " word; lw += 1 + ww; continue }
+                if (line != "") { print line; line = ""; lw = 0 }
+                if (ww <= width || ww == length(word)) { line = word; lw = ww; continue }
+                m = length(word); i = 1
+                while (i <= m) {
+                    b = byteat(word, i); l = clen(b); w = cwidth(word, i, b)
+                    if (line != "" && lw + w > width) { print line; line = ""; lw = 0 }
+                    line = line substr(word, i, l); lw += w; i += l
+                }
+            }
+            print line
+        }'
+}
+
+# Print text on the guide. On a terminal, long text wraps at word boundaries
+# with a hanging indent under its first character.
+# Usage: clack_emit "<first lead>" "<continuation lead>" "<text>" \
+#                   "<text colour>" "<suffix>" "<line end>" [reserved columns]
+# The first lead and the suffix may hold colour codes; the continuation lead
+# is plain spaces as wide as the first lead.
+clack_emit() {
+    _ce_head="$1"
+    _ce_pad="$2"
+    _ce_text="$3"
+    _ce_tc="$4"
+    _ce_suffix="$5"
+    _ce_end="$6"
+    _ce_width=0
+    if [ "$SETUP_WRAP_WIDTH" -gt 0 ]; then
+        _ce_width=$((SETUP_WRAP_WIDTH - 3 - ${#_ce_pad} - ${7:-0}))
+        [ "$_ce_width" -ge 16 ] || _ce_width=0
+    fi
+    if [ "$_ce_width" -gt 0 ]; then
+        _ce_rest=$(printf '%s\n' "$_ce_text" | clack_wrap "$_ce_width")
+    else
+        _ce_rest="$_ce_text"
+    fi
+    _ce_lead="$_ce_head"
+    while :; do
+        case "$_ce_rest" in
+            *"$NEWLINE"*)
+                _ce_line="${_ce_rest%%"$NEWLINE"*}"
+                _ce_rest="${_ce_rest#*"$NEWLINE"}"
+                printf "${GRAY}%s${NC}  %b${_ce_tc}%s${NC}\n" "$S_BAR" "$_ce_lead" "$_ce_line"
+                _ce_lead="$_ce_pad"
+                ;;
+            *)
+                printf "${GRAY}%s${NC}  %b${_ce_tc}%s${NC}%b${_ce_end}" \
+                    "$S_BAR" "$_ce_lead" "$_ce_rest" "$_ce_suffix"
+                return 0
+                ;;
+        esac
+    done
+}
+
+# One item row: "│  <mark> <text>".
+# Usage: clack_item "<mark colour>" "<mark>" "<text>" ["<text colour>"]
+clack_item() {
+    clack_emit "${1}${2}${NC} " "  " "$3" "${4:-}" "" "\n"
+}
+
 # Print an empty row while preserving the session guide.
 clack_guide() {
     printf "${GRAY}%s${NC}\n" "$S_BAR"
 }
 
-# Session intro - start of CLI flow
+# Session intro - start of CLI flow. Items may follow directly; each section
+# adds its own guide row above its header.
 # Usage: clack_intro "Title"
 clack_intro() {
     CLACK_SESSION_ACTIVE=true
     CLACK_SESSION_CLOSED=false
-    printf "\n"
-    printf "${GRAY}%s%s${NC} ${BOLD}%s${NC}\n" "$S_CORNER_TOP" "$S_BAR_H" "$1"
-    clack_guide
+    printf "\n${GRAY}%s${NC} ${BOLD}%s${NC}\n" "$S_TOP" "$1"
 }
 
 # Session outro - end of CLI flow
@@ -335,7 +515,7 @@ clack_outro() {
         SETUP_LOG_FILE=""
     fi
     clack_guide
-    printf "${GRAY}%s%s${NC} ${GREEN}%s${NC}\n\n" "$S_CORNER_BOTTOM" "$S_BAR_H" "$1"
+    printf "${GRAY}%s${NC} ${GREEN}%s${NC}\n\n" "$S_BOTTOM" "$1"
 }
 
 # Non-fatal component failures close the tree in warning yellow, not success
@@ -344,56 +524,62 @@ clack_outro_warn() {
     clack_show_error_log
     CLACK_SESSION_CLOSED=true
     clack_guide
-    printf "${GRAY}%s%s${NC} ${YELLOW}%s${NC}\n\n" "$S_CORNER_BOTTOM" "$S_BAR_H" "$1"
+    printf "${GRAY}%s${NC} ${YELLOW}%s${NC}\n\n" "$S_BOTTOM" "$1"
 }
 
-# Section header connected to the session guide
+# Section header connected to the session guide. Structure is never coloured:
+# a coloured header reads as a status.
 # Usage: clack_section "Section title"
 clack_section() {
     clack_guide
-    printf "${GRAY}%s${MAGENTA}%s${NC} ${BOLD}%s${NC}\n" "$S_BRANCH" "$S_BAR_H" "$1"
+    printf "${GRAY}%s${NC} ${BOLD}%s${NC}\n" "$S_BRANCH" "$1"
 }
 
-# Log with guide line - success
-# Usage: clack_success "Message"
+# Item rows. Usage: clack_success "Message" (and the same for the others)
 clack_success() {
-    printf "${GRAY}%s${NC}  ${GREEN}%s${NC} %s\n" "$S_BAR" "$S_CHECK" "$1"
+    clack_item "$GREEN" "$S_CHECK" "$1"
 }
 
-# Log with guide line - error
-# Usage: clack_error "Message"
 clack_error() {
-    printf "${GRAY}%s${NC}  ${RED}%s${NC} %s\n" "$S_BAR" "$S_CROSS" "$1"
+    clack_item "$RED" "$S_CROSS" "$1"
     clack_flush_detail
 }
 
-# Log with guide line - warning
-# Usage: clack_warn "Message"
 clack_warn() {
-    printf "${GRAY}%s${NC}  ${YELLOW}!${NC} %s\n" "$S_BAR" "$1"
+    clack_item "$YELLOW" "$S_WARN" "$1"
     clack_flush_detail
 }
 
-# Log with guide line - info
-# Usage: clack_info "Message"
+# A neutral fact (paths, choices made, what a component is for).
 clack_info() {
-    printf "${GRAY}%s${NC}  ${CYAN}%s${NC} %s\n" "$S_BAR" "$S_ARROW" "$1"
+    clack_item "$GRAY" "$S_DOT" "$1"
 }
 
-# Log with guide line - skipped
-# Usage: clack_skip "Message"
+# An action in progress (non-terminal output; a terminal gets the spinner).
+clack_step() {
+    clack_item "$CYAN" "$S_ARROW" "$1"
+}
+
 clack_skip() {
-    printf "${GRAY}%s${NC}  ${GRAY}%s %s${NC}\n" "$S_BAR" "$S_CIRCLE" "$1"
+    clack_item "$GRAY" "$S_CIRCLE" "$1" "$GRAY"
 }
 
-# Log with guide line - plain text
-# Usage: clack_log "Message"
-clack_log() {
-    if [ -n "$1" ]; then
-        printf "${GRAY}%s${NC}  %b\n" "$S_BAR" "$1"
-    else
-        clack_guide
-    fi
+# Gray detail under the item above it, two columns further in.
+clack_detail_row() {
+    clack_emit "  " "  " "$1" "$GRAY" "" "\n"
+}
+
+# A command to copy: accent colour, its own row, never wrapped, so a terminal
+# narrower than the command still copies it back as one line.
+clack_cmd() {
+    printf "${GRAY}%s${NC}    ${CYAN}%s${NC}\n" "$S_BAR" "$1"
+}
+
+# A label and the command it describes.
+# Usage: clack_hint "Label" "command"
+clack_hint() {
+    clack_info "$1:"
+    clack_cmd "$2"
 }
 
 # Remove terminal color/control sequences before third-party diagnostics are
@@ -455,7 +641,7 @@ clack_print_detail() {
         | tail -n "$_cpd_limit" \
         | cut -c 1-300 \
         | while IFS= read -r _cpd_line; do
-            printf "${GRAY}%s${NC}    ${DIM}%s${NC}\n" "$S_BAR" "$_cpd_line"
+            clack_detail_row "$_cpd_line"
         done
 }
 
@@ -507,7 +693,7 @@ clack_spinner() {
         _cs_dynamic=true
         (
             while true; do
-                for _cs_frame in '◒' '◐' '◓' '◑'; do
+                for _cs_frame in $S_SPIN_FRAMES; do
                     printf "\r${GRAY}%s${NC}  ${CYAN}%s${NC} %s" "$S_BAR" "$_cs_frame" "$_cs_message"
                     sleep 0.1 2>/dev/null || sleep 1
                 done
@@ -516,7 +702,7 @@ clack_spinner() {
         _cs_pid=$!
         CLACK_SPINNER_PID="$_cs_pid"
     else
-        clack_info "$_cs_message"
+        clack_step "$_cs_message"
     fi
 
     # Guard the command explicitly so `set -e` can never skip spinner cleanup.
@@ -585,7 +771,29 @@ run_remote_shell_installer() {
     return "$_rsi_status"
 }
 
-# Confirm prompt connected to the session guide
+# Read one answer from the terminal into CLACK_ANSWER, falling back to $1.
+# Reads /dev/tty for piped execution (curl | sh). A terminal echoes its own
+# newline, so printing another one creates stray blank rows; only redirected
+# or headless output needs the answer written out.
+clack_read_answer() {
+    CLACK_ANSWER=""
+    if [ -t 0 ]; then
+        if read -r CLACK_ANSWER; then
+            [ -t 1 ] || printf "%s\n" "${CLACK_ANSWER:-$1}"
+        else
+            CLACK_ANSWER="$1"
+            printf "%s\n" "$CLACK_ANSWER"
+        fi
+    elif { read -r CLACK_ANSWER < /dev/tty; } 2>/dev/null; then
+        [ -t 1 ] || printf "%s\n" "${CLACK_ANSWER:-$1}"
+    else
+        CLACK_ANSWER="$1"
+        printf "%s\n" "$CLACK_ANSWER"
+    fi
+    [ -n "$CLACK_ANSWER" ] || CLACK_ANSWER="$1"
+}
+
+# Yes/no question on the guide: "│  ? Question [y/N] ".
 # Usage: clack_confirm "Question?" "y|n"
 # Returns: 0 for yes, 1 for no
 clack_confirm() {
@@ -593,37 +801,15 @@ clack_confirm() {
     _cc_default="$2"
 
     if [ "$_cc_default" = "y" ]; then
-        _cc_hint="${BOLD}Y${NC}${GRAY}/n${NC}"
+        _cc_hint="[Y/n]"
     else
-        _cc_hint="${GRAY}y/${NC}${BOLD}N${NC}"
+        _cc_hint="[y/N]"
     fi
 
-    clack_guide
-    printf "${GRAY}%s${CYAN}%s${NC} %s ${GRAY}[%b]${NC} " "$S_BRANCH" "$S_BAR_H" "$_cc_prompt" "$_cc_hint"
+    clack_emit "${CYAN}${S_ASK}${NC} " "  " "$_cc_prompt" "" " ${GRAY}${_cc_hint}${NC} " "" 7
+    clack_read_answer "$_cc_default"
 
-    # Read from /dev/tty for piped execution support. A terminal echoes its own
-    # newline, so printing another one creates the stray blank rows seen with
-    # `curl | sh`; only redirected/headless output needs an explicit value.
-    _cc_answer=""
-    if [ -t 0 ]; then
-        if read -r _cc_answer; then
-            [ -t 1 ] || printf "%s\n" "${_cc_answer:-$_cc_default}"
-        else
-            _cc_answer="$_cc_default"
-            printf "%s\n" "$_cc_answer"
-        fi
-    elif { read -r _cc_answer < /dev/tty; } 2>/dev/null; then
-        [ -t 1 ] || printf "%s\n" "${_cc_answer:-$_cc_default}"
-    else
-        _cc_answer="$_cc_default"
-        printf "%s\n" "$_cc_answer"
-    fi
-
-    if [ -z "$_cc_answer" ]; then
-        _cc_answer="$_cc_default"
-    fi
-
-    case "$_cc_answer" in
+    case "$CLACK_ANSWER" in
         [Yy]*) return 0 ;;
         *) return 1 ;;
     esac
@@ -661,39 +847,13 @@ clack_confirm_optional() {
     clack_confirm "$1" "$2"
 }
 
-# Compact note block. Content stays on the single outer guide instead of
-# drawing a second, competing box down the left side.
-# Usage: clack_note "title" "line1" "line2" ...
-# Or:    clack_note "title" <<EOF
-#        line1
-#        line2
-#        EOF
-# Note: clack_log uses %b to interpret color escapes in lines.
-clack_note() {
-    _cn_title="$1"
-    shift
-
-    clack_guide
-    printf "${GRAY}%s${GREEN}%s${NC} ${BOLD}%s${NC}\n" "$S_BRANCH" "$S_BAR_H" "$_cn_title"
-
-    if [ $# -gt 0 ]; then
-        for _cn_line in "$@"; do
-            clack_log "$_cn_line"
-        done
-    else
-        while IFS= read -r _cn_line; do
-            clack_log "$_cn_line"
-        done
-    fi
-}
-
 # Cancel message
 # Usage: clack_cancel "Message"
 clack_cancel() {
     clack_show_error_log
     CLACK_SESSION_CLOSED=true
     clack_guide
-    printf "${GRAY}%s%s${NC} ${RED}%s${NC}\n\n" "$S_CORNER_BOTTOM" "$S_BAR_H" "$1"
+    printf "${GRAY}%s${NC} ${RED}%s${NC}\n\n" "$S_BOTTOM" "$1"
 }
 
 # Last-resort guard for an unanticipated `set -e`, signal, or shell failure.
@@ -781,15 +941,21 @@ get_project_root() {
     return 1
 }
 
-# Check if running as root and warn
+# Check if running as root and warn, saying why it matters. A terminal user
+# is asked (default no); without a terminal (a container build) there is
+# nobody to ask, so setup continues after the warning.
 # Returns: 0 to continue, exits if user declines
 warn_if_root() {
     if [ "$(id -u)" -eq 0 ]; then
         clack_warn "$(i18n warn_root)"
-        clack_log "$(i18n warn_root_risk)"
+        clack_detail_row "$(i18n warn_root_risk)"
 
+        if ! has_interactive_tty; then
+            clack_info "$(i18n info_root_noninteractive)"
+            return 0
+        fi
         if ! clack_confirm "$(i18n confirm_continue_as_root)" "n"; then
-            clack_cancel "$(i18n error_setup_failed)"
+            clack_cancel "$(i18n setup_cancelled)"
             exit 1
         fi
     fi
@@ -882,7 +1048,7 @@ configure_mirrors() {
     clack_warn "$(i18n mirror_slow_index)"
 
     if ! clack_confirm "$(i18n mirror_confirm)" "y"; then
-        clack_log "$(i18n mirror_skipped)"
+        clack_info "$(i18n mirror_skipped)"
         return 0
     fi
 
@@ -892,31 +1058,16 @@ configure_mirrors() {
 # Pick a mirror and export it. Reached from an accepted prompt or from an
 # explicit MARKITAI_USE_MIRROR=1.
 select_mirror_source() {
-    # Show mirror source selection on the same continuous tree guide.
-    clack_guide
-    printf "${GRAY}%s${CYAN}%s${NC} %s ${GRAY}[1]${NC}\n" "$S_BRANCH" "$S_BAR_H" "$(i18n mirror_select)"
-    printf "${GRAY}%s${NC}  ${CYAN}1.${NC} %s\n" "$S_BAR" "$(i18n mirror_tuna)"
-    printf "${GRAY}%s${NC}  ${GRAY}2.${NC} %s\n" "$S_BAR" "$(i18n mirror_aliyun)"
-    printf "${GRAY}%s${NC}  ${GRAY}3.${NC} %s\n" "$S_BAR" "$(i18n mirror_tencent)"
-    printf "${GRAY}%s${NC}  ${GRAY}4.${NC} %s\n" "$S_BAR" "$(i18n mirror_huawei)"
-    printf "${GRAY}%s${NC}  > " "$S_BAR"
+    # The choices first, then the question, so the cursor waits after it.
+    clack_detail_row "1. $(i18n mirror_tuna)"
+    clack_detail_row "2. $(i18n mirror_aliyun)"
+    clack_detail_row "3. $(i18n mirror_tencent)"
+    clack_detail_row "4. $(i18n mirror_huawei)"
+    clack_emit "${CYAN}${S_ASK}${NC} " "  " "$(i18n mirror_select)" "" " ${GRAY}[1]${NC} " "" 5
 
     # Fall back to the default choice when no TTY is available (CI, cron).
-    # As with confirmations, do not add a second newline on terminal output.
-    _mirror_choice=""
-    if [ -t 0 ]; then
-        if read -r _mirror_choice; then
-            [ -t 1 ] || printf "%s\n" "${_mirror_choice:-1}"
-        else
-            _mirror_choice="1"
-            printf "%s\n" "$_mirror_choice"
-        fi
-    elif { read -r _mirror_choice < /dev/tty; } 2>/dev/null; then
-        [ -t 1 ] || printf "%s\n" "${_mirror_choice:-1}"
-    else
-        _mirror_choice="1"
-        printf "%s\n" "$_mirror_choice"
-    fi
+    clack_read_answer "1"
+    _mirror_choice="$CLACK_ANSWER"
 
     [ -z "$_mirror_choice" ] && _mirror_choice="1"
 
@@ -943,19 +1094,19 @@ select_mirror_source() {
     export PLAYWRIGHT_DOWNLOAD_HOST="https://cdn.npmmirror.com/binaries/playwright"
 
     clack_success "$(i18n mirror_enabled)"
-    clack_log "  $(i18n mirror_pypi): $UV_INDEX_URL"
-    clack_log "  $(i18n mirror_npm): $NPM_CONFIG_REGISTRY"
-    clack_log "  $(i18n mirror_playwright): $PLAYWRIGHT_DOWNLOAD_HOST"
+    clack_detail_row "$(i18n mirror_pypi): $UV_INDEX_URL"
+    clack_detail_row "$(i18n mirror_npm): $NPM_CONFIG_REGISTRY"
+    clack_detail_row "$(i18n mirror_playwright): $PLAYWRIGHT_DOWNLOAD_HOST"
 }
 
 # ============================================================
 # Mode Detection
 # ============================================================
 
-# Check if running in development mode
-# Returns: 0 if dev mode, 1 if user mode
+# Check whether the current directory is the root of a markitai checkout,
+# where a development environment can be set up.
+# Returns: 0 in a checkout root, 1 elsewhere
 is_dev_mode() {
-    # Check if we're in the markitai project directory
     # Note: .git can be a directory (normal repo) or file (worktree)
     if [ -f "./pyproject.toml" ] && [ -e "./.git" ] && [ -d "./scripts" ]; then
         if grep -q "markitai" "./pyproject.toml" 2>/dev/null; then
@@ -963,6 +1114,57 @@ is_dev_mode() {
         fi
     fi
     return 1
+}
+
+# What setup does: "install" (markitai for this user) or "dev" (sync the
+# checkout, pre-commit hooks). Someone who cloned the repo and runs the
+# installer from its root most likely wants markitai installed, so a checkout
+# root no longer switches to dev mode silently: it asks, defaulting to install.
+SETUP_MODE="install"
+CHECKOUT_ANNOUNCED=false
+
+# Sets: SETUP_MODE (from MARKITAI_SETUP_MODE or the question)
+choose_setup_mode() {
+    _csm_env=$(printf '%s' "${MARKITAI_SETUP_MODE:-}" | tr '[:upper:]' '[:lower:]')
+    case "$_csm_env" in
+        install|user)
+            SETUP_MODE="install"
+            ;;
+        dev|development)
+            SETUP_MODE="dev"
+            ;;
+        *)
+            if [ -n "$_csm_env" ]; then
+                clack_warn "$(i18n warn_unknown_mode): ${MARKITAI_SETUP_MODE}"
+            fi
+            if is_dev_mode; then
+                CHECKOUT_ANNOUNCED=true
+                clack_info "$(i18n repo_root_detected)"
+                # Ask only when stdin is a terminal, like the install-source
+                # question: `curl | sh` from a checkout is meant to install.
+                if [ -t 0 ]; then
+                    if clack_confirm "$(i18n confirm_dev_mode)" "n"; then
+                        SETUP_MODE="dev"
+                    fi
+                else
+                    clack_info "$(i18n info_mode_default)"
+                    return 0
+                fi
+            fi
+            ;;
+    esac
+
+    if [ "$SETUP_MODE" = "dev" ] && ! get_project_root >/dev/null; then
+        clack_error "$(i18n error_dev_needs_repo)"
+        clack_cancel "$(i18n error_setup_failed)"
+        exit 1
+    fi
+
+    if [ "$SETUP_MODE" = "dev" ]; then
+        clack_info "$(i18n mode_dev)"
+    else
+        clack_info "$(i18n mode_user)"
+    fi
 }
 
 # ============================================================
@@ -1018,7 +1220,9 @@ choose_install_source() {
         return 0
     fi
 
-    clack_info "$(i18n repo_detected): $MARKITAI_REPO_ROOT"
+    if [ "$CHECKOUT_ANNOUNCED" != true ]; then
+        clack_info "$(i18n repo_detected): $MARKITAI_REPO_ROOT"
+    fi
     if clack_confirm "$(i18n confirm_local_install)" "n"; then
         MARKITAI_SOURCE="local"
         MARKITAI_LOCAL_PATH="$MARKITAI_REPO_ROOT/packages/markitai"
@@ -1059,6 +1263,11 @@ MARKITAI_INSTALL_OPTIONAL="${MARKITAI_INSTALL_OPTIONAL:-}"
 # Global variable for Python command path
 PYTHON_CMD=""
 
+# PATH as setup found it, to tell whether markitai's commands will be found
+# in the user's next shell; and the folder uv puts tool commands in.
+SETUP_ORIGINAL_PATH="$PATH"
+UV_TOOL_BIN=""
+
 # ============================================================
 # Platform Detection
 # ============================================================
@@ -1080,15 +1289,15 @@ detect_os
 install_uv() {
     # Check if already installed
     if command -v uv >/dev/null 2>&1; then
-        _uv_version=$(uv --version 2>/dev/null | head -n1 | tr -d '\r')
-        clack_success "$(i18n uv): $_uv_version $(i18n already_installed)"
+        _uv_version=$(uv --version 2>/dev/null | head -n1 | awk '{print $1" "$2}')
+        clack_success "$_uv_version ($(i18n already_installed))"
         track_install "uv" "installed"
         return 0
     fi
 
     # Prompt to install
     if ! clack_confirm "$(i18n confirm_uv)" "y"; then
-        clack_skip "$(i18n uv)"
+        clack_skip "$(i18n uv) $(i18n skipped)"
         track_install "uv" "skipped"
         return 1
     fi
@@ -1126,8 +1335,8 @@ install_uv() {
     if [ "$_uv_ok" = true ]; then
         export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
         if command -v uv >/dev/null 2>&1; then
-            _uv_version=$(uv --version 2>/dev/null | head -n1 | tr -d '\r')
-            clack_success "$(i18n uv): $_uv_version $(i18n installed)"
+            _uv_version=$(uv --version 2>/dev/null | head -n1 | awk '{print $1" "$2}')
+            clack_success "$_uv_version ($(i18n installed))"
             track_install "uv" "installed"
             return 0
         fi
@@ -1157,7 +1366,7 @@ detect_python() {
     fi
 
     # Not found, auto-install (3.13 as default)
-    clack_info "$(i18n installing) $(i18n python) 3.13..."
+    clack_step "$(i18n installing) $(i18n python) 3.13..."
     if clack_run_quiet "$(i18n installing) $(i18n python) 3.13" uv python install 3.13; then
         _py_path=$(uv python find 3.13 2>/dev/null) || _py_path=""
         if [ -n "$_py_path" ] && [ -x "$_py_path" ]; then
@@ -1170,6 +1379,30 @@ detect_python() {
 
     clack_error "$(i18n error_python_required)"
     return 1
+}
+
+# Put the folder uv installs tool commands into on PATH for the rest of the
+# run. UV_TOOL_BIN_DIR or XDG_BIN_HOME can move it away from ~/.local/bin, and
+# the version check, `doctor --suggest-extras` and `init` all run markitai.
+use_uv_tool_bin_dir() {
+    UV_TOOL_BIN=$(uv tool dir --bin 2>/dev/null) || UV_TOOL_BIN=""
+    [ -n "$UV_TOOL_BIN" ] || UV_TOOL_BIN="$HOME/.local/bin"
+    case ":$PATH:" in
+        *":$UV_TOOL_BIN:"*) ;;
+        *) PATH="$UV_TOOL_BIN:$PATH"; export PATH ;;
+    esac
+}
+
+# Say so when markitai's command folder is not on the PATH setup started with:
+# otherwise "Getting started" recommends commands the shell cannot find.
+warn_if_tool_bin_off_path() {
+    [ -n "$UV_TOOL_BIN" ] || return 0
+    case ":$SETUP_ORIGINAL_PATH:" in
+        *":$UV_TOOL_BIN:"*) return 0 ;;
+    esac
+    clack_warn "$(i18n warn_bin_off_path): $UV_TOOL_BIN"
+    clack_detail_row "$(i18n info_bin_off_path_fix)"
+    clack_cmd "uv tool update-shell"
 }
 
 # Install markitai (User mode)
@@ -1195,7 +1428,7 @@ install_markitai() {
         if [ "$MARKITAI_SOURCE" != "local" ] && [ -z "$MARKITAI_VERSION" ] \
             && ! markitai_extras_need_update; then
             if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool upgrade markitai; then
-                export PATH="$HOME/.local/bin:$PATH"
+                use_uv_tool_bin_dir
                 _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
                 clack_success "$(i18n markitai) $_mi_version"
                 track_install "markitai" "installed"
@@ -1204,7 +1437,7 @@ install_markitai() {
         fi
         # Upgrade failed (or local source), try force reinstall
         if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
-            export PATH="$HOME/.local/bin:$PATH"
+            use_uv_tool_bin_dir
             _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
             if [ "$MARKITAI_SOURCE" != "local" ] && [ -n "$MARKITAI_VERSION" ] \
                 && [ "$_mi_version" != "$MARKITAI_VERSION" ]; then
@@ -1219,7 +1452,7 @@ install_markitai() {
     else
         # Fresh install
         if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD"; then
-            export PATH="$HOME/.local/bin:$PATH"
+            use_uv_tool_bin_dir
             _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
             if [ "$MARKITAI_SOURCE" != "local" ] && [ -n "$MARKITAI_VERSION" ] \
                 && [ "$_mi_version" != "$MARKITAI_VERSION" ]; then
@@ -1439,38 +1672,45 @@ finalize_markitai_extras() {
 
     # Reinstall with all extras (progressive fallback on failure)
     _mi_pkg=$(markitai_pkg_spec "$MARKITAI_EXTRAS")
-    _uv_err=""
-    if ! _uv_err=$(uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force 2>&1); then
-        clack_record_detail "$(i18n markitai) extras" "$_uv_err"
-        # Full install failed — retry without SDK-dependent extras
-        _safe_extras=""
-        _skipped=""
-        _old_ifs="$IFS"; IFS=','
-        for _e in $MARKITAI_EXTRAS; do
-            case "$_e" in
-                all)
-                    _safe_extras="$MARKITAI_ALL_FALLBACK_EXTRAS"
-                    _skipped="claude-agent, copilot"
-                    ;;
-                claude-agent|copilot) _skipped="${_skipped:+$_skipped, }$_e" ;;
-                *) _safe_extras="${_safe_extras:+$_safe_extras,}$_e" ;;
-            esac
-        done
-        IFS="$_old_ifs"
+    if clack_spinner "$(i18n installing) $(i18n markitai) extras..." \
+        uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
+        clack_success "$(i18n markitai) extras: $(printf '%s' "$MARKITAI_EXTRAS" | sed 's/,/, /g')"
+        return 0
+    fi
+    # The spinner kept the full stderr in the setup log; reuse its tail.
+    _uv_err="$CLACK_PENDING_DETAIL"
+    CLACK_PENDING_DETAIL=""
 
-        if [ -n "$_safe_extras" ]; then
-            _mi_pkg=$(markitai_pkg_spec "$_safe_extras")
-            if clack_run_quiet "$(i18n markitai) extras fallback" \
-                uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
-                [ -n "$_skipped" ] && clack_warn "$(i18n skipped) extras: $_skipped (SDK $(i18n not_found))"
-            else
-                clack_warn "$(i18n markitai) extras update $(i18n failed)"
-            fi
+    # Full install failed: retry without SDK-dependent extras
+    _safe_extras=""
+    _skipped=""
+    _old_ifs="$IFS"; IFS=','
+    for _e in $MARKITAI_EXTRAS; do
+        case "$_e" in
+            all)
+                _safe_extras="$MARKITAI_ALL_FALLBACK_EXTRAS"
+                _skipped="claude-agent, copilot"
+                ;;
+            claude-agent|copilot) _skipped="${_skipped:+$_skipped, }$_e" ;;
+            *) _safe_extras="${_safe_extras:+$_safe_extras,}$_e" ;;
+        esac
+    done
+    IFS="$_old_ifs"
+
+    if [ -n "$_safe_extras" ]; then
+        _mi_pkg=$(markitai_pkg_spec "$_safe_extras")
+        if clack_run_quiet "$(i18n markitai) extras fallback" \
+            uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
+            clack_success "$(i18n markitai) extras: $(printf '%s' "$_safe_extras" | sed 's/,/, /g')"
+            [ -n "$_skipped" ] && clack_warn "$(i18n skipped) extras: $_skipped (SDK $(i18n not_found))"
         else
             clack_warn "$(i18n markitai) extras update $(i18n failed)"
-            clack_print_detail "$_uv_err" 3
         fi
+    else
+        clack_warn "$(i18n markitai) extras update $(i18n failed)"
+        clack_print_detail "$_uv_err" 3
     fi
+    return 0
 }
 
 # Sync project dependencies (Dev mode)
@@ -1508,7 +1748,7 @@ install_precommit() {
     cd "$_project_root" || return 1
 
     if [ ! -f ".pre-commit-config.yaml" ]; then
-        clack_skip "$(i18n precommit)"
+        clack_skip "$(i18n precommit) $(i18n skipped)"
         return 0
     fi
 
@@ -1557,7 +1797,7 @@ install_optional_playwright() {
     clack_info "$(i18n info_playwright_purpose)"
 
     if ! clack_confirm_optional "$(i18n confirm_playwright)" "y"; then
-        clack_skip "$(i18n playwright)"
+        clack_skip "$(i18n playwright) $(i18n skipped)"
         track_install "playwright" "skipped"
         return 2
     fi
@@ -1630,12 +1870,12 @@ install_optional_claude_cli() {
     fi
 
     if ! clack_confirm_optional "$(i18n confirm_claude_cli)" "n"; then
-        clack_skip "$(i18n claude_cli)"
+        clack_skip "$(i18n claude_cli) $(i18n skipped)"
         track_install "claude_cli" "skipped"
         return 2
     fi
 
-    clack_info "$(i18n installing) $(i18n claude_cli)..."
+    clack_step "$(i18n installing) $(i18n claude_cli)..."
 
     # Try official install script in a child shell so its exit is contained.
     if run_remote_shell_installer "$(i18n installing) $(i18n claude_cli)" "https://claude.ai/install.sh"; then
@@ -1698,12 +1938,12 @@ install_optional_copilot_cli() {
     fi
 
     if ! clack_confirm_optional "$(i18n confirm_copilot_cli)" "n"; then
-        clack_skip "$(i18n copilot_cli)"
+        clack_skip "$(i18n copilot_cli) $(i18n skipped)"
         track_install "copilot_cli" "skipped"
         return 2
     fi
 
-    clack_info "$(i18n installing) $(i18n copilot_cli)..."
+    clack_step "$(i18n installing) $(i18n copilot_cli)..."
 
     # Try official install script in a child shell so its exit is contained.
     if run_remote_shell_installer "$(i18n installing) $(i18n copilot_cli)" "https://gh.io/copilot-install"; then
@@ -1745,61 +1985,38 @@ install_optional_copilot_cli() {
     return 1
 }
 
-# Print installation summary
-# Usage: print_summary
+# Print one row per tracked component.
+# Usage: print_summary_rows "comp1|comp2|" installed|skipped|failed
+print_summary_rows() {
+    _psr_rest="$1"
+    while [ -n "$_psr_rest" ]; do
+        case "$_psr_rest" in
+            *"|"*) ;;
+            *) _psr_rest="$_psr_rest|" ;;
+        esac
+        _psr_comp="${_psr_rest%%|*}"
+        _psr_rest="${_psr_rest#*|}"
+        [ -n "$_psr_comp" ] || continue
+        case "$2" in
+            installed) clack_success "$(i18n "$_psr_comp")" ;;
+            skipped) clack_skip "$(i18n "$_psr_comp") $(i18n skipped)" ;;
+            failed) clack_item "$RED" "$S_CROSS" "$(i18n "$_psr_comp") $(i18n failed)" ;;
+        esac
+    done
+}
+
+# Print installation summary: one row per component, its mark saying what
+# happened (installed, skipped on purpose, failed).
+# Usage: print_summary [--no-header]
 print_summary() {
-    clack_section "$(i18n section_summary)"
+    [ "${1:-}" = "--no-header" ] || clack_section "$(i18n section_summary)"
+    print_summary_rows "$INSTALLED_COMPONENTS" installed
+    print_summary_rows "$SKIPPED_COMPONENTS" skipped
+    print_summary_rows "$FAILED_COMPONENTS" failed
+}
 
-    # Print installed components using heredoc
-    if [ -n "$INSTALLED_COMPONENTS" ]; then
-        _ifs_old="$IFS"
-        IFS='|'
-        # shellcheck disable=SC2086
-        set -- $INSTALLED_COMPONENTS
-        IFS="$_ifs_old"
-        if [ $# -gt 0 ]; then
-            clack_guide
-            printf "${GRAY}%s${NC}  ${BOLD}%s${NC}\n" "$S_BAR" "$(i18n summary_installed)"
-            for _comp in "$@"; do
-                [ -n "$_comp" ] && printf "${GRAY}%s${NC}    ${GREEN}%s${NC} %s\n" "$S_BAR" "$S_CHECK" "$(i18n "$_comp")"
-            done
-        fi
-    fi
-
-    # Print skipped components
-    if [ -n "$SKIPPED_COMPONENTS" ]; then
-        _ifs_old="$IFS"
-        IFS='|'
-        # shellcheck disable=SC2086
-        set -- $SKIPPED_COMPONENTS
-        IFS="$_ifs_old"
-        if [ $# -gt 0 ]; then
-            clack_guide
-            printf "${GRAY}%s${NC}  ${BOLD}%s${NC}\n" "$S_BAR" "$(i18n summary_skipped)"
-            for _comp in "$@"; do
-                [ -n "$_comp" ] && printf "${GRAY}%s${NC}    ${YELLOW}%s${NC} %s\n" "$S_BAR" "$S_CIRCLE" "$(i18n "$_comp")"
-            done
-        fi
-    fi
-
-    # Print failed components
-    if [ -n "$FAILED_COMPONENTS" ]; then
-        _ifs_old="$IFS"
-        IFS='|'
-        # shellcheck disable=SC2086
-        set -- $FAILED_COMPONENTS
-        IFS="$_ifs_old"
-        if [ $# -gt 0 ]; then
-            clack_guide
-            printf "${GRAY}%s${NC}  ${BOLD}%s${NC}\n" "$S_BAR" "$(i18n summary_failed)"
-            for _comp in "$@"; do
-                [ -n "$_comp" ] && printf "${GRAY}%s${NC}    ${RED}%s${NC} %s\n" "$S_BAR" "$S_CROSS" "$(i18n "$_comp")"
-            done
-        fi
-    fi
-
-    # Empty line before docs link
-    clack_log ""
+# Documentation and issue links close both completion notes.
+print_help_links() {
     clack_info "$(i18n info_docs): https://markitai.dev"
     clack_info "$(i18n info_issues): https://github.com/Ynewtime/markitai/issues"
 }
@@ -1823,55 +2040,33 @@ check_mkai_alias() {
 print_user_completion() {
     check_mkai_alias
 
-    set -- \
-        "$(i18n interactive_mode):" \
-        "  ${CYAN}markitai -I${NC}"
-
+    clack_section "$(i18n getting_started)"
+    warn_if_tool_bin_off_path
+    clack_hint "$(i18n convert_file)" "markitai file.pdf"
+    clack_hint "$(i18n interactive_mode)" "markitai -I"
     # Only advertise the serve command when its dependencies were selected.
     if markitai_extra_enabled "serve"; then
-        set -- "$@" \
-            "" \
-            "$(i18n start_web_ui):" \
-            "  ${CYAN}markitai serve${NC}"
+        clack_hint "$(i18n start_web_ui)" "markitai serve"
     fi
-
-    set -- "$@" \
-        "" \
-        "$(i18n configure_llm):" \
-        "  ${CYAN}markitai init${NC}" \
-        "" \
-        "$(i18n convert_file):" \
-        "  ${CYAN}markitai file.pdf${NC}" \
-        "" \
-        "$(i18n show_help):" \
-        "  ${CYAN}markitai --help${NC}"
-
+    clack_hint "$(i18n configure_llm)" "markitai init"
+    clack_hint "$(i18n show_help)" "markitai --help"
     # Only advertise the short alias when it actually resolves to markitai.
     if [ "${MKAI_USABLE:-false}" = "true" ]; then
-        set -- "$@" "" "$(i18n short_alias)"
+        clack_info "$(i18n short_alias)"
     fi
-
-    clack_note "$(i18n getting_started)" "$@"
+    print_help_links
 }
 
 # Print dev mode completion message
 # Usage: print_dev_completion
 print_dev_completion() {
-    clack_note "$(i18n quick_start)" \
-        "$(i18n configure_env):" \
-        "  ${CYAN}cp .env.example .env${NC}" \
-        "" \
-        "$(i18n interactive_mode):" \
-        "  ${CYAN}uv run markitai -I${NC}" \
-        "" \
-        "$(i18n start_web_ui):" \
-        "  ${CYAN}uv run markitai serve${NC}" \
-        "" \
-        "$(i18n run_tests):" \
-        "  ${CYAN}uv run pytest${NC}" \
-        "" \
-        "$(i18n run_cli):" \
-        "  ${CYAN}uv run markitai --help${NC}"
+    clack_section "$(i18n quick_start)"
+    clack_hint "$(i18n configure_env)" "cp .env.example .env"
+    clack_hint "$(i18n interactive_mode)" "uv run markitai -I"
+    clack_hint "$(i18n start_web_ui)" "uv run markitai serve"
+    clack_hint "$(i18n run_tests)" "uv run pytest"
+    clack_hint "$(i18n run_cli)" "uv run markitai --help"
+    print_help_links
 }
 
 # Initialize markitai config (silent, first install only)
@@ -1895,9 +2090,6 @@ init_config() {
 
 # User mode main flow
 run_user_setup() {
-    clack_intro "$(i18n welcome)"
-    clack_info "$(i18n mode_user)"
-    warn_if_root
     configure_mirrors
     choose_install_source
 
@@ -1919,11 +2111,13 @@ run_user_setup() {
     install_optional_copilot_cli || true
     note_chatgpt_route
 
+    # The extras step reports in the summary, not under the last section.
+    clack_section "$(i18n section_summary)"
     finalize_markitai_extras || true
 
     init_config >/dev/null 2>&1
 
-    print_summary
+    print_summary --no-header
     print_user_completion
     if [ -n "$FAILED_COMPONENTS" ]; then
         clack_outro_warn "$(i18n setup_complete_with_warnings)"
@@ -1934,9 +2128,6 @@ run_user_setup() {
 
 # Dev mode main flow
 run_dev_setup() {
-    clack_intro "$(i18n welcome)"
-    clack_info "$(i18n mode_dev)"
-    warn_if_root
     configure_mirrors
 
     clack_section "$(i18n section_prerequisites)"
@@ -1966,7 +2157,10 @@ run_dev_setup() {
 
 # Main entry point
 main() {
-    if is_dev_mode; then
+    clack_intro "$(i18n welcome)"
+    warn_if_root
+    choose_setup_mode
+    if [ "$SETUP_MODE" = "dev" ]; then
         run_dev_setup
     else
         run_user_setup

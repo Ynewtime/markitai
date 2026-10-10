@@ -63,6 +63,18 @@ _OPTIONAL_INSTALLERS = (
 )
 
 
+def _decoded_text(script: Path) -> str:
+    """Return a script's text with setup.ps1's ``\\uXXXX`` escapes decoded.
+
+    setup.ps1 must stay ASCII for Windows PowerShell 5.1, so its Chinese
+    strings are escapes; content checks have to look at the decoded text.
+    """
+    text = script.read_text(encoding="utf-8")
+    if script.suffix != ".ps1":
+        return text
+    return re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), text)
+
+
 def _shell_function(name: str) -> str:
     """Return one top-level POSIX shell function body."""
     text = _SETUP_SH.read_text(encoding="utf-8")
@@ -158,6 +170,7 @@ def test_setup_migrates_retired_receipt_extras(
         f"install_markitai() {{\n{_shell_function('install_markitai')}}}\n"
         'markitai_tools_dir() { printf "%s\\n" "$TEST_TOOLS_DIR"; }\n'
         "i18n() { :; }\nclack_success() { :; }\ntrack_install() { :; }\n"
+        "use_uv_tool_bin_dir() { :; }\n"
         'clack_spinner() { shift; "$@"; }\n'
         'markitai() { printf "markitai %s\\n" "$TEST_INSTALLED_VERSION"; }\n'
         "uv() {\n"
@@ -186,7 +199,8 @@ def test_setup_migrates_retired_receipt_extras(
             f"function Get-MarkitaiPkgSpec {{\n{_powershell_function('Get-MarkitaiPkgSpec')}}}\n"
             f"function Install-Markitai {{\n{_powershell_function('Install-Markitai')}}}\n"
             "function Get-MarkitaiToolsDir { return $env:TEST_TOOLS_DIR }\n"
-            "function i18n {}\nfunction Clack-Info {}\n"
+            "function i18n {}\nfunction Clack-Info {}\nfunction Clack-Step {}\n"
+            "function Add-UvToolBinToPath {}\n"
             "function Clack-Success {}\nfunction Track-Install {}\n"
             'function markitai { return "markitai $env:TEST_INSTALLED_VERSION" }\n'
             "function uv {\n"
@@ -658,7 +672,7 @@ def test_setup_scripts_no_longer_mention_ffmpeg(script: Path) -> None:
 def test_setup_scripts_dropped_the_ffmpeg_i18n_strings() -> None:
     """Both languages of every FFmpeg string must be gone, not just English."""
     for script in (_SETUP_SH, _SETUP_PS1):
-        text = script.read_text(encoding="utf-8")
+        text = _decoded_text(script)
         for stale in (
             "confirm_ffmpeg",
             "info_ffmpeg_purpose",
@@ -702,7 +716,7 @@ def test_setup_scripts_no_longer_manage_libreoffice(script: Path) -> None:
 def test_setup_scripts_dropped_the_libreoffice_i18n_strings() -> None:
     """Both languages of every LibreOffice string must be gone, not just English."""
     for script in (_SETUP_SH, _SETUP_PS1):
-        text = script.read_text(encoding="utf-8")
+        text = _decoded_text(script)
         for stale in (
             "confirm_libreoffice",
             "info_libreoffice_purpose",
@@ -785,7 +799,7 @@ def test_declined_serve_is_not_re_added_by_suggest_extras() -> None:
 def test_ocr_bilingual_strings_exist_in_both_scripts() -> None:
     """Every new prompt needs an English and a Chinese spelling."""
     for script in (_SETUP_SH, _SETUP_PS1):
-        text = script.read_text(encoding="utf-8")
+        text = _decoded_text(script)
         assert text.count("confirm_ocr") >= 3, f"{script.name}: zh + en + call site"
         assert "扫描件" in text, f"{script.name}: missing Chinese OCR copy"
         assert "scanned" in text, f"{script.name}: missing English OCR copy"
@@ -799,7 +813,7 @@ def test_ocr_bilingual_strings_exist_in_both_scripts() -> None:
 def test_mirror_prompt_no_longer_warns_every_proxyless_user() -> None:
     """The old "no proxy detected" warning fired for the whole planet."""
     for script in (_SETUP_SH, _SETUP_PS1):
-        text = script.read_text(encoding="utf-8")
+        text = _decoded_text(script)
         for stale in (
             "mirror_no_proxy",
             "No proxy detected",
