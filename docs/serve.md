@@ -332,10 +332,9 @@ also exposes optional `rerun_failure`: `operation` (`retry` or `enhance`),
 `error_code`, `error` and RFC3339 `failed_at`. Its status, output, original finish
 time and price still describe the retained result; this field describes the
 latest failed operation. It is available even when no model usage was recorded.
-The workbench shows the failure in its shared notification card and keeps preview,
-download and retry available. Clicking the item's status icon reopens the full
-details. Warnings belonging to the retained output are grouped as previous-result
-warnings; the latest attempt's cost is shown only when usage was actually recorded.
+The workbench's inspector shows the failure above the retained result's facts
+and keeps preview, download and retry available, with the service's full wording
+behind Details.
 New admission or successful completion clears the operation failure.
 SSE events, snapshots and saved metadata carry the same outcome; normal restart
 preserves it. Old history has no field. Invalid stored outcomes are ignored with
@@ -392,7 +391,7 @@ panic without a returned observation, or failed metadata persistence can still
 leave accounting unavailable. This field does not provide a durable billing ledger.
 
 `DELETE /api/jobs/{job_id}/items/{item_id}` returns 204 for a terminal job. It removes
-that ledger row, its retained upload, Markdown pair and owned assets/screenshots,
+that item, its retained upload, Markdown pair and owned assets/screenshots,
 while keeping files claimed by another item. Image metadata rows for assets actually
 removed are pruned in the same recoverable transaction; shared rows remain. The last item's deletion removes the
 whole job. Deleting while any job work runs returns 409; repeated deletion returns

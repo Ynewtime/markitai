@@ -1,12 +1,12 @@
 import type { Dict } from "../i18n/index.ts";
 import type { JobOptions } from "../api/types.ts";
 import { publicOptions, withOcrFor } from "./options.ts";
-import { failedToRetry, type SessionItem, type SessionJob } from "./session.ts";
+import { failedToRetry, type SessionItem } from "./session.ts";
 
 export interface RetryBatchEntry { readonly item: SessionItem; readonly options: JobOptions }
 
 /** The approval belongs to the exact retryable identities and options captured at this click. */
-export function prepareRetryBatch(items: readonly SessionItem[], jobs: Readonly<Record<string, SessionJob>>, fallback: JobOptions): readonly RetryBatchEntry[] {
+export function prepareRetryBatch(items: readonly SessionItem[], jobs: Readonly<Record<string, { options?: JobOptions | null }>>, fallback: JobOptions): readonly RetryBatchEntry[] {
   return Object.freeze(failedToRetry([...items]).map((item) => {
     const base = publicOptions(item.options ?? jobs[item.jobId]?.options ?? fallback);
     const options = item.skipped && item.skipReason === "image_only" ? withOcrFor(base) : base;

@@ -9,23 +9,17 @@ export const en = {
   homeAria: "Markitai home",
   docsLabel: "Docs",
   opensNewTab: "(Opens in new tab)",
-  appearanceTitle: "Appearance",
   langAria: "Language",
   themeAria: "Theme",
   themeAuto: "Auto",
   themeLight: "Light",
   themeDark: "Dark",
-  historyCurrent: "Conversion tasks · current page",
-  settingsAria: "Settings",
   titleHome: "Documents and pages to Markdown · Markitai",
   titleWorkspace: "Tasks · Markitai",
 
   // home
   heroTitle: "Drop files. Paste URLs. Get Markdown.",
   heroSub: "Turn documents, images, and web pages into clean Markdown. Add LLM enhancement only when needed.",
-  sessResults: (n: number) => `${n} ${plural(n, "item", "items")} in session · View results`,
-  sessProgress: (n: number) => `${n} converting · View progress`,
-
   // composer
   urlPlaceholder: "Paste URLs · one per line · or drop files",
   urlPlaceholderShort: "Paste URLs or drop files",
@@ -127,9 +121,7 @@ export const en = {
     "Without LLM: URLs capture screenshots (the web result adds a Markdown wrapper); files still use their normal converter.",
 
   // feedback under the composer
-  capHintPre: "LLM not configured · ",
   capHintLink: "Configure LLM",
-  capHintPost: " to enable enhancement",
   submitting: "Uploading and creating the task…",
   uploadProgress: (percent: number, sent: string, total: string) => `Uploading ${percent}% · ${sent} of ${total}`,
   uploadUnknown: (sent: string) => `Uploading · ${sent} sent`,
@@ -155,110 +147,55 @@ export const en = {
 
   // workspace
   conversions: "Conversions",
-  currentSession: "Current session",
   statusQueued: "Queued",
   statusRunning: "Converting",
   statusDone: "Done",
   statusFailed: "Failed",
   statusSkipped: "Skipped",
   statusStopped: "Stopped by you",
-  retryFailedAndStopped: (n: number) => `Retry failed / stopped (${n})`,
-  retryAllFailed: (n: number) => `Retry all failed (${n})`,
   stopRemaining: "Stop remaining",
   stopTitle: "Items already converting finish; waiting items are not converted.",
   stopRequested: (n: number) =>
     `Stopping · ${n} waiting ${plural(n, "item", "items")} will not be converted`,
-  clearAll: "Clear all",
-  clearCompleted: "Clear completed",
-  nothingCompleted: "No completed jobs to clear",
-  emptyWorkspace: "No conversions yet · drop files or paste URLs above.",
-  downloadAllZip: "Download all (.zip)",
-  downloadingZip: "Preparing .zip…",
   downloadFailed: "Archive download failed",
   zipWhileRunning: "Available when all conversions finish",
   filterAll: "All",
-  filterDone: "Done",
   filterFailed: "Failed",
-  filterSkipped: "Skipped",
-  filterPh: "Filter…",
   filterAria: "Filter items by name",
   filterStatusAria: "Filter by status",
-  filterShown: (n: number, m: number) => `${n} of ${m} shown`,
   filterNoMatch: "No items match the filter",
-  colName: "Name",
-  colDuration: "Duration",
-  colFinished: "Finished",
-  colCost: "LLM / Cost",
-  colStatus: "Status",
   total: "Total",
   itemsAria: "Converted items",
   baseTag: "Base",
   llmTag: "LLM",
-  originCli: "CLI",
   downloadMd: "Download .md",
   downloadFile: (name: string) => `Download ${name}`,
   retryAria: (name: string) => `Retry ${name}`,
   retryFailed: "Retry failed",
   enhanceWithLlm: (name: string) => `Enhance ${name} with LLM`,
-  llmEnhanceUnavailable: "Configure a routable LLM in settings to use this action",
-  llmEnhanceTurnOn: "Turn on LLM enhancement above to use this action",
   llmEnhanceFailed: "LLM enhancement failed",
   rerunRetained: (operation: "retry" | "enhance") => `${operation === "enhance" ? "Enhancement" : "Retry"} failed · Previous result kept`,
   notifyRetained: (count: number) => `${count} ${count === 1 ? "rerun failed" : "reruns failed"}. Previous results were kept.`,
-  errExpandTitle: "Click to show the full error",
-  showItemDetails: (name: string) => `Show details for ${name}`,
   notificationDetails: "Full details",
   deleteFailed: "Deletion failed",
-  attemptUsageNotice: "Usage for the latest attempt is recorded separately.",
-  previousResultWarnings: "Previous result warnings",
   skipImageOnly: "Image skipped because neither LLM enhancement nor OCR was enabled.",
-  skipExists: "Output already exists",
-  skipPendingBatch: "LLM batch still running · collect it with the CLI",
   itemWarnings: (n: number) => (n === 1 ? "1 warning" : `${n} warnings`),
-  itemWarningsTitle: "Conversion warnings",
-  // The incomplete-cost sentence, added up over the rows a card speaks for. It
-  // mirrors `ConversionUsage::unpriced_warning` in the core: three models are
-  // named and the rest are counted.
-  costIncomplete: (entries: { model: string; requests: number; reason: "noTariff" | "noCounts" }[]) => {
-    const named = entries.slice(0, 3).map((entry) => {
-      const count = entry.requests === 1 ? "1 request" : `${entry.requests} requests`;
-      return entry.reason === "noCounts"
-        ? `${count} to ${entry.model} reported no usage counts`
-        : `${count} to ${entry.model} ${entry.requests === 1 ? "has" : "have"} no reviewed price`;
-    });
-    if (entries.length > 3) named.push(`${entries.length - 3} more models`);
-    return `Cost is incomplete: ${named.join("; ")}. cost_usd is the known priced subtotal; the complete cost is unknown.`;
-  },
   stagedCount: (n: number) => (n === 1 ? "1 file" : `${n} files`),
   stagedClear: (label: string) => `Remove ${label} from this submission`,
-  groupExpand: (label: string) => `Open ${label}`,
-  groupCollapse: (label: string) => `Close ${label}`,
   histDeleteAria: (name: string) => `Permanently delete ${name}`,
   deleteItemTitle: (name: string) => `Delete ${name}?`,
   deleteItemDescription: "This removes the stored result and cannot be undone.",
   deletePermanently: "Delete permanently",
   deleting: "Deleting…",
   cancel: "Cancel",
-  histOpen: "Open",
   histDeleted: (name: string) => `${name} permanently deleted`,
-  histStorageSize: (size: string) => `Storage ${size}`,
-  histMore: (n: number) => `+${n} more`,
   retryLoad: "Retry",
-  jobLoadFailed: "Could not load this job",
-  nothingToPreview: "This job has no previewable result",
-  adoptedJob: (n: number) => `${n} saved items brought into this session`,
-  noFailedItem: "No retryable item remains in this job",
-  noEnhanceableItem: "No base Markdown result remains in this job",
   connLost: "Lost connection to the server",
-  persistenceTitle: "Job not saved",
   ariaDuration: (minutes: number, seconds: number) => {
     if (minutes === 0) return `${seconds.toFixed(1)} Seconds`;
     const m = `${minutes} ${minutes === 1 ? "Minute" : "Minutes"}`;
     return seconds === 0 ? m : `${m} ${seconds} ${seconds === 1 ? "Second" : "Seconds"}`;
   },
-  announceItem: (name: string, status: string, settled: number, total: number) =>
-    `${name} ${status} · ${settled} of ${total} complete`,
-  historySummaryUnavailable: "Could not verify this saved summary · refresh to retry",
   announceRetryStopped: (n: number) => `Retrying ${n} failed or stopped items`,
   announceRetryStoppedFailed: (n: number, again: number) => `Retried ${n} failed or stopped items; ${again} could not be queued`,
   announceRetryAll: (n: number) => `Retrying ${n} failed items`,
@@ -267,16 +204,9 @@ export const en = {
 
   // notifications
   close: "Close",
-  imageSkippedTitle: "Image skipped",
-  imageSkipped: (name: string) => `${name} needs LLM enhancement or OCR to be converted.`,
   enableOcr: "Enable OCR and retry",
-  noModelTitle: "No model configured",
-  noModelMessage: (name: string) => `${name} asked for LLM processing, but no model is configured.`,
   retryPlain: "Retry without LLM",
-  offlineTitle: "Server unreachable",
   reconnected: "Connected to the service again",
-  onlineTitle: "Connected",
-
   // preview
   previewAria: "Preview mode",
   rendered: "Rendered",
@@ -284,8 +214,6 @@ export const en = {
   diffTab: "Diff",
   filesTab: "Files",
   versionAria: "Markdown version",
-  llmEnhancedLabel: "LLM enhanced",
-  words: "Words",
   loading: "Loading…",
   exportPdf: "Export PDF",
   pdfSettings: "PDF settings",
@@ -314,7 +242,6 @@ export const en = {
   modelsAdded: (n: number) => `${n} ${plural(n, "model", "models")} added`,
   modelsConfigured: (n: number) => `${n} ${plural(n, "model", "models")} configured`,
   providerModels: (n: number) => `${n} ${plural(n, "model", "models")}`,
-  selectProvider: (label: string) => `Select ${label}`,
   editProvider: (label: string) => `Edit ${label} provider`,
   deleteProvider: (label: string) => `Delete ${label} provider`,
   deleteProviderTitle: (label: string) => `Delete ${label}?`,
@@ -389,7 +316,6 @@ export const en = {
   modelWeight: (n: number) => `Routing weight ${n}`,
   modelWeightShort: (n: number) => `Weight ${n}`,
   weightHint: "Routing weight used when models share the same routing group",
-  itemsNotice: (n: number) => `${n} ${plural(n, "item", "items")}`,
   modelsToAdd: (n: number) => `Add ${n} ${plural(n, "model", "models")}`,
   modelsToRemove: (n: number) => `Remove ${n} ${plural(n, "model", "models")}`,
   modelsRemoved: (n: number) => `${n} ${plural(n, "model", "models")} removed`,
@@ -400,7 +326,6 @@ export const en = {
   setStatusNone: "No models configured",
   setSourceLbl: "Source",
   openConfigFile: "Open the config file in your editor",
-  setModel: "Model",
   setApiKey: "API key",
   setApiBase: "API base",
   setKeyPh: "Paste the key",
@@ -460,10 +385,8 @@ export const en = {
   cloudflareContinue: "Continue conversion",
   cloudflareConfirm: "Send and convert",
   cloudflareScope: "Selected URLs and supported files may be sent to Cloudflare using this server’s account. Confirm the scope before each request.",
-  cloudflareBilling: "Cloudflare request · External fees excluded here",
   cloudflareCharges: "Cloudflare may charge fees. They are not included in the LLM subtotal shown here.",
   cloudflareNativeHint: "The selected files keep the native reader. Choosing Cloudflare does not turn off OCR or screenshots.",
-  cloudflareBillingDetail: "This records a request, not completed processing. Cloudflare determines actual processing and charges. External fees are not included in the LLM subtotal shown here.",
   cloudflareScopeCounts: (urls: number, candidates: number, files: number, native: number) => [
     urls > 0 ? `${urls} ${urls === 1 ? "URL" : "URLs"}` : "",
     candidates > 0 ? `Up to ${candidates} selected ${candidates === 1 ? "file" : "files"} may be sent${files > 0 ? ` (${files} ${files === 1 ? "name matches" : "names match"} supported formats)` : ""}` : "",
@@ -482,7 +405,169 @@ export const en = {
     unavailable: "Cloudflare capabilities are unavailable. Refresh the page to check again.",
   } as Record<string, string>)[reason] ?? "Cloudflare is unavailable.",
   cloudflareSetup: "Configure fetch.cloudflare.account_id and fetch.cloudflare.api_token on the server. An administrator must permit remote processing. Local configuration checks do not verify Cloudflare API permissions.",
-  cloudflareLlmSubtotal: "LLM subtotal",
+  // shell and navigation
+  skipToContent: "Skip to content",
+  sidebarAria: "Sidebar",
+  workNavAria: "Workbench",
+  collapseSidebar: "Collapse sidebar",
+  expandSidebar: "Expand sidebar",
+  navConvert: "Convert",
+  navModels: "Models",
+  navAppearance: "Appearance and language",
+  navAccess: "Access token",
+  navLive: (n: number) => `${n} converting`,
+  titleSettings: "Settings · Markitai",
+
+  // convert view
+  recentTitle: "Recent",
+  allConversions: "All conversions",
+  failedCount: (n: number) => `${n} failed`,
+
+  // conversions view
+  summaryEmpty: "Nothing converted yet.",
+  summaryDone: (done: number, total: number, failed: number, stopped: number, skipped: number) =>
+    [`${done} of ${total} converted`, ...(failed ? [`${failed} failed`] : []), ...(stopped ? [`${stopped} stopped`] : []), ...(skipped ? [`${skipped} skipped`] : [])].join(", ") + ".",
+  summaryRunning: (done: number, total: number, running: number, queued: number) =>
+    [`${done} of ${total} converted`, ...(running ? [`${running} converting`] : []), ...(queued ? [`${queued} waiting`] : [])].join(", ") + ".",
+  emptyConversions: "No conversions yet. Drop files here or paste URLs above.",
+  downloadAll: "Download all",
+  retryFailedN: (n: number) => `Retry failed (${n})`,
+  filterByName: "Filter by name",
+  filterNotices: "Notices",
+  historyLoadFailed: "Could not load saved conversions",
+  capHintText: "No model is configured, so LLM enhancement is off.",
+  dismiss: "Dismiss",
+  downloadFailedFile: "Download failed",
+  announceSettled: (name: string, status: string) => `${name} · ${status}`,
+  nFiles: (n: number) => (n === 1 ? "1 file" : `${n} files`),
+  nPages: (n: number) => (n === 1 ? "1 web page" : `${n} web pages`),
+  filesAndPages: (files: number, pages: number) => `${files === 1 ? "1 file" : `${files} files`} and ${pages === 1 ? "1 web page" : `${pages} web pages`}`,
+  presetName: (preset: string) => ({ minimal: "Minimal", standard: "Standard", rich: "Rich" })[preset] ?? preset,
+  groupProgress: (settled: number, total: number) => `${settled} of ${total} finished`,
+  statusRetained: "Done · rerun failed",
+  itemsCount: (n: number) => (n === 1 ? "1 item" : `${n} items`),
+
+  // inspector
+  overviewTitle: "All conversions",
+  overviewEmpty: "Converted files and pages appear here.",
+  selectHint: "Select a conversion to see its details.",
+  preview: "Preview",
+  compare: "Compare",
+  downloadShort: "Download",
+  downloadZip: "Download .zip",
+  runAgain: "Run again",
+  enhance: "Enhance with LLM",
+  retryPlainVerb: "Retry",
+  addModelAction: "Add a model",
+  convertedWithLlm: "Converted with LLM",
+  convertedPlain: "Converted",
+  inDuration: "in",
+  convertingFor: "Converting for",
+  waitingSlot: "Waiting for a conversion slot",
+  stoppedLine: "Stopped before conversion. Retry to convert it.",
+  skippedLine: (reason: string) => (reason ? `Skipped (${reason.replaceAll("_", " ")})` : "Skipped"),
+  imagesSaved: (n: number) => (n === 1 ? "1 image" : `${n} images`),
+  screenshotsSaved: (n: number) => (n === 1 ? "1 screenshot" : `${n} screenshots`),
+  alsoBase: (name: string) => `${name} (without LLM)`,
+  factSource: "Source",
+  factOutput: "Output",
+  factAlso: "Also saved",
+  factModels: "Models",
+  factCost: "Cost",
+  factOptions: "Options",
+  factFinished: "Finished",
+  factTook: "Took",
+  factKept: "Kept until",
+  factOrigin: "Recorded by",
+  originCliLong: "the command line",
+  modelsNotReported: "Not reported by this server",
+  costNone: "No model used",
+  costUnknown: "Unknown: no price for the model's answers",
+  costUnknownKnown: (amount: string) => `Unknown: at least ${amount}`,
+  costPartial: (amount: string, unpriced: number) => `At least ${amount} · ${unpriced === 1 ? "1 request" : `${unpriced} requests`} without a price`,
+  costUnknownItems: (n: number) => (n === 1 ? "1 item" : `${n} items`),
+  supportedFormats: "Supported formats",
+  noticesHeading: (n: number) => (n === 1 ? "1 notice" : `${n} notices`),
+  noticeKinds: (n: number) => (n === 1 ? "1 kind of notice" : `${n} kinds of notice`),
+  noticeTitle: (kind: string, count: number, models: string[], sample: string) => {
+    const list = (names: string[]) => (names.length <= 2 ? names.join(" and ") : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`);
+    switch (kind) {
+      case "alt_kept":
+        return count === 1 ? "1 image kept its original alt text: its analysis failed" : `${count} images kept their original alt text: their analysis failed`;
+      case "cost_incomplete":
+        return models.length ? `No reviewed price for ${list(models)}, so the cost is unknown` : "The cost is incomplete";
+      case "json_resent":
+        return count === 1 ? "1 model answer was not valid JSON and was requested again as text" : `${count} model answers were not valid JSON and were requested again as text`;
+      case "image_requests_split":
+        return count === 1 ? "1 image analysis was not valid JSON, so caption and description were requested separately" : `${count} image analyses were not valid JSON, so captions and descriptions were requested separately`;
+      case "resent":
+        return count === 1 ? "1 model request failed and was sent again" : `${count} model requests failed and were sent again`;
+      case "deployment_skipped":
+        return models.length ? `${list(models)} was skipped for this run` : "A model was skipped for this run";
+      default:
+        return sample;
+    }
+  },
+  noticeWhere: (names: string[]) => (names.length === 1 ? `In ${names[0]}` : names.length <= 3 ? `In ${names.join(", ")}` : `In ${names.length} items`),
+  addPrice: "How to add a price",
+  showItem: "Show item",
+  showItems: "Show items",
+  resultStart: "Start of the result",
+  openPreview: "Open the preview",
+  failedHeading: (n: number) => (n === 1 ? "1 failed" : `${n} failed`),
+  stoppedCount: (n: number) => (n === 1 ? "1 item was stopped before conversion." : `${n} items were stopped before conversion.`),
+  deleteSubmissionAria: (label: string) => `Permanently delete ${label}`,
+  deleteSubmissionTitle: (n: number) => (n === 1 ? "Delete this conversion?" : `Delete these ${n} conversions?`),
+
+  // preview and compare
+  previousItem: "Previous item",
+  nextItem: "Next item",
+  positionOf: (index: number, total: number) => `${index} of ${total}`,
+  closePreview: "Close preview",
+  fullWidth: "Full width",
+  dockPreview: "Beside the list",
+  moreActions: "More actions",
+  openPage: "Open the page",
+  keysMove: "previous / next item",
+  keysClose: "close",
+  tableCapped: (shown: string, total: string) => `Showing the first ${shown} of ${total} rows so the preview stays fast. The download has every row.`,
+  tableAllShown: (total: string) => `All ${total} rows shown.`,
+  tableShowAll: "Show all rows",
+  tableShowing: "Adding rows…",
+  tableOpenSource: "Open in Source",
+  original: "Original",
+  downloadOriginal: "Download the original",
+  pageOf: (page: number, total: number) => `Page ${page} of ${total}`,
+  pageImage: (page: number) => `Page ${page} of the original`,
+  pageUnavailable: "This page could not be drawn",
+  morePages: (n: number) => `${n} more pages are not shown here. Download the original to see them.`,
+  tableN: (n: number) => `Table ${n}`,
+  headingMark: "Heading",
+  originalTooLarge: "The original is too large to show here. Download it instead.",
+  originalUnavailable: (reason: string, name: string) =>
+    (
+      ({
+        not_kept: "This server did not keep the original, so it cannot be shown beside the Markdown.",
+        unsupported_format: `The browser cannot show ${name.split(".").pop()?.toUpperCase() ?? "this"} files. Download the original to compare.`,
+        too_large: "The original is too large to show here. Download it instead.",
+        render_unavailable: "This server cannot draw this original.",
+      }) as Record<string, string>
+    )[reason] ?? "The original cannot be shown here.",
+
+  // settings pages
+  modelsHint: "Connections and models for LLM enhancement",
+  appearanceHint: "Language and light or dark theme",
+  accessHint: "The token this tab uses with the service",
+  languageHint: "The language of this workbench in this browser.",
+  themeHint: "Follow the system, or always use light or dark.",
+  accessHeld: "This tab has an access token.",
+  accessNone: "This tab has no access token.",
+  accessRefused: "The service refused this tab's access token.",
+  accessExplain: "Open the link printed by markitai serve; it carries the token. Or paste the token here.",
+  replaceToken: "Replace the access token",
+  forgetToken: "Forget the token",
+  tokenSaved: "Token saved for this tab.",
+
   // token dialog
   tokenTitle: "Service access",
   tokenText: "Enter the access token printed when markitai serve started.",
@@ -491,8 +576,6 @@ export const en = {
   connect: "Connect",
 
   // crash surface (also read before the dictionary is available)
-  crashTitle: "Something went wrong",
-  crashReload: "Reload",
 };
 
 export type Dict = typeof en;

@@ -157,7 +157,13 @@ test("boot.js applies a stored theme and the language before first paint", () =>
   const run = (stored: Record<string, string>, language: string, throws = false) => {
     const attributes = new Map<string, string>();
     const root = { lang: "", setAttribute: (name: string, value: string) => attributes.set(name, value) };
-    const document = { documentElement: root, title: "Markitai" };
+    const preloads: { rel: string; href: string }[] = [];
+    const document = {
+      documentElement: root,
+      title: "Markitai",
+      createElement: () => ({ rel: "", href: "" }),
+      head: { appendChild: (node: { rel: string; href: string }) => preloads.push(node) },
+    };
     const localStorage = {
       getItem: (key: string) => {
         if (throws) throw new Error("blocked");
@@ -165,16 +171,24 @@ test("boot.js applies a stored theme and the language before first paint", () =>
       },
     };
     runInNewContext(source, { document, localStorage, navigator: { language }, String });
-    return { root, attributes, document };
+    return { root, attributes, document, preloads };
   };
-  const dark = run({ "markitai.theme": "dark", "markitai.lang": "zh" }, "en-US");
+  const dark = run({ "markitai.theme": "dark", "markitai.lang": "zh", "markitai.sidebar": "collapsed" }, "en-US");
   assert.equal(dark.attributes.get("data-theme"), "dark");
+  assert.equal(dark.attributes.has("data-rail"), true);
   assert.equal(dark.root.lang, "zh-CN");
+  // The reader's language pack is fetched beside the application.
+  assert.deepEqual(dark.preloads, [{ rel: "modulepreload", href: "/ui/i18n-zh.js" }]);
+  const japanese = run({}, "ja-JP");
+  assert.equal(japanese.root.lang, "ja");
+  assert.deepEqual(japanese.preloads.map((link) => link.href), ["/ui/i18n-ja.js"]);
   assert.match(dark.document.title, /Markitai/);
   const auto = run({ "markitai.theme": "neon" }, "zh-TW");
   assert.equal(auto.attributes.has("data-theme"), false);
   assert.equal(auto.root.lang, "zh-CN");
-  assert.equal(run({}, "fr", true).root.lang, "en");
+  const blocked = run({}, "fr", true);
+  assert.equal(blocked.root.lang, "en");
+  assert.deepEqual(blocked.preloads, []);
   // Everything the page loads is a same-origin file: the CSP allows nothing inline.
   const html = readFileSync(new URL("../../public/index.html", import.meta.url), "utf8");
   for (const tag of html.match(/<script\b[^>]*>/g) ?? []) assert.match(tag, /\ssrc="\/ui\/[a-z]+\.js"/);

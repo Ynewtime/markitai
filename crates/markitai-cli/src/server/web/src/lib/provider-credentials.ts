@@ -74,8 +74,8 @@ function savedKey(value: string | null, detected: boolean): SavedKey {
 export function providerDraft(credentials: ProviderCredentials): ProviderDraft {
   const baseRetained = credentials.api_base?.trim().startsWith("env:") === true;
   return {
-    configured: Boolean(credentials.api_key),
-    key: savedKey(credentials.api_key, credentials.api_key_source === "environment"),
+    configured: Boolean(credentials.api_key ?? credentials.api_key_masked),
+    key: savedKey(credentials.api_key ?? credentials.api_key_masked ?? null, credentials.api_key_source === "environment"),
     base: baseRetained ? "" : credentials.api_base ?? "",
     baseRetained,
     baseVariable: baseRetained ? variableOf(credentials.api_base ?? "") : null,

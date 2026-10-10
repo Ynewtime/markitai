@@ -48,7 +48,7 @@ export function ProviderPicker({
         if (!cards.length) return null;
         return (
           <section key={kind}>
-            <h3 class="group-title">{t.providerGroup(kind)}</h3>
+            <h2 class="group-title">{t.providerGroup(kind)}</h2>
             <div class="provider-grid">
               {cards.map((card) => {
                 const label = providerLabel(t, card);
@@ -59,7 +59,6 @@ export function ProviderPicker({
                     <button
                       type="button"
                       class="provider-pick"
-                      aria-label={t.selectProvider(label)}
                       disabled={card.status === "disabled"}
                       onClick={() => onSelect(card)}
                     >

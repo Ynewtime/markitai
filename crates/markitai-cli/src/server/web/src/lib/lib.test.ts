@@ -106,7 +106,7 @@ test("URL lines accept bare domains and report the first unusable line", () => {
 });
 
 test("formatting reads well in tabular columns", () => {
-  assert.deepEqual([fmtDur(4200), fmtDur(59_960), fmtDur(83_000), fmtDur(3_723_000)], ["4.2s", "1:00", "1:23", "1:02:03"]);
+  assert.deepEqual([fmtDur(240), fmtDur(4200), fmtDur(59_960), fmtDur(83_000), fmtDur(3_723_000)], ["240 ms", "4.2 s", "1:00", "1:23", "1:02:03"]);
   assert.deepEqual([fmtCost(0), fmtCost(0.0123), fmtCost(1.5)], ["$0", "$0.0123", "$1.5"]);
   assert.deepEqual([fmtBytes(512), fmtBytes(2048), fmtBytes(3 * 1024 * 1024)], ["512 B", "2.0 KB", "3.0 MB"]);
   assert.equal(timestampMs("2026-10-02T08:34:19.257123+00:00"), Date.UTC(2026, 9, 2, 8, 34, 19, 257));

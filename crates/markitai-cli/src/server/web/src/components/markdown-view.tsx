@@ -1,147 +1,118 @@
-// The preview panel: Rendered, Source, Diff (when an exact base/LLM pair exists)
-// and Files tabs; a Base | LLM switch for paired results on the panes that show
-// one version; PDF export and the Markdown download. Rendering is sanitized and
-// pinned to the result's files.
+// A result's document: Rendered, Source, Diff (only for an exact base/LLM
+// pair) and Files, with the Base | LLM switch. Rendered starts with the
+// front-matter card and the conversion's notices; long tables show their first
+// 500 rows with a sticky header and "Show all rows"; code blocks are
+// highlighted by a module loaded only when there is code. Every pane has the
+// same fixed height, so switching tabs never moves the frame. Rendering is
+// sanitized and pinned to the result's own files.
+import type { ComponentChildren } from "preact";
+import { createPortal } from "preact/compat";
+import type { MutableRef } from "preact/hooks";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { fetchBlob, fetchResult, fetchText, filePath } from "../api/client.ts";
+import { fetchBlob, fetchText, filePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
-import type { ItemResult } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { copyText } from "../lib/clipboard.ts";
+import type { ResultDocument } from "../hooks/use-result-document.ts";
 import { compareLines, type Comparison } from "../lib/diff.ts";
 import { interceptDownload } from "../lib/download.ts";
-import { basename, countWords, fmtBytes, fmtDate, utf8Bytes } from "../lib/format.ts";
-import { type ImageLoads, loadArtifactImages, markdownPair, renderMarkdown, splitFrontmatter } from "../lib/markdown.ts";
-import { printDocument, type PrintJob } from "../lib/print.ts";
+import { basename, fmtBytes, localeTag } from "../lib/format.ts";
+import { parseFrontMatter } from "../lib/frontmatter.ts";
+import { type ImageLoads, loadArtifactImages, renderMarkdown, splitFrontmatter } from "../lib/markdown.ts";
+import { groupNotices } from "../lib/notices.ts";
+import type { SessionItem } from "../lib/session.ts";
+import { capTables, freezeColumns, markNumericColumns, MARKER, ROW_CHUNK, ROW_LIMIT, tableSlice, type CappedTable } from "../lib/tables.ts";
+import { FrontCard } from "./inspector.tsx";
 import { Icon, Logo } from "./icons.tsx";
-import { PdfSettings, readFurniture, storeFurniture } from "./pdf-settings.tsx";
 
 /** Larger sides are offered as downloads instead of being compared in the page. */
 const DIFF_BYTES = 8 * 1024 * 1024;
+/** Tables taller than this scroll inside their own frame, under a sticky header. */
+const TALL_ROWS = 24;
 
-type Tab = "rendered" | "source" | "diff" | "files";
+export type Tab = "rendered" | "source" | "diff" | "files";
 
-/** The panes that show one version, where the Base | LLM switch has an effect.
- * Diff shows both versions and Files is a listing, so the floating switch is
- * absent there rather than covering the diff's last lines or a file row. */
-const VERSION_TABS: readonly Tab[] = ["rendered", "source"];
-
-export interface PreviewTarget {
-  key: string;
-  jobId: string;
-  itemId: string;
-  name: string;
-  output: string | null;
-  finishedAt: string | null;
-  llmEnhanced: boolean;
-  operation: string;
+export interface RenderedState {
+  printable: HTMLElement | null;
+  images: ImageLoads | null;
 }
 
-const results = new Map<string, ItemResult>();
+interface HighlightModule {
+  highlightAll(root: ParentNode, done?: () => void): () => void;
+}
+let highlighter: Promise<HighlightModule> | null = null;
+function loadHighlighter(): Promise<HighlightModule> {
+  highlighter ??= import("/ui/highlight.js") as Promise<HighlightModule>;
+  highlighter.catch(() => {
+    highlighter = null;
+  });
+  return highlighter;
+}
 
 export function MarkdownView({
   t,
   locale,
   item,
+  doc,
   createdAt,
-  announce,
   describe,
+  tab,
+  onTab,
+  compact = false,
+  rendered,
+  onRendered,
+  onError,
 }: {
   t: Dict;
   locale: Locale;
-  item: PreviewTarget;
+  item: SessionItem;
+  doc: ResultDocument;
   createdAt: string | null;
-  announce: (message: string) => void;
   describe: (error: unknown) => { text: string; detail: string };
+  tab: Tab;
+  onTab: (tab: Tab) => void;
+  /** Compare: only Rendered and Source, no notices. */
+  compact?: boolean;
+  rendered?: MutableRef<RenderedState>;
+  /** Called with the rendered body once its content is in place (and with null when it goes). */
+  onRendered?: (root: HTMLElement | null) => void;
+  onError?: (message: string) => void;
 }) {
-  // A retry or enhancement keeps the item's identity but replaces its output.
-  const cacheKey = `${item.key}|${item.finishedAt ?? ""}|${item.llmEnhanced}|${item.operation}`;
-  const [result, setResult] = useState<ItemResult | null>(() => results.get(cacheKey) ?? null);
-  const [loadError, setLoadError] = useState<unknown>(null);
-  const [tab, setTab] = useState<Tab>("rendered");
-  const [version, setVersion] = useState<"base" | "llm" | null>(null);
-  const [texts, setTexts] = useState<Record<string, string>>({});
-  const [textError, setTextError] = useState<unknown>(null);
-  const [diff, setDiff] = useState<Comparison | { kind: "error"; error: unknown } | null>(null);
-  const [furniture, setFurniture] = useState(readFurniture);
-  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
-  const [renderError, setRenderError] = useState<unknown>(null);
-  const [printError, setPrintError] = useState<string | null>(null);
+  const { result, pair, shown, path, markdown } = doc;
   const body = useRef<HTMLDivElement>(null);
-  const images = useRef<ImageLoads | null>(null);
   const printable = useRef<HTMLDivElement>(null);
-  const printing = useRef<PrintJob | null>(null);
   const tabs = useRef<Record<Tab, HTMLButtonElement | null>>({ rendered: null, source: null, diff: null, files: null });
-  const currentPath = useRef("");
-
-  useEffect(() => {
-    const cached = results.get(cacheKey);
-    if (cached) {
-      setResult(cached);
-      return;
-    }
-    let stale = false;
-    setResult(null);
-    setLoadError(null);
-    fetchResult(item.jobId, item.itemId).then(
-      (value) => {
-        if (stale) return;
-        results.set(cacheKey, value);
-        setResult(value);
-      },
-      (error: unknown) => !stale && setLoadError(error),
-    );
-    return () => {
-      stale = true;
-    };
-  }, [cacheKey, item.jobId, item.itemId]);
-
-  const pair = useMemo(() => (result ? markdownPair(result.artifacts) : null), [result]);
-  const shown = version ?? (result?.variant === "llm" ? "llm" : "base");
-  const documentPath = useMemo(() => {
-    if (!result) return item.output ?? "";
-    if (pair) return pair[shown];
-    const markdown = result.artifacts.find((artifact) => artifact.relpath === item.output) ?? result.artifacts.find((artifact) => artifact.relpath.endsWith(".md"));
-    return markdown?.relpath ?? item.output ?? "";
-  }, [result, pair, shown, item.output]);
-  currentPath.current = documentPath;
-  const resultPath = pair ? pair[result?.variant === "llm" ? "llm" : "base"] : documentPath;
-  const markdown = result === null ? null : documentPath === resultPath ? result.markdown : (texts[documentPath] ?? null);
-
-  // The other version of a pair is read on demand.
-  useEffect(() => {
-    if (!result || markdown !== null || !documentPath) return;
-    let stale = false;
-    setTextError(null);
-    fetchText(filePath(item.jobId, documentPath), 64 * 1024 * 1024).then(
-      (text) => !stale && setTexts((previous) => ({ ...previous, [documentPath]: text })),
-      (error: unknown) => !stale && setTextError(error),
-    );
-    return () => {
-      stale = true;
-    };
-  }, [result, markdown, documentPath, item.jobId]);
-
-  useEffect(() => {
-    if (tab === "diff" && !pair) setTab("rendered");
-  }, [tab, pair]);
+  const [renderError, setRenderError] = useState<unknown>(null);
+  const [diff, setDiff] = useState<Comparison | { kind: "error"; error: unknown } | null>(null);
+  const [expanding, setExpanding] = useState<Record<number, number>>({});
+  const capped = useRef<CappedTable[]>([]);
+  /** The caption placeholder of each capped table, by index: never looked up in a large document. */
+  const capHosts = useRef<HTMLElement[]>([]);
+  const order: Tab[] = compact ? ["rendered", "source"] : pair ? ["rendered", "source", "diff", "files"] : ["rendered", "source", "files"];
+  const active = order.includes(tab) ? tab : "rendered";
 
   const split = useMemo(() => (markdown === null ? null : splitFrontmatter(markdown)), [markdown]);
-  const meta = useMemo(() => (markdown === null ? null : { words: countWords(markdown), bytes: utf8Bytes(markdown) }), [markdown]);
+  const front = useMemo(() => parseFrontMatter(split?.frontmatter ?? null), [split]);
+  const notices = useMemo(() => (compact ? [] : groupNotices(item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))), [compact, item.warnings, item.key, item.name]);
 
+  // ---- Rendered
   useEffect(() => {
     const target = body.current;
     if (!target || split === null || !result) return;
     let stale = false;
     let loads: ImageLoads | null = null;
+    let stopHighlight: (() => void) | null = null;
     setRenderError(null);
+    setExpanding({});
     const placeholder = (alt: string) => t.imagePlaceholder(alt || t.imageUnavailable);
-    renderMarkdown(split.body, {
-      documentPath,
+    const cut = capTables(split.body);
+    capped.current = cut.tables;
+    capHosts.current = [];
+    renderMarkdown(cut.markdown, {
+      documentPath: path,
       artifacts: result.artifacts,
       // With a token, images are fetched with the header instead of a tokened URL.
-      imageURL: (path) => (hasToken() ? null : filePath(item.jobId, path)),
-      fileURL: (path) => filePath(item.jobId, path),
+      imageURL: (relpath) => (hasToken() ? null : filePath(item.jobId, relpath)),
+      fileURL: (relpath) => filePath(item.jobId, relpath),
       placeholder,
       fallbackAlt: t.figureFrom(item.name),
       tableLabel: t.tableAria,
@@ -149,10 +120,32 @@ export function MarkdownView({
     }).then(
       (fragment) => {
         if (stale) return;
+        // A capped table's marker paragraph becomes its caption bar.
+        for (const paragraph of [...fragment.querySelectorAll("p")]) {
+          const text = paragraph.textContent ?? "";
+          if (!text.startsWith(MARKER)) continue;
+          const index = Number(text.slice(MARKER.length));
+          const table = cut.tables[index];
+          if (!table || !Number.isSafeInteger(index)) continue;
+          const bar = document.createElement("div");
+          bar.className = "table-cap";
+          bar.setAttribute("data-cap", String(index));
+          capHosts.current[index] = bar;
+          paragraph.replaceWith(bar);
+          bar.previousElementSibling?.classList.add("is-capped");
+        }
+        for (const wrap of fragment.querySelectorAll<HTMLElement>(".table-scroll")) {
+          const table = wrap.querySelector("table");
+          if (!table) continue;
+          markNumericColumns(table);
+          if (table.rows.length > TALL_ROWS) wrap.classList.add("is-tall");
+        }
         target.replaceChildren(fragment);
+        // Caption bars are drawn by Preact into the placeholders below.
+        setExpanding(Object.fromEntries(cut.tables.map((_, index) => [index, -1])));
         loads = loadArtifactImages(
           target,
-          (path) => fetchBlob(filePath(item.jobId, path)).then((file) => file.blob),
+          (relpath) => fetchBlob(filePath(item.jobId, relpath)).then((file) => file.blob),
           (image) => {
             const span = document.createElement("span");
             span.className = "img-blocked";
@@ -160,19 +153,73 @@ export function MarkdownView({
             image.replaceWith(span);
           },
         );
-        images.current = loads;
+        if (rendered) rendered.current.images = loads;
+        if (target.querySelector("pre > code")) {
+          loadHighlighter().then(
+            (module) => {
+              if (!stale) stopHighlight = module.highlightAll(target);
+            },
+            () => undefined,
+          );
+        }
+        onRendered?.(target);
       },
       (error: unknown) => !stale && setRenderError(error),
     );
     return () => {
       stale = true;
+      stopHighlight?.();
       loads?.dispose();
-      if (images.current === loads) images.current = null;
+      if (rendered && rendered.current.images === loads) rendered.current.images = null;
+      onRendered?.(null);
     };
-  }, [split, documentPath, result, item.jobId, item.name, t]);
+  }, [split, path, result, item.jobId, item.name, t]);
 
   useEffect(() => {
-    if (tab !== "diff" || !pair || !result) return;
+    if (rendered) rendered.current.printable = printable.current;
+  });
+
+  /** Draw a capped table's remaining rows in steps, so the page keeps answering. */
+  const showAll = async (index: number) => {
+    const table = capped.current[index];
+    const bar = capHosts.current[index];
+    const wrap = bar?.previousElementSibling;
+    const tbody = wrap?.querySelector("table")?.tBodies[0];
+    if (!table || !tbody || !result) return;
+    const element = tbody.closest("table");
+    if (element) freezeColumns(element as HTMLTableElement);
+    let from = ROW_LIMIT;
+    setExpanding((previous) => ({ ...previous, [index]: from }));
+    while (from < table.total) {
+      const to = Math.min(table.total, from + ROW_CHUNK);
+      const fragment = await renderMarkdown(tableSlice(table, from, to), {
+        documentPath: path,
+        artifacts: result.artifacts,
+        imageURL: (relpath) => (hasToken() ? null : filePath(item.jobId, relpath)),
+        fileURL: (relpath) => filePath(item.jobId, relpath),
+        placeholder: (alt) => t.imagePlaceholder(alt || t.imageUnavailable),
+        fallbackAlt: t.figureFrom(item.name),
+        tableLabel: t.tableAria,
+        codeLabel: t.codeAria,
+      });
+      if (!tbody.isConnected) return;
+      const rows = fragment.querySelector("tbody");
+      if (rows) {
+        // The new rows take the numeric alignment of the columns they join,
+        // in a row group of their own so the rows above are not laid out again.
+        const numeric = [...(tbody.rows[0]?.cells ?? [])].map((cell) => cell.classList.contains("num"));
+        for (const row of rows.querySelectorAll("tr")) for (let index = 0; index < row.cells.length; index++) if (numeric[index]) row.cells[index]?.classList.add("num");
+        tbody.closest("table")?.append(rows);
+      }
+      from = to;
+      setExpanding((previous) => ({ ...previous, [index]: from }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
+  // ---- Diff
+  useEffect(() => {
+    if (active !== "diff" || !pair || !result) return;
     let stale = false;
     setDiff(null);
     const sizes = new Map(result.artifacts.map((artifact) => [artifact.relpath, artifact.size]));
@@ -180,8 +227,10 @@ export function MarkdownView({
       setDiff({ kind: "too-large" });
       return;
     }
-    const read = (path: string) =>
-      path === resultPath ? Promise.resolve(result.markdown) : texts[path] !== undefined ? Promise.resolve(texts[path] as string) : fetchText(filePath(item.jobId, path), DIFF_BYTES);
+    const read = (relpath: string) => {
+      const known = doc.text(relpath);
+      return known !== null ? Promise.resolve(known) : fetchText(filePath(item.jobId, relpath), DIFF_BYTES);
+    };
     Promise.all([read(pair.base), read(pair.llm)]).then(
       ([base, llm]) => !stale && setDiff(compareLines(base, llm)),
       (error: unknown) => {
@@ -192,139 +241,72 @@ export function MarkdownView({
     return () => {
       stale = true;
     };
-    // A version text read meanwhile does not change the comparison, so `texts` is not a dependency.
-  }, [tab, pair, result, resultPath, item.jobId]);
+  }, [active, pair, result, item.jobId]);
 
-  useEffect(() => {
-    if (copied === "idle") return;
-    const timer = setTimeout(() => setCopied("idle"), 1500);
-    return () => clearTimeout(timer);
-  }, [copied]);
-
-  useEffect(() => () => printing.current?.cancel(), []);
-
-  const order: Tab[] = pair ? ["rendered", "source", "diff", "files"] : ["rendered", "source", "files"];
   const onTabKey = (event: KeyboardEvent) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
     event.preventDefault();
-    const index = order.indexOf(tab);
-    const next = order[(index + (event.key === "ArrowRight" ? 1 : order.length - 1)) % order.length] ?? "rendered";
-    setTab(next);
-    tabs.current[next]?.focus();
+    const index = order.indexOf(active);
+    const next =
+      event.key === "Home" ? order[0] : event.key === "End" ? order[order.length - 1] : order[(index + (event.key === "ArrowRight" ? 1 : order.length - 1)) % order.length];
+    onTab(next ?? "rendered");
+    tabs.current[next ?? "rendered"]?.focus();
   };
-  const tabButton = (value: Tab, label: string) => (
+  const prefix = compact ? "cmp" : "pv";
+  const tabButton = (value: Tab, label: string, count?: number) => (
     <button
       ref={(node) => {
         tabs.current[value] = node;
       }}
       type="button"
       role="tab"
-      id={`tab-${value}`}
-      aria-selected={tab === value}
-      aria-controls={`pane-${value}`}
-      tabIndex={tab === value ? 0 : -1}
-      class={tab === value ? "tab is-on" : "tab"}
-      onClick={() => setTab(value)}
+      id={`${prefix}-tab-${value}`}
+      aria-selected={active === value}
+      aria-controls={`${prefix}-pane-${value}`}
+      tabIndex={active === value ? 0 : -1}
+      class={active === value ? "tab is-on" : "tab"}
+      onClick={() => onTab(value)}
       onKeyDown={onTabKey}
     >
       {label}
+      {count !== undefined && <span class="tab-count">{count}</span>}
     </button>
   );
 
-  const docName = basename(documentPath || item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "");
-  const date = createdAt ? fmtDate(createdAt) : null;
-  const versionLabel = result === null ? null : shown === "llm" && (pair !== null || result.variant === "llm") ? t.llmEnhancedLabel : t.baseTag;
-  const failure = loadError ?? textError;
-  const note = (error: unknown) => (
-    <p class={error ? "pane-note line-error" : "pane-note"}>{error ? describe(error).text : t.loading}</p>
-  );
-
-  // A link to one of the result's files: with a token, downloaded with the header.
+  const failure = doc.error ?? renderError;
+  const note = (error: unknown) => <p class={error ? "pane-note line-error" : "pane-note"}>{error ? describe(error).text : t.loading}</p>;
+  const docName = basename(path || item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "");
   const onDocumentLink = (event: MouseEvent) => {
     const link = (event.target as Element | null)?.closest?.("a[data-artifact]");
-    const path = link?.getAttribute("data-artifact");
-    if (!path) return;
-    interceptDownload(event, filePath(item.jobId, path), basename(path), (error) => setPrintError(describe(error).text));
+    const relpath = link?.getAttribute("data-artifact");
+    if (!relpath) return;
+    interceptDownload(event, filePath(item.jobId, relpath), basename(relpath), (error) => onError?.(describe(error).text));
   };
-
-  const exportPdf = async () => {
-    if (!printable.current || markdown === null) return;
-    printing.current?.cancel();
-    setPrintError(null);
-    const path = documentPath;
-    // Images fetched with the header token must be in place before the clone.
-    await images.current?.done;
-    if (!printable.current || path !== currentPath.current) return;
-    const job = printDocument({
-      source: printable.current,
-      title: docName,
-      furniture,
-      isCurrent: () => path === currentPath.current,
-      messages: { loading: t.printImagesLoading, broken: t.printImageBroken },
-    });
-    printing.current = job;
-    announce(t.exportPdf);
-    job.done.then(
-      () => undefined,
-      (error: Error) => {
-        if (error.name !== "AbortError") setPrintError(error.message);
-      },
-    );
-  };
+  const words = new Intl.NumberFormat(localeTag(locale));
 
   return (
-    <div class="viewer">
+    <div class={compact ? "viewer is-compact" : "viewer"}>
       <div class="viewer-bar">
         <div class="tabs" role="tablist" aria-label={t.previewAria}>
           {tabButton("rendered", t.rendered)}
           {tabButton("source", t.source)}
-          {pair && tabButton("diff", t.diffTab)}
-          {tabButton("files", t.filesTab)}
+          {!compact && pair && tabButton("diff", t.diffTab)}
+          {!compact && tabButton("files", t.filesTab, result?.artifacts.length)}
         </div>
-        <div class="viewer-side">
-          {meta && (
-            <span class="viewer-meta">
-              {meta.words.toLocaleString(locale === "zh" ? "zh-CN" : "en")} {t.words} · {fmtBytes(meta.bytes)}
-            </span>
-          )}
-          <PdfSettings
-            t={t}
-            disabled={markdown === null}
-            furniture={furniture}
-            onToggle={() => {
-              const next = !furniture;
-              setFurniture(next);
-              storeFurniture(next);
-            }}
-          />
-          <button type="button" class="btn btn-ghost btn-sm" disabled={markdown === null} title={t.exportPdf} aria-label={t.exportPdf} onClick={() => void exportPdf()}>
-            <Icon name="FilePdf" size={13} />
-            <span class="btn-label">{t.exportPdf}</span>
-          </button>
-          {documentPath && (
-            <a
-              class="btn btn-ghost btn-sm"
-              href={filePath(item.jobId, documentPath)}
-              download={basename(documentPath)}
-              aria-label={t.downloadMd}
-              onClick={(event) => interceptDownload(event, filePath(item.jobId, documentPath), basename(documentPath), (error) => setPrintError(describe(error).text))}
-              onAuxClick={(event) => interceptDownload(event, filePath(item.jobId, documentPath), basename(documentPath), (error) => setPrintError(describe(error).text))}
-            >
-              <Icon name="DownloadSimple" size={13} />
-              <span class="btn-label">{t.downloadMd}</span>
-            </a>
-          )}
-        </div>
+        {pair && (active === "rendered" || active === "source") && (
+          <span class="seg" role="group" aria-label={t.versionAria}>
+            {(["base", "llm"] as const).map((value) => (
+              <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => doc.setVersion(value)}>
+                {value === "base" ? t.baseTag : t.llmTag}
+              </button>
+            ))}
+          </span>
+        )}
       </div>
-      {printError && (
-        <p class="viewer-alert line-error" role="alert">
-          {printError}
-        </p>
-      )}
 
-      <div id="pane-rendered" role="tabpanel" aria-labelledby="tab-rendered" class="pane" tabIndex={0} hidden={tab !== "rendered"}>
+      <div id={`${prefix}-pane-rendered`} role="tabpanel" aria-labelledby={`${prefix}-tab-rendered`} class="pane" tabIndex={0} hidden={active !== "rendered"}>
         {markdown === null || renderError ? (
-          note(failure ?? renderError)
+          note(failure)
         ) : (
           <div ref={printable} class="pdf-doc">
             <div class="print-head" aria-hidden="true">
@@ -335,59 +317,59 @@ export function MarkdownView({
               <span class="print-title">{docName}</span>
             </div>
             <div class="doc">
-              <p class="doc-meta">
-                {item.name}
-                {date !== null && ` · ${date}`}
-                {versionLabel !== null && ` · ${versionLabel}`}
-              </p>
+              {notices.length > 0 && (
+                <details class="doc-notices">
+                  <summary>
+                    <Icon name="Warning" size={14} />
+                    <span>{t.noticesHeading(notices.reduce((sum, group) => sum + group.count, 0))}</span>
+                    <span class="doc-notices-first">{t.noticeTitle(notices[0]?.kind ?? "other", notices[0]?.count ?? 0, notices[0]?.models ?? [], notices[0]?.sample ?? "")}</span>
+                  </summary>
+                  <ul>
+                    {notices.map((group) => (
+                      <li key={group.key}>
+                        {t.noticeTitle(group.kind, group.count, group.models, group.sample)}
+                        {group.kind === "other" && group.count > 1 && ` ×${group.count}`}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {front && (front.title || front.description || front.tags.length > 0) && <FrontCard front={front} />}
               <div ref={body} class="doc-body" onClick={onDocumentLink} onAuxClick={onDocumentLink} />
+              {Object.entries(expanding).map(([key, from]) => {
+                const index = Number(key);
+                const table = capped.current[index];
+                const bar = capHosts.current[index];
+                if (!table || !bar?.isConnected) return null;
+                return (
+                  <CapBar key={key} t={t} words={words} host={bar} total={table.total} shown={from < 0 ? ROW_LIMIT : from} busy={from >= 0 && from < table.total} onShowAll={() => void showAll(index)} onSource={() => onTab("source")} />
+                );
+              })}
             </div>
             <div class="print-foot" aria-hidden="true">
               <span>{t.pdfPreparedBy}</span>
               <span class="print-source">
                 {t.pdfSource}: {item.name}
-                {date !== null && ` · ${date}`}
+                {createdAt !== null && ` · ${createdAt.slice(0, 10)}`}
               </span>
             </div>
           </div>
         )}
       </div>
 
-      <div id="pane-source" role="tabpanel" aria-labelledby="tab-source" class="pane" hidden={tab !== "source"}>
+      <div id={`${prefix}-pane-source`} role="tabpanel" aria-labelledby={`${prefix}-tab-source`} class="pane is-source" tabIndex={0} hidden={active !== "source"}>
         {markdown === null || split === null ? (
           note(failure)
         ) : (
-          <div class="source-wrap">
-            <div class="terminal">
-              <div class="terminal-head">
-                <span class="terminal-name">
-                  {basename(documentPath || item.name)}
-                  {meta && ` · ${fmtBytes(meta.bytes)} · utf-8`}
-                </span>
-                <button
-                  type="button"
-                  class="pill-btn"
-                  onClick={() =>
-                    void copyText(markdown).then((ok) => {
-                      setCopied(ok ? "copied" : "failed");
-                      announce(ok ? t.copied : t.copyFailed);
-                    })
-                  }
-                >
-                  {copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : t.copy}
-                </button>
-              </div>
-              <pre tabIndex={0} aria-label={t.srcAria}>
-                {split.frontmatter !== null && <span class="fm">{split.frontmatter}</span>}
-                {split.body}
-              </pre>
-            </div>
-          </div>
+          <pre class="source" aria-label={t.srcAria}>
+            {split.frontmatter !== null && <span class="fm">{split.frontmatter}</span>}
+            {split.body}
+          </pre>
         )}
       </div>
 
-      {pair && (
-        <div id="pane-diff" role="tabpanel" aria-labelledby="tab-diff" class="pane" tabIndex={0} hidden={tab !== "diff"}>
+      {!compact && pair && (
+        <div id={`${prefix}-pane-diff`} role="tabpanel" aria-labelledby={`${prefix}-tab-diff`} class="pane" tabIndex={0} hidden={active !== "diff"}>
           {diff === null ? (
             note(null)
           ) : diff.kind === "error" ? (
@@ -419,50 +401,83 @@ export function MarkdownView({
         </div>
       )}
 
-      <div id="pane-files" role="tabpanel" aria-labelledby="tab-files" class="pane" tabIndex={0} hidden={tab !== "files"}>
-        {result === null ? (
-          note(loadError)
-        ) : result.artifacts.length === 0 ? (
-          <p class="pane-note">{t.filesNone}</p>
-        ) : (
-          <ul class="file-list" aria-label={t.filesAria}>
-            {result.artifacts.map((artifact) => (
-              <li key={artifact.relpath}>
-                <Icon name="FileText" size={14} />
-                <span class="file-path" title={artifact.relpath}>
-                  {artifact.relpath}
-                </span>
-                <span class="file-size">{fmtBytes(artifact.size)}</span>
-                <a
-                  class="row-icon"
-                  href={filePath(item.jobId, artifact.relpath)}
-                  download={basename(artifact.relpath)}
-                  aria-label={t.downloadFile(artifact.relpath)}
-                  title={artifact.relpath}
-                  onClick={(event) =>
-                    interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => setPrintError(describe(error).text))
-                  }
-                  onAuxClick={(event) =>
-                    interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => setPrintError(describe(error).text))
-                  }
-                >
-                  <Icon name="DownloadSimple" size={15} />
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      {pair && VERSION_TABS.includes(tab) && (
-        <span class="seg viewer-version" role="group" aria-label={t.versionAria}>
-          {(["base", "llm"] as const).map((value) => (
-            <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => setVersion(value)}>
-              <Icon name={value === "base" ? "FileText" : "MagicWand"} size={12} />
-              {value === "base" ? t.baseTag : t.llmTag}
-            </button>
-          ))}
-        </span>
+      {!compact && (
+        <div id={`${prefix}-pane-files`} role="tabpanel" aria-labelledby={`${prefix}-tab-files`} class="pane" tabIndex={0} hidden={active !== "files"}>
+          {result === null ? (
+            note(doc.error)
+          ) : result.artifacts.length === 0 ? (
+            <p class="pane-note">{t.filesNone}</p>
+          ) : (
+            <ul class="file-list" aria-label={t.filesAria}>
+              {result.artifacts.map((artifact) => (
+                <li key={artifact.relpath}>
+                  <Icon name={/\.(png|jpe?g|gif|webp|avif|svg)$/i.test(artifact.relpath) ? "Image" : "FileText"} size={14} />
+                  <span class="file-path" title={artifact.relpath}>
+                    {artifact.relpath}
+                  </span>
+                  <span class="file-size">{fmtBytes(artifact.size)}</span>
+                  <a
+                    class="icon-btn"
+                    href={filePath(item.jobId, artifact.relpath)}
+                    download={basename(artifact.relpath)}
+                    aria-label={t.downloadFile(artifact.relpath)}
+                    title={t.downloadFile(artifact.relpath)}
+                    onClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => onError?.(describe(error).text))}
+                    onAuxClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => onError?.(describe(error).text))}
+                  >
+                    <Icon name="DownloadSimple" size={15} />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );
+}
+
+/** The caption under a capped table, drawn into the placeholder the renderer left there. */
+function CapBar({
+  t,
+  words,
+  host,
+  total,
+  shown,
+  busy,
+  onShowAll,
+  onSource,
+}: {
+  t: Dict;
+  words: Intl.NumberFormat;
+  host: HTMLElement;
+  total: number;
+  shown: number;
+  busy: boolean;
+  onShowAll: () => void;
+  onSource: () => void;
+}) {
+  const [, setTick] = useState(0);
+  useEffect(() => setTick((value) => value + 1), [host]);
+  const complete = shown >= total;
+  const content = (
+    <>
+      <span role="status">{complete ? t.tableAllShown(words.format(total)) : t.tableCapped(words.format(Math.min(shown, total)), words.format(total))}</span>
+      {!complete && (
+        <>
+          <button type="button" class="btn btn-sm" disabled={busy} aria-busy={busy || undefined} onClick={onShowAll}>
+            {busy ? t.tableShowing : t.tableShowAll}
+          </button>
+          <button type="button" class="text-link" onClick={onSource}>
+            {t.tableOpenSource}
+          </button>
+        </>
+      )}
+    </>
+  );
+  return <Portal host={host}>{content}</Portal>;
+}
+
+function Portal({ host, children }: { host: HTMLElement; children: ComponentChildren }) {
+  return createPortal(children, host);
 }

@@ -1,5 +1,5 @@
-// Model settings, as a 760px dialog with a breadcrumb: the configured models,
-// then Add models → provider → model catalogue. A model row's Edit opens the
+// Model settings, as a page with a breadcrumb: the configured models, then
+// Add models → provider → model catalogue. A model row's Edit opens the
 // provider's page the same way. Escape steps back one level.
 // Every write carries the revision this draft started from; a conflict keeps
 // the draft and reloads the lists, and the person decides to use the new revision.
@@ -19,7 +19,6 @@ import {
 } from "../api/client.ts";
 import type { Deployment, DiscoveryResult, NewDeployment, ProviderCard, SettingsView } from "../api/types.ts";
 import { NARROW, useMedia } from "../hooks/use-media.ts";
-import { useModal } from "../hooks/use-modal.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { endpointFor, sameEndpoint } from "../lib/models.ts";
@@ -36,10 +35,8 @@ import {
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker } from "./model-picker.tsx";
-import { Notification, type NotificationModel } from "./notification.tsx";
 import { manageable, providerLabel, ProviderPicker } from "./provider-picker.tsx";
 
-const EXIT_MS = 120;
 type Described = { text: string; detail: string };
 
 function Secret({
@@ -89,25 +86,29 @@ function Secret({
   );
 }
 
-export function SettingsModal({
+interface TestNote {
+  tone: "success" | "error";
+  title: string;
+  message: string;
+  detail?: string;
+}
+
+export function ModelsSettings({
   t,
   locale,
-  onClose,
   onSaved,
   announce,
   describe,
 }: {
   t: Dict;
   locale: Locale;
-  onClose: () => void;
   onSaved: () => void;
   announce: (message: string) => void;
   describe: (error: unknown) => Described;
 }) {
-  const card = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
   const narrow = useMedia(NARROW);
-  const [closing, setClosing] = useState(false);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [providers, setProviders] = useState<ProviderCard[]>([]);
@@ -117,12 +118,6 @@ export function SettingsModal({
   const [conflict, setConflict] = useState(false);
   const [listError, setListError] = useState<Described | null>(null);
   const [listNote, setListNote] = useState<string | null>(null);
-
-  const requestClose = useCallback(() => {
-    if (closing) return;
-    setClosing(true);
-    setTimeout(onClose, EXIT_MS);
-  }, [closing, onClose]);
 
   const refreshProviders = useCallback(async (refresh = false): Promise<ProviderCard[] | null> => {
     try {
@@ -188,7 +183,7 @@ export function SettingsModal({
 
   // ---- model rows: test, edit, delete, save detected
   const [tests, setTests] = useState<Record<string, "busy" | "ok" | "fail">>({});
-  const [testNote, setTestNote] = useState<NotificationModel | null>(null);
+  const [testNote, setTestNote] = useState<TestNote | null>(null);
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), []);
   const settle = (id: string, state: "ok" | "fail") => {
@@ -423,7 +418,8 @@ export function SettingsModal({
   };
   const focusHeading = () => requestAnimationFrame(() => card.current?.querySelector<HTMLElement>("#settings-title")?.focus());
 
-  useModal(card, () => {
+  // Escape steps back one level: an open form, then the provider, then Add models.
+  const stepBack = () => {
     if (connMode !== null) {
       // An open key or address form closes first; its toggle takes the focus back.
       const toggle = card.current?.querySelector<HTMLElement>(`[aria-controls="conn-${connMode}-form"]`);
@@ -435,8 +431,9 @@ export function SettingsModal({
     } else if (adding) {
       resetAdd();
       focusHeading();
-    } else requestClose();
-  });
+    } else return false;
+    return true;
+  };
 
   const choose = (next: ProviderCard, focus = "#settings-title") => {
     setProvider(next);
@@ -683,9 +680,9 @@ export function SettingsModal({
 
   const connection = saved && (
     <section class="connection" aria-labelledby="connection-title" aria-busy={connBusy || undefined}>
-      <h3 id="connection-title" class="group-title" tabIndex={-1}>
+      <h2 id="connection-title" class="group-title" tabIndex={-1}>
         {t.connectionTitle}
-      </h3>
+      </h2>
       {conn === null ? (
         <p class={connFailed ? "line-error" : "dialog-dim"}>{connFailed ? t.providersLoadFailed : t.loading}</p>
       ) : (
@@ -826,59 +823,63 @@ export function SettingsModal({
 
 
   return (
-    <div
-      class={closing ? "veil is-leaving" : "veil"}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) requestClose();
+    <section
+      ref={card}
+      class="settings-page"
+      aria-labelledby="settings-title"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.defaultPrevented || document.querySelector(".confirm-card")) return;
+        if (stepBack()) event.preventDefault();
       }}
     >
-      {testNote && (
-        <Notification
-          note={testNote}
-          closeLabel={t.close}
-          onClose={() => {
-            clearTimeout(timers.current.note);
-            setTestNote(null);
-          }}
-        />
-      )}
-      <div ref={card} class="dialog dialog-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1}>
-        <div class="dialog-head">
+        <div class="page-head settings-head">
           <nav class="crumbs" aria-label={t.breadcrumbAria}>
             {adding ? (
               <>
                 <button type="button" onClick={resetAdd}>
-                  {t.settingsTitle}
+                  {t.navModels}
                 </button>
                 <span aria-hidden="true">/</span>
                 {provider === null ? (
-                  <h2 id="settings-title" tabIndex={-1}>
+                  <h1 id="settings-title" tabIndex={-1}>
                     {t.addModels}
-                  </h2>
+                  </h1>
                 ) : (
                   <>
                     <button type="button" onClick={backToProviders}>
                       {t.addModels}
                     </button>
                     <span aria-hidden="true">/</span>
-                    <h2 id="settings-title" tabIndex={-1}>
+                    <h1 id="settings-title" tabIndex={-1}>
                       {label}
-                    </h2>
+                    </h1>
                   </>
                 )}
               </>
             ) : (
-              <h2 id="settings-title" tabIndex={-1}>
-                {t.settingsTitle}
-              </h2>
+              <h1 id="settings-title" tabIndex={-1}>
+                {t.navModels}
+              </h1>
             )}
           </nav>
-          <button type="button" class="icon-btn" aria-label={t.close} title={t.close} onClick={requestClose}>
-            <Icon name="X" size={16} />
-          </button>
         </div>
+        {testNote && (
+          <p class={testNote.tone === "error" ? "settings-status line-error" : "settings-status line-note"} role={testNote.tone === "error" ? "alert" : "status"} title={testNote.detail || undefined}>
+            <strong>{testNote.title}</strong> · {testNote.message}
+            <button
+              type="button"
+              class="text-link"
+              onClick={() => {
+                clearTimeout(timers.current.note);
+                setTestNote(null);
+              }}
+            >
+              {t.dismiss}
+            </button>
+          </p>
+        )}
 
-        <div class="dialog-body">
+        <div class="settings-body">
           {settings === null ? (
             <p class={loadError ? "line-error" : "dialog-dim"}>{loadError ? describe(loadError).text : t.loading}</p>
           ) : adding ? (
@@ -913,7 +914,7 @@ export function SettingsModal({
                 <section class="provider-detail">
                   <div class="provider-detail-head">
                     <div class="provider-detail-copy">
-                      <h3 class="group-title">{autoLoads ? t.modelCatalogTitle : t.connectProviderTitle(label)}</h3>
+                      <h2 class="group-title">{autoLoads ? t.modelCatalogTitle : t.connectProviderTitle(label)}</h2>
                       <p>{t.providerDetailHint(provider.kind, provider.provider, provider.source, { local, manualOnly, needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom" })}</p>
                       {(provider.kind === "common" || provider.kind === "compatible") && (provider.default_base || provider.key_variable) && (
                         <p class="provider-facts">
@@ -1036,7 +1037,7 @@ export function SettingsModal({
               )}
               {settings.detected.length > 0 && (
                 <section class="detected">
-                  <h3 class="group-title">{t.detectedSession}</h3>
+                  <h2 class="group-title">{t.detectedSession}</h2>
                   <div class="model-rows">{settings.detected.map((deployment) => modelRow(deployment, true))}</div>
                 </section>
               )}
@@ -1046,12 +1047,11 @@ export function SettingsModal({
           {!footer && status}
         </div>
         {footer && (
-          <div class="dialog-foot">
+          <div class="settings-foot">
             {status}
             {footer}
           </div>
         )}
-      </div>
-    </div>
+    </section>
   );
 }

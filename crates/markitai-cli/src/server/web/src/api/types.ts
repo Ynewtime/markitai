@@ -194,6 +194,7 @@ export interface Capabilities {
   limits: { max_job_items: number; history_retention_days?: number | null };
   implementation?: "rust" | "python";
   docs_url?: string;
+  /** This backend's source repository, for the sidebar's link. */
   source_url?: string;
   features?: Features;
 }
@@ -287,6 +288,8 @@ export interface ProviderCredentials {
   api_key: string | null;
   /** "environment" when the key was found in the environment rather than the configuration. */
   api_key_source?: string | null;
+  /** Python 1.2's name for the same display value; read when `api_key` is absent. */
+  api_key_masked?: string | null;
   api_base: string | null;
   api_base_placeholder: string | null;
 }

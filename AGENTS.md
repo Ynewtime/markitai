@@ -50,8 +50,13 @@ sh docs/validation/drivers/windows-check-round38/check-windows.sh clippy -- -D w
 - For pdf-inspector changes, rsync to `.local/pdf-backlog-r1/vendor-copy`, touch
   each source file, run its own suite and match the exact 21 failed names in
   `.local/pdf-backlog-r1/failures-r129.txt`. Do not accept stale Cargo results.
-- UI changes preserve the reference webapp design. Run `npm ci` and
-  `node build.mjs`, and commit generated `dist/` with the change.
+- The shared workbench design lives here (owner decision, 2026-10-11):
+  `crates/markitai-cli/src/server/web/` is the one frontend both this server and
+  Python markitai serve, through the API contract in [web UI](docs/web-ui.md)
+  and `openapi.json`. UI changes keep that design and contract working against
+  both backends. Run `npm ci` and `node build.mjs`, commit generated `dist/`
+  with the change, and package it for the other backend with
+  `node scripts/package.mjs OUTDIR`.
 - Retrieve full CI logs with `gh api repos/Ynewtime/markitai-rust/actions/jobs/<id>/logs
   --allow-escape-sequences`, never truncated `gh run view --log`. Verify the exact
   commit, attempt and expected jobs. Do not restart a watcher or dispatch another

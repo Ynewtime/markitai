@@ -3,9 +3,12 @@
 //   node build.mjs            write dist/
 //   node build.mjs --check    rebuild in memory and fail when dist/ differs
 //
-// Outputs: app.js and app.css (minified, with .gz twins served to gzip clients),
-// gzip copies of the vendored marked/DOMPurify modules, the static shell files,
-// and manifest.json (sizes, SHA-256, tool versions and a digest of the sources,
+// Outputs: app.js, app.css, highlight.js and the i18n-zh.js / i18n-ja.js
+// language packs (minified, with .gz twins served to gzip clients;
+// highlight.js loads only when a preview shows code, a pack only for a reader
+// of that language), gzip copies
+// of the vendored marked/DOMPurify modules, the static shell files, and
+// manifest.json (sizes, SHA-256, tool versions and a digest of the sources,
 // which scripts/test_web_dist.py checks without Node).
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -79,8 +82,11 @@ async function build() {
   const outputs = new Map();
   outputs.set("app.js", await bundle("src/main.tsx", { format: "esm", jsx: "automatic", jsxImportSource: "preact" }));
   outputs.set("app.css", await bundle("src/styles/app.css", { loader: { ".css": "css" } }));
+  outputs.set("highlight.js", await bundle("src/highlight/main.ts", { format: "esm" }));
+  // Language packs: data only, loaded for a reader of that language.
+  for (const locale of ["zh", "ja"]) outputs.set(`i18n-${locale}.js`, await bundle(`src/i18n/pack-${locale}.ts`, { format: "esm" }));
   for (const name of ["index.html", "boot.js", "logo.svg"]) outputs.set(name, readFileSync(join(here, "public", name)));
-  for (const name of ["app.js", "app.css"]) outputs.set(`${name}.gz`, gzip(outputs.get(name)));
+  for (const name of ["app.js", "app.css", "highlight.js", "i18n-zh.js", "i18n-ja.js"]) outputs.set(`${name}.gz`, gzip(outputs.get(name)));
   for (const name of ["marked.js", "purify.js"]) outputs.set(`${name}.gz`, gzip(readFileSync(join(vendor, name))));
   const version = (name) => JSON.parse(readFileSync(join(here, "node_modules", name, "package.json"), "utf8")).version;
   const manifest = {
@@ -122,5 +128,5 @@ if (check) {
   mkdirSync(dist, { recursive: true });
   for (const [name, bytes] of outputs) writeFileSync(join(dist, name), bytes);
   const size = (name) => `${name} ${outputs.get(name).length} B`;
-  console.log(["app.js", "app.js.gz", "app.css", "app.css.gz", "marked.js.gz", "purify.js.gz"].map(size).join(" · "));
+  console.log(["app.js", "app.js.gz", "app.css", "app.css.gz", "highlight.js.gz", "i18n-zh.js.gz", "i18n-ja.js.gz", "marked.js.gz", "purify.js.gz"].map(size).join(" · "));
 }

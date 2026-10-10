@@ -3,7 +3,6 @@
 import type {
   AttemptDiagnostics,
   RemoteProcessing,
-  HistoryEntry,
   ItemKind,
   ItemPayload,
   ItemStatus,
@@ -15,7 +14,6 @@ import type {
 } from "../api/types.ts";
 import { publicOptions } from "./options.ts";
 import { isUnsupported } from "../i18n/errors.ts";
-import { displayName, timestampMs } from "./format.ts";
 
 /** A terminal fetch can outlive its stream or a user's next attempt. */
 export async function settleCurrentJobSnapshot(
@@ -55,7 +53,9 @@ export interface SessionItem {
   warnings: string[];
   remoteProcessing?: RemoteProcessing | null;
   options?: JobOptions;
-  /** Upload size known to this tab (files only). */
+  /** Models that produced the retained result (newer backends). */
+  models: string[];
+  /** Upload size: reported by the backend, else known to this tab (files only). */
   sizeBytes: number | null;
   /** When this tab first saw the item running, for the live timer. */
   startedAt: number | null;
@@ -101,6 +101,7 @@ export function seedItem(jobId: string, seed: Seed): SessionItem {
     skipReason: null,
     retryable: true,
     warnings: [],
+    models: [],
     sizeBytes: seed.sizeBytes,
     startedAt: null,
   };
@@ -136,6 +137,8 @@ export function mergeItem(previous: SessionItem, payload: ItemPayload, now: numb
     skipReason: stopped ? "user_stopped" : payload.skip_reason,
     retryable: payload.retryable,
     warnings: payload.warnings ?? [],
+    models: Array.isArray(payload.models) ? payload.models.filter((model) => typeof model === "string") : previous.models,
+    sizeBytes: typeof payload.source_size === "number" ? payload.source_size : previous.sizeBytes,
     startedAt,
   };
 }
@@ -163,6 +166,7 @@ export function requeued(item: SessionItem, operation: "retry" | "enhance"): Ses
     skipped: false,
     skipReason: null,
     warnings: [],
+    models: [],
     startedAt: null,
   };
 }
@@ -237,114 +241,12 @@ export function canRetry(item: SessionItem): boolean {
 export const failedToRetry = (items: SessionItem[]): SessionItem[] => items.filter((item) => (item.status === "error" || item.status === "done" && item.skipped && item.skipReason === "user_stopped") && canRetry(item));
 
 /** Original items still waiting for a conversion slot: what Stop remaining can stop. */
-export function waitingJobs(items: SessionItem[], jobs: Record<string, SessionJob>): string[] {
+export function waitingJobs(items: SessionItem[], jobs: Record<string, { status: JobStatus }>): string[] {
   const ids = new Set<string>();
   for (const item of items) {
     if (item.status === "queued" && item.operation === "convert" && jobs[item.jobId]?.status === "running") ids.add(item.jobId);
   }
   return [...ids];
-}
-
-export type LedgerRow =
-  | { kind: "session"; key: string; item: SessionItem }
-  // One submission that carried several items: a folder, several files, a URL
-  // list or a batch of URLs. It reads as one row and opens into its items.
-  | { kind: "group"; key: string; jobId: string; items: SessionItem[]; label: string | null }
-  | { kind: "archive"; key: string; entry: HistoryEntry };
-
-/** The rows a group shows when it is open. */
-export function groupItemRows(row: Extract<LedgerRow, { kind: "group" }>): LedgerRow[] {
-  return row.items.map((item) => ({ kind: "session" as const, key: item.key, item }));
-}
-
-/** What a submitted batch is called in the ledger: the folder or URL list it
- * came from. A batch that named nothing reads as the batch itself — its job id —
- * rather than as one file that happens to be inside it; the count says how many
- * items it holds. */
-export function groupLabel(label: string | null | undefined, jobId: string): string {
-  return label?.trim() || jobId;
-}
-
-function activity(items: SessionItem[], createdAt: string | null | undefined): number {
-  if (items.some(isActive)) return Number.POSITIVE_INFINITY;
-  let latest: number | null = null;
-  for (const item of items) {
-    const at = timestampMs(item.finishedAt);
-    if (at !== null && (latest === null || at > latest)) latest = at;
-  }
-  return latest ?? timestampMs(createdAt) ?? 0;
-}
-
-/** One chronological ledger: jobs ordered by their latest activity (running
- * first), items inside a job in input order, saved jobs folded in by the same rule. */
-export function mergeLedger(items: SessionItem[], jobs: Record<string, SessionJob>, archive: HistoryEntry[]): LedgerRow[] {
-  const groups = new Map<string, SessionItem[]>();
-  for (const item of items) {
-    const group = groups.get(item.jobId);
-    if (group) group.push(item);
-    else groups.set(item.jobId, [item]);
-  }
-  interface Group {
-    jobId: string;
-    at: number;
-    created: number;
-    rows: LedgerRow[];
-  }
-  const ordered: Group[] = [];
-  for (const [jobId, group] of groups) {
-    const createdAt = jobs[jobId]?.createdAt ?? null;
-    const rows: LedgerRow[] =
-      group.length > 1
-        ? [{ kind: "group", key: `group:${jobId}`, jobId, items: group, label: jobs[jobId]?.label ?? null }]
-        : group.map((item) => ({ kind: "session", key: item.key, item }));
-    ordered.push({
-      jobId,
-      at: activity(group, createdAt),
-      created: createdAt === null ? Number.POSITIVE_INFINITY : (timestampMs(createdAt) ?? 0),
-      rows,
-    });
-  }
-  for (const entry of archive) {
-    // A job briefly in both stores during a retry shows once, as the live row.
-    if (groups.has(entry.job_id)) continue;
-    ordered.push({
-      jobId: entry.job_id,
-      at: timestampMs(entry.finished_at) ?? timestampMs(entry.created_at) ?? 0,
-      created: timestampMs(entry.created_at) ?? 0,
-      rows: [{ kind: "archive", key: `archive:${entry.job_id}`, entry }],
-    });
-  }
-  ordered.sort((left, right) => right.at - left.at || right.created - left.created || left.jobId.localeCompare(right.jobId));
-  return ordered.flatMap((group) => group.rows);
-}
-
-export type StatusFilter = "all" | "done" | "failed" | "skipped";
-export const STATUS_FILTERS: StatusFilter[] = ["all", "done", "failed", "skipped"];
-
-export function rowMatches(row: LedgerRow, filter: StatusFilter, query: string): boolean {
-  const needle = query.trim().toLowerCase();
-  if (row.kind === "group") {
-    // A group matches when any of its items does, and opens to show them.
-    return row.items.some((item) =>
-      rowMatches({ kind: "session", key: item.key, item }, filter, query),
-    ) || (!needle && filter === "all");
-  }
-  if (row.kind === "session") {
-    const item = row.item;
-    const status =
-      filter === "all" ||
-      (filter === "done" && item.status === "done" && !item.skipped) ||
-      (filter === "failed" && item.status === "error") ||
-      (filter === "skipped" && item.status === "done" && item.skipped);
-    return status && (!needle || displayName(item.name).toLowerCase().includes(needle));
-  }
-  const entry = row.entry;
-  const status =
-    filter === "all" ||
-    (filter === "done" && entry.done - entry.skipped > 0) ||
-    (filter === "failed" && entry.failed > 0) ||
-    (filter === "skipped" && entry.skipped > 0);
-  return status && (!needle || entry.names_preview.some((name) => displayName(name).toLowerCase().includes(needle)));
 }
 
 /** Session seeds survive a reload in sessionStorage; the service is asked for the rest. */
