@@ -31,6 +31,31 @@ def test_onboarding_only_ever_picks_the_declared_defaults() -> None:
     ]
 
 
+def _models(detected: list[tuple[str, bool]]) -> list[str]:
+    from markitai.cli.commands.init import _build_config
+
+    config = _build_config(detected)
+    return [
+        e["litellm_params"]["model"]
+        for e in config.get("llm", {}).get("model_list", [])
+    ]
+
+
+def test_openrouter_is_skipped_where_claude_haiku_is_reached_directly() -> None:
+    """Its default is Claude Haiku too: one route to the same model is enough."""
+    openrouter = PROVIDER_DEFAULT_MODELS["openrouter"]
+
+    assert openrouter not in _models(
+        [("Anthropic API", True), ("OpenRouter API", True)]
+    )
+    assert openrouter not in _models([("Claude CLI", True), ("OpenRouter API", True)])
+    assert _models([("Google Gemini API", True), ("OpenRouter API", True)]) == [
+        PROVIDER_DEFAULT_MODELS["gemini"],
+        openrouter,
+    ]
+    assert _models([("OpenRouter API", True)]) == [openrouter]
+
+
 class TestInitAtomicWrites:
     """Tests that init command uses atomic writes for file operations."""
 

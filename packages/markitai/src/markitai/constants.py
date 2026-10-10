@@ -350,7 +350,10 @@ PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     "openai": "openai/gpt-6-luna",
     "gemini": "gemini/gemini-flash-lite-latest",
     "deepseek": "deepseek/deepseek-flash",
-    "openrouter": "openrouter/google/gemini-3.5-flash-lite",
+    # OpenRouter's moving alias for the newest Claude Haiku ("~" marks its
+    # aliases). On 2026-10-10 its catalog named Haiku 5.5, but requests were
+    # still served and billed as Haiku 4.5 (see markitai.model_catalog)
+    "openrouter": "openrouter/~anthropic/claude-haiku-latest",
 }
 
 

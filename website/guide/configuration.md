@@ -287,9 +287,9 @@ Model names follow LiteLLM's `provider/model` form:
 | OpenAI | `openai/gpt-6-luna` |
 | Gemini | `gemini/gemini-flash-lite-latest` |
 | DeepSeek | `deepseek/deepseek-flash` |
-| OpenRouter | `openrouter/google/gemini-3.5-flash-lite` |
+| OpenRouter | `openrouter/~anthropic/claude-haiku-latest` |
 
-Set `model_list` to use anything else. `copilot/auto` is Copilot's Auto model selection, the only choice on Copilot Free and Student plans; it is billed at the rate of the model it picks. On a paid plan, name a model to pin it (for example `copilot/claude-haiku-5.5`). A model the provider has retired only produces a startup warning; markitai never rewrites your choice.
+Set `model_list` to use anything else. `copilot/auto` is Copilot's Auto model selection, the only choice on Copilot Free and Student plans; it is billed at the rate of the model it picks. On a paid plan, name a model to pin it (for example `copilot/claude-haiku-5.5`). `openrouter/~anthropic/claude-haiku-latest` is OpenRouter's alias for its newest Claude Haiku and is billed at what OpenRouter charges for the model that answers; set `openrouter/anthropic/claude-haiku-5.5` to pin one. A model the provider has retired only produces a startup warning; markitai never rewrites your choice.
 
 When the detection finds more than one provider, markitai does not pick one. Every provider it finds joins one pool, and requests are spread across the pool, so one run can send documents, or chunks of a long document, to different vendors. markitai lists the models on stderr at startup, even without `-v`; only `--quiet` hides that notice. To use a single model, set `MODEL=<provider/model>` or `llm.model_list`.
 
