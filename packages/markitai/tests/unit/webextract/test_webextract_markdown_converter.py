@@ -325,3 +325,39 @@ class TestLanguageAllowlist:
         html = '<pre><code class="python-code">print(1)</code></pre>'
         md = _convert(html)
         assert "```python" in md
+
+
+class TestInlineSvg:
+    """Labelled drawings stay as markup; label-less ones (icons) are dropped."""
+
+    def test_a_chart_with_labels_is_kept_as_markup(self) -> None:
+        md = _convert(
+            '<p>Before</p><svg viewBox="0 0 400 200"><path d="M0 0L9 9"/>'
+            '<text x="1" y="2">Jan.</text></svg><p>After</p>'
+        )
+        assert "<svg" in md and "Jan." in md
+
+    def test_an_icon_without_labels_is_dropped(self) -> None:
+        md = _convert(
+            '<p>Before</p><svg viewBox="0 0 40 40"><title>Star</title>'
+            '<path d="M0 0h40v40H0z"/></svg><p>After</p>'
+        )
+        assert "<svg" not in md and "path" not in md
+        assert "Before" in md and "After" in md
+
+    def test_an_embedded_raster_without_labels_is_dropped(self) -> None:
+        """cnbc.com wraps a 1.4 MB base64 PNG in a decorative SVG."""
+        md = _convert(
+            '<svg viewBox="0 0 383 83" width="383" height="83"><defs><pattern '
+            'id="p"><image href="data:image/png;base64,'
+            + "A" * 5000
+            + '"/></pattern></defs><rect fill="url(#p)"/></svg><p>Story</p>'
+        )
+        assert md == "Story"
+
+    def test_text_in_a_foreign_object_counts_as_a_label(self) -> None:
+        md = _convert(
+            '<svg viewBox="0 0 100 50"><foreignObject width="100" height="50">'
+            "<div>Step one</div></foreignObject></svg>"
+        )
+        assert "<svg" in md and "Step one" in md
