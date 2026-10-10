@@ -340,3 +340,50 @@ class TestLogUrlRedaction:
         # ``token=...`` pair with REDACTED; either way the path stays readable.
         assert "/api/jobs/abc/files/out.md?download=1&" in content
         assert "mk_SECRET123" not in content
+
+
+class TestMarkedConsoleSink:
+    """Run warnings read like every other status line (terminal style guide)."""
+
+    def _emit(self, monkeypatch, level: str, text: str, *, tty: bool) -> str:
+        import io
+
+        from loguru import logger
+        from rich.console import Console
+
+        from markitai.cli import logging_config
+        from markitai.utils import term
+
+        buf = io.StringIO()
+        console = (
+            Console(file=buf, force_terminal=True, width=40, color_system=None)
+            if tty
+            else term._SoftWrapConsole(file=buf, width=40)
+        )
+        monkeypatch.setattr("markitai.cli.console.get_stderr_console", lambda: console)
+        sink = logger.add(
+            logging_config._marked_console_sink,
+            format="<level>{message}</level>",
+            colorize=True,
+        )
+        try:
+            logger.log(level, text)
+        finally:
+            logger.remove(sink)
+        return buf.getvalue()
+
+    def test_warning_is_marked_and_one_line_when_piped(self, monkeypatch) -> None:
+        text = "[PDF] scan.pdf: 1 page looks scanned/garbled (page 1); consider --ocr"
+        out = self._emit(monkeypatch, "WARNING", text, tty=False)
+        assert out == f"  ! {text}\n"
+
+    def test_error_is_a_cross(self, monkeypatch) -> None:
+        out = self._emit(monkeypatch, "ERROR", "boom", tty=False)
+        assert out == "  ✗ boom\n"
+
+    def test_wraps_under_the_text_on_a_terminal(self, monkeypatch) -> None:
+        text = "[PDF] scan.pdf: 1 page looks scanned/garbled (page 1); consider --ocr"
+        lines = self._emit(monkeypatch, "WARNING", text, tty=True).splitlines()
+        assert lines[0].startswith("  ! [PDF]")
+        assert len(lines) > 1
+        assert all(line.startswith("    ") for line in lines[1:])
