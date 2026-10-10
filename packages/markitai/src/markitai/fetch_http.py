@@ -19,6 +19,34 @@ MAX_RESPONSE_BYTES = MAX_DOCUMENT_SIZE
 # Responses that carry no body, whatever their Content-Length says.
 _BODYLESS_STATUSES = (204, 304)
 
+#: Contact address named in the default User-Agent. Sites that publish a
+#: User-Agent policy (Wikimedia) ask automated clients for one. The project
+#: page is also accepted by bot filters that reset connections from agents
+#: naming any other URL (Akamai on npr.org did, for markitai.dev).
+_USER_AGENT_CONTACT = "https://github.com/Ynewtime/markitai"
+
+#: Headers of a desktop Chrome request, for one retry after a site refused
+#: the descriptive agent (401/403): some sites only serve browsers.
+BROWSER_REQUEST_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def default_user_agent() -> str:
+    """User-Agent of markitai's static fetches: name, version and contact.
+
+    Generic library agents are refused by many sites (Wikipedia answers
+    ``python-httpx/x.y`` with 403), a descriptive one is served.
+    """
+    from markitai import __version__
+
+    return f"markitai/{__version__} (+{_USER_AGENT_CONTACT})"
+
 
 class ResponseTooLargeError(Exception):
     """A response body is larger than :data:`MAX_RESPONSE_BYTES`."""
@@ -78,7 +106,14 @@ _pending_close_tasks: set[Any] = set()
 def _public_http_client(proxy: str | None, timeout: float) -> Any:
     import httpx
 
-    return httpx.AsyncClient(trust_env=False, proxy=proxy, timeout=timeout)
+    # A User-Agent in the request headers (the browser's own, an image
+    # download's) replaces this default.
+    return httpx.AsyncClient(
+        trust_env=False,
+        proxy=proxy,
+        timeout=timeout,
+        headers={"User-Agent": default_user_agent()},
+    )
 
 
 async def public_http_request(
@@ -308,7 +343,12 @@ class StaticHttpResponse:
 
 @runtime_checkable
 class StaticHttpClient(Protocol):
-    """Protocol for static HTTP clients."""
+    """Protocol for static HTTP clients.
+
+    A client sends :func:`default_user_agent` unless the request headers
+    carry their own User-Agent, or it impersonates a browser
+    (``impersonates_browser``), whose agent it sends instead.
+    """
 
     name: str
 
@@ -343,6 +383,7 @@ class HttpxClient:
     """
 
     name = "httpx"
+    impersonates_browser = False
 
     def __init__(self) -> None:
         # (effective proxy, event loop the client is bound to) -> client
@@ -377,6 +418,7 @@ class HttpxClient:
             "follow_redirects": True,
             "timeout": timeout_s,
             "limits": httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            "headers": {"User-Agent": default_user_agent()},
         }
         if proxy:
             client_kwargs["proxy"] = proxy
@@ -462,6 +504,8 @@ class CurlCffiClient:
     """
 
     name = "curl_cffi"
+    # Sends the impersonated Chrome's own User-Agent, not markitai's.
+    impersonates_browser = True
 
     def __init__(self) -> None:
         # (effective proxy, event loop the session is bound to) -> session

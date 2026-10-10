@@ -127,7 +127,7 @@ markitai 内置了 `x.com`、`twitter.com` 和 `github.com` 的配置。只有�
 
 ## 静态 HTTP 适配器
 
-静态策略用 httpx，绝大多数站点都没问题。若站点因为 TLS 指纹检测返回 403 或空内容，`auto` 会自己回退到 Playwright 或 Cloudflare。想不开浏览器就绕过指纹检测，换成 curl-cffi：
+静态策略用 httpx，绝大多数站点都没问题。它以 `markitai/<版本> (+https://github.com/Ynewtime/markitai)` 表明身份：维基百科等站点拒绝通用库的 User-Agent，但会响应这种说明来源的标识。站点仍然返回 401 或 403 时，会先用桌面浏览器的请求头重试一次，再交给 `auto` 的下一个策略。若站点因为 TLS 指纹检测返回 403 或空内容，`auto` 会自己回退到 Playwright 或 Cloudflare。想不开浏览器就绕过指纹检测，换成 curl-cffi（它发送所模拟 Chrome 自己的 User-Agent）：
 
 ```bash
 uv pip install markitai[extra-fetch]
