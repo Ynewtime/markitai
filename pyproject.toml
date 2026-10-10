@@ -131,6 +131,7 @@ source_modules = [
     "markitai.image",
     "markitai.json_order",
     "markitai.llm",
+    "markitai.model_catalog",
     "markitai.ocr",
     "markitai.ocr_layout",
     "markitai.output_profiles",

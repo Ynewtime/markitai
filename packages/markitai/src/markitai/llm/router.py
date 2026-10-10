@@ -288,6 +288,7 @@ class MarkitaiRouter:
         "copilot/gpt-4.1",  # GPT-4.1 series
         "copilot/gpt-4o",  # All GPT-4o variants (including mini)
         "copilot/gpt-5",  # GPT-5 series (gpt-5, gpt-5-mini, gpt-5.1* … gpt-5.6*)
+        "copilot/gpt-6",  # GPT-6 series (every current OpenAI model reads images)
         "copilot/raptor-",  # GitHub's fine-tuned GPT-5 mini (inherits vision)
     )
     # Note: copilot/gpt-3.5*, copilot/gpt-4 (non-4o/4.1), copilot/grok-* do

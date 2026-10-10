@@ -17,6 +17,10 @@ from litellm import completion_cost
 from loguru import logger
 
 from markitai.constants import DEFAULT_MAX_OUTPUT_TOKENS
+from markitai.model_catalog import register_missing_models
+
+# Every LLM path imports this module before it prices or sizes a request.
+register_missing_models()
 
 # Cache for model info to avoid repeated litellm queries
 _model_info_cache: dict[str, dict[str, Any]] = {}

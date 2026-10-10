@@ -336,18 +336,19 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
 #   - a provider-managed alias over a dated id wherever one exists, so a
 #     vendor's next release does not strand this table,
 #   - nothing an ordinary account cannot reach: limited-preview deployments
-#     (gpt-5.6-luna) may be configured by hand but are never chosen here.
+#     may be configured by hand but are never chosen here.
+# Reviewed 2026-10-10 against each provider's own model and pricing pages.
 PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     # Subscription / CLI providers (aliases; the CLI resolves the generation)
     "claude-agent": "claude-agent/sonnet",
-    "copilot": "copilot/claude-haiku-4.5",
-    "chatgpt": "chatgpt/gpt-5.6",
+    "copilot": "copilot/claude-haiku-5.5",
+    "chatgpt": "chatgpt/gpt-6-luna",
     # API-key providers
-    "anthropic": "anthropic/claude-haiku-4-5",
-    "openai": "openai/gpt-5.6-luna",
+    "anthropic": "anthropic/claude-haiku-5-5",
+    "openai": "openai/gpt-6-luna",
     "gemini": "gemini/gemini-flash-lite-latest",
     "deepseek": "deepseek/deepseek-flash",
-    "openrouter": "openrouter/google/gemini-3.1-flash-lite",
+    "openrouter": "openrouter/google/gemini-3.5-flash-lite",
 }
 
 

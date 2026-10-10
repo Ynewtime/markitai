@@ -40,7 +40,7 @@ Library calls keep `stdout` clean. Diagnostics go through [loguru](https://githu
 import os
 import markitai
 
-os.environ["MODEL"] = "openai/gpt-5.6-luna"  # or configure llm.model_list
+os.environ["MODEL"] = "openai/gpt-6-luna"  # or configure llm.model_list
 
 out = markitai.convert("report.pdf", output_dir="out/", llm=True)
 print(out.llm_markdown)  # enhanced body

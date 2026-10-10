@@ -129,7 +129,24 @@ class TestRetiredModelsConstant:
 class TestApiKeyProviderDefaults:
     """The API-key defaults must be in the LiteLLM catalog markitai ships."""
 
-    @pytest.mark.parametrize("provider", ["anthropic", "openai", "gemini", "deepseek"])
+    @pytest.mark.parametrize(
+        "model",
+        [
+            # 1.2.1's previous defaults: still served, so no warning
+            "openai/gpt-5.6-luna",
+            "anthropic/claude-haiku-4-5",
+            "copilot/claude-haiku-4.5",
+            "openrouter/google/gemini-3.1-flash-lite",
+        ],
+    )
+    def test_previous_defaults_are_not_reported_as_retired(self, model: str) -> None:
+        from markitai.providers import check_deprecated_models
+
+        assert check_deprecated_models([model]) == []
+
+    @pytest.mark.parametrize(
+        "provider", ["anthropic", "openai", "gemini", "deepseek", "openrouter"]
+    )
     def test_default_is_priced_in_the_bundled_cost_map(self, provider: str) -> None:
         import importlib
 
@@ -446,6 +463,14 @@ class TestEstimateModelCost:
         assert result.source == "litellm_fuzzy"
         assert result.matched_model == "claude-sonnet-4-6"
         assert result.cost_usd > 0
+
+    def test_a_repeated_component_must_be_matched_as_often(self) -> None:
+        """copilot/claude-haiku-5.5 was priced as claude-haiku-4-5 (10x)."""
+        from markitai.providers import _find_litellm_model_fuzzy, estimate_model_cost
+
+        assert _find_litellm_model_fuzzy("claude-haiku-5.5") == "claude-haiku-5-5"
+        result = estimate_model_cost("claude-haiku-5.5", 1_000_000, 1_000_000)
+        assert result.cost_usd == pytest.approx(0.10 + 0.50)
 
     def test_tier_suffix_is_never_dropped_on_the_way_to_a_price(self) -> None:
         """gpt-5.4-codex used to be priced as plain gpt-5.4."""

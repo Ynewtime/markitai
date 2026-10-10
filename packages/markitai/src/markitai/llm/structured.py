@@ -128,8 +128,9 @@ def _refuses_live_function_tools(model_id: str) -> bool:
     the model's default reasoning effort with HTTP 400 ("Function tools with
     reasoning_effort are not supported for gpt-5.6-luna in
     /v1/chat/completions. To use function tools, use /v1/responses or set
-    reasoning_effort to 'none'."), so every structured call to the default
-    OpenAI model spent one failed request before the JSON_SCHEMA rung. Only
+    reasoning_effort to 'none'."); gpt-6-luna documents the same limit. So
+    every structured call to the default OpenAI model spent one failed
+    request before the JSON_SCHEMA rung. Only
     the live ladder skips TOOLS: batches keep it and send
     ``reasoning_effort="none"`` (see ``markitai.llm.batch_api``).
     """

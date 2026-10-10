@@ -267,12 +267,12 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 
 模型按 LiteLLM 的 `provider/model` 命名：
 
-- `openai/gpt-5.6`
-- `anthropic/claude-sonnet-4-6`
+- `openai/gpt-6-luna`
+- `anthropic/claude-sonnet-5-5`
 - `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-flash`
 - `ollama/llama3.2`
-- `claude-agent/sonnet`、`copilot/gpt-5.6`、`chatgpt/gpt-5.6`（订阅制提供商）
+- `claude-agent/sonnet`、`copilot/claude-haiku-5.5`、`chatgpt/gpt-6-luna`（订阅制提供商）
 
 #### markitai 自动选用的默认模型
 
@@ -281,15 +281,15 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 | 提供商 | 默认模型 |
 |---|---|
 | Claude Code | `claude-agent/sonnet` |
-| GitHub Copilot | `copilot/claude-haiku-4.5` |
-| ChatGPT | `chatgpt/gpt-5.6` |
-| Anthropic | `anthropic/claude-haiku-4-5` |
-| OpenAI | `openai/gpt-5.6-luna` |
+| GitHub Copilot | `copilot/claude-haiku-5.5` |
+| ChatGPT | `chatgpt/gpt-6-luna` |
+| Anthropic | `anthropic/claude-haiku-5-5` |
+| OpenAI | `openai/gpt-6-luna` |
 | Gemini | `gemini/gemini-flash-lite-latest` |
 | DeepSeek | `deepseek/deepseek-flash` |
-| OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
+| OpenRouter | `openrouter/google/gemini-3.5-flash-lite` |
 
-想用别的就设 `model_list`。配了已被提供商下线的模型只会在启动时警告一句，markitai 不会替你改。
+想用别的就设 `model_list`。GitHub 只在付费 Copilot 套餐里提供 Claude Haiku 5.5，Copilot Free 用户请设 `copilot/claude-haiku-4.5`。配了已被提供商下线的模型只会在启动时警告一句，markitai 不会替你改。
 
 检测到不止一个提供商时，markitai 不会只挑一个。找到的提供商都进同一个模型池，请求分摊到池里各个模型，所以一次运行里不同文档、甚至同一篇长文档的不同分块，可能交给不同厂商处理。启动时 markitai 会在 stderr 列出这些模型，不加 `-v` 也能看到，只有 `--quiet` 会隐藏。想只用一个模型，设 `MODEL=<provider/model>` 或 `llm.model_list`。
 

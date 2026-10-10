@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+from collections import Counter
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -181,12 +182,17 @@ def _find_litellm_model_fuzzy(model: str) -> str | None:
     try:
         import litellm
 
+        from markitai.model_catalog import register_missing_models
+
+        register_missing_models()
+
         # Split model name into components (split on both - and .)
         components = re.split(r"[-.]", model.lower())
         components = [c for c in components if c]  # Remove empty strings
 
         if not components:
             return None
+        wanted = Counter(components)
 
         best_match: str | None = None
 
@@ -197,13 +203,15 @@ def _find_litellm_model_fuzzy(model: str) -> str | None:
                 continue
 
             model_lower = litellm_model.lower()
-            model_components = re.split(r"[-.]", model_lower)
+            model_components = Counter(re.split(r"[-.]", model_lower))
 
-            # Every component must be present. A "half the components"
-            # threshold silently drops the part that picks the tier:
-            # gpt-5.4-codex matched plain gpt-5.4 and was priced at the
-            # cheaper non-codex rate.
-            if not all(c in model_components for c in components):
+            # Every component must be present, as often as in the query. A
+            # "half the components" threshold silently drops the part that
+            # picks the tier (gpt-5.4-codex matched plain gpt-5.4 and was
+            # priced at the cheaper non-codex rate), and a plain membership
+            # test lets one "5" stand for two: claude-haiku-5.5 matched
+            # claude-haiku-4-5 and was priced at ten times its rate.
+            if any(model_components[c] < n for c, n in wanted.items()):
                 continue
 
             # Shortest surviving name is the base model, not a dated or
@@ -256,6 +264,9 @@ def _litellm_prices(model: str) -> tuple[float, float] | None:
     """
     import litellm
 
+    from markitai.model_catalog import register_missing_models
+
+    register_missing_models()
     try:
         info = litellm.get_model_info(model)
     except Exception as e:

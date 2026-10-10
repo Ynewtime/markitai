@@ -50,7 +50,7 @@ Pass `llm: true` to enable enhancement (provider charges may apply). Models reso
       "command": "uvx",
       "args": ["--from", "markitai[mcp]", "markitai-mcp"],
       "env": {
-        "MODEL": "openai/gpt-5.6-luna",
+        "MODEL": "openai/gpt-6-luna",
         "OPENAI_API_KEY": "sk-..."
       }
     }

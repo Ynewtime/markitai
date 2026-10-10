@@ -48,16 +48,12 @@ _RETIREMENT_HORIZON_DAYS = 120
 # Defaults whose recorded date is judged to be litellm's error rather than
 # the provider's plan. Each entry needs the evidence, because waiving a
 # retirement warning is exactly the mistake this guard exists to prevent.
-_DISPUTED_RETIREMENT_DATES = {
-    # litellm carries 2026-10-15 on 5 of the 19 spellings of this model
-    # (direct API, Vertex, Azure AI, EU Bedrock) and None on the other 14,
-    # including plain Bedrock, Databricks, Snowflake and DeepInfra. No
-    # Anthropic announcement backs it, and haiku has no 5-generation
-    # successor, so the alternative costs twice as much for no known
-    # reason. Reviewed 2026-08-28; drop this entry if Anthropic confirms.
-    "claude-haiku-4-5",
-    "claude-haiku-4.5",
-}
+_DISPUTED_RETIREMENT_DATES: frozenset[str] = frozenset(
+    # Empty since 2026-10-10. claude-haiku-4-5 / claude-haiku-4.5 were waived
+    # here while haiku had no successor; Anthropic now lists 2026-10-15 as
+    # the earliest retirement of claude-haiku-4-5 and released
+    # claude-haiku-5-5, which the Anthropic and Copilot defaults use.
+)
 
 # Literals that name a provider but are not a default pick. Each one is a
 # prefix or path fragment the code matches against, not a model to send.
@@ -69,6 +65,7 @@ _NOT_A_DEFAULT_PICK = frozenset(
         "copilot/gpt-4.1",
         "copilot/gpt-4o",
         "copilot/gpt-5",
+        "copilot/gpt-6",
         "copilot/raptor-",
         # cli/processors/validators.py: models Copilot refuses to serve
         "copilot/o1",
