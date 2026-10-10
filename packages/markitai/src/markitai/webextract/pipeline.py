@@ -171,12 +171,13 @@ def _build_from_resolved(
 class _ExtractionContext:
     """Cache expensive computations across retry levels.
 
-    Parses HTML once and caches ``original_soup`` and ``metadata``.
-    Every extraction level (including Level 1) uses
-    ``fresh_soup_and_root()`` which deep-copies the soup, ensuring
-    ``original_soup`` is never mutated by removals/standardization.
-    Mobile style pruning is the only pre-extraction mutation applied
-    to ``original_soup`` — it persists intentionally across all levels.
+    Parses HTML once and caches ``original_soup`` and ``metadata``. Each
+    extraction level mutates its tree (removals, standardization), so it
+    takes one from :meth:`take_soup`: the parsed page itself the first time,
+    a fresh parse after that. Most pages need only Level 1, and parsing again
+    costs less than the deep copy every level used to make. Mobile style
+    pruning is the only pre-extraction mutation; it is applied to every
+    parse, so it persists across all levels.
     """
 
     def __init__(self, html: str, url: str) -> None:
@@ -187,12 +188,33 @@ class _ExtractionContext:
         self.md_instance = _create_markitdown()
         self._root_path: tuple[int, ...] | None = None
         self._schema_used = False
+        self._handed_out = False
+
+    def prune_mobile_styles(self) -> None:
+        """Prune mobile-hidden elements from the parsed page (once per parse)."""
+        from markitai.webextract.mobile_styles import apply_mobile_style_pruning
+
+        apply_mobile_style_pruning(self.original_soup)
+
+    def pristine(self) -> BeautifulSoup:
+        """The parsed, pruned page, unmutated (parsed again if handed out)."""
+        if self._handed_out:
+            self.original_soup = parse_html(self.raw_html)
+            self.prune_mobile_styles()
+            self._handed_out = False
+        return self.original_soup
+
+    def take_soup(self) -> BeautifulSoup:
+        """A parsed, pruned page the caller may mutate."""
+        soup = self.pristine()
+        self._handed_out = True
+        return soup
 
     def fresh_soup_and_root(
         self, extractor: object | None, diagnostics: dict[str, object]
     ) -> tuple[BeautifulSoup, Tag | BeautifulSoup]:
-        """Return a fresh deep-copy of the parsed soup with root selected."""
-        soup = copy.deepcopy(self.original_soup)
+        """Return a fresh, mutable parsed page with root selected."""
+        soup = self.take_soup()
         if extractor is None and self._root_path is not None:
             selected: Tag | BeautifulSoup = soup
             for index in self._root_path:
@@ -243,12 +265,9 @@ def _extract_generic(
     """
     ctx = _ExtractionContext(html, url)
 
-    # Prune mobile-hidden elements before scoring.
-    # This mutates original_soup but that's OK — mobile style pruning
-    # should persist across all retry levels.
-    from markitai.webextract.mobile_styles import apply_mobile_style_pruning
-
-    apply_mobile_style_pruning(ctx.original_soup)
+    # Prune mobile-hidden elements before scoring; every later parse of the
+    # page is pruned the same way, so it persists across all retry levels.
+    ctx.prune_mobile_styles()
 
     extractor = find_extractor(url)
     diagnostics: dict[str, object] = {
@@ -258,9 +277,8 @@ def _extract_generic(
         "removed_partial_selectors": False,
     }
 
-    # Use fresh_soup_and_root for Level 1 too — _extract_once mutates
-    # root in place (removals, standardize, sanitize), so operating on
-    # original_soup directly would corrupt it for subsequent retries.
+    # _extract_once mutates root in place (removals, standardize, sanitize):
+    # Level 1 takes the parsed page itself, and any later level a new parse.
     _, root = ctx.fresh_soup_and_root(extractor, diagnostics)
 
     # Multi-level extraction with adaptive retry
@@ -455,9 +473,9 @@ def _extract_with_retry(
     # hit pays for a deep copy, then re-locates the match by index — bs4's
     # deepcopy preserves structure 1:1, so document-order indices are stable.
     hidden_root: Tag | None = None
-    hidden_idx = _find_largest_hidden_content_index(ctx.original_soup)
+    hidden_idx = _find_largest_hidden_content_index(ctx.pristine())
     if hidden_idx is not None:
-        body3b = copy.deepcopy(ctx.original_soup).body
+        body3b = ctx.take_soup().body
         if body3b is not None:
             matches = body3b.select(HIDDEN_EXACT_SKIP_SELECTOR)
             if hidden_idx < len(matches):
@@ -510,7 +528,7 @@ def _extract_with_retry(
     # makes adopt_external_footnotes a no-op, so the parents chain a
     # whole-tree copy would preserve is never consulted here).
     if word_count < _RETRY_SPARSE_THRESHOLD and not body_fallback_extracted:
-        body = ctx.original_soup.body
+        body = ctx.pristine().body
         if body is not None:
             body = copy.copy(body)
             body_html, body_md, _ = _extract_once(

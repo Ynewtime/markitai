@@ -160,7 +160,11 @@ def _text(el: Tag) -> str:
 
 
 def _gone(el: Tag) -> bool:
-    return bool(getattr(el, "decomposed", False)) or el.parent is None
+    # Not bs4's ``decomposed`` property: it reads ``self._decomposed``, which
+    # decompose() sets, and on a live tag that lookup falls through to
+    # Tag.__getattr__, i.e. ``self.find("_decomposed")``, a search of the whole
+    # subtree for a tag of that name (47k such searches on 15 real pages).
+    return bool(el.__dict__.get("_decomposed", False)) or el.parent is None
 
 
 def _next_tag_sibling(el: Tag) -> Tag | None:
