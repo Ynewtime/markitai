@@ -307,15 +307,18 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        # Should be ONE grouped line with 2 example names + "..."
-        assert "5 files skipped (image_only)" in captured.err
-        # Only 2 example filenames shown, plus "..."
-        assert "..." in captured.err
+        # ONE grouped line with 2 example names and how many more
+        assert (
+            "5 files skipped (image_only): a.bmp, b.gif and 3 more; "
+            "use --llm or --ocr for content extraction\n"
+        ) in captured.err
 
     def test_skip_warnings_show_hint_for_image_only(
         self, tmp_path: Path, capsys
     ) -> None:
-        """image_only skip warnings should suggest --llm or --ocr."""
+        """image_only skip warnings suggest --llm or --ocr, as the same
+        sentence: the hint once ran on from the last file name
+        ("a.png Use --llm or --ocr ...")."""
         config = BatchConfig()
         processor = BatchProcessor(config, tmp_path)
         processor.state = BatchState(
@@ -334,8 +337,11 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        assert "--llm" in captured.err
-        assert "--ocr" in captured.err
+        assert (
+            "1 file skipped (image_only): a.png; "
+            "use --llm or --ocr for content extraction\n"
+        ) in captured.err
+        assert "a.png Use" not in captured.err
 
     def test_skip_warnings_many_files_no_individual_names(
         self, tmp_path: Path, capsys
@@ -360,8 +366,10 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        assert "10 files skipped (image_only)" in captured.err
-        assert "..." in captured.err
+        assert "10 files skipped (image_only): img00.png, img01.png and 8 more;" in (
+            captured.err
+        )
+        assert "img02.png" not in captured.err
 
     def test_skip_warnings_multiple_reasons_separate_lines(
         self, tmp_path: Path, capsys
@@ -390,8 +398,9 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        assert "1 file skipped (image_only)" in captured.err
-        assert "1 file skipped (exists)" in captured.err
+        assert "1 file skipped (image_only): a.png; use --llm" in captured.err
+        # No hint for this reason: the line ends with the file name
+        assert "1 file skipped (exists): b.pdf\n" in captured.err
 
 
 class TestBatchProcessor:
