@@ -205,7 +205,7 @@ def _image_size(path: Path) -> tuple[int, int]:
     return width, height
 
 
-def _pdf_pages(path: Path) -> tuple[list[tuple[float, float]], int]:
+def _pdf_pages(path: Path, boxes: bool = True) -> tuple[list[tuple[float, float]], int]:
     import pymupdf
 
     with pymupdf.open(path) as document:
@@ -213,14 +213,18 @@ def _pdf_pages(path: Path) -> tuple[list[tuple[float, float]], int]:
             raise RenderError("the PDF is encrypted")
         count = document.page_count
         pages = []
-        for index in range(min(count, MAX_LISTED_PAGES)):
+        for index in range(min(count, MAX_LISTED_PAGES) if boxes else 0):
             rect = document[index].rect  # the visible box, rotation applied
             pages.append((float(rect.width), float(rect.height)))
     return pages, count
 
 
-def describe(job: Job, item: JobItem) -> Original:
-    """What the Compare view can show of *item* (no rendering)."""
+def describe(job: Job, item: JobItem, *, boxes: bool = True) -> Original:
+    """What the Compare view can show of *item* (no rendering).
+
+    ``boxes=False`` skips the page sizes (a page request needs only the kind
+    and the page count, and a long PDF has thousands of boxes).
+    """
     upload = kept_upload(job, item)
     if upload is not None:
         suffix = upload.suffix.lower()
@@ -231,7 +235,7 @@ def describe(job: Job, item: JobItem) -> Original:
         )
         if suffix in PDF_EXTENSIONS:
             try:
-                pages, count = _pdf_pages(upload)
+                pages, count = _pdf_pages(upload, boxes)
             except Exception:
                 base.reason = "render_unavailable"
             else:
@@ -261,19 +265,21 @@ def describe(job: Job, item: JobItem) -> Original:
             return base
         screenshots = item_screenshots(job, item)
         if screenshots:
-            return _with_screenshots(base, screenshots)
+            return _with_screenshots(base, screenshots, boxes)
         base.reason = base.reason or "unsupported_format"
         return base
     screenshots = item_screenshots(job, item)
     original = Original(kind="none", name=item.name, reason="not_kept")
     if screenshots:
-        return _with_screenshots(original, screenshots)
+        return _with_screenshots(original, screenshots, boxes)
     return original
 
 
-def _with_screenshots(original: Original, screenshots: list[Path]) -> Original:
+def _with_screenshots(
+    original: Original, screenshots: list[Path], boxes: bool = True
+) -> Original:
     pages: list[tuple[float, float]] = []
-    for shot in screenshots[:MAX_LISTED_PAGES]:
+    for shot in screenshots[:MAX_LISTED_PAGES] if boxes else []:
         try:
             width, height = _image_size(shot)
         except Exception:

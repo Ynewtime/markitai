@@ -3818,7 +3818,7 @@ def create_app(
             raise ApiError(422, "invalid_page_request", "page must be a number")
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)
-        original = await asyncio.to_thread(describe_original, job, item)
+        original = await asyncio.to_thread(describe_original, job, item, boxes=False)
         number = int(page)
         if original.kind in ("none", "html", "text"):
             raise ApiError(
