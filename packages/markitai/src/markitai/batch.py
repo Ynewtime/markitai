@@ -86,6 +86,11 @@ class FileState:
             writing a ``.v2`` copy next to it
         warnings: Non-fatal problems of this run (an image whose analysis
             failed); in memory only, never written to the state file
+        earlier_run: Completed by an earlier run of this batch (loaded as
+            completed by ``--resume``); in memory only
+        usage_unknown: Completed by an earlier run whose state did not
+            record cost and usage (written by an older markitai); its cost
+            is unknown, not zero
     """
 
     path: str
@@ -103,6 +108,8 @@ class FileState:
     cache_hit: bool = False
     target: str | None = None
     warnings: list[str] = field(default_factory=list)
+    earlier_run: bool = False
+    usage_unknown: bool = False
 
 
 @dataclass(frozen=True)
@@ -169,6 +176,8 @@ class UrlState:
         warnings: Non-fatal problems of this run (a requested screenshot
             that was not captured); in memory only, never written to the
             state file
+        earlier_run: Completed by an earlier run (see FileState)
+        usage_unknown: Cost and usage not recorded (see FileState)
     """
 
     url: str
@@ -187,6 +196,8 @@ class UrlState:
     cache_hit: bool = False
     target: str | None = None
     warnings: list[str] = field(default_factory=list)
+    earlier_run: bool = False
+    usage_unknown: bool = False
 
 
 def url_state_key(url: str, output_name: str | None = None) -> str:
@@ -238,7 +249,8 @@ def _minimal_entry(state: FileState | UrlState) -> dict[str, Any]:
     Completed items keep their output, failed ones their error; unfinished
     ones also keep the output path they had reserved, so ``--resume``
     redoes them over their own earlier output. Both paths are stored
-    absolute (see ``_state_path``).
+    absolute (see ``_state_path``). Completed items also keep what they
+    cost and when they ran (see ``_accounting_entry``).
     """
     entry: dict[str, Any] = {"status": state.status.value}
     if isinstance(state, UrlState):
@@ -249,7 +261,102 @@ def _minimal_entry(state: FileState | UrlState) -> dict[str, Any]:
         entry["error"] = state.error
     if state.status != FileStatus.COMPLETED and state.target:
         entry["target"] = _state_path(state.target)
+    if state.status == FileStatus.COMPLETED:
+        entry.update(_accounting_entry(state))
     return entry
+
+
+def _accounting_entry(state: FileState | UrlState) -> dict[str, Any]:
+    """What a completed item cost and when it ran, for the state file.
+
+    A resumed batch does not redo its completed items, so its report and
+    summary can only count their spend if the state kept it. ``cost_usd``
+    is always written for an item whose usage is known: its absence marks
+    an item from a state that did not record usage (an older markitai),
+    whose cost stays unknown rather than zero (see
+    ``_restore_accounting``). Defaults are left out to keep the file small.
+    """
+    entry: dict[str, Any] = {}
+    for name in ("started_at", "completed_at", "duration"):
+        value = getattr(state, name)
+        if value is not None:
+            entry[name] = value
+    if not state.usage_unknown:
+        entry["cost_usd"] = state.cost_usd
+        if state.llm_usage:
+            entry["llm_usage"] = state.llm_usage
+    if state.cache_hit:
+        entry["cache_hit"] = True
+    if state.images:
+        entry["images"] = state.images
+    if state.screenshots:
+        entry["screenshots"] = state.screenshots
+    if isinstance(state, FileState) and state.skip_reason:
+        entry["skip_reason"] = state.skip_reason
+    if isinstance(state, UrlState) and state.fetch_strategy:
+        entry["fetch_strategy"] = state.fetch_strategy
+    return entry
+
+
+def _restore_accounting(
+    state: FileState | UrlState, data: dict[str, Any], *, llm: bool
+) -> None:
+    """Read back what ``_accounting_entry`` stored for one item.
+
+    Args:
+        state: The item to update in place.
+        data: Its state file (or sidecar) entry.
+        llm: Whether the batch ran with LLM enabled. A completed item of an
+            LLM batch without a recorded ``cost_usd`` comes from a state
+            that did not record usage: its cost is unknown, not zero.
+    """
+    state.started_at = data.get("started_at")
+    state.completed_at = data.get("completed_at")
+    state.duration = data.get("duration")
+    state.images = data.get("images", 0)
+    state.screenshots = data.get("screenshots", 0)
+    state.cache_hit = data.get("cache_hit", False)
+    cost = data.get("cost_usd")
+    state.cost_usd = cost or 0.0
+    state.llm_usage = data.get("llm_usage") or {}
+    state.usage_unknown = llm and state.status == FileStatus.COMPLETED and cost is None
+    if isinstance(state, FileState):
+        state.skip_reason = data.get("skip_reason")
+    else:
+        state.fetch_strategy = data.get("fetch_strategy")
+
+
+def _sum_llm_usage(
+    items: Iterable[FileState | UrlState],
+) -> tuple[dict[str, dict[str, Any]], float]:
+    """Per-model usage and total cost of some batch items (files and URLs)."""
+    models_usage: dict[str, dict[str, Any]] = {}
+    total_cost = 0.0
+    for item in items:
+        # Run cost is summed per item, not per model
+        total_cost += item.cost_usd
+        for model, usage in item.llm_usage.items():
+            if model not in models_usage:
+                models_usage[model] = {
+                    "requests": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cached_input_tokens": 0,
+                    "cost_usd": 0.0,
+                }
+            models_usage[model]["requests"] += usage.get("requests", 0)
+            models_usage[model]["input_tokens"] += usage.get("input_tokens", 0)
+            models_usage[model]["output_tokens"] += usage.get("output_tokens", 0)
+            models_usage[model]["cached_input_tokens"] += usage.get(
+                "cached_input_tokens", 0
+            )
+            models_usage[model]["cost_usd"] += usage.get("cost_usd", 0.0)
+            if usage.get("unpriced_requests"):
+                models_usage[model]["unpriced_requests"] = (
+                    models_usage[model].get("unpriced_requests", 0)
+                    + usage["unpriced_requests"]
+                )
+    return models_usage, total_cost
 
 
 @dataclass
@@ -354,7 +461,24 @@ class BatchState:
 
         Note: input_dir/output_dir are stored in options with absolute paths.
         Files keys are stored as relative paths (relative to input_dir).
+
+        Each item reports the run that processed it: an item completed by
+        an earlier run of a resumed batch keeps its own timestamps, cost and
+        usage, and is marked ``earlier_run: true``. Its ``cost_usd`` and
+        ``llm_usage`` are null when that run's state did not record them.
         """
+
+        def accounting(state: FileState | UrlState) -> dict[str, Any]:
+            unknown = state.usage_unknown
+            entry: dict[str, Any] = {
+                "cost_usd": None if unknown else state.cost_usd,
+                "llm_usage": None if unknown else state.llm_usage,
+                "cache_hit": state.cache_hit,
+            }
+            if state.earlier_run:
+                entry["earlier_run"] = True
+            return entry
+
         # Convert log_file to absolute path if it exists
         log_file_abs = None
         if self.log_file:
@@ -376,9 +500,7 @@ class BatchState:
                 "duration": state.duration,
                 "images": state.images,
                 "screenshots": state.screenshots,
-                "cost_usd": state.cost_usd,
-                "llm_usage": state.llm_usage,
-                "cache_hit": state.cache_hit,
+                **accounting(state),
             }
 
         # Convert URLs to dict
@@ -395,9 +517,7 @@ class BatchState:
                 "started_at": state.started_at,
                 "completed_at": state.completed_at,
                 "duration": state.duration,
-                "cost_usd": state.cost_usd,
-                "llm_usage": state.llm_usage,
-                "cache_hit": state.cache_hit,
+                **accounting(state),
             }
 
         return {
@@ -419,6 +539,8 @@ class BatchState:
         - options: input_dir/output_dir needed to resolve paths
         - documents: status + output (completed) or error (failed)
         - urls: status + output + source_file
+        - completed items: their cost, usage and timestamps, which a
+          resumed batch reports instead of redoing the item
         """
         # Convert files keys to relative paths (relative to input_dir)
         input_dir_path = Path(self.input_dir).resolve()
@@ -463,6 +585,7 @@ class BatchState:
         )
 
         documents_data = data.get("documents", {})
+        llm = bool(options.get("llm"))
 
         # Reconstruct absolute file paths from relative paths
         input_dir_path = Path(input_dir) if input_dir else Path(".")
@@ -479,44 +602,31 @@ class BatchState:
                 # Interrupted mid-processing; treat as FAILED so it is
                 # re-processed on resume (see FileStatus docstring)
                 file_status = FileStatus.FAILED
-            state.files[abs_path] = FileState(
+            file_state = FileState(
                 path=abs_path,
                 status=file_status,
                 output=file_data.get("output"),
                 error=file_data.get("error"),
-                started_at=file_data.get("started_at"),
-                completed_at=file_data.get("completed_at"),
-                duration=file_data.get("duration"),
-                images=file_data.get("images", 0),
-                screenshots=file_data.get("screenshots", 0),
-                cost_usd=file_data.get("cost_usd", 0.0),
-                llm_usage=file_data.get("llm_usage", {}),
-                cache_hit=file_data.get("cache_hit", False),
                 target=file_data.get("target"),
             )
+            _restore_accounting(file_state, file_data, llm=llm)
+            state.files[abs_path] = file_state
 
         # Reconstruct URL states
         for url, url_data in data.get("urls", {}).items():
             url_status = FileStatus(url_data.get("status", "pending"))
             if url_status == FileStatus.IN_PROGRESS:
                 url_status = FileStatus.FAILED
-            state.urls[url] = UrlState(
+            url_state = UrlState(
                 url=url_data.get("url") or url,
                 source_file=url_data.get("source_file", ""),
                 status=url_status,
                 output=url_data.get("output"),
                 error=url_data.get("error"),
-                fetch_strategy=url_data.get("fetch_strategy"),
-                images=url_data.get("images", 0),
-                screenshots=url_data.get("screenshots", 0),
-                started_at=url_data.get("started_at"),
-                completed_at=url_data.get("completed_at"),
-                duration=url_data.get("duration"),
-                cost_usd=url_data.get("cost_usd", 0.0),
-                llm_usage=url_data.get("llm_usage", {}),
-                cache_hit=url_data.get("cache_hit", False),
                 target=url_data.get("target"),
             )
+            _restore_accounting(url_state, url_data, llm=llm)
+            state.urls[url] = url_state
 
         return state
 
@@ -1023,6 +1133,7 @@ class BatchProcessor:
 
         # Replay .jsonl sidecar if present
         jsonl_path = self.state_file.with_suffix(".jsonl")
+        llm = bool(state.options.get("llm"))
         if jsonl_path.exists():
             try:
                 # Build reverse lookup: relative_path -> absolute_key (O(N) once)
@@ -1063,6 +1174,8 @@ class BatchProcessor:
                                     fs.error = entry_data["error"]
                                 if "target" in entry_data:
                                     fs.target = entry_data["target"]
+                                if fs.status == FileStatus.COMPLETED:
+                                    _restore_accounting(fs, entry_data, llm=llm)
                         elif entry_type == "url":
                             if key in state.urls:
                                 us = state.urls[key]
@@ -1075,17 +1188,19 @@ class BatchProcessor:
                                     us.error = entry_data["error"]
                                 if "target" in entry_data:
                                     us.target = entry_data["target"]
+                                if us.status == FileStatus.COMPLETED:
+                                    _restore_accounting(us, entry_data, llm=llm)
             except Exception as e:
                 logger.warning(f"Failed to replay .jsonl sidecar, ignoring: {e}")
 
         # JSONL replay may reintroduce IN_PROGRESS entries (interrupted run);
-        # treat them as FAILED so they are re-processed on resume
-        for fs in state.files.values():
-            if fs.status == FileStatus.IN_PROGRESS:
-                fs.status = FileStatus.FAILED
-        for us in state.urls.values():
-            if us.status == FileStatus.IN_PROGRESS:
-                us.status = FileStatus.FAILED
+        # treat them as FAILED so they are re-processed on resume. What is
+        # completed now was done by an earlier run: this run reports it
+        # (with the cost recorded then) but does not redo it.
+        for item in chain(state.files.values(), state.urls.values()):
+            if item.status == FileStatus.IN_PROGRESS:
+                item.status = FileStatus.FAILED
+            item.earlier_run = item.status == FileStatus.COMPLETED
 
         return state
 
@@ -1235,7 +1350,12 @@ class BatchProcessor:
             logger.warning(f"Could not save batch state on exit: {e}")
 
     def _compute_summary(self) -> dict[str, Any]:
-        """Compute summary statistics for report."""
+        """Compute summary statistics for report.
+
+        Counts cover the whole batch. ``duration`` is this run's wall-clock
+        time; ``processing_time`` sums the items' own durations, so on a
+        resumed run it includes those of the items an earlier run completed.
+        """
         if self.state is None:
             return {}
 
@@ -1277,42 +1397,58 @@ class BatchProcessor:
         }
 
     def _compute_llm_usage(self) -> dict[str, Any]:
-        """Compute aggregated LLM usage statistics for report."""
+        """Compute aggregated LLM usage statistics for report.
+
+        The block covers the whole batch: on a resumed run, the items an
+        earlier run completed count with the usage recorded then. Only then
+        does it also carry ``this_run``, the same block for the items this
+        run processed, and ``usage_unknown_items``, the number of earlier
+        items whose usage the state did not record (the totals leave them
+        out, like ``cost_usd`` leaves out ``unpriced_requests``).
+        """
         if self.state is None:
             return {}
 
-        # Aggregate LLM usage by model (from both files and URLs)
-        models_usage: dict[str, dict[str, Any]] = {}
-        items = chain(self.state.files.values(), self.state.urls.values())
-        for item in items:
-            for model, usage in item.llm_usage.items():
-                if model not in models_usage:
-                    models_usage[model] = {
-                        "requests": 0,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "cached_input_tokens": 0,
-                        "cost_usd": 0.0,
-                    }
-                models_usage[model]["requests"] += usage.get("requests", 0)
-                models_usage[model]["input_tokens"] += usage.get("input_tokens", 0)
-                models_usage[model]["output_tokens"] += usage.get("output_tokens", 0)
-                models_usage[model]["cached_input_tokens"] += usage.get(
-                    "cached_input_tokens", 0
-                )
-                models_usage[model]["cost_usd"] += usage.get("cost_usd", 0.0)
-                if usage.get("unpriced_requests"):
-                    models_usage[model]["unpriced_requests"] = (
-                        models_usage[model].get("unpriced_requests", 0)
-                        + usage["unpriced_requests"]
-                    )
-
-        # Run cost is summed per item (files + URLs), not per model
-        total_cost = sum(f.cost_usd for f in self.state.files.values()) + sum(
-            u.cost_usd for u in self.state.urls.values()
+        items = list(chain(self.state.files.values(), self.state.urls.values()))
+        models, cost = _sum_llm_usage(items)
+        this_run = None
+        if any(item.earlier_run for item in items):
+            run_models, run_cost = _sum_llm_usage(
+                item for item in items if not item.earlier_run
+            )
+            this_run = build_llm_usage_block(run_models, cost_usd=run_cost)
+        return build_llm_usage_block(
+            models,
+            cost_usd=cost,
+            this_run=this_run,
+            usage_unknown_items=sum(1 for item in items if item.usage_unknown),
         )
 
-        return build_llm_usage_block(models_usage, cost_usd=total_cost)
+    def _cost_text(self) -> str:
+        """The cost part of the summary line ("" when nothing was spent).
+
+        A resumed batch shows the whole batch's cost with this run's part,
+        or says plainly that the earlier runs' cost is unknown (a state
+        that did not record it, or a model without a known price).
+        """
+        if self.state is None:
+            return ""
+        items = list(chain(self.state.files.values(), self.state.urls.values()))
+        this_run = [item for item in items if not item.earlier_run]
+        earlier = [item for item in items if item.earlier_run]
+        run_cost = sum(item.cost_usd for item in this_run)
+        if any(usage_has_unpriced(item.llm_usage) for item in this_run):
+            return ", cost unknown"
+        if not earlier:
+            return f", ${run_cost:.3f}" if run_cost > 0 else ""
+        if any(
+            item.usage_unknown or usage_has_unpriced(item.llm_usage) for item in earlier
+        ):
+            return f", ${run_cost:.3f} this run, cost of earlier runs unknown"
+        total_cost = run_cost + sum(item.cost_usd for item in earlier)
+        if total_cost <= 0:
+            return ""
+        return f", ${total_cost:.3f} total, ${run_cost:.3f} this run"
 
     def init_state(
         self,
@@ -1448,11 +1584,6 @@ class BatchProcessor:
             except ValueError:
                 wall_duration = 0.0
 
-        # LLM cost (from both files and URLs)
-        total_cost = sum(f.cost_usd for f in self.state.files.values()) + sum(
-            u.cost_usd for u in self.state.urls.values()
-        )
-
         # Collect warnings (failed files and URLs)
         warnings: list[str] = []
         for f in self.state.files.values():
@@ -1482,14 +1613,7 @@ class BatchProcessor:
         if url_completed > 0:
             parts.append(f"{url_completed} URLs")
 
-        unpriced = any(
-            usage_has_unpriced(item.llm_usage)
-            for item in chain(self.state.files.values(), self.state.urls.values())
-        )
-        if unpriced:
-            cost_str = ", cost unknown"
-        else:
-            cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
+        cost_str = self._cost_text()
         # Nothing converted is still a finished run; say so instead of "Done: ".
         summary_text = f"Done: {', '.join(parts) or 'nothing converted'} ({wall_duration_str}{cost_str})"
         term.summary(summary_text, console=self.console)

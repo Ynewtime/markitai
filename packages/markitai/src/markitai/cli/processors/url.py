@@ -6,6 +6,7 @@ This module contains functions for fetching and processing URLs.
 from __future__ import annotations
 
 import asyncio
+import copy
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -24,6 +25,7 @@ from markitai.constants import SCREENSHOTS_REL_PATH
 from markitai.json_order import order_report
 from markitai.runs import (
     Outcome,
+    build_llm_usage_block,
     build_single_report,
     build_url_batch_report,
     resolve_exit_code,
@@ -986,6 +988,7 @@ async def process_url_batch(
     history: list[Outcome] | None = None,
     resume: bool = False,
     source_file: Path | None = None,
+    earlier: list[Outcome] | None = None,
 ) -> None:
     """Batch process multiple URLs from a URL list file.
 
@@ -1016,6 +1019,8 @@ async def process_url_batch(
             (same list file, output directory and key options) left.
         source_file: The ``.urls`` file the entries came from; part of the
             state's identity and recorded as each URL's source.
+        earlier: Optional list collecting the Outcomes of the URLs an
+            earlier run of a resumed list completed (see ``process_batch``).
     """
     # Batch output must be a directory; reject file-like -o values early
     if output_dir.suffix == ".md" and not output_dir.is_dir():
@@ -1148,6 +1153,12 @@ async def process_url_batch(
     requeued: set[str] = set()
     source_label = str(source_file) if source_file is not None else ""
     entries_to_process = list(url_entries)
+    # What the URLs an earlier run completed cost (the report counts the
+    # whole list, and this run's part on its own)
+    earlier_llm_usage: dict[str, dict[str, Any]] = {}
+    earlier_llm_cost = 0.0
+    earlier_unknown = 0
+    earlier_outcomes: list[Outcome] = []
     resumed_state = batch.load_state() if resume else None
     if resumed_state is not None:
         # Named entries used to share their URL's state; give them their own
@@ -1174,6 +1185,7 @@ async def process_url_batch(
                 # Done in an earlier run: keep it in this run's report
                 results[key] = {
                     "status": "completed",
+                    "earlier_run": True,
                     "error": None,
                     "output": url_state.output,
                     "fetch_strategy": url_state.fetch_strategy,
@@ -1181,6 +1193,31 @@ async def process_url_batch(
                     "screenshots": url_state.screenshots,
                 }
                 completed += 1
+                if url_state.usage_unknown:
+                    earlier_unknown += 1
+                else:
+                    earlier_llm_cost += url_state.cost_usd
+                    _merge_llm_usage(earlier_llm_usage, url_state.llm_usage)
+                earlier_outcomes.append(
+                    Outcome(
+                        kind="url",
+                        source=url_state.url,
+                        status="completed",
+                        output_path=(
+                            Path(url_state.output) if url_state.output else None
+                        ),
+                        images=url_state.images,
+                        screenshots=url_state.screenshots,
+                        cost_usd=url_state.cost_usd,
+                        llm_usage=url_state.llm_usage,
+                        cache_hit=url_state.cache_hit,
+                        llm_cache_hit=url_state.cache_hit,
+                        fetch_strategy=url_state.fetch_strategy,
+                        duration=url_state.duration,
+                        earlier_run=True,
+                        usage_unknown=url_state.usage_unknown,
+                    )
+                )
             else:
                 entries_to_process.append(entry)
         resumed_state.started_at = datetime.now().astimezone().isoformat()
@@ -1437,21 +1474,32 @@ async def process_url_batch(
         )
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # A resumed list reports the whole list, with this run's part
+        list_llm_usage, list_llm_cost, this_run = total_llm_usage, total_llm_cost, None
+        if earlier_outcomes:
+            list_llm_usage = copy.deepcopy(earlier_llm_usage)
+            _merge_llm_usage(list_llm_usage, total_llm_usage)
+            list_llm_cost = earlier_llm_cost + total_llm_cost
+            this_run = build_llm_usage_block(total_llm_usage, cost_usd=total_llm_cost)
         report = build_url_batch_report(
             results,
             total_urls=len(url_entries),
             completed_urls=completed,
             failed_urls=failed,
             duration=duration,
-            llm_usage=total_llm_usage,
-            cost_usd=total_llm_cost,
+            llm_usage=list_llm_usage,
+            cost_usd=list_llm_cost,
             log_file_path=log_file_path,
+            this_run=this_run,
+            usage_unknown_items=earlier_unknown,
         )
 
         atomic_write_json(report_path, report, order_func=order_report)
         logger.debug(f"Report saved: {report_path}")
     else:
         logger.debug("Report generation disabled (output.report=false)")
+    if earlier is not None:
+        earlier.extend(earlier_outcomes)
 
     # Print informational results only when requested. Failures themselves are
     # emitted to stderr at the point they occur, including in quiet mode.

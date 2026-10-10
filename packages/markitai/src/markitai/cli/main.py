@@ -631,6 +631,9 @@ def app(
     # recorded as one job after the run completes (even on partial failure).
     # Defined before the JSON helpers so early input errors can report them.
     history_items: list[Outcome] = []
+    # Items an earlier run of a resumed batch completed: listed by --json
+    # with the cost recorded then, never recorded in history again
+    earlier_items: list[Outcome] = []
 
     if json_output:
         # stdout carries the JSON result, so the Markdown needs a real
@@ -659,7 +662,7 @@ def app(
         handoff = ctx.obj.get("_llm_batch_handoff")
         sys.stdout.write(
             json_result.render(
-                history_items,
+                earlier_items + history_items,
                 error=error,
                 batch=handoff.to_json() if handoff is not None else None,
             )
@@ -1232,6 +1235,7 @@ def app(
                 history=history_items,
                 resume=resume,
                 source_file=Path(input_path_str),
+                earlier=earlier_items,
             )
             return
 
@@ -1398,6 +1402,7 @@ def app(
                 glob_patterns=glob_patterns,
                 quiet=quiet,
                 history=history_items,
+                earlier=earlier_items,
             )
             return
 
