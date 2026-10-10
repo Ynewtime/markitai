@@ -2,7 +2,7 @@
 
 Regression: ``litellm_params.max_tokens: 8192`` was dropped when the router
 was built, and every request carried the model's catalog maximum instead
-(``max_tokens: 128000`` for DeepSeek V4, ``max_output_tokens: 65535`` for
+(``max_tokens: 128000`` for DeepSeek Flash, ``max_output_tokens: 65535`` for
 Gemini), raising the worst-case cost of each call. The wire tests point a
 real router at an in-process capture server on 127.0.0.1, so they inspect
 the outgoing request body without touching the network.
@@ -58,7 +58,7 @@ class _CaptureHandler(BaseHTTPRequestHandler):
                 "id": "chatcmpl-test",
                 "object": "chat.completion",
                 "created": 0,
-                "model": "deepseek-v4-flash",
+                "model": "deepseek-flash",
                 "choices": [
                     {
                         "index": 0,
@@ -106,7 +106,7 @@ def _processor(api_base: str, max_tokens: int | None) -> LLMProcessor:
             ModelConfig(
                 model_name="default",
                 litellm_params=LiteLLMParams(
-                    model="deepseek/deepseek-v4-flash",
+                    model="deepseek/deepseek-flash",
                     api_key="test-key",
                     api_base=api_base,
                     max_tokens=max_tokens,

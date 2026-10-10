@@ -111,6 +111,38 @@ class TestRetiredModelsConstant:
         for model in PROVIDER_DEFAULT_MODELS.values():
             assert model.partition("/")[2] not in retired
 
+    @pytest.mark.parametrize(
+        "model", ["deepseek/deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]
+    )
+    def test_retired_deepseek_flash_points_to_the_current_default(
+        self, model: str
+    ) -> None:
+        """markitai 1.2.0 wrote deepseek-v4-flash into configs as its default."""
+        from markitai.constants import PROVIDER_DEFAULT_MODELS
+        from markitai.providers import check_deprecated_models
+
+        (warning,) = check_deprecated_models([model])
+        assert PROVIDER_DEFAULT_MODELS["deepseek"] == "deepseek/deepseek-flash"
+        assert "deepseek/deepseek-flash" in warning
+
+
+class TestApiKeyProviderDefaults:
+    """The API-key defaults must be in the LiteLLM catalog markitai ships."""
+
+    @pytest.mark.parametrize("provider", ["anthropic", "openai", "gemini", "deepseek"])
+    def test_default_is_priced_in_the_bundled_cost_map(self, provider: str) -> None:
+        import importlib
+
+        from markitai.constants import PROVIDER_DEFAULT_MODELS
+
+        # markitai.llm points LiteLLM at its bundled map before importing it
+        importlib.import_module("markitai.llm")
+        litellm = importlib.import_module("litellm")
+        info = litellm.get_model_info(PROVIDER_DEFAULT_MODELS[provider])
+        assert (info.get("input_cost_per_token") or 0) > 0
+        assert (info.get("output_cost_per_token") or 0) > 0
+        assert info.get("max_output_tokens")
+
 
 class TestIsLocalProviderModel:
     """Tests for is_local_provider_model function."""
