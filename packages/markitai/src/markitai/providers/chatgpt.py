@@ -32,7 +32,6 @@ Limitations:
 from __future__ import annotations
 
 import asyncio
-import platform
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +41,7 @@ from loguru import logger
 from markitai.providers.auth import _check_chatgpt_auth, get_auth_resolution_hint
 from markitai.providers.common import UNSUPPORTED_PARAMS, sync_completion
 from markitai.providers.errors import AuthenticationError, ProviderError
+from markitai.utils import osinfo
 
 if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
@@ -427,7 +427,7 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
         }
 
         # Build headers (match Codex CLI conventions)
-        os_info = f"{platform.system()} {platform.release()}; {platform.machine()}"
+        os_info = f"{osinfo.system()} {osinfo.release()}; {osinfo.machine()}"
         headers: dict[str, str] = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",

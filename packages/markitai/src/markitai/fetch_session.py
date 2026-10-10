@@ -256,10 +256,11 @@ def _get_system_proxy() -> tuple[str, str]:
         Tuple of (proxy_url, bypass_list) where bypass_list is comma-separated hosts
         The bypass list is normalized to Linux no_proxy compatible format.
     """
-    import platform
     import subprocess
 
-    system = platform.system()
+    from markitai.utils import osinfo
+
+    system = osinfo.system()
 
     if system == "Linux":
         return _get_linux_system_proxy()

@@ -35,18 +35,18 @@ def _clear_detection_cache():
 
 class TestDetection:
     def test_non_darwin_returns_false(self) -> None:
-        with patch("markitai.utils.office_mac.platform.system", return_value="Linux"):
+        with patch("platform.system", return_value="Linux"):
             assert office_mac.find_ms_office_app("Microsoft Word") is False
 
     def test_darwin_app_present(self, tmp_path: Path, monkeypatch) -> None:
         (tmp_path / "Microsoft Word.app").mkdir()
         monkeypatch.setattr(office_mac, "_APP_SEARCH_BASES", (tmp_path,))
-        with patch("markitai.utils.office_mac.platform.system", return_value="Darwin"):
+        with patch("platform.system", return_value="Darwin"):
             assert office_mac.find_ms_office_app("Microsoft Word") is True
 
     def test_darwin_app_missing(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setattr(office_mac, "_APP_SEARCH_BASES", (tmp_path,))
-        with patch("markitai.utils.office_mac.platform.system", return_value="Darwin"):
+        with patch("platform.system", return_value="Darwin"):
             assert office_mac.find_ms_office_app("Microsoft Word") is False
 
 
