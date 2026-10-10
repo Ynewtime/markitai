@@ -13,12 +13,13 @@ Usage:
 
 from __future__ import annotations
 
-import os
+from markitai.utils.litellm_import import prepare_litellm_import
 
 # Before any submodule imports LiteLLM: it would otherwise fetch its model
-# cost map over the network on import (the CLI sets the same default; this
-# covers the Python API and the MCP server). An explicit value wins.
-os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+# cost map over the network on import, and its logging filters would race
+# the import on other threads (the CLI does the same; this covers the Python
+# API and the MCP server).
+prepare_litellm_import()
 
 # Re-export cache classes from refactored module
 from markitai.llm.cache import (
