@@ -423,7 +423,7 @@ class TestSizeConstants:
 
     def test_max_state_file_size(self) -> None:
         """Test MAX_STATE_FILE_SIZE is reasonable."""
-        assert MAX_STATE_FILE_SIZE == 10 * 1024 * 1024  # 10 MB
+        assert MAX_STATE_FILE_SIZE == 64 * 1024 * 1024  # 64 MB
         assert MAX_STATE_FILE_SIZE > 0
 
     def test_max_document_size(self) -> None:

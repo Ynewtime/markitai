@@ -27,7 +27,13 @@ ENVELOPE_VERSION = "1.0"
 
 
 def _item(outcome: Outcome) -> dict[str, Any]:
-    """Render one Outcome as a stable, flat JSON object."""
+    """Render one Outcome as a stable, flat JSON object.
+
+    An item an earlier run of a resumed batch completed has ``earlier_run``
+    set; its ``cost_usd`` and ``llm_usage`` are null when that run's state
+    did not record them (unknown, not zero).
+    """
+    unknown = outcome.usage_unknown
     return {
         "kind": outcome.kind,
         "source": outcome.source,
@@ -38,7 +44,8 @@ def _item(outcome: Outcome) -> dict[str, Any]:
         "skip_reason": outcome.skip_reason,
         "images": outcome.images,
         "screenshots": outcome.screenshots,
-        "cost_usd": round(outcome.cost_usd, 6),
+        "earlier_run": outcome.earlier_run,
+        "cost_usd": None if unknown else round(outcome.cost_usd, 6),
         "duration_s": (
             round(outcome.duration, 3) if outcome.duration is not None else None
         ),
@@ -47,7 +54,7 @@ def _item(outcome: Outcome) -> dict[str, Any]:
         "llm_cache_hit": outcome.llm_cache_hit,
         "fetch_strategy": outcome.fetch_strategy,
         "source_file": outcome.source_file,
-        "llm_usage": outcome.llm_usage,
+        "llm_usage": None if unknown else outcome.llm_usage,
     }
 
 
@@ -60,7 +67,8 @@ def build_envelope(
     """Build the top-level ``--json`` document from collected outcomes.
 
     Args:
-        outcomes: One Outcome per work item, in completion order.
+        outcomes: One Outcome per work item, in completion order. A resumed
+            batch lists the items its earlier runs completed first.
         error: A run-level failure that produced no Outcome (a missing input
             path, an unsupported format, an interrupt). Without it, a run that
             died before its first item would report ``ok: true`` with an empty
@@ -73,6 +81,9 @@ def build_envelope(
         ``{"version", "ok", "error", "batch", "items", "totals"}`` where
         ``ok`` is False when any item failed or is still pending, or a
         run-level error was reported (partial batch failure included).
+        ``totals.cost_usd`` covers every item whose cost is known (the
+        whole batch), ``totals.this_run_cost_usd`` only the items this run
+        processed.
     """
     items = [_item(outcome) for outcome in outcomes]
     completed = sum(1 for i in items if i["status"] == "completed")
@@ -91,7 +102,10 @@ def build_envelope(
             "failed": failed,
             "skipped": skipped,
             "pending": pending,
-            "cost_usd": round(sum(i["cost_usd"] for i in items), 6),
+            "cost_usd": round(sum(i["cost_usd"] or 0.0 for i in items), 6),
+            "this_run_cost_usd": round(
+                sum(i["cost_usd"] for i in items if not i["earlier_run"]), 6
+            ),
             "duration_s": round(
                 sum(i["duration_s"] or 0.0 for i in items),
                 3,

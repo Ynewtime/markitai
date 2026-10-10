@@ -1365,6 +1365,13 @@ class TestStateSerialization:
             images=3,
             cost_usd=0.05,
         )
+        state.files[str(tmp_path / "input" / "retry.pdf")] = FileState(
+            path=str(tmp_path / "input" / "retry.pdf"),
+            status=FileStatus.FAILED,
+            error="boom",
+            duration=1.0,
+            cost_usd=0.01,
+        )
 
         data = state.to_minimal_dict()
 
@@ -1372,10 +1379,15 @@ class TestStateSerialization:
         assert "version" in data
         assert "options" in data
         assert "documents" in data
-        # Should not have timing/cost details
+        # A completed item keeps what it cost and took: --resume does not
+        # redo it, and its report still counts it
         doc = data["documents"]["test.pdf"]
-        assert "duration" not in doc
-        assert "cost_usd" not in doc
+        assert doc["duration"] == 5.5
+        assert doc["cost_usd"] == 0.05
+        assert doc["images"] == 3
+        assert "llm_usage" not in doc  # defaults are left out
+        # An item --resume redoes keeps none of it
+        assert data["documents"]["retry.pdf"] == {"status": "failed", "error": "boom"}
 
     def test_batch_state_from_dict(self, tmp_path: Path) -> None:
         """Test BatchState deserialization from dict."""
