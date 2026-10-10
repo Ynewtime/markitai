@@ -122,6 +122,7 @@ def _env(**overrides: str) -> dict[str, str]:
         "MARKITAI_SETUP_SOURCE",
         "MARKITAI_VERSION",
         "MARKITAI_INSTALL_OPTIONAL",
+        "UV_COMPILE_BYTECODE",
     }
     env = {key: value for key, value in os.environ.items() if key not in drop}
     env.update({"LANG": "en_US.UTF-8", "TERM": "xterm-256color"})
@@ -1326,5 +1327,17 @@ def test_setup_ps1_redirected_on_windows_uses_the_shells_code_page(
     )
     result = _run_ps(tmp_path, body, runtime=False)
     assert result.stdout.rstrip().endswith(f"unicode={unicode}"), (
+        result.stdout + result.stderr
+    )
+
+
+@_needs_pwsh
+@pytest.mark.parametrize(("preset", "expected"), [(None, "1"), ("0", "0")])
+def test_setup_ps1_compiles_bytecode_unless_told_otherwise(
+    tmp_path: Path, preset: str | None, expected: str
+) -> None:
+    env = {} if preset is None else {"UV_COMPILE_BYTECODE": preset}
+    result = _run_ps(tmp_path, '"compile=$env:UV_COMPILE_BYTECODE"', **env)
+    assert result.stdout.rstrip().endswith(f"compile={expected}"), (
         result.stdout + result.stderr
     )

@@ -31,6 +31,15 @@ try {
     [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 } catch {}
 
+# uv compiles the installed packages to bytecode. Left to the first run,
+# Python compiles and writes every module it imports, and on Windows (each new
+# file scanned) that took long: on the Windows machine the first URL conversion after an
+# install took 44 s against 4.6 s for the next one, and the first import of the
+# LLM libraries 85 s. Only for this script's own uv calls: under irm | iex this
+# is the user's shell, so the previous value comes back at the end.
+$script:OriginalCompileBytecode = $env:UV_COMPILE_BYTECODE
+if (-not $env:UV_COMPILE_BYTECODE) { $env:UV_COMPILE_BYTECODE = "1" }
+
 # ============================================================
 # Terminal capabilities
 # ============================================================
@@ -2453,4 +2462,5 @@ try {
     if ($script:OriginalOutputEncoding) {
         try { [Console]::OutputEncoding = $script:OriginalOutputEncoding } catch {}
     }
+    $env:UV_COMPILE_BYTECODE = $script:OriginalCompileBytecode
 }

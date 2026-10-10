@@ -1296,6 +1296,11 @@ UV_VERSION="${UV_VERSION:-}"
 # Set to 1/true/yes/on to install optional extras and components when no TTY
 # is available. Interactive runs continue to prompt component by component.
 MARKITAI_INSTALL_OPTIONAL="${MARKITAI_INSTALL_OPTIONAL:-}"
+# uv compiles the installed packages to bytecode, so the first run does not
+# compile and write every module it imports (on Windows, where setup.ps1 does
+# the same, the first conversion took 44 s against 4.6 s for the next).
+UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
+export UV_COMPILE_BYTECODE
 
 # Global variable for Python command path
 PYTHON_CMD=""
