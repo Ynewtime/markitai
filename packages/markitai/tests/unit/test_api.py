@@ -156,6 +156,7 @@ class TestResolveConfig:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("MODEL", "openai/gpt-test")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         cfg = _resolve_config(
             MarkitaiConfig(), llm=True, ocr=None, screenshot=None, alt=None, desc=None
         )
@@ -200,6 +201,7 @@ class TestResolveConfig:
         """Regression: the API only fell back to MODEL, so a provider key in
         the environment — enough for the CLI — raised "no models" here."""
         monkeypatch.delenv("MODEL", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")  # what detection found
         monkeypatch.setattr(
             "markitai.providers.detect.detect_all_providers",
             lambda: self._detected("openai/gpt-5.6-luna"),
@@ -230,6 +232,7 @@ class TestResolveConfig:
 
     def test_model_env_beats_detection(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MODEL", "openai/gpt-test")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
         def fail() -> list[Any]:
             raise AssertionError("detection must not run when MODEL is set")
@@ -257,6 +260,8 @@ class TestResolveConfig:
         from loguru import logger
 
         monkeypatch.delenv("MODEL", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         monkeypatch.setattr("markitai.api._POOLED_NOTICES_SHOWN", set())
         monkeypatch.setattr(
             "markitai.providers.detect.detect_all_providers",
@@ -290,6 +295,7 @@ class TestResolveConfig:
         """Detection probes CLI auth with asyncio.run, which raises inside a
         running loop — aconvert must resolve config in a worker thread."""
         monkeypatch.delenv("MODEL", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
         def detect() -> list[Any]:
             async def probe() -> bool:

@@ -323,6 +323,18 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
+# Every variable LiteLLM (1.104) reads each provider's key from, in the order
+# it reads them: the first one set is the key a request carries. A key
+# LiteLLM would find must never be reported missing, so this has all of its
+# names, not only the one markitai documents (PROVIDER_API_KEY_ENV above).
+PROVIDER_API_KEY_ENV_NAMES: dict[str, tuple[str, ...]] = {
+    "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+    "openai": ("OPENAI_API_KEY",),
+    "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY", "OR_API_KEY"),
+}
+
 
 # The model each provider defaults to when markitai picks one for the user:
 # credential auto-detection, the `init` wizard, `serve`'s startup candidates

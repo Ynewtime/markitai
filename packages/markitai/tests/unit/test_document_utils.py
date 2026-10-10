@@ -838,8 +838,10 @@ class TestFallbackFrontmatterDegradation:
 
     When every LLM path fails, markitai silently wrote a .llm.md whose only
     hint of degradation was an empty description. The fallback must carry an
-    explicit marker in the frontmatter and emit an ERROR-level log (the only
-    level quiet/stdout mode shows).
+    explicit marker in the frontmatter. The failure reaches the console once,
+    from the item (its error, or its llm.on_failure fallback warning, a user
+    notice the default console shows); the log line here is a warning, so
+    the console does not print the same failure a second time.
     """
 
     def test_fallback_frontmatter_marks_llm_enhanced_false(
@@ -852,11 +854,18 @@ class TestFallbackFrontmatterDegradation:
         data = yaml.safe_load(frontmatter_yaml)
         assert data["llm_enhanced"] is False
 
-    def test_fallback_frontmatter_logs_error(self, mock_processor: MagicMock) -> None:
+    def test_fallback_frontmatter_logs_a_warning_not_an_error(
+        self, mock_processor: MagicMock
+    ) -> None:
         from loguru import logger
 
-        errors: list[str] = []
-        sink_id = logger.add(lambda message: errors.append(str(message)), level="ERROR")
+        records: list[tuple[str, str]] = []
+        sink_id = logger.add(
+            lambda message: records.append(
+                (message.record["level"].name, message.record["message"])
+            ),
+            level="WARNING",
+        )
         try:
             mock_processor.documents._build_fallback_frontmatter(
                 "https://example.com/post",
@@ -864,9 +873,12 @@ class TestFallbackFrontmatterDegradation:
             )
         finally:
             logger.remove(sink_id)
-        assert any("LLM enhancement failed" in msg for msg in errors), (
-            f"expected an ERROR-level degradation notice, got: {errors}"
-        )
+        assert (
+            "WARNING",
+            "[https://example.com/post] LLM enhancement failed; "
+            "using fallback frontmatter",
+        ) in records
+        assert not [level for level, _ in records if level == "ERROR"]
 
 
 class TestRefusalIsNotACleanup:
