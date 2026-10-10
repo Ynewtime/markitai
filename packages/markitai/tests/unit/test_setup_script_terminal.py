@@ -42,6 +42,11 @@ _PWSH = shutil.which("pwsh") or shutil.which("powershell")
 _WINDOWS_POWERSHELL = shutil.which("powershell") if sys.platform == "win32" else None
 
 _needs_pwsh = pytest.mark.skipif(_PWSH is None, reason="no PowerShell available")
+# setup.sh runs under a POSIX sh: on Windows only with Git for Windows' bin
+# folder (or another sh) on PATH. Without one its tests are skipped, never
+# failed; the PowerShell tests run either way.
+_SH = shutil.which("sh")
+_NO_SH = "no POSIX sh on PATH (on Windows, Git for Windows' bin folder)"
 _needs_pty = pytest.mark.skipif(
     sys.platform == "win32", reason="pseudo-terminals are POSIX only"
 )
@@ -128,8 +133,10 @@ def _run_sh(tmp_path: Path, body: str, **env: str) -> subprocess.CompletedProces
     script.write_text(
         f"#!/bin/sh\nset -eu\n{_sh_runtime()}\n{body}\n", encoding="utf-8"
     )
+    if _SH is None:
+        pytest.skip(_NO_SH)
     return subprocess.run(
-        ["sh", str(script)],
+        [_SH, str(script)],
         check=False,
         capture_output=True,
         encoding="utf-8",
@@ -708,9 +715,9 @@ def test_setup_sh_checkout_root_asks_on_a_terminal(
     script.write_text(
         f"#!/bin/sh\nset -eu\n{_sh_runtime()}\n{body}\n", encoding="utf-8"
     )
-    sh = shutil.which("sh")
-    assert sh is not None
-    output = _run_in_pty([sh, str(script)], _env(NO_COLOR="1"), answer)
+    if _SH is None:
+        pytest.skip(_NO_SH)
+    output = _run_in_pty([_SH, str(script)], _env(NO_COLOR="1"), answer)
     assert "? Set up a development environment here instead of installing" in output
     assert f"mode={mode}" in output
 
@@ -841,9 +848,9 @@ def test_setup_sh_source_question_defaults_to_the_checkout(
     script.write_text(
         f"#!/bin/sh\nset -eu\n{_sh_runtime()}\n{body}\n", encoding="utf-8"
     )
-    sh = shutil.which("sh")
-    assert sh is not None
-    output = _run_in_pty([sh, str(script)], _env(NO_COLOR="1"), answer, b"[Y/n]")
+    if _SH is None:
+        pytest.skip(_NO_SH)
+    output = _run_in_pty([_SH, str(script)], _env(NO_COLOR="1"), answer, b"[Y/n]")
     assert "? Install markitai from this checkout? (n: the PyPI release instead)" in (
         output
     )

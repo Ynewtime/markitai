@@ -33,6 +33,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,6 +45,13 @@ _SETUP_SH = Path(__file__).resolve().parents[4] / "scripts" / "setup.sh"
 _SETUP_PS1 = Path(__file__).resolve().parents[4] / "scripts" / "setup.ps1"
 _MARKITAI_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 _POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+# setup.sh runs under a POSIX sh: on Windows only with Git for Windows' bin
+# folder (or another sh) on PATH. Without one its tests are skipped, never
+# failed; the PowerShell tests run either way.
+_SH = shutil.which("sh")
+_needs_sh = pytest.mark.skipif(
+    _SH is None, reason="no POSIX sh on PATH (on Windows, Git for Windows' bin folder)"
+)
 
 # Non-fatal orchestration calls: declining/failing these must NOT abort setup.
 # (install_uv / install_markitai are intentionally fatal and use their own
@@ -110,7 +118,7 @@ def _extras_runtime(script_path: Path) -> str:
 @pytest.mark.parametrize(
     "runtime",
     [
-        "sh",
+        pytest.param("sh", marks=_needs_sh),
         pytest.param(
             "powershell",
             marks=pytest.mark.skipif(
@@ -225,7 +233,8 @@ def test_setup_migrates_retired_receipt_extras(
         command = [_POWERSHELL, "-NoLogo", "-NoProfile", "-File"]
         script = tmp_path / "migrate.ps1"
     else:
-        command = ["sh"]
+        assert _SH is not None
+        command = [_SH]
         script = tmp_path / "migrate.sh"
     script.write_text(harness, encoding="utf-8")
     result = subprocess.run(
@@ -261,6 +270,15 @@ def test_setup_migrates_retired_receipt_extras(
     )
     current = tomllib.loads(receipt.read_text(encoding="utf-8"))
     assert current["tool"]["requirements"][0]["extras"] == clean_extras
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or not os.environ.get("CI"),
+    reason="only CI on Linux and macOS must have sh",
+)
+def test_ci_runs_the_setup_sh_tests_on_posix() -> None:
+    """The sh-based tests skip without sh; on POSIX CI that must never happen."""
+    assert _SH is not None, "no sh on PATH: setup.sh's tests would be skipped"
 
 
 @pytest.mark.skipif(not _SETUP_SH.exists(), reason="scripts/setup.sh not present")
@@ -527,6 +545,7 @@ def test_the_fallback_offers_everything_all_would_have() -> None:
         )
 
 
+@_needs_sh
 def test_setup_sh_bounds_and_sanitizes_failed_command_output(tmp_path: Path) -> None:
     """A noisy ANSI-colored failure must stay inside and close the tree."""
     text = _SETUP_SH.read_text(encoding="utf-8")
@@ -562,8 +581,9 @@ def test_setup_sh_bounds_and_sanitizes_failed_command_output(tmp_path: Path) -> 
     )
 
     full_log = tmp_path / "full-setup.log"
+    assert _SH is not None
     result = subprocess.run(
-        ["sh", str(script)],
+        [_SH, str(script)],
         check=False,
         capture_output=True,
         text=True,
@@ -923,29 +943,34 @@ def _run_shell_probe(tmp_path: Path, url: str, timeout: str = "3") -> int:
     env["NO_PROXY"] = "127.0.0.1,localhost"
     env["MARKITAI_INDEX_PROBE_URL"] = url
     env["MARKITAI_INDEX_PROBE_TIMEOUT"] = timeout
+    assert _SH is not None
     return subprocess.run(
-        ["sh", str(script)], check=False, capture_output=True, text=True, env=env
+        [_SH, str(script)], check=False, capture_output=True, text=True, env=env
     ).returncode
 
 
+@_needs_sh
 @pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
 def test_shell_probe_accepts_a_healthy_index(tmp_path: Path, probe_server: str) -> None:
     """A 200 with a body means the default index is usable: stay silent."""
     assert _run_shell_probe(tmp_path, f"{probe_server}/ok") == 0
 
 
+@_needs_sh
 @pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
 def test_shell_probe_rejects_an_empty_200(tmp_path: Path, probe_server: str) -> None:
     """HTTP 200 is not success: an empty body must count as unreachable."""
     assert _run_shell_probe(tmp_path, f"{probe_server}/empty") == 1
 
 
+@_needs_sh
 @pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
 def test_shell_probe_rejects_an_error_status(tmp_path: Path, probe_server: str) -> None:
     """A 5xx index is unreachable for installation purposes."""
     assert _run_shell_probe(tmp_path, f"{probe_server}/boom") == 1
 
 
+@_needs_sh
 @pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
 def test_shell_probe_times_out_on_a_slow_index(
     tmp_path: Path, probe_server: str
@@ -954,6 +979,7 @@ def test_shell_probe_times_out_on_a_slow_index(
     assert _run_shell_probe(tmp_path, f"{probe_server}/slow", timeout="1") == 1
 
 
+@_needs_sh
 @pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
 def test_shell_probe_rejects_a_dead_port(tmp_path: Path) -> None:
     """Nothing listening at all is the plainest unreachable case."""
