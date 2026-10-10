@@ -628,7 +628,8 @@ class TestDeepSeekThinkingModels:
         "model",
         [
             "deepseek/deepseek-flash",
-            # Older configs: both ids now route to V4.1-Flash, in thinking mode
+            # Older configs: the retired id routes to V4.1-Flash; V4-Pro is
+            # still served. Both answer in thinking mode.
             "deepseek/deepseek-v4-flash",
             "deepseek/deepseek-v4-pro",
         ],
