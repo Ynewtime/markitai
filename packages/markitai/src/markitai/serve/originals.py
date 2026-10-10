@@ -436,6 +436,23 @@ def pdf_page_text(path: Path, page_number: int) -> dict[str, Any]:
     }
 
 
+def _init_page_worker() -> None:
+    """Ignore Ctrl-C and end with the server.
+
+    A terminal's Ctrl-C reaches every process attached to it; the server
+    stops its workers itself (``PdfWorkers.close``), and an idle worker's own
+    KeyboardInterrupt would only print a traceback. A server that is killed
+    instead (``TerminateProcess`` on Windows, a crash) cannot stop them: they
+    end on their own, or they would keep its working directory open.
+    """
+    import signal
+
+    from markitai.utils.executor import exit_with_parent
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    exit_with_parent()
+
+
 class PdfWorkers:
     """PyMuPDF work for the Compare view, in a few worker processes.
 
@@ -463,6 +480,7 @@ class PdfWorkers:
                 self._pool = ProcessPoolExecutor(
                     max_workers=self.workers,
                     mp_context=multiprocessing.get_context("spawn"),
+                    initializer=_init_page_worker,
                 )
             return self._pool
 
@@ -470,13 +488,30 @@ class PdfWorkers:
         with self._lock:
             if self._pool is pool:
                 self._pool = None
-        if kill:
-            for process in list((getattr(pool, "_processes", None) or {}).values()):
-                try:
-                    process.kill()
-                except Exception:  # already gone
-                    pass
+        processes = list((getattr(pool, "_processes", None) or {}).values())
+        # Taken before shutdown(), which drops the pool's reference to it
+        manager = getattr(pool, "_executor_manager_thread", None)
         pool.shutdown(wait=False, cancel_futures=True)
+        if not kill:
+            return
+        for process in processes:
+            try:
+                process.kill()
+            except Exception:  # already gone
+                pass
+        # Wait (bounded) for the workers, then for the pool's manager thread,
+        # which holds the queues: their semaphores are released only when
+        # the queues are freed, and a server leaving before that got "There
+        # appear to be 5 leaked semaphore objects" from the resource tracker
+        # on every stop after a Compare (as converter.pdf_parallel does)
+        for process in processes:
+            try:
+                process.join(timeout=1)
+            except Exception:
+                pass
+        if manager is not None:
+            manager.join(timeout=2)
+        del manager
 
     def run(self, function: Callable[..., Any], *args: Any) -> Any:
         """Run *function* in a worker and wait for it (call from a thread)."""

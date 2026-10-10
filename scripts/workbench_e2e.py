@@ -32,12 +32,15 @@ import io
 import json
 import os
 import re
+import shutil
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import traceback
 import zipfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -367,8 +370,18 @@ def make_inputs(directory: Path, pages_port: int) -> dict[str, Path]:
 
 @contextlib.contextmanager
 def run_server(
-    home: Path, port: int, llm_port: int, bundle: Path | None, log: Path
+    home: Path,
+    port: int,
+    llm_port: int,
+    bundle: Path | None,
+    log: Path,
+    shutdown: dict[str, Any],
 ) -> Iterator[str]:
+    """Run serve in *home* until the block ends, then stop it like a user does.
+
+    How the stop went (graceful or not, how long, processes it left behind)
+    is written into *shutdown*.
+    """
     (home / ".markitai").mkdir(parents=True, exist_ok=True)
     config = {
         "llm": {
@@ -437,9 +450,16 @@ def run_server(
             ),
             str(bundle),
         ]
+    # Its own process group (Windows) or session: the stop signal below goes
+    # to the server, and the terminal's Ctrl-C does not reach it twice
+    group: dict[str, Any] = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        if sys.platform == "win32"
+        else {"start_new_session": True}
+    )
     with log.open("w", encoding="utf-8") as sink:
         process = subprocess.Popen(
-            command, cwd=home, env=env, stdout=sink, stderr=subprocess.STDOUT
+            command, cwd=home, env=env, stdout=sink, stderr=subprocess.STDOUT, **group
         )
         base = f"http://127.0.0.1:{port}"
         try:
@@ -463,11 +483,126 @@ def run_server(
                 raise RuntimeError("server did not start")
             yield base
         finally:
-            process.terminate()
-            try:
-                process.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                process.kill()
+            shutdown.update(stop_server(process))
+
+
+def _alive(process: Any) -> bool:
+    import psutil
+
+    try:
+        return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+    except psutil.Error:
+        return False
+
+
+def stop_server(process: subprocess.Popen[bytes]) -> dict[str, Any]:
+    """Stop serve with Ctrl-C (Ctrl-Break on Windows) and wait for its children.
+
+    ``terminate()`` is not a stop on Windows: it kills the process outright
+    (under ``uv run`` only the venv's python.exe launcher, which then kills
+    the server through its job object), so the server cannot stop its
+    workers, and its spawned workers break away from that job. A stopped
+    server must leave no process behind: one that does keeps its working
+    directory (the throwaway home) open, and Windows then refuses to delete
+    it. Leftovers are reported, then killed.
+    """
+    import psutil
+
+    try:
+        children = psutil.Process(process.pid).children(recursive=True)
+    except psutil.Error:
+        children = []
+    started = time.monotonic()
+    graceful, note = True, ""
+    try:
+        process.send_signal(
+            signal.CTRL_BREAK_EVENT if sys.platform == "win32" else signal.SIGINT
+        )
+        process.wait(timeout=30)
+    except (OSError, ValueError) as error:  # Windows: no console to signal in
+        graceful, note = False, f"could not signal it ({error}); killed"
+    except subprocess.TimeoutExpired:
+        graceful, note = False, "still running 30 s after the signal; killed"
+    if process.poll() is None:
+        for child in children:
+            with contextlib.suppress(psutil.Error):
+                child.kill()
+        process.kill()
+        process.wait(timeout=30)
+    seconds = round(time.monotonic() - started, 1)
+    # A stopped server stops its children; give them a moment to exit
+    deadline = time.monotonic() + 10
+    leftovers = [child for child in children if _alive(child)]
+    while leftovers and time.monotonic() < deadline:
+        time.sleep(0.2)
+        leftovers = [child for child in leftovers if _alive(child)]
+    described = []
+    for child in leftovers:
+        with contextlib.suppress(psutil.Error):
+            described.append(f"{child.pid} {' '.join(child.cmdline())[:160]}")
+            child.kill()
+    return {
+        "graceful": graceful,
+        "seconds": seconds,
+        "children": len(children),
+        "leftovers": described,
+        "note": note,
+    }
+
+
+def shutdown_step(shutdown: dict[str, Any]) -> dict[str, Any]:
+    """The server's stop as a step of the report."""
+    if not shutdown:
+        return {
+            "state": "shutdown",
+            "ok": False,
+            "note": "the server was not stopped",
+            "screenshot": "",
+            "seconds": 0,
+        }
+    leftovers = shutdown["leftovers"]
+    ok = shutdown["graceful"] and not leftovers
+    if ok:
+        note = (
+            f"stopped by {'Ctrl-Break' if sys.platform == 'win32' else 'Ctrl-C'} "
+            f"in {shutdown['seconds']} s; its {shutdown['children']} child "
+            "process(es) ended with it"
+        )
+    else:
+        note = "; ".join(
+            part
+            for part in (
+                shutdown["note"],
+                f"left running: {', '.join(leftovers)}" if leftovers else "",
+            )
+            if part
+        )
+    return {
+        "state": "shutdown",
+        "ok": ok,
+        "note": note,
+        "screenshot": "",
+        "seconds": shutdown["seconds"],
+    }
+
+
+def remove_tree(path: Path, timeout: float = 15) -> str | None:
+    """Delete *path*, retrying while Windows still has a file in it open.
+
+    Returns:
+        None once it is gone, else the last error.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            shutil.rmtree(path)
+            return None
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            if time.monotonic() >= deadline:
+                return f"{type(error).__name__}: {error}"
+            time.sleep(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -997,33 +1132,64 @@ def main(argv: list[str] | None = None) -> int:
     _, llm_port = _serve(_FakeLLM)
     _, pages_port = _serve(_Pages)
     results: dict[str, Any] = {"widths": {}, "bundle": None, "browser": args.browser}
-    failed = False
-    with tempfile.TemporaryDirectory(prefix="markitai-e2e-") as scratch:
-        inputs = make_inputs(Path(scratch) / "inputs", pages_port)
+    interrupted: BaseException | None = None
+    scratch = Path(tempfile.mkdtemp(prefix="markitai-e2e-"))
+    try:
+        inputs = make_inputs(scratch / "inputs", pages_port)
         for width in (int(w) for w in args.widths.split(",")):
-            home = Path(scratch) / f"home-{width}"
-            with run_server(
-                home,
-                _free_port(),
-                llm_port,
-                args.bundle,
-                args.out / f"server-{width}.log",
-            ) as base:
-                caps = json.loads(
-                    __import__("urllib.request")
-                    .request.urlopen(f"{base}/api/capabilities")
-                    .read()
+            entry: dict[str, Any] = {"steps": [], "errors": [], "api_calls": 0}
+            results["widths"][width] = entry
+            shutdown: dict[str, Any] = {}
+            try:
+                with run_server(
+                    scratch / f"home-{width}",
+                    _free_port(),
+                    llm_port,
+                    args.bundle,
+                    args.out / f"server-{width}.log",
+                    shutdown,
+                ) as base:
+                    caps = json.loads(
+                        __import__("urllib.request")
+                        .request.urlopen(f"{base}/api/capabilities")
+                        .read()
+                    )
+                    results["version"] = caps.get("version")
+                    run = browse(
+                        base, width, args.out, inputs, pages_port, args.browser
+                    )
+                    entry.update(
+                        steps=run.steps, errors=run.errors, api_calls=len(run.api)
+                    )
+            except Exception as error:  # noqa: BLE001 - recorded; the next width runs
+                entry["errors"].append(
+                    f"run aborted: {type(error).__name__}: {error}"[:400]
                 )
-                run = browse(base, width, args.out, inputs, pages_port, args.browser)
-            results["widths"][width] = {
-                "steps": run.steps,
-                "errors": run.errors,
-                "api_calls": len(run.api),
-            }
-            results["version"] = caps.get("version")
-            failed = (
-                failed or bool(run.errors) or not all(step["ok"] for step in run.steps)
+                print(traceback.format_exc(), file=sys.stderr, flush=True)
+            entry["steps"].append(shutdown_step(shutdown))
+            print(
+                f"[{width}] {'ok  ' if entry['steps'][-1]['ok'] else 'FAIL'} "
+                f"shutdown: {entry['steps'][-1]['note']}",
+                flush=True,
             )
+    except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - still write what ran
+        interrupted = error
+        results["aborted"] = f"{type(error).__name__}: {error}"[:400]
+    finally:
+        # Every server and its children are stopped by now: on Windows a
+        # process left with a file or its working directory in here makes
+        # the delete fail, which is a leak to report, not to crash on
+        cleanup_error = remove_tree(scratch)
+        if cleanup_error:
+            results["cleanup_error"] = cleanup_error
+    failed = (
+        interrupted is not None
+        or bool(results.get("cleanup_error"))
+        or any(
+            data["errors"] or not all(step["ok"] for step in data["steps"])
+            for data in results["widths"].values()
+        )
+    )
     from importlib.resources import files
 
     manifest_path = (
@@ -1049,13 +1215,19 @@ def main(argv: list[str] | None = None) -> int:
     ]
     for width, data in results["widths"].items():
         for step in data["steps"]:
+            shot = step["screenshot"]
             lines.append(
-                f"| {width} | {step['state']} | {'ok' if step['ok'] else '**FAIL**'} | {step['note']} | [{step['screenshot']}]({step['screenshot']}) |"
+                f"| {width} | {step['state']} | {'ok' if step['ok'] else '**FAIL**'} | {step['note']} | {f'[{shot}]({shot})' if shot else ''} |"
             )
         for error in data["errors"]:
             lines.append(f"| {width} | error | **FAIL** | {error} | |")
+    for key, state in (("cleanup_error", "cleanup"), ("aborted", "aborted")):
+        if results.get(key):
+            lines.append(f"| | {state} | **FAIL** | {results[key]} | |")
     (args.out / "INDEX.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"{'FAILED' if failed else 'passed'}: {args.out / 'INDEX.md'}")
+    if isinstance(interrupted, KeyboardInterrupt):
+        raise interrupted
     return 1 if failed else 0
 
 

@@ -55,6 +55,29 @@ def get_converter_executor() -> ThreadPoolExecutor:
     return _CONVERTER_EXECUTOR
 
 
+def exit_with_parent() -> None:
+    """End this worker process as soon as the process that spawned it is gone.
+
+    For the initializer of a spawned ``ProcessPoolExecutor``. The pool's
+    queues hand every worker both ends of their pipes, so a worker whose
+    parent was killed (a signal, a crash, ``os._exit`` without a shutdown,
+    ``TerminateProcess`` on Windows) never sees EOF and would wait forever,
+    holding the parent's working directory open (on Windows that directory
+    can then not be deleted). The parent's sentinel does close with it.
+    """
+    import multiprocessing
+
+    parent = multiprocessing.parent_process()
+    if parent is None:
+        return
+
+    def watch() -> None:
+        parent.join()
+        os._exit(0)
+
+    threading.Thread(target=watch, name="markitai-parent-watch", daemon=True).start()
+
+
 # Global heavy task semaphore to prevent OOM from LibreOffice/Playwright/etc.
 _HEAVY_TASK_SEMAPHORE: asyncio.Semaphore | None = None
 
