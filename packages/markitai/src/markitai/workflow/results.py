@@ -45,7 +45,13 @@ def document_process_result(
     from markitai.utils.paths import derive_output_name
 
     if not result.success:
-        return ProcessResult(success=False, error=result.error)
+        # A failed LLM stage was still paid for: its spend stays on the item
+        return ProcessResult(
+            success=False,
+            error=result.error,
+            cost_usd=ctx.llm_cost,
+            llm_usage=ctx.llm_usage,
+        )
 
     if result.skip_reason == "exists":
         skipped_output = ctx.output_dir / derive_output_name(ctx.input_path.name)

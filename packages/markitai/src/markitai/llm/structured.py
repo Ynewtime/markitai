@@ -111,7 +111,11 @@ def _is_deepseek_thinking_model(model_id: str) -> bool:
     but in thinking mode DeepSeek rejects a forced ``tool_choice`` with HTTP
     400 ("Thinking mode does not support this tool_choice"), and its API has
     no ``json_schema`` response format, so every document would spend one
-    failed request per rejected tier first.
+    failed request per rejected tier first. Requests now turn thinking off
+    (``models.cleanup_reasoning_params``), which allows a forced tool call
+    again, but JSON in the prompt costs the same tokens, needs no tool
+    support from whichever DeepSeek model the alias serves, and keeps
+    working if a deployment thinks after all.
     """
     if not model_id.startswith("deepseek/"):
         return False

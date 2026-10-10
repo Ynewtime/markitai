@@ -24,7 +24,6 @@ from markitai.llm.degeneration import truncate_degenerate_tail
 from markitai.llm.engine import (
     EmptyLLMResponseError,
     LLMCall,
-    extract_cached_tokens,
     find_budget_exceeded_error,
     find_non_retryable_provider_error,
     run_structured_ladder,
@@ -871,9 +870,10 @@ class VisionAnalyzer:
                     ),
                 )
 
-                # Track usage first: a truncated batch was billed like any
-                # other call, and truncation hits the largest (priciest)
-                # batches, so raising before accounting hid real spend.
+                # Usage was tracked per answer by the guarded adapter (a
+                # truncated or rejected batch was billed like any other);
+                # the raw response carries instructor's total, which only
+                # feeds the per-image shares below.
                 actual_model = getattr(raw_response, "model", None) or "default"
                 input_tokens = 0
                 output_tokens = 0
@@ -884,14 +884,6 @@ class VisionAnalyzer:
                         getattr(raw_response.usage, "completion_tokens", 0) or 0
                     )
                     cost = get_response_cost(raw_response)
-                    self._engine.track_usage(
-                        actual_model,
-                        input_tokens,
-                        output_tokens,
-                        cost,
-                        context,
-                        extract_cached_tokens(raw_response),
-                    )
 
                 # Check for truncation (after accounting; the truncated
                 # results are never cached because this aborts the batch)

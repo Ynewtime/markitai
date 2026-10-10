@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -278,6 +278,74 @@ class DocumentPlan:
     fetch_strategy: str | None
     extra_meta: dict[str, Any] | None
     chunk_calls: list[LLMCall] = field(default_factory=list)
+
+
+class PlaceholderLossError(ValueError):
+    """A document answer dropped structural placeholders it must keep.
+
+    Raised by the document call's ``validate`` hook (nothing is cached)
+    after the placeholders whose position was unambiguous were put back;
+    ``missing`` names the rest, for the one retry that asks for them.
+    """
+
+    def __init__(
+        self,
+        missing: list[str],
+        total: int,
+        *,
+        originals: dict[str, str] | None = None,
+        retried: bool = False,
+    ) -> None:
+        labels = [_placeholder_label(p, (originals or {}).get(p)) for p in missing]
+        super().__init__(
+            f"LLM answer dropped {len(missing)}/{total} structural placeholders "
+            f"({', '.join(labels)})"
+            + ("; the one retry lost them too" if retried else "")
+        )
+        self.missing = missing
+        self.total = total
+        self.originals = originals
+
+
+def _placeholder_label(placeholder: str, original: str | None) -> str:
+    """What a placeholder stands for, for messages ("page 2 marker")."""
+    marker = re.search(r"(Page|Slide) number:\s*(\d+)", original or "")
+    if marker:
+        return f"{marker.group(1).lower()} {marker.group(2)} marker"
+    image = re.search(r"\]\(([^)]+)\)", original or "")
+    if image:
+        return f"image {image.group(1).rsplit('/', 1)[-1]}"
+    return placeholder
+
+
+def _placeholder_retry_note(source: str, missing: list[str]) -> str:
+    """System-prompt addition for the retry of an answer that lost placeholders.
+
+    Names each placeholder and the line it comes before, so the second
+    request is not a repeat of the first.
+    """
+    lines = source.split("\n")
+    where: list[str] = []
+    for placeholder in missing:
+        index = next(
+            (i for i, line in enumerate(lines) if placeholder in line), len(lines)
+        )
+        following = next(
+            (line.strip() for line in lines[index + 1 :] if line.strip()), ""
+        )
+        if lines[index : index + 1] and lines[index].strip() != placeholder:
+            where.append(f"- `{placeholder}`, inside its line, exactly where it is")
+        elif following:
+            anchor = following if len(following) <= 80 else following[:77] + "..."
+            where.append(f"- `{placeholder}`, on its own line, right before: {anchor}")
+        else:
+            where.append(f"- `{placeholder}`, on its own line, at the very end")
+    return (
+        "\n\n## Previous Answer Rejected\n"
+        "A previous answer to this request was rejected because cleaned_markdown "
+        "lost these placeholders. Keep every `__MARKITAI_*__` placeholder, written "
+        "exactly as given (not bold, not escaped), in its place:\n" + "\n".join(where)
+    )
 
 
 class DocumentEnhancer:
@@ -652,6 +720,11 @@ class DocumentEnhancer:
         return stabilized_body if not suffix else f"{stabilized_body}\n\n{suffix}"
 
     @staticmethod
+    def _boundary_placeholders(mapping: dict[str, str]) -> list[str]:
+        """The page/slide boundary placeholders of a protection mapping."""
+        return [p for p in mapping if "PAGENUM" in p or "SLIDENUM" in p]
+
+    @staticmethod
     def _find_missing_boundary_placeholders(
         llm_output: str,
         mapping: dict[str, str],
@@ -937,10 +1010,16 @@ class DocumentEnhancer:
                 format_error_message(exc), cleaned_markdown=extracted_text
             ) from exc
 
-        # Restore protected content from placeholders, with fallback for removed items
-        result = content_utils.unprotect_content(
-            content_utils.strip_prompt_echo(response.content), mapping, protected
+        # Put back page/slide placeholders the answer dropped where their
+        # position is unambiguous, then restore protected content from
+        # placeholders, with fallback for removed items
+        answer_text, _ = content_utils.restore_dropped_placeholders(
+            protected_content,
+            content_utils.strip_prompt_echo(response.content),
+            self._boundary_placeholders(mapping),
+            mapping,
         )
+        result = content_utils.unprotect_content(answer_text, mapping, protected)
 
         # Fix malformed image references (e.g., extra closing parentheses)
         result = content_utils.fix_malformed_image_refs(result)
@@ -1302,7 +1381,12 @@ class DocumentEnhancer:
             falling back to the extracted text would report unenhanced
             output as enhanced.
             """
-            response_markdown = content_utils.strip_prompt_echo(result.cleaned_markdown)
+            response_markdown, _ = content_utils.restore_dropped_placeholders(
+                protected_text,
+                content_utils.strip_prompt_echo(result.cleaned_markdown),
+                self._boundary_placeholders(mapping),
+                mapping,
+            )
             lost = self._boundary_placeholder_loss(response_markdown, mapping)
             if lost is not None:
                 raise ValueError(
@@ -1648,6 +1732,7 @@ class DocumentEnhancer:
             for placeholder in mapping
             if "PAGENUM" in placeholder or "SLIDENUM" in placeholder
         ] + list(image_mapping)
+        originals = {**mapping, **image_mapping}
         calls = [
             self._build_document_call(
                 chunk,
@@ -1655,6 +1740,9 @@ class DocumentEnhancer:
                 check_rewrite=not body_verbatim,
                 chunked=len(chunks) > 1,
                 required_placeholders=tuple(p for p in structural if p in chunk),
+                placeholder_originals={
+                    p: originals[p] for p in structural if p in chunk
+                },
             )
             for chunk in chunks
         ]
@@ -1831,6 +1919,7 @@ class DocumentEnhancer:
         check_rewrite: bool = True,
         chunked: bool = False,
         required_placeholders: tuple[str, ...] = (),
+        placeholder_originals: dict[str, str] | None = None,
     ) -> LLMCall:
         """Build the combined cleaner+frontmatter structured call.
 
@@ -1855,7 +1944,12 @@ class DocumentEnhancer:
             required_placeholders: Structural placeholders in *markdown*
                 (page/slide boundaries, image positions) the answer must
                 keep; losing one would make the result fall back to the
-                unenhanced input.
+                unenhanced input. One the answer dropped is put back when
+                its position is unambiguous
+                (``content.restore_dropped_placeholders``); the rest raise
+                ``PlaceholderLossError``.
+            placeholder_originals: Placeholder -> the content it stands
+                for (an answer that wrote the original back is repaired).
         """
         extra_rules = self._extra_cleaning_rules
         cache_key = self._prompt_scoped_key(
@@ -1894,14 +1988,8 @@ class DocumentEnhancer:
                 response.cleaned_markdown, source
             )
             if check_rewrite:
-                missing = [
-                    p for p in required_placeholders if p not in validated_markdown
-                ]
-                if missing:
-                    raise ValueError(
-                        f"LLM answer dropped {len(missing)}/"
-                        f"{len(required_placeholders)} structural placeholders"
-                    )
+                # A refusal is rejected as such first: it lost the
+                # placeholders too, but is not worth the placeholder retry
                 judge = (
                     content_utils.implausible_chunk_cleaning_reason
                     if chunked
@@ -1910,6 +1998,27 @@ class DocumentEnhancer:
                 rejection = judge(markdown, validated_markdown)
                 if rejection is not None:
                     raise ValueError(f"LLM answer is not a cleanup ({rejection})")
+                validated_markdown, missing = (
+                    content_utils.restore_dropped_placeholders(
+                        markdown,
+                        validated_markdown,
+                        required_placeholders,
+                        placeholder_originals,
+                    )
+                )
+                if missing:
+                    raise PlaceholderLossError(
+                        missing,
+                        len(required_placeholders),
+                        originals=placeholder_originals,
+                    )
+                if validated_markdown != response.cleaned_markdown and any(
+                    p not in response.cleaned_markdown for p in required_placeholders
+                ):
+                    logger.info(
+                        f"[{source}] Put back structural placeholders the LLM "
+                        "answer dropped or rewrote (their position was unambiguous)"
+                    )
             if validated_markdown != response.cleaned_markdown:
                 return DocumentProcessResult(
                     cleaned_markdown=validated_markdown,
@@ -1933,9 +2042,51 @@ class DocumentEnhancer:
         )
 
     async def _run_document_call(self, call: LLMCall) -> DocumentProcessResult:
-        """Run a prepared document call (the engine handles caching)."""
-        response, _raw_response = await self._engine.complete_structured(call)
-        return response
+        """Run a prepared document call (the engine handles caching).
+
+        An answer that lost structural placeholders whose position could
+        not be restored gets one more request whose system prompt names
+        them and where they go, when the document's request budget has
+        room for it. A second loss, or no room, fails with the first
+        error; the rejected answers are paid for and counted either way.
+        """
+        try:
+            response, _raw_response = await self._engine.complete_structured(call)
+            return response
+        except PlaceholderLossError as loss:
+            budget = self._engine.request_budget
+            remaining = (
+                budget.remaining(call.context)
+                if isinstance(budget, RequestBudget)
+                else None
+            )
+            if remaining is not None and remaining < 1:
+                raise
+            logger.warning(
+                f"[LLM:{call.context}] {loss}; asking once more with the "
+                "placeholders named"
+            )
+            note = _placeholder_retry_note(call.cache_content, loss.missing)
+            messages = [
+                {**message, "content": f"{message['content']}{note}"}
+                if message.get("role") == "system"
+                and isinstance(message.get("content"), str)
+                else message
+                for message in call.messages
+            ]
+            try:
+                response, _raw_response = await self._engine.complete_structured(
+                    replace(call, messages=messages)
+                )
+            # "from None": error formatting reports the root cause, and the
+            # loss is what the user can act on, not the budget refusal
+            except PlaceholderLossError as again:
+                raise PlaceholderLossError(
+                    again.missing, again.total, originals=again.originals, retried=True
+                ) from None
+            except LLMRequestBudgetExceededError:
+                raise loss from None
+            return response
 
     async def _run_document_plan(self, plan: DocumentPlan) -> DocumentProcessResult:
         """Run every call of a plan and merge the chunks into one result.
