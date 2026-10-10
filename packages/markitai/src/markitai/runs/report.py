@@ -120,6 +120,7 @@ def build_single_report(
             outcome.source: {
                 "status": outcome.status,
                 "error": outcome.error,
+                "warnings": list(outcome.warnings),
                 "output": str(outcome.output_path),
                 "images": outcome.images,
                 "screenshots": outcome.screenshots,
@@ -147,6 +148,7 @@ def build_single_report(
                 "status": outcome.status,
                 "source_file": outcome.source_file,
                 "error": outcome.error,
+                "warnings": list(outcome.warnings),
                 "output": str(outcome.output_path),
                 "fetch_strategy": outcome.fetch_strategy,
                 "fetch_cache_hit": outcome.fetch_cache_hit,
