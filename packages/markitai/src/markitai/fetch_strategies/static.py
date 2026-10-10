@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from markitai.fetch_http import get_static_http_client
+from markitai.fetch_http import BROWSER_REQUEST_HEADERS, get_static_http_client
 from markitai.fetch_strategies._shared import (
     _build_native_fetch_result,
     _convert_document_bytes,
@@ -60,6 +60,10 @@ def _get_header_value(
 
     return default
 
+
+#: Answers that turn the client away rather than the request: retried once
+#: with a browser's headers before AUTO falls back to a real browser.
+_AGENT_REFUSAL_STATUSES = frozenset({401, 403})
 
 _HTML_SUFFIXES = frozenset({".html", ".htm", ".xhtml"})
 
@@ -376,6 +380,23 @@ async def fetch_with_static_conditional(
         response = await client.get(
             url, headers=headers, timeout_s=30.0, proxy=proxy_url
         )
+        if response.status_code in _AGENT_REFUSAL_STATUSES and not getattr(
+            client, "impersonates_browser", False
+        ):
+            # Some sites serve browsers only. One more request is far
+            # cheaper than the browser the AUTO chain would launch next.
+            logger.debug(
+                "[ConditionalFetch] HTTP {} for markitai's User-Agent; "
+                "retrying once as a browser: {}",
+                response.status_code,
+                url,
+            )
+            response = await client.get(
+                url,
+                headers={**headers, **BROWSER_REQUEST_HEADERS},
+                timeout_s=30.0,
+                proxy=proxy_url,
+            )
 
         # Extract response headers for future conditional requests
         response_etag = _get_header_value(response.headers, "etag", "ETag")

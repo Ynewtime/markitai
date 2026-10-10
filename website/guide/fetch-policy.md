@@ -127,7 +127,7 @@ markitai ships built-in profiles for `x.com`, `twitter.com` and `github.com`. On
 
 ## Static HTTP Adapters
 
-The static strategy uses httpx, which works for most sites. If a site rejects it with a 403 or empty content because of TLS fingerprinting, `auto` falls back to Playwright or Cloudflare on its own. To get past the fingerprint check without launching a browser, switch to curl-cffi:
+The static strategy uses httpx, which works for most sites. It identifies itself as `markitai/<version> (+https://github.com/Ynewtime/markitai)`: sites such as Wikipedia refuse generic library agents but serve a descriptive one. When a site still answers 401 or 403, the request is repeated once with a desktop browser's headers before `auto` moves on. If a site rejects it with a 403 or empty content because of TLS fingerprinting, `auto` falls back to Playwright or Cloudflare on its own. To get past the fingerprint check without launching a browser, switch to curl-cffi (it sends the impersonated Chrome's own User-Agent):
 
 ```bash
 uv pip install markitai[extra-fetch]
