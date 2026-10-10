@@ -435,8 +435,21 @@ fn sandboxed(reply: &Reply) {
 fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::start(temp.path());
+    let capabilities = server.json("/api/capabilities");
     assert_eq!(
-        server.json("/api/capabilities")["features"],
+        (
+            capabilities["implementation"].clone(),
+            capabilities["docs_url"].clone(),
+            capabilities["source_url"].clone()
+        ),
+        (
+            json!("rust"),
+            json!("https://github.com/Ynewtime/markitai-rust/blob/main/docs/index.md"),
+            json!("https://github.com/Ynewtime/markitai-rust")
+        )
+    );
+    assert_eq!(
+        capabilities["features"],
         json!({"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
             "original":true,"result_excerpt":true,"job_labels":true})
     );

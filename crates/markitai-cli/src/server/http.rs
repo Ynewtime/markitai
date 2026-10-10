@@ -59,6 +59,7 @@ pub(super) async fn capabilities(
         "version":markitai_core::VERSION,
         "implementation":"rust",
         "docs_url":DOCS_URL,
+        "source_url":SOURCE_URL,
         "llm":llm,
         "remote_services":{"cloudflare":cloudflare},
         "presets":presets,
@@ -71,6 +72,7 @@ pub(super) async fn capabilities(
 }
 
 const DOCS_URL: &str = "https://github.com/Ynewtime/markitai-rust/blob/main/docs/index.md";
+const SOURCE_URL: &str = "https://github.com/Ynewtime/markitai-rust";
 
 fn invalid_label() -> ApiError {
     ApiError::new(

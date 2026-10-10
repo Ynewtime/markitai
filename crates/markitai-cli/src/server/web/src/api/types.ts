@@ -194,6 +194,7 @@ export interface Capabilities {
   limits: { max_job_items: number; history_retention_days?: number | null };
   implementation?: "rust" | "python";
   docs_url?: string;
+  source_url?: string;
   features?: Features;
 }
 
