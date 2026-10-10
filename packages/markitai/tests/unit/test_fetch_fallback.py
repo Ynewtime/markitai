@@ -301,8 +301,9 @@ class TestPlaywrightActionableErrors:
         message = str(exc_info.value)
         assert "Chromium browser is missing" in message
         assert "markitai doctor --fix" in message
-        assert "playwright install chromium" in message
-        assert "-m playwright install chromium" in message
+        from markitai.utils.guidance import playwright_install_command
+
+        assert playwright_install_command() in message
 
     @pytest.mark.asyncio
     async def test_missing_package_raises_actionable_error(self, monkeypatch) -> None:

@@ -17,6 +17,7 @@ from rich.console import Console
 
 from markitai.config import LiteLLMParams, MarkitaiConfig, ModelConfig
 from markitai.utils import term
+from markitai.utils.guidance import markitai_python_command
 
 # The module, not the click command that markitai.cli.commands exports
 # under the same name
@@ -220,7 +221,7 @@ class TestHints:
         """A bare `python` is not markitai's tool environment."""
         (label, command), *rest = doctor_mod.get_install_commands("playwright", "linux")
         assert not rest and not label
-        assert command.startswith(doctor_mod._markitai_python() + " -m playwright")
+        assert command.startswith(markitai_python_command() + " -m playwright")
         assert "--with-deps chromium" in command
         mac = doctor_mod.get_install_commands("playwright", "darwin")[0][1]
         assert mac.endswith("-m playwright install chromium")
@@ -232,7 +233,7 @@ class TestHints:
                 sys, "executable", r"C:\Users\A B\uv\tools\markitai\python.exe"
             ),
         ):
-            python = doctor_mod._markitai_python()
+            python = markitai_python_command()
         assert python == r'& "C:\Users\A B\uv\tools\markitai\python.exe"'
 
     def test_hints_render_commands_on_their_own_lines(self) -> None:
@@ -348,3 +349,112 @@ class TestUnusedKeys:
 
         llm = json.loads(buf.getvalue())["llm-api"]
         assert llm["unused_api_keys"] == ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"]
+
+
+class TestWindowsDoctor:
+    """the Windows machine, right after setup.ps1 (item 16)."""
+
+    def test_slow_first_launch_gets_one_retry(self) -> None:
+        """Defender scanning a fresh chrome.exe made the first launch time out."""
+        import subprocess
+
+        ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        calls: list[float] = []
+
+        def run(*args: Any, timeout: float, **kwargs: Any) -> Any:
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(cmd="python", timeout=timeout)
+            return ok
+
+        with patch.object(doctor_mod.subprocess, "run", run):
+            assert doctor_mod._smoke_test_playwright_browser() == (True, "")
+        assert calls == list(doctor_mod._SMOKE_TIMEOUTS_S)
+
+    def test_a_launch_that_stays_slow_is_slow_not_unusable(self) -> None:
+        import subprocess
+
+        def run(*args: Any, timeout: float, **kwargs: Any) -> Any:
+            raise subprocess.TimeoutExpired(cmd="python", timeout=timeout)
+
+        with (
+            patch.object(doctor_mod.subprocess, "run", run),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available", return_value=True
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
+                return_value=True,
+            ),
+        ):
+            row = doctor_mod._check_playwright()
+
+        assert row["status"] == "warning"
+        assert "slow to start" in row["message"]
+        assert "run doctor again" in row["message"]
+        assert "unusable" not in row["message"]
+        assert row["install_commands"] == ["markitai doctor"]
+
+    def test_text_and_json_say_the_same(self) -> None:
+        slow = {
+            "name": "Playwright",
+            "description": "Browser automation for dynamic URLs",
+            "status": "warning",
+            **doctor_mod._playwright_runtime_problem(doctor_mod.SMOKE_SLOW),
+        }
+        buf = io.StringIO()
+        with (
+            _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS),
+            patch.object(doctor_mod, "_check_playwright", return_value=slow),
+            patch.object(doctor_mod.click, "echo", lambda s: buf.write(s)),
+        ):
+            doctor_mod._doctor_impl(as_json=True)
+            out, _ = _run(None)
+
+        message = json.loads(buf.getvalue())["playwright"]["message"]
+        assert f"  ! Playwright: {message}" in out.splitlines()
+        assert "  • Playwright:" in out.splitlines()
+        assert "    markitai doctor" in out.splitlines()
+        assert "Playwright (slow to start)" in out.splitlines()[-1]
+
+    def test_the_same_hint_is_printed_once(self) -> None:
+        """Vision Model and VLM OCR both asked for a vision-capable model."""
+        vision_hint = "Use vision-capable models like gemini-*, gpt-6*, claude-*"
+        with (
+            _doctor_env(_config("deepseek/deepseek-flash"), env=OWNER_KEYS),
+            patch(
+                "markitai.llm.get_model_info_cached",
+                return_value={"supports_vision": False},
+            ),
+        ):
+            out, _ = _run(None)
+        assert out.count(vision_hint) == 1
+        assert "  • Vision Model, VLM OCR: " + vision_hint in out.splitlines() or (
+            "  • Vision Model: " + vision_hint in out.splitlines()
+        )
+
+    def test_hint_uses_the_tool_python_never_a_bare_python(self) -> None:
+        """`python` on the Windows machine is only the Microsoft Store alias."""
+        exe = r"C:\Users\runner\AppData\Roaming\uv\tools\markitai\Scripts\python.exe"
+        with (
+            patch.object(sys, "platform", "win32"),
+            patch.object(sys, "executable", exe),
+        ):
+            (_, command), *_ = doctor_mod.get_install_commands("playwright")
+        assert command == f"{exe} -m playwright install chromium"
+
+    def test_wraps_one_column_short_on_windows(self) -> None:
+        """conhost wraps a full-width line itself: an extra blank row."""
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, width=40, color_system=None)
+        with patch.object(term.sys, "platform", "win32"):
+            term.print_marked("word " * 30, mark=term.MARK_WARNING, console=console)
+        lines = buf.getvalue().splitlines()
+        assert all(len(line) <= 39 for line in lines)
+        assert not any(line.endswith(" ") for line in lines)
+
+    @pytest.mark.parametrize("width", [80, 40])
+    def test_no_trailing_spaces(self, width: int) -> None:
+        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS):
+            out, _ = _run(width)
+        assert not [line for line in out.splitlines() if line.endswith(" ")]

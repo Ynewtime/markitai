@@ -153,7 +153,10 @@ def print_marked(
         c.print(prefix + body, soft_wrap=True, highlight=False)
         return
     hang = prefix.cell_len
-    width = max(c.width - hang, 20)
+    # The Windows console wraps a line that fills the window by itself, so a
+    # full-width line there turns into an extra (blank) row: stop one short
+    edge = 1 if sys.platform == "win32" else 0
+    width = max(c.width - hang - edge, 20)
     out = prefix.copy()
     first = True
     for paragraph in body.split("\n", allow_blank=True):

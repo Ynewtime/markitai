@@ -44,22 +44,6 @@ def _normalize_platform(platform: str | None) -> str:
     return "linux" if platform.startswith("linux") else platform
 
 
-def _markitai_python() -> str:
-    """markitai's own interpreter, as a command the user can paste.
-
-    ``python`` on PATH is usually not markitai's environment: setup.sh and
-    ``uv tool install`` put markitai in an isolated tool venv, so the
-    interpreter running this process is the one that has Playwright.
-    """
-    exe = sys.executable or "python"
-    if sys.platform == "win32":
-        # PowerShell runs a quoted path only with the call operator
-        return f'& "{exe}"' if " " in exe else exe
-    import shlex
-
-    return shlex.quote(exe)
-
-
 def get_install_commands(
     component: str,
     platform: str | None = None,
@@ -80,12 +64,7 @@ def get_install_commands(
     """
     platform = _normalize_platform(platform)
     if component == "playwright":
-        python = _markitai_python()
-        if platform == "linux":
-            # --with-deps also installs the system libraries Chromium needs
-            # (Playwright asks for sudo itself)
-            return [("", f"{python} -m playwright install --with-deps chromium")]
-        return [("", f"{python} -m playwright install chromium")]
+        return [("", playwright_install_command(platform))]
     if component == "libreoffice" and platform == "linux":
         from markitai.utils.office import libreoffice_linux_install_commands
 
@@ -202,21 +181,39 @@ def _playwright_package_install_hint() -> str:
     return extra_install_command("browser")
 
 
+# A first launch right after installing can take long: on Windows,
+# Defender scans the new chrome.exe (the Windows machine: over 30 s, then 0.7 s on
+# every later launch). One retry after the first timeout catches that.
+_SMOKE_TIMEOUTS_S = (60, 30)
+# Detail returned when every attempt timed out: slow, not broken
+SMOKE_SLOW = "slow"
+
+
 def _smoke_test_playwright_browser() -> tuple[bool, str]:
-    """Launch and close Chromium in an isolated subprocess with a timeout."""
-    try:
-        with TemporaryDirectory(prefix="markitai-doctor-smoke-") as workdir:
-            result = subprocess.run(
-                [sys.executable, "-c", _PLAYWRIGHT_LAUNCH_SMOKE],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                cwd=workdir,
-            )
-    except subprocess.TimeoutExpired:
-        return False, "headless launch timed out after 30 seconds"
-    except Exception as e:
-        return False, f"headless launch error: {e}"
+    """Launch and close Chromium in an isolated subprocess with a timeout.
+
+    Returns:
+        ``(True, "")`` on success; ``(False, SMOKE_SLOW)`` when every attempt
+        timed out; ``(False, detail)`` when the launch failed.
+    """
+    result = None
+    for timeout in _SMOKE_TIMEOUTS_S:
+        try:
+            with TemporaryDirectory(prefix="markitai-doctor-smoke-") as workdir:
+                result = subprocess.run(
+                    [sys.executable, "-c", _PLAYWRIGHT_LAUNCH_SMOKE],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=workdir,
+                )
+            break
+        except subprocess.TimeoutExpired:
+            continue
+        except Exception as e:
+            return False, f"headless launch error: {e}"
+    if result is None:
+        return False, SMOKE_SLOW
 
     if result.returncode == 0:
         return True, ""
@@ -227,9 +224,33 @@ def _smoke_test_playwright_browser() -> tuple[bool, str]:
     if sys.platform.startswith("linux"):
         detail += (
             "; install system libraries with "
-            f"'{_markitai_python()} -m playwright install-deps chromium'"
+            f"'{markitai_python_command()} -m playwright install-deps chromium'"
         )
     return False, f"headless launch failed: {detail}"
+
+
+def _playwright_runtime_problem(detail: str) -> dict[str, Any]:
+    """Doctor fields for a Chromium that is installed but did not launch.
+
+    The terminal report and --json carry the same message.
+    """
+    if detail == SMOKE_SLOW:
+        seconds = sum(_SMOKE_TIMEOUTS_S)
+        return {
+            "message": (
+                f"Chromium is installed but slow to start (no headless launch "
+                f"within {seconds} s); a first launch after installing can be "
+                "that slow while antivirus scans it, so run doctor again"
+            ),
+            "install_hint": "Run 'markitai doctor' again in a minute",
+            "install_commands": ["markitai doctor"],
+            "slow_start": True,
+            "summary_name": "Playwright (slow to start)",
+        }
+    return {
+        "message": f"Chromium is installed but cannot launch: {detail}",
+        **_install_fields("playwright"),
+    }
 
 
 def _install_component(component: str, *, package_missing: bool = False) -> bool:
@@ -312,6 +333,7 @@ from markitai.constants import (
 from markitai.providers.auth import AuthManager, get_auth_resolution_hint
 from markitai.providers.discovery import provider_label
 from markitai.utils.errors import extra_install_command
+from markitai.utils.guidance import markitai_python_command, playwright_install_command
 
 console = get_console()
 
@@ -440,8 +462,7 @@ def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
                         "name": "Playwright",
                         "description": "Browser automation for dynamic URLs",
                         "status": "warning",
-                        "message": f"Chromium installed but unusable: {runtime_detail}",
-                        **_install_fields("playwright"),
+                        **_playwright_runtime_problem(runtime_detail),
                     }
             return {
                 "name": "Playwright",
@@ -1191,18 +1212,21 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                         runtime_ok, runtime_detail = _smoke_test_playwright_browser()
                         if not runtime_ok:
                             verification["status"] = "warning"
-                            verification["message"] = (
-                                f"Chromium installed but unusable: {runtime_detail}"
+                            verification.update(
+                                _playwright_runtime_problem(runtime_detail)
                             )
-                            verification.update(_install_fields("playwright"))
-                            ui.error(
-                                t(
-                                    "doctor.fix_verification_failed",
-                                    component=verification["name"],
-                                    detail=runtime_detail,
+                            if runtime_detail == SMOKE_SLOW:
+                                # Downloaded; only its first launch was slow
+                                ui.warning(verification["message"])
+                            else:
+                                ui.error(
+                                    t(
+                                        "doctor.fix_verification_failed",
+                                        component=verification["name"],
+                                        detail=runtime_detail,
+                                    )
                                 )
-                            )
-                            repair_failed_names.append(results[component]["name"])
+                                repair_failed_names.append(results[component]["name"])
                         else:
                             ui.success(
                                 t(
@@ -1213,12 +1237,20 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Render hints and the final outcome only after any requested repair has
     # been rechecked, so one invocation cannot end with a stale pre-fix status.
-    hint_items = [
-        info
-        for info in results.values()
-        if info["status"] in ("missing", "error", "warning")
-        and info.get("install_hint")
-    ]
+    # One line per distinct fix: two checks with the same hint (Vision Model
+    # and VLM OCR both asking for a vision-capable model) share it
+    by_fix: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+    for info in results.values():
+        if info["status"] not in ("missing", "error", "warning") or not info.get(
+            "install_hint"
+        ):
+            continue
+        remedy = (str(info["install_hint"]), tuple(info.get("install_commands") or ()))
+        if remedy in by_fix:
+            by_fix[remedy]["name"] += f", {info['name']}"
+        else:
+            by_fix[remedy] = {**info}
+    hint_items = list(by_fix.values())
     required_failed = _required_failed_count()
     if hint_items:
         console.print()

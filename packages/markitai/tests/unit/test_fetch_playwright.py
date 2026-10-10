@@ -851,7 +851,9 @@ class TestPlaywrightRenderer:
                 await renderer._ensure_browser()
 
             assert "Failed to launch Chromium browser" in str(exc_info.value)
-            assert "uv run playwright install chromium" in str(exc_info.value)
+            from markitai.utils.guidance import playwright_install_command
+
+            assert playwright_install_command() in str(exc_info.value)
             mock_playwright_instance.stop.assert_called_once()
 
     @pytest.mark.asyncio
