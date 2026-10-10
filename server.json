@@ -8,13 +8,13 @@
     "source": "github"
   },
   "websiteUrl": "https://markitai.dev/guide/mcp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "markitai",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -23,7 +23,7 @@
         {
           "type": "named",
           "name": "--from",
-          "value": "markitai[mcp]==1.2.0",
+          "value": "markitai[mcp]==1.2.1",
           "description": "Install this markitai release with the mcp extra (the MCP SDK) for this run",
           "isRequired": true
         }
