@@ -439,7 +439,7 @@ fn connection(data: &Data, id: &str, deployment: Option<&str>) -> ApiResult<Valu
     let entry = &data.models[model::find(&data.models, id, &HashMap::new())?];
     let params = probe_params(entry, &data.providers);
     Ok(
-        json!({"provider":model::provider(entry),"api_key":params["api_key"],"api_base":params["api_base"],"use_environment_credentials":params["use_environment_credentials"]}),
+        json!({"provider":model::connection_provider(entry, &data.providers),"api_key":params["api_key"],"api_base":params["api_base"],"use_environment_credentials":params["use_environment_credentials"]}),
     )
 }
 fn probe_params(entry: &Value, providers: &[Value]) -> Value {

@@ -145,8 +145,12 @@ pub(super) fn providers(data: &Data) -> Value {
     // The reference's providers first, then the further OpenAI-compatible ones.
     for known in &catalog {
         let name = known.provider;
-        if data.providers.iter().any(|p| p["provider"] == name)
-            || data.models.iter().any(|p| model::provider(p) == name)
+        // A saved connection hides its provider's card, except that another
+        // OpenAI-compatible endpoint, or OpenAI itself, can always be added.
+        let repeatable = matches!(name, "openai" | "custom");
+        if !repeatable
+            && (data.providers.iter().any(|p| p["provider"] == name)
+                || data.models.iter().any(|p| model::provider(p) == name))
             || result.iter().any(|p| p["provider"] == name)
         {
             continue;

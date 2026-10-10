@@ -112,6 +112,24 @@ pub(super) fn provider(entry: &Value) -> String {
         .map_or("openai", |(provider, _)| provider)
         .to_ascii_lowercase()
 }
+/// The provider of a deployment's connection: its model prefix, or `custom`
+/// for an `openai/` model linked to a saved OpenAI-compatible endpoint.
+pub(super) fn connection_provider(entry: &Value, providers: &[Value]) -> String {
+    let prefix = provider(entry);
+    let custom = linked(entry)
+        .and_then(|id| providers.iter().find(|p| p["id"] == id))
+        .is_some_and(|saved| saved["provider"] == "custom");
+    if prefix == "openai" && custom {
+        "custom".into()
+    } else {
+        prefix
+    }
+}
+/// `custom` names any OpenAI-compatible endpoint; its models use the `openai/`
+/// prefix. Every other provider is its own model prefix.
+fn serves(provider: &str, prefix: &str) -> bool {
+    provider == prefix || (provider == "custom" && prefix == "openai")
+}
 pub(super) fn local(provider: &str) -> bool {
     matches!(provider, "claude-agent" | "copilot" | "chatgpt")
 }
@@ -226,18 +244,15 @@ pub(super) fn create(
     )?;
     let group = string(body, "model_name", true, true)?.unwrap();
     let model = string(body, "model", true, true)?.unwrap();
-    let name = string(body, "provider", false, true)?
-        .unwrap_or_else(|| {
-            model
-                .split_once('/')
-                .map_or("openai", |(provider, _)| provider)
-                .to_owned()
-        })
-        .to_lowercase();
     let model_provider = model
         .split_once('/')
-        .map_or("openai", |(provider, _)| provider);
-    if name.is_empty() || name != model_provider.to_ascii_lowercase() {
+        .map_or("openai", |(provider, _)| provider)
+        .to_ascii_lowercase();
+    let requested = string(body, "provider", false, true)?.map(|name| name.to_lowercase());
+    if requested
+        .as_deref()
+        .is_some_and(|name| name.is_empty() || !serves(name, &model_provider))
+    {
         return Err(invalid("provider must match the model provider"));
     }
     let client_key = client_field(body, "api_key")?;
@@ -264,11 +279,23 @@ pub(super) fn create(
         let entry = &credential_models[index];
         provider_id = linked(entry).map(str::to_owned);
         let mut value = params(entry, providers);
-        value["provider"] = json!(provider(entry));
+        value["provider"] = json!(connection_provider(entry, providers));
         value
     } else {
         json!({})
     };
+    // An `openai/` model added from a saved OpenAI-compatible endpoint stays
+    // with that endpoint when the request names no provider.
+    let name = requested.unwrap_or_else(|| {
+        if model_provider == "openai" && fallback["provider"] == "custom" {
+            "custom".into()
+        } else {
+            model_provider.clone()
+        }
+    });
+    if name.is_empty() {
+        return Err(invalid("provider must match the model provider"));
+    }
     let supplied_key = body.get("api_key").is_some();
     let key = if supplied_key {
         client_key.map(Value::String).unwrap_or(Value::Null)
@@ -288,6 +315,9 @@ pub(super) fn create(
             base.as_str(),
             supplied_key,
         )?;
+    }
+    if name == "custom" && base.as_str().is_none_or(str::is_empty) {
+        return Err(invalid("an OpenAI-compatible endpoint needs its api_base"));
     }
     let allow_environment = !supplied_key
         && fallback["provider"].is_string()
@@ -339,13 +369,20 @@ pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> Ap
     client_field(body, "api_key")?;
     let client_base = client_field(body, "api_base")?;
     let old = params(entry, providers);
-    let old_provider = provider(entry);
+    let old_provider = connection_provider(entry, providers);
     let next_provider = body["model"]
         .as_str()
         .map(|name| {
-            name.split_once('/')
+            let prefix = name
+                .split_once('/')
                 .map_or("openai", |(provider, _)| provider)
-                .to_ascii_lowercase()
+                .to_ascii_lowercase();
+            // Another model of the same OpenAI-compatible endpoint.
+            if serves(&old_provider, &prefix) {
+                old_provider.clone()
+            } else {
+                prefix
+            }
         })
         .unwrap_or_else(|| old_provider.clone());
     let base = if body.get("api_base").is_some() {
