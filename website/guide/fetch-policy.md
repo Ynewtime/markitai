@@ -96,7 +96,7 @@ Per-domain overrides:
 |--------|------|---------|-------------|
 | `wait_for_selector` | string | `null` | CSS selector to wait for before extracting |
 | `wait_for` | string | `null` | Page load event: `load`, `domcontentloaded`, `networkidle`. Unset inherits `fetch.playwright.wait_for` |
-| `extra_wait_ms` | integer | `null` | Extra wait after the load event. Unset inherits `fetch.playwright.extra_wait_ms` |
+| `extra_wait_ms` | integer | `null` | Longest extra wait after the load event; it ends earlier once the page has settled. Unset inherits `fetch.playwright.extra_wait_ms` |
 | `prefer_strategy` | string | `null` | Strategy to try first for this domain |
 | `strategy_priority` | list | `null` | Full strategy order for this domain (overrides global order and `prefer_strategy`) |
 | `skip_auto_scroll` | boolean | `false` | Skip auto-scrolling on single-content pages (tweets, issues, docs) |

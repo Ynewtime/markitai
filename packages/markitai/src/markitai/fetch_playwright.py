@@ -194,6 +194,8 @@ def _build_auto_scroll_script(
 
     Borrowed from baoyu-skills url-to-markdown pattern:
     Scroll down incrementally, check if page height grows, stop when stable.
+    A page that fits the window has nothing below the fold to load, so it
+    is not scrolled (or waited for) at all.
 
     Args:
         max_steps: Maximum number of scroll iterations
@@ -205,6 +207,7 @@ def _build_auto_scroll_script(
     return f"""
     async () => {{
         let lastHeight = document.body.scrollHeight;
+        if (lastHeight <= window.innerHeight) return;
         for (let i = 0; i < {max_steps}; i++) {{
             window.scrollTo(0, document.body.scrollHeight);
             await new Promise(r => setTimeout(r, {step_delay_ms}));
@@ -353,6 +356,101 @@ _CLOSE_TIMEOUT_S = 10.0
 
 class PlaywrightPageTimeoutError(FetchError):
     """A page operation after navigation outran fetch.playwright.timeout."""
+
+
+#: Request types whose answer can still change the DOM. Images, fonts,
+#: media, beacons and streams (EventSource, WebSocket) cannot, and a page
+#: that keeps one of them open would otherwise never count as settled.
+_DOM_REQUEST_TYPES = frozenset({"document", "script", "xhr", "fetch"})
+
+#: How long a page must stay quiet (no such request in flight and no DOM
+#: change) to count as settled: the window of Playwright's "networkidle".
+_SETTLE_QUIET_S = 0.5
+_SETTLE_POLL_S = 0.05
+
+# Milliseconds since the DOM last changed. The first call in a document
+# starts watching it and answers 0.
+_DOM_QUIET_SCRIPT = """
+() => {
+    const key = Symbol.for("markitai.domQuiet");
+    let state = window[key];
+    if (!state) {
+        state = window[key] = { last: performance.now() };
+        new MutationObserver(() => { state.last = performance.now(); }).observe(
+            document, { subtree: true, childList: true, characterData: true }
+        );
+    }
+    return performance.now() - state.last;
+}
+"""
+
+
+class _PageActivity:
+    """Requests in flight on a page that can still change its DOM.
+
+    Attach before ``goto()`` so the document's own request is counted.
+    """
+
+    def __init__(self, page: Any) -> None:
+        # Playwright hands the same Request object to every event of one
+        # request; it is held here until finished, so its id stays unique
+        self._in_flight: dict[int, Any] = {}
+        self._idle_since = time.monotonic()
+        page.on("request", self._started)
+        page.on("requestfinished", self._finished)
+        page.on("requestfailed", self._finished)
+
+    def _started(self, request: Any) -> None:
+        if getattr(request, "resource_type", None) in _DOM_REQUEST_TYPES:
+            self._in_flight[id(request)] = request
+
+    def _finished(self, request: Any) -> None:
+        if self._in_flight.pop(id(request), None) is None:
+            return
+        if not self._in_flight:
+            self._idle_since = time.monotonic()
+
+    def idle_for(self) -> float:
+        """Seconds since the last such request finished (0 while one runs)."""
+        if self._in_flight:
+            return 0.0
+        return time.monotonic() - self._idle_since
+
+
+async def _wait_until_settled(
+    page: Any,
+    activity: _PageActivity,
+    limit_s: float,
+    quiet_s: float = _SETTLE_QUIET_S,
+) -> bool:
+    """Wait until the page has been quiet for ``quiet_s``, at most ``limit_s``.
+
+    Quiet means no script, document, XHR or fetch request in flight and no
+    DOM change. A static page settles about ``quiet_s`` after it loaded; a
+    page still rendering keeps the old fixed wait as its upper bound.
+
+    Returns:
+        True when the page settled, False when ``limit_s`` ran out first.
+    """
+    deadline = time.monotonic() + limit_s
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            dom_quiet_ms = await asyncio.wait_for(
+                page.evaluate(_DOM_QUIET_SCRIPT), remaining
+            )
+            dom_quiet_s = float(dom_quiet_ms) / 1000
+        except (TypeError, ValueError):
+            dom_quiet_s = quiet_s  # No answer to go by: the network decides
+        except Exception:
+            # A navigation replaced the document, or the page is too busy
+            # to answer: not settled yet
+            dom_quiet_s = 0.0
+        if dom_quiet_s >= quiet_s and activity.idle_for() >= quiet_s:
+            return True
+        await asyncio.sleep(min(_SETTLE_POLL_S, max(0.0, remaining)))
 
 
 class _PageDeadline:
@@ -795,6 +893,8 @@ class PlaywrightRenderer:
                 await context.add_cookies(cookies)
 
             page = await context.new_page()
+            # Watch requests from the start, the document's own included
+            activity = _PageActivity(page)
 
             # Set up resource filtering before navigation
             if reject_resource_patterns:
@@ -845,7 +945,11 @@ class PlaywrightRenderer:
                         enriched.metadata["screenshot_error"] = shot_error
                 return enriched
 
-            # Precise element waiting (preferred) or time-based fallback
+            # Precise element waiting (preferred) or time-based fallback.
+            # extra_wait_ms bounds the wait for scripts to finish rendering:
+            # it ends as soon as the page has settled, so a page that is
+            # complete at load no longer sits out the whole bound.
+            selector_found = True
             if wait_for_selector:
                 wait_started = time.perf_counter()
                 try:
@@ -853,19 +957,25 @@ class PlaywrightRenderer:
                         wait_for_selector, timeout=min(timeout, 10000)
                     )
                 except Exception as e:
+                    selector_found = False
                     logger.debug(
                         f"wait_for_selector '{wait_for_selector}' timed out: {e}"
                     )
-                else:
-                    # Stabilize only when the selector was actually found.
-                    if extra_wait_ms > 0:
-                        await asyncio.sleep(extra_wait_ms / 1000)
                 logger.debug(
                     "[Playwright] Element wait: {:.3f}s",
                     time.perf_counter() - wait_started,
                 )
-            elif extra_wait_ms > 0:
-                await asyncio.sleep(extra_wait_ms / 1000)
+            # Stabilize only when the selector (if any) was actually found.
+            if selector_found and extra_wait_ms > 0:
+                settle_started = time.perf_counter()
+                settled = await _wait_until_settled(
+                    page, activity, extra_wait_ms / 1000
+                )
+                logger.debug(
+                    "[Playwright] Render wait: {:.3f}s ({})",
+                    time.perf_counter() - settle_started,
+                    "settled" if settled else "extra_wait_ms reached",
+                )
 
             # Every page operation from here on shares one budget derived
             # from fetch.playwright.timeout (plus the auto-scroll's own
@@ -887,9 +997,19 @@ class PlaywrightRenderer:
             # Auto-scroll to trigger lazy-loaded content
             if not skip_auto_scroll:
                 try:
+                    scroll_started = time.perf_counter()
                     scroll_script = _build_auto_scroll_script()
                     await deadline.run(page.evaluate(scroll_script), "auto-scroll")
-                    await asyncio.sleep(DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000)
+                    if needs_screenshot:
+                        # Lets images scrolled into view finish painting.
+                        # The text was read at each step and needs no wait.
+                        await asyncio.sleep(
+                            DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000
+                        )
+                    logger.debug(
+                        "[Playwright] Auto-scroll: {:.3f}s",
+                        time.perf_counter() - scroll_started,
+                    )
                 except PlaywrightPageTimeoutError:
                     raise
                 except Exception as e:
