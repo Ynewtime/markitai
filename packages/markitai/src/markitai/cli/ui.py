@@ -28,6 +28,9 @@ from rich.text import Text
 
 from markitai.cli.console import get_console, get_stderr_console
 from markitai.ports import StdioInteraction
+from markitai.utils.term import (
+    MARK_ARROW as MARK_ARROW,
+)
 
 # Terminal glyphs and text helpers now live in the foundation layer so
 # engines below the CLI can render without importing markitai.cli;
@@ -45,6 +48,9 @@ from markitai.utils.term import (
     MARK_LINE as MARK_LINE,
 )
 from markitai.utils.term import (
+    MARK_SKIP as MARK_SKIP,
+)
+from markitai.utils.term import (
     MARK_SUCCESS as MARK_SUCCESS,
 )
 from markitai.utils.term import (
@@ -52,6 +58,12 @@ from markitai.utils.term import (
 )
 from markitai.utils.term import (
     MARK_WARNING as MARK_WARNING,
+)
+from markitai.utils.term import (
+    print_command as print_command,
+)
+from markitai.utils.term import (
+    print_marked as print_marked,
 )
 from markitai.utils.term import (
     summarize_active_items as summarize_active_items,
@@ -106,8 +118,7 @@ def success(text: str, *, console: Console | None = None) -> None:
         text: The success message to display.
         console: Optional console for output (defaults to shared console).
     """
-    c = console or get_console()
-    c.print(f"  [green]{MARK_SUCCESS}[/] {_plain(text)}")
+    print_marked(text, mark=MARK_SUCCESS, console=console)
 
 
 def error(
@@ -120,10 +131,11 @@ def error(
         detail: Optional detail text shown on a separate line.
         console: Optional console for output (defaults to shared console).
     """
-    c = console or get_console()
-    c.print(f"  [red]{MARK_ERROR}[/] {_plain(text)}")
+    print_marked(text, mark=MARK_ERROR, console=console)
     if detail:
-        c.print(f"    [dim]{MARK_LINE} {_plain(detail)}[/]")
+        print_marked(
+            detail, mark=MARK_LINE, console=console, indent=4, text_style="dim"
+        )
 
 
 def warning(
@@ -136,10 +148,11 @@ def warning(
         detail: Optional detail text shown on a separate line.
         console: Optional console for output (defaults to shared console).
     """
-    c = console or get_console()
-    c.print(f"  [yellow]{MARK_WARNING}[/] {_plain(text)}")
+    print_marked(text, mark=MARK_WARNING, console=console)
     if detail:
-        c.print(f"    [dim]{MARK_LINE} {_plain(detail)}[/]")
+        print_marked(
+            detail, mark=MARK_LINE, console=console, indent=4, text_style="dim"
+        )
 
 
 def info(text: str, *, console: Console | None = None) -> None:
@@ -149,8 +162,7 @@ def info(text: str, *, console: Console | None = None) -> None:
         text: The info message to display.
         console: Optional console for output (defaults to shared console).
     """
-    c = console or get_console()
-    c.print(f"  [dim]{MARK_INFO}[/] {_plain(text)}")
+    print_marked(text, mark=MARK_INFO, console=console)
 
 
 def step(text: str, *, console: Console | None = None) -> None:
@@ -160,8 +172,7 @@ def step(text: str, *, console: Console | None = None) -> None:
         text: The step message to display.
         console: Optional console for output (defaults to shared console).
     """
-    c = console or get_console()
-    c.print(f"  [dim]{MARK_LINE}[/] {_plain(text)}")
+    print_marked(text, mark=MARK_LINE, console=console)
 
 
 def section(text: str, *, console: Console | None = None) -> None:
