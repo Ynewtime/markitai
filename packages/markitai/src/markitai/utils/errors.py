@@ -39,8 +39,8 @@ class ConfigFileError(Exception):
     """
 
 
-def extra_install_command(extra: str) -> str:
-    """The one command that adds an extra to *this* markitai install.
+def extra_install_command(*extras: str) -> str:
+    """The one command that adds extras to *this* markitai install.
 
     Every message that tells a user how to unblock themselves goes through
     here. Left to themselves the call sites drifted into five spellings of
@@ -54,20 +54,23 @@ def extra_install_command(extra: str) -> str:
     holding a command that does not apply to them. uv is the fallback when
     the layout says nothing (a plain virtualenv, a checkout, an editable
     install), matching what the docs recommend.
+
+    Several extras give one command: doctor on a plain install used to print
+    one reinstall per missing extra.
     """
     import sys
     from pathlib import Path
 
     installer = "pipx" if "pipx" in Path(sys.prefix).parts else "uv tool"
     if installer == "uv tool":
-        spec = _uv_tool_spec(Path(sys.prefix), extra)
+        spec = _uv_tool_spec(Path(sys.prefix), extras)
         if spec is not None:
             return f'uv tool install "{spec}" --force'
-    return f'{installer} install "markitai[{extra}]" --force'
+    return f'{installer} install "markitai[{",".join(sorted(set(extras)))}]" --force'
 
 
-def _uv_tool_spec(prefix: object, extra: str) -> str | None:
-    """markitai's requirement from this uv tool install, plus ``extra``.
+def _uv_tool_spec(prefix: object, extras: tuple[str, ...]) -> str | None:
+    """markitai's requirement from this uv tool install, plus ``extras``.
 
     ``uv tool install --force`` replaces the tool with exactly what it is
     given, so "markitai[legacy]" alone drops every extra already installed
@@ -88,8 +91,8 @@ def _uv_tool_spec(prefix: object, extra: str) -> str | None:
         )
     except (OSError, ValueError, KeyError, TypeError, StopIteration):
         return None
-    extras = sorted({*requirement.get("extras", []), extra})
-    spec = f"markitai[{','.join(extras)}]"
+    merged = sorted({*requirement.get("extras", []), *extras})
+    spec = f"markitai[{','.join(merged)}]"
     if requirement.get("directory"):
         return f"{spec} @ {requirement['directory']}"
     if requirement.get("path"):
