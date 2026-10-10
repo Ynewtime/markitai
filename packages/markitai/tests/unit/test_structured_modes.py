@@ -662,7 +662,15 @@ class TestOpenAIReasoningModels:
         structured_mod._model_mode_cache.clear()
 
     @pytest.mark.parametrize(
-        "model", ["openai/gpt-5.6-luna", "gpt-5.6-luna", "openai/gpt-5.6"]
+        "model",
+        [
+            # gpt-6-luna documents it: function tools on chat completions
+            # only with reasoning_effort "none"
+            "openai/gpt-6-luna",
+            "openai/gpt-5.6-luna",
+            "gpt-5.6-luna",
+            "openai/gpt-5.6",
+        ],
     )
     def test_live_ladder_starts_at_json_schema(self, model):
         assert litellm.supports_function_calling(model)
@@ -671,12 +679,19 @@ class TestOpenAIReasoningModels:
             instructor.Mode.MD_JSON,
         )
 
-    def test_batch_keeps_tools_with_reasoning_off(self):
+    @pytest.mark.parametrize("model", ["openai/gpt-6-luna", "openai/gpt-5.6-luna"])
+    def test_batch_keeps_tools_with_reasoning_off(self, model):
         """--llm-batch sends reasoning_effort="none", which allows tools."""
-        assert instructor_mode_for_model("openai/gpt-5.6-luna") == instructor.Mode.TOOLS
+        assert instructor_mode_for_model(model) == instructor.Mode.TOOLS
 
     @pytest.mark.parametrize(
-        "model", ["openai/gpt-4o-mini", "anthropic/claude-haiku-4-5"]
+        "model",
+        [
+            "openai/gpt-4o-mini",
+            "anthropic/claude-haiku-4-5",
+            # forced tool_choice is accepted; the answer then skips thinking
+            "anthropic/claude-haiku-5-5",
+        ],
     )
     def test_models_without_the_restriction_keep_tools(self, model):
         assert structured_mode_ladder([model])[0] == instructor.Mode.TOOLS

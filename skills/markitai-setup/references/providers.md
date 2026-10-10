@@ -30,14 +30,14 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 | Provider | Model string | Auth |
 |---|---|---|
 | Google Gemini | `gemini/gemini-flash-lite-latest` | `GEMINI_API_KEY` |
-| OpenAI | `openai/gpt-5.6` | `OPENAI_API_KEY` |
-| Anthropic | `anthropic/claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai/gpt-6-luna` | `OPENAI_API_KEY` |
+| Anthropic | `anthropic/claude-haiku-5-5` | `ANTHROPIC_API_KEY` |
 | DeepSeek | `deepseek/deepseek-flash` | `DEEPSEEK_API_KEY` |
-| OpenRouter | `openrouter/google/gemini-3.1-pro` | `OPENROUTER_API_KEY` |
+| OpenRouter | `openrouter/google/gemini-3.5-flash-lite` | `OPENROUTER_API_KEY` |
 | Ollama (local server) | `ollama/llama3.2` + `"api_base": "http://localhost:11434"` | none |
 | Claude subscription | `claude-agent/sonnet` (aliases: `sonnet` `opus` `haiku` `inherit`, or full model strings) | Claude Code CLI login; extra: `claude-agent` |
-| Copilot subscription | `copilot/gpt-5.6`, `copilot/claude-haiku-4.5`, … (plan-dependent; no o1/o3) | Copilot CLI login; extra: `copilot` |
-| ChatGPT subscription | `chatgpt/gpt-5.6`, `chatgpt/gpt-5.6-codex`, `chatgpt/codex-mini` | OAuth device flow on first use; no SDK needed |
+| Copilot subscription | `copilot/claude-haiku-5.5` (paid plans), `copilot/claude-haiku-4.5` (also Copilot Free), … (plan-dependent; no o1/o3) | Copilot CLI login; extra: `copilot` |
+| ChatGPT subscription | `chatgpt/gpt-6-luna`, `chatgpt/gpt-6.1-sol` (plan-dependent) | OAuth device flow on first use; no SDK needed |
 
 Gemini has no CLI/subscription route: direct API key or OpenRouter only.
 
@@ -57,7 +57,7 @@ Retired upstream (rejected on request): `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4
 
 ## Vision (`--alt` / `--desc`)
 
-Image analysis needs a vision-capable model. litellm auto-detects this for remote API models; local providers pass images as file attachments, so pick a vision-capable model there too (e.g. `copilot/gpt-5.6`, `chatgpt/gpt-5.6`, `claude-agent/sonnet`). `markitai doctor` reports which vision model it detected.
+Image analysis needs a vision-capable model. litellm auto-detects this for remote API models; local providers pass images as file attachments, so pick a vision-capable model there too (e.g. `copilot/claude-haiku-5.5`, `chatgpt/gpt-6-luna`, `claude-agent/sonnet`). `markitai doctor` reports which vision model it detected.
 
 ## Local provider errors
 

@@ -267,12 +267,12 @@ Gemini has no subscription sign-in. Use an API key (`gemini/`) or go through Ope
 
 Model names follow LiteLLM's `provider/model` form:
 
-- `openai/gpt-5.6`
-- `anthropic/claude-sonnet-4-6`
+- `openai/gpt-6-luna`
+- `anthropic/claude-sonnet-5-5`
 - `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-flash`
 - `ollama/llama3.2`
-- `claude-agent/sonnet`, `copilot/gpt-5.6`, `chatgpt/gpt-5.6` (subscription providers)
+- `claude-agent/sonnet`, `copilot/claude-haiku-5.5`, `chatgpt/gpt-6-luna` (subscription providers)
 
 #### Defaults markitai picks for you
 
@@ -281,15 +281,15 @@ Model names follow LiteLLM's `provider/model` form:
 | Provider | Default model |
 |---|---|
 | Claude Code | `claude-agent/sonnet` |
-| GitHub Copilot | `copilot/claude-haiku-4.5` |
-| ChatGPT | `chatgpt/gpt-5.6` |
-| Anthropic | `anthropic/claude-haiku-4-5` |
-| OpenAI | `openai/gpt-5.6-luna` |
+| GitHub Copilot | `copilot/claude-haiku-5.5` |
+| ChatGPT | `chatgpt/gpt-6-luna` |
+| Anthropic | `anthropic/claude-haiku-5-5` |
+| OpenAI | `openai/gpt-6-luna` |
 | Gemini | `gemini/gemini-flash-lite-latest` |
 | DeepSeek | `deepseek/deepseek-flash` |
-| OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
+| OpenRouter | `openrouter/google/gemini-3.5-flash-lite` |
 
-Set `model_list` to use anything else. A model the provider has retired only produces a startup warning; markitai never rewrites your choice.
+Set `model_list` to use anything else. GitHub offers Claude Haiku 5.5 on paid Copilot plans; on Copilot Free, set `copilot/claude-haiku-4.5`. A model the provider has retired only produces a startup warning; markitai never rewrites your choice.
 
 When the detection finds more than one provider, markitai does not pick one. Every provider it finds joins one pool, and requests are spread across the pool, so one run can send documents, or chunks of a long document, to different vendors. markitai lists the models on stderr at startup, even without `-v`; only `--quiet` hides that notice. To use a single model, set `MODEL=<provider/model>` or `llm.model_list`.
 

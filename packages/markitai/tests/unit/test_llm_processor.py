@@ -429,6 +429,8 @@ class TestMarkitaiRouterLocal:
         assert router._is_image_capable_local("copilot/claude-sonnet-4") is True
         assert router._is_image_capable_local("copilot/gpt-4o-mini") is True
         assert router._is_image_capable_local("chatgpt/gpt-5.3") is True
+        assert router._is_image_capable_local("copilot/gpt-6-luna") is True
+        assert router._is_image_capable_local("copilot/claude-haiku-5.5") is True
         assert router._is_image_capable_local("copilot/gpt-3.5-turbo") is False
         assert router._is_image_capable_local("copilot/grok-3") is False
 

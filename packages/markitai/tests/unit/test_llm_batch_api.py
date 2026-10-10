@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import instructor
+import pytest
 from pydantic import BaseModel
 
 from markitai.llm.batch_api import (
@@ -74,13 +75,14 @@ class TestBuildRequest:
         assert "cleaned_markdown" in system  # schema was appended
         assert "tools" not in req["body"]
 
-    def test_tools_mode_turns_reasoning_off(self) -> None:
+    @pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-5.6-luna"])
+    def test_tools_mode_turns_reasoning_off(self, model: str) -> None:
         """Batch deployments reject function tools unless reasoning is off."""
         req = build_openai_batch_request(
             "doc1",
             messages=MESSAGES,
             response_model=_Doc,
-            model="gpt-5.6-luna",
+            model=model,
             mode=instructor.Mode.TOOLS,
         )
         assert req["body"]["reasoning_effort"] == "none"
