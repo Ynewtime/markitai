@@ -10,6 +10,8 @@
 #
 # Environment:
 #   MARKITAI_SETUP_MODE=install|dev  choose without the question (default: install)
+#   MARKITAI_SETUP_SOURCE=local|pypi in a checkout, install from it (default) or
+#                                    from the PyPI release, without the question
 #   MARKITAI_INSTALL_OPTIONAL=1      install optional components without a terminal
 #   MARKITAI_VERSION=X.Y.Z           pin the markitai release
 #   MARKITAI_USE_MIRROR=1|0          use (or never offer) a PyPI mirror
@@ -124,10 +126,13 @@ i18n() {
 
             # Install source (repo detection)
             repo_detected)              echo "检测到 markitai 源码仓库" ;;
-            confirm_local_install)      echo "从这个源码仓库安装 markitai，而不是 PyPI 发布版?" ;;
+            confirm_local_install)      echo "从这个源码仓库安装 markitai? (n: 改用 PyPI 发布版)" ;;
             source_local)               echo "安装来源: 本地源码" ;;
             source_pypi)                echo "安装来源: PyPI" ;;
-            info_repo_noninteractive)   echo "非交互模式: 已检测到源码仓库, 将使用 PyPI 发布版" ;;
+            info_repo_noninteractive)   echo "无终端可询问: 从这个源码仓库安装; 设置 MARKITAI_SETUP_SOURCE=pypi 可改用 PyPI 发布版" ;;
+            info_source_pinned)         echo "已设置 MARKITAI_VERSION: 安装该 PyPI 发布版" ;;
+            warn_unknown_source)        echo "忽略 MARKITAI_SETUP_SOURCE (应为 local 或 pypi)" ;;
+            error_local_needs_repo)     echo "MARKITAI_SETUP_SOURCE=local 需要在 markitai 源码仓库中运行本脚本" ;;
 
             # Network / Mirrors
             mirror_slow_index)          echo "PyPI 默认源响应缓慢或不可达" ;;
@@ -243,10 +248,13 @@ i18n() {
 
             # Install source (repo detection)
             repo_detected)              echo "markitai source repo detected" ;;
-            confirm_local_install)      echo "Install markitai from this checkout instead of the PyPI release?" ;;
+            confirm_local_install)      echo "Install markitai from this checkout? (n: the PyPI release instead)" ;;
             source_local)               echo "Install source: local repo" ;;
             source_pypi)                echo "Install source: PyPI" ;;
-            info_repo_noninteractive)   echo "Non-interactive mode: source repo detected, using PyPI release" ;;
+            info_repo_noninteractive)   echo "No terminal to ask: installing from this checkout; set MARKITAI_SETUP_SOURCE=pypi for the PyPI release" ;;
+            info_source_pinned)         echo "MARKITAI_VERSION is set: installing that PyPI release" ;;
+            warn_unknown_source)        echo "Ignoring MARKITAI_SETUP_SOURCE (expected local or pypi)" ;;
+            error_local_needs_repo)     echo "MARKITAI_SETUP_SOURCE=local needs this script to run from a markitai checkout" ;;
 
             # Network / Mirrors
             mirror_slow_index)          echo "The default PyPI index is slow or unreachable from here" ;;
@@ -1206,24 +1214,51 @@ detect_markitai_repo() {
     return 1
 }
 
-# Ask whether to install markitai from the local repo or PyPI
-# Default (enter / non-interactive / not in repo) = PyPI
+# In a markitai checkout, install markitai from it (default) or from PyPI.
+# Someone running the installer from a checkout expects that code installed;
+# MARKITAI_SETUP_SOURCE chooses without the question, and a pinned
+# MARKITAI_VERSION names a PyPI release.
 # Sets: MARKITAI_SOURCE, MARKITAI_LOCAL_PATH
 choose_install_source() {
-    if ! detect_markitai_repo; then
-        return 0
-    fi
+    _cis_env=$(printf '%s' "${MARKITAI_SETUP_SOURCE:-}" | tr '[:upper:]' '[:lower:]')
+    case "$_cis_env" in
+        local|checkout|source) _cis_want="local" ;;
+        pypi|release) _cis_want="pypi" ;;
+        "") _cis_want="" ;;
+        *)
+            clack_warn "$(i18n warn_unknown_source): ${MARKITAI_SETUP_SOURCE}"
+            _cis_want=""
+            ;;
+    esac
 
-    # Non-interactive (stdin not a TTY, e.g. curl | sh): never prompt
-    if [ ! -t 0 ]; then
-        clack_info "$(i18n info_repo_noninteractive)"
+    if ! detect_markitai_repo; then
+        if [ "$_cis_want" = "local" ]; then
+            clack_error "$(i18n error_local_needs_repo)"
+            clack_cancel "$(i18n error_setup_failed)"
+            exit 1
+        fi
         return 0
     fi
 
     if [ "$CHECKOUT_ANNOUNCED" != true ]; then
         clack_info "$(i18n repo_detected): $MARKITAI_REPO_ROOT"
     fi
-    if clack_confirm "$(i18n confirm_local_install)" "n"; then
+    if [ -z "$_cis_want" ]; then
+        if [ -n "${MARKITAI_VERSION:-}" ]; then
+            _cis_want="pypi"
+            clack_info "$(i18n info_source_pinned)"
+        elif [ ! -t 0 ]; then
+            # No terminal (e.g. curl | sh): the default without asking
+            _cis_want="local"
+            clack_info "$(i18n info_repo_noninteractive)"
+        elif clack_confirm "$(i18n confirm_local_install)" "y"; then
+            _cis_want="local"
+        else
+            _cis_want="pypi"
+        fi
+    fi
+
+    if [ "$_cis_want" = "local" ]; then
         MARKITAI_SOURCE="local"
         MARKITAI_LOCAL_PATH="$MARKITAI_REPO_ROOT/packages/markitai"
         clack_info "$(i18n source_local)"

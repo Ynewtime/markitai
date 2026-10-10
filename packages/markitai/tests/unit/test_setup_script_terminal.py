@@ -113,6 +113,8 @@ def _env(**overrides: str) -> dict[str, str]:
         "WT_SESSION",
         "TERM_PROGRAM",
         "MARKITAI_SETUP_MODE",
+        "MARKITAI_SETUP_SOURCE",
+        "MARKITAI_VERSION",
         "MARKITAI_INSTALL_OPTIONAL",
     }
     env = {key: value for key, value in os.environ.items() if key not in drop}
@@ -183,8 +185,10 @@ def _i18n_table(script: Path, lang: str) -> dict[str, str]:
     return {key: _decode_escapes(value.replace("''", "'")) for key, value in pairs}
 
 
-def _run_in_pty(argv: list[str], env: dict[str, str], answer: bytes) -> str:
-    """Run argv with a pseudo-terminal as stdio, answer the first [y/N] prompt."""
+def _run_in_pty(
+    argv: list[str], env: dict[str, str], answer: bytes, prompt: bytes = b"[y/N]"
+) -> str:
+    """Run argv with a pseudo-terminal as stdio, answer the first ``prompt``."""
     import pty
     import select
 
@@ -210,7 +214,7 @@ def _run_in_pty(argv: list[str], env: dict[str, str], answer: bytes) -> str:
             if not chunk:
                 break
             output += chunk
-            if not answered and b"[y/N]" in output:
+            if not answered and prompt in output:
                 os.write(master, answer + b"\r")
                 answered = True
     finally:
@@ -762,6 +766,139 @@ def test_setup_ps1_main_no_longer_switches_modes_silently() -> None:
     assert main.index("Clack-Intro") < main.index("Test-AdminWarning")
     assert main.index("Test-AdminWarning") < main.index("Select-SetupMode")
     assert '$script:SETUP_MODE -eq "dev"' in main
+
+
+# ============================================================
+# Install source: in a checkout, install from it unless told otherwise
+# ============================================================
+
+
+def _sh_source_body(in_checkout: bool) -> str:
+    detect = "MARKITAI_REPO_ROOT=/repo; return 0" if in_checkout else "return 1"
+    return (
+        f"detect_markitai_repo() {{ {detect}; }}\n"
+        'MARKITAI_SOURCE="pypi"\nMARKITAI_LOCAL_PATH=""\nMARKITAI_REPO_ROOT=""\n'
+        "CHECKOUT_ANNOUNCED=false\n"
+        f"{_shell_function('choose_install_source')}"
+        'clack_intro "Markitai Setup"\n'
+        "choose_install_source </dev/null\n"
+        'printf "source=%s path=%s\\n" "$MARKITAI_SOURCE" "$MARKITAI_LOCAL_PATH"\n'
+    )
+
+
+def test_setup_sh_checkout_without_terminal_installs_the_checkout(
+    tmp_path: Path,
+) -> None:
+    result = _run_sh(tmp_path, _sh_source_body(in_checkout=True))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.rstrip().endswith("source=local path=/repo/packages/markitai")
+    assert "MARKITAI_SETUP_SOURCE=pypi" in result.stdout
+
+
+@pytest.mark.parametrize("value", ["pypi", "PyPI", "release"])
+def test_setup_sh_source_env_selects_pypi(tmp_path: Path, value: str) -> None:
+    result = _run_sh(
+        tmp_path, _sh_source_body(in_checkout=True), MARKITAI_SETUP_SOURCE=value
+    )
+    assert result.stdout.rstrip().endswith("source=pypi path=")
+    assert "Install source: PyPI" in result.stdout
+
+
+def test_setup_sh_pinned_version_installs_that_release(tmp_path: Path) -> None:
+    result = _run_sh(
+        tmp_path, _sh_source_body(in_checkout=True), MARKITAI_VERSION="1.2.1"
+    )
+    assert result.stdout.rstrip().endswith("source=pypi path=")
+    assert "MARKITAI_VERSION is set" in result.stdout
+
+
+def test_setup_sh_local_source_needs_a_checkout(tmp_path: Path) -> None:
+    result = _run_sh(
+        tmp_path, _sh_source_body(in_checkout=False), MARKITAI_SETUP_SOURCE="local"
+    )
+    assert result.returncode == 1
+    assert "needs this script to run from a markitai checkout" in result.stdout
+
+
+def test_setup_sh_unknown_source_warns_and_keeps_the_default(tmp_path: Path) -> None:
+    result = _run_sh(
+        tmp_path, _sh_source_body(in_checkout=True), MARKITAI_SETUP_SOURCE="git"
+    )
+    assert "! Ignoring MARKITAI_SETUP_SOURCE" in result.stdout
+    assert result.stdout.rstrip().endswith("source=local path=/repo/packages/markitai")
+
+
+@_needs_pty
+@pytest.mark.parametrize(("answer", "source"), [(b"", "local"), (b"n", "pypi")])
+def test_setup_sh_source_question_defaults_to_the_checkout(
+    tmp_path: Path, answer: bytes, source: str
+) -> None:
+    """Enter installs this checkout; only an explicit no picks PyPI."""
+    body = _sh_source_body(in_checkout=True).replace(
+        "choose_install_source </dev/null", "choose_install_source"
+    )
+    script = tmp_path / "harness.sh"
+    script.write_text(
+        f"#!/bin/sh\nset -eu\n{_sh_runtime()}\n{body}\n", encoding="utf-8"
+    )
+    sh = shutil.which("sh")
+    assert sh is not None
+    output = _run_in_pty([sh, str(script)], _env(NO_COLOR="1"), answer, b"[Y/n]")
+    assert "? Install markitai from this checkout? (n: the PyPI release instead)" in (
+        output
+    )
+    assert f"source={source}" in output
+
+
+def _ps_source_body(in_checkout: bool) -> str:
+    root = "'/repo'" if in_checkout else "$null"
+    return (
+        f"function Get-MarkitaiRepoRoot {{ return {root} }}\n"
+        "function Test-InteractiveInput { return $false }\n"
+        '$script:MARKITAI_SOURCE = "pypi"\n$script:MarkitaiLocalPath = $null\n'
+        "$script:MarkitaiVersion = $env:MARKITAI_VERSION\n"
+        "$script:CHECKOUT_ANNOUNCED = $false\n"
+        f"{_powershell_function('Select-InstallSource')}"
+        'Clack-Intro "Markitai Setup"\n'
+        "Select-InstallSource\n"
+        '"source=$($script:MARKITAI_SOURCE) path=$($script:MarkitaiLocalPath)"\n'
+    )
+
+
+@_needs_pwsh
+def test_setup_ps1_checkout_without_terminal_installs_the_checkout(
+    tmp_path: Path,
+) -> None:
+    result = _run_ps(tmp_path, _ps_source_body(in_checkout=True))
+    assert result.returncode == 0, result.stderr
+    assert "source=local path=" in result.stdout
+    assert "packages" in result.stdout.rstrip().splitlines()[-1]
+    assert "MARKITAI_SETUP_SOURCE=pypi" in result.stdout
+
+
+@_needs_pwsh
+def test_setup_ps1_source_env_and_pin_select_pypi(tmp_path: Path) -> None:
+    body = _ps_source_body(in_checkout=True)
+    by_env = _run_ps(tmp_path, body, MARKITAI_SETUP_SOURCE="PyPI")
+    assert by_env.stdout.rstrip().endswith("source=pypi path=")
+    pinned = _run_ps(tmp_path, body, MARKITAI_VERSION="1.2.1")
+    assert pinned.stdout.rstrip().endswith("source=pypi path=")
+    assert "MARKITAI_VERSION is set" in pinned.stdout
+
+
+@_needs_pwsh
+def test_setup_ps1_local_source_needs_a_checkout(tmp_path: Path) -> None:
+    body = _ps_source_body(in_checkout=False)
+    result = _run_ps(tmp_path, body, MARKITAI_SETUP_SOURCE="local")
+    assert result.returncode == 1
+    assert "needs this script to run from a markitai checkout" in result.stdout
+
+
+def test_both_scripts_default_the_source_question_to_the_checkout() -> None:
+    sh = _shell_function("choose_install_source")
+    ps = _powershell_function("Select-InstallSource")
+    assert 'clack_confirm "$(i18n confirm_local_install)" "y"' in sh
+    assert 'Clack-Confirm (i18n "confirm_local_install") "y"' in ps
 
 
 # ============================================================
