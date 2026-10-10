@@ -10,7 +10,7 @@ use image::RgbImage;
 /// Pixels whose text probability exceeds this are text.
 const THRESHOLD: f32 = 0.3;
 /// A region whose mean probability is below this is not text.
-const BOX_THRESHOLD: f32 = 0.5;
+pub(super) const BOX_THRESHOLD: f32 = 0.5;
 /// How far a region grows back: its area times this, over its perimeter.
 const UNCLIP_RATIO: f32 = 1.6;
 /// Regions with a shorter side than this (in map pixels) are specks.
@@ -102,6 +102,41 @@ impl Layout {
     }
 }
 
+/// Tiles of a sparse image, as the reference retries a full-image pass that
+/// found no text: overlapping rectangles near 800 by 600 pixels (at most four
+/// per side), each `[x0, y0, x1, y1]`. A small image, or one that is a single
+/// tile, has none.
+pub(super) fn tiles(width: u32, height: u32) -> Vec<[u32; 4]> {
+    const TILE_WIDTH: u32 = 800;
+    const TILE_HEIGHT: u32 = 600;
+    const PER_SIDE: u32 = 4;
+    if width < 320 && height < 320 {
+        return Vec::new();
+    }
+    let columns = width.div_ceil(TILE_WIDTH).clamp(1, PER_SIDE);
+    let rows = height.div_ceil(TILE_HEIGHT).clamp(1, PER_SIDE);
+    if columns == 1 && rows == 1 {
+        return Vec::new();
+    }
+    let (tile_width, tile_height) = (width.div_ceil(columns), height.div_ceil(rows));
+    // Six percent of a tile, at least 16 pixels, on every inner edge.
+    // In f64, as the reference computes it, so the rounding agrees.
+    let overlap = |side: u32| ((f64::from(side) * 0.06).round() as u32).max(16);
+    let (overlap_x, overlap_y) = (overlap(tile_width), overlap(tile_height));
+    let mut found = Vec::new();
+    for row in 0..rows {
+        for column in 0..columns {
+            found.push([
+                (column * tile_width).saturating_sub(overlap_x),
+                (row * tile_height).saturating_sub(overlap_y),
+                ((column + 1) * tile_width + overlap_x).min(width),
+                ((row + 1) * tile_height + overlap_y).min(height),
+            ]);
+        }
+    }
+    found
+}
+
 /// The detection input: the image scaled into `layout` on its background,
 /// as BGR planes normalized to [-1, 1], the order and range the model was
 /// trained on.
@@ -175,7 +210,17 @@ pub(super) struct Region {
 /// The text regions of a probability map (`width` by `height`, row-major)
 /// for an image laid out as `layout`: the first [`MAX_REGIONS`] from the top,
 /// and whether there were more.
+#[cfg(test)]
 pub(super) fn regions(map: &[f32], layout: &Layout) -> Result<(Vec<Region>, bool)> {
+    regions_scoring(map, layout, BOX_THRESHOLD)
+}
+
+/// [`regions`] whose mean probability is at least `box_threshold`.
+pub(super) fn regions_scoring(
+    map: &[f32],
+    layout: &Layout,
+    box_threshold: f32,
+) -> Result<(Vec<Region>, bool)> {
     let (width, height) = (layout.width as usize, layout.height as usize);
     if map.len() != width * height {
         return Err(failure("detection model returned a map of the wrong size"));
@@ -193,7 +238,7 @@ pub(super) fn regions(map: &[f32], layout: &Layout) -> Result<(Vec<Region>, bool
             continue;
         }
         let score = mean_inside(map, width, height, &rect.corners());
-        if score < BOX_THRESHOLD {
+        if score < box_threshold {
             continue;
         }
         let grown = rect.grown(rect.area() * UNCLIP_RATIO / rect.perimeter());
@@ -722,5 +767,31 @@ mod tests {
             clockwise([[10.0, 0.0], [0.0, 5.0], [0.0, 0.0], [10.0, 5.0]]),
             [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]]
         );
+    }
+
+    #[test]
+    fn sparse_images_are_tiled_as_the_reference_tiles_them() {
+        // Small images and single tiles are not retried.
+        assert!(tiles(300, 300).is_empty());
+        assert!(tiles(800, 600).is_empty());
+        // 1024 by 768: two by two tiles of 512 by 384, overlapping by
+        // max(16, 6 %) = 31 and 23 pixels.
+        assert_eq!(
+            tiles(1024, 768),
+            vec![
+                [0, 0, 543, 407],
+                [481, 0, 1024, 407],
+                [0, 361, 543, 768],
+                [481, 361, 1024, 768],
+            ]
+        );
+        // A narrow tall strip is tiled by rows alone, and a large scan at most
+        // four by four.
+        assert_eq!(tiles(330, 1300).len(), 3);
+        assert_eq!(tiles(330, 1300)[1], [0, 408, 330, 894]);
+        assert_eq!(tiles(9000, 9000).len(), 16);
+        for [x0, y0, x1, y1] in tiles(4000, 3000) {
+            assert!(x0 < x1 && y0 < y1 && x1 <= 4000 && y1 <= 3000);
+        }
     }
 }
