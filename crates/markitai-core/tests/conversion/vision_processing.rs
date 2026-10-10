@@ -391,13 +391,14 @@ fn first_validation_or_transport_failure_never_dispatches_later_frames() {
         let base = std::fs::read_to_string(output.output_path.as_ref().unwrap()).unwrap();
         assert_eq!(base.matches("<!-- Page number:").count(), 21);
         assert!(base.contains("<!-- Page number: 21 -->"));
-        let attempts = if invalid_json { 3 } else { 1 };
+        // A repeated rejection ends the JSON-text attempts after two.
+        let attempts = if invalid_json { 2 } else { 1 };
         assert_eq!(server.count(), attempts);
         assert_eq!(output.usage.requests, attempts as u64);
-        assert_eq!(output.usage.input_tokens, if invalid_json { 21 } else { 2 });
+        assert_eq!(output.usage.input_tokens, if invalid_json { 14 } else { 2 });
         assert_eq!(
             output.usage.output_tokens,
-            if invalid_json { 15 } else { 1 }
+            if invalid_json { 10 } else { 1 }
         );
         assert!(!output.llm_cache_hit());
     }

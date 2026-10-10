@@ -338,7 +338,8 @@ fn single_failures_distinguish_paid_zero_unknown_and_all_invalid_attempts() {
         ("TERMINALBADPAID", Some((1, 11, 3))),
         ("TERMINALBADZERO", Some((1, 0, 0))),
         ("TERMINALBADUNKNOWN", None),
-        ("TERMINALBADINVALID", Some((3, 21, 15))),
+        // Two attempts: the second rejection repeats the first.
+        ("TERMINALBADINVALID", Some((2, 14, 10))),
     ] {
         let root = tempfile::tempdir().unwrap();
         let model = Model::new();
