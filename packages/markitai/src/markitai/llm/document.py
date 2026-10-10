@@ -289,15 +289,33 @@ class PlaceholderLossError(ValueError):
     """
 
     def __init__(
-        self, missing: list[str], total: int, *, retried: bool = False
+        self,
+        missing: list[str],
+        total: int,
+        *,
+        originals: dict[str, str] | None = None,
+        retried: bool = False,
     ) -> None:
+        labels = [_placeholder_label(p, (originals or {}).get(p)) for p in missing]
         super().__init__(
             f"LLM answer dropped {len(missing)}/{total} structural placeholders "
-            f"({', '.join(missing)})"
+            f"({', '.join(labels)})"
             + ("; the one retry lost them too" if retried else "")
         )
         self.missing = missing
         self.total = total
+        self.originals = originals
+
+
+def _placeholder_label(placeholder: str, original: str | None) -> str:
+    """What a placeholder stands for, for messages ("page 2 marker")."""
+    marker = re.search(r"(Page|Slide) number:\s*(\d+)", original or "")
+    if marker:
+        return f"{marker.group(1).lower()} {marker.group(2)} marker"
+    image = re.search(r"\]\(([^)]+)\)", original or "")
+    if image:
+        return f"image {image.group(1).rsplit('/', 1)[-1]}"
+    return placeholder
 
 
 def _placeholder_retry_note(source: str, missing: list[str]) -> str:
@@ -1989,7 +2007,11 @@ class DocumentEnhancer:
                     )
                 )
                 if missing:
-                    raise PlaceholderLossError(missing, len(required_placeholders))
+                    raise PlaceholderLossError(
+                        missing,
+                        len(required_placeholders),
+                        originals=placeholder_originals,
+                    )
                 if validated_markdown != response.cleaned_markdown and any(
                     p not in response.cleaned_markdown for p in required_placeholders
                 ):
@@ -2060,7 +2082,7 @@ class DocumentEnhancer:
             # loss is what the user can act on, not the budget refusal
             except PlaceholderLossError as again:
                 raise PlaceholderLossError(
-                    again.missing, again.total, retried=True
+                    again.missing, again.total, originals=again.originals, retried=True
                 ) from None
             except LLMRequestBudgetExceededError:
                 raise loss from None
