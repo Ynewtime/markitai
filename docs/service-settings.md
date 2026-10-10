@@ -34,6 +34,17 @@ may contain multiple deployments. Legacy name-based changes return 409 when the
 name is ambiguous. New deployments receive UUID identities; the first v2 mutation
 also assigns persistent identities to legacy entries.
 
+An OpenAI-compatible endpoint is saved with `provider: "custom"`: its models
+keep the `openai/` prefix (`openai/<id>`), and it needs an `api_base`, sent or
+inherited from the saved connection or deployment it reuses. The connection is
+saved with provider `custom`, and its models route to that address. A further
+model of the endpoint may name only `credential_provider_id`; it stays with the
+endpoint. Every other provider must be the model's own prefix, otherwise 422
+`invalid_settings_request`. The provider list keeps offering the OpenAI and
+OpenAI-compatible endpoint cards after such a connection is saved, so another
+endpoint, or OpenAI itself, can still be added; a saved connection of any other
+provider takes the place of that provider's card.
+
 For example, a batch request contains `expected_revision` and `deployments`:
 
 ```json

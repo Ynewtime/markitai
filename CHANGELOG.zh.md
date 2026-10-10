@@ -6,6 +6,8 @@
 
 - HEIF/HEIC 图片在 Windows 与 Linux 上使用内置纯 Rust 解码器（heifer）解码，可用于转换、视觉模型与本地 OCR，与 macOS 一致；此前会报不支持。
 - AVIF 图片在 Windows 与 Linux 上使用 rav1d（dav1d AV1 解码器的 Rust 移植版，随仓库内置，不含汇编）解码，可用于转换、文档内嵌图片、视觉模型与本地 OCR，与 macOS 一致；此前会报不支持。支持网格、透明通道、10/12 位以及裁剪、旋转、镜像属性；叠加图（overlay）明确报不支持，解码器出错只会让该图片失败。单个文件总共最多解码 9600 万像素和 2,050 个 AV1 图像项，因此一个把同一张 3000 万像素图块引用 1,024 次的 3 KB 网格文件约一秒即失败，而不会解码数分钟。该解码器使发布版 CLI 增大约 1.2 MB。
+- `markitai serve` 可在 Markdown 旁显示条目的原件：`GET /api/jobs/{job_id}/items/{item_id}/original` 描述保留了什么（上传的 PDF、图片、HTML 或文本文件，URL 条目按 HTML 转换时的页面，否则为页面截图）及其页面尺寸；`…/original/file` 下载原件（HTML 和 SVG 以纯文本发送并受沙箱限制）；`…/original/pages/{n}` 渲染 PDF 页面或缩放图片（TIFF 和 HEIC/HEIF 转为 PNG）；`…/original/pages/{n}/text` 给出 PDF 页面的文本行及其位置框。同一时间最多渲染两页（429 `render_busy`）。
+- 服务任务支持可选的 `label`，在快照和历史中返回；`GET /api/history?include=items` 随摘要返回每个任务的条目；`…/result?max_bytes=` 返回长结果按行截断的开头部分，并附 `truncated` 和 `markdown_bytes`；条目报告 `models` 和 `source_size`；能力接口报告 `implementation`、`docs_url` 和 `features`。
 - 工作台会把上传的 `.urls` 文件当作 URL 列表读取：每一条变成一个 URL 任务（跳过注释行与空行，带输出名的条目保留该名字），不再报「不支持的文件类型」。批量提交（文件夹、多选文件、拖入文件夹、`.urls` 列表）现在会先暂存并显示一行名称，等点击「转换」再开始，便于先设选项；单个文件仍然选中即转换。这类提交在任务列表中显示为一个可展开的分组行，包含名称、条目数与汇总信息，组内条目保留各自的下载/重试/删除操作。
 - `--help` 末尾打印该二进制的构建身份：版本、来源提交（工作区有改动时标为 `(local changes)`，非检出目录为 `unknown`）、目标与构建类型，以及构建时间（按本机时区显示并带 UTC 偏移）。`SOURCE_DATE_EPOCH` 可固定该时间，便于可复现构建；`-h` 与单行 `--version` 保持不变。
 - 原生 Rust 转换核心、独立 CLI，以及进程内调用的 Python、Node.js 和 Go 绑定；CLI 包无需安装这些语言运行时。
@@ -52,6 +54,7 @@
 
 ### 修复
 
+- 在服务设置中保存 OpenAI 兼容端点（provider 为 `custom`、模型带 `openai/` 前缀）会以“provider must match the model provider”失败；现在它保存为 `custom` 连接，其模型路由到该端点地址。保存一个端点后，OpenAI 和 OpenAI 兼容端点卡片仍可继续添加。
 - HTML：懒加载图片的地址位于站点自定义的 `data-` 属性（如 `data-image-loader`）、`src` 仅为内联占位图时，图片会被保留，不再随占位图一起丢弃。
 - 资源中绑定了大图但从未绘制它的 PDF 页面按正常文本页读取，不再给出“看起来像扫描页而按纯文本读取”的警告（如参考 `sample.pdf` 第 5 页）。
 - PDF 两端对齐文本中，生成器在空格字形前用 `TJ` 偏移加宽词间距时，词与词之间不再出现两个空格（如参考 `sample.pdf` 中的粗体段落）。

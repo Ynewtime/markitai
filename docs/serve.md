@@ -35,9 +35,17 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
 ## Job workflow
 
 1. `GET /api/capabilities` returns version, effective LLM configuration, presets,
-   SVG/browser availability, Cloudflare local readiness, and the 1,000-item limit.
-2. `POST /api/jobs` accepts form fields `urls` (a JSON array) and `options` (a JSON
-   object), plus repeated multipart `files`. URL-only requests also accept
+   SVG/browser availability, Cloudflare local readiness, the 1,000-item limit and
+   the seven-day history retention (`limits`), and, for clients shared with other
+   backends, `implementation: "rust"`, `docs_url` and `features` (`cancel`,
+   `download_tickets`, `url_lists`, `history_items`, `original`,
+   `result_excerpt`, `job_labels`, all true).
+2. `POST /api/jobs` accepts form fields `urls` (a JSON array), `options` (a JSON
+   object) and `label`, plus repeated multipart `files`. `label` names the
+   submission in history (a folder or `.urls` file name): plain text without
+   control characters, at most 120 characters after trimming, else 422
+   `invalid_label`; it is returned as `label` (null when absent) in snapshots and
+   history entries. URL-only requests also accept
    `application/x-www-form-urlencoded`. A successful submission returns
    HTTP 201 with `job_id` and ordered `{item_id,name,kind}` entries. File entries
    precede URL entries. Upload names are sanitized and made unique, including
@@ -56,14 +64,22 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    `queued` to `running` to `done` or `error`; failed conversions remain in the
    job with their error and nullable output. A job containing failed items
    still completes with `status: "done"` and separate success/failure counts.
+   An item reports `source_size`, the bytes of its uploaded original, and
+   `models`, the models whose requests produced its retained result (named as
+   its usage records them, in name order); each is omitted when unknown or
+   empty.
 4. `GET /api/jobs/{job_id}/events` streams a first `snapshot`, subsequent `item`
    and `job` events, and idle keepalives. A terminal job event closes the stream.
    Slow subscribers receive a fresh snapshot after a bounded event-buffer
    overrun.
 5. `GET /api/jobs/{job_id}/items/{item_id}/result` returns `name`, selected
-   `variant`, `markdown`, and downloadable `{relpath,size}` artifacts. Fetch an
-   artifact through `GET /api/jobs/{job_id}/files/{relpath}`. Download all output
-   files through `GET /api/jobs/{job_id}/archive` after completion.
+   `variant`, `markdown`, downloadable `{relpath,size}` artifacts, `truncated`
+   and `markdown_bytes` (the size of the whole Markdown). `?max_bytes=N`
+   (N ≥ 1024, else 422 `invalid_max_bytes`) returns only the start of the
+   Markdown, at most N bytes, ending at a line break in its last quarter when
+   there is one and never inside a UTF-8 sequence; `artifacts` stays complete.
+   Fetch an artifact through `GET /api/jobs/{job_id}/files/{relpath}`. Download
+   all output files through `GET /api/jobs/{job_id}/archive` after completion.
 6. `POST /api/jobs/{job_id}/cancel` stops the job's original items that are still
    waiting for a conversion slot. It returns HTTP 202 with `job_id` and `stopping`,
    the number of such items when the request arrived. Each becomes an `error` item
@@ -94,6 +110,45 @@ configured failure policy, item by item.
 [browser workbench](web-ui.md#layout-and-interaction) uses to switch
 those choices off. Remote consent cannot request interactive terminal input.
 When LLM is enabled, base output is retained.
+
+## Originals for Compare
+
+Four routes show an item's source beside its Markdown, for items in any status
+while the source is kept. `GET /api/jobs/{job_id}/items/{item_id}/original`
+describes it without drawing anything: `kind` is `pdf`, `image` (png, jpeg, gif,
+webp, avif, bmp, tiff, heic/heif), `html`, `text` (md, markdown, txt, csv, tsv,
+json, xml, yaml, yml, log), chosen by the kept upload's name; `html` for a URL
+item whose page was converted from HTML in this process (the static or browser
+fetch); else `screenshots` when the conversion saved page screenshots; else
+`none` with `reason` `not_kept` (a CLI-recorded job, a removed upload, a URL page
+read through Jina, Defuddle or Cloudflare or from the page cache),
+`unsupported_format` (no browser view and no screenshots, for example DOCX or
+SVG) or `render_unavailable` (a PDF or image this build cannot open). It also
+gives the original's `name`, `media_type`, `size`, `download` path, `pages`
+(page boxes: PDF points of the visible box after rotation, image and screenshot
+pixels; at most 2,000), `page_count` and `text_layer` (PDF only).
+
+`…/original/file` sends the kept upload or page snapshot as an attachment with
+`nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`; HTML and SVG
+are sent as `text/plain; charset=utf-8`, so a direct visit never renders them.
+It may be opened with a download ticket. `…/original/pages/{n}?width=` returns
+page `n` as an image `width` pixels wide (clamped to 160–2,400, default 1,200):
+a PDF page drawn on white (narrower when the 32-megapixel limit requires), the
+image itself when browsers show its type and it is no wider, otherwise a scaled
+PNG (always for TIFF and HEIC/HEIF), or screenshot `n`. Pages carry
+`Cache-Control: private, max-age=86400` and an ETag, and recently drawn ones are
+kept in memory (32 MiB). `…/original/pages/{n}/text` returns a PDF page's text
+as up to 5,000 lines in reading order, each a run of text on one baseline, with
+`bbox` `[x0, y0, x1, y1]` in points from the page's top-left corner. At most
+two pages are drawn at a time; another request gets 429 `render_busy` with
+`Retry-After`. Errors: 404 `original_unavailable`, 404 `page_not_found`, 422
+`invalid_page_request` (a page number or width that is not a whole number) and
+422 `render_failed`.
+
+A URL item's page snapshot is the HTML the item's Markdown was converted from,
+at most 10 MiB, stored privately as `snapshots/<item_id>.html` in the job folder.
+A retry replaces it with the page it converted, or removes it when the new
+result was not converted from HTML here; deleting the item deletes it.
 
 ## Cloudflare request authorization
 
@@ -367,7 +422,7 @@ and old unmarked `.upload-*` directories are retained; their names alone are not
 proof of ownership. Normal publication removes the staging marker.
 
 Jobs live below `MARKITAI_HOME/serve/jobs/<12-hex-id>/`, containing private
-`uploads/`, `out/`, and an atomically replaced `meta.json`. Job, upload and output root directories use mode
+`uploads/`, `out/`, URL page `snapshots/`, and an atomically replaced `meta.json`. Job, upload and output root directories use mode
 0700 and generated metadata/uploads use mode 0600 on Unix. Current server
 metadata uses the existing version-2 shape, with additive native output-base and
 asset indexes, per-item options, and internal file-transaction commit identifiers. Existing CLI and reference terminal histories are readable. Legacy artifact lists
@@ -375,7 +430,8 @@ recover assets referenced in Markdown, including visible `assets/` profiles;
 assets without references and without a native item index are still downloadable
 by path and included in the ZIP, but are not guessed into an item artifact list.
 `GET /api/history` refreshes jobs added by other local processes and returns the
-existing summaries in reverse creation order. A job folder that cannot be read
+existing summaries in reverse creation order; `?include=items` adds each job's
+`options` and its items as the snapshot shows them. A job folder that cannot be read
 (for example, one with a damaged retry journal) is skipped with one
 `Serve: skipped unreadable history job …` line on standard error and left in
 place; startup, history and the other jobs are unaffected, and the folder is
@@ -440,11 +496,13 @@ proxy and server logs, shell history and browser history, so prefer the header.
 For a download that a browser must open itself (a navigation cannot send
 `Authorization`), an authenticated client asks `POST /api/download-tickets` with
 `{"path": "/api/jobs/{job_id}/archive"}` (or a job file,
-`/api/jobs/{job_id}/files/{relpath}`, or `/api/history/archive`, written exactly as
-it will be requested) and receives 201 `{"ticket", "url", "expires_in": 60}`.
+`/api/jobs/{job_id}/files/{relpath}`, an item's original,
+`/api/jobs/{job_id}/items/{item_id}/original/file`, or `/api/history/archive`,
+written exactly as it will be requested) and receives 201 `{"ticket", "url",
+"expires_in": 60}`.
 `url` is that path with `?ticket=…`: 64 random hexadecimal characters that admit
 one GET of that path within 60 seconds. Only the ticket's SHA-256 is held, at most
-64 tickets are outstanding (429 `too_many_tickets`), a path outside those three
+64 tickets are outstanding (429 `too_many_tickets`), a path outside those four
 download routes is 422 `invalid_ticket_path`, and a request body over 8 KiB is 413
 `request_too_large`. A ticket presented a second time,
 after it expired, for another path or with another method is spent and refused
@@ -482,7 +540,8 @@ its files individually.
 
 Uploads are synchronized before durable job publication. An interrupted or
 failed upload does not establish a completed conversion. JSON Markdown results are limited
-to 64 MiB; larger output remains available through file downloads. Files and ZIPs
+to 64 MiB (an excerpt by `max_bytes` of an item with an asset index is not);
+larger output remains available through file downloads. Files and ZIPs
 stream in bounded chunks. Every archive request builds its own private temporary
 ZIP, retained until the response completes or disconnects. It never rewrites a
 shared job ZIP, so concurrent downloads do not invalidate each other. Internal
