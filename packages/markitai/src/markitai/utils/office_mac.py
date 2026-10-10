@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import errno
 import os
-import platform
 import shutil
 import subprocess
 import tempfile
@@ -41,6 +40,8 @@ from functools import cache
 from pathlib import Path
 
 from loguru import logger
+
+from markitai.utils import osinfo
 
 # Aligned with the LibreOffice PDF export it substitutes for (office.py)
 PDF_TIMEOUT = 600
@@ -80,7 +81,7 @@ def find_ms_office_app(app_name: str) -> bool:
     Filesystem check only -- never launches the app (unlike the Windows
     COM probe in utils/office.py).
     """
-    if platform.system() != "Darwin":
+    if osinfo.system() != "Darwin":
         return False
     for base in _APP_SEARCH_BASES:
         if (base / f"{app_name}.app").exists():

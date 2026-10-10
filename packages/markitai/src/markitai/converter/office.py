@@ -406,9 +406,9 @@ class PptxConverter(OfficeConverter):
 
         # Fallback: Convert to PDF and render pages
         # Log a hint for Windows users without MS Office
-        import platform
+        from markitai.utils import osinfo
 
-        if platform.system() == "Windows":
+        if osinfo.system() == "Windows":
             logger.warning(
                 "[PPTX] MS Office not available. "
                 "Install Microsoft Office for faster slide rendering. "
@@ -531,18 +531,18 @@ class PptxConverter(OfficeConverter):
 
         logger.info(f"[PPTX] Rendering slides via PDF: {input_path.name}")
 
-        import platform
+        from markitai.utils import osinfo
 
         soffice_cmd = find_libreoffice()
         if soffice_cmd is None:
             # macOS fallback: export PDF via PowerPoint AppleScript
             if (
-                platform.system() == "Darwin"
+                osinfo.system() == "Darwin"
                 and (self.config is None or self.config.office.macos_fallback)
                 and office_mac.powerpoint_available()
             ):
                 pass  # fall through to the PowerPoint branch below
-            elif platform.system() == "Windows":
+            elif osinfo.system() == "Windows":
                 user_notice(
                     f"[PPTX] Cannot render slides of {input_path.name}: "
                     "Neither MS Office nor LibreOffice found. "
@@ -551,7 +551,7 @@ class PptxConverter(OfficeConverter):
                     "to enable slide rendering."
                 )
                 return [], []
-            elif platform.system() == "Darwin":
+            elif osinfo.system() == "Darwin":
                 if self.config is not None and not self.config.office.macos_fallback:
                     user_notice(
                         f"[PPTX] Cannot render slides of {input_path.name}: "

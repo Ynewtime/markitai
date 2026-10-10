@@ -170,15 +170,15 @@ class ImageProcessor:
         On Windows, uses Pillow which has native EMF/WMF support.
         On other platforms, falls back to LibreOffice if available.
         """
-        import platform
-
         from PIL import Image
+
+        from markitai.utils import osinfo
 
         # Normalize format name
         fmt_lower = original_fmt.lower().replace("x-", "")  # x-emf -> emf
 
         # On Windows, Pillow can natively read EMF/WMF files
-        if platform.system() == "Windows" and fmt_lower in ("emf", "wmf"):
+        if osinfo.system() == "Windows" and fmt_lower in ("emf", "wmf"):
             try:
                 with io.BytesIO(image_data) as buffer:
                     img = Image.open(buffer)

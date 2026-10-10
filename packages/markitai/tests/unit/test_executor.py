@@ -25,7 +25,7 @@ class TestGetOptimalWorkers:
     def test_windows_returns_max_4(self):
         """Test that Windows returns max 4 workers."""
         with (
-            patch("markitai.utils.executor.platform.system", return_value="Windows"),
+            patch("platform.system", return_value="Windows"),
             patch("markitai.utils.executor.os.cpu_count", return_value=8),
         ):
             result = _get_optimal_workers()
@@ -34,7 +34,7 @@ class TestGetOptimalWorkers:
     def test_windows_respects_low_cpu_count(self):
         """Test that Windows respects CPU count if less than 4."""
         with (
-            patch("markitai.utils.executor.platform.system", return_value="Windows"),
+            patch("platform.system", return_value="Windows"),
             patch("markitai.utils.executor.os.cpu_count", return_value=2),
         ):
             result = _get_optimal_workers()
@@ -43,7 +43,7 @@ class TestGetOptimalWorkers:
     def test_linux_returns_max_8(self):
         """Test that Linux returns max 8 workers."""
         with (
-            patch("markitai.utils.executor.platform.system", return_value="Linux"),
+            patch("platform.system", return_value="Linux"),
             patch("markitai.utils.executor.os.cpu_count", return_value=16),
         ):
             result = _get_optimal_workers()
@@ -52,7 +52,7 @@ class TestGetOptimalWorkers:
     def test_macos_returns_max_8(self):
         """Test that macOS returns max 8 workers."""
         with (
-            patch("markitai.utils.executor.platform.system", return_value="Darwin"),
+            patch("platform.system", return_value="Darwin"),
             patch("markitai.utils.executor.os.cpu_count", return_value=10),
         ):
             result = _get_optimal_workers()
@@ -61,7 +61,7 @@ class TestGetOptimalWorkers:
     def test_handles_none_cpu_count(self):
         """Test that None cpu_count defaults to 4."""
         with (
-            patch("markitai.utils.executor.platform.system", return_value="Linux"),
+            patch("platform.system", return_value="Linux"),
             patch("markitai.utils.executor.os.cpu_count", return_value=None),
         ):
             result = _get_optimal_workers()

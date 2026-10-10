@@ -8,17 +8,18 @@ by the anydoc backend (converter/legacy.py, markitai[legacy] extra).
 
 from __future__ import annotations
 
-import platform
 import shutil
 from functools import lru_cache
 from pathlib import Path
 
 from loguru import logger
 
+from markitai.utils import osinfo
+
 
 def _is_windows() -> bool:
     """Check if running on Windows."""
-    return platform.system() == "Windows"
+    return osinfo.system() == "Windows"
 
 
 import threading
@@ -157,7 +158,7 @@ def find_libreoffice() -> str | None:
     # Check common installation paths
     common_paths: list[str] = []
 
-    if platform.system() == "Windows":
+    if osinfo.system() == "Windows":
         import os
 
         prog_dirs = [
@@ -174,7 +175,7 @@ def find_libreoffice() -> str | None:
                 common_paths.append(
                     os.path.join(prog_dir, subdir, "program", "soffice.exe")
                 )
-    elif platform.system() == "Darwin":
+    elif osinfo.system() == "Darwin":
         common_paths.append("/Applications/LibreOffice.app/Contents/MacOS/soffice")
 
     # Linux paths (always checked as fallback)

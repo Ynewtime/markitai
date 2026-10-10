@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import os
-import platform
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
+
+from markitai.utils import osinfo
 
 T = TypeVar("T")
 
@@ -21,7 +22,7 @@ def _get_optimal_workers() -> int:
     so we use a lower default to reduce switching costs.
     """
     cpu_count = os.cpu_count() or 4
-    if platform.system() == "Windows":
+    if osinfo.system() == "Windows":
         # Windows: lower default to reduce thread switch overhead
         return min(cpu_count, 4)
     else:
@@ -94,7 +95,7 @@ def _get_total_ram_bytes() -> int | None:
         Total RAM in bytes, or None if detection fails.
     """
     # Method 1: GlobalMemoryStatusEx (Windows)
-    if platform.system() == "Windows":
+    if osinfo.system() == "Windows":
         try:
             import ctypes
 
