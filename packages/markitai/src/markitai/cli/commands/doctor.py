@@ -246,6 +246,9 @@ def _playwright_runtime_problem(detail: str) -> dict[str, Any]:
             "install_commands": ["markitai doctor"],
             "slow_start": True,
             "summary_name": "Playwright (slow to start)",
+            # Installed and launching, just slowly the first time: a
+            # configured Playwright workflow is not blocked by it
+            "blocking": False,
         }
     return {
         "message": f"Chromium is installed but cannot launch: {detail}",

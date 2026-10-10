@@ -416,6 +416,7 @@ class TestWindowsDoctor:
         assert "  • Playwright:" in out.splitlines()
         assert "    markitai doctor" in out.splitlines()
         assert "Playwright (slow to start)" in out.splitlines()[-1]
+        assert out.splitlines()[-1].startswith("✓ Ready.")
 
     def test_the_same_hint_is_printed_once(self) -> None:
         """Vision Model and VLM OCR both asked for a vision-capable model."""
