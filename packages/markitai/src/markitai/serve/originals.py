@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 from markitai.constants import SCREENSHOTS_REL_PATH
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from markitai.serve.jobs import Job, JobItem
 
 PDF_EXTENSIONS = frozenset({".pdf"})
@@ -67,8 +69,9 @@ MAX_LISTED_PAGES = 2000
 MAX_TEXT_LINES = 5000
 #: Pixels of one rendered page at most.
 MAX_RENDER_PIXELS = 32_000_000
-#: An image original larger than this is not decoded for a preview.
-MAX_SOURCE_PIXELS = 178_000_000
+#: An image original larger than this is not decoded for a preview (a JPEG
+#: is decoded at a reduced size, other formats in full).
+MAX_SOURCE_PIXELS = 100_000_000
 MIN_WIDTH, MAX_WIDTH, DEFAULT_WIDTH = 160, 2400, 1200
 
 _MEDIA_TYPES = {
@@ -205,7 +208,8 @@ def _image_size(path: Path) -> tuple[int, int]:
     return width, height
 
 
-def _pdf_pages(path: Path, boxes: bool = True) -> tuple[list[tuple[float, float]], int]:
+def pdf_pages(path: Path, boxes: bool = True) -> tuple[list[tuple[float, float]], int]:
+    """A PDF's page boxes (the first ``MAX_LISTED_PAGES``) and its page count."""
     import pymupdf
 
     with pymupdf.open(path) as document:
@@ -219,7 +223,14 @@ def _pdf_pages(path: Path, boxes: bool = True) -> tuple[list[tuple[float, float]
     return pages, count
 
 
-def describe(job: Job, item: JobItem, *, boxes: bool = True) -> Original:
+def describe(
+    job: Job,
+    item: JobItem,
+    *,
+    boxes: bool = True,
+    pdf_layout: Callable[[Path, bool], tuple[list[tuple[float, float]], int]]
+    | None = None,
+) -> Original:
     """What the Compare view can show of *item* (no rendering).
 
     ``boxes=False`` skips the page sizes (a page request needs only the kind
@@ -235,7 +246,7 @@ def describe(job: Job, item: JobItem, *, boxes: bool = True) -> Original:
         )
         if suffix in PDF_EXTENSIONS:
             try:
-                pages, count = _pdf_pages(upload, boxes)
+                pages, count = (pdf_layout or pdf_pages)(upload, boxes)
             except Exception:
                 base.reason = "render_unavailable"
             else:
@@ -329,7 +340,11 @@ def render_pdf_page(path: Path, page_number: int, width: int) -> bytes:
 
 def render_image(path: Path, width: int) -> tuple[bytes, str]:
     """An image page: the file itself when a browser can show it at this
-    width, else a PNG scaled to *width* (EXIF rotation applied)."""
+    width, else a PNG scaled to *width* (EXIF rotation applied).
+
+    Decoded only as large as needed: a JPEG at a reduced scale, other formats
+    reduced in steps before the final filter.
+    """
     from PIL import Image, ImageOps
 
     suffix = path.suffix.lower()
@@ -339,23 +354,27 @@ def render_image(path: Path, width: int) -> tuple[bytes, str]:
         require_pillow_heif()
     try:
         with Image.open(path) as image:
+            stored_w, stored_h = image.size
+            try:
+                orientation = image.getexif().get(0x0112)
+            except Exception:
+                orientation = None
+            turned = orientation in (5, 6, 7, 8)
+            shown_w, shown_h = (stored_h, stored_w) if turned else (stored_w, stored_h)
             if (
                 suffix in BROWSER_IMAGE_EXTENSIONS
-                and image.size[0] <= width
-                and image.size[0] * image.size[1] <= MAX_RENDER_PIXELS
+                and shown_w <= width
+                and shown_w * shown_h <= MAX_RENDER_PIXELS
             ):
                 return path.read_bytes(), media_type_of(path)
-            if image.size[0] * image.size[1] > MAX_SOURCE_PIXELS:
+            if stored_w * stored_h > MAX_SOURCE_PIXELS and image.format != "JPEG":
                 raise RenderError("the image is too large to preview")
-            image.seek(0)
+            scale = min(1.0, _fit(shown_w, shown_h, width))
+            target = (max(1, round(shown_w * scale)), max(1, round(shown_h * scale)))
+            box = (target[1], target[0]) if turned else target
+            image.draft("RGB", box)  # JPEG only: decode at a reduced scale
+            image.thumbnail(box, Image.Resampling.LANCZOS, reducing_gap=2.0)
             frame = ImageOps.exif_transpose(image)
-            scale = min(1.0, _fit(frame.size[0], frame.size[1], width))
-            target = (
-                max(1, round(frame.size[0] * scale)),
-                max(1, round(frame.size[1] * scale)),
-            )
-            if target != frame.size:
-                frame = frame.resize(target, Image.Resampling.LANCZOS)
             if frame.mode not in ("RGB", "RGBA", "L", "LA"):
                 frame = frame.convert("RGBA" if "A" in frame.getbands() else "RGB")
             buffer = io.BytesIO()
@@ -415,3 +434,106 @@ def pdf_page_text(path: Path, page_number: int) -> dict[str, Any]:
         "height": round(float(rect.height), 2),
         "lines": lines,
     }
+
+
+class PdfWorkers:
+    """PyMuPDF work for the Compare view, in a few worker processes.
+
+    PyMuPDF holds the GIL while it draws or reads a page, so in a thread a
+    page that takes seconds to draw would stall every other request of the
+    server. Spawned processes do it instead; a call that runs past *timeout*
+    takes its pool down (the processes are killed) and fails with
+    :class:`RenderError`, and the next call starts a fresh pool.
+    """
+
+    def __init__(self, workers: int = 2, timeout: float = 20.0) -> None:
+        import threading
+
+        self.workers = workers
+        self.timeout = timeout
+        self._lock = threading.Lock()
+        self._pool: Any = None
+
+    def _get_pool(self) -> Any:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+
+        with self._lock:
+            if self._pool is None:
+                self._pool = ProcessPoolExecutor(
+                    max_workers=self.workers,
+                    mp_context=multiprocessing.get_context("spawn"),
+                )
+            return self._pool
+
+    def _drop(self, pool: Any, *, kill: bool) -> None:
+        with self._lock:
+            if self._pool is pool:
+                self._pool = None
+        if kill:
+            for process in list((getattr(pool, "_processes", None) or {}).values()):
+                try:
+                    process.kill()
+                except Exception:  # already gone
+                    pass
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    def run(self, function: Callable[..., Any], *args: Any) -> Any:
+        """Run *function* in a worker and wait for it (call from a thread)."""
+        from concurrent.futures import TimeoutError as FutureTimeout
+        from concurrent.futures.process import BrokenProcessPool
+
+        pool = self._get_pool()
+        try:
+            future = pool.submit(function, *args)
+        except (BrokenProcessPool, RuntimeError):
+            self._drop(pool, kill=True)
+            pool = self._get_pool()
+            future = pool.submit(function, *args)
+        try:
+            return future.result(timeout=self.timeout)
+        except FutureTimeout:
+            self._drop(pool, kill=True)
+            raise RenderError(f"gave up after {self.timeout:.0f} s") from None
+        except BrokenProcessPool:
+            self._drop(pool, kill=False)
+            raise RenderError("the page worker stopped") from None
+
+    def close(self) -> None:
+        with self._lock:
+            pool, self._pool = self._pool, None
+        if pool is not None:
+            self._drop(pool, kill=True)
+
+
+class ByteCache:
+    """A small LRU of rendered pages, bounded by total size."""
+
+    def __init__(self, max_bytes: int = 64 * 1024 * 1024) -> None:
+        import threading
+        from collections import OrderedDict
+
+        self.max_bytes = max_bytes
+        self._lock = threading.Lock()
+        self._entries: OrderedDict[tuple[Any, ...], tuple[bytes, str]] = OrderedDict()
+        self._size = 0
+
+    def get(self, key: tuple[Any, ...]) -> tuple[bytes, str] | None:
+        with self._lock:
+            value = self._entries.get(key)
+            if value is not None:
+                self._entries.move_to_end(key)
+            return value
+
+    def put(self, key: tuple[Any, ...], value: tuple[bytes, str]) -> None:
+        if len(value[0]) > self.max_bytes // 4:
+            return
+        with self._lock:
+            old = self._entries.pop(key, None)
+            if old is not None:
+                self._size -= len(old[0])
+            self._entries[key] = value
+            self._size += len(value[0])
+            while self._size > self.max_bytes and self._entries:
+                _, dropped = self._entries.popitem(last=False)
+                self._size -= len(dropped[0])

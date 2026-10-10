@@ -68,10 +68,14 @@ from markitai.serve.jobs import (
     write_job_meta,
 )
 from markitai.serve.originals import (
+    ByteCache,
+    Original,
+    PdfWorkers,
     RenderError,
     clamp_width,
     kept_upload,
     pdf_page_text,
+    pdf_pages,
     render_image,
     render_pdf_page,
 )
@@ -1087,6 +1091,11 @@ def _markdown_excerpt(data: bytes, max_bytes: int | None) -> tuple[str, bool]:
     if newline >= 0 and newline + 1 >= cut - cut // 4:
         cut = newline + 1
     return data[:cut].decode("utf-8", "replace"), True
+
+
+def _small_number(text: str, digits: int) -> bool:
+    """ASCII digits only, at most *digits* of them (``"²".isdigit()`` is true)."""
+    return re.fullmatch(rf"[0-9]{{1,{digits}}}", text) is not None
 
 
 def _created_instant(value: object) -> float:
@@ -2111,6 +2120,7 @@ def create_app(
             expiry_task.cancel()
             with suppress(asyncio.CancelledError):
                 await expiry_task
+            app.state.pdf_workers.close()
             await app.state.markitai.registry.shutdown()
 
             from markitai.converter.pdf_parallel import shutdown_pool
@@ -2254,6 +2264,10 @@ def create_app(
     tickets = DownloadTickets()
     app.state.download_tickets = tickets
     app.state.page_renders = asyncio.Semaphore(_PAGE_RENDER_SLOTS)
+    # PyMuPDF holds the GIL: Compare's PDF work runs in worker processes
+    app.state.pdf_workers = PdfWorkers(workers=_PAGE_RENDER_SLOTS)
+    app.state.page_cache = ByteCache()
+    app.state.original_cache = {}
     app.add_middleware(_TokenAuthMiddleware, token=token, tickets=tickets)
     # Outermost: compresses whatever the inner layers answer
     app.add_middleware(_CompressionMiddleware)
@@ -3429,7 +3443,8 @@ def create_app(
                     key: value
                     for key, value in saved_options.items()
                     if key in JobOptions.model_fields and key != "remote_processing"
-                }
+                },
+                strict=False,
             )
         _check_preset(state, opts)
 
@@ -3638,13 +3653,14 @@ def create_app(
         """
         limit: int | None = None
         if max_bytes is not None:
-            if not max_bytes.isdigit() or int(max_bytes) < 1024:
+            if not _small_number(max_bytes, 20) or int(max_bytes) < 1024:
                 raise ApiError(
                     422,
                     "invalid_max_bytes",
                     "max_bytes must be an integer of at least 1024",
                 )
-            limit = int(max_bytes)
+            # Never more than a whole result may be: the cap is the same
+            limit = min(int(max_bytes), MAX_RESULT_BYTES)
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)
         if item.status != "done" or item.output is None:
@@ -3774,6 +3790,28 @@ def create_app(
     def _original_paths(job: Job, item: JobItem) -> str:
         return f"/api/jobs/{job.job_id}/items/{item.item_id}/original/file"
 
+    async def _describe(
+        request: Request, job: Job, item: JobItem, *, boxes: bool
+    ) -> Original:
+        """The item's original, cached until the item is converted again."""
+        cache: dict[tuple[Any, ...], Original] = request.app.state.original_cache
+        key = (job.job_id, item.item_id, item.finished_at, item.output, boxes)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        workers: PdfWorkers = request.app.state.pdf_workers
+
+        def layout(path: Path, with_boxes: bool) -> tuple[list[Any], int]:
+            return workers.run(pdf_pages, path, with_boxes)
+
+        original = await asyncio.to_thread(
+            describe_original, job, item, boxes=boxes, pdf_layout=layout
+        )
+        if len(cache) >= 512:
+            cache.pop(next(iter(cache)))
+        cache[key] = original
+        return original
+
     @app.get(
         "/api/jobs/{job_id}/items/{item_id}/original",
         response_model=OriginalDescriptor,
@@ -3784,7 +3822,7 @@ def create_app(
         """What the Compare view can show of the item's source."""
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)
-        original = await asyncio.to_thread(describe_original, job, item)
+        original = await _describe(request, job, item, boxes=True)
         return original.descriptor(_original_paths(job, item))
 
     @app.get("/api/jobs/{job_id}/items/{item_id}/original/file")
@@ -3814,11 +3852,11 @@ def create_app(
     async def _page_request(
         request: Request, job_id: str, item_id: str, page: str
     ) -> tuple[Any, int]:
-        if not page.isdigit():
+        if not _small_number(page, 6):
             raise ApiError(422, "invalid_page_request", "page must be a number")
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)
-        original = await asyncio.to_thread(describe_original, job, item, boxes=False)
+        original = await _describe(request, job, item, boxes=False)
         number = int(page)
         if original.kind in ("none", "html", "text"):
             raise ApiError(
@@ -3833,10 +3871,27 @@ def create_app(
         request: Request, job_id: str, item_id: str, page: str, width: str | None = None
     ) -> Response:
         """Page *page* (1-based) as an image, *width* pixels wide."""
-        if width is not None and not width.isdigit():
+        if width is not None and not _small_number(width, 6):
             raise ApiError(422, "invalid_page_request", "width must be a number")
         target = clamp_width(int(width) if width is not None else None)
         original, number = await _page_request(request, job_id, item_id, page)
+        source = (
+            original.screenshots[number - 1]
+            if original.kind == "screenshots"
+            else original.path
+        )
+        assert source is not None
+        try:
+            stat = source.stat()
+        except OSError:
+            raise ApiError(
+                404, "original_unavailable", "the original is gone"
+            ) from None
+        cache: ByteCache = request.app.state.page_cache
+        cache_key = (str(source), stat.st_mtime_ns, stat.st_size, number, target)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return _page_image(*cached)
         renders: asyncio.Semaphore = request.app.state.page_renders
         if renders.locked():
             raise ApiError(
@@ -3848,17 +3903,14 @@ def create_app(
         async with renders:
             try:
                 if original.kind == "pdf":
+                    workers: PdfWorkers = request.app.state.pdf_workers
                     body = await asyncio.to_thread(
-                        render_pdf_page, original.path, number, target
+                        workers.run, render_pdf_page, source, number, target
                     )
                     media_type = "image/png"
-                elif original.kind == "image":
-                    body, media_type = await asyncio.to_thread(
-                        render_image, original.path, target
-                    )
                 else:
                     body, media_type = await asyncio.to_thread(
-                        render_image, original.screenshots[number - 1], target
+                        render_image, source, target
                     )
             except IndexError:
                 raise ApiError(404, "page_not_found", "no such page") from None
@@ -3867,6 +3919,10 @@ def create_app(
                 raise ApiError(
                     422, "render_failed", "this page cannot be drawn"
                 ) from None
+        cache.put(cache_key, (body, media_type))
+        return _page_image(body, media_type)
+
+    def _page_image(body: bytes, media_type: str) -> Response:
         return Response(
             content=body,
             media_type=media_type,
@@ -3891,7 +3947,10 @@ def create_app(
                 404, "original_unavailable", "this original has no text layer"
             )
         try:
-            return await asyncio.to_thread(pdf_page_text, original.path, number)
+            workers: PdfWorkers = request.app.state.pdf_workers
+            return await asyncio.to_thread(
+                workers.run, pdf_page_text, original.path, number
+            )
         except IndexError:
             raise ApiError(404, "page_not_found", "no such page") from None
         except RenderError:

@@ -14,8 +14,9 @@ screenshots every state:
 
 It fails on a page error, a 5xx answer or a step whose check does not hold.
 
-Usage (needs the serve and browser extras, and Chromium for Playwright:
-``python -m playwright install chromium``)::
+Usage (needs the serve and browser extras, and the browser for Playwright:
+``python -m playwright install chromium``, or ``webkit`` / ``firefox`` for
+``--browser``)::
 
     uv run python scripts/workbench_e2e.py --out /tmp/workbench-e2e
     uv run python scripts/workbench_e2e.py --widths 1440 --bundle path/to/unpacked-bundle
@@ -591,14 +592,19 @@ def _api(page: Any, base: str, method: str, path: str, **kwargs: Any) -> Any:
 
 
 def browse(
-    base: str, width: int, out: Path, inputs: dict[str, Path], pages_port: int
+    base: str,
+    width: int,
+    out: Path,
+    inputs: dict[str, Path],
+    pages_port: int,
+    engine: str = "chromium",
 ) -> Run:
     from playwright.sync_api import sync_playwright
 
     run = Run(out=out, width=width)
     phone = width < 600
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = getattr(playwright, engine).launch()
         context = browser.new_context(
             viewport={"width": width, "height": 844 if phone else 900},
             device_scale_factor=2 if phone else 1,
@@ -976,11 +982,17 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="serve this unpacked bundle instead of the vendored one",
     )
+    parser.add_argument(
+        "--browser",
+        choices=("chromium", "webkit", "firefox"),
+        default="chromium",
+        help="browser engine (webkit is Safari's; install it with playwright install)",
+    )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     _, llm_port = _serve(_FakeLLM)
     _, pages_port = _serve(_Pages)
-    results: dict[str, Any] = {"widths": {}, "bundle": None}
+    results: dict[str, Any] = {"widths": {}, "bundle": None, "browser": args.browser}
     failed = False
     with tempfile.TemporaryDirectory(prefix="markitai-e2e-") as scratch:
         inputs = make_inputs(Path(scratch) / "inputs", pages_port)
@@ -998,7 +1010,7 @@ def main(argv: list[str] | None = None) -> int:
                     .request.urlopen(f"{base}/api/capabilities")
                     .read()
                 )
-                run = browse(base, width, args.out, inputs, pages_port)
+                run = browse(base, width, args.out, inputs, pages_port, args.browser)
             results["widths"][width] = {
                 "steps": run.steps,
                 "errors": run.errors,
@@ -1025,7 +1037,7 @@ def main(argv: list[str] | None = None) -> int:
     lines = [
         "# markitai serve: web workbench end-to-end run",
         "",
-        f"markitai {results.get('version')}, workbench bundle `{results['bundle']}`, {sys.platform}, Python {sys.version.split()[0]}.",
+        f"markitai {results.get('version')}, workbench bundle `{results['bundle']}`, {sys.platform}, Python {sys.version.split()[0]}, {args.browser}.",
         "Offline: fake LLM, local pages, generated inputs, throwaway HOME.",
         "",
         "| Width | State | Result | Note | Screenshot |",
