@@ -1032,3 +1032,19 @@ def test_powershell_probe_matches_the_shell_probe(
     timeout = "1" if path == "slow" else "3"
     actual = _run_powershell_probe(tmp_path, f"{probe_server}/{path}", timeout)
     assert actual == expected
+
+
+def test_setup_scripts_compile_bytecode_at_install() -> None:
+    """The first run after an install compiled every module it imported: on
+    runner-win 44 s for the first URL conversion against 4.6 s for the next."""
+    shell_text = _SETUP_SH.read_text(encoding="utf-8")
+    powershell_text = _SETUP_PS1.read_text(encoding="utf-8")
+    assert 'UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"' in shell_text
+    assert "export UV_COMPILE_BYTECODE" in shell_text
+    assert (
+        'if (-not $env:UV_COMPILE_BYTECODE) { $env:UV_COMPILE_BYTECODE = "1" }'
+        in powershell_text
+    )
+    # irm | iex runs in the user's own shell: the old value comes back
+    final = powershell_text[powershell_text.rindex("} finally {") :]
+    assert "$env:UV_COMPILE_BYTECODE = $script:OriginalCompileBytecode" in final
