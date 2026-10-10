@@ -17,6 +17,17 @@ if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+else:
+    # A non-UTF-8 locale (LANG=en_US.ISO-8859-1, PYTHONIOENCODING=ascii):
+    # a character the stream cannot encode (a dash, a CJK file name) is
+    # replaced instead of crashing the run; the status marks switch to
+    # ASCII (markitai.utils.term)
+    for _stream in (sys.stdout, sys.stderr):
+        _encoding = (getattr(_stream, "encoding", None) or "utf-8").lower()
+        if not _encoding.replace("-", "").startswith("utf") and hasattr(
+            _stream, "reconfigure"
+        ):
+            _stream.reconfigure(errors="replace")  # type: ignore[union-attr]
 
 # Suppress noisy messages before imports
 # Note: Most warning filters are now centralized in logging_config.setup_logging()
