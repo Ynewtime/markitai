@@ -4,11 +4,11 @@ Builds the FastAPI app hermetically and returns its OpenAPI document with the
 SSE event payload models injected. The SSE models (:data:`SSE_EVENTS` in
 :mod:`markitai.serve.schemas`) never appear in a route signature — without
 the explicit injection the exported contract would miss the event stream the
-webapp actually consumes.
+web UI actually consumes.
 
 Consumers: ``scripts/export_openapi.py`` (CLI dump) and
-``tests/unit/serve/test_contract_sync.py`` (contract test against
-``webapp/src/api/types.ts``).
+``tests/unit/serve/test_contract_sync.py`` (contract test against the shared
+workbench's API contract).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def build_openapi_schema() -> dict[str, Any]:
 
     The app is built with a never-existing static dir so the export is
     deterministic: the JSON root hint route is always part of the contract,
-    whether or not a webapp bundle happens to be built locally.
+    whether or not a workbench bundle is present.
     """
     from markitai.serve.app import create_app
 

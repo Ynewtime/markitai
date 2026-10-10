@@ -30,3 +30,11 @@ def test_redact_urls_in_text_masks_token_in_bare_request_target() -> None:
     assert redact_urls_in_text(line) == (
         '127.0.0.1:5000 - "GET /api/jobs/abc/events?token=[REDACTED] HTTP/1.1" 200'
     )
+
+
+def test_redact_urls_in_text_masks_download_ticket_in_request_target() -> None:
+    line = '127.0.0.1:5000 - "GET /api/jobs/abc/archive?ticket=0f1e2d3c HTTP/1.1" 200'
+
+    assert redact_urls_in_text(line) == (
+        '127.0.0.1:5000 - "GET /api/jobs/abc/archive?ticket=[REDACTED] HTTP/1.1" 200'
+    )

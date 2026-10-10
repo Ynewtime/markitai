@@ -60,6 +60,114 @@ def normalize_job_options(options: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def public_options(options: dict[str, Any] | None) -> dict[str, Any]:
+    """Saved options as clients see them: every option, no consent marker.
+
+    History remembers selections, never permission for a later request, so
+    ``remote_processing`` is never echoed. A CLI-recorded job's ``origin``
+    passes through.
+    """
+    saved = options or {}
+    echoed = {
+        name: saved.get(name)
+        for name in JobOptions.model_fields
+        if name != "remote_processing"
+    }
+    if "origin" in saved:
+        echoed["origin"] = saved["origin"]
+    return echoed
+
+
+def pricing_from_usage(
+    usage: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Request coverage of one item's model cost, or None when no model ran.
+
+    A request whose price is unknown is counted in ``unpriced_requests``; a
+    cost is ``complete`` only when every recorded request was priced.
+    """
+    requests = unpriced = 0
+    for stats in (usage or {}).values():
+        if not isinstance(stats, dict):
+            continue
+        requests += max(0, int(stats.get("requests") or 0))
+        unpriced += max(0, int(stats.get("unpriced_requests") or 0))
+    if requests <= 0:
+        return None
+    unpriced = min(unpriced, requests)
+    priced = requests - unpriced
+    return {
+        "priced_requests": priced,
+        "unpriced_requests": unpriced,
+        "cost_status": _cost_status(priced, unpriced),
+    }
+
+
+def _cost_status(priced: int, unpriced: int) -> str:
+    if priced == 0:
+        return "unknown"
+    return "partial" if unpriced else "complete"
+
+
+def models_from_usage(usage: dict[str, dict[str, Any]] | None) -> list[str]:
+    """Models that answered requests for an item, first use first."""
+    return [
+        str(name)
+        for name, stats in (usage or {}).items()
+        if isinstance(stats, dict) and int(stats.get("requests") or 0) > 0
+    ]
+
+
+def _valid_pricing(value: object) -> dict[str, Any] | None:
+    """A persisted pricing record, or None when it is malformed."""
+    if not isinstance(value, dict):
+        return None
+    priced = value.get("priced_requests")
+    unpriced = value.get("unpriced_requests")
+    if (
+        not isinstance(priced, int)
+        or not isinstance(unpriced, int)
+        or priced < 0
+        or unpriced < 0
+        or priced + unpriced == 0
+        or value.get("cost_status") != _cost_status(priced, unpriced)
+    ):
+        return None
+    return {
+        "priced_requests": priced,
+        "unpriced_requests": unpriced,
+        "cost_status": value["cost_status"],
+    }
+
+
+def aggregate_pricing(items: list[JobItem]) -> dict[str, Any] | None:
+    """Job-level coverage of the summed ``cost_usd`` of *items*.
+
+    Mirrors the Rust server: an item with a known cost but no request counts
+    (history written before pricing was recorded) makes completeness
+    unknowable, so no aggregate is claimed; items without a model add nothing.
+    """
+    priced = unpriced = 0
+    for item in items:
+        if item.cost_usd is None:
+            if item.pricing is not None:
+                return None
+            continue
+        if item.pricing is not None:
+            priced += item.pricing["priced_requests"]
+            unpriced += item.pricing["unpriced_requests"]
+            continue
+        if item.cost_usd > 0:
+            return None
+    if priced + unpriced == 0:
+        return None
+    return {
+        "priced_requests": priced,
+        "unpriced_requests": unpriced,
+        "cost_status": _cost_status(priced, unpriced),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -92,15 +200,30 @@ class JobItem:
     # scanned", "hidden text detected", ...), then the pipeline's own result
     # warnings ("image analysis failed ..."): the web user has no console.
     warnings: list[str] = field(default_factory=list)
+    # Stable cause of a failure ("unsupported", "fetch_error", "cancelled",
+    # ...), beside the English ``error``.
+    error_code: str | None = None
+    # Request coverage of ``cost_usd`` ({priced_requests, unpriced_requests,
+    # cost_status}); None when no model answered a request for this item.
+    pricing: dict[str, Any] | None = None
+    # Models that produced the retained result, first use first.
+    models: list[str] = field(default_factory=list)
+    # Bytes of the uploaded original; None for URLs.
+    source_size: int | None = None
 
     def to_payload(self) -> dict[str, Any]:
-        """Return the item event payload (contract: ``event: item``)."""
+        """Return the item event payload (contract: ``event: item``).
+
+        Without ``options``: :meth:`Job.item_payload` adds the public form
+        for clients, :func:`write_job_meta` the saved form.
+        """
         return {
             "item_id": self.item_id,
             "name": self.name,
             "kind": self.kind,
             "status": self.status,
             "error": self.error,
+            "error_code": self.error_code,
             "output": self.output,
             # persisted so a rehydrated URL item retries into the same
             # de-conflicted output name instead of recomputing (and colliding)
@@ -108,12 +231,15 @@ class JobItem:
             "duration_ms": self.duration_ms,
             "finished_at": self.finished_at,
             "cost_usd": self.cost_usd,
+            "pricing": dict(self.pricing) if self.pricing is not None else None,
             "llm_enhanced": self.llm_enhanced,
             "operation": self.operation,
             "skipped": self.skipped,
             "skip_reason": self.skip_reason,
             "retryable": self.retryable,
             "warnings": list(self.warnings),
+            "models": list(self.models),
+            "source_size": self.source_size,
         }
 
 
@@ -136,6 +262,8 @@ class RetryWork:
     prior_operation: str = "convert"
     prior_llm_enhanced: bool = False
     prior_warnings: list[str] = field(default_factory=list)
+    prior_pricing: dict[str, Any] | None = None
+    prior_models: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -172,6 +300,13 @@ class Job:
         default_factory=asyncio.Queue, repr=False
     )
     retry_pending: set[str] = field(default_factory=set, repr=False)
+    # What the submission is called in the list (a folder or URL list name)
+    label: str | None = None
+    # POST .../cancel: original items still waiting for a slot never start
+    stop_requested: bool = False
+    # Tasks of the initial run's items still waiting for a conversion slot;
+    # a stop request cancels them (an item removes itself once it runs).
+    waiting: dict[str, asyncio.Task[None]] = field(default_factory=dict, repr=False)
 
     @property
     def uploads_dir(self) -> Path:
@@ -214,6 +349,13 @@ class Job:
             "total": len(self.items),
         }
 
+    def item_payload(self, item: JobItem) -> dict[str, Any]:
+        """One item as clients see it, with its saved (public) options."""
+        return {
+            **item.to_payload(),
+            "options": public_options(item.options or self.options),
+        }
+
     def snapshot(self) -> dict[str, Any]:
         """Return the full job JSON (contract: ``GET /api/jobs/{id}``)."""
         return {
@@ -221,11 +363,12 @@ class Job:
             "status": self.status,
             "created_at": self.created_at,
             "finished_at": self.finished_at,
-            "options": self.options,
+            "options": public_options(self.options),
             "done": self.done_count,
             "failed": self.failed_count,
             "total": len(self.items),
-            "items": [i.to_payload() for i in self.items],
+            "items": [self.item_payload(i) for i in self.items],
+            "label": self.label,
         }
 
 
@@ -294,7 +437,7 @@ class JobRegistry:
 
     def publish_item(self, job: Job, item: JobItem) -> None:
         """Publish an ``item`` event for *item*."""
-        self.publish(job, "item", item.to_payload())
+        self.publish(job, "item", job.item_payload(item))
 
     def publish_job(self, job: Job) -> None:
         """Publish a ``job`` progress event."""
@@ -354,6 +497,24 @@ def _meta_finished_at(job_dir: Path) -> float | None:
     except (OSError, ValueError, UnicodeDecodeError):
         return None
     return _iso_timestamp(meta.get("finished_at")) if isinstance(meta, dict) else None
+
+
+def job_expired(job: Job, ttl_hours: float = JOB_TTL_HOURS) -> bool:
+    """Whether a finished job is past retention.
+
+    An expired job is never listed or served, even before the hourly sweep
+    removes it. Running jobs never expire; a job without a readable
+    ``finished_at`` ages from its folder's modification time.
+    """
+    if job.status == "running" or job.runners:
+        return False
+    finished = _iso_timestamp(job.finished_at)
+    if finished is None:
+        try:
+            finished = job.job_dir.stat().st_mtime
+        except OSError:
+            return False
+    return finished < time.time() - ttl_hours * 3600
 
 
 def cleanup_stale_jobs(
@@ -482,6 +643,7 @@ def write_job_meta(job: Job, *, refresh_size: bool = True) -> None:
             "options": job.options,
             "dir_size_bytes": job.dir_size_bytes,
             "version": 2,
+            "label": job.label,
             "items": [
                 {**item.to_payload(), "options": item.options or job.options}
                 for item in job.items
@@ -524,6 +686,9 @@ def _item_from_payload(
     if not isinstance(retryable, bool):
         # CLI-recorded files keep no original to convert again.
         retryable = not (origin == "cli" and kind == "file")
+    raw_models = raw.get("models")
+    raw_size = raw.get("source_size")
+    raw_code = raw.get("error_code")
     return JobItem(
         item_id=str(raw.get("item_id") or f"i{index}"),
         name=str(raw.get("name") or ""),
@@ -547,6 +712,14 @@ def _item_from_payload(
         else None,
         retryable=retryable,
         warnings=warnings,
+        error_code=raw_code if isinstance(raw_code, str) and raw_code else None,
+        pricing=_valid_pricing(raw.get("pricing")),
+        models=[m for m in raw_models if isinstance(m, str)]
+        if isinstance(raw_models, list)
+        else [],
+        source_size=raw_size
+        if isinstance(raw_size, int) and not isinstance(raw_size, bool)
+        else None,
     )
 
 
@@ -589,6 +762,7 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
         options = raw_options if isinstance(raw_options, dict) else {}
         normalized_options = normalize_job_options(options)
         raw_size = meta.get("dir_size_bytes")
+        raw_label = meta.get("label")
         job = Job(
             job_id=entry.name,
             job_dir=entry,
@@ -605,6 +779,7 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
             status="done",
             finished_at=meta.get("finished_at"),
             dir_size_bytes=raw_size if isinstance(raw_size, int) else None,
+            label=raw_label[:120] if isinstance(raw_label, str) and raw_label else None,
         )
         registry.jobs[job.job_id] = job
         count += 1
@@ -736,7 +911,23 @@ async def process_file_item(
 
         return document_process_result(ctx, result)
     except Exception as e:
-        return ProcessResult(success=False, error=format_error_message(e))
+        return ProcessResult(
+            success=False,
+            error=format_error_message(e),
+            error_code="conversion_error",
+        )
+
+
+def file_error_code(error: str | None) -> str:
+    """Stable cause of a failed file conversion, from the core's message."""
+    text = error or ""
+    if text.startswith("Unsupported file format"):
+        return "unsupported"
+    if text.startswith("No output was produced"):
+        return "no_output"
+    if text.startswith("Cloudflare API token and account ID required"):
+        return "config_error"
+    return "conversion_error"
 
 
 @dataclass
@@ -804,10 +995,14 @@ async def process_url_item(
             )
     except JinaRateLimitError:
         return ProcessResult(
-            success=False, error="Jina Reader rate limit exceeded (20 RPM)"
+            success=False,
+            error="Jina Reader rate limit exceeded (20 RPM)",
+            error_code="fetch_error",
         )
     except FetchError as e:
-        return ProcessResult(success=False, error=format_error_message(e))
+        return ProcessResult(
+            success=False, error=format_error_message(e), error_code="fetch_error"
+        )
     except Exception as e:
         # ConversionError (no content, or a failed LLM stage under
         # llm.on_failure "fail", whose requests were still paid for) and
@@ -817,6 +1012,7 @@ async def process_url_item(
             error=format_error_message(e),
             cost_usd=spend.cost,
             llm_usage=spend.usage,
+            error_code="conversion_error",
         )
 
     # A failed LLM enhancement follows llm.on_failure, as for files: under
@@ -865,6 +1061,9 @@ async def process_url_item(
 def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
     """Map a ProcessResult onto the item (skip strings are non-errors)."""
     item.cost_usd = result.cost_usd
+    item.pricing = pricing_from_usage(result.llm_usage)
+    item.models = models_from_usage(result.llm_usage)
+    item.error_code = None
     if result.output_path:
         try:
             item.output = (
@@ -886,7 +1085,22 @@ def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
     else:
         item.status = "error"
         item.error = result.error or "unknown error"
+        item.error_code = result.error_code or (
+            file_error_code(result.error) if item.kind == "file" else "conversion_error"
+        )
         item.llm_enhanced = False
+
+
+SHUTDOWN_ERROR = "cancelled (server shutdown)"
+STOPPED_ERROR = "cancelled (stopped by request)"
+
+
+def _mark_cancelled(item: JobItem, *, stopped: bool) -> None:
+    """End an item that never finished: stopped by request or by shutdown."""
+    item.status = "error"
+    item.error = STOPPED_ERROR if stopped else SHUTDOWN_ERROR
+    item.error_code = "cancelled" if stopped else "shutdown"
+    item.finished_at = now_iso()
 
 
 async def _run_item(
@@ -928,24 +1142,26 @@ async def _run_item(
             finally:
                 item.warnings = list(notices)
     except asyncio.CancelledError:
-        # Only registry.shutdown() cancels job tasks.
-        item.status = "error"
-        item.error = "cancelled (server shutdown)"
+        # Only registry.shutdown() cancels a running item (a stop request
+        # cancels items still waiting for their slot, never a running one).
+        _mark_cancelled(item, stopped=False)
         item.duration_ms = int((time.perf_counter() - start) * 1000)
-        item.finished_at = now_iso()
         registry.publish_item(job, item)
         raise
     except Exception as e:  # defensive: the item must reach a terminal state
         from markitai.batch import ProcessResult
         from markitai.utils.text import format_error_message
 
-        result = ProcessResult(success=False, error=format_error_message(e))
+        result = ProcessResult(
+            success=False, error=format_error_message(e), error_code="internal_error"
+        )
     item.warnings = merge_item_warnings(item.warnings, result.warnings)
     if require_llm and result.success:
         if not (result.output_path and result.llm_enhanced):
             result.success = False
             result.output_path = None
             result.error = "LLM enhancement did not produce an enhanced Markdown result"
+            result.error_code = "enhancement_failed"
     item.duration_ms = int((time.perf_counter() - start) * 1000)
     _apply_result(job, item, result)
     item.finished_at = now_iso()
@@ -1017,36 +1233,70 @@ async def run_job(
         )
         url_semaphore = asyncio.Semaphore(max(1, run_cfg.batch.url_concurrency))
 
+        def stoppable(item: JobItem) -> bool:
+            # A stop request ends the job's original items still waiting for
+            # a slot; queued retries keep their own lifecycle.
+            return job.stop_requested and item.operation == "convert"
+
+        def stop(item: JobItem) -> None:
+            _mark_cancelled(item, stopped=True)
+            registry.publish_item(job, item)
+            registry.publish_job(job)
+
         async def run_gated(item: JobItem) -> None:
+            if stoppable(item):
+                stop(item)
+                return
             gate: AbstractAsyncContextManager[object | None] = (
                 file_slots.slot(llm=run_cfg.llm.enabled)
                 if item.kind == "file"
                 else url_semaphore
             )
-            async with gate:
-                from markitai.fetch_policy import public_network_only
+            try:
+                async with gate:
+                    job.waiting.pop(item.item_id, None)
+                    # A stop that arrives together with the slot still wins:
+                    # the item has not started.
+                    if stoppable(item):
+                        stop(item)
+                        return
+                    from markitai.fetch_policy import public_network_only
 
-                token = public_network_only.set(job.public_network_only)
-                try:
-                    await _run_item(
-                        registry,
-                        job,
-                        item,
-                        run_cfg,
-                        shared_processor,
-                        url_ctx,
-                        require_llm=require_llm,
-                    )
-                finally:
-                    public_network_only.reset(token)
+                    token = public_network_only.set(job.public_network_only)
+                    try:
+                        await _run_item(
+                            registry,
+                            job,
+                            item,
+                            run_cfg,
+                            shared_processor,
+                            url_ctx,
+                            require_llm=require_llm,
+                        )
+                    finally:
+                        public_network_only.reset(token)
+            except asyncio.CancelledError:
+                # Cancelled while waiting for its slot by a stop request (not
+                # by shutdown, which cancels the whole run): end it here so
+                # the rest of the job carries on.
+                if item.status == "queued" and stoppable(item) and not registry.closing:
+                    stop(item)
+                    return
+                raise
+            finally:
+                job.waiting.pop(item.item_id, None)
 
-        await asyncio.gather(*(run_gated(item) for item in targets))
+        tasks: list[asyncio.Task[None]] = []
+        for item in targets:
+            task = asyncio.ensure_future(run_gated(item))
+            if item.operation == "convert" and item.status == "queued":
+                job.waiting[item.item_id] = task
+            tasks.append(task)
+        await asyncio.gather(*tasks)
     except asyncio.CancelledError:
         for item in targets:
             if item.status in ("queued", "running"):
-                item.status = "error"
-                item.error = "cancelled (server shutdown)"
-                item.finished_at = now_iso()
+                _mark_cancelled(item, stopped=False)
         raise
     except Exception as e:  # defensive: the job must reach a terminal state
         logger.exception("[Serve] Job {} crashed: {}", job.job_id, e)
@@ -1054,6 +1304,7 @@ async def run_job(
             if item.status in ("queued", "running"):
                 item.status = "error"
                 item.error = f"internal error: {e}"
+                item.error_code = "internal_error"
                 item.finished_at = now_iso()
                 registry.publish_item(job, item)
     finally:
@@ -1132,8 +1383,11 @@ def _restore_prior_result(job: Job, item: JobItem, work: RetryWork) -> None:
     """
     item.status = "done"
     item.error = None
+    item.error_code = None
     item.output = work.prior_output
     item.cost_usd = work.prior_cost_usd
+    item.pricing = work.prior_pricing
+    item.models = list(work.prior_models)
     item.duration_ms = work.prior_duration_ms
     item.finished_at = work.prior_finished_at
     item.operation = work.prior_operation
@@ -1322,9 +1576,7 @@ async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
                         # row was reset when the rerun was queued.
                         _restore_prior_result(job, item, work)
                     else:
-                        item.status = "error"
-                        item.error = "cancelled (server shutdown)"
-                        item.finished_at = now_iso()
+                        _mark_cancelled(item, stopped=False)
                     registry.publish_item(job, item)
                 job.retry_pending.discard(work.item_id)
                 job.retry_queue.task_done()

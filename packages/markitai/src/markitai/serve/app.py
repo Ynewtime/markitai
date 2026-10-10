@@ -22,13 +22,11 @@ from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import parse_qs, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import ValidationError
 from starlette.background import BackgroundTask
@@ -37,32 +35,55 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from markitai import __version__
 from markitai.constants import PROVIDER_API_KEY_ENV
 from markitai.providers.discovery import provider_default_api_base
-from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT
+from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, PENDING_BATCH_SKIP_REASON
 from markitai.serve.artifacts import (
     item_asset_files,
     markdown_pair,
     split_output_name,
 )
+from markitai.serve.errors import (
+    ApiError,
+    error_response,
+    fallback_reason,
+    validation_detail,
+)
 from markitai.serve.jobs import (
+    JOB_TTL_HOURS,
     SHUTDOWN_EVENT,
     Job,
     JobItem,
     JobRegistry,
     RetryWork,
+    aggregate_pricing,
     cleanup_stale_jobs,
     item_base_name,
     job_cached_dir_size,
     job_duration_ms,
+    job_expired,
+    public_options,
     rehydrate_jobs,
     run_history_expiry,
     run_job,
     run_retry_queue,
     write_job_meta,
 )
+from markitai.serve.originals import (
+    RenderError,
+    clamp_width,
+    kept_upload,
+    pdf_page_text,
+    render_image,
+    render_pdf_page,
+)
+from markitai.serve.originals import describe as describe_original
+from markitai.serve.originals import media_type_of as original_media_type
 from markitai.serve.schemas import (
+    CancelResponse,
     Capabilities,
     CreateJobResponse,
     DetectedModel,
+    DownloadTicket,
+    DownloadTicketRequest,
     HistoryEntry,
     ItemResult,
     JobOptions,
@@ -78,9 +99,14 @@ from markitai.serve.schemas import (
     LLMSettingsUpdate,
     LLMTestResult,
     ModelDiscoveryResult,
+    OriginalDescriptor,
+    PageText,
     ProviderConnectionList,
     RootInfo,
 )
+from markitai.serve.tickets import LIFETIME_S as TICKET_LIFETIME_S
+from markitai.serve.tickets import DownloadTickets, downloadable
+from markitai.serve.workbench import BUNDLED_DIR, Workbench, mount_workbench
 from markitai.utils.url_redaction import redact_log_record
 
 if TYPE_CHECKING:
@@ -105,7 +131,19 @@ _SSE_PING_INTERVAL = 15.0
 # and may not honor the litellm timeout parameter.
 _LLM_TEST_TIMEOUT_S = 15
 _LLM_TEST_BACKSTOP_S = 30.0
-ROOT_HINT = "web UI not built; POST /api/jobs or see /api/capabilities"
+ROOT_HINT = "web UI not bundled; POST /api/jobs or see /api/capabilities"
+DOCS_URL = "https://markitai.dev"
+# A Markdown result larger than this is not sent as JSON; the file download
+# endpoint serves it instead.
+MAX_RESULT_BYTES = 64 * 1024 * 1024
+# A submission label: what the list calls a folder or URL-list upload.
+MAX_LABEL_CHARS = 120
+# An uploaded ``.urls`` list larger than this is refused.
+MAX_URL_LIST_BYTES = 1024 * 1024
+# A download ticket request names one path.
+_TICKET_BODY_LIMIT = 8 * 1024
+# Pages drawn for the Compare view at the same time at most.
+_PAGE_RENDER_SLOTS = 2
 
 # Upload names are bounded by UTF-8 *byte* length (ext4 NAME_MAX is 255
 # bytes): leave room for the " (N)" dedupe suffix plus the longest derived
@@ -192,15 +230,9 @@ async def _backfill_llm_models(cfg: MarkitaiConfig) -> None:
 
 
 def detect_static_dir() -> Path | None:
-    """Auto-detect a built web UI: package static dir, then repo webapp/dist."""
-    bundled = Path(__file__).parent / "static"
-    if (bundled / "index.html").is_file():
-        return bundled
-    parents = Path(__file__).resolve().parents
-    if len(parents) > 5:
-        repo_dist = parents[5] / "webapp" / "dist"
-        if (repo_dist / "index.html").is_file():
-            return repo_dist
+    """The vendored workbench bundle shipped in the package, when present."""
+    if (BUNDLED_DIR / "manifest.json").is_file():
+        return BUNDLED_DIR
     return None
 
 
@@ -226,11 +258,8 @@ class _BodyLimitMiddleware:
                     declared = int(value)
                     break
             if declared is not None and declared > self.max_bytes:
-                from fastapi.responses import JSONResponse
-
-                response = JSONResponse(
-                    {"detail": "request body too large", "code": _http_error_code(413)},
-                    status_code=413,
+                response = error_response(
+                    413, "request_too_large", "request body too large"
                 )
                 await response(scope, receive, send)
                 return
@@ -238,7 +267,9 @@ class _BodyLimitMiddleware:
 
 
 _LOCAL_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
-_STATE_CHANGING_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
+# Methods that may carry an Origin without it being checked: everything else
+# (POST, PATCH, PUT, DELETE and any other verb) must come from this origin.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def _host_header_hostname(value: str) -> str | None:
@@ -306,7 +337,17 @@ def _is_trusted_origin(
         host_port = host.port or default_port
     except ValueError:
         return False
-    if not origin.hostname:
+    # An origin is scheme://host[:port] and nothing else ("null", a path, a
+    # query or credentials make it malformed, and it is refused).
+    if (
+        origin.scheme not in _DEFAULT_PORTS
+        or not origin.hostname
+        or origin.username is not None
+        or origin.password is not None
+        or origin.path not in ("", "/")
+        or origin.query
+        or origin.fragment
+    ):
         return False
     if origin.hostname in extra_allowed:
         return True
@@ -349,35 +390,25 @@ class _HostGuardMiddleware:
             if host_header is not None and not _is_trusted_hostname(
                 host_hostname, self.allowed_hosts
             ):
-                response = JSONResponse(
-                    {
-                        "detail": (
-                            f"host '{host_header}' is not allowed; use "
-                            "localhost, an IP address, or start the server "
-                            "with --allowed-host"
-                        ),
-                        "code": _http_error_code(400),
-                    },
-                    status_code=400,
+                response = error_response(
+                    400,
+                    "host_not_allowed",
+                    f"host '{host_header}' is not allowed; use localhost, an IP "
+                    "address, or start the server with --allowed-host",
                 )
                 await response(scope, receive, send)
                 return
             if (
                 origin_header is not None
-                and scope.get("method", "").upper() in _STATE_CHANGING_METHODS
+                and scope.get("method", "").upper() not in _SAFE_METHODS
                 and not _is_trusted_origin(
                     origin_header, host_header, self.allowed_hosts
                 )
             ):
-                response = JSONResponse(
-                    {
-                        "detail": (
-                            f"cross-site request from origin "
-                            f"'{origin_header}' is not allowed"
-                        ),
-                        "code": _http_error_code(403),
-                    },
-                    status_code=403,
+                response = error_response(
+                    403,
+                    "origin_not_allowed",
+                    f"cross-site request from origin '{origin_header}' is not allowed",
                 )
                 await response(scope, receive, send)
                 return
@@ -424,10 +455,23 @@ def _scope_bearer_token(scope: Any) -> str | None:
     return None
 
 
+def _scope_query_param(scope: Any, name: str) -> str | None:
+    """Extract one query value (last occurrence wins)."""
+    values = parse_qs(scope.get("query_string", b"").decode("latin-1")).get(name)
+    return values[-1] if values else None
+
+
 def _scope_query_token(scope: Any) -> str | None:
     """Extract the ``?token=`` query value (last occurrence wins)."""
-    values = parse_qs(scope.get("query_string", b"").decode("latin-1")).get("token")
-    return values[-1] if values else None
+    return _scope_query_param(scope, "token")
+
+
+def _scope_raw_path(scope: Any) -> str:
+    """The request path as the client sent it (percent-encoded)."""
+    raw = scope.get("raw_path")
+    if isinstance(raw, bytes) and raw:
+        return raw.decode("latin-1").partition("?")[0]
+    return str(scope.get("path", ""))
 
 
 def _scope_presents_token(scope: Any, token: str) -> bool:
@@ -453,30 +497,46 @@ class _TokenAuthMiddleware:
     unchanged), except on the LLM settings routes, which
     ``protect_local_settings`` gates on the token for every peer. The static
     app shell stays reachable so a browser can load the UI from the tokened
-    URL — only ``/api/`` carries anything worth protecting. A ``token`` of None disables the gate entirely (``--no-auth``):
-    remote peers then fall back to the legacy public-URL-only policy enforced
-    by ``_guard_fetch_targets`` and the loopback-only settings middleware.
+    URL — only ``/api/`` carries anything worth protecting. A ``token`` of
+    None disables the gate entirely (``--no-auth``): remote peers then fall
+    back to the legacy public-URL-only policy enforced by
+    ``_guard_fetch_targets`` and the loopback-only settings middleware.
+
+    A ``?ticket=`` (see :mod:`markitai.serve.tickets`) stands in for the
+    token on exactly one GET of the path it was issued for; presenting it
+    spends it, and a wrong, spent or expired one is refused for every peer.
     """
 
-    def __init__(self, app: Any, token: str | None) -> None:
+    def __init__(self, app: Any, token: str | None, tickets: DownloadTickets) -> None:
         self.app = app
         self.token = token
+        self.tickets = tickets
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if (
             scope["type"] == "http"
             and self.token is not None
             and scope.get("path", "").startswith("/api/")
-            and not _is_loopback_scope(scope)
             and not _scope_presents_token(scope, self.token)
         ):
-            response = JSONResponse(
-                {"detail": _AUTH_REQUIRED_DETAIL, "code": _http_error_code(401)},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            await response(scope, receive, send)
-            return
+            ticket = _scope_query_param(scope, "ticket")
+            if ticket is not None:
+                if not (
+                    self.tickets.redeem(ticket, _scope_raw_path(scope))
+                    and scope.get("method", "").upper() == "GET"
+                ):
+                    response = error_response(
+                        401,
+                        "ticket_invalid",
+                        "download ticket is invalid, expired, already used or "
+                        "issued for another path",
+                    )
+                    await response(scope, receive, send)
+                    return
+            elif not _is_loopback_scope(scope):
+                response = error_response(401, "token_required", _AUTH_REQUIRED_DETAIL)
+                await response(scope, receive, send)
+                return
         await self.app(scope, receive, send)
 
 
@@ -512,27 +572,6 @@ def _is_trusted_request(request: Request) -> bool:
         return True
     token = request.app.state.serve_token
     return token is not None and _scope_presents_token(request.scope, token)
-
-
-def _http_error_code(status_code: int) -> str:
-    """Map an HTTP status onto a stable, coarse machine code.
-
-    The ``detail`` string is for humans (and may be translated); ``code`` is
-    the part a client or agent branches on.
-    """
-    return {
-        400: "bad_request",
-        401: "unauthorized",
-        403: "forbidden",
-        404: "not_found",
-        405: "method_not_allowed",
-        409: "conflict",
-        413: "payload_too_large",
-        422: "invalid_request",
-        429: "rate_limited",
-        500: "server_error",
-        503: "unavailable",
-    }.get(status_code, "server_error" if status_code >= 500 else "request_failed")
 
 
 _OPEN_FILES_EXHAUSTED_DETAIL = (
@@ -625,17 +664,28 @@ async def _guard_fetch_targets(request: Request, urls: Sequence[str]) -> None:
             request.client.host if request.client is not None else "?",
             assessment.reason,
         )
-        raise HTTPException(
-            status_code=403, detail=_url_rejection_detail(url, assessment.reason)
+        raise ApiError(
+            403, "remote_url_forbidden", _url_rejection_detail(url, assessment.reason)
         )
 
 
 def _get_job(request: Request, job_id: str) -> Job:
-    """Return the job with *job_id* or raise 404."""
+    """Return the job with *job_id* or raise 404.
+
+    A job past history retention is gone even before the sweep removes it.
+    """
     job = _state(request).registry.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    if job is None or job_expired(job):
+        raise ApiError(404, "job_not_found", "job not found")
     return job
+
+
+def _get_item(job: Job, item_id: str) -> JobItem:
+    """Return the item with *item_id* of *job* or raise 404."""
+    item = job.get_item(item_id)
+    if item is None:
+        raise ApiError(404, "item_not_found", "item not found")
+    return item
 
 
 def _bound_name_bytes(name: str, max_bytes: int) -> str:
@@ -704,12 +754,11 @@ async def _save_upload(
             while chunk := await upload.read(_UPLOAD_CHUNK):
                 size += len(chunk)
                 if size > MAX_UPLOAD_BYTES:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=(
-                            f"file '{name}' exceeds the "
-                            f"{MAX_UPLOAD_BYTES // (1024 * 1024)}MB upload limit"
-                        ),
+                    raise ApiError(
+                        413,
+                        "file_too_large",
+                        f"file '{name}' exceeds the "
+                        f"{MAX_UPLOAD_BYTES // (1024 * 1024)}MB upload limit",
                     )
                 fh.write(chunk)
     except HTTPException:
@@ -717,6 +766,71 @@ async def _save_upload(
         taken.discard(target.name.casefold())
         raise
     return target
+
+
+async def _read_url_list(upload: UploadFile) -> list[tuple[str, str | None]]:
+    """Read an uploaded ``.urls`` list: its entries become URL items.
+
+    Same formats as the CLI (one URL per line with an optional output name,
+    ``#`` comments, or a JSON array of strings or ``{"url", "output_name"}``
+    objects); entries that are not HTTP(S) URLs are skipped as the CLI skips
+    them, but a list with no usable URL is refused rather than converting
+    nothing. Returns ``(url, output file name or None)`` pairs.
+    """
+    from markitai.urls import UrlListParseError, parse_url_list_text
+
+    name = _sanitize_upload_name(upload.filename)
+    data = bytearray()
+    while chunk := await upload.read(_UPLOAD_CHUNK):
+        data += chunk
+        if len(data) > MAX_URL_LIST_BYTES:
+            raise ApiError(
+                413, "url_list_too_large", f"{name} exceeds the 1 MiB URL list limit"
+            )
+    try:
+        text = bytes(data).decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ApiError(422, "invalid_url_list", f"{name} is not UTF-8 text") from None
+    try:
+        entries = parse_url_list_text(text, name)
+    except UrlListParseError:
+        raise ApiError(
+            422, "invalid_url_list", f"{name} is not a valid URL list"
+        ) from None
+    parsed: list[tuple[str, str | None]] = []
+    for entry in entries:
+        url = entry.url.strip()
+        if _url_problem(url) is not None:
+            continue
+        output_name = (entry.output_name or "").strip() or None
+        if output_name is not None:
+            base = output_name.removesuffix(".md")
+            if "/" in output_name or "\\" in output_name or base in ("", ".", ".."):
+                raise ApiError(
+                    422,
+                    "invalid_output_name",
+                    f"{name}: a URL output name must be a filename without "
+                    "directory components",
+                )
+            output_name = f"{_sanitize_upload_name(base)}.md"
+        parsed.append((url, output_name))
+    if not parsed:
+        raise ApiError(422, "empty_url_list", f"{name} holds no HTTP(S) URLs")
+    return parsed
+
+
+def _url_problem(url: str) -> str | None:
+    """The reason a submitted URL is refused, or None when it is usable."""
+    try:
+        parsed = urlsplit(url)
+        parsed.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError:
+        return "invalid_url"
+    if not parsed.scheme or not parsed.netloc:
+        return "invalid_url"
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        return "unsupported_url_scheme"
+    return None
 
 
 def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
@@ -769,9 +883,11 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
     if opts.backend is not None:
         cfg.fetch.cloudflare.convert_enabled = opts.backend == "cloudflare"
     if cfg.llm.enabled and not cfg.llm.model_list:
+        # Only a server configuration that enables LLM gets here: a request
+        # that asks for a model is refused first (_require_model).
         logger.warning(
-            "[Serve] LLM requested but no models are configured; "
-            "running without LLM enhancement"
+            "[Serve] LLM enabled by the configuration but no models are "
+            "configured; running without LLM enhancement"
         )
         cfg.llm.enabled = False
     if cfg.llm.enabled:
@@ -779,6 +895,205 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
         # variant alongside .llm.md.
         cfg.llm.keep_base = True
     return cfg
+
+
+def _parse_job_options(raw: str) -> JobOptions:
+    """Read the ``options`` form field; problems are named, never echoed."""
+    try:
+        return JobOptions.model_validate_json(raw or "{}")
+    except ValidationError as e:
+        raise ApiError(
+            422, "invalid_options", f"invalid options: {validation_detail(e.errors())}"
+        ) from None
+
+
+def _check_preset(state: ServeState, opts: JobOptions) -> None:
+    if opts.preset is not None:
+        from markitai.config import get_preset
+
+        if get_preset(opts.preset.lower(), state.config) is None:
+            raise ApiError(422, "unknown_preset", f"unknown preset '{opts.preset}'")
+
+
+def _requests_llm(opts: JobOptions, base: MarkitaiConfig) -> bool:
+    """Whether the request itself asks for model processing.
+
+    As opposed to a server configuration that happens to enable it: an
+    explicit ``llm``, else the chosen preset's LLM switch.
+    """
+    if opts.llm is not None:
+        return opts.llm
+    if opts.preset:
+        from markitai.config import get_preset
+
+        preset = get_preset(opts.preset.lower(), base)
+        return bool(preset is not None and preset.llm)
+    return False
+
+
+def _llm_routable(state: ServeState) -> bool:
+    effective = _effective_models(state.configured_models, state.detected_models)
+    return any(_is_deployment_routable(model) for model in effective)
+
+
+def _require_model(state: ServeState, opts: JobOptions) -> None:
+    """Refuse a request for model processing when no model can serve it.
+
+    Before any job exists: the alternative is converting without the model
+    the user asked for and reporting success.
+    """
+    if _requests_llm(opts, state.config) and not _llm_routable(state):
+        raise ApiError(
+            422,
+            "llm_unavailable",
+            "this request needs a model, but none is available; add a model in "
+            "Settings, or set MODEL and a provider API key",
+        )
+
+
+def _cloudflare_capability(cfg: MarkitaiConfig, *, trusted: bool) -> dict[str, Any]:
+    """Whether this server can process a request with Cloudflare.
+
+    An untrusted caller learns nothing: credentials are not even resolved.
+    """
+    from markitai.converter.cloudflare import CF_SUPPORTED_FORMATS
+    from markitai.fetch_consent import _env_no_remote_fetch
+
+    extensions = sorted({fmt.value for fmt in CF_SUPPORTED_FORMATS})
+    if not trusted:
+        return {
+            "configured": False,
+            "available": False,
+            "reason": "client_not_trusted",
+            "browser_rendering": False,
+            "file_conversion": False,
+            "file_extensions": [],
+        }
+    cloudflare = cfg.fetch.cloudflare
+    configured = bool(
+        cloudflare.get_resolved_api_token(strict=False)
+        and cloudflare.get_resolved_account_id(strict=False)
+    )
+    reason: str | None
+    if _env_no_remote_fetch() or cfg.fetch.remote_consent == "never":
+        reason = "disabled_by_policy"
+    else:
+        reason = None if configured else "not_configured"
+    available = reason is None
+    return {
+        "configured": configured,
+        "available": available,
+        "reason": reason,
+        "browser_rendering": available,
+        "file_conversion": available,
+        "file_extensions": extensions,
+    }
+
+
+def _check_remote_processing(
+    state: ServeState, opts: JobOptions, *, trusted: bool
+) -> None:
+    """Cloudflare runs only with this request's own, informed consent.
+
+    A Cloudflare strategy or backend in the request needs
+    ``remote_processing: "cloudflare"`` beside it, a trusted caller (it bills
+    the server's account) and a configured, allowed Cloudflare. The consent
+    is never stored, so a saved selection cannot convey it again.
+    """
+    selected = opts.strategy == "cloudflare" or opts.backend == "cloudflare"
+    if not selected:
+        if opts.remote_processing is not None:
+            raise ApiError(
+                422,
+                "invalid_options",
+                "remote_processing requires a Cloudflare strategy or backend in "
+                "this request",
+            )
+        return
+    if not trusted:
+        raise ApiError(
+            403,
+            "remote_processing_forbidden",
+            "Cloudflare processing requires a trusted authenticated request",
+        )
+    if opts.remote_processing != "cloudflare":
+        raise ApiError(
+            422,
+            "remote_processing_confirmation_required",
+            "Confirm Cloudflare processing for this request",
+        )
+    if opts.backend == "cloudflare" and opts.strategy in ("defuddle", "jina"):
+        raise ApiError(
+            422,
+            "invalid_options",
+            "Cloudflare confirmation cannot authorize another remote strategy; "
+            "choose auto, static, playwright or cloudflare",
+        )
+    capability = _cloudflare_capability(state.config, trusted=True)
+    if not capability["available"]:
+        if capability["reason"] == "disabled_by_policy":
+            raise ApiError(
+                422,
+                "remote_processing_disabled",
+                "Cloudflare processing is disabled by server policy",
+            )
+        raise ApiError(
+            422,
+            "cloudflare_unavailable",
+            "Cloudflare is not configured on this server",
+        )
+
+
+def _saved_options(opts: JobOptions) -> dict[str, Any]:
+    """Options as a job remembers them: the selections, never the consent."""
+    return opts.model_dump(exclude={"remote_processing"})
+
+
+def _parse_label(raw: str | None) -> str | None:
+    """A submission label: plain text, at most ``MAX_LABEL_CHARS`` long."""
+    if raw is None:
+        return None
+    label = " ".join(
+        "".join(
+            " " if char.isspace() or ord(char) < 0x20 else char for char in raw
+        ).split()
+    )
+    if len(label) > MAX_LABEL_CHARS:
+        raise ApiError(
+            422,
+            "invalid_request",
+            f"label is longer than {MAX_LABEL_CHARS} characters",
+        )
+    return label or None
+
+
+def _markdown_excerpt(data: bytes, max_bytes: int | None) -> tuple[str, bool]:
+    """Decode a Markdown result, cut to *max_bytes* when that is given.
+
+    The cut never splits a UTF-8 sequence and moves back to the last line
+    end when one lies within the last quarter of the excerpt.
+    """
+    if max_bytes is None or len(data) <= max_bytes:
+        return data.decode("utf-8", "replace"), False
+    cut = max_bytes
+    while cut > 0 and data[cut] & 0xC0 == 0x80:
+        cut -= 1
+    newline = data.rfind(b"\n", 0, cut)
+    if newline >= 0 and newline + 1 >= cut - cut // 4:
+        cut = newline + 1
+    return data[:cut].decode("utf-8", "replace"), True
+
+
+def _created_instant(value: object) -> float:
+    """Sort key of a job's ``created_at``: its instant, oldest unknown first."""
+    if isinstance(value, str) and value:
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            pass
+    return float("-inf")
 
 
 # ---------------------------------------------------------------------------
@@ -1293,9 +1608,10 @@ def _check_credential_target(
     if (api_key, api_base) in configured:
         return
     if api_base is not None and api_base.startswith("env:"):
-        raise HTTPException(
-            status_code=422,
-            detail=(
+        raise ApiError(
+            422,
+            "invalid_settings_request",
+            (
                 "api_base: env: references from the web API must already be "
                 "configured with this key; reference them in the config file instead"
             ),
@@ -1319,7 +1635,7 @@ def _check_credential_target(
             "a different endpoint, enter the key itself or change api_base "
             "in the config file"
         )
-    raise HTTPException(status_code=422, detail=detail)
+    raise ApiError(422, "invalid_settings_request", detail)
 
 
 def _reject_rebound_credentials(
@@ -1327,9 +1643,10 @@ def _reject_rebound_credentials(
 ) -> None:
     """Refuse to send a stored key to an endpoint other than its saved one."""
     if stored_key and api_base is not None and api_base != stored_base:
-        raise HTTPException(
-            status_code=422,
-            detail=(
+        raise ApiError(
+            422,
+            "invalid_settings_request",
+            (
                 "stored credentials only work with their saved api_base; to use "
                 "a different endpoint, enter the key itself or change api_base "
                 "in the config file"
@@ -1417,7 +1734,7 @@ def _stored_probe_body(
                 },
             )
     if not candidates:
-        raise HTTPException(status_code=422, detail=f"{label} not found")
+        raise ApiError(422, "invalid_settings_request", f"{label} not found")
     params = candidates[0].litellm_params
     return LLMSettingsUpdate(
         model=params.model,
@@ -1621,38 +1938,6 @@ def _initial_settings_revision(
     )
 
 
-class _SPAStaticFiles(StaticFiles):
-    """Static files with SPA fallback: unknown paths serve index.html.
-
-    The build names ``assets/`` files after their content hash, so a
-    browser may keep them for good; ``index.html`` (which names the current
-    hashes) is revalidated on every load (its ETag makes that a 304).
-    """
-
-    async def get_response(self, path: str, scope: Any) -> Any:
-        try:
-            response = await super().get_response(path, scope)
-        except StarletteHTTPException as e:
-            if e.status_code == 404:
-                return self._cache(await super().get_response("index.html", scope))
-            raise
-        if response.status_code == 404:
-            return self._cache(await super().get_response("index.html", scope))
-        # StaticFiles joins the path with os.sep ("assets\\x.js" on Windows)
-        path = path.replace("\\", "/")
-        if path.startswith("assets/") and response.status_code in (200, 304):
-            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-            return response
-        if path in ("", ".", "index.html"):
-            return self._cache(response)
-        return response
-
-    @staticmethod
-    def _cache(response: Any) -> Any:
-        response.headers["Cache-Control"] = "no-cache"
-        return response
-
-
 class _CompressionMiddleware:
     """Gzip responses, except event streams and file downloads.
 
@@ -1663,7 +1948,7 @@ class _CompressionMiddleware:
     exclusions are in the installed version.
     """
 
-    _BYPASS_SUFFIXES = ("/events", "/archive")
+    _BYPASS_SUFFIXES = ("/events", "/archive", "/original/file")
 
     def __init__(self, app: Any) -> None:
         from starlette.middleware.gzip import GZipMiddleware
@@ -1677,6 +1962,8 @@ class _CompressionMiddleware:
             scope["type"] != "http"
             or path.endswith(self._BYPASS_SUFFIXES)
             or "/files/" in path
+            or "/original/pages/" in path
+            or path.startswith("/ui/")
         ):
             await self._app(scope, receive, send)
             return
@@ -1700,8 +1987,10 @@ def create_app(
     """Create the markitai serve FastAPI application.
 
     Args:
-        static_dir: Directory with a built web UI. Auto-detected when None
-            (package ``serve/static/``, then repo ``webapp/dist/``).
+        static_dir: Directory holding a workbench bundle (``manifest.json``
+            and ``ui/``). None serves the bundle vendored in the package
+            (``serve/workbench/``); a directory without a valid bundle serves
+            only the API, with a JSON hint at ``/``.
         jobs_root: Directory holding per-job workspaces. Defaults to
             ``~/.markitai/serve/jobs``.
         config: Base configuration. When None it is loaded via ConfigManager
@@ -1860,7 +2149,7 @@ def create_app(
     async def _unhandled_error_with_code(
         request: Request, exc: Exception
     ) -> JSONResponse:
-        """Give an unhandled 500 the same machine code as every other error.
+        """Give an unhandled 500 the same error body as every other error.
 
         Starlette's default handler returns a plain-text body, which would be
         the one reply a client cannot branch on. The detail stays generic on
@@ -1869,59 +2158,62 @@ def create_app(
         logger.exception(
             "[Serve] Unhandled error on {} {}", request.method, request.url.path
         )
-        return JSONResponse(
-            {
-                "detail": "internal server error",
-                "code": _http_error_code(500),
-            },
-            status_code=500,
-        )
+        return error_response(500, "internal_error", "internal server error")
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error_with_code(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        """Give pydantic's 422 the same machine code as a route-raised one.
+        """A request body or parameter the route's schema refused.
 
-        FastAPI's default body is ``{"detail": [...]}``; adding ``code`` keeps
-        the error contract uniform without changing the shape clients read.
+        ``detail`` is one sentence naming the fields (never their submitted
+        values); ``reason`` says which kind of request it was.
         """
-        return JSONResponse(
-            {
-                "detail": jsonable_encoder(exc.errors()),
-                "code": _http_error_code(422),
-            },
-            status_code=422,
-        )
+        errors = list(exc.errors())
+        path = request.url.path
+        if any(error.get("type") == "json_invalid" for error in errors):
+            reason = "invalid_json"
+        elif path.startswith("/api/settings/llm"):
+            reason = "invalid_settings_request"
+        elif path.endswith("/retry"):
+            reason = "invalid_retry_body"
+        elif path == "/api/download-tickets":
+            reason = "invalid_ticket_path"
+        elif "/original/pages/" in path:
+            reason = "invalid_page_request"
+        else:
+            reason = "invalid_request"
+        return error_response(422, reason, validation_detail(errors))
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error_with_code(
         request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
-        """Add a stable machine code beside FastAPI's human ``detail``.
+        """Answer every refusal with ``{detail, code, reason}``.
 
-        Clients keep reading ``detail`` unchanged; a script can branch on
-        ``code`` without string-matching prose that may be translated.
+        ``detail`` stays the human sentence; ``code`` follows the status and
+        ``reason`` is the stable cause clients translate.
         """
         if exc.status_code == 400 and _ran_out_of_open_files(exc):
             # Not a malformed body: the server lacked the file descriptors
             logger.warning(
                 "[Serve] Upload to {} failed: too many open files", request.url.path
             )
-            return JSONResponse(
-                {
-                    "detail": _OPEN_FILES_EXHAUSTED_DETAIL,
-                    "code": _http_error_code(503),
-                },
-                status_code=503,
-            )
-        return JSONResponse(
-            {
-                "detail": exc.detail,
-                "code": _http_error_code(exc.status_code),
-            },
-            status_code=exc.status_code,
-            headers=exc.headers,
+            return error_response(503, "unavailable", _OPEN_FILES_EXHAUSTED_DETAIL)
+        if isinstance(exc, ApiError):
+            reason = exc.reason
+        elif exc.status_code == 400 and request.url.path == "/api/jobs":
+            # FastAPI's "There was an error parsing the body"
+            reason = "invalid_multipart"
+        else:
+            reason = fallback_reason(exc.status_code, exc.detail)
+        detail = exc.detail
+        if exc.status_code == 404 and reason == "route_not_found":
+            detail = "route not found"
+        elif exc.status_code == 405:
+            detail = "method not allowed"
+        return error_response(
+            exc.status_code, reason, detail, headers=dict(exc.headers or {})
         )
 
     @app.middleware("http")
@@ -1934,18 +2226,17 @@ def create_app(
             if serve_token is not None and not _scope_presents_token(
                 request.scope, serve_token
             ):
-                return JSONResponse(
-                    {"detail": _AUTH_REQUIRED_DETAIL, "code": _http_error_code(401)},
-                    status_code=401,
-                    headers={"WWW-Authenticate": "Bearer", "Cache-Control": "no-store"},
+                return error_response(
+                    401,
+                    "token_required",
+                    _AUTH_REQUIRED_DETAIL,
+                    headers={"Cache-Control": "no-store"},
                 )
             if not _is_trusted_request(request):
-                return JSONResponse(
-                    {
-                        "detail": "LLM settings are available on loopback only",
-                        "code": _http_error_code(403),
-                    },
-                    status_code=403,
+                return error_response(
+                    403,
+                    "settings_forbidden",
+                    "LLM settings are available on loopback only",
                     headers={"Cache-Control": "no-store"},
                 )
             response = await call_next(request)
@@ -1955,7 +2246,10 @@ def create_app(
 
     # Added after the middlewares above so it runs outermost: a remote peer
     # without the token gets one uniform 401 before any other guard answers.
-    app.add_middleware(_TokenAuthMiddleware, token=token)
+    tickets = DownloadTickets()
+    app.state.download_tickets = tickets
+    app.state.page_renders = asyncio.Semaphore(_PAGE_RENDER_SLOTS)
+    app.add_middleware(_TokenAuthMiddleware, token=token, tickets=tickets)
     # Outermost: compresses whatever the inner layers answer
     app.add_middleware(_CompressionMiddleware)
 
@@ -1970,6 +2264,8 @@ def create_app(
         routable = any(_is_deployment_routable(model) for model in effective)
         return {
             "version": __version__,
+            "implementation": "python",
+            "docs_url": DOCS_URL,
             "llm": {
                 "configured": bool(state.configured_models),
                 "routable": routable,
@@ -1986,9 +2282,26 @@ def create_app(
                 "browser": find_spec("playwright") is not None,
                 "svg": find_spec("cairosvg") is not None,
             },
-            # The webapp reads server-owned limits from here instead of
+            # The web UI reads server-owned limits from here instead of
             # duplicating the constants (contract: schemas.CapabilitiesLimits).
-            "limits": {"max_job_items": MAX_JOB_ITEMS},
+            "limits": {
+                "max_job_items": MAX_JOB_ITEMS,
+                "history_retention_days": round(JOB_TTL_HOURS / 24),
+            },
+            "features": {
+                "cancel": True,
+                "download_tickets": True,
+                "url_lists": True,
+                "history_items": True,
+                "original": True,
+                "result_excerpt": True,
+                "job_labels": True,
+            },
+            "remote_services": {
+                "cloudflare": _cloudflare_capability(
+                    state.config, trusted=_is_trusted_request(request)
+                )
+            },
         }
 
     @app.get("/api/settings/llm", response_model=LLMSettingsPayload)
@@ -2154,8 +2467,10 @@ def create_app(
             # provider default) so re-saving after only a key edit does not
             # pin the default as an explicit override; the default is offered
             # separately for the editor's placeholder.
+            masked = _mask_api_key(saved.api_key)
             return {
-                "api_key_masked": _mask_api_key(saved.api_key),
+                "api_key": masked,
+                "api_key_masked": masked,
                 "api_base": saved.api_base,
                 "api_base_placeholder": provider_default_api_base(saved.provider),
             }
@@ -2172,15 +2487,18 @@ def create_app(
         )
         if legacy is not None:
             legacy_provider = legacy.litellm_params.model.split("/", 1)[0].lower()
+            masked = _mask_api_key(legacy.litellm_params.api_key)
             return {
-                "api_key_masked": _mask_api_key(legacy.litellm_params.api_key),
+                "api_key": masked,
+                "api_key_masked": masked,
                 "api_base": legacy.litellm_params.api_base,
                 "api_base_placeholder": provider_default_api_base(legacy_provider),
             }
 
-        raise HTTPException(
-            status_code=404,
-            detail=(
+        raise ApiError(
+            404,
+            "settings_entry_missing",
+            (
                 "This saved provider connection no longer exists. "
                 "Refresh the provider list and choose it again."
             ),
@@ -2216,17 +2534,19 @@ def create_app(
             else None
         )
         if body.provider_id is not None and stored_provider is None and stored is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
+            raise ApiError(
+                404,
+                "settings_entry_missing",
+                (
                     "This saved provider connection no longer exists. "
                     "Refresh the provider list and choose it again."
                 ),
             )
         if deployment_id is not None and stored is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
+            raise ApiError(
+                404,
+                "settings_entry_missing",
+                (
                     "This saved provider connection no longer exists. "
                     "Refresh the provider list and choose it again."
                 ),
@@ -2289,9 +2609,10 @@ def create_app(
                     state.config_path,
                     type(e).__name__,
                 )
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"failed to update config file: {type(e).__name__}",
+                raise ApiError(
+                    500,
+                    "settings_io_failed",
+                    f"failed to update config file: {type(e).__name__}",
                 )
             except ValueError as e:
                 logger.error(
@@ -2299,9 +2620,10 @@ def create_app(
                     state.config_path,
                     type(e).__name__,
                 )
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"failed to update config file: {type(e).__name__}",
+                raise ApiError(
+                    500,
+                    "settings_io_failed",
+                    f"failed to update config file: {type(e).__name__}",
                 )
             state.configured_models = merged
             state.configured_providers = merged_providers
@@ -2332,17 +2654,19 @@ def create_app(
             else None
         )
         if body.credential_deployment_id is not None and credential_source is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
+            raise ApiError(
+                404,
+                "settings_entry_missing",
+                (
                     "This saved provider connection no longer exists. "
                     "Refresh the provider list and choose it again."
                 ),
             )
         if body.credential_provider_id is not None and credential_provider is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
+            raise ApiError(
+                404,
+                "settings_entry_missing",
+                (
                     "This saved provider connection no longer exists. "
                     "Refresh the provider list and choose it again."
                 ),
@@ -2468,8 +2792,10 @@ def create_app(
         ) -> list[Any]:
             matches = _find_raw_entries(entries, model_name)
             if not matches:
-                raise HTTPException(
-                    status_code=404, detail=f"model_name '{model_name}' not found"
+                raise ApiError(
+                    404,
+                    "settings_entry_missing",
+                    f"model_name '{model_name}' not found",
                 )
             if len(matches) > 1:
                 raise HTTPException(
@@ -2497,8 +2823,10 @@ def create_app(
         ) -> list[Any]:
             matches = _find_raw_entries(entries, model_name)
             if not matches:
-                raise HTTPException(
-                    status_code=404, detail=f"model_name '{model_name}' not found"
+                raise ApiError(
+                    404,
+                    "settings_entry_missing",
+                    f"model_name '{model_name}' not found",
                 )
             if len(matches) > 1:
                 raise HTTPException(
@@ -2544,7 +2872,9 @@ def create_app(
         request: Request, deployment_id: str, body: LLMModelUpdate
     ) -> dict[str, Any]:
         if body.expected_revision is None:
-            raise HTTPException(status_code=422, detail="expected_revision is required")
+            raise ApiError(
+                422, "invalid_settings_request", "expected_revision is required"
+            )
         configured = _configured_credential_pairs(_state(request))
 
         def mutate(
@@ -2552,9 +2882,10 @@ def create_app(
         ) -> list[Any]:
             entry = _find_raw_deployment(entries, deployment_id, legacy_mapping)
             if entry is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
+                raise ApiError(
+                    404,
+                    "settings_entry_missing",
+                    (
                         "This model configuration no longer exists. "
                         "Refresh settings and try again."
                     ),
@@ -2581,9 +2912,10 @@ def create_app(
         ) -> list[Any]:
             entry = _find_raw_deployment(entries, deployment_id, legacy_mapping)
             if entry is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
+                raise ApiError(
+                    404,
+                    "settings_entry_missing",
+                    (
                         "This model configuration no longer exists. "
                         "Refresh settings and try again."
                     ),
@@ -2629,9 +2961,10 @@ def create_app(
                 entries, providers, provider_id, legacy_mapping
             )
             if target is None and legacy_entry is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
+                raise ApiError(
+                    404,
+                    "settings_entry_missing",
+                    (
                         "This saved provider connection no longer exists. "
                         "Refresh the provider list and choose it again."
                     ),
@@ -2740,9 +3073,10 @@ def create_app(
                 entries, providers, provider_id, legacy_mapping
             )
             if target is None and legacy_entry is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
+                raise ApiError(
+                    404,
+                    "settings_entry_missing",
+                    (
                         "This saved provider connection no longer exists. "
                         "Refresh the provider list and choose it again."
                     ),
@@ -2815,15 +3149,16 @@ def create_app(
         """
         state = _state(request)
         if not state.config_path.is_file():
-            raise HTTPException(
-                status_code=404,
-                detail="config file does not exist yet; save a model to create it",
+            raise ApiError(
+                404,
+                "config_missing",
+                "config file does not exist yet; save a model to create it",
             )
         try:
             await asyncio.to_thread(_open_in_editor, state.config_path)
         except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"could not open the config file: {e}"
+            raise ApiError(
+                500, "settings_io_failed", f"could not open the config file: {e}"
             ) from e
 
     @app.post("/api/settings/llm/test", response_model=LLMTestResult)
@@ -2858,49 +3193,67 @@ def create_app(
         files: list[UploadFile] = File(default=[]),
         urls: str = Form(default="[]"),
         options: str = Form(default="{}"),
+        label: str | None = Form(default=None),
     ) -> dict[str, Any]:
         state = _state(request)
+        if state.registry.closing:
+            raise ApiError(503, "shutting_down", "server is shutting down")
 
         try:
             url_list = json.loads(urls) if urls.strip() else []
         except json.JSONDecodeError:
-            raise HTTPException(status_code=422, detail="urls must be a JSON array")
+            raise ApiError(
+                422, "invalid_urls", "urls must be a JSON array of strings"
+            ) from None
         if not isinstance(url_list, list) or not all(
             isinstance(u, str) and u.strip() for u in url_list
         ):
-            raise HTTPException(
-                status_code=422, detail="urls must be a JSON array of non-empty strings"
+            raise ApiError(
+                422, "invalid_urls", "urls must be a JSON array of non-empty strings"
             )
+        opts = _parse_job_options(options)
+        job_label = _parse_label(label)
 
-        await _guard_fetch_targets(request, [u.strip() for u in url_list])
+        # A `.urls` upload is a URL list, not a document: its entries join
+        # the job as URL items (after any listed ones' files, before the
+        # `urls` field's), the way the CLI reads a .urls input.
+        documents: list[UploadFile] = []
+        url_entries: list[tuple[str, str | None]] = []
+        for upload in files:
+            if (upload.filename or "").lower().endswith(".urls"):
+                url_entries.extend(await _read_url_list(upload))
+            else:
+                documents.append(upload)
+        url_entries.extend((url.strip(), None) for url in url_list)
 
-        try:
-            opts = JobOptions.model_validate_json(options or "{}")
-        except ValidationError as e:
-            raise HTTPException(status_code=422, detail=f"invalid options: {e}")
-
-        total = len(files) + len(url_list)
+        total = len(documents) + len(url_entries)
         if total == 0:
-            raise HTTPException(
-                status_code=422, detail="at least one file or url is required"
-            )
+            raise ApiError(422, "empty_job", "at least one file or url is required")
         if total > MAX_JOB_ITEMS:
-            raise HTTPException(
-                status_code=422,
-                detail=f"too many items: {total} (max {MAX_JOB_ITEMS})",
+            raise ApiError(
+                422,
+                "too_many_items",
+                f"too many items: {total} (max {MAX_JOB_ITEMS})",
             )
+        for url, _ in url_entries:
+            problem = _url_problem(url)
+            if problem == "invalid_url":
+                raise ApiError(422, problem, "invalid URL: not an absolute web address")
+            if problem is not None:
+                raise ApiError(422, problem, "URLs must use http or https")
 
-        if opts.preset is not None:
-            from markitai.config import get_preset
-
-            if get_preset(opts.preset.lower(), state.config) is None:
-                raise HTTPException(
-                    status_code=422, detail=f"unknown preset '{opts.preset}'"
-                )
+        await _guard_fetch_targets(request, [url for url, _ in url_entries])
+        _check_preset(state, opts)
+        trusted = _is_trusted_request(request)
+        _check_remote_processing(state, opts, trusted=trusted)
+        # Without a routable model every item would fail or silently skip the
+        # model the user asked for: refuse before anything is stored.
+        _require_model(state, opts)
 
         cfg = _build_job_config(state.config, opts)
-        job = state.registry.create_job(options=opts.model_dump(), cfg=cfg)
-        job.public_network_only = not _is_trusted_request(request)
+        job = state.registry.create_job(options=_saved_options(opts), cfg=cfg)
+        job.public_network_only = not trusted
+        job.label = job_label
         cfg.output.dir = str(job.out_dir)
 
         from markitai.utils.cli_helpers import url_to_filename
@@ -2913,7 +3266,7 @@ def create_app(
             taken_uploads = {
                 entry.name.casefold() for entry in job.uploads_dir.iterdir()
             }
-            for index, upload in enumerate(files, start=1):
+            for index, upload in enumerate(documents, start=1):
                 if index > 1:
                     # Reading an upload spooled in memory never suspends: a
                     # folder of small files would hold the loop, and every
@@ -2926,6 +3279,7 @@ def create_app(
                         name=saved.name,
                         kind="file",
                         source=saved,
+                        source_size=saved.stat().st_size,
                     )
                 )
 
@@ -2936,9 +3290,10 @@ def create_app(
             # Compared case-insensitively: on macOS/Windows file systems
             # "Page.html.md" and "page.html.md" are one file.
             taken = {derive_output_name(item.name).casefold() for item in job.items}
-            for offset, url in enumerate(url_list, start=len(files) + 1):
-                clean_url = url.strip()
-                base_name = url_to_filename(clean_url)
+            for offset, (url, named) in enumerate(
+                url_entries, start=len(documents) + 1
+            ):
+                base_name = named or url_to_filename(url)
                 output_name = base_name
                 counter = 2
                 while output_name.casefold() in taken:
@@ -2950,9 +3305,9 @@ def create_app(
                 job.items.append(
                     JobItem(
                         item_id=f"i{offset}",
-                        name=clean_url,
+                        name=url,
                         kind="url",
-                        source=clean_url,
+                        source=url,
                         output_name=output_name,
                     )
                 )
@@ -2964,14 +3319,14 @@ def create_app(
         except Exception as e:
             state.registry.discard_job(job)
             logger.exception("[Serve] Job {} creation failed: {}", job.job_id, e)
-            raise HTTPException(
-                status_code=500, detail="internal error while creating the job"
+            raise ApiError(
+                500, "internal_error", "internal error while creating the job"
             ) from e
         logger.info(
             "[Serve] Job {} created: {} file(s), {} url(s)",
             job.job_id,
-            len(files),
-            len(url_list),
+            len(documents),
+            len(url_entries),
         )
         return {
             "job_id": job.job_id,
@@ -2980,6 +3335,39 @@ def create_app(
                 for i in job.items
             ],
         }
+
+    @app.post(
+        "/api/jobs/{job_id}/cancel", status_code=202, response_model=CancelResponse
+    )
+    async def cancel_job(request: Request, job_id: str) -> dict[str, Any]:
+        """Stop the job's original items still waiting for a conversion slot.
+
+        Items already converting finish; queued retries keep their own
+        lifecycle. Each stopped item ends as an error with ``error_code``
+        ``cancelled`` and stays retryable.
+        """
+        state = _state(request)
+        if state.registry.closing:
+            raise ApiError(503, "shutting_down", "server is shutting down")
+        job = _get_job(request, job_id)
+        if job.status != "running":
+            raise ApiError(409, "job_not_running", "job is not running")
+        waiting = [
+            item
+            for item in job.items
+            if item.status == "queued"
+            and item.operation == "convert"
+            and item.item_id not in job.retry_pending
+        ]
+        if not waiting:
+            raise ApiError(409, "nothing_to_stop", "no queued items to stop")
+        job.stop_requested = True
+        for item in waiting:
+            task = job.waiting.get(item.item_id)
+            if task is not None and not task.done():
+                task.cancel()
+        logger.info("[Serve] Job {} stopping {} queued item(s)", job_id, len(waiting))
+        return {"job_id": job_id, "stopping": len(waiting)}
 
     @app.post(
         "/api/jobs/{job_id}/items/{item_id}/retry",
@@ -2994,80 +3382,91 @@ def create_app(
     ) -> dict[str, Any]:
         """Queue a terminal item to retry or explicitly enhance with LLM."""
         state = _state(request)
+        if state.registry.closing:
+            raise ApiError(503, "shutting_down", "server is shutting down")
         job = _get_job(request, job_id)
-        item = job.get_item(item_id)
-        if item is None:
-            raise HTTPException(status_code=404, detail="item not found")
+        item = _get_item(job, item_id)
+        if item.skip_reason == PENDING_BATCH_SKIP_REASON:
+            # Enhancing it here would pay for the same enhancement twice.
+            raise ApiError(
+                409,
+                "batch_pending",
+                "provider batch enhancement is pending; collect that batch "
+                "(markitai --llm-batch-collect) before retrying or enhancing "
+                "this item",
+            )
         if item.status not in ("done", "error") or item_id in job.retry_pending:
-            raise HTTPException(
-                status_code=409,
-                detail="item has not reached a terminal state yet; retry when done",
+            raise ApiError(
+                409,
+                "item_busy",
+                "item has not reached a terminal state yet; retry when done",
             )
         if not item.retryable:
             # A CLI run (--record-history) keeps only the outputs: there is
             # no original under uploads/ to convert again.
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "file items recorded from a CLI run cannot be retried or "
-                    "enhanced here; run the markitai CLI on the file again"
-                ),
+            raise ApiError(
+                409,
+                "not_retryable",
+                "file items recorded from a CLI run cannot be retried or "
+                "enhanced here; run the markitai CLI on the file again",
             )
 
         operation = body.operation if body is not None else "retry"
+        explicit_options = body is not None and body.options is not None
         if body is not None and body.options is not None:
             opts = body.options
         else:
             saved_options = item.options if item.options is not None else job.options
+            # A saved selection never carries consent (it is not stored).
             opts = JobOptions.model_validate(
                 {
                     key: value
                     for key, value in saved_options.items()
-                    if key in JobOptions.model_fields
+                    if key in JobOptions.model_fields and key != "remote_processing"
                 }
             )
-        if opts.preset is not None:
-            from markitai.config import get_preset
-
-            if get_preset(opts.preset.lower(), state.config) is None:
-                raise HTTPException(
-                    status_code=422, detail=f"unknown preset '{opts.preset}'"
-                )
+        _check_preset(state, opts)
 
         if item.kind == "file":
-            uploads_dir = job.uploads_dir.resolve()
-            upload = (uploads_dir / item.name).resolve()
+            upload = kept_upload(job, item)
             # Rehydrated meta is untrusted on-disk state; never follow a
             # tampered name outside the job's upload directory.
-            if not upload.is_relative_to(uploads_dir) or not upload.is_file():
-                raise HTTPException(
-                    status_code=404,
-                    detail=(
-                        f"original upload '{item.name}' is no longer on "
-                        "disk (job files may have been cleaned up)"
-                    ),
+            if upload is None:
+                raise ApiError(
+                    404,
+                    "upload_missing",
+                    f"original upload '{item.name}' is no longer on disk (job "
+                    "files may have been cleaned up)",
                 )
             item.source = upload
-        else:
+        elif item.kind == "url":
             from markitai.utils.cli_helpers import url_to_filename
 
+            problem = _url_problem(item.name)
+            if problem is not None:
+                raise ApiError(422, problem, "URLs must be absolute http(s) addresses")
             # Same gate as job creation: a rerun re-fetches item.name, and
             # rehydrated meta is untrusted on-disk state.
             await _guard_fetch_targets(request, [item.name])
             item.source = item.name
             item.output_name = item.output_name or url_to_filename(item.name)
+        else:
+            raise ApiError(409, "no_source", "item has no supported original source")
 
+        trusted = _is_trusted_request(request)
+        _check_remote_processing(state, opts, trusted=trusted)
+        # Options inherited from the item were the caller's earlier choice;
+        # a retry that names model processing now needs a model now.
+        if explicit_options and operation == "retry":
+            _require_model(state, opts)
         cfg = _build_job_config(state.config, opts)
-        if operation == "enhance" and (
-            not cfg.llm.enabled or not _llm_settings_payload(state)["routable"]
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail="LLM enhancement is unavailable; enable a routable LLM first",
+        if operation == "enhance" and (not cfg.llm.enabled or not _llm_routable(state)):
+            raise ApiError(
+                409,
+                "llm_unavailable",
+                "LLM enhancement is unavailable; enable a routable LLM first",
             )
-        job.public_network_only = job.public_network_only or not _is_trusted_request(
-            request
-        )
+        job.public_network_only = job.public_network_only or not trusted
         cfg.output.dir = str(job.out_dir)
         # The rerun reuses the job's out_dir, so it would otherwise hit
         # on_conflict against its own prior output (rename → duplicate
@@ -3076,8 +3475,8 @@ def create_app(
         cfg.output.on_conflict = "overwrite"
         job.cfg = cfg
         if operation != "enhance":
-            job.options = opts.model_dump()
-            item.options = opts.model_dump()
+            job.options = _saved_options(opts)
+            item.options = _saved_options(opts)
 
         # Snapshot the previous successful (non-skipped) result so a failed
         # rerun can be rolled back to it instead of destroying a done output.
@@ -3093,6 +3492,8 @@ def create_app(
             prior_operation=item.operation if protect else "convert",
             prior_llm_enhanced=item.llm_enhanced if protect else False,
             prior_warnings=list(item.warnings) if protect else [],
+            prior_pricing=item.pricing if protect else None,
+            prior_models=list(item.models) if protect else [],
         )
 
         # Reset only this item. The job keeps its identity and item ordering;
@@ -3101,10 +3502,13 @@ def create_app(
         # rehydrates the job at its last persisted state rather than losing it.
         item.status = "queued"
         item.error = None
+        item.error_code = None
         item.output = None
         item.duration_ms = None
         item.finished_at = None
         item.cost_usd = None
+        item.pricing = None
+        item.models = []
         item.llm_enhanced = False
         item.operation = operation
         item.skipped = False
@@ -3144,13 +3548,11 @@ def create_app(
             # have removed this row, or the job with its last row. A repeat
             # delete is then a plain 404, never a 500 or an empty job.
             if state.registry.get(job_id) is not job:
-                raise HTTPException(status_code=404, detail="job not found")
-            item = job.get_item(item_id)
-            if item is None:
-                raise HTTPException(status_code=404, detail="item not found")
+                raise ApiError(404, "job_not_found", "job not found")
+            item = _get_item(job, item_id)
             if job.status == "running" or item.status not in ("done", "error"):
-                raise HTTPException(
-                    status_code=409, detail="job is still running; retry when done"
+                raise ApiError(
+                    409, "job_running", "job is still running; retry when done"
                 )
 
             if len(job.items) == 1:
@@ -3215,21 +3617,30 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/api/jobs/{job_id}/items/{item_id}/result", response_model=ItemResult)
+    @app.get(
+        "/api/jobs/{job_id}/items/{item_id}/result",
+        response_model=ItemResult,
+    )
     async def get_item_result(
-        request: Request, job_id: str, item_id: str
+        request: Request, job_id: str, item_id: str, max_bytes: int | None = None
     ) -> dict[str, Any]:
+        """The item's selected Markdown, its variant and every artifact.
+
+        ``max_bytes`` (at least 1024) returns an excerpt instead: at most
+        that many bytes, cut at a line end when one is near and never inside
+        a UTF-8 sequence, with ``truncated`` and the full ``markdown_bytes``.
+        """
+        if max_bytes is not None and max_bytes < 1024:
+            raise ApiError(422, "invalid_request", "max_bytes must be at least 1024")
         job = _get_job(request, job_id)
-        item = job.get_item(item_id)
-        if item is None:
-            raise HTTPException(status_code=404, detail="item not found")
+        item = _get_item(job, item_id)
         if item.status != "done" or item.output is None:
-            raise HTTPException(status_code=404, detail="item result not available")
+            raise ApiError(404, "result_unavailable", "item result not available")
 
         out_dir = job.out_dir.resolve()
         output_path = (out_dir / item.output).resolve()
         if not output_path.is_relative_to(out_dir):
-            raise HTTPException(status_code=404, detail="item result not available")
+            raise ApiError(404, "result_unavailable", "item result not available")
 
         # The item's known base, not split_output_name(output): an upload
         # named "notes.llm" writes notes.llm.md, which stripping would read
@@ -3246,41 +3657,56 @@ def create_app(
         elif llm_path.is_file():
             variant, markdown_path = "llm", llm_path
         else:
-            raise HTTPException(status_code=404, detail="item result not available")
+            raise ApiError(404, "result_unavailable", "item result not available")
 
-        artifacts: list[dict[str, Any]] = []
-        seen: set[Path] = set()
+        def collect() -> tuple[str, int, bool, list[dict[str, Any]]]:
+            artifacts: list[dict[str, Any]] = []
+            seen: set[Path] = set()
 
-        def add_artifact(path: Path) -> None:
-            if path.is_file() and path not in seen:
-                seen.add(path)
-                artifacts.append(
-                    {
-                        "relpath": path.relative_to(out_dir).as_posix(),
-                        "size": path.stat().st_size,
-                    }
+            def add_artifact(path: Path) -> None:
+                if path.is_file() and path not in seen:
+                    seen.add(path)
+                    artifacts.append(
+                        {
+                            "relpath": path.relative_to(out_dir).as_posix(),
+                            "size": path.stat().st_size,
+                        }
+                    )
+
+            add_artifact(base_path)
+            # Only expose the .llm.md when the item is actually enhanced, so a
+            # stale sibling never makes the UI offer a spurious base↔llm diff.
+            if item.llm_enhanced:
+                add_artifact(llm_path)
+            # Same ownership rule item deletion uses (serve.artifacts): the
+            # asset prefix is the output base name, and references tie URL
+            # screenshots (named after the URL) to their item.
+            for artifact in item_asset_files(
+                out_dir,
+                base_name,
+                (base_path, llm_path) if item.llm_enhanced else (base_path,),
+            ):
+                add_artifact(artifact)
+            total = markdown_path.stat().st_size
+            if max_bytes is None and total > MAX_RESULT_BYTES:
+                raise ApiError(
+                    413,
+                    "result_too_large",
+                    "result is too large for JSON; use the file download endpoint",
                 )
+            with markdown_path.open("rb") as fh:
+                data = fh.read(max_bytes + 1 if max_bytes is not None else -1)
+            text, truncated = _markdown_excerpt(data, max_bytes)
+            return text, total, truncated, artifacts
 
-        add_artifact(base_path)
-        # Only expose the .llm.md when the item is actually enhanced, so a
-        # stale sibling never makes the UI offer a spurious base↔llm diff.
-        if item.llm_enhanced:
-            add_artifact(llm_path)
-        # Same ownership rule item deletion uses (serve.artifacts): the
-        # asset prefix is the output base name, and references tie URL
-        # screenshots (named after the URL) to their item.
-        for artifact in item_asset_files(
-            out_dir,
-            base_name,
-            (base_path, llm_path) if item.llm_enhanced else (base_path,),
-        ):
-            add_artifact(artifact)
-
+        markdown, total, truncated, artifacts = await asyncio.to_thread(collect)
         return {
             "name": item.name,
             "variant": variant,
-            "markdown": markdown_path.read_text(encoding="utf-8"),
+            "markdown": markdown,
             "artifacts": artifacts,
+            "truncated": truncated,
+            "markdown_bytes": total,
         }
 
     @app.get("/api/jobs/{job_id}/files/{relpath:path}")
@@ -3289,18 +3715,23 @@ def create_app(
         out_dir = job.out_dir.resolve()
         target = (out_dir / relpath).resolve()
         if not target.is_relative_to(out_dir) or not target.is_file():
-            raise HTTPException(status_code=404, detail="file not found")
+            raise ApiError(404, "file_not_found", "file not found")
         return FileResponse(
-            target, filename=target.name, content_disposition_type="attachment"
+            target,
+            filename=target.name,
+            content_disposition_type="attachment",
+            # Markdown is text to every browser; never sniffed into HTML
+            media_type="text/plain; charset=utf-8"
+            if target.suffix.lower() == ".md"
+            else None,
+            headers={"X-Content-Type-Options": "nosniff"},
         )
 
     @app.get("/api/jobs/{job_id}/archive")
     async def get_job_archive(request: Request, job_id: str) -> FileResponse:
         job = _get_job(request, job_id)
         if job.status == "running":
-            raise HTTPException(
-                status_code=409, detail="job is still running; retry when done"
-            )
+            raise ApiError(409, "job_running", "job is still running; retry when done")
         archive_path = job.job_dir / "archive.zip"
 
         def build() -> None:
@@ -3322,14 +3753,196 @@ def create_app(
             filename=f"markitai-{job.job_id}.zip",
             media_type="application/zip",
             content_disposition_type="attachment",
+            headers={"X-Content-Type-Options": "nosniff"},
         )
+
+    # ------------------------------------------------------------- originals
+
+    def _original_paths(job: Job, item: JobItem) -> str:
+        return f"/api/jobs/{job.job_id}/items/{item.item_id}/original/file"
+
+    @app.get(
+        "/api/jobs/{job_id}/items/{item_id}/original",
+        response_model=OriginalDescriptor,
+    )
+    async def get_item_original(
+        request: Request, job_id: str, item_id: str
+    ) -> dict[str, Any]:
+        """What the Compare view can show of the item's source."""
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        original = await asyncio.to_thread(describe_original, job, item)
+        return original.descriptor(_original_paths(job, item))
+
+    @app.get("/api/jobs/{job_id}/items/{item_id}/original/file")
+    async def get_item_original_file(
+        request: Request, job_id: str, item_id: str
+    ) -> FileResponse:
+        """The stored original bytes, never rendered by a direct visit."""
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        upload = kept_upload(job, item)
+        if upload is None:
+            raise ApiError(404, "original_unavailable", "no original is kept")
+        media_type = original_media_type(upload)
+        if media_type in ("text/html", "application/xhtml+xml", "image/svg+xml"):
+            media_type = "text/plain; charset=utf-8"
+        return FileResponse(
+            upload,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": "attachment; filename*=UTF-8''"
+                + quote(item.name, safe=""),
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox; default-src 'none'",
+            },
+        )
+
+    async def _page_request(
+        request: Request, job_id: str, item_id: str, page: str
+    ) -> tuple[Any, int]:
+        if not page.isdigit():
+            raise ApiError(422, "invalid_page_request", "page must be a number")
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        original = await asyncio.to_thread(describe_original, job, item)
+        number = int(page)
+        if original.kind in ("none", "html", "text"):
+            raise ApiError(
+                404, "original_unavailable", "this original has no page images"
+            )
+        if not 1 <= number <= original.page_count:
+            raise ApiError(404, "page_not_found", "no such page")
+        return original, number
+
+    @app.get("/api/jobs/{job_id}/items/{item_id}/original/pages/{page}")
+    async def get_item_original_page(
+        request: Request, job_id: str, item_id: str, page: str, width: str | None = None
+    ) -> Response:
+        """Page *page* (1-based) as an image, *width* pixels wide."""
+        if width is not None and not width.isdigit():
+            raise ApiError(422, "invalid_page_request", "width must be a number")
+        target = clamp_width(int(width) if width is not None else None)
+        original, number = await _page_request(request, job_id, item_id, page)
+        renders: asyncio.Semaphore = request.app.state.page_renders
+        if renders.locked():
+            raise ApiError(
+                429,
+                "render_busy",
+                "other pages are being drawn; try again in a moment",
+                headers={"Retry-After": "1"},
+            )
+        async with renders:
+            try:
+                if original.kind == "pdf":
+                    body = await asyncio.to_thread(
+                        render_pdf_page, original.path, number, target
+                    )
+                    media_type = "image/png"
+                elif original.kind == "image":
+                    body, media_type = await asyncio.to_thread(
+                        render_image, original.path, target
+                    )
+                else:
+                    body, media_type = await asyncio.to_thread(
+                        render_image, original.screenshots[number - 1], target
+                    )
+            except IndexError:
+                raise ApiError(404, "page_not_found", "no such page") from None
+            except RenderError as e:
+                logger.debug("[Serve] Page {} of {} not drawn: {}", number, item_id, e)
+                raise ApiError(
+                    422, "render_failed", "this page cannot be drawn"
+                ) from None
+        return Response(
+            content=body,
+            media_type=media_type,
+            headers={
+                "Cache-Control": "private, max-age=86400",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox; default-src 'none'",
+            },
+        )
+
+    @app.get(
+        "/api/jobs/{job_id}/items/{item_id}/original/pages/{page}/text",
+        response_model=PageText,
+    )
+    async def get_item_original_page_text(
+        request: Request, job_id: str, item_id: str, page: str
+    ) -> dict[str, Any]:
+        """A PDF page's text as positioned lines (top-left origin, points)."""
+        original, number = await _page_request(request, job_id, item_id, page)
+        if not original.text_layer:
+            raise ApiError(
+                404, "original_unavailable", "this original has no text layer"
+            )
+        try:
+            return await asyncio.to_thread(pdf_page_text, original.path, number)
+        except IndexError:
+            raise ApiError(404, "page_not_found", "no such page") from None
+        except RenderError:
+            raise ApiError(422, "render_failed", "this page cannot be read") from None
+
+    # ---------------------------------------------------------- downloads
+
+    @app.post("/api/download-tickets", status_code=201, response_model=DownloadTicket)
+    async def create_download_ticket(request: Request) -> dict[str, Any]:
+        """A single-use, 60-second ticket for one download path.
+
+        A browser download is a navigation, which cannot carry the
+        ``Authorization`` header; the ticket rides in its URL instead of the
+        access token and is worthless once used or expired.
+        """
+        invalid = ApiError(
+            422,
+            "invalid_ticket_path",
+            'a download ticket needs a JSON body {"path": ...} naming a job '
+            "file, a job archive, an item original or the history archive",
+        )
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > _TICKET_BODY_LIMIT:
+                raise ApiError(
+                    413, "request_too_large", "a download ticket request exceeds 8 KiB"
+                )
+        try:
+            body = DownloadTicketRequest.model_validate_json(bytes(data))
+        except ValidationError:
+            raise invalid from None
+        if not downloadable(body.path):
+            raise invalid
+        tickets: DownloadTickets = request.app.state.download_tickets
+        ticket = tickets.issue(body.path)
+        if ticket is None:
+            raise ApiError(
+                429,
+                "too_many_tickets",
+                "too many download tickets are outstanding; use or let them "
+                "expire first",
+            )
+        return {
+            "ticket": ticket,
+            "url": f"{body.path}?ticket={ticket}",
+            "expires_in": TICKET_LIFETIME_S,
+        }
 
     # -------------------------------------------------------------- history
 
-    @app.get("/api/history", response_model=list[HistoryEntry])
-    async def get_history(request: Request) -> list[dict[str, Any]]:
+    @app.get(
+        "/api/history",
+        response_model=list[HistoryEntry],
+        # options/items only with include=items
+        response_model_exclude_unset=True,
+    )
+    async def get_history(
+        request: Request, include: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Saved jobs, newest first; ``include=items`` adds every item."""
         state = _state(request)
         registry = state.registry
+        with_items = "items" in (include or "").split(",")
         # Pick up jobs written since startup by other processes — local CLI
         # conversions recorded with --record-history land in the same jobs
         # root. Runs on the loop thread on purpose: it only stats/parses
@@ -3340,36 +3953,47 @@ def create_app(
         # The registry already dedupes archived vs this-process terminal jobs:
         # a job finished in this process is one entry, and startup rehydrate
         # never overwrites a live registry entry.
-        jobs = [job for job in registry.jobs.values() if job.status != "running"]
-        entries = await asyncio.to_thread(
-            lambda: [
-                {
-                    "job_id": job.job_id,
-                    "created_at": job.created_at,
-                    "finished_at": job.finished_at,
-                    "status": job.status,
-                    "total": len(job.items),
-                    "done": job.done_count,
-                    "failed": job.failed_count,
-                    "skipped": job.skipped_count,
-                    "llm_enhanced": sum(i.llm_enhanced for i in job.items),
-                    "cost_usd": (
-                        sum(i.cost_usd or 0.0 for i in job.items)
-                        if any(i.cost_usd is not None for i in job.items)
-                        else None
-                    ),
-                    "names_preview": [i.name for i in job.items[:3]],
-                    "kinds_preview": [i.kind for i in job.items[:3]],
-                    "duration_ms": job_duration_ms(job),
-                    "size_bytes": job_cached_dir_size(job),
-                    "origin": job.options.get("origin") or "web",
-                    # A mixed CLI job still offers retry for its URL items
-                    "retryable": any(i.retryable for i in job.items),
-                }
-                for job in jobs
-            ]
-        )
-        entries.sort(key=lambda e: str(e["created_at"]), reverse=True)
+        jobs = [
+            job
+            for job in registry.jobs.values()
+            if job.status != "running" and not job_expired(job)
+        ]
+
+        def entry(job: Job) -> dict[str, Any]:
+            value: dict[str, Any] = {
+                "job_id": job.job_id,
+                "created_at": job.created_at,
+                "finished_at": job.finished_at,
+                "status": job.status,
+                "total": len(job.items),
+                "done": job.done_count,
+                "failed": job.failed_count,
+                "skipped": job.skipped_count,
+                "llm_enhanced": sum(i.llm_enhanced for i in job.items),
+                "cost_usd": (
+                    sum(i.cost_usd or 0.0 for i in job.items)
+                    if any(i.cost_usd is not None for i in job.items)
+                    else None
+                ),
+                "pricing": aggregate_pricing(job.items),
+                "names_preview": [i.name for i in job.items[:3]],
+                "kinds_preview": [i.kind for i in job.items[:3]],
+                "duration_ms": job_duration_ms(job),
+                "size_bytes": job_cached_dir_size(job),
+                "origin": job.options.get("origin") or "web",
+                # A mixed CLI job still offers retry for its URL items
+                "retryable": any(i.retryable for i in job.items),
+                "label": job.label,
+            }
+            if with_items:
+                value["options"] = public_options(job.options)
+                value["items"] = [job.item_payload(i) for i in job.items]
+            return value
+
+        entries = await asyncio.to_thread(lambda: [entry(job) for job in jobs])
+        # By instant, not text: CLI history records local time with its
+        # offset and the server records UTC.
+        entries.sort(key=lambda e: _created_instant(e["created_at"]), reverse=True)
         return entries
 
     @app.get("/api/history/archive")
@@ -3377,11 +4001,15 @@ def create_app(
         """Download every completed job, including rehydrated history."""
         registry = _state(request).registry
         jobs = sorted(
-            (job for job in registry.jobs.values() if job.status != "running"),
-            key=lambda job: job.created_at,
+            (
+                job
+                for job in registry.jobs.values()
+                if job.status != "running" and not job_expired(job)
+            ),
+            key=lambda job: _created_instant(job.created_at),
         )
         if not jobs:
-            raise HTTPException(status_code=404, detail="no completed jobs to archive")
+            raise ApiError(404, "history_empty", "no completed jobs to archive")
 
         # A response owns its archive until streaming and cleanup finish.
         # Sharing a path lets one download remove another response's file.
@@ -3417,6 +4045,7 @@ def create_app(
             filename="markitai-all.zip",
             media_type="application/zip",
             content_disposition_type="attachment",
+            headers={"X-Content-Type-Options": "nosniff"},
             background=BackgroundTask(archive_path.unlink, missing_ok=True),
         )
 
@@ -3426,21 +4055,21 @@ def create_app(
         job = _get_job(request, job_id)
         async with job.delete_lock:
             if registry.get(job_id) is not job:
-                raise HTTPException(status_code=404, detail="job not found")
+                raise ApiError(404, "job_not_found", "job not found")
             if job.status == "running":
-                raise HTTPException(
-                    status_code=409, detail="job is still running; retry when done"
+                raise ApiError(
+                    409, "job_running", "job is still running; retry when done"
                 )
             await asyncio.to_thread(registry.discard_job, job)
         logger.info("[Serve] History job {} deleted", job_id)
 
     # --------------------------------------------------------------- static
 
-    resolved_static = static_dir if static_dir is not None else detect_static_dir()
-    if resolved_static is not None and (resolved_static / "index.html").is_file():
-        app.mount(
-            "/", _SPAStaticFiles(directory=resolved_static, html=True), name="static"
-        )
+    bundle_dir = static_dir if static_dir is not None else detect_static_dir()
+    workbench = Workbench.load(bundle_dir) if bundle_dir is not None else None
+    app.state.workbench = workbench
+    if workbench is not None:
+        mount_workbench(app, workbench)
     else:
 
         @app.get("/", response_model=RootInfo)

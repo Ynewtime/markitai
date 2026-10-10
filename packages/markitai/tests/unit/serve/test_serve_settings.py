@@ -684,6 +684,8 @@ class TestProviderCredentialLifecycle:
         # An explicitly-saved base is returned verbatim; the default is offered
         # separately for the editor placeholder.
         assert credentials.json() == {
+            # The shared workbench reads `api_key`; 1.2 clients `api_key_masked`
+            "api_key": "sk…uest",
             "api_key_masked": "sk…uest",
             "api_base": "https://proxy.example/v1",
             "api_base_placeholder": "https://api.deepseek.com",
@@ -725,6 +727,8 @@ class TestProviderCredentialLifecycle:
         # A key-only connection saves no base (stays on the provider default);
         # the editor field is empty with the default as its placeholder.
         assert credentials.json() == {
+            # The shared workbench reads `api_key`; 1.2 clients `api_key_masked`
+            "api_key": "…ek",
             "api_key_masked": "…ek",
             "api_base": None,
             "api_base_placeholder": "https://api.deepseek.com",

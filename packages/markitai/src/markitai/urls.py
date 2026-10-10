@@ -66,20 +66,33 @@ def parse_url_list(file_path: Path) -> list[UrlEntry]:
 
     # utf-8-sig drops the BOM Windows editors prepend; left in place it hides
     # the first URL and the JSON array's opening bracket.
-    content = file_path.read_text(encoding="utf-8-sig").strip()
+    return parse_url_list_text(file_path.read_text(encoding="utf-8-sig"), file_path)
+
+
+def parse_url_list_text(content: str, source: Path | str) -> list[UrlEntry]:
+    """Parse the text of a URL list (see :func:`parse_url_list`).
+
+    Args:
+        content: The list's text, already decoded.
+        source: Where it came from, for messages only.
+
+    Raises:
+        UrlListParseError: If a JSON list cannot be parsed.
+    """
+    content = content.lstrip("﻿").strip()
 
     if not content:
         return []
 
     # Try JSON first
     if content.startswith("["):
-        return _parse_json_url_list(content, file_path)
+        return _parse_json_url_list(content, source)
 
     # Fall back to plain text
-    return _parse_text_url_list(content, file_path)
+    return _parse_text_url_list(content, source)
 
 
-def _parse_json_url_list(content: str, file_path: Path) -> list[UrlEntry]:
+def _parse_json_url_list(content: str, file_path: Path | str) -> list[UrlEntry]:
     """Parse JSON format URL list."""
     try:
         data = json.loads(content)
@@ -133,7 +146,7 @@ def _parse_json_url_list(content: str, file_path: Path) -> list[UrlEntry]:
     return entries
 
 
-def _parse_text_url_list(content: str, file_path: Path) -> list[UrlEntry]:
+def _parse_text_url_list(content: str, file_path: Path | str) -> list[UrlEntry]:
     """Parse plain text format URL list."""
     entries = []
 

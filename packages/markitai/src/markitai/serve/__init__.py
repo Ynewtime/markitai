@@ -48,7 +48,8 @@ def create_app(
     """Create the FastAPI app (guarded re-export of :func:`serve.app.create_app`).
 
     Args:
-        static_dir: Directory with a built web UI. Auto-detected when None.
+        static_dir: Directory holding a workbench bundle; None serves the
+            one vendored in the package.
         jobs_root: Directory holding per-job workspaces. Defaults to
             ``~/.markitai/serve/jobs``.
         config: Base configuration. Loaded via ConfigManager when None.

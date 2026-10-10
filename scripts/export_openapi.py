@@ -4,7 +4,7 @@
 The document includes the SSE event payload schemas (``x-sse-events`` on the
 events route); see ``markitai/serve/openapi.py``. The contract test
 ``packages/markitai/tests/unit/serve/test_contract_sync.py`` compares it against the
-webapp mirror ``webapp/src/api/types.ts``.
+shared workbench's API contract.
 
 Usage:
     uv run python scripts/export_openapi.py               # print to stdout

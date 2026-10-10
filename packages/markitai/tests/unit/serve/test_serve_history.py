@@ -34,7 +34,12 @@ def _all_job_options(**set_values: object) -> dict[str, object]:
     """
     from markitai.serve.schemas import JobOptions
 
-    return {name: set_values.get(name) for name in JobOptions.model_fields}
+    return {
+        name: set_values.get(name)
+        for name in JobOptions.model_fields
+        # Consent for one request: never saved or echoed
+        if name != "remote_processing"
+    }
 
 
 from markitai.config import MarkitaiConfig
@@ -172,10 +177,16 @@ class TestJobMeta:
         assert meta["status"] == "done"
         assert meta["options"] == _all_job_options()
         assert meta["version"] == 2
+        # meta.json keeps each item's saved options; the API echoes them in
+        # their public form, so compare everything else
         assert [
             {key: value for key, value in item.items() if key != "options"}
             for item in meta["items"]
-        ] == data["items"]
+        ] == [
+            {key: value for key, value in item.items() if key != "options"}
+            for item in data["items"]
+        ]
+        assert all(item["options"] == _all_job_options() for item in data["items"])
         assert all(item["options"] == meta["options"] for item in meta["items"])
         item = meta["items"][0]
         assert item["output"] == "doc.txt.md"
@@ -324,12 +335,16 @@ class TestHistory:
             "skipped": 0,
             "llm_enhanced": 0,
             "cost_usd": 0.25,
+            # The fake result reports a cost but no metered requests, so
+            # completeness is not claimed (and no "$0" is invented either)
+            "pricing": None,
             "names_preview": ["new.txt"],
             "kinds_preview": ["file"],
             "duration_ms": newest["duration_ms"],
             "size_bytes": newest["size_bytes"],
             "origin": "web",
             "retryable": True,
+            "label": None,
         }
         assert newest["duration_ms"] >= 0
         assert newest["size_bytes"] > 0
