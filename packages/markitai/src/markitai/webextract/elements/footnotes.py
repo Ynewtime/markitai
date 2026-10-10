@@ -1515,6 +1515,13 @@ class _FootnoteHandler:
                     assign_ref(el, entry)
 
         for container, group_refs in sup_groups.values():
+            # The fallback passes above may have replaced this sup already
+            # (claimed again by its numeric text): DOM replaceWith on a
+            # detached node, which defuddle relies on, does nothing, while
+            # bs4 raises and the whole extraction fell back to markitdown
+            # (en.wikipedia.org/wiki/Python_(programming_language)).
+            if container.parent is None:
+                continue
             replacements = [
                 self._create_footnote_reference(num, ref_id)
                 for num, ref_id in group_refs

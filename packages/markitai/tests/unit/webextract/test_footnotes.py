@@ -207,3 +207,27 @@ class TestNoFootnotesPassThrough:
         md = html_to_markdown(str(root), md_instance=_create_markitdown())
         assert "[^" not in md
         assert "1. step one" in md
+
+
+def test_a_sup_claimed_twice_does_not_end_the_extraction():
+    """A <sup> grouped as the reference to one footnote, whose text "[2]"
+    then names another, unreferenced footnote: the numeric fallback replaced
+    it first, and replacing the group raised ValueError (bs4), so the whole
+    page fell back to markitdown. DOM replaceWith on a detached node, which
+    defuddle relies on, does nothing."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    words = " with many words" * 30
+    html = (
+        "<html><head><title>T</title></head><body><article><h1>T</h1>"
+        f"<p>Python is a language{words}"
+        '<sup class="reference" id="cite_ref-a"><a href="#cite_note-a">[2]</a>'
+        "</sup> and more text.</p>"
+        f"<p>Second paragraph{words}.</p>"
+        '<ol class="references"><li id="cite_note-a">Note A text here.</li>'
+        '<li id="cite_note-b">Note B text here.</li></ol>'
+        "</article></body></html>"
+    )
+    markdown = extract_web_content(html, "https://en.wikipedia.org/wiki/T").markdown
+    assert "[^1]: Note A text here." in markdown
+    assert "[^2]: Note B text here." in markdown
