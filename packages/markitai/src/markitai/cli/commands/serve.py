@@ -176,7 +176,7 @@ def _lan_address() -> str | None:
 
 def _print_access_urls(host: str, port: int, url_host: str, token: str) -> None:
     """Print the tokened URLs on stderr; the token is the remote credential."""
-    from rich.markup import escape
+    from markitai.utils.term import print_command, print_marked
 
     console = get_stderr_console()
     urls = [_token_url(url_host, port, token)]
@@ -184,44 +184,46 @@ def _print_access_urls(host: str, port: int, url_host: str, token: str) -> None:
         lan = _lan_address()
         if lan is not None:
             urls.append(_token_url(lan, port, token))
-    console.print(
-        "To use this server, open one of these URLs (the token signs you in):"
+    print_marked(
+        "To use this server, open one of these URLs (the token signs you in):",
+        mark="",
+        indent=0,
+        console=console,
     )
+    # Never wrapped: Rich used to break a LAN URL inside its token, and the
+    # copied link then failed to sign in
     for url in urls:
-        console.print(f"    {escape(url)}")
+        print_command(url, console=console)
+
+
+def _print_warning(first: str, *more: str) -> None:
+    """A warning on stderr: '! first', further sentences under its text."""
+    from markitai.utils.term import MARK_WARNING, print_marked
+
+    console = get_stderr_console()
+    print_marked(first, mark=MARK_WARNING, indent=0, console=console)
+    for line in more:
+        print_marked(line, mark="", indent=2, console=console)
 
 
 def _warn_exposed_bind(host: str, port: int) -> None:
     """Explain, on stderr, what a non-loopback bind with token auth opens up."""
-    from rich.markup import escape
-
-    console = get_stderr_console()
-    console.print(
-        f"[yellow]Warning:[/yellow] binding to {escape(host)}:{port} publishes "
-        "this server to your network."
-    )
-    console.print(
-        "         Requests from other machines must present the access token; "
-        "treat the URLs below as credentials."
+    _print_warning(
+        f"Binding to {host}:{port} publishes this server to your network.",
+        "Requests from other machines must present the access token; "
+        "treat the URLs below as credentials.",
     )
 
 
 def _warn_exposed_bind_no_auth(host: str, port: int) -> None:
     """Tell the user, on stderr, what --no-auth beyond loopback actually opens."""
-    from rich.markup import escape
-
-    console = get_stderr_console()
-    console.print(
-        f"[yellow]Warning:[/yellow] binding to {escape(host)}:{port} publishes "
-        "this server to your network with no authentication."
-    )
-    console.print(
-        "         Anyone who can reach that address can convert files and "
-        "read, download or delete your whole conversion history."
-    )
-    console.print(
-        "         Drop --no-auth to require the access token, use the default "
-        "--host 127.0.0.1, or keep it behind an authenticating reverse proxy."
+    _print_warning(
+        f"Binding to {host}:{port} publishes this server to your network "
+        "with no authentication.",
+        "Anyone who can reach that address can convert files and read, "
+        "download or delete your whole conversion history.",
+        "Drop --no-auth to require the access token, use the default "
+        "--host 127.0.0.1, or keep it behind an authenticating reverse proxy.",
     )
 
 

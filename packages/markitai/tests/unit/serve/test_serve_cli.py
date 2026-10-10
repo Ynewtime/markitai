@@ -346,7 +346,7 @@ class TestNonLoopbackBindWarning:
         stderr = _squeeze(result.stderr)
         assert "#token=mk_" in stderr
         assert "?token=" not in stderr
-        assert "Warning" not in stderr
+        assert "publishes this server" not in stderr
 
     def test_no_auth_loopback_stays_silent(
         self, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
@@ -355,6 +355,28 @@ class TestNonLoopbackBindWarning:
         result, _ = _invoke_serve(cli_runner, ["--no-auth"], monkeypatch)
         assert result.exit_code == 0, result.output
         assert result.stderr.strip() == ""
+
+    def test_token_url_is_never_wrapped_on_a_terminal(self) -> None:
+        """At 80 columns Rich broke the LAN URL inside its token."""
+        import importlib
+        import io
+
+        from rich.console import Console
+
+        serve_cmd = importlib.import_module("markitai.cli.commands.serve")
+
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, width=40, color_system=None)
+        token = "mk_" + "x" * 43
+        with (
+            patch.object(serve_cmd, "get_stderr_console", return_value=console),
+            patch.object(serve_cmd, "_lan_address", return_value="192.168.139.61"),
+        ):
+            serve_cmd._print_access_urls("0.0.0.0", 3600, "127.0.0.1", token)
+
+        lines = buf.getvalue().splitlines()
+        assert f"    http://127.0.0.1:3600/#token={token}" in lines
+        assert f"    http://192.168.139.61:3600/#token={token}" in lines
 
     def test_binds_beyond_loopback_classifier(self) -> None:
         from markitai.cli.commands.serve import _binds_beyond_loopback
