@@ -12,6 +12,7 @@ import re
 
 from bs4 import Tag
 
+from markitai.webextract.selectors import select_one as _css_select_one
 from markitai.webextract.utils import count_words, normalize_text
 
 _DATE_RE = re.compile(
@@ -69,7 +70,7 @@ def _is_prose_block(el: Tag) -> bool:
         return False
     # A dialog inside the subtree pollutes the element's text with modal
     # copy; a script/style descendant pollutes it with source code.
-    if el.select_one('[role="dialog"], [role="alertdialog"]') is not None:
+    if _css_select_one(el, '[role="dialog"], [role="alertdialog"]') is not None:
         return False
     if el.find(["script", "style"]) is not None:
         return False

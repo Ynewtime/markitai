@@ -92,20 +92,26 @@ def test_relationship_selectors_match_only_indexed_candidates():
     assert root is not None
     selector = "div > span.reference"
     expected = root.select(selector)
+    from soupsieve.css_match import CSSMatch
+
     with (
         patch.object(
             soupsieve.SoupSieve, "select", side_effect=AssertionError("full CSS scan")
         ),
         patch.object(
-            soupsieve.SoupSieve,
-            "match",
+            CSSMatch,
+            "match_selectors",
             autospec=True,
-            side_effect=soupsieve.SoupSieve.match,
+            side_effect=CSSMatch.match_selectors,
         ) as match,
     ):
         actual = select(root, selector)
     assert [id(e) for e in actual] == [id(e) for e in expected]
-    assert match.call_count == 2
+    # SoupSieve sees the two span.reference candidates (and, for the `>`
+    # relation, their parents), none of the 100 unrelated sections
+    seen = [call.args[1] for call in match.call_args_list]
+    assert sum(el.name == "span" for el in seen) == 2
+    assert {el.name for el in seen} <= {"span", "div", "p"}
 
 
 @pytest.mark.parametrize(
@@ -250,3 +256,70 @@ def test_custom_extractor_body_still_retries_the_unmodified_original():
         in result.markdown
     )
     assert result.diagnostics["retry_level"] == "body_fallback"
+
+
+@pytest.mark.parametrize("path", sorted(FIXTURES.glob("*.html")), ids=lambda p: p.stem)
+def test_indexed_match_and_closest_match_css_reference(path):
+    """matches()/closest() answer exactly as el.css.match()/el.css.closest()."""
+    from markitai.webextract.constants import (
+        HIDDEN_EXACT_SELECTOR,
+        HIDDEN_EXACT_SKIP_SELECTOR,
+    )
+    from markitai.webextract.selectors import closest, matches
+
+    root = BeautifulSoup(path.read_text(encoding="utf-8"), "lxml")
+    elements = root.find_all(True)
+    for selector in (
+        EXACT_SELECTORS_JOINED,
+        FOOTNOTE_INLINE_REFERENCES,
+        FOOTNOTE_LIST_SELECTORS,
+        HIDDEN_EXACT_SELECTOR,
+        HIDDEN_EXACT_SKIP_SELECTOR,
+    ):
+        expected = [el.css.match(selector) for el in elements]
+        assert [matches(el, selector) for el in elements] == expected, selector
+        for el in elements[::7]:
+            assert closest(el, selector) is el.css.closest(selector), selector
+
+
+def test_plain_attrs_never_admits_what_soupsieve_must_normalize():
+    """Only elements whose attrs a parser could have produced skip SoupSieve;
+    anything else (including str subclasses) goes to the reference matcher."""
+    from markitai.webextract.selectors import _plain_attrs
+
+    def reference(attrs):
+        if "id" in attrs and not isinstance(attrs["id"], str):
+            return False
+        return not any(
+            not isinstance(key, str)
+            or key != key.lower()
+            or not (
+                value is None
+                or isinstance(value, str)
+                or isinstance(value, list)
+                and all(isinstance(v, str) for v in value)
+            )
+            for key, value in attrs.items()
+        )
+
+    class Text(str):
+        pass
+
+    cases = [
+        {},
+        {"class": ["a", "b"], "href": "#x"},
+        {"id": "x", "data-1": "y", "123": "z"},
+        {"ID": "x"},
+        {"id": None},
+        {"id": ["a"]},
+        {"width": 100},
+        {"class": ["a", 1]},
+        {"title": None},
+        {Text("class"): ["a"]},
+        {"content": Text("text/html; charset=utf-8")},
+    ]
+    for attrs in cases:
+        if _plain_attrs(attrs):
+            assert reference(attrs), attrs
+    assert _plain_attrs({"class": ["a", "b"], "href": "#x"})
+    assert _plain_attrs({"content": Text("text/html; charset=utf-8")})

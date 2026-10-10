@@ -13,6 +13,9 @@ from markitai.webextract.constants import (
     NAVIGATION_INDICATORS,
     NON_CONTENT_CLASS_PATTERNS,
 )
+from markitai.webextract.selectors import closest as _css_closest
+from markitai.webextract.selectors import matches as _css_matches
+from markitai.webextract.selectors import select_one as _css_select_one
 
 
 def score_and_remove(root: Tag) -> int:
@@ -72,11 +75,11 @@ def _is_footnote_context(el: Tag) -> bool:
     inside a footnote list container are never scored for removal.
     """
     try:
-        if el.css.match(FOOTNOTE_LIST_SELECTORS):
+        if _css_matches(el, FOOTNOTE_LIST_SELECTORS):
             return True
-        if el.select_one(FOOTNOTE_LIST_SELECTORS) is not None:
+        if _css_select_one(el, FOOTNOTE_LIST_SELECTORS) is not None:
             return True
-        return el.css.closest(FOOTNOTE_LIST_SELECTORS) is not None
+        return _css_closest(el, FOOTNOTE_LIST_SELECTORS) is not None
     except Exception:
         return False
 
@@ -104,7 +107,7 @@ def _is_likely_content(el: Tag) -> bool:
     # Contains protected elements (code, table, math, etc.)
     for selector in CONTENT_PROTECTION_SELECTORS:
         try:
-            if el.select_one(selector):
+            if _css_select_one(el, selector):
                 return True
         except Exception:
             continue

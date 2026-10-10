@@ -438,10 +438,26 @@ def _remove_empty_elements(root: Tag) -> None:
             continue
         # <pre>/<code> whitespace tokens and SVG shapes (line, path, …)
         # are meaningful despite having no text.
-        if el.find_parent(("pre", "code", "svg")) is not None:
+        if _has_ancestor_named(el, _KEEP_EMPTY_INSIDE):
             continue
-        if not el.get_text(strip=True) and not el.find(list(ALLOWED_EMPTY_ELEMENTS)):
+        # No stripped string at all, without joining a container's whole text
+        if next(el.stripped_strings, None) is None and not el.find(
+            list(ALLOWED_EMPTY_ELEMENTS)
+        ):
             el.decompose()
+
+
+_KEEP_EMPTY_INSIDE = frozenset({"pre", "code", "svg"})
+
+
+def _has_ancestor_named(el: Tag, names: frozenset[str]) -> bool:
+    """``el.find_parent(names) is not None``, without bs4's per-call matcher."""
+    parent = el.parent
+    while parent is not None:
+        if parent.name in names:
+            return True
+        parent = parent.parent
+    return False
 
 
 def _remove_trailing_content(root: Tag) -> None:

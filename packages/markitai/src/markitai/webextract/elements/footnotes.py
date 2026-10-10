@@ -30,6 +30,8 @@ from markitai.webextract.constants import (
     FOOTNOTE_LIST_SELECTORS,
 )
 from markitai.webextract.dom import attr_str
+from markitai.webextract.selectors import closest as _css_closest
+from markitai.webextract.selectors import matches as _css_matches
 from markitai.webextract.selectors import select as _css_select
 from markitai.webextract.selectors import select_one as _css_select_one
 from markitai.webextract.utils import tag_children
@@ -62,14 +64,14 @@ _BLOCK_LEVEL_ELEMENTS = BLOCK_LEVEL_ELEMENTS
 
 def _matches(el: Tag, selector: str) -> bool:
     try:
-        return el.css.match(selector)
+        return _css_matches(el, selector)
     except Exception:
         return False
 
 
 def _closest(el: Tag, selector: str) -> Tag | None:
     try:
-        return el.css.closest(selector)
+        return _css_closest(el, selector)
     except Exception:
         return None
 
@@ -1221,7 +1223,14 @@ class _FootnoteHandler:
             for _ in range(3):
                 if ancestor is None or columns:
                     break
-                columns = _css_select(ancestor, ":scope > .sidenotes-column")
+                # ":scope > .sidenotes-column": SoupSieve scans the ancestor's
+                # whole subtree for its children (up to the page, 3 times)
+                columns = [
+                    child
+                    for child in ancestor.children
+                    if isinstance(child, Tag)
+                    and "sidenotes-column" in _class_list(child)
+                ]
                 ancestor = _parent_element(ancestor)
         if not columns:
             return footnotes

@@ -6,6 +6,9 @@ import re
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.selectors import select as _css_select
+from markitai.webextract.selectors import select_one as _css_select_one
+
 
 def normalize_callouts(root: Tag) -> None:
     """Standardize callout/alert elements to blockquote with data-callout.
@@ -34,14 +37,14 @@ def _normalize_obsidian_callouts(root: Tag) -> None:
     into a blockquote. Its display:none represents the fold state, not absent
     content. Hidden elements *inside* the body still follow normal removal.
     """
-    for callout in reversed(root.select("div.callout[data-callout]")):
+    for callout in reversed(_css_select(root, "div.callout[data-callout]")):
         content = callout.find("div", class_="callout-content", recursive=False)
         if not isinstance(content, Tag):
             continue
         callout_type = str(callout.get("data-callout") or "note")
         if not re.fullmatch(r"[\w-]+", callout_type):
             callout_type = "note"
-        title_el = callout.select_one(".callout-title-inner")
+        title_el = _css_select_one(callout, ".callout-title-inner")
         title = title_el.get_text(" ", strip=True) if title_el else ""
         classes = callout.get("class") or []
         fold = str(callout.get("data-callout-fold") or "")
@@ -58,7 +61,7 @@ def _normalize_obsidian_callouts(root: Tag) -> None:
 
 def _normalize_github_alerts(root: Tag) -> None:
     """Convert GitHub .markdown-alert to blockquote."""
-    for alert in root.select(".markdown-alert"):
+    for alert in _css_select(root, ".markdown-alert"):
         # Extract type from class: markdown-alert-note → note
         classes = alert.get("class")
         callout_type = "note"
@@ -69,7 +72,7 @@ def _normalize_github_alerts(root: Tag) -> None:
                 break
 
         # Remove title element
-        title_el = alert.select_one(".markdown-alert-title")
+        title_el = _css_select_one(alert, ".markdown-alert-title")
         if title_el:
             title_el.decompose()
 
@@ -79,7 +82,7 @@ def _normalize_github_alerts(root: Tag) -> None:
 
 def _normalize_bootstrap_alerts(root: Tag) -> None:
     """Convert Bootstrap .alert.alert-* to blockquote."""
-    for alert in root.select(".alert"):
+    for alert in _css_select(root, ".alert"):
         classes = alert.get("class")
         callout_type = "note"
         for cls in classes if isinstance(classes, list) else []:
@@ -89,7 +92,7 @@ def _normalize_bootstrap_alerts(root: Tag) -> None:
                 break
 
         # Extract title if present
-        title_el = alert.select_one(".alert-heading, .alert-title")
+        title_el = _css_select_one(alert, ".alert-heading, .alert-title")
         if title_el:
             title_el.decompose()
 
@@ -137,7 +140,7 @@ _ADMONITION_TYPES = frozenset(
 
 def _normalize_admonitions(root: Tag) -> None:
     """Convert Hugo/Docsy .admonition blocks to blockquote callouts."""
-    for el in root.select(".admonition"):
+    for el in _css_select(root, ".admonition"):
         if el.get("data-callout"):
             continue
         classes = el.get("class")
@@ -146,14 +149,14 @@ def _normalize_admonitions(root: Tag) -> None:
 
         # Title text from .admonition-title (icon SVGs contribute none);
         # remove it so it doesn't duplicate inside the content.
-        title_el = el.select_one(".admonition-title")
+        title_el = _css_select_one(el, ".admonition-title")
         title = title_el.get_text(strip=True) if title_el is not None else ""
         if title_el is not None:
             title_el.decompose()
 
         content = (
-            el.select_one(".admonition-content")
-            or el.select_one(".details-content")
+            _css_select_one(el, ".admonition-content")
+            or _css_select_one(el, ".details-content")
             or el
         )
         _convert_to_blockquote(el, callout_type, title=title, content=content)
