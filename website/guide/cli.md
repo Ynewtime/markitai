@@ -378,7 +378,16 @@ markitai https://example.com -o ./output --no-remote-fetch
 
 Status lines start with a mark that means the same everywhere: `✓` success, `!` warning, `✗` error, `•` information, `→` next step, `○` skipped on purpose. On a terminal the marks are coloured; piped or redirected output, and `NO_COLOR`, drop the colour but keep the marks, one line per message.
 
-The ASCII set (`+ ! x - > o`) is used only where the Unicode marks cannot be shown: `TERM=dumb`, an output encoding that cannot write them (a non-UTF-8 locale, `PYTHONIOENCODING=ascii`), and a Windows console that cannot process escape sequences (Windows before 10 version 1511, or the console host's "Use legacy console" option). Windows Terminal, VS Code, SSH sessions, today's console host and Windows pipes and files all get the Unicode marks; markitai writes UTF-8 to pipes and files on Windows, so read a captured log as UTF-8 (in Windows PowerShell 5.1, set `[Console]::OutputEncoding = [Text.Encoding]::UTF8` before capturing a command's output).
+The ASCII set (`+ ! x - > o`) is used where the Unicode marks would not be shown or read correctly: `TERM=dumb`; an output encoding that cannot write them (a non-UTF-8 locale, `PYTHONIOENCODING=ascii`); a Windows console that cannot process escape sequences (Windows before 10 version 1511, or the console host's "Use legacy console" option); and on Windows, a pipe or a file while the console's output code page is not UTF-8 (65001). Windows Terminal, VS Code, SSH sessions, today's console host and mintty (Git Bash) show the Unicode marks. One run uses one set: when stdout or stderr needs the ASCII set, both get it.
+
+**Windows pipes and files.** markitai writes UTF-8 to them, but Windows PowerShell 5.1 decodes a program's piped output with the console's code page (`[Console]::OutputEncoding`, 437 on an English system), which would turn `✓` into `Γ£ô`; so they get the ASCII set unless that code page is UTF-8. To get the Unicode marks (and the rest of the text, Chinese included, decoded correctly) in PowerShell 5.1, run this before capturing a command's output:
+
+```powershell
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+markitai doctor | Out-File -Encoding utf8 doctor.txt
+```
+
+In cmd, `chcp 65001` does the same. Output with no console attached (a service, a detached process) has no code page to follow and keeps the Unicode marks.
 
 ## Setup Commands
 

@@ -63,13 +63,12 @@ def _set_console_mode(std_handle: int, mode: int) -> bool:
 def _legacy_windows_console(std_handle: int) -> bool:
     """Whether a standard handle is a console that cannot read escape codes.
 
-    Only a real console is asked: a pipe or a file carries UTF-8 (the CLI
-    reconfigures its streams on Windows), as on macOS and Linux. A console
-    that does not process escape sequences yet has them switched on first,
-    which every console host since Windows 10 version 1511 allows; only one
-    that refuses (older Windows, conhost's "Use legacy console") is legacy.
-    It gets the ASCII marks and Rich's win32 rendering (markitai-rust follows
-    the same rule).
+    Only a real console is asked (a pipe or a file follows the console's code
+    page instead, see ``_windows_unicode``). A console that does not process
+    escape sequences yet has them switched on first, which every console host
+    since Windows 10 version 1511 allows; only one that refuses (older
+    Windows, conhost's "Use legacy console") is legacy. It gets the ASCII
+    marks and Rich's win32 rendering (markitai-rust follows the same rule).
     """
     if sys.platform != "win32":
         return False
@@ -86,6 +85,100 @@ def _legacy_windows_console(std_handle: int) -> bool:
 
 _LEGACY_STDOUT = _legacy_windows_console(_STD_OUTPUT_HANDLE)
 _LEGACY_STDERR = _legacy_windows_console(_STD_ERROR_HANDLE)
+
+#: The UTF-8 code page
+_UTF8_CODE_PAGE = 65001
+
+
+def _console_output_code_page() -> int | None:
+    """The output code page of the console this process is attached to.
+
+    None without a console (a service, a detached process), where
+    ``GetConsoleOutputCP`` returns 0, and off Windows.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        page = int(ctypes.WinDLL("kernel32").GetConsoleOutputCP())
+    except (OSError, AttributeError):  # no console API to ask
+        return None
+    return page or None
+
+
+def _msys_terminal(std_handle: int) -> bool:
+    """Whether a standard handle is an msys or Cygwin pseudo-terminal.
+
+    mintty (Git Bash, MSYS2) hands a program a named pipe called like
+    ``\\msys-1888ae32e00d56aa-pty0-to-master``; it decodes the UTF-8 bytes
+    itself. The same test as Rust's standard library makes for ``is_terminal``.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32")
+        # FILE_NAME_INFO: a DWORD length, then the name in UTF-16
+        buffer = ctypes.create_string_buffer(4 + 2 * 260)
+        file_name_info = 2
+        if not kernel32.GetFileInformationByHandleEx(
+            kernel32.GetStdHandle(std_handle),
+            file_name_info,
+            buffer,
+            wintypes.DWORD(len(buffer)),
+        ):
+            return False
+        length = int.from_bytes(buffer.raw[:4], "little")
+        name = buffer.raw[4 : 4 + length].decode("utf-16-le", "replace")
+    except (OSError, AttributeError, ValueError):
+        return False
+    return ("msys-" in name or "cygwin-" in name) and "-pty" in name
+
+
+def _windows_unicode(
+    kind: str, *, vt: bool = True, code_page: int | None = None
+) -> bool:
+    """Whether one Windows output stream gets the Unicode marks (owner rule,
+    2026-10-11, the same in markitai-rust's ``term::windows_unicode``).
+
+    ``kind`` is what the stream is:
+
+    * ``"console"``: the marks where it reads escape sequences (``vt``:
+      Windows 10 version 1511 and later, Windows Terminal, VS Code), the
+      ASCII set on a legacy console;
+    * ``"pty"``: mintty or another msys terminal, which decodes UTF-8 itself;
+    * ``"redirected"``: a pipe or a file follows the attached console's output
+      code page (``code_page``), because Windows PowerShell decodes a
+      program's output with it (``[Console]::OutputEncoding``): read at code
+      page 437, the UTF-8 bytes of ``✓`` show as ``Γ£ô``. So the marks only
+      at 65001 (UTF-8). With no console attached (``code_page`` None) there
+      is no code page to follow, and the marks stay Unicode, as on macOS and
+      Linux.
+    """
+    if kind == "console":
+        return vt
+    if kind == "pty":
+        return True
+    return code_page is None or code_page == _UTF8_CODE_PAGE
+
+
+def _windows_output(
+    std_handle: int, stream: IO[str], legacy: bool
+) -> tuple[str, bool, int | None]:
+    """``(kind, vt, code_page)`` of one Windows standard stream, for
+    :func:`_windows_unicode`."""
+    try:
+        mode = _console_mode(std_handle)
+    except (OSError, AttributeError):  # no console API to ask
+        mode = None
+    if mode is not None:
+        return "console", not legacy, None
+    if is_terminal(stream) or _msys_terminal(std_handle):
+        return "pty", True, None
+    return "redirected", True, _console_output_code_page()
 
 
 class _SoftWrapConsole(Console):
@@ -148,16 +241,25 @@ def get_stderr_console() -> Console:
     return _stderr_console
 
 
-def _streams_take_unicode(legacy_stdout: bool = _LEGACY_STDOUT) -> bool:
+def _streams_take_unicode(
+    legacy_stdout: bool = _LEGACY_STDOUT, legacy_stderr: bool = _LEGACY_STDERR
+) -> bool:
     """Whether stdout and stderr can carry the Unicode status marks.
 
-    The marks mean the same on every platform, so only output that really
-    cannot show them gets the ASCII set (see the terminal style guide):
-    ``TERM=dumb``; a stream that cannot encode them (a non-UTF-8 locale such
-    as ``LANG=en_US.ISO-8859-1``, or ``PYTHONIOENCODING=ascii``: printing one
-    raised UnicodeEncodeError); and a Windows console that cannot process
-    escape sequences (``_legacy_windows_console``). Windows pipes and files
-    keep them. ``NO_COLOR`` turns colour off, never the marks.
+    The marks mean the same on every platform, so only output that would not
+    show them gets the ASCII set (see the terminal style guide): ``TERM=dumb``;
+    a stream that cannot encode them (a non-UTF-8 locale such as
+    ``LANG=en_US.ISO-8859-1``, or ``PYTHONIOENCODING=ascii``: printing one
+    raised UnicodeEncodeError); and on Windows, a stream
+    :func:`_windows_unicode` gives the ASCII set: a legacy console, or a pipe
+    or file while the console's output code page is not UTF-8. ``NO_COLOR``
+    turns colour off, never the marks.
+
+    One answer for both streams: when either needs the ASCII set, both get it,
+    so one run never mixes the two sets (markitai-rust judges each stream on
+    its own; the difference shows only when one stream is a console and the
+    other a pipe or file at another code page, and never puts a mark a reader
+    cannot decode into a pipe).
     """
     if os.environ.get("TERM") == "dumb":
         return False
@@ -167,7 +269,18 @@ def _streams_take_unicode(legacy_stdout: bool = _LEGACY_STDOUT) -> bool:
             "✓✗•◆│→○".encode(encoding)
         except (UnicodeEncodeError, LookupError):
             return False
-    return not legacy_stdout
+    if sys.platform != "win32":
+        return True
+    for std_handle, stream, legacy in (
+        (_STD_OUTPUT_HANDLE, sys.stdout, legacy_stdout),
+        (_STD_ERROR_HANDLE, sys.stderr, legacy_stderr),
+    ):
+        if stream is None:  # pythonw: no stream, nothing printed there
+            continue
+        kind, vt, code_page = _windows_output(std_handle, stream, legacy)
+        if not _windows_unicode(kind, vt=vt, code_page=code_page):
+            return False
+    return True
 
 
 _UNICODE_MARKS = _streams_take_unicode()

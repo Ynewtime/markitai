@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,7 +58,28 @@ def sample_config_dict() -> dict:
 _FORCED_COLOUR_ENV = ("FORCE_COLOR", "PY_COLORS", "CLICOLOR_FORCE", "TTY_COMPATIBLE")
 
 
+# On Windows a pipe or file gets the Unicode marks only while the console's
+# output code page is UTF-8 (markitai.utils.term._windows_unicode). The test
+# process's own output is a pipe, and the console of a CI step or an SSH
+# session is at the OEM code page (437), so the marks this process and the
+# CLI it starts print would follow the machine. The session runs at 65001 and
+# gives the console its code page back at the end; tests that check the other
+# code pages fake them, or start a console of their own.
+_ORIGINAL_CODE_PAGE: int | None = None
+
+
+def _console_code_page(page: int | None = None) -> int:
+    """The console's output code page (0 without one); set it first if given."""
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32")  # type: ignore[attr-defined]
+    if page is not None:
+        kernel32.SetConsoleOutputCP(page)
+    return int(kernel32.GetConsoleOutputCP())
+
+
 def pytest_configure(config: pytest.Config) -> None:
+    global _ORIGINAL_CODE_PAGE
     for name in _FORCED_COLOUR_ENV:
         os.environ.pop(name, None)
     os.environ["COLUMNS"] = "80"
@@ -65,6 +87,16 @@ def pytest_configure(config: pytest.Config) -> None:
     # tests that want them set it themselves
     if os.environ.get("TERM") == "dumb":
         del os.environ["TERM"]
+    if sys.platform == "win32":
+        page = _console_code_page()
+        if page not in (0, 65001):
+            _ORIGINAL_CODE_PAGE = page
+            _console_code_page(65001)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    if sys.platform == "win32" and _ORIGINAL_CODE_PAGE is not None:
+        _console_code_page(_ORIGINAL_CODE_PAGE)
 
 
 # pytest puts the running test's id in PYTEST_CURRENT_TEST; Windows refuses
