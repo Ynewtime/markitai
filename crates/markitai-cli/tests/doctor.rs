@@ -250,7 +250,7 @@ fn environment_models_and_text_summary_match_what_a_conversion_uses() {
         text.trim_end()
             .lines()
             .last()
-            .is_some_and(|line| line.starts_with("! Ready. Not available (optional): ")),
+            .is_some_and(|line| line.starts_with("✓ Ready. Not available (optional): ")),
         "{text}"
     );
     let output = command(dir.path(), json!({"fetch":{"strategy":"playwright"}}))

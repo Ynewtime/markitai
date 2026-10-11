@@ -78,7 +78,7 @@ fn doctor_frame_is_chinese_while_check_values_and_exit_status_are_unchanged() {
     // How many optional backends are ready depends on the platform.
     let summary = lines.last().copied().unwrap_or_default();
     assert!(
-        summary.starts_with("! 已就绪。以下可选功能不可用："),
+        summary.starts_with("✓ 已就绪。以下可选功能不可用："),
         "{text}"
     );
     assert!(summary.contains("LLM API、Vision Model"), "{text}");
