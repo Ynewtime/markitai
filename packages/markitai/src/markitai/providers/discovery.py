@@ -21,6 +21,13 @@ from urllib.parse import urljoin
 import httpx
 
 from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_DEFAULT_MODELS
+from markitai.providers.connectable import (
+    CONNECTABLE,
+    Connectable,
+    connectable,
+    default_base,
+    installed,
+)
 
 if TYPE_CHECKING:
     from markitai.config import ModelConfig
@@ -69,20 +76,27 @@ def provider_label(provider: str) -> str:
     }.get(provider, provider.replace("_", " ").title())
 
 
-_PROVIDER_DEFAULT_API_BASES = {
-    "anthropic": "https://api.anthropic.com/v1",
-    "claude-agent": "https://api.anthropic.com/v1",
-    "deepseek": "https://api.deepseek.com",
-    "gemini": "https://generativelanguage.googleapis.com/v1beta",
-    "ollama": "http://127.0.0.1:11434",
-    "openai": "https://api.openai.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-}
-
-
 def provider_default_api_base(provider: str) -> str | None:
-    """Return the effective built-in API base for a known provider."""
-    return _PROVIDER_DEFAULT_API_BASES.get(provider.lower())
+    """Return the effective built-in API base for a known provider.
+
+    The address in LiteLLM's form (``connectable``): Anthropic's is the host,
+    to which LiteLLM adds ``/v1/messages``.
+    """
+    if provider.lower() == "claude-agent":
+        return "https://api.anthropic.com/v1"
+    return default_base(provider)
+
+
+_COMMON_LABELS = {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "gemini": "Gemini",
+    "ollama": "Ollama",
+    "deepseek": "DeepSeek",
+    "openrouter": "OpenRouter",
+    "azure": "Azure OpenAI",
+    "custom": "OpenAI-compatible endpoint",
+}
 
 
 def _credential_identity(api_key: str | None) -> str:
@@ -271,30 +285,43 @@ async def detect_provider_connections(
         )
 
     present = {card["provider"] for card in cards}
-    for provider, label in (
-        ("openai", "OpenAI"),
-        ("anthropic", "Anthropic"),
-        ("gemini", "Gemini"),
-        ("ollama", "Ollama"),
-        ("deepseek", "DeepSeek"),
-        ("openrouter", "OpenRouter"),
-        ("azure", "Azure OpenAI"),
-        ("custom", "OpenAI-compatible endpoint"),
-    ):
-        if provider not in present:
+    # A subscription runtime installed with its extra but not detected (no
+    # CLI on PATH, not signed in yet) can still be connected: its runtime
+    # signs in and lists the account's models. ChatGPT signs in with a
+    # device code only `markitai auth login chatgpt` can show, so it is
+    # offered once signed in (the card above)
+    for provider in ("claude-agent", "copilot"):
+        if provider not in present and _local_runtime_available(provider):
             cards.append(
                 {
                     "id": f"common:{provider}",
                     "provider": provider,
-                    "label": label,
+                    "label": provider_label(provider),
                     "kind": "common",
-                    "status": "needs_credentials"
-                    if provider != "ollama"
-                    else "unknown",
+                    "status": "unknown",
                     "source": "built_in",
                     "supports_discovery": True,
+                    "key_optional": True,
                 }
             )
+    for row in CONNECTABLE:
+        if row.provider in present or not installed(row):
+            continue
+        # A local server at its default address, or a cloud's own
+        # credentials, may already work; only a check tells
+        local = row.key_optional and (row.base is not None or row.cloud)
+        cards.append(
+            {
+                "id": f"common:{row.provider}",
+                "provider": row.provider,
+                "label": _COMMON_LABELS.get(row.provider)
+                or provider_label(row.provider),
+                "kind": "common",
+                "status": "unknown" if local else "needs_credentials",
+                "source": "built_in",
+                "supports_discovery": row.discovery != "manual",
+            }
+        )
     _connection_cache[key] = _CacheEntry(
         value={"providers": cards}, fetched_at=time.monotonic()
     )
@@ -484,10 +511,10 @@ async def _http_models(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
     elif provider in {"anthropic", "claude-agent"}:
-        url = urljoin(
-            (api_base or provider_default_api_base(provider) or "").rstrip("/") + "/",
-            "models",
-        )
+        # LiteLLM takes Anthropic's host (it adds /v1/messages); an address
+        # entered with its /v1 lists the same models
+        base = (api_base or provider_default_api_base(provider) or "").rstrip("/")
+        url = urljoin(base.removesuffix("/v1") + "/", "v1/models")
         if api_key:
             if provider == "claude-agent":
                 headers["Authorization"] = f"Bearer {api_key}"
@@ -547,6 +574,8 @@ async def _http_models(
         url = urljoin(api_base.rstrip("/") + "/", "models")
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+    elif (row := connectable(provider)) is not None and row.discovery != "builtin":
+        return await _listed_models(row, api_key, api_base)
     else:
         return _result(
             provider,
@@ -627,6 +656,83 @@ async def _http_models(
         detail=(
             "Azure lists regional base models; routing still requires a deployment name"
             if provider == "azure"
+            else None
+        ),
+    )
+
+
+async def _listed_models(
+    row: Connectable, api_key: str | None, api_base: str | None
+) -> dict[str, Any]:
+    """List the models of a provider from ``connectable``: the OpenAI-style
+    ``GET <base>/models`` most of them serve, or Cohere's own list."""
+    provider = row.provider
+    if row.discovery == "manual":
+        return _result(
+            provider,
+            status="unavailable",
+            source="live_api",
+            authoritative=False,
+            models=[],
+            detail="The provider publishes no model list; enter model IDs by hand",
+        )
+    base = api_base or row.base
+    if not base:
+        return _result(
+            provider,
+            status="unavailable",
+            source="live_api",
+            authoritative=False,
+            models=[],
+            detail="API base is required",
+        )
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if row.discovery == "cohere":
+        # Cohere's list lives beside its API, whichever chat URL LiteLLM uses
+        parts = httpx.URL(base)
+        url = f"{parts.scheme}://{parts.netloc.decode('ascii')}/v1/models"
+        params.update(endpoint="chat", page_size="1000")
+    else:
+        url = urljoin(base.rstrip("/") + "/", row.models_path)
+
+    async with httpx.AsyncClient(
+        timeout=_REMOTE_TIMEOUT, follow_redirects=False
+    ) as client:
+        response = await client.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        body = response.json()
+
+    if row.discovery == "cohere":
+        records = body.get("models", []) if isinstance(body, dict) else []
+        key, label_keys = "name", ()
+        more = isinstance(body, dict) and bool(body.get("next_page_token"))
+    else:
+        # Together AI answers with the bare list
+        records = body.get("data", []) if isinstance(body, dict) else body
+        key, label_keys = "id", ("display_name", "name")
+        more = isinstance(body, dict) and body.get("has_more") is True
+    candidates: list[dict[str, Any]] = []
+    for record in records if isinstance(records, list) else []:
+        raw_id = record.get(key) if isinstance(record, dict) else None
+        if not isinstance(raw_id, str) or not raw_id:
+            continue
+        label = next(
+            (record[k] for k in label_keys if isinstance(record.get(k), str)), None
+        )
+        candidates.append(_candidate(f"{provider}/{raw_id}", label or raw_id))
+    deduplicated = list({item["model"]: item for item in candidates}.values())
+    return _result(
+        provider,
+        status="partial" if more else "ok",
+        source="live_api",
+        authoritative=not more,
+        models=deduplicated,
+        detail=(
+            "The provider has more models; only its first page is shown"
+            if more
             else None
         ),
     )

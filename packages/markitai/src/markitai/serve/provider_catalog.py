@@ -5,6 +5,10 @@ catalog gives the same provider, so the workbench's picker groups Python's
 cards as it groups Rust's. ``provider_catalog.json`` is that catalog, exported
 from markitai-rust (its ``source`` names the commit); refresh it when a newly
 vendored workbench changes the catalog or its brand marks.
+
+``card_facts`` adds what the picker's provider page needs to connect a
+provider (its default address, key variable, whether a key is optional), in
+the form this build routes it (``markitai.providers.connectable``).
 """
 
 from __future__ import annotations
@@ -50,4 +54,30 @@ def annotate_card(card: dict[str, Any]) -> dict[str, Any]:
     card.setdefault("group", entry["group"])
     card.setdefault("icon", entry["icon"])
     card.setdefault("aliases", list(entry["aliases"]))
+    return card
+
+
+def card_facts(card: dict[str, Any]) -> dict[str, Any]:
+    """Add the catalog's label and the connection facts to a provider card.
+
+    ``default_base`` (null when an address must be entered), ``key_variable``
+    and ``key_optional`` are those of ``markitai.providers.connectable``;
+    a subscription runtime takes neither key nor address. Values the card
+    already has stay.
+    """
+    from markitai.providers.connectable import connectable
+
+    provider = str(card.get("provider", ""))
+    entry = _catalog().get(provider.lower())
+    if entry is not None and card.get("kind") in {"common", "configured"}:
+        card["label"] = entry["label"]
+    row = connectable(provider)
+    if row is not None:
+        card.setdefault("default_base", row.base)
+        card.setdefault("key_variable", row.key_variable)
+        card.setdefault("key_optional", row.key_optional)
+    elif entry is not None and entry["group"] == "subscriptions":
+        card.setdefault("default_base", None)
+        card.setdefault("key_variable", None)
+        card.setdefault("key_optional", True)
     return card

@@ -79,7 +79,7 @@ Every option has hover or tap help that says what it depends on, where the data 
 
 ## LLM Settings
 
-**Settings → Models** edits the same configuration as `markitai config`: discover providers, browse model lists, set weights and test connections without exposing stored keys. **Add models** opens a provider picker: search by name or model prefix, the common providers as tiles, the others under filters such as Local and Subscriptions. Changes apply to web jobs and to later CLI runs alike.
+**Settings → Models** edits the same configuration as `markitai config`: discover providers, browse model lists, set weights and test connections without exposing stored keys. **Add models** opens a provider picker: search by name or model prefix, the common providers as tiles, the others under filters (Clouds, Inference, Gateways, Local, Subscriptions, Model makers). It offers every provider markitai can route through LiteLLM, about 90, each with the address it uses and the key variable it reads; enter a key (and an address, for servers of your own), then pick from the provider's model list, or type model IDs where the provider publishes none. Changes apply to web jobs and to later CLI runs alike.
 
 The provider editor shows a saved key only in masked form (`sk…7890`; an `env:` reference is shown as is). Leave the field as it is to keep the saved key, type a new key to replace it, or clear it to remove the key. A saved API base address is shown without its credentials (`https://…@proxy.example/v1?api_key=…`): left as shown it keeps the saved address; to change it, type the whole address.
 
