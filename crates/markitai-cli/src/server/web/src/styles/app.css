@@ -2503,14 +2503,11 @@ kbd {
   width: 100%;
   min-height: 40px;
   padding: 10px 8px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: 20px;
   color: var(--text-1);
   resize: none;
-}
-.url-box::placeholder {
-  font-family: var(--font-sans);
 }
 .url-box:focus {
   outline: none;
@@ -3645,10 +3642,15 @@ kbd {
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
   background: var(--bg);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-base);
   color: var(--text-1);
   transition: border-color var(--dur-fast) ease;
+}
+/* keys and tokens stay monospace so l/1 and O/0 can be told apart; addresses and names use the UI sans */
+input[type="password"],
+.dialog input[type="password"] {
+  font-family: var(--font-mono);
 }
 .dialog input:not([type="checkbox"]):focus {
   border-color: var(--accent);
