@@ -65,7 +65,7 @@ async def test_screenshot_shows_the_styled_page_not_the_cleaned_dom(
             output_dir=tmp_path,
         )
 
-    assert result.screenshot_path is not None
+    assert result.screenshot_path is not None, result.metadata.get("screenshot_error")
     with Image.open(result.screenshot_path) as image:
         rgb = image.convert("RGB")
         nav = rgb.getpixel((400, 100))
