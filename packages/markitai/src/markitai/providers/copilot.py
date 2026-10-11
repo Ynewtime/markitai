@@ -688,7 +688,11 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                 timeout=timeout,
             )
 
-            # Extract content from response
+            # Extract content from response. A turn that ended without an
+            # assistant message has no answer: its absence is not the text
+            # "None" (it became an image's description)
+            if response is None:
+                raise RuntimeError("Copilot ended the turn without an answer")
             if hasattr(response, "data") and hasattr(response.data, "content"):
                 result_text = response.data.content
             else:

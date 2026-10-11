@@ -80,6 +80,36 @@ except ImportError:
     RateLimitError = Exception  # type: ignore[misc, assignment]
 
 
+# The SDK's categories of a failed turn, in the words the shared error
+# classifier looks for (markitai.providers.errors)
+_TURN_ERRORS = {
+    "authentication_failed": "authentication failed",
+    "billing_error": "billing error",
+    "rate_limit": "rate limit",
+    "invalid_request": "invalid request",
+    "server_error": "server error",
+}
+
+
+def _turn_error_message(category: str | None, result: Any, text: str) -> str:
+    """Describe a turn Claude Code reported as failed, for the error raised.
+
+    Never returned as an answer: a caller that took the error text for the
+    model's output wrote it into the document (a standalone image's
+    description read "Claude AI usage limit reached").
+    """
+    parts = [_TURN_ERRORS.get(category or "", category or "error")]
+    status = getattr(result, "api_error_status", None)
+    if isinstance(status, int):
+        parts.append(f"HTTP {status}")
+    detail = getattr(result, "result", None) or text
+    errors = getattr(result, "errors", None)
+    if not detail and errors:
+        detail = "; ".join(str(e) for e in errors)
+    message = f"Claude Code reported a failed turn ({', '.join(parts)})"
+    return f"{message}: {str(detail).strip()[:300]}" if detail else message
+
+
 class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
     """Custom LiteLLM provider using Claude Agent SDK.
 
@@ -373,6 +403,11 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         structured_output: dict[str, Any] | None = None
         usage_info: dict[str, Any] = {}
         total_cost_usd: float = 0.0
+        # A failed turn (expired login, usage limit, API error) still ends
+        # with the error text as an assistant message; only these flags say
+        # it is not an answer
+        turn_error: str | None = None
+        failed_result: Any = None
 
         try:
             # Build options dict (the SDK takes no timeout; it handles
@@ -421,6 +456,10 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                 await client.query(prompt)
                 async for message in client.receive_response():
                     if isinstance(message, claude_agent_sdk.types.AssistantMessage):
+                        # The SDK's category of a failed turn: a string
+                        error = getattr(message, "error", None)
+                        if isinstance(error, str) and turn_error is None:
+                            turn_error = error
                         for block in message.content:
                             if isinstance(block, claude_agent_sdk.types.TextBlock):
                                 result_text += block.text
@@ -435,6 +474,12 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                             and message.structured_output
                         ):
                             structured_output = message.structured_output
+                        if getattr(message, "is_error", False) is True:
+                            failed_result = message
+            if turn_error is not None or failed_result is not None:
+                raise RuntimeError(
+                    _turn_error_message(turn_error, failed_result, result_text)
+                )
 
         except Exception as e:
             error_msg = str(e)
