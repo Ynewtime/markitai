@@ -11,6 +11,7 @@ text layer could not be extracted.
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -173,13 +174,16 @@ class TestScreenshotHasItsOwnBudget:
         page = _page([])
         loop = asyncio.get_running_loop()
         shot = tmp_path / "shot.jpg"
+        finished: list[str] = []
 
         async def slow_capture(*args, **kwargs):
             await asyncio.sleep(0.25)
+            finished.append("capture")
             return shot, [shot]
 
         async def slow_title():
             await asyncio.sleep(0.1)
+            finished.append("title")
             return "Title"
 
         page.title = AsyncMock(side_effect=slow_title)
@@ -196,7 +200,14 @@ class TestScreenshotHasItsOwnBudget:
                 screenshot_config=ScreenshotConfig(enabled=True),
                 output_dir=tmp_path,
             )
-        assert loop.time() - started >= 0.35  # capture + title exceeded 300ms
+        # Both ran in full, one after the other: together they outlasted the
+        # 300 ms page budget, and the fetch still succeeded
+        assert finished == ["capture", "title"]
+        # asyncio fires a timer up to one clock tick early and the clock
+        # itself moves in ticks (15.6 ms on Windows): 0.35 s of sleeps can
+        # measure 0.344 s there. Three ticks of margin still leave > 0.3 s.
+        tick = time.get_clock_info("monotonic").resolution
+        assert loop.time() - started >= 0.35 - 3 * tick
         assert result.screenshot_path == shot
         assert "screenshot_error" not in result.metadata
         assert "Test content." in result.content
