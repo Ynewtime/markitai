@@ -123,7 +123,7 @@ async def test_only_successful_selector_wait_gets_stabilization(
     if selector_found:
         # Waits for the page to settle, at most extra_wait_ms
         settle.assert_awaited_once()
-        assert settle.await_args.args[2] == 0.5
+        assert settle.await_args_list[0].args[2] == 0.5
     else:
         settle.assert_not_awaited()
 
