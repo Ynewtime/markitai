@@ -2,14 +2,19 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
+#[path = "support/console.rs"]
+mod console;
+
 fn invoke(root: &Path, args: &[&str]) -> Output {
     invoke_env(root, args, &[])
 }
 fn invoke_env(root: &Path, args: &[&str], overrides: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     // The messages asserted here are English with the Unicode marks: no
-    // language, locale or terminal setting of the machine running the tests
-    // may choose otherwise (Windows would fall back to its display language).
+    // language, locale, terminal setting or console code page of the machine
+    // running the tests may choose otherwise (Windows would fall back to its
+    // display language).
+    console::detached(&mut command);
     for name in ["LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LANG", "TERM"] {
         command.env_remove(name);
     }

@@ -113,10 +113,14 @@ MARKITAI_LANG=zh markitai doctor
 - 无法显示这些标记的输出改用 `+ ! x > - o ? *`：Unix 上字符集不是 UTF-8 的 locale
   （`C`/`POSIX` 或未设置按 UTF-8 处理，与 Python 相同），以及不能处理转义序列的
   Windows 控制台（Windows 10 1511 之前的版本，或勾选了“使用旧版控制台”）。
-  Windows 10 及以后的控制台主机、Windows Terminal、VS Code、mintty 与 SSH 会话
-  都显示 Unicode 标记。Windows 上的管道与文件输出和 macOS/Linux 一样是 UTF-8、
-  使用 Unicode 标记，与控制台代码页无关（Python markitai 也写 UTF-8）；按其他代码页
-  解码的读取方会把所有非 ASCII 字符显示错，见[故障排查](troubleshooting.md)。
+  Windows 10 及以后的控制台主机、Windows Terminal、VS Code、mintty 与 SSH 终端
+  会话都显示 Unicode 标记。
+- Windows 上的管道与文件输出仍是 UTF-8，标记跟随所附控制台的输出代码页：Windows
+  PowerShell 按这个代码页（`[Console]::OutputEncoding`）解码程序的输出，所以只有
+  代码页为 65001（UTF-8）时使用 Unicode 标记，其他代码页（默认的 437、936 等）
+  使用 ASCII 标记，不会出现 `Γ£ô` 这样的乱码。没有控制台的进程（服务、分离启动
+  的进程）没有代码页可跟随，保持 Unicode 标记。转圈字符与状态行的省略号与标记
+  采用同一判断。见[故障排查](troubleshooting.md)。
 - 只用 8 种普通颜色加灰色 90，浅色与深色主题都清晰；经典蓝底 Windows PowerShell
   窗口把暗黄显示成近白色，在那里警告、错误、成功与青色改用亮色槽。
 

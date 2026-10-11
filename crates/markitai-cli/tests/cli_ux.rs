@@ -5,6 +5,9 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+#[path = "support/console.rs"]
+mod console;
+
 /// A valid 1x1 RGBA PNG (every chunk checksum correct).
 const TINY_PNG: &[u8] = &[
     137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
@@ -41,6 +44,7 @@ impl Setup {
 
     fn command(&self, extra: &[(&str, &str)]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
+        console::detached(&mut command);
         command.env_clear();
         for name in ["PATH", "SYSTEMROOT", "TMPDIR"] {
             if let Some(value) = std::env::var_os(name) {

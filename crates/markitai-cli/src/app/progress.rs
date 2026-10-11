@@ -74,14 +74,16 @@ pub(super) fn columns() -> usize {
 }
 
 /// `text` cut to `limit` columns, keeping its end (the file name) and marking
-/// the cut with an ellipsis at the start.
-fn fit(text: &str, limit: usize) -> String {
+/// the cut with an ellipsis at the start: `…`, or `...` where the output takes
+/// no Unicode marks.
+fn fit(text: &str, limit: usize, unicode: bool) -> String {
     let total: usize = text.chars().map(width).sum();
     if total <= limit {
         return text.to_owned();
     }
+    let ellipsis = if unicode { "…" } else { "..." };
     let mut kept = Vec::new();
-    let mut used = 1; // the ellipsis
+    let mut used = ellipsis.chars().count();
     for character in text.chars().rev() {
         let columns = width(character);
         if used + columns > limit {
@@ -90,7 +92,8 @@ fn fit(text: &str, limit: usize) -> String {
         used += columns;
         kept.push(character);
     }
-    std::iter::once('…').chain(kept.into_iter().rev()).collect()
+    let kept: String = kept.into_iter().rev().collect();
+    format!("{ellipsis}{kept}")
 }
 
 fn clock(seconds: u64) -> String {
@@ -146,11 +149,12 @@ fn batch_line(
     lang: Lang,
     columns: usize,
 ) -> String {
-    let (head, tail) = batch_parts(done, total, name, elapsed, lang, columns);
+    let (head, tail) = batch_parts(done, total, name, elapsed, lang, columns, true);
     head + &tail
 }
 
-/// [`batch_line`] as the counter and name, and the clock, which is shown in gray.
+/// [`batch_line`] as the counter and name, and the clock, which is shown in
+/// gray; `unicode` is the marks choice of stderr.
 fn batch_parts(
     done: usize,
     total: usize,
@@ -158,6 +162,7 @@ fn batch_parts(
     elapsed: Duration,
     lang: Lang,
     columns: usize,
+    unicode: bool,
 ) -> (String, String) {
     let counter = format!("[{done}/{total}]");
     let elapsed = clock(elapsed.as_secs());
@@ -176,9 +181,9 @@ fn batch_parts(
         if counter.len() + tail_width <= limit {
             return (counter, tail);
         }
-        return (fit(&counter, limit), String::new());
+        return (fit(&counter, limit, unicode), String::new());
     }
-    (format!("{counter} {}", fit(name, room)), tail)
+    (format!("{counter} {}", fit(name, room, unicode)), tail)
 }
 
 /// The status line of a batch. Dropping it erases the line.
@@ -212,12 +217,21 @@ impl Progress {
         self.drawn = Some(Instant::now());
         let done = done.min(self.total);
         let elapsed = self.started.elapsed();
-        let (head, tail) = batch_parts(done, self.total, current, elapsed, i18n::lang(), columns());
+        let style = Style::stderr();
+        let (head, tail) = batch_parts(
+            done,
+            self.total,
+            current,
+            elapsed,
+            i18n::lang(),
+            columns(),
+            style.unicode,
+        );
         let line = format!("{head}{tail}");
         // The clock changes once a second; an identical line is not worth
         // terminal traffic (unless something erased it since).
         if line != self.line || !SHOWN.load(Ordering::SeqCst) {
-            let styled = format!("{head}{}", Style::stderr().paint(Tone::Secondary, &tail));
+            let styled = format!("{head}{}", style.paint(Tone::Secondary, &tail));
             draw(&line, &styled);
             self.line = line;
         }
@@ -237,8 +251,8 @@ impl Drop for Progress {
 }
 
 /// A line for one long conversion: `⠋ Converting name … 7s`, the spinner in
-/// the accent colour (`| / - \\` where the output takes no Unicode marks) and
-/// the seconds in gray. It appears only
+/// the accent colour (`| / - \\` and `...` where the output takes no Unicode
+/// marks) and the seconds in gray. It appears only
 /// after the conversion has taken [`SPINNER_AFTER`], runs on its own thread
 /// and erases itself when dropped.
 pub(super) struct Spinner {
@@ -283,6 +297,7 @@ impl Spinner {
                 let name = fit(
                     &name,
                     room.saturating_sub(head.chars().map(width).sum::<usize>() + tail.len()),
+                    style.unicode,
                 );
                 draw(
                     &format!("{head}{name}{tail}"),
@@ -372,6 +387,19 @@ mod tests {
         // Wide characters count double.
         let wide = batch_line(1, 2, &"报告".repeat(30), Duration::ZERO, Lang::En, 40);
         assert!(wide.chars().map(width).sum::<usize>() < 40, "{wide}");
+        // Where stderr takes no Unicode marks, the cut is marked with dots.
+        let (head, _) = batch_parts(
+            3,
+            9,
+            "a/very/long/directory/structure/final-report-2026.pdf",
+            Duration::ZERO,
+            Lang::En,
+            60,
+            false,
+        );
+        assert_eq!(head, "[3/9] ...tory/structure/final-report-2026.pdf");
+        assert_eq!(fit("abcdefgh", 6, false), "...fgh");
+        assert_eq!(fit("abcdefgh", 6, true), "…defgh");
         // A terminal too narrow for a name still gets the counter.
         assert_eq!(
             batch_line(1, 2, "name.pdf", Duration::ZERO, Lang::En, 10),

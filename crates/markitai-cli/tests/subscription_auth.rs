@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "support/console.rs"]
+mod console;
 #[path = "../../markitai-core/src/subscription/fake_runtime.rs"]
 mod fake_runtime;
 
@@ -250,7 +252,7 @@ fn claude_status_and_login_delegate_to_official_runtime_with_private_auth_home()
     }
     // A signed-out runtime is one command away: the text status says which.
     fixture.state("signed-out", 0);
-    let text = command()
+    let text = console::detached(&mut command())
         .args(["auth", "claude", "status"])
         .output()
         .unwrap();

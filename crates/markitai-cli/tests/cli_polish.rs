@@ -1,9 +1,20 @@
 use serde_json::{Value, json};
+use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Output};
 
+#[path = "support/console.rs"]
+mod console;
+
 fn command(root: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
+    let mut command = isolated(env!("CARGO_BIN_EXE_markitai"), root);
+    console::detached(&mut command);
+    command
+}
+
+/// `program` in an environment that names only `root`, with English asked for.
+fn isolated(program: impl AsRef<OsStr>, root: &Path) -> Command {
+    let mut command = Command::new(program);
     command.env_clear();
     for key in ["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "ComSpec"] {
         if let Some(value) = std::env::var_os(key) {
@@ -79,6 +90,72 @@ fn configuration_warnings_are_advisory_explicit_and_separate_from_errors() {
     assert!(invalid.stdout.is_empty());
     assert!(String::from_utf8_lossy(&invalid.stderr).starts_with("✗ "));
     assert!(!String::from_utf8_lossy(&invalid.stderr).contains("  ! "));
+}
+
+#[test]
+fn a_dumb_terminal_gets_the_ascii_marks_in_a_pipe_too() {
+    let root = tempfile::tempdir().unwrap();
+    let dumb = command(root.path())
+        .env("TERM", "dumb")
+        .args(["config", "validate"])
+        .output()
+        .unwrap();
+    assert!(dumb.status.success());
+    assert_eq!(dumb.stdout, b"+ Configuration is valid\n");
+}
+
+/// Windows marks in a pipe or a file follow the output code page of the
+/// console markitai is attached to, the page Windows PowerShell decodes a
+/// program's output with: the ASCII set at 437, the Unicode marks at 65001
+/// and without a console.
+#[cfg(windows)]
+#[test]
+fn windows_redirected_marks_follow_the_console_code_page() {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    use windows_sys::Win32::System::Console::GetConsoleOutputCP;
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+    let root = tempfile::tempdir().unwrap();
+    let system = Path::new(&std::env::var_os("SYSTEMROOT").expect("SYSTEMROOT")).join("System32");
+    let runner = unsafe { GetConsoleOutputCP() };
+    for (page, expected) in [
+        (437, "+ Configuration is valid\n"),
+        (65001, "✓ Configuration is valid\n"),
+    ] {
+        let result = root.path().join(format!("validate-{page}.txt"));
+        let active = root.path().join(format!("page-{page}.txt"));
+        // cmd runs in a hidden console of its own, so the page it sets stays
+        // there; markitai, started by cmd, shares that console and writes to
+        // a file. The second chcp records the page that was in effect.
+        let shell = isolated(system.join("cmd.exe"), root.path())
+            .creation_flags(CREATE_NO_WINDOW)
+            .raw_arg(format!(
+                r#"/d /s /c ""{chcp}" {page} >nul && "{markitai}" config validate >"{result}" 2>&1 & "{chcp}" >"{active}""#,
+                chcp = system.join("chcp.com").display(),
+                markitai = env!("CARGO_BIN_EXE_markitai"),
+                result = result.display(),
+                active = active.display(),
+            ))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let written = std::fs::read(&result).unwrap_or_default();
+        assert_eq!(
+            String::from_utf8_lossy(&written),
+            expected,
+            "code page {page}: {} {}",
+            String::from_utf8_lossy(&std::fs::read(&active).unwrap_or_default()),
+            String::from_utf8_lossy(&shell.stderr)
+        );
+    }
+    assert_eq!(
+        unsafe { GetConsoleOutputCP() },
+        runner,
+        "the code page of the test runner's own console changed"
+    );
+    // Without a console there is no page to follow.
+    let detached = output(root.path(), &["config", "validate"]);
+    assert_eq!(detached.stdout, "✓ Configuration is valid\n".as_bytes());
 }
 
 #[test]

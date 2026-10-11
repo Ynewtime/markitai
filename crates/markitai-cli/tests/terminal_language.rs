@@ -6,9 +6,13 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+#[path = "support/console.rs"]
+mod console;
+
 /// A clean environment: nothing from the developer's locale leaks in.
 fn command(root: &Path, envs: &[(&str, &str)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
+    console::detached(&mut command);
     command.env_clear();
     for name in ["SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {

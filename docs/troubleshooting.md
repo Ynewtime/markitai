@@ -392,13 +392,16 @@ and not with `-q`, `--json` or `TERM=dumb`. Piped or redirected output carries o
 lines described above, unchanged. A single conversion that takes longer than two
 seconds shows a spinner line the same way.
 
-**`Γ£ô` instead of `✓` in PowerShell.** Piped and redirected output is UTF-8 on every
-system, as Python markitai writes it. Windows PowerShell and PowerShell 7 decode the
-output of a program they capture (`$out = markitai …`, `markitai … | Select-String …`)
-with `[Console]::OutputEncoding`, the console's code page (437 or 936 by default), so
-the marks and every other non-ASCII character (Chinese, file names, Markdown on
-stdout) come out wrong. Run `[Console]::OutputEncoding = [Text.Encoding]::UTF8`
-first (in cmd, `chcp 65001`). Output shown in the console itself is not affected.
+**`+` and `-` instead of `✓` and `•` in piped output on Windows.** Windows PowerShell
+and PowerShell 7 decode the output of a program they capture (`$out = markitai …`,
+`markitai … | Out-File …`) with `[Console]::OutputEncoding`, the console's code page
+(437 or 936 by default). Read that way, the UTF-8 bytes of `✓` show as `Γ£ô`, so a pipe
+or file gets the ASCII marks (`+ ! x > - o ? *`) unless that code page is 65001
+(UTF-8); a process without a console keeps the Unicode marks. Other non-ASCII text
+(Chinese, file names, Markdown on stdout) is UTF-8 all the same and comes out wrong at
+another code page. Run `[Console]::OutputEncoding = [Text.Encoding]::UTF8` first (in
+cmd, `chcp 65001`): the marks are then Unicode and all text decodes correctly. Output
+shown in the console itself is not affected.
 
 **`✗ Unsupported file format: '.xyz'`.** The message lists every recognized
 extension. Rename files that have the wrong extension.

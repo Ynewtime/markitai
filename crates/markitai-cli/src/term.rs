@@ -11,8 +11,11 @@
 //!
 //! Each stream is judged on its own: colour on a terminal unless `NO_COLOR` or
 //! `TERM=dumb` (`FORCE_COLOR` turns it on off a terminal); the ASCII marks where
-//! the output cannot draw the Unicode ones; wrapping with a hanging indent only
-//! on a terminal, so piped output keeps one line per message.
+//! the output cannot draw the Unicode ones, or where its reader would decode
+//! them with another code page (a Windows pipe); wrapping with a hanging indent
+//! only on a terminal, so piped output keeps one line per message. Glyphs drawn
+//! around the marks (the spinner, the status line's ellipsis) follow the same
+//! choice.
 
 use std::io::IsTerminal;
 use std::sync::OnceLock;
@@ -103,7 +106,8 @@ pub(crate) const EDGE: usize = if cfg!(windows) { 1 } else { 0 };
 const MIN_ROOM: usize = 20;
 
 impl Style {
-    /// What a pipe receives: Unicode marks, no colour, one line per message.
+    /// What a pipe receives on macOS and Linux: Unicode marks, no colour, one
+    /// line per message.
     #[cfg(test)]
     pub(crate) const PLAIN: Self = Self {
         color: false,
@@ -431,9 +435,43 @@ fn detect(stream: Stream) -> Style {
     });
     Style {
         color,
-        unicode: !dumb && platform::unicode(stream),
+        unicode: !dumb && platform::unicode(stream, terminal),
         width,
         bright: color && terminal && platform::classic_powershell(stream),
+    }
+}
+
+/// What a Windows output stream is, as far as the marks are concerned.
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowsOutput {
+    /// A console; `vt` says whether it reads escape sequences.
+    Console { vt: bool },
+    /// A terminal that is not a console: mintty or another msys or Cygwin
+    /// pseudo-terminal, which decodes the UTF-8 bytes itself.
+    Pty,
+    /// A pipe or a file, with the output code page of the console the
+    /// process is attached to; `None` without a console (a service, a
+    /// detached process).
+    Redirected { code_page: Option<u32> },
+}
+
+/// Whether a Windows stream gets the Unicode marks. A console draws them when
+/// it reads escape sequences (Windows 10 version 1511 and later, Windows
+/// Terminal, VS Code); one that cannot (older Windows, the console host's "Use
+/// legacy console") gets the ASCII set. A pipe or a file follows the console's
+/// output code page, because Windows PowerShell decodes a program's output with
+/// it (`[Console]::OutputEncoding`): read at code page 437, the UTF-8 bytes of
+/// `✓` show as `Γ£ô`. So redirected output carries the Unicode marks only at
+/// 65001 (UTF-8). Without a console there is no code page to follow, and the
+/// marks stay Unicode, as on macOS and Linux.
+#[cfg(any(windows, test))]
+fn windows_unicode(output: WindowsOutput) -> bool {
+    const UTF8: u32 = 65001;
+    match output {
+        WindowsOutput::Console { vt } => vt,
+        WindowsOutput::Pty => true,
+        WindowsOutput::Redirected { code_page } => code_page.is_none_or(|page| page == UTF8),
     }
 }
 
@@ -468,7 +506,7 @@ mod platform {
     /// `zh_CN`) gets the ASCII set; the C locale or none counts as UTF-8, as
     /// Python's runtime takes it (PEP 538/540), since scripts and containers
     /// set it on UTF-8 terminals.
-    pub(super) fn unicode(_: Stream) -> bool {
+    pub(super) fn unicode(_: Stream, _terminal: bool) -> bool {
         utf8_output()
     }
 
@@ -568,7 +606,8 @@ mod platform {
     }
 
     /// Whether `stream` is a Windows console, rather than a pipe, a file or
-    /// an msys terminal (a pipe that mintty reads).
+    /// an msys terminal (a pipe that mintty reads, which the standard
+    /// library counts as a terminal).
     fn console(stream: Stream) -> bool {
         let Some(handle) = handle(stream) else {
             return false;
@@ -579,16 +618,21 @@ mod platform {
         unsafe { GetConsoleMode(handle, &mut mode) != 0 }
     }
 
-    /// The Unicode marks, as on macOS and Linux, everywhere except a console
-    /// that cannot read escape sequences: Windows before 10 (version 1511) or
-    /// the console host's "Use legacy console" option, the consoles Python
-    /// markitai's Rich check also gives the ASCII set. Redirected output is
-    /// UTF-8 whatever the console's code page, as Python markitai writes it,
-    /// so it carries the marks like any other text; a reader that decodes it
-    /// with another code page shows every non-ASCII character wrongly, not
-    /// only the marks.
-    pub(super) fn unicode(stream: Stream) -> bool {
-        !console(stream) || ansi(stream)
+    /// The marks rule of [`super::windows_unicode`] for `stream`; `terminal`
+    /// is the standard library's answer, a console or an msys terminal.
+    pub(super) fn unicode(stream: Stream, terminal: bool) -> bool {
+        use super::WindowsOutput;
+        super::windows_unicode(if console(stream) {
+            WindowsOutput::Console { vt: ansi(stream) }
+        } else if terminal {
+            WindowsOutput::Pty
+        } else {
+            // SAFETY: GetConsoleOutputCP takes no arguments; 0 means no console.
+            let page = unsafe { GetConsoleOutputCP() };
+            WindowsOutput::Redirected {
+                code_page: (page != 0).then_some(page),
+            }
+        })
     }
 
     /// Chinese on a console needs a font that has it: a modern terminal, or
@@ -640,7 +684,7 @@ mod platform {
     pub(super) fn ansi(_: Stream) -> bool {
         true
     }
-    pub(super) fn unicode(_: Stream) -> bool {
+    pub(super) fn unicode(_: Stream, _terminal: bool) -> bool {
         true
     }
     pub(super) fn cjk_capable() -> bool {
@@ -852,6 +896,28 @@ mod tests {
             ASCII.prompt(0, "Clear caches? [y/N]: "),
             "? Clear caches? [y/N]: "
         );
+    }
+
+    #[test]
+    fn windows_consoles_follow_escape_sequences_and_pipes_the_code_page() {
+        use WindowsOutput::{Console, Pty, Redirected};
+        // A console: Unicode where it reads escape sequences, ASCII on a
+        // legacy one.
+        assert!(windows_unicode(Console { vt: true }));
+        assert!(!windows_unicode(Console { vt: false }));
+        // mintty and other msys terminals decode UTF-8 themselves.
+        assert!(windows_unicode(Pty));
+        // A pipe or a file: only a UTF-8 console code page reads the marks.
+        for page in [437, 850, 936, 1252] {
+            assert!(!windows_unicode(Redirected {
+                code_page: Some(page)
+            }));
+        }
+        assert!(windows_unicode(Redirected {
+            code_page: Some(65001)
+        }));
+        // No console (a service, a detached process): no code page to follow.
+        assert!(windows_unicode(Redirected { code_page: None }));
     }
 
     #[test]
