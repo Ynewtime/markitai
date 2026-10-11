@@ -116,7 +116,7 @@ fn help_explains_output_privacy_cache_and_unsupported_workflows() {
             "implies --screenshot",
             "quiet by default",
             "log.dir",
-            "OpenAI Batch API",
+            "OpenAI or Anthropic Batch API",
             "original -o directory",
             "does not cancel it",
             "with Workers AI in your Cloudflare account",

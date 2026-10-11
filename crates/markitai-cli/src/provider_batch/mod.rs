@@ -253,7 +253,7 @@ pub(super) fn submit(
                             record.warnings.extend(decoded.warnings);
                         }
                         provider::Prepared::Request(plan) => {
-                            let custom_id = format!("doc-{index}");
+                            let custom_id = provider::request_id(session.api(), &generation, index);
                             serde_json::to_writer(
                                 &mut request_bytes,
                                 &plan.request(&custom_id).map_err(runtime)?,

@@ -14,7 +14,8 @@ endpoint. It does not need the original input directory. Credentials are resolve
 again from the current configuration and remain in memory. Inline configuration
 and keys are never inserted into a suggested collection command or saved job.
 
-Only OpenAI's Batch API is implemented; see [supported scope](#initial-supported-scope).
+OpenAI's Batch API and Anthropic's Message Batches are implemented; see
+[supported scope](#initial-supported-scope) and [Anthropic](#anthropic-message-batches).
 
 ## Resuming an unfinished job
 
@@ -41,8 +42,8 @@ Batch creation still cannot enforce a continuation dollar budget.
 
 ## Initial supported scope
 
-The current implementation accepts one effective OpenAI deployment and structured
-text documents that fit one existing document request. Repeated identical entries
+The current implementation accepts one effective OpenAI or Anthropic deployment
+and structured text documents that fit one existing document request. Repeated identical entries
 may share that identity; different endpoints, accounts, models, token limits or
 fallback groups are rejected. A custom OpenAI-compatible endpoint is useful for
 local protocol tests, but does not establish that the remote service implements
@@ -55,7 +56,7 @@ Markdown. The slide-marker preference is saved at preparation time and applied
 after restoring protected markers; changing it during collection does not alter
 that job's output. Long documents, pure mode, OCR, screenshots and image analysis are
 currently rejected rather than silently sent through a paid live fallback.
-Anthropic Batch and legacy Python Batch-state import remain unfinished scope. Ordinary `--resume` refuses an input scope with an
+Legacy Python Batch-state import remains unfinished scope. Ordinary `--resume` refuses an input scope with an
 unresolved native provider job.
 The CLI currently permits one unfinished provider job per output directory.
 A preparation lock enforces that boundary before any base file is published,
@@ -78,6 +79,40 @@ Markdown with a warning and its observed usage. No automatic live request is
 made. This differs from the reference's automatic per-item live fallback. Output
 ownership conflicts and edited files are errors and cannot be downgraded into
 successful fallback.
+
+## Anthropic Message Batches
+
+An `anthropic/<model>` deployment submits to Message Batches
+(`POST /v1/messages/batches`) with its `x-api-key` and `anthropic-version:
+2023-06-01`. The lifecycle above is the same, with these differences:
+
+- There is no file upload. The upload step only validates the saved
+  `requests.jsonl` (each row exactly `custom_id` and `params`, one model, a
+  positive `max_tokens`) and records its digest; the single create call sends
+  those rows inline after checking that they still match the digest.
+- Each request is the live Messages request: the system prompt, the document
+  and the same structured mode (forced tool for Claude Haiku 5.5, JSON schema
+  for the other reviewed Claude models), with `max_tokens` from the
+  deployment or 8,192.
+- Custom IDs are `<submission nonce>-<n>`. A Message Batch keeps no metadata,
+  so these IDs are the identity proof: reconciling an uncertain creation lists
+  batches of the same size and opens the results of ended ones (at most four),
+  binding only the one whose first result names one of this submission's IDs.
+  A same-size batch that is still processing leaves the search unresolved, and
+  `--llm-batch-collect ID` for an uncertain attempt waits until that batch has
+  ended. Nothing in this search can lead to a second create.
+- Status: `in_progress` and `canceling` are pending; an ended batch is
+  completed, cancelled when cancellation began, or expired when no request ran
+  before the 24-hour deadline. Results are read from
+  `/v1/messages/batches/{id}/results` built from the validated ID, never from
+  the batch's `results_url`, and matched by custom ID.
+- `errored`, `canceled` and `expired` results carry no message and no usage
+  (Anthropic does not bill them); they are item failures handled by
+  `llm.on_failure` like OpenAI error rows. Succeeded messages are priced from
+  the catalog's batch rates (half the list price).
+
+Anthropic's own limits are 100,000 requests or 256 MB per batch; markitai's
+transport limits below are lower and apply first.
 
 ## Durable evidence and output ownership
 

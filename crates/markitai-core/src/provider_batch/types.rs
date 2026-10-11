@@ -3,6 +3,49 @@ use serde_json::Value;
 use std::fmt;
 
 pub const ENDPOINT: &str = "/v1/chat/completions";
+/// The identity Anthropic Message Batches give their remote jobs.
+pub const MESSAGES_ENDPOINT: &str = "/v1/messages/batches";
+/// Anthropic batches carry their requests inline in the create call, so there
+/// is no uploaded file; this stands for that input wherever state names one.
+pub const INLINE_INPUT: &str = "file-inline";
+
+/// The Batch API a client speaks, chosen by the configured provider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Api {
+    /// Upload a JSONL file, then create a batch that names it.
+    OpenAi,
+    /// Message Batches: requests travel inline; results stream back by ID.
+    Anthropic,
+}
+impl Api {
+    pub fn for_provider(provider: &str) -> Option<Self> {
+        match provider {
+            "openai" => Some(Self::OpenAi),
+            "anthropic" => Some(Self::Anthropic),
+            _ => None,
+        }
+    }
+}
+
+/// The custom ID of the request at `index` of the submission `nonce`.
+/// Anthropic's carry the nonce: a Message Batch keeps no metadata, so the IDs
+/// in its results are what proves an uncertain creation later.
+pub fn request_id(api: Api, nonce: &str, index: usize) -> String {
+    match api {
+        Api::OpenAi => format!("doc-{index}"),
+        Api::Anthropic => format!("{}{index}", nonce_prefix(nonce)),
+    }
+}
+
+/// The custom-ID prefix of an Anthropic submission: its nonce without hyphens.
+pub(super) fn nonce_prefix(nonce: &str) -> String {
+    format!("{}-", nonce.replace('-', ""))
+}
+
+/// A provider batch ID: OpenAI's `batch_…` or Anthropic's `msgbatch_…`.
+pub fn batch_id(value: &str) -> bool {
+    identifier(value, "batch") || identifier(value, "msgbatch")
+}
 
 /// Byte limits apply before JSON parsing, including decompressed response bytes.
 #[derive(Clone, Copy, Debug)]
@@ -172,7 +215,7 @@ impl RemoteIdentity {
         self.batch
     }
     pub fn matches(&self, uploaded: &UploadedInput, nonce: &str) -> bool {
-        self.endpoint == ENDPOINT
+        (self.endpoint == ENDPOINT || self.endpoint == MESSAGES_ENDPOINT)
             && self.batch.input_file_id == uploaded.file_id
             && self.submission_nonce.as_deref() == Some(nonce)
     }

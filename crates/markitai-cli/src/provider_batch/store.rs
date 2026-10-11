@@ -412,7 +412,7 @@ impl Store {
         limits: Limits,
     ) -> Result<Self> {
         let limits = limits.check()?;
-        if !opaque(batch_id, "batch") {
+        if !markitai_core::provider_batch::batch_id(batch_id) {
             return Err(Error::Invalid("Provider batch ID is invalid"));
         }
         let root = Root::open(output, allow_symlinks, false)?;
@@ -691,7 +691,7 @@ impl Store {
         if !matches!(
             self.state.phase,
             Phase::Creating | Phase::CreateUncertain | Phase::Submitted
-        ) || !opaque(&batch.id, "batch")
+        ) || !markitai_core::provider_batch::batch_id(&batch.id)
             || self
                 .state
                 .uploaded
@@ -1433,7 +1433,7 @@ fn absolute_path(path: &Path) -> bool {
 fn validate_endpoint(endpoint: &Endpoint) -> Result<()> {
     let url = url::Url::parse(&endpoint.api_base)
         .map_err(|_| Error::Invalid("Provider batch endpoint is invalid"))?;
-    if endpoint.provider != "openai"
+    if markitai_core::provider_batch::Api::for_provider(&endpoint.provider).is_none()
         || endpoint.api_base.len() > 8192
         || endpoint.api_base.trim() != endpoint.api_base
         || endpoint.api_base.chars().any(char::is_control)
@@ -1639,7 +1639,7 @@ fn validate_job(job: &Job, output: &Path, limits: Limits) -> Result<()> {
         }
     }
     if let Some(batch) = &job.batch
-        && (!opaque(&batch.id, "batch")
+        && (!markitai_core::provider_batch::batch_id(&batch.id)
             || job
                 .uploaded
                 .as_ref()

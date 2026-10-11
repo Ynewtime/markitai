@@ -14,6 +14,13 @@ pub struct Endpoint {
     pub api_base: String,
     pub model: String,
 }
+impl Endpoint {
+    /// Plans and sessions only hold OpenAI or Anthropic endpoints.
+    pub fn api(&self) -> crate::provider_batch::Api {
+        crate::provider_batch::Api::for_provider(&self.provider)
+            .unwrap_or(crate::provider_batch::Api::OpenAi)
+    }
+}
 
 /// Credentials live only in this process and cannot be serialized with a plan.
 pub struct Session {
@@ -86,11 +93,15 @@ impl Session {
             ));
         }
         let first = entries.first().ok_or(Error::NoModelConfigured)?;
-        if first.provider != "openai" || first.protocol != Protocol::Chat {
-            return Err(Error::Unsupported(
-                "This Provider Batch implementation supports OpenAI text requests".into(),
-            ));
-        }
+        let route = match (first.provider.as_str(), first.protocol) {
+            ("openai", Protocol::Chat) => "/chat/completions",
+            ("anthropic", Protocol::Anthropic) => "/messages",
+            _ => {
+                return Err(Error::Unsupported(
+                    "Provider Batch supports OpenAI and Anthropic text requests".into(),
+                ));
+            }
+        };
         if entries.iter().any(|entry| {
             entry.provider != first.provider
                 || entry.model != first.model
@@ -121,10 +132,8 @@ impl Session {
         }
         let base_path = endpoint
             .path()
-            .strip_suffix("/chat/completions")
-            .ok_or_else(|| {
-                Error::Config("Provider Batch requires a chat completions endpoint".into())
-            })?
+            .strip_suffix(route)
+            .ok_or_else(|| Error::Config(format!("Provider Batch requires a {route} endpoint")))?
             .to_owned();
         endpoint.set_path(&base_path);
         let identity = Endpoint {
@@ -160,13 +169,19 @@ impl Session {
         &self,
         remaining: Duration,
     ) -> Result<crate::provider_batch::Client> {
-        crate::provider_batch::Client::new(
+        crate::provider_batch::Client::for_api(
+            self.api(),
             &self.identity.api_base,
             self.entry.key.as_deref().unwrap_or(""),
             self.timeout.min(remaining),
             crate::provider_batch::Limits::default(),
         )
         .map_err(|error| Error::Config(error.to_string()))
+    }
+
+    /// The Batch API of the configured provider.
+    pub fn api(&self) -> crate::provider_batch::Api {
+        self.identity.api()
     }
 
     /// Validate the whole text capability before upload; no silent live fallback.
@@ -284,7 +299,13 @@ impl Plan {
 
     pub fn validate(&self) -> Result<()> {
         if self.version != PLAN_VERSION
-            || self.endpoint.provider != "openai"
+            || crate::provider_batch::Api::for_provider(&self.endpoint.provider).is_none()
+            || (self.endpoint.provider == "anthropic"
+                && self
+                    .request
+                    .get("max_tokens")
+                    .and_then(Value::as_u64)
+                    .is_none_or(|tokens| tokens == 0))
             || self.markdown.trim().is_empty()
             || self.markdown.len() > MAX_DOCUMENT_BYTES
             || self.source.len() > 8192
@@ -335,22 +356,43 @@ impl Plan {
                 "Provider Batch custom ID is invalid".into(),
             ));
         }
-        Ok(
-            json!({"custom_id":custom_id,"method":"POST","url":"/v1/chat/completions","body":self.request}),
-        )
+        Ok(match self.endpoint.api() {
+            crate::provider_batch::Api::OpenAi => {
+                json!({"custom_id":custom_id,"method":"POST","url":"/v1/chat/completions","body":self.request})
+            }
+            crate::provider_batch::Api::Anthropic => {
+                json!({"custom_id":custom_id,"params":self.request})
+            }
+        })
+    }
+
+    fn protocol(&self) -> Protocol {
+        match self.endpoint.api() {
+            crate::provider_batch::Api::OpenAi => Protocol::Chat,
+            crate::provider_batch::Api::Anthropic => Protocol::Anthropic,
+        }
     }
 
     fn deployment(&self) -> Deployment {
+        let protocol = self.protocol();
         Deployment {
-            id: format!("openai/{}", self.endpoint.model),
+            id: format!("{}/{}", self.endpoint.provider, self.endpoint.model),
             explicit_id: None,
             group: "default".into(),
             model: self.endpoint.model.clone(),
-            provider: "openai".into(),
+            provider: self.endpoint.provider.clone(),
             weight: 1,
             key: None,
-            endpoint: format!("{}/chat/completions", self.endpoint.api_base),
-            protocol: Protocol::Chat,
+            endpoint: format!(
+                "{}{}",
+                self.endpoint.api_base,
+                if protocol == Protocol::Anthropic {
+                    "/messages"
+                } else {
+                    "/chat/completions"
+                }
+            ),
+            protocol,
             max_tokens: None,
             reasoning_effort: None,
             supports_vision: None,
@@ -413,7 +455,7 @@ impl Plan {
                 mode: self.mode,
                 schema: structured::Schema::Document,
             }
-            .decode(Protocol::Chat, body)
+            .decode(self.protocol(), body)
             .map_err(|failure| failure.error)?;
             let answer = self.answer(&structured::parse(&text)?, false)?;
             let mut warnings: Vec<String> = answer.salvaged.iter().cloned().collect();
@@ -661,6 +703,71 @@ mod tests {
                 .is_err()
         );
     }
+    #[test]
+    fn anthropic_plans_send_message_params_and_decode_tool_answers_at_batch_prices() {
+        let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":"anthropic/claude-haiku-5-5","api_key":"fixture-api-secret"}}]},"cache":{"enabled":false}});
+        let session = Session::configured(&cfg, &HashMap::new()).unwrap();
+        assert_eq!(session.api(), crate::provider_batch::Api::Anthropic);
+        assert_eq!(session.identity().api_base, "https://api.anthropic.com/v1");
+        let text = "# Document\n\nSee [the source](https://example.test/a).\n";
+        let plan = plan(&cfg, text);
+        let saved = serde_json::to_string(&plan).unwrap();
+        assert!(!saved.contains("fixture-api-secret"));
+        let row = plan.request("nonce-0").unwrap();
+        assert_eq!(row.as_object().unwrap().len(), 2);
+        let params = &row["params"];
+        assert_eq!(params["model"], "claude-haiku-5-5");
+        assert_eq!(params["max_tokens"], 8192);
+        assert!(params["system"].is_string());
+        assert_eq!(params["tool_choice"]["name"], "MarkitaiDocument");
+        let protected = chunks::Protected::new(text);
+        let answer = json!({"cleaned_markdown":protected.text,"frontmatter":{"description":"A fixture document","tags":["fixture"]}});
+        let item = crate::provider_batch::ResultItem {
+            custom_id: "nonce-0".into(),
+            http_status: Some(200),
+            body: Some(
+                json!({"type":"message","model":"claude-haiku-5-5","stop_reason":"tool_use",
+                "content":[{"type":"tool_use","id":"toolu_fixture","name":"MarkitaiDocument","input":answer}],
+                "usage":{"input_tokens":1000,"output_tokens":100}}),
+            ),
+            error: None,
+            request_id: Some("msg_fixture".into()),
+        };
+        let restored: Plan = serde_json::from_str(&saved).unwrap();
+        let decoded = restored.decode(&item, &cfg).unwrap();
+        assert!(decoded.markdown.contains("https://example.test/a"));
+        assert_eq!(decoded.usage.requests, 1);
+        assert_eq!(decoded.usage.input_tokens, 1000);
+        // Claude Haiku 5.5 at half its $0.10 / $0.50 per MTok list price.
+        assert!((decoded.usage.cost_usd - 0.000075).abs() < 1e-12);
+        // An errored result is not billed and has no body.
+        let errored = crate::provider_batch::ResultItem {
+            http_status: None,
+            body: None,
+            error: Some(json!({"type":"error","error":{"type":"overloaded_error","message":"x"}})),
+            ..item
+        };
+        let failure = restored.decode(&errored, &cfg).err().unwrap();
+        assert_eq!(failure.usage.requests, 0);
+        // A plan without an output limit cannot become a Message Batch row.
+        let mut unlimited = serde_json::to_value(&restored).unwrap();
+        unlimited["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("max_tokens");
+        let unlimited: Plan = serde_json::from_value(unlimited).unwrap();
+        assert!(unlimited.request("nonce-0").is_err());
+    }
+
+    #[test]
+    fn other_providers_are_refused_before_any_batch_work() {
+        let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":"gemini/gemini-3.8-flash","api_key":"fixture"}}]}});
+        let Err(Error::Unsupported(message)) = Session::configured(&cfg, &HashMap::new()) else {
+            panic!("Gemini has no batch transport here");
+        };
+        assert!(message.contains("OpenAI and Anthropic"), "{message}");
+    }
+
     #[test]
     fn exact_cached_answer_avoids_a_new_request_and_preserves_validation() {
         let private = tempfile::tempdir().unwrap();

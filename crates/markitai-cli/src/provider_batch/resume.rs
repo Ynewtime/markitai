@@ -116,8 +116,9 @@ pub(super) fn advance_frozen(
                     .as_ref()
                     .ok_or_else(|| runtime("Frozen upload identity is missing"))?
                     .clone();
+                let requests = store.request_path().map_err(runtime)?;
                 let nonce = store.mark_creating().map_err(runtime)?;
-                match client.create(&uploaded, &nonce) {
+                match client.create(&uploaded, &nonce, &requests) {
                     Ok(batch) => store.bind_batch(batch).map_err(runtime)?,
                     Err(error) => {
                         if matches!(error, provider::Error::CreateUncertain) {

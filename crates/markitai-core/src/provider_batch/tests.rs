@@ -11,13 +11,13 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
-struct Request {
-    method: String,
-    path: String,
-    headers: String,
-    body: Vec<u8>,
+pub(super) struct Request {
+    pub(super) method: String,
+    pub(super) path: String,
+    pub(super) headers: String,
+    pub(super) body: Vec<u8>,
 }
-enum Reply {
+pub(super) enum Reply {
     Bytes(u16, Vec<u8>),
     Redirect(String),
     Truncated(Vec<u8>),
@@ -25,21 +25,21 @@ enum Reply {
     Disconnect,
 }
 impl Reply {
-    fn json(value: Value) -> Self {
+    pub(super) fn json(value: Value) -> Self {
         Self::Bytes(200, serde_json::to_vec(&value).unwrap())
     }
-    fn text(value: String) -> Self {
+    pub(super) fn text(value: String) -> Self {
         Self::Bytes(200, value.into_bytes())
     }
 }
-struct Server {
+pub(super) struct Server {
     address: String,
     requests: Arc<Mutex<Vec<Request>>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 impl Server {
-    fn new(reply: impl Fn(&Request, usize) -> Reply + Send + 'static) -> Self {
+    pub(super) fn new(reply: impl Fn(&Request, usize) -> Reply + Send + 'static) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap().to_string();
@@ -142,7 +142,7 @@ impl Server {
             worker: Some(worker),
         }
     }
-    fn base(&self) -> String {
+    pub(super) fn base(&self) -> String {
         format!("http://{}/prefix/v1", self.address)
     }
     fn client(&self) -> Client {
@@ -157,7 +157,7 @@ impl Server {
         )
         .unwrap()
     }
-    fn requests(&self) -> Vec<Request> {
+    pub(super) fn requests(&self) -> Vec<Request> {
         self.requests.lock().unwrap().clone()
     }
 }
@@ -228,7 +228,7 @@ fn upload_submits_the_validated_snapshot_even_if_original_is_replaced() {
     let root = tempfile::tempdir().unwrap();
     let original = rows(&[request("doc_a"), request("doc_b")]);
     let path = write_input(root.path(), &[request("doc_a"), request("doc_b")]);
-    let snapshot = super::input::snapshot(&path, Limits::default()).unwrap();
+    let snapshot = super::input::snapshot(&path, Limits::default(), Api::OpenAi).unwrap();
     std::fs::write(&path, b"unvalidated replacement").unwrap();
     let server = Server::new(|request, _| {
         assert_eq!(request.path, "/prefix/v1/files");
@@ -372,7 +372,9 @@ fn create_and_retrieve_preserve_identity_without_following_result_urls() {
         Reply::json(batch)
     });
     let client = server.client();
-    let created = client.create(&uploaded(), "attempt_123").unwrap();
+    let created = client
+        .create(&uploaded(), "attempt_123", Path::new("unused.jsonl"))
+        .unwrap();
     assert_eq!(created.status, BatchStatus::Validating);
     let retrieved = client.retrieve(&created.id).unwrap();
     assert_eq!(retrieved.status, BatchStatus::Completed);
@@ -397,7 +399,7 @@ fn ambiguous_create_disconnect_invalid_success_and_5xx_are_never_retried() {
         });
         let error = server
             .client()
-            .create(&uploaded(), "attempt_123")
+            .create(&uploaded(), "attempt_123", Path::new("unused.jsonl"))
             .unwrap_err();
         assert_eq!(error, Error::CreateUncertain);
         assert_eq!(server.requests().len(), 1);
@@ -412,7 +414,7 @@ fn explicit_create_rejection_is_distinct_from_unknown_and_never_retried() {
     assert_eq!(
         server
             .client()
-            .create(&uploaded(), "attempt_123")
+            .create(&uploaded(), "attempt_123", Path::new("unused.jsonl"))
             .unwrap_err(),
         Error::Http(401)
     );
@@ -429,7 +431,9 @@ fn redirects_do_not_forward_auth_or_repeat_post() {
     let client = server.client();
     assert_eq!(client.upload(&path).unwrap_err(), Error::Http(307));
     assert_eq!(
-        client.create(&uploaded(), "attempt_123").unwrap_err(),
+        client
+            .create(&uploaded(), "attempt_123", Path::new("unused.jsonl"))
+            .unwrap_err(),
         Error::CreateUncertain
     );
     assert_eq!(
