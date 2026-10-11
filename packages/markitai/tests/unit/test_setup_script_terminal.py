@@ -1301,28 +1301,42 @@ def test_ci_runs_the_guards_when_only_a_setup_script_changes() -> None:
 
 @_needs_pwsh
 @pytest.mark.parametrize(
-    ("modern", "code_page", "unicode"),
+    ("redirected", "code_page", "modern", "vt", "term", "unicode"),
     [
-        pytest.param("$true", 1252, False, id="ssh-to-a-1252-file"),
-        pytest.param("$false", 437, False, id="console-to-a-437-file"),
-        pytest.param("$true", 65001, True, id="utf8-code-page"),
+        # Windows pipes and files: UTF-8 once the script switched the console
+        # encoding, whatever the shell's own code page was
+        pytest.param("$true", 65001, "$false", "$false", "", True, id="file-utf8"),
+        pytest.param("$true", 437, "$true", "$true", "", False, id="file-not-utf8"),
+        # Consoles: escape sequences on (Windows 10 1511+), or a modern terminal
+        pytest.param("$false", 437, "$false", "$true", "", True, id="console-vt"),
+        pytest.param("$false", 437, "$true", "$false", "", True, id="windows-terminal"),
+        pytest.param("$false", 437, "$false", "$false", "", False, id="legacy-console"),
+        pytest.param("$true", 65001, "$true", "$true", "dumb", False, id="term-dumb"),
     ],
 )
-def test_setup_ps1_redirected_on_windows_uses_the_shells_code_page(
-    tmp_path: Path, modern: str, code_page: int, unicode: bool
+def test_setup_ps1_marks_follow_markitais_rule(
+    tmp_path: Path,
+    redirected: str,
+    code_page: int,
+    modern: str,
+    vt: str,
+    term: str,
+    unicode: bool,
 ) -> None:
-    """`setup.ps1 > setup.log` over SSH wrote UTF-8 box drawing that
-    Get-Content (ANSI in 5.1) showed as mojibake: the script had already
-    switched the console to UTF-8, and SSH counted as a modern terminal."""
+    """Marks mean the same as in markitai (Python and Rust): ASCII only for
+    TERM=dumb, a console without escape sequences, or output that is not
+    UTF-8. A redirect used to get ASCII unless the shell's own code page was
+    65001, although the bytes were UTF-8."""
     body = (
         "$script:OnWindows = $true\n"
         f"$script:ModernTerminal = {modern}\n"
-        f"$script:OriginalOutputEncoding = [pscustomobject]@{{ CodePage = {code_page} }}\n"
-        f"{_powershell_function('Test-OutputRedirected')}"
+        f"function Test-OutputRedirected {{ return {redirected} }}\n"
+        f"function Get-OutputCodePage {{ return {code_page} }}\n"
+        f"function Test-VirtualTerminalConsole {{ return {vt} }}\n"
         f"{_powershell_function('Test-UnicodeMarks')}"
         '"unicode=$(Test-UnicodeMarks)"\n'
     )
-    result = _run_ps(tmp_path, body, runtime=False)
+    result = _run_ps(tmp_path, body, runtime=False, TERM=term)
     assert result.stdout.rstrip().endswith(f"unicode={unicode}"), (
         result.stdout + result.stderr
     )
