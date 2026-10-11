@@ -12,11 +12,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from markitai.cli.streams import configure_standard_streams
+
+# Before the UI modules import markitai.utils.term, which picks the status
+# marks from the streams' encoding
+configure_standard_streams()
+
 # Re-export UI components and i18n (lightweight, always needed)
-from markitai.cli import i18n, ui
+from markitai.cli import i18n, ui  # noqa: E402
 
 # Re-export CLI app
-from markitai.cli.main import app, main
+from markitai.cli.main import app, main  # noqa: E402
 
 # Re-export utilities from refactored modules (lightweight)
 from markitai.utils.cli_helpers import (

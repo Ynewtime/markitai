@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import io
 import sys
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 from rich.console import Console
@@ -135,5 +136,129 @@ class TestAsciiMarks:
     def test_utf8_streams_keep_unicode(self) -> None:
         utf8 = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
         with patch.object(sys, "stdout", utf8), patch.object(sys, "stderr", utf8):
-            if sys.platform != "win32":
-                assert term._streams_take_unicode() is True
+            assert term._streams_take_unicode(legacy_stdout=False) is True
+
+
+_VT = term._ENABLE_VIRTUAL_TERMINAL_PROCESSING
+
+
+class TestWindowsMarks:
+    """Marks mean the same on every platform (owner rule, as in markitai-rust).
+
+    Windows pipes and files get the Unicode marks (the CLI writes UTF-8 to
+    them); so does a console that reads escape sequences, after markitai
+    switches them on; only a console that refuses (legacy conhost) gets the
+    ASCII set. The console API is faked: these run on any OS.
+    """
+
+    @staticmethod
+    def _legacy(mode: int | None, settable: bool = True) -> tuple[bool, list[int]]:
+        calls: list[int] = []
+
+        def set_mode(handle: int, new_mode: int) -> bool:
+            calls.append(new_mode)
+            return settable
+
+        with (
+            patch.object(sys, "platform", "win32"),
+            patch.object(term, "_console_mode", return_value=mode),
+            patch.object(term, "_set_console_mode", side_effect=set_mode),
+        ):
+            return term._legacy_windows_console(term._STD_OUTPUT_HANDLE), calls
+
+    def test_a_pipe_or_file_is_not_a_legacy_console(self) -> None:
+        assert self._legacy(None) == (False, [])
+
+    def test_a_console_with_escape_sequences_on_is_modern(self) -> None:
+        assert self._legacy(0x3 | _VT) == (False, [])
+
+    def test_escape_sequences_are_switched_on_first(self) -> None:
+        """Windows 10 1511+ conhost starts without them; asking turns them on."""
+        assert self._legacy(0x3) == (False, [0x3 | _VT])
+
+    def test_a_console_that_refuses_them_is_legacy(self) -> None:
+        assert self._legacy(0x3, settable=False) == (True, [0x3 | _VT])
+
+    def test_no_console_api_is_not_legacy(self) -> None:
+        with (
+            patch.object(sys, "platform", "win32"),
+            patch.object(term, "_console_mode", side_effect=OSError),
+        ):
+            assert term._legacy_windows_console(term._STD_OUTPUT_HANDLE) is False
+
+    def test_other_platforms_never_ask(self) -> None:
+        with (
+            patch.object(sys, "platform", "darwin"),
+            patch.object(term, "_console_mode") as mode,
+        ):
+            assert term._legacy_windows_console(term._STD_OUTPUT_HANDLE) is False
+        mode.assert_not_called()
+
+    def test_only_a_legacy_console_gets_ascii_marks(self) -> None:
+        utf8 = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        with (
+            patch.object(sys, "stdout", utf8),
+            patch.object(sys, "stderr", utf8),
+            patch.dict("os.environ", {"NO_COLOR": "1"}),
+        ):
+            assert term._streams_take_unicode(legacy_stdout=False) is True
+            assert term._streams_take_unicode(legacy_stdout=True) is False
+
+    @pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+    def test_term_dumb_gets_ascii_everywhere(self, platform: str) -> None:
+        utf8 = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        with (
+            patch.object(sys, "platform", platform),
+            patch.object(sys, "stdout", utf8),
+            patch.object(sys, "stderr", utf8),
+            patch.dict("os.environ", {"TERM": "dumb"}),
+        ):
+            assert term._streams_take_unicode(legacy_stdout=False) is False
+
+    def test_consoles_take_their_streams_answer_not_richs(self) -> None:
+        """Rich calls every Windows pipe legacy: square panels, win32 colours."""
+        with (
+            patch("rich.console.detect_legacy_windows", return_value=True),
+            patch.object(term, "_LEGACY_STDOUT", False),
+            patch.object(term, "_LEGACY_STDERR", True),
+        ):
+            stdout = term._SoftWrapConsole(file=io.StringIO())
+            stderr = term.make_stderr_console()
+            explicit = term._SoftWrapConsole(file=io.StringIO(), legacy_windows=True)
+        assert stdout.legacy_windows is False
+        assert stderr.legacy_windows is True
+        assert explicit.legacy_windows is True
+
+    def test_the_console_api_calls(self) -> None:
+        """The ctypes calls themselves, against a fake kernel32."""
+        import ctypes
+
+        class Kernel32:
+            def __init__(self, mode: int | None) -> None:
+                self.mode, self.set_to = mode, None
+
+            def GetStdHandle(self, number: int) -> int:  # noqa: N802 - win32 name
+                assert number == term._STD_OUTPUT_HANDLE
+                return 7
+
+            def GetConsoleMode(self, handle: int, out: Any) -> int:  # noqa: N802
+                assert handle == 7
+                if self.mode is None:
+                    return 0
+                ctypes.cast(out, ctypes.POINTER(ctypes.c_ulong))[0] = self.mode
+                return 1
+
+            def SetConsoleMode(self, handle: int, mode: int) -> int:  # noqa: N802
+                self.set_to = mode
+                return 1
+
+        for mode, legacy in ((None, False), (0x3, False), (0x3 | _VT, False)):
+            kernel32 = Kernel32(mode)
+            with (
+                patch.object(sys, "platform", "win32"),
+                patch.object(
+                    ctypes, "WinDLL", MagicMock(return_value=kernel32), create=True
+                ),
+            ):
+                assert term._legacy_windows_console(term._STD_OUTPUT_HANDLE) is legacy
+            assert kernel32.set_to == (0x3 | _VT if mode == 0x3 else None)

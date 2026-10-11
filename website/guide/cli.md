@@ -374,6 +374,12 @@ markitai https://example.com -o ./output --no-remote-fetch
 | `2` | Command-line usage error (unknown option, conflicting flags), or a Batch API wait timed out (or lost contact) and needs `--llm-batch-collect`. This wins over `10`: items that failed alongside it are reported in `--json` and on stderr |
 | `10` | Batch finished with partial failures; successful items are kept |
 
+## Terminal output
+
+Status lines start with a mark that means the same everywhere: `✓` success, `!` warning, `✗` error, `•` information, `→` next step, `○` skipped on purpose. On a terminal the marks are coloured; piped or redirected output, and `NO_COLOR`, drop the colour but keep the marks, one line per message.
+
+The ASCII set (`+ ! x - > o`) is used only where the Unicode marks cannot be shown: `TERM=dumb`, an output encoding that cannot write them (a non-UTF-8 locale, `PYTHONIOENCODING=ascii`), and a Windows console that cannot process escape sequences (Windows before 10 version 1511, or the console host's "Use legacy console" option). Windows Terminal, VS Code, SSH sessions, today's console host and Windows pipes and files all get the Unicode marks; markitai writes UTF-8 to pipes and files on Windows, so read a captured log as UTF-8 (in Windows PowerShell 5.1, set `[Console]::OutputEncoding = [Text.Encoding]::UTF8` before capturing a command's output).
+
 ## Setup Commands
 
 ### `markitai init`
