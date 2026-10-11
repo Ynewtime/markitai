@@ -12,14 +12,23 @@ import sys
 
 import pytest
 
+_TIMEOUT_S = 30
+# A script still running 5 s before the timeout prints every thread's stack
+# and exits, so a hang fails with where it hung (macOS CI timed out with no
+# output at all) instead of a bare TimeoutExpired
+_WATCHDOG = (
+    "import faulthandler\n"
+    f"faulthandler.dump_traceback_later({_TIMEOUT_S - 5}, exit=True)\n"
+)
+
 
 def run_isolated(script: str, *args: str) -> None:
     result = subprocess.run(
-        [sys.executable, "-c", script, *args],
+        [sys.executable, "-c", _WATCHDOG + script, *args],
         check=False,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=_TIMEOUT_S,
         env={**os.environ, "MARKITAI_NO_REMOTE_FETCH": "1"},
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -83,12 +92,19 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from click.testing import CliRunner
 from markitai.cli.main import app
 
+def step(name):
+    print(name, file=sys.stderr, flush=True)
+
+step("imported")
 handler = functools.partial(SimpleHTTPRequestHandler, directory=sys.argv[1])
 server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 url = f"http://127.0.0.1:{server.server_address[1]}/page.html"
+step("serving")
 result = CliRunner().invoke(app, [url, '-s', 'static', '--preset', 'minimal', '--no-cache', '--no-remote-fetch'])
+step("converted")
 server.shutdown()
+step("stopped")
 assert result.exit_code == 0, (result.output, result.exception)
 assert 'A complete page' in result.output, result.output
 assert 'litellm' not in sys.modules, 'A URL without LLM imported the LLM stack'
