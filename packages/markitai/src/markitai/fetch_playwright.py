@@ -1591,6 +1591,7 @@ async def _capture_screenshot(
         _compress_screenshot,
         _url_to_screenshot_filename,
         remove_stale_screenshot_tiles,
+        screenshot_path_for,
     )
 
     try:
@@ -1598,7 +1599,7 @@ async def _capture_screenshot(
         filename = _url_to_screenshot_filename(url)
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        screenshot_path = output_dir / filename
+        screenshot_path = screenshot_path_for(output_dir, filename)
         # Tiles of an earlier, longer capture under this name would
         # otherwise survive and be picked up alongside the new ones.
         remove_stale_screenshot_tiles(screenshot_path)

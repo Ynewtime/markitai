@@ -751,3 +751,58 @@ def test_json_envelope_always_has_warnings() -> None:
         [Outcome(kind="url", source="https://example.com", status="completed")]
     )
     assert envelope["items"][0]["warnings"] == []
+
+
+class TestWindowsPathLength:
+    """Windows opens a path over MAX_PATH only with long paths enabled (off by
+    default); a long URL's 200-character name under a deep folder lost its
+    screenshot there (runner-win)."""
+
+    LONG = "example.com_" + "a-long-article-slug_" * 10 + "q1f0c6a2e.full.jpg"
+
+    def test_other_platforms_keep_the_name(self, tmp_path):
+        from markitai.fetch_screenshot import screenshot_path_for
+
+        with patch("sys.platform", "darwin"):
+            path = screenshot_path_for(tmp_path / ("d" * 120), self.LONG)
+        assert path.name == self.LONG
+
+    def test_windows_shortens_only_what_would_not_fit(self, tmp_path):
+        import os
+
+        from markitai.fetch_screenshot import screenshot_path_for
+
+        deep = tmp_path / ("d" * 120)
+        other = self.LONG.replace("example.com", "example.org")
+        with patch("sys.platform", "win32"):
+            short = screenshot_path_for(tmp_path, "example.com_page.full.jpg")
+            fitted = screenshot_path_for(deep, self.LONG)
+            fitted_other = screenshot_path_for(deep, other)
+        assert short.name == "example.com_page.full.jpg"
+        # Room for a tile's "--12" too
+        assert len(os.path.abspath(fitted)) + 4 <= 259
+        assert fitted.name.startswith("example.com_a-long-article-slug")
+        assert fitted.name.endswith(".full.jpg")
+        assert fitted.name != fitted_other.name
+
+    @pytest.mark.asyncio
+    async def test_the_capture_is_saved_under_the_fitted_name(self, tmp_path):
+        from markitai.fetch_playwright import _capture_screenshot
+
+        page = MagicMock()
+
+        async def screenshot(*, path, **kwargs):
+            from PIL import Image
+
+            Image.new("RGB", (40, 30), "white").save(path, "JPEG")
+
+        page.screenshot = AsyncMock(side_effect=screenshot)
+        deep = tmp_path / ("d" * 120)
+        url = "https://example.com/" + "a-long-article-slug/" * 10 + "?page=2"
+        with patch("sys.platform", "win32"):
+            path, tiles = await _capture_screenshot(
+                page, ScreenshotConfig(enabled=True), deep, url
+            )
+        assert path is not None and path.is_file()
+        assert tiles == [path]
+        assert len(str(path)) + 4 <= 259

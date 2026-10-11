@@ -96,6 +96,47 @@ def _tile_pattern(primary: Path) -> re.Pattern[str]:
     return re.compile(rf"^{re.escape(primary.stem)}--(\d+){re.escape(primary.suffix)}$")
 
 
+#: Windows' MAX_PATH less its terminating NUL. Longer paths open only where
+#: long paths are enabled, which Windows does not do by default.
+_WINDOWS_MAX_PATH = 259
+#: Room kept for a tile's ``--N`` (``name.full--12.jpg``)
+_TILE_SUFFIX_ROOM = 4
+
+
+def screenshot_path_for(output_dir: Path, filename: str) -> Path:
+    """``output_dir / filename``, shortened where Windows could not open it.
+
+    A long URL's screenshot name runs to 200 characters; under an ordinary
+    output folder on Windows the path passed MAX_PATH, which Python opens
+    only where long-path support is on (off by default), so the capture was
+    lost. Such a name keeps its start and gains a short hash of the whole
+    name, so two long URLs still get two files. Other platforms keep the
+    name as it is.
+    """
+    import os
+    import sys
+
+    path = output_dir / filename
+    if sys.platform != "win32":
+        return path
+    suffix = ".full.jpg" if filename.endswith(".full.jpg") else Path(filename).suffix
+    room = (
+        _WINDOWS_MAX_PATH
+        - len(os.path.abspath(output_dir))
+        - len(os.sep)
+        - _TILE_SUFFIX_ROOM
+    )
+    if len(filename) <= room:
+        return path
+    digest = hashlib.sha256(filename.encode()).hexdigest()[:10]
+    keep = room - len(suffix) - len(digest) - 1
+    stem = filename[: len(filename) - len(suffix)]
+    # A folder so deep that not even a few characters of the name fit: the
+    # hash alone is the shortest name left
+    head = stem[:keep].rstrip("_.") if keep >= 8 else "screenshot"
+    return output_dir / f"{head}_{digest}{suffix}"
+
+
 def existing_screenshot_tiles(primary: Path) -> list[Path]:
     """Return ``primary`` followed by its on-disk tiles, in tile order."""
     pattern = _tile_pattern(primary)
