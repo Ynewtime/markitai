@@ -40,6 +40,7 @@ pub use preparation::{PreparedConversion, prepare_with_publication};
 pub mod provider_batch;
 pub mod provider_management;
 pub mod spa_domains;
+mod store_retry;
 pub mod subscription;
 #[cfg(target_os = "macos")]
 mod system_frameworks;

@@ -289,7 +289,12 @@ expired entries until a lookup or successful learning prunes them. Storage is
 limited to 4,096 authorities of at most 1,024 UTF-8 bytes each and a 16 MiB SQLite
 database; this is not a bound on process memory or all temporary filesystem
 overhead. New files are private, and symlink or multiply linked database files
-are rejected. There is no migration from the reference JSON store.
+are rejected. There is no migration from the reference JSON store. Like the
+fetch cache, the store waits up to 30 seconds for another connection's lock and
+retries a lookup, recording, listing or clear that fails for a passing reason
+for up to 5 seconds. The table is created under the write lock of the first
+recording, and a store another process has just created without it reads as
+empty.
 
 Unavailable storage leaves successful fetching intact with a fixed warning.
 Management failures are explicit and sanitized. [Cache commands](cache.md#learned-domain-management)
