@@ -131,6 +131,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An image that is still over the 5 MB vision limit after being scaled down to 512 px is sent at 512 px instead of at its original, larger size. The scaling also stops exactly at 512 px instead of at the last step above it.
 - The MCP server reports a malformed or invalid config file with its message ("Invalid JSON in …", "Invalid configuration in …") instead of an opaque "Error executing tool" error. `ConfigFileError` is now exported from `markitai.api`, and `markitai.config.ConfigFileError` keeps working.
 
+### Security
+
+- **The server's own API keys no longer go to an address a settings caller picks.** A model or connection saved through the `markitai serve` settings page (or tested there) without a key, but with an address, made LiteLLM read the server's key variable for that provider (`OPENAI_API_KEY`, `GROQ_API_KEY`, `LM_STUDIO_API_KEY`, ...) and send it to that address: anyone holding the access token could have the server's key sent to a host of their own, which the rule against `env:` references aimed at a caller's host was meant to prevent. Such an entry now stores the placeholder key `markitai-no-key`, which no server takes as a credential (a server that checks no key, such as LM Studio, vLLM or llama.cpp, works with it, and a keyless OpenAI-compatible endpoint now works at all; it is shown as having no key), and a connection test at an address the caller names uses it too. A connection with a key can no longer be turned into one without a key at another address (HTTP 422). Entries written by hand in the config file are unchanged: one without `api_key` still uses the environment's key, wherever its `api_base` points.
+
 ## [1.2.0] - 2026-09-28
 
 ### Added

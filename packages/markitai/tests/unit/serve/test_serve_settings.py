@@ -283,8 +283,11 @@ class TestAddLLMModel:
             "custom_entry_key": "keep-me",
         }
         assert stored_models[1]["model_name"] == "extra"
+        # Saved without a key at an address the request names: the
+        # placeholder, so the server's OPENAI_API_KEY never goes there
         assert stored_models[1]["litellm_params"] == {
             "model": "openai/gpt-new",
+            "api_key": "markitai-no-key",
             "api_base": "https://proxy.example/v1",
         }
         assert stored_models[1]["model_info"]["id"]

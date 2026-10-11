@@ -131,6 +131,10 @@
 - 缩小到 512 px 后仍超过 5 MB 视觉输入上限的图片，现在按 512 px 的版本发送，不再发送原始的更大图片。缩放也会恰好停在 512 px，而不是停在高于它的上一档。
 - MCP 服务器遇到格式错误或取值无效的配置文件时，会返回具体信息（"Invalid JSON in …"、"Invalid configuration in …"），不再是含糊的 "Error executing tool" 错误。`ConfigFileError` 现在可从 `markitai.api` 导入，`markitai.config.ConfigFileError` 照常可用。
 
+### 安全
+
+- **服务器自己的 API key 不再发往设置调用方选定的地址。** 通过 `markitai serve` 设置页面保存（或在那里测试）的模型或连接如果没有 key 却指定了地址，LiteLLM 会读取服务器上该提供商的 key 变量（`OPENAI_API_KEY`、`GROQ_API_KEY`、`LM_STUDIO_API_KEY` 等）并发往那个地址：持有访问令牌的人就能让服务器把它的 key 发到自己的主机，而禁止把 `env:` 引用指向调用方所选主机的规则正是为了防止这一点。现在这样的条目会保存占位 key `markitai-no-key`，任何服务器都不会把它当作凭据（不校验 key 的服务器，如 LM Studio、vLLM、llama.cpp，照常可用，无 key 的 OpenAI 兼容端点也终于能用了；界面上显示为没有 key），在调用方指定的地址上做连接测试时也用它。已有 key 的连接不能再改成指向另一个地址的无 key 连接（HTTP 422）。你在配置文件里手写的条目不变：没有 `api_key` 的条目无论 `api_base` 指向哪里，仍使用环境变量中的 key。
+
 ## [1.2.0] - 2026-09-28
 
 ### 新增

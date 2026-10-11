@@ -1099,7 +1099,7 @@ def _mask_api_key(api_key: str | None) -> str | None:
     first 2 + last 4 characters; short keys reveal at most the last 2 and
     never more than half.
     """
-    if api_key is None:
+    if api_key is None or api_key == NO_KEY:
         return None
     if api_key.startswith("env:"):
         return api_key
@@ -1272,7 +1272,8 @@ def _deployment_view(
         "routing_group": model.model_name,
         "model": model.litellm_params.model,
         "weight": model.litellm_params.weight,
-        "api_key_configured": bool(model.litellm_params.api_key) and not local,
+        "api_key_configured": bool(_real_key(model.litellm_params.api_key))
+        and not local,
         "api_base_configured": bool(model.litellm_params.api_base) and not local,
         "api_base": (
             None if local else _sanitized_api_origin(model.litellm_params.api_base)
@@ -1598,6 +1599,77 @@ def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
 
 CredentialPair = tuple[str | None, str | None]
 
+#: The key a connection or deployment saved through the settings API stores
+#: when it has none but names an address (owner rule, 2026-10-11). Without a
+#: key LiteLLM reads the server's own key variable (OPENAI_API_KEY,
+#: GROQ_API_KEY, LM_STUDIO_API_KEY, ...) and sends it to whatever address the
+#: entry names, an address a settings caller can choose; with this one it
+#: sends a word that is no credential. A server that checks no key (LM
+#: Studio, vLLM, llama.cpp) takes it. Entries written by hand in the config
+#: file are never given one: there a missing key still means "the
+#: environment's". Never shown as a saved key.
+NO_KEY = "markitai-no-key"
+
+
+def _real_key(api_key: Any) -> Any:
+    """*api_key*, or None when it is the :data:`NO_KEY` placeholder."""
+    return None if api_key == NO_KEY else api_key
+
+
+def _keyless_placeholder(api_key: Any, api_base: Any, model: Any) -> Any:
+    """The key to store for an entry the settings API writes: *api_key*, or
+    :data:`NO_KEY` when there is none while *api_base* names an address.
+
+    Without an address the provider's own endpoint gets the environment's
+    key, as configured by the owner; the subscription runtimes (claude-agent,
+    copilot, chatgpt) take neither key nor address.
+    """
+    from markitai.providers import is_local_provider_model
+
+    if api_key or not api_base:
+        return api_key
+    if isinstance(model, str) and is_local_provider_model(model):
+        return api_key
+    return NO_KEY
+
+
+def _endpoint_host(api_base: Any, provider: str) -> tuple[str, str] | None:
+    """Scheme and host:port an entry's requests go to (its default when it
+    names no address); None when unknown."""
+    base = api_base if isinstance(api_base, str) and api_base else None
+    base = base or provider_default_api_base(provider)
+    if not base or base.startswith("env:"):
+        return None
+    parts = urlsplit(base)
+    return parts.scheme.lower(), parts.netloc.rpartition("@")[2].lower()
+
+
+def _refuse_keyless_move(
+    old: CredentialPair, new: CredentialPair, provider: str
+) -> None:
+    """Refuse turning a connection with a key into a keyless one aimed at
+    another host it names: its requests would leave with the placeholder (or,
+    for an entry written by hand, the server's own key variable) for a server
+    the owner never paired a key with. A new connection for that server says
+    so. Dropping the address too (back to the provider's endpoint) is fine.
+    """
+    if not _real_key(old[0]) or _real_key(new[0]):
+        return
+    # Back on the provider's own endpoint, the environment's key goes to its
+    # own provider, as for an entry that never named an address
+    if not new[1]:
+        return
+    if _endpoint_host(new[1], provider) == _endpoint_host(old[1], provider):
+        return
+    raise ApiError(
+        422,
+        "invalid_settings_request",
+        (
+            "a connection with a key cannot become one without a key at another "
+            "address; add a new connection for that server instead"
+        ),
+    )
+
 
 def _configured_credential_pairs(state: ServeState) -> frozenset[CredentialPair]:
     """Every ``(api_key, api_base)`` pair already present in the saved config."""
@@ -1638,7 +1710,7 @@ def _check_credential_target(
                 "configured with this key; reference them in the config file instead"
             ),
         )
-    if not api_key:
+    if not api_key or api_key == NO_KEY:
         return
     if api_key.startswith("env:"):
         if api_base is None and api_key[4:] in PROVIDER_API_KEY_ENV.values():
@@ -1664,7 +1736,7 @@ def _reject_rebound_credentials(
     stored_key: str | None, stored_base: str | None, api_base: str | None
 ) -> None:
     """Refuse to send a stored key to an endpoint other than its saved one."""
-    if stored_key and api_base is not None and api_base != stored_base:
+    if _real_key(stored_key) and api_base is not None and api_base != stored_base:
         raise ApiError(
             422,
             "invalid_settings_request",
@@ -2500,7 +2572,7 @@ def create_app(
                     if saved.api_key is not None or saved.api_base is not None
                     else "needs_credentials",
                     "source": "config",
-                    "api_key_configured": bool(saved.api_key),
+                    "api_key_configured": bool(_real_key(saved.api_key)),
                     "api_base_configured": bool(saved.api_base),
                     "api_base": _sanitized_api_origin(
                         saved.api_base or provider_default_api_base(saved.provider)
@@ -2549,7 +2621,7 @@ def create_app(
                     "kind": "configured",
                     "status": "ready" if params.weight > 0 else "disabled",
                     "source": "config",
-                    "api_key_configured": bool(params.api_key),
+                    "api_key_configured": bool(_real_key(params.api_key)),
                     "api_base_configured": bool(params.api_base),
                     "api_base": _sanitized_api_origin(
                         params.api_base or provider_default_api_base(provider)
@@ -2692,7 +2764,7 @@ def create_app(
         sent_base = None if _shown_base(body.api_base, fallback_base) else body.api_base
         if body.api_key is None:
             _reject_rebound_credentials(fallback_key, fallback_base, sent_base)
-        raw_key = body.api_key if body.api_key is not None else fallback_key
+        raw_key = body.api_key if body.api_key is not None else _real_key(fallback_key)
         raw_base = sent_base if sent_base is not None else fallback_base
         _check_credential_target(
             raw_key,
@@ -2831,6 +2903,14 @@ def create_app(
             from markitai.providers.connectable import pinned_base
 
             api_base = api_base or pinned_base(provider_name)
+        if body.api_base is not None or (
+            credential_provider is None and credential_source is None
+        ):
+            # An address this request names (or the pinned default of a new
+            # connection) never gets the server's own key: keyless, it is
+            # stored with the placeholder. A saved connection's own pair
+            # stays as it is.
+            api_key = _keyless_placeholder(api_key, api_base, body.model)
         _check_credential_target(
             api_key,
             api_base,
@@ -2891,6 +2971,17 @@ def create_app(
                 params["api_base"] = body.api_base
         if "weight" in body.model_fields_set and body.weight is not None:
             params["weight"] = body.weight
+        if "api_key" in body.model_fields_set or base_set:
+            model = params.get("model")
+            provider = model.split("/", 1)[0].lower() if isinstance(model, str) else ""
+            _refuse_keyless_move(
+                old_pair, (params.get("api_key"), params.get("api_base")), provider
+            )
+            placeholder = _keyless_placeholder(
+                params.get("api_key"), params.get("api_base"), model
+            )
+            if placeholder is not None:
+                params["api_key"] = placeholder
         _strip_ignored_local_params(params)
         _check_credential_target(
             params.get("api_key"),
@@ -3155,12 +3246,24 @@ def create_app(
                     target.pop("api_base", None)
                 else:
                     target["api_base"] = body.api_base
+            _refuse_keyless_move(
+                (old_key, old_base),
+                (target.get("api_key"), target.get("api_base")),
+                provider_name,
+            )
+            placeholder = _keyless_placeholder(
+                target.get("api_key"), target.get("api_base"), f"{provider_name}/"
+            )
+            if placeholder is not None and placeholder != target.get("api_key"):
+                target["api_key"] = placeholder
+                key_set = True
             _check_credential_target(
                 target.get("api_key"),
                 target.get("api_base"),
-                client_key=body.api_key if key_set else None,
+                client_key=body.api_key if "api_key" in body.model_fields_set else None,
                 configured=configured | {(old_key, old_base)},
             )
+            new_key = target.get("api_key")
 
             saved_id = str(target["id"])
             for entry in entries:
@@ -3182,10 +3285,10 @@ def create_app(
                 ):
                     continue
                 if key_set:
-                    if body.api_key is None:
+                    if new_key is None:
                         params.pop("api_key", None)
                     else:
-                        params["api_key"] = body.api_key
+                        params["api_key"] = new_key
                 if base_set:
                     if body.api_base is None:
                         params.pop("api_base", None)
@@ -3319,7 +3422,18 @@ def create_app(
                 client_key=body.api_key,
                 configured=_configured_credential_pairs(_state(request)),
             )
+            asked_base = body.api_base
             body = _fill_stored_credentials(_state(request), body)
+            if asked_base is not None:
+                # An address the caller names is tested with the placeholder
+                # rather than the server's own key variable
+                body = body.model_copy(
+                    update={
+                        "api_key": _keyless_placeholder(
+                            body.api_key, body.api_base, body.model
+                        )
+                    }
+                )
         try:
             detail = await asyncio.wait_for(
                 _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S

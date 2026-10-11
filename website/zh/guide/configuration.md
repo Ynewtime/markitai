@@ -346,6 +346,8 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 }
 ```
 
+你在这里写的条目如果没有 `api_key`，会从环境变量读取该提供商的 key（`openai/` 读 `OPENAI_API_KEY`，以此类推），并发往它指定的 `api_base`；因此不属于该提供商的端点请配上它自己的 key。在 `markitai serve` 设置页面保存的无 key 连接则会写入 `"api_key": "markitai-no-key"`，这是一个不构成凭据的占位值，这样服务器的 key 永远不会发到设置调用方指定的地址；在这里删掉它，这样的条目就会改用环境变量中的 key。
+
 `api_base` 对订阅制提供商无效。Claude Code 认 `ANTHROPIC_BASE_URL`，Copilot 和 ChatGPT 自己管理端点。
 
 ### Vision 模型

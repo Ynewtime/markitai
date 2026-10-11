@@ -346,6 +346,8 @@ Two more shapes:
 }
 ```
 
+An entry you write here without `api_key` uses the provider's key variable from the environment (`OPENAI_API_KEY` for `openai/`, ...), at whatever `api_base` it names, so give an endpoint that is not that provider's its own key. Connections saved from the `markitai serve` settings page without a key store `"api_key": "markitai-no-key"` instead, a placeholder that is no credential, so the server's key never goes to an address a settings caller chose; remove it here to let such an entry use the environment's key.
+
 `api_base` does not apply to the subscription providers. Claude Code honours `ANTHROPIC_BASE_URL`; Copilot and ChatGPT manage their endpoints themselves.
 
 ### Vision Models
