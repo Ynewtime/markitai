@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from importlib import metadata
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,6 +26,7 @@ from markitai.fetch_http import (
 )
 from markitai.fetch_strategies.static import fetch_with_static_conditional
 from markitai.fetch_types import FetchError, FetchResult
+from tests.local_http import LocalHTTPServer
 
 ARTICLE = (
     "<!doctype html><html><head><title>Markdown</title></head><body><article>"
@@ -64,7 +65,7 @@ class _Site:
             def log_message(self, *_args: object) -> None:
                 pass
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server = LocalHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}/wiki/Markdown"
         threading.Thread(
             target=self._server.serve_forever,

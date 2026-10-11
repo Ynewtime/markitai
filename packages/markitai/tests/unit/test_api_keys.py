@@ -18,7 +18,7 @@ import json
 import threading
 import time
 from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from typing import Any
 
 import litellm
@@ -58,6 +58,7 @@ from markitai.providers.api_keys import (
 )
 from markitai.providers.errors import ProviderError
 from markitai.utils.text import format_error_message
+from tests.local_http import LocalHTTPServer
 
 FAKE_KEY = "kv-" + "unit-test-not-a-key-" * 2
 AUTH_FAILS = "Authentication Fails (governor)"
@@ -118,7 +119,7 @@ class _Stub(BaseHTTPRequestHandler):
 
 class StubServer:
     def __init__(self) -> None:
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
+        self.server = LocalHTTPServer(("127.0.0.1", 0), _Stub)
         self.server.seen = []  # type: ignore[attr-defined]
         self.url = f"http://127.0.0.1:{self.server.server_port}"
 

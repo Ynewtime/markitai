@@ -69,6 +69,15 @@ ENV_FILE=${ENV_FILE:-$HOME/.markitai/.env}
 E2E_MODEL=${E2E_MODEL:-gemini/gemini-flash-lite-latest}
 BATCH_DOCS=${BATCH_DOCS:-40}
 HTTP_PORT=${HTTP_PORT:-8899}
+# The local page server. Not `python3 -m http.server`: its bind looks up the
+# address's host name (socket.getfqdn), which took over 25 s on macOS runners,
+# longer than the steps below wait for the page.
+LOCAL_SERVER='import http.server, socketserver, sys
+class Server(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+Server(("127.0.0.1", int(sys.argv[1])), http.server.SimpleHTTPRequestHandler).serve_forever()'
 SERVE_PORT=${SERVE_PORT:-8900}
 E2E_PUBLIC_URL=${E2E_PUBLIC_URL:-https://github.com/Ynewtime/markitai}
 E2E_BATCH_MODEL=${E2E_BATCH_MODEL:-openai/gpt-6-luna}
@@ -294,7 +303,7 @@ HTML
 # server survives as its orphan, and the *next* run of this script finds the
 # port held by the previous one — serving a directory that has since been
 # deleted, which reads as "markitai cannot fetch a local page".
-(cd 00-inputs/site && exec python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
+(cd 00-inputs/site && exec python3 -c "$LOCAL_SERVER" "$HTTP_PORT" >/dev/null 2>&1) &
 SERVER_PID=$!
 
 # Confirm the page being served is ours before believing anything this step
@@ -616,7 +625,7 @@ closing paragraph so the extractor has something to keep.</p>
 <p>Closing paragraph with a <a href="/">link back</a> and a final sentence.</p>
 </article></body></html>
 HTML
-(cd 00-inputs/site && exec python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
+(cd 00-inputs/site && exec python3 -c "$LOCAL_SERVER" "$HTTP_PORT" >/dev/null 2>&1) &
 SERVER_PID=$!
 for _ in 1 2 3 4 5; do
   sleep 1
@@ -871,7 +880,7 @@ file "tool install log" 20-all-extras/install.log
 # ── 22 ───────────────────────────────────────────────────────────────────────
 step 22-browser "Fetching with a real browser" \
   "Playwright rendering, a full-page screenshot, and reading a page from its screenshot alone."
-(cd 00-inputs/site && exec python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
+(cd 00-inputs/site && exec python3 -c "$LOCAL_SERVER" "$HTTP_PORT" >/dev/null 2>&1) &
 SERVER_PID=$!
 for _ in 1 2 3 4 5; do
   sleep 1

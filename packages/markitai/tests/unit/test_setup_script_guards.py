@@ -36,10 +36,12 @@ import subprocess
 import sys
 import threading
 import tomllib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
+
+from tests.local_http import LocalHTTPServer
 
 _SETUP_SH = Path(__file__).resolve().parents[4] / "scripts" / "setup.sh"
 _SETUP_PS1 = Path(__file__).resolve().parents[4] / "scripts" / "setup.ps1"
@@ -915,7 +917,7 @@ class _ProbeHandler(BaseHTTPRequestHandler):
 @pytest.fixture
 def probe_server():
     """A loopback HTTP server plus a gate that releases the /slow request."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
+    server = LocalHTTPServer(("127.0.0.1", 0), _ProbeHandler)
     server.slow_gate = threading.Event()  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

@@ -14,13 +14,14 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from markitai.constants import PROVIDER_API_KEY_ENV_NAMES
+from tests.local_http import LocalHTTPServer
 
 AUTH_FAILS = "Authentication Fails (governor)"
 FAKE_KEY = "kv-" + "cli-test-not-a-key-" * 2
@@ -83,7 +84,7 @@ class _Stub(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def stub() -> Iterator[tuple[str, list[str]]]:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
+    server = LocalHTTPServer(("127.0.0.1", 0), _Stub)
     server.paths = []  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

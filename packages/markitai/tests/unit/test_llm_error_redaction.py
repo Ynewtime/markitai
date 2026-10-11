@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,7 @@ from markitai.llm.processor import LLMProcessor
 from markitai.utils.secret_redaction import REDACTED, redact_secrets, register_secret
 from markitai.utils.text import format_error_message
 from markitai.utils.url_redaction import redact_log_record
+from tests.local_http import LocalHTTPServer
 
 # Built at run time so no key-shaped literal sits in the repository. The
 # configured key has no known prefix: only its registered value can mask it.
@@ -107,7 +108,7 @@ class _EchoingProvider(BaseHTTPRequestHandler):
 @pytest.fixture
 def provider() -> Iterator[str]:
     """Base URL of the echoing provider; append ``/<mode>/v1``."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _EchoingProvider)
+    server = LocalHTTPServer(("127.0.0.1", 0), _EchoingProvider)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

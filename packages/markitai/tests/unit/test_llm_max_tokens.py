@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -37,6 +37,7 @@ from markitai.constants import DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP
 from markitai.llm.batch_api import build_openai_batch_request
 from markitai.llm.engine import LLMCall
 from markitai.llm.processor import LLMProcessor
+from tests.local_http import LocalHTTPServer
 
 # DeepSeek V4 Flash as litellm's catalog describes it: an output ceiling far
 # above the hard cap, so an ignored config shows up as the 128k cap.
@@ -88,7 +89,7 @@ class _CaptureHandler(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def capture_server() -> Iterator[tuple[str, list[dict[str, Any]]]]:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _CaptureHandler)
+    server = LocalHTTPServer(("127.0.0.1", 0), _CaptureHandler)
     server.bodies = []  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
