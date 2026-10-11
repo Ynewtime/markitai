@@ -51,6 +51,14 @@
 
 ### Fixed
 
+- HTML: an X Article in its status page as X served it in 2026 (`twitterArticleRichTextView`) is its title, cover and whole body, with its headings, lists and code blocks, instead of only the title and one picture.
+- HTML: replies to an X post from other accounts, and the author's own replies after the first of them, follow the post under `## Comments` as block quotes headed `**Name @handle** · [date](link)`, as the reference writes them, also in a timeline labelled in another language; they were left out.
+- HTML: a GitHub issue is its opening post, then its comments under `## Comments` (`**author** · [date](link)`), without the issue viewer's avatars, screen-reader headings, "opened on … · edited by …" lines and badges; a permalink to lines of a file in it is a code block.
+- HTML: an inline SVG chart or diagram that shows text, in a block of its own, is kept as a drawing (sanitized SVG markup in an HTML block, with the colours its lost style sheet gave it resolved) as the reference keeps it, instead of its loose axis labels.
+- HTML: arXiv's LaTeXML footnotes and thanks notes are Markdown footnotes, and a footnote mark is only its mark, instead of the mark twice and a literal "footnotemark: 2".
+- HTML: a `link` or `meta` element inside a paragraph (MediaWiki writes one before every inline template) no longer splits it, which broke sentences on Wikipedia and a link around inline code on mediawiki.org; a paragraph of only white space is no longer a line of spaces.
+- HTML: page furniture that was kept is left out: arXiv's abstract-page service column and arXivLabs tabs, a clock of several cities above a live page's title, a closing heading and list of picks on other sites, a "Was this page helpful?" poll and text hidden by a BEM `hidden` modifier class, an RSS icon, and a site banner with the site's name and search box.
+- HTML: a code block no longer starts with a blank line when the markup breaks the line right after `<code>`, and a `markdown` (or `diff`, `dockerfile` …) label above a block is read as its language instead of a stray line.
 - HTML: a lazy-loaded image whose address is in a site's own `data-` attribute (`data-image-loader`) behind an inline placeholder is kept, instead of being dropped with the placeholder.
 - A PDF page that binds a large image in its resources but never draws it is read as the text page it is, without the warning that it was "read as plain text because it looked like a scan" (page 5 of the reference `sample.pdf`).
 - PDF justified text no longer shows two spaces between words where the producer widens each break with a `TJ` offset before the space glyph (the bold run of the reference `sample.pdf`).

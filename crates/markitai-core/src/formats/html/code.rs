@@ -115,6 +115,8 @@ fn gutter(element: ElementRef<'_>) -> bool {
             "linenos",
             "linenodiv",
             "line-numbers-rows",
+            // GitHub's file excerpt draws its numbers from an attribute.
+            "blob-num",
         ],
     ) || (any_class(
         element,
@@ -187,8 +189,21 @@ fn styled_block(element: ElementRef<'_>) -> bool {
         && (style_is(element, "white-space", &["pre", "pre-wrap", "break-spaces"])
             || (has_class(element, "block") && any_class(element, &["lean", "hl"])))
 }
+/// GitHub's embedded file excerpt (a permalink to lines of a file in an issue
+/// or a comment): a table with a row per line, the line's code in
+/// `td.blob-code` beside its `td.blob-num`.
+fn blob_table(element: ElementRef<'_>) -> bool {
+    element.value().name() == "table"
+        && element
+            .descendants()
+            .filter_map(ElementRef::wrap)
+            .any(|cell| cell.value().name() == "td" && has_class(cell, "blob-code"))
+}
 fn target(element: ElementRef<'_>) -> bool {
-    element.value().name() == "pre" || code_mirror(element) || styled_block(element)
+    element.value().name() == "pre"
+        || code_mirror(element)
+        || styled_block(element)
+        || blob_table(element)
 }
 fn explicit_wrapper(element: ElementRef<'_>) -> bool {
     matches!(element.value().name(), "div" | "figure" | "table" | "code")
@@ -261,6 +276,16 @@ fn language_label(raw: &str) -> Option<String> {
             | "text"
             | "lean"
             | "nasm"
+            | "markdown"
+            | "diff"
+            | "dockerfile"
+            | "powershell"
+            | "graphql"
+            | "lua"
+            | "perl"
+            | "haskell"
+            | "elixir"
+            | "dart"
     )
     .then(|| name.to_owned())
 }
@@ -635,6 +660,10 @@ fn row(element: ElementRef<'_>) -> bool {
             "CodeMirror",
         ],
     ) || code_mirror(element)
+        || (element.value().name() == "tr"
+            && element
+                .child_elements()
+                .any(|cell| has_class(cell, "blob-code")))
         || element.value().attribute("data-line").is_some()
         || paired_gutter(element).is_some()
         || (element.value().name() == "div"
@@ -692,6 +721,15 @@ fn text_content(element: ElementRef<'_>, output: &mut String, depth: usize) -> R
                 }
             }
         } else if let Node::Text(text) = child.value() {
+            // Text directly in a table's structure is the markup's layout,
+            // which a browser does not draw.
+            if matches!(
+                element.value().name(),
+                "table" | "thead" | "tbody" | "tfoot" | "tr"
+            ) && text.trim().is_empty()
+            {
+                continue;
+            }
             output.push_str(text);
             if text.contains('\n') {
                 gap_has_line = true;
@@ -731,7 +769,27 @@ fn render_target(
     };
     let mut text = String::new();
     text_content(content, &mut text, depth + skipped_depth)?;
+    if blob_table(root) {
+        text = excerpt_lines(&text);
+    }
     Ok((text, code_language(root, scope)))
+}
+
+/// A file excerpt's lines without the space the excerpt's cells add around
+/// them: trailing white space, and the indent every line shares.
+fn excerpt_lines(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
+    let indent = lines
+        .iter()
+        .filter(|line| !line.is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    lines
+        .iter()
+        .map(|line| line.get(indent..).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn confirmed_targets(element: ElementRef<'_>, depth: usize) -> Result<Option<Vec<CodeTarget<'_>>>> {
@@ -774,12 +832,19 @@ pub(super) fn render(element: ElementRef<'_>, output: &mut Out, depth: usize) ->
         .map(|(target, target_depth)| render_target(target, &scope, target_depth))
         .collect::<Result<Vec<_>>>()?;
     for (text, language) in blocks {
+        // A line break that opens the code is the markup's, not a blank first
+        // line: the parser drops it right after `<pre>`, and pages that
+        // write it after `<code>` or a highlighter's span mean the same.
+        let text = text
+            .strip_prefix("\r\n")
+            .or_else(|| text.strip_prefix('\n'))
+            .unwrap_or(&text);
         output.start("pre");
         output.start("code");
         if let Some(language) = language {
             output.attribute("class", &format!("language-{language}"));
         }
-        output.text(&text);
+        output.text(text);
         output.end("code");
         output.end("pre");
     }
@@ -935,6 +1000,23 @@ mod tests {
                 "div"
             )
             .0
+        );
+    }
+    #[test]
+    fn a_markdown_header_is_a_label_and_the_opening_line_break_is_markup() {
+        // X's Article code block: a `markdown` header with a copy button, and
+        // code that opens with a line break inside a highlighter's span.
+        assert_eq!(
+            code(
+                "<div><div><div><span>markdown</span></div><div><button aria-label='Copy to clipboard'></button></div></div><pre><code class='language-markdown'><span>\nvault/\n  notes/</span></code></pre></div>",
+                "div"
+            ),
+            "<pre><code class=\"language-markdown\">vault/\n  notes/</code></pre>"
+        );
+        // Only one break is the markup's; a second is a blank first line.
+        assert_eq!(
+            code("<pre><code>\r\n\n  x</code></pre>", "pre"),
+            "<pre><code>\n  x</code></pre>"
         );
     }
     #[test]

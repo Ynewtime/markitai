@@ -26,7 +26,8 @@ article with `markdown-body`, `entry-content` and `itemprop=text`, and the
 complete `data-testid=issue-viewer-container`. Individual `markdown-body`
 comments are not treated as an entire page. Issue discussion content remains;
 known metadata sidebars, sticky header duplicates and comment action controls
-are excluded.
+are excluded. An issue whose opening post the viewer renders is read by the
+GitHub issue reader instead ([site readers](html.md#content-region-and-site-readers)).
 
 Page chrome exclusion uses container roles or complete class/ID tokens for
 table-of-contents widgets, related/recommended post widgets, subscription
@@ -77,6 +78,21 @@ root to the body:
 - a short label of words above the first `h1` in the same container (at most
   four words, no digits, no sentence punctuation: a category, a kicker) goes,
   while a date stays;
+- before the first `h1`, a clock goes: a block of two or more times of day
+  (`2:45`, `14:15`) with at most eight words for each and a four-word label,
+  without a sentence, link, picture or heading (a live page's "Current time in"
+  widget for several cities); one time is a dateline and stays, and times among
+  content belong to it;
+- before the region's first running text, on any page, the site's banner goes:
+  a block without running text that holds the site's search box or a link to
+  its feed and one heading whose text is the site's name (the page's `<title>`,
+  or its first or last part around ` - `, ` | `, ` – `, ` — `, ` · ` or ` » `);
+- the region's last block goes, as the reference removes it, when it is a
+  heading and a list of two or more items, each mostly (three fifths of its
+  text) links to another host than the page's (affiliate picks, a product
+  roundup), with no text after the list; a list under a heading that labels
+  notes or sources, "See also", "Further reading" or "External links" stays,
+  and so does every list of a page whose address is unknown;
 - inside the body, a block after the last text, code or picture that is only a
   row of links with at most a label (two or more links; tags, related posts) goes. A
   paragraph or a list is text however short, a heading seals what follows it
@@ -153,7 +169,9 @@ when the selected article is narrower. Chrome references do not create notes.
 These rules preserve an article about navigation, ordinary comment bodies,
 reading lists and unlabelled image galleries. They intentionally leave some
 ambiguous material that the reference implementation removes using text and
-link-density heuristics, including trailing link lists under a heading and
+link-density heuristics, including trailing lists of links within the site
+under a heading, the last short paragraphs and sections of an article (its
+"trailing thin sections", which can be the article's own last sentence) and
 gallery-like related tiles without a semantic label inside the article body
 (see the furniture rules above for what stands beside it).
 

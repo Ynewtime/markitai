@@ -10,7 +10,7 @@
 
 use super::Attribute;
 use super::article::{
-    discarded, featured_comment, furniture, heading, note, structured_page, teaser,
+    discarded, featured_comment, feed_link, furniture, heading, note, structured_page, teaser,
 };
 use super::facts::Facts;
 use scraper::{ElementRef, Node};
@@ -30,6 +30,10 @@ const MAX_LABEL: usize = 2;
 const MAX_NAV_TABLE: usize = 4;
 /// A short label above the title, in words.
 const MAX_EYEBROW: usize = 4;
+/// A clock above the title shows at least two times of day ...
+const MIN_CLOCKS: usize = 2;
+/// ... in at most this many words for each.
+const MAX_CLOCK_WORDS: usize = 8;
 /// A row of links after the body's last text.
 const MIN_LINKS: usize = 2;
 const MIN_TAIL: usize = 25;
@@ -330,6 +334,48 @@ impl<'a> Region<'a> {
         }
     }
 
+    /// Before the region's first running text, the site's banner (see
+    /// [`Region::site_banner`]).
+    fn banner(&self, names: &[String], found: &mut Vec<ElementRef<'a>>) {
+        for index in 1..self.nodes.len() {
+            if self.site_banner(index, names) {
+                found.push(self.nodes[index].element);
+                return;
+            }
+            if self.nodes[index].own > 0 {
+                return;
+            }
+        }
+    }
+
+    /// The site's banner: a block with the site's search box or a link to its
+    /// feed, no running text, and one heading that is the site's name.
+    fn site_banner(&self, block: usize, names: &[String]) -> bool {
+        let node = &self.nodes[block];
+        if names.is_empty() || node.keep || node.paragraphs > 0 || node.text > MAX_LABEL {
+            return false;
+        }
+        let element = node.element;
+        let tools = element
+            .descendants()
+            .filter_map(ElementRef::wrap)
+            .any(|inner| match inner.value().name() {
+                "form" => true,
+                "input" => inner.value().attribute("type") == Some("search"),
+                "a" => feed_link(inner),
+                _ => inner.value().attribute("role") == Some("search"),
+            });
+        let mut headings = (block..node.end)
+            .map(|index| self.nodes[index].element)
+            .filter(|inner| heading(*inner));
+        tools
+            && headings.next().is_some_and(|title| {
+                let text = super::plain(title);
+                names.iter().any(|name| name == text.trim())
+            })
+            && headings.next().is_none()
+    }
+
     /// A reply after the post it follows in a thread: the same element with
     /// the same first class (or a plain `article`, the element of a comment),
     /// both dated, the reply with words of its own besides its date and not a
@@ -588,6 +634,57 @@ impl<'a> Region<'a> {
         }
     }
 
+    /// Before the page's title, a clock: a block of two or more times of day
+    /// with a few words for each and a short label (a live page's "Current
+    /// time in" widget for several cities), and no sentence, link, picture or
+    /// kept content.
+    fn clocks(&self, found: &mut Vec<ElementRef<'a>>) {
+        let Some(title) = self
+            .nodes
+            .iter()
+            .position(|node| node.element.value().name() == "h1" && node.title)
+        else {
+            return;
+        };
+        let mut index = 1;
+        while index < title {
+            let node = &self.nodes[index];
+            if node.end > title {
+                // Around the title: its own blocks come later.
+                index += 1;
+                continue;
+            }
+            let times = times_of_day(&super::plain(node.element));
+            // Times among content (a link, a sentence, a picture, a heading)
+            // belong to it, down to the smallest block.
+            let content = || {
+                node.links > 0
+                    || node.paragraphs > 0
+                    || node.keep
+                    || node.title
+                    || node.picture
+                    || node
+                        .element
+                        .descendants()
+                        .filter_map(ElementRef::wrap)
+                        .any(|inner| {
+                            matches!(
+                                inner.value().name(),
+                                "video" | "audio" | "canvas" | "figure"
+                            )
+                        })
+            };
+            if times < MIN_CLOCKS || content() {
+                index = node.end;
+            } else if node.total <= times * MAX_CLOCK_WORDS + MAX_EYEBROW {
+                found.push(node.element);
+                index = node.end;
+            } else {
+                index += 1;
+            }
+        }
+    }
+
     /// Inside the body, what follows its last running text, code or picture and
     /// is a row of links with at most a label: tags, related posts, previous
     /// and next. A paragraph or a list is text however short, a heading
@@ -741,6 +838,54 @@ fn label_words(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The names a page's `<title>` gives its site: the whole title, and its
+/// first and last parts around a separator (`Post - Site`, `Site | Post`).
+fn site_names(title: Option<&str>) -> Vec<String> {
+    let Some(title) = title.map(|title| title.split_whitespace().collect::<Vec<_>>().join(" "))
+    else {
+        return Vec::new();
+    };
+    if title.is_empty() {
+        return Vec::new();
+    }
+    let mut names = vec![title.clone()];
+    for separator in [" - ", " | ", " – ", " — ", " · ", " :: ", "｜", " » "] {
+        if let Some((first, _)) = title.split_once(separator) {
+            names.push(first.trim().to_owned());
+        }
+        if let Some((_, last)) = title.rsplit_once(separator) {
+            names.push(last.trim().to_owned());
+        }
+    }
+    names.retain(|name| !name.is_empty());
+    names
+}
+
+/// How many times of day (`2:45`, `14:05`) a text shows: one or two digits,
+/// a colon and two digits, with no digit or colon on either side.
+fn times_of_day(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let digit = |at: usize| bytes.get(at).is_some_and(u8::is_ascii_digit);
+    let mut count = 0;
+    for (at, byte) in bytes.iter().enumerate() {
+        if *byte != b':' || !digit(at + 1) || !digit(at + 2) {
+            continue;
+        }
+        let hours = (1..=2)
+            .take_while(|back| at >= *back && digit(at - back))
+            .count();
+        let before = at.checked_sub(hours + 1).map(|before| bytes[before]);
+        let after = bytes.get(at + 3).copied();
+        if hours > 0
+            && !before.is_some_and(|byte| byte.is_ascii_digit() || byte == b':')
+            && !after.is_some_and(|byte| byte.is_ascii_digit() || byte == b':')
+        {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// A reading time: "8 min read", "5-minute read", "Reading time: 3 minutes".
 fn reading_time(words: &[&str]) -> bool {
     let number = |word: &str| word.len() <= 3 && word.bytes().all(|byte| byte.is_ascii_digit());
@@ -771,6 +916,95 @@ fn counter(words: &[&str]) -> bool {
         )
 }
 
+/// The region's last block when it is a list of picks on other sites under
+/// its own heading (affiliate picks, a product roundup), as the reference
+/// removes it: a heading followed by a list of two or more items, each mostly
+/// the text of links to another host than the page's, with no text after the
+/// list. A heading that names the article's sources or further reading keeps
+/// its list. Without the page's host nothing is removed.
+pub(super) fn trailing_picks<'a>(
+    root: ElementRef<'a>,
+    page: Option<&url::Url>,
+) -> Vec<ElementRef<'a>> {
+    let Some(host) = page.and_then(url::Url::host_str) else {
+        return Vec::new();
+    };
+    let site = |host: &str| host.trim_start_matches("www.").to_ascii_lowercase();
+    let page_host = site(host);
+    let has_text = |element: ElementRef<'_>| element.text().any(|text| !text.trim().is_empty());
+    for heading in root
+        .descendants()
+        .filter_map(ElementRef::wrap)
+        .filter(|element| matches!(element.value().name(), "h2" | "h3" | "h4" | "h5" | "h6"))
+    {
+        let Some(list) = heading
+            .next_siblings()
+            .find_map(ElementRef::wrap)
+            .filter(|list| matches!(list.value().name(), "ul" | "ol"))
+        else {
+            continue;
+        };
+        let label = super::plain(heading).trim().to_lowercase();
+        if scholarly_label(&label)
+            || ["see also", "further reading", "external links"].contains(&label.as_str())
+        {
+            continue;
+        }
+        let items: Vec<ElementRef<'_>> = list
+            .child_elements()
+            .filter(|item| item.value().name() == "li")
+            .collect();
+        if items.len() < 2 {
+            continue;
+        }
+        // Nothing with text after the list, up to the region's root.
+        let mut level = list;
+        let mut trailing = false;
+        while level != root {
+            if level
+                .next_siblings()
+                .filter_map(ElementRef::wrap)
+                .any(has_text)
+            {
+                trailing = true;
+                break;
+            }
+            match level.parent().and_then(ElementRef::wrap) {
+                Some(parent) => level = parent,
+                None => break,
+            }
+        }
+        if trailing {
+            continue;
+        }
+        let picks = items.iter().all(|item| {
+            let links: Vec<ElementRef<'_>> = item
+                .descendants()
+                .filter_map(ElementRef::wrap)
+                .filter(|link| link.value().name() == "a")
+                .filter(|link| link.value().attribute("href").is_some())
+                .collect();
+            let elsewhere = |link: &ElementRef<'_>| {
+                link.value()
+                    .attribute("href")
+                    .and_then(|href| page.and_then(|page| page.join(href.trim()).ok()))
+                    .and_then(|url| url.host_str().map(site))
+                    .is_some_and(|host| host != page_host)
+            };
+            let item_text = super::plain(*item).trim().chars().count();
+            let link_text: usize = links
+                .iter()
+                .map(|link| super::plain(*link).trim().chars().count())
+                .sum();
+            !links.is_empty() && links.iter().all(elsewhere) && link_text * 5 >= item_text * 3
+        });
+        if picks {
+            return vec![heading, list];
+        }
+    }
+    Vec::new()
+}
+
 /// Blocks of a full page's content region that are furniture beside the body.
 ///
 /// The body is the innermost element holding three fifths of the region's
@@ -791,7 +1025,11 @@ fn counter(words: &[&str]) -> bool {
 /// links) always stays. A short label right above the first `h1`, and a row of
 /// links after the body's last text (see [`Region::tail`]), go too. A region
 /// without such a body keeps everything.
-pub(super) fn beside_body<'a>(facts: &Facts, root: ElementRef<'a>) -> Vec<ElementRef<'a>> {
+pub(super) fn beside_body<'a>(
+    facts: &Facts,
+    root: ElementRef<'a>,
+    title: Option<&str>,
+) -> Vec<ElementRef<'a>> {
     if structured_page(root) {
         return Vec::new();
     }
@@ -806,7 +1044,9 @@ pub(super) fn beside_body<'a>(facts: &Facts, root: ElementRef<'a>) -> Vec<Elemen
     }
     if region.nodes[0].paragraphs >= MIN_PARAGRAPHS {
         region.eyebrow(&mut found);
+        region.clocks(&mut found);
     }
+    region.banner(&site_names(title), &mut found);
     region.tail(facts, body, &mut found);
     found
 }
@@ -839,7 +1079,7 @@ mod tests {
     fn left_out(html: &str) -> Vec<String> {
         let document = Html::parse_document(html);
         let facts = Facts::new(document.root_element());
-        let mut ids = beside_body(&facts, select(&document, &facts))
+        let mut ids = beside_body(&facts, select(&document, &facts), None)
             .into_iter()
             .map(|element| {
                 element
@@ -960,6 +1200,121 @@ mod tests {
             body()
         ));
         assert_eq!(ids, ["banner", "crumbs"]);
+    }
+
+    #[test]
+    fn a_closing_list_of_picks_on_other_sites_is_furniture() {
+        let page = url::Url::parse("https://www.example.com/2026/03/16/new-product").unwrap();
+        let picks = |heading: &str, items: &str, after: &str| {
+            let html = format!(
+                r#"<body><article><h1>New product</h1>{}<h3>{heading}</h3><ul>{items}</ul>{after}</article></body>"#,
+                body()
+            );
+            let document = Html::parse_document(&html);
+            let root = document
+                .select(&super::super::selector("article"))
+                .next()
+                .unwrap();
+            trailing_picks(root, Some(&page))
+                .into_iter()
+                .map(|element| element.value().name().to_owned())
+                .collect::<Vec<_>>()
+        };
+        let shop = r#"<li><a href="https://shop.example/1">Earbuds (<b>$209</b>)</a></li><li><a href="https://shop.example/4">Tracker</a> (<a href="https://shop.example/4a">1-pack</a> / <a href="https://shop.example/4b">4-pack</a>)</li>"#;
+        assert_eq!(picks("Best accessories", shop, ""), ["h3", "ul"]);
+        // Sources, links within the site, prose items, a single item and a list
+        // that text follows are the article's.
+        assert!(picks("Sources", shop, "").is_empty());
+        assert!(picks("Further reading", shop, "").is_empty());
+        assert!(
+            picks(
+                "More",
+                r#"<li><a href="/a">A</a></li><li><a href="https://example.com/b">B</a></li>"#,
+                ""
+            )
+            .is_empty()
+        );
+        assert!(picks("Tools", r#"<li><a href="https://a.example">A</a>, which parses every format we tried</li><li><a href="https://b.example">B</a></li>"#, "").is_empty());
+        assert!(
+            picks(
+                "Picks",
+                r#"<li><a href="https://shop.example/1">One</a></li>"#,
+                ""
+            )
+            .is_empty()
+        );
+        assert!(picks("Picks", shop, "<p>Prices may change.</p>").is_empty());
+        // Without the page's host nothing is removed.
+        let document =
+            Html::parse_document(&format!("<article><h3>Picks</h3><ul>{shop}</ul></article>"));
+        assert!(trailing_picks(document.root_element(), None).is_empty());
+    }
+
+    #[test]
+    fn the_site_banner_before_the_content_is_furniture() {
+        let banner = |title: &str, header: &str| {
+            let html = format!(
+                r#"<html><head><title>{title}</title></head><body><div id="container"><div id="header">{header}</div><div id="content"><h2>A post</h2>{}</div></div></body></html>"#,
+                body()
+            );
+            let document = Html::parse_document(&html);
+            let facts = Facts::new(document.root_element());
+            beside_body(&facts, select(&document, &facts), Some(title))
+                .into_iter()
+                .filter_map(|element| element.value().attribute("id").map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        let tools = r#"<form action="/search"><input type="text" name="q"></form><div><a href="/feed.html" title="Feed"><img src="/rss.png"></a></div>"#;
+        assert_eq!(
+            banner(
+                "阮一峰的网络日志",
+                &format!("<h1>阮一峰的网络日志</h1>{tools}")
+            ),
+            ["header"]
+        );
+        assert_eq!(
+            banner("A post | My Blog", &format!("<h1>My Blog</h1>{tools}")),
+            ["header"]
+        );
+        // A heading that is not the site's name, a banner without the site's
+        // search or feed, and one with a sentence are kept.
+        assert!(banner("My Blog", &format!("<h1>Annual report</h1>{tools}")).is_empty());
+        assert!(banner("My Blog", "<h1>My Blog</h1><p>Hi</p>").is_empty());
+        assert!(
+            banner(
+                "My Blog",
+                &format!("<h1>My Blog</h1><p>Notes on systems programming, written weekly since the spring of 2004 by one person.</p>{tools}")
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_clock_of_several_cities_above_the_title_is_furniture() {
+        let page = |before: &str| {
+            format!(
+                r#"<body><article>{before}<div><h1>Live updates</h1>{}</div></article></body>"#,
+                body()
+            )
+        };
+        assert_eq!(
+            left_out(&page(
+                r#"<div id="clock"><div>Current time in</div><div><div><p><span>City A</span>2:45 a.m. April 8</p></div>
+                <div><p><span>Город Б</span>14:15 8 апреля</p></div></div></div>"#
+            )),
+            ["clock"]
+        );
+        // One time is a dateline; times in a sentence, beside a picture, in
+        // a long block or in a ratio are content.
+        for kept in [
+            "<p>April 8, 2026, 2:45 a.m.</p>",
+            "<p>Doors open at 7:00 and the show starts at 8:00, as announced.</p>",
+            r#"<figure><img src="/map.png" width="600" height="400"><figcaption>City A 2:45, City B 2:15</figcaption></figure>"#,
+            "<div><p>Score 3:2 then 3:3 after a long and eventful second half of play</p></div>",
+            "<p>Ratio 10:100:1000 and 2:45</p>",
+        ] {
+            assert!(left_out(&page(kept)).is_empty(), "{kept}");
+        }
     }
 
     #[test]
