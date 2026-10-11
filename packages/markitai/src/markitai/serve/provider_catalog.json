@@ -1,0 +1,777 @@
+{
+ "source": "markitai-rust 89ffe75 crates/markitai-core/src/provider_management.rs (SHOWN)",
+ "providers": [
+  {
+   "provider": "openai",
+   "label": "OpenAI",
+   "group": "common",
+   "icon": "openai",
+   "aliases": []
+  },
+  {
+   "provider": "anthropic",
+   "label": "Anthropic",
+   "group": "common",
+   "icon": "anthropic",
+   "aliases": [
+    "claude"
+   ]
+  },
+  {
+   "provider": "gemini",
+   "label": "Gemini",
+   "group": "common",
+   "icon": "gemini",
+   "aliases": [
+    "google",
+    "google ai studio"
+   ]
+  },
+  {
+   "provider": "deepseek",
+   "label": "DeepSeek",
+   "group": "common",
+   "icon": "deepseek",
+   "aliases": []
+  },
+  {
+   "provider": "openrouter",
+   "label": "OpenRouter",
+   "group": "common",
+   "icon": "openrouter",
+   "aliases": []
+  },
+  {
+   "provider": "azure",
+   "label": "Azure OpenAI",
+   "group": "common",
+   "icon": "azure",
+   "aliases": [
+    "microsoft"
+   ]
+  },
+  {
+   "provider": "ollama",
+   "label": "Ollama",
+   "group": "common",
+   "icon": "ollama",
+   "aliases": [
+    "ollama_chat"
+   ]
+  },
+  {
+   "provider": "mistral",
+   "label": "Mistral AI",
+   "group": "common",
+   "icon": "mistral",
+   "aliases": []
+  },
+  {
+   "provider": "chatgpt",
+   "label": "ChatGPT",
+   "group": "subscriptions",
+   "icon": "openai",
+   "aliases": [
+    "codex",
+    "openai"
+   ]
+  },
+  {
+   "provider": "claude-agent",
+   "label": "Claude",
+   "group": "subscriptions",
+   "icon": "claude",
+   "aliases": [
+    "claude code",
+    "anthropic"
+   ]
+  },
+  {
+   "provider": "copilot",
+   "label": "GitHub Copilot",
+   "group": "subscriptions",
+   "icon": "githubcopilot",
+   "aliases": [
+    "github"
+   ]
+  },
+  {
+   "provider": "ai21",
+   "label": "AI21 Labs",
+   "group": "makers",
+   "icon": "ai21",
+   "aliases": [
+    "ai21_chat",
+    "jamba"
+   ]
+  },
+  {
+   "provider": "amazon_nova",
+   "label": "Amazon Nova",
+   "group": "makers",
+   "icon": "nova",
+   "aliases": [
+    "amazon",
+    "aws"
+   ]
+  },
+  {
+   "provider": "codestral",
+   "label": "Codestral",
+   "group": "makers",
+   "icon": "mistral",
+   "aliases": [
+    "mistral"
+   ]
+  },
+  {
+   "provider": "cognition",
+   "label": "Cognition",
+   "group": "makers",
+   "icon": null,
+   "aliases": [
+    "swe"
+   ]
+  },
+  {
+   "provider": "cohere",
+   "label": "Cohere",
+   "group": "makers",
+   "icon": "cohere",
+   "aliases": [
+    "cohere_chat",
+    "command"
+   ]
+  },
+  {
+   "provider": "compactifai",
+   "label": "CompactifAI",
+   "group": "makers",
+   "icon": null,
+   "aliases": [
+    "multiverse computing"
+   ]
+  },
+  {
+   "provider": "inception",
+   "label": "Inception",
+   "group": "makers",
+   "icon": "inception",
+   "aliases": [
+    "mercury"
+   ]
+  },
+  {
+   "provider": "meta",
+   "label": "Meta Llama API",
+   "group": "makers",
+   "icon": "meta",
+   "aliases": [
+    "llama"
+   ]
+  },
+  {
+   "provider": "minimax",
+   "label": "MiniMax",
+   "group": "makers",
+   "icon": "minimax",
+   "aliases": []
+  },
+  {
+   "provider": "moonshot",
+   "label": "Moonshot AI",
+   "group": "makers",
+   "icon": "moonshot",
+   "aliases": [
+    "kimi"
+   ]
+  },
+  {
+   "provider": "morph",
+   "label": "Morph",
+   "group": "makers",
+   "icon": "morph",
+   "aliases": []
+  },
+  {
+   "provider": "perplexity",
+   "label": "Perplexity",
+   "group": "makers",
+   "icon": "perplexity",
+   "aliases": [
+    "sonar"
+   ]
+  },
+  {
+   "provider": "sarvam",
+   "label": "Sarvam AI",
+   "group": "makers",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "xai",
+   "label": "xAI",
+   "group": "makers",
+   "icon": "xai",
+   "aliases": [
+    "grok"
+   ]
+  },
+  {
+   "provider": "xiaomi_mimo",
+   "label": "Xiaomi MiMo",
+   "group": "makers",
+   "icon": null,
+   "aliases": [
+    "xiaomi"
+   ]
+  },
+  {
+   "provider": "zai",
+   "label": "Z.ai",
+   "group": "makers",
+   "icon": "zai",
+   "aliases": [
+    "zhipu",
+    "glm",
+    "bigmodel"
+   ]
+  },
+  {
+   "provider": "dashscope",
+   "label": "Alibaba Cloud Model Studio",
+   "group": "clouds",
+   "icon": "bailian",
+   "aliases": [
+    "bailian",
+    "aliyun",
+    "qwen"
+   ]
+  },
+  {
+   "provider": "bedrock",
+   "label": "Amazon Bedrock",
+   "group": "clouds",
+   "icon": "bedrock",
+   "aliases": [
+    "aws"
+   ]
+  },
+  {
+   "provider": "azure_ai",
+   "label": "Azure AI Foundry",
+   "group": "clouds",
+   "icon": "azureai",
+   "aliases": [
+    "microsoft",
+    "foundry"
+   ]
+  },
+  {
+   "provider": "bedrock_mantle",
+   "label": "Bedrock Mantle",
+   "group": "clouds",
+   "icon": "bedrock",
+   "aliases": [
+    "aws",
+    "amazon bedrock"
+   ]
+  },
+  {
+   "provider": "cloudflare",
+   "label": "Cloudflare Workers AI",
+   "group": "clouds",
+   "icon": "workersai",
+   "aliases": [
+    "workers ai"
+   ]
+  },
+  {
+   "provider": "databricks",
+   "label": "Databricks",
+   "group": "clouds",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "datarobot",
+   "label": "DataRobot",
+   "group": "clouds",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "gradient_ai",
+   "label": "DigitalOcean Gradient",
+   "group": "clouds",
+   "icon": "digitalocean",
+   "aliases": [
+    "digitalocean"
+   ]
+  },
+  {
+   "provider": "heroku",
+   "label": "Heroku",
+   "group": "clouds",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "ovhcloud",
+   "label": "OVHcloud",
+   "group": "clouds",
+   "icon": null,
+   "aliases": [
+    "ovh"
+   ]
+  },
+  {
+   "provider": "qwen_ai_platform",
+   "label": "Qwen AI Platform",
+   "group": "clouds",
+   "icon": "qwen",
+   "aliases": [
+    "alibaba",
+    "dashscope"
+   ]
+  },
+  {
+   "provider": "qwencloud",
+   "label": "Qwen Cloud",
+   "group": "clouds",
+   "icon": "qwen",
+   "aliases": [
+    "alibaba",
+    "dashscope"
+   ]
+  },
+  {
+   "provider": "scaleway",
+   "label": "Scaleway",
+   "group": "clouds",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "tencent",
+   "label": "Tencent Cloud",
+   "group": "clouds",
+   "icon": "tencentcloud",
+   "aliases": [
+    "hunyuan",
+    "tokenhub"
+   ]
+  },
+  {
+   "provider": "vertex_ai",
+   "label": "Vertex AI",
+   "group": "clouds",
+   "icon": "vertexai",
+   "aliases": [
+    "vertex_ai_beta",
+    "google cloud",
+    "gcp"
+   ]
+  },
+  {
+   "provider": "volcengine",
+   "label": "Volcano Engine",
+   "group": "clouds",
+   "icon": "volcengine",
+   "aliases": [
+    "ark",
+    "doubao",
+    "byteplus",
+    "bytedance"
+   ]
+  },
+  {
+   "provider": "abliteration",
+   "label": "Abliteration",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "baseten",
+   "label": "Baseten",
+   "group": "inference",
+   "icon": "baseten",
+   "aliases": []
+  },
+  {
+   "provider": "cerebras",
+   "label": "Cerebras",
+   "group": "inference",
+   "icon": "cerebras",
+   "aliases": []
+  },
+  {
+   "provider": "chutes",
+   "label": "Chutes",
+   "group": "inference",
+   "icon": "chutes",
+   "aliases": []
+  },
+  {
+   "provider": "crusoe",
+   "label": "Crusoe",
+   "group": "inference",
+   "icon": "crusoe",
+   "aliases": []
+  },
+  {
+   "provider": "darkbloom",
+   "label": "Darkbloom",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "deepinfra",
+   "label": "DeepInfra",
+   "group": "inference",
+   "icon": "deepinfra",
+   "aliases": []
+  },
+  {
+   "provider": "empiriolabs",
+   "label": "Empirio Labs",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "featherless_ai",
+   "label": "Featherless",
+   "group": "inference",
+   "icon": "featherless",
+   "aliases": []
+  },
+  {
+   "provider": "fireworks_ai",
+   "label": "Fireworks AI",
+   "group": "inference",
+   "icon": "fireworks",
+   "aliases": []
+  },
+  {
+   "provider": "friendliai",
+   "label": "FriendliAI",
+   "group": "inference",
+   "icon": "friendli",
+   "aliases": []
+  },
+  {
+   "provider": "galadriel",
+   "label": "Galadriel",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "gmi",
+   "label": "GMI Cloud",
+   "group": "inference",
+   "icon": "gmicloud",
+   "aliases": []
+  },
+  {
+   "provider": "groq",
+   "label": "Groq",
+   "group": "inference",
+   "icon": "groq",
+   "aliases": []
+  },
+  {
+   "provider": "libertai",
+   "label": "LibertAI",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "modelscope",
+   "label": "ModelScope",
+   "group": "inference",
+   "icon": "modelscope",
+   "aliases": []
+  },
+  {
+   "provider": "nebius",
+   "label": "Nebius",
+   "group": "inference",
+   "icon": "nebius",
+   "aliases": [
+    "token factory"
+   ]
+  },
+  {
+   "provider": "neosantara",
+   "label": "Neosantara",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "novita",
+   "label": "Novita AI",
+   "group": "inference",
+   "icon": "novita",
+   "aliases": []
+  },
+  {
+   "provider": "nscale",
+   "label": "Nscale",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "nvidia_nim",
+   "label": "NVIDIA NIM",
+   "group": "inference",
+   "icon": "nvidia",
+   "aliases": []
+  },
+  {
+   "provider": "parasail",
+   "label": "Parasail",
+   "group": "inference",
+   "icon": "parasail",
+   "aliases": []
+  },
+  {
+   "provider": "pinstripes",
+   "label": "Pinstripes",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "publicai",
+   "label": "PublicAI",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "sambanova",
+   "label": "SambaNova",
+   "group": "inference",
+   "icon": "sambanova",
+   "aliases": []
+  },
+  {
+   "provider": "scx-ai",
+   "label": "SCX.ai",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "synthetic",
+   "label": "Synthetic",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "tensormesh",
+   "label": "Tensormesh",
+   "group": "inference",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "together_ai",
+   "label": "Together AI",
+   "group": "inference",
+   "icon": "together",
+   "aliases": []
+  },
+  {
+   "provider": "veniceai",
+   "label": "Venice AI",
+   "group": "inference",
+   "icon": "venice",
+   "aliases": []
+  },
+  {
+   "provider": "wandb",
+   "label": "W&B Inference",
+   "group": "inference",
+   "icon": "wandb",
+   "aliases": [
+    "weights & biases",
+    "coreweave"
+   ]
+  },
+  {
+   "provider": "aiml",
+   "label": "AI/ML API",
+   "group": "gateways",
+   "icon": null,
+   "aliases": [
+    "aimlapi"
+   ]
+  },
+  {
+   "provider": "aihubmix",
+   "label": "AiHubMix",
+   "group": "gateways",
+   "icon": "aihubmix",
+   "aliases": []
+  },
+  {
+   "provider": "apertis",
+   "label": "Apertis",
+   "group": "gateways",
+   "icon": "apertis",
+   "aliases": [
+    "stima"
+   ]
+  },
+  {
+   "provider": "assemblyai",
+   "label": "AssemblyAI",
+   "group": "gateways",
+   "icon": "assemblyai",
+   "aliases": []
+  },
+  {
+   "provider": "cometapi",
+   "label": "CometAPI",
+   "group": "gateways",
+   "icon": "cometapi",
+   "aliases": []
+  },
+  {
+   "provider": "edenai",
+   "label": "Eden AI",
+   "group": "gateways",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "helicone",
+   "label": "Helicone",
+   "group": "gateways",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "huggingface",
+   "label": "Hugging Face",
+   "group": "gateways",
+   "icon": "huggingface",
+   "aliases": [
+    "hf"
+   ]
+  },
+  {
+   "provider": "litellm_proxy",
+   "label": "LiteLLM Proxy",
+   "group": "gateways",
+   "icon": null,
+   "aliases": [
+    "litellm"
+   ]
+  },
+  {
+   "provider": "nadir",
+   "label": "Nadir",
+   "group": "gateways",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "nano-gpt",
+   "label": "NanoGPT",
+   "group": "gateways",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "poe",
+   "label": "Poe",
+   "group": "gateways",
+   "icon": "poe",
+   "aliases": []
+  },
+  {
+   "provider": "vercel_ai_gateway",
+   "label": "Vercel AI Gateway",
+   "group": "gateways",
+   "icon": "vercel",
+   "aliases": []
+  },
+  {
+   "provider": "docker_model_runner",
+   "label": "Docker Model Runner",
+   "group": "local",
+   "icon": null,
+   "aliases": [
+    "docker"
+   ]
+  },
+  {
+   "provider": "lemonade",
+   "label": "Lemonade",
+   "group": "local",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "llamafile",
+   "label": "llamafile",
+   "group": "local",
+   "icon": null,
+   "aliases": []
+  },
+  {
+   "provider": "lm_studio",
+   "label": "LM Studio",
+   "group": "local",
+   "icon": "lmstudio",
+   "aliases": []
+  },
+  {
+   "provider": "custom",
+   "label": "OpenAI-compatible endpoint",
+   "group": "local",
+   "icon": null,
+   "aliases": [
+    "openai_like",
+    "custom",
+    "self-hosted",
+    "llama.cpp"
+   ]
+  },
+  {
+   "provider": "oobabooga",
+   "label": "text-generation-webui",
+   "group": "local",
+   "icon": null,
+   "aliases": [
+    "oobabooga",
+    "textgen"
+   ]
+  },
+  {
+   "provider": "hosted_vllm",
+   "label": "vLLM",
+   "group": "local",
+   "icon": "vllm",
+   "aliases": []
+  },
+  {
+   "provider": "xinference",
+   "label": "Xinference",
+   "group": "local",
+   "icon": "xinference",
+   "aliases": []
+  }
+ ]
+}

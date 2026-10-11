@@ -23,6 +23,8 @@ REQUIRED_FILES = {
     "markitai/serve/workbench/ui/logo.svg",
     # Prices of models the pinned LiteLLM does not list (markitai.model_catalog)
     "markitai/litellm_rows.json",
+    # Provider groups and brand-mark keys (markitai.serve.provider_catalog)
+    "markitai/serve/provider_catalog.json",
 }
 
 
