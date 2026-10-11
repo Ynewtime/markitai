@@ -685,8 +685,15 @@ Replacement and LRU eviction share an immediate transaction. Logical capacity
 counts UTF-8 Markdown bytes, excluding metadata, SQLite files and WAL overhead.
 Fetch and LLM stores each have their own capacity; this is not a combined disk
 quota. The store bounds row allocation and lazily creates the database only
-when saving an admissible page. Cache errors add a fixed warning to successful
-content instead of exposing paths, SQL, headers, URLs or page data.
+when saving an admissible page. A read, write, removal or clear that fails
+because a store file is busy for a moment (lock contention SQLite did not wait
+out, a WAL lock protocol error, an I/O error; on Windows also a file that is
+locked, open without sharing, being deleted or held by a virus scanner) is
+tried again as a whole, with growing pauses, for up to 5 seconds; each attempt
+is one transaction, so a failed one changed nothing. Other failures (a damaged
+store, a link or directory in its place, a full disk) are not retried. Cache
+errors add a fixed warning to successful content instead of exposing paths,
+SQL, headers, URLs or page data.
 Conversion reads require writable access to update `accessed_at`. If opening the
 store or updating that timestamp fails, even an otherwise reusable page becomes
 a cache miss and fetching continues over the network.

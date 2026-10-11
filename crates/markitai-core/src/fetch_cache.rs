@@ -56,6 +56,135 @@ fn unavailable() -> Error {
     Error::Conversion("Persistent URL fetch cache is unavailable".into())
 }
 
+/// How long an operation is tried again after transient failures, counted
+/// from its first attempt. Lock waits have their own `BUSY_TIMEOUT` inside
+/// each attempt, so an attempt that waited that long is not repeated.
+const RETRY_WINDOW: Duration = Duration::from_secs(5);
+const FIRST_RETRY_WAIT: Duration = Duration::from_millis(20);
+const LONGEST_RETRY_WAIT: Duration = Duration::from_millis(500);
+
+/// Why one attempt at the store failed. Only the operation's caller sees
+/// `unavailable()`; the cause decides whether the attempt is repeated.
+#[derive(Debug)]
+struct Fault {
+    transient: bool,
+    /// What failed, for the tests' report; it can name paths and SQL, so
+    /// the error callers get never carries it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    detail: String,
+}
+
+type Attempt<T> = std::result::Result<T, Fault>;
+
+impl Fault {
+    /// A failure that another attempt cannot change: an invalid entry, a
+    /// store that is not one, a link or directory in its place.
+    fn permanent(detail: impl Into<String>) -> Self {
+        Self {
+            transient: false,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl From<rusqlite::Error> for Fault {
+    fn from(error: rusqlite::Error) -> Self {
+        Self {
+            transient: transient_sqlite(&error),
+            detail: error.to_string(),
+        }
+    }
+}
+
+impl From<std::io::Error> for Fault {
+    fn from(error: std::io::Error) -> Self {
+        Self {
+            transient: transient_io(&error),
+            detail: error.to_string(),
+        }
+    }
+}
+
+/// Lock contention SQLite did not wait out (some lock steps return busy
+/// without calling the busy handler), a WAL lock protocol failure under
+/// load, and I/O errors: SQLite reports a file another process holds for a
+/// moment (Windows sharing and lock violations, a virus scanner opening a
+/// new file, a side file being deleted by the last connection) as an I/O
+/// error once its own short retries are spent, and on Windows as a file it
+/// cannot open.
+fn transient_sqlite(error: &rusqlite::Error) -> bool {
+    use rusqlite::ErrorCode;
+    let rusqlite::Error::SqliteFailure(error, _) = error else {
+        return false;
+    };
+    matches!(
+        error.code,
+        ErrorCode::DatabaseBusy
+            | ErrorCode::DatabaseLocked
+            | ErrorCode::FileLockingProtocolFailed
+            | ErrorCode::SystemIoFailure
+    ) || (cfg!(windows) && error.code == ErrorCode::CannotOpen)
+}
+
+/// The file errors that pass: on Windows a file that is open without
+/// sharing, locked, being deleted or held by a scanner (access denied); on
+/// every system an interrupted or would-block call.
+fn transient_io(error: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            ERROR_ACCESS_DENIED, ERROR_DELETE_PENDING, ERROR_LOCK_VIOLATION,
+            ERROR_SHARING_VIOLATION,
+        };
+        if error.raw_os_error().is_some_and(|code| {
+            [
+                ERROR_ACCESS_DENIED,
+                ERROR_SHARING_VIOLATION,
+                ERROR_LOCK_VIOLATION,
+                ERROR_DELETE_PENDING,
+            ]
+            .contains(&(code as u32))
+        }) {
+            return true;
+        }
+    }
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+    )
+}
+
+/// Run `attempt` until it succeeds, a failure is not transient, or the
+/// retry window is spent, waiting twice as long after each transient
+/// failure. Every attempt is one complete transaction (or read), so a
+/// failed one changed nothing.
+fn retrying<T>(mut attempt: impl FnMut() -> Attempt<T>) -> Result<T> {
+    let deadline = Instant::now() + RETRY_WINDOW;
+    let mut wait = FIRST_RETRY_WAIT;
+    loop {
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(fault) if fault.transient && Instant::now() + wait < deadline => {
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(LONGEST_RETRY_WAIT);
+            }
+            Err(_fault) => {
+                #[cfg(test)]
+                eprintln!(
+                    "fetch cache unavailable ({}): {}",
+                    if _fault.transient {
+                        "transient, retries spent"
+                    } else {
+                        "permanent"
+                    },
+                    _fault.detail
+                );
+                return Err(unavailable());
+            }
+        }
+    }
+}
+
 fn path(cfg: &Value) -> PathBuf {
     config::state_path(Path::new(
         cfg.pointer("/cache/global_dir")
@@ -229,6 +358,10 @@ impl Cache {
         if !self.should_read(url) || url.len() > MAX_LABEL {
             return Ok(None);
         }
+        retrying(|| self.read(url, scope, timestamp))
+    }
+
+    fn read(&self, url: &str, scope: Option<&str>, timestamp: i64) -> Attempt<Option<Entry>> {
         let Some(mut connection) = existing(&self.path, false)? else {
             return Ok(None);
         };
@@ -280,8 +413,7 @@ impl Cache {
                     ))
                 },
             )
-            .optional()
-            .map_err(|_| unavailable())?;
+            .optional()?;
         let Some((mut entry, metadata)) = row else {
             return Ok(None);
         };
@@ -293,35 +425,39 @@ impl Cache {
             return Ok(None);
         }
         if let Some(metadata) = metadata.filter(|text| !text.is_empty()) {
-            entry.metadata = serde_json::from_str(&metadata).map_err(|_| unavailable())?;
+            entry.metadata = serde_json::from_str(&metadata)
+                .map_err(|_| Fault::permanent("stored metadata is not a JSON object"))?;
         }
         touch_connection(&mut connection, &key, timestamp)?;
         Ok(Some(entry))
     }
 
     pub(crate) fn touch(&self, url: &str, scope: Option<&str>) -> Result<()> {
-        if let Some(mut connection) = existing(&self.path, false)? {
-            touch_connection(&mut connection, &key(url, scope), now())?;
-        }
-        Ok(())
+        let (key, timestamp) = (key(url, scope), now());
+        retrying(|| {
+            if let Some(mut connection) = existing(&self.path, false)? {
+                touch_connection(&mut connection, &key, timestamp)?;
+            }
+            Ok(())
+        })
     }
 
     /// Invalidate an old page after a successful response becomes ineligible.
     /// Failed fetches must retain the last good entry instead.
     pub(crate) fn remove(&self, url: &str, scope: Option<&str>) -> Result<()> {
-        if let Some(mut connection) = existing(&self.path, false)? {
-            if columns(&connection)?.is_empty() && empty_database(&connection)? {
-                return Ok(());
+        let key = key(url, scope);
+        retrying(|| {
+            if let Some(mut connection) = existing(&self.path, false)? {
+                if columns(&connection)?.is_empty() && empty_database(&connection)? {
+                    return Ok(());
+                }
+                let transaction =
+                    connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                transaction.execute("DELETE FROM fetch_cache WHERE key=?1", [&key])?;
+                transaction.commit()?;
             }
-            let transaction = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(|_| unavailable())?;
-            transaction
-                .execute("DELETE FROM fetch_cache WHERE key=?1", [key(url, scope)])
-                .map_err(|_| unavailable())?;
-            transaction.commit().map_err(|_| unavailable())?;
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     pub(crate) fn set(&self, url: &str, scope: Option<&str>, entry: &Entry) -> Result<()> {
@@ -352,11 +488,24 @@ impl Cache {
             return Ok(());
         }
         let metadata = metadata_json(&entry.metadata)?;
+        let key = key(url, scope);
+        retrying(|| self.write(&key, url, entry, &metadata, size, timestamp))
+    }
+
+    /// One attempt at storing `entry`, creating the store on first use.
+    fn write(
+        &self,
+        key: &str,
+        url: &str,
+        entry: &Entry,
+        metadata: &str,
+        size: i64,
+        timestamp: i64,
+    ) -> Attempt<()> {
         if let Some(parent) = self.path.parent() {
             crate::platform::private_directory()
                 .recursive(true)
-                .create(parent)
-                .map_err(|_| unavailable())?;
+                .create(parent)?;
         }
         // Create the file before SQLite does, so it and the side files SQLite
         // copies its mode to are private from the start.
@@ -367,7 +516,7 @@ impl Cache {
         {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err(unavailable()),
+            Err(error) => return Err(error.into()),
         }
         private(&self.path)?;
         let mut connection = open(
@@ -375,15 +524,9 @@ impl Cache {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )?;
         configure_wal(&connection)?;
-        connection
-            .pragma_update(None, "synchronous", "NORMAL")
-            .map_err(|_| unavailable())?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| unavailable())?;
-        transaction
-            .execute_batch(SCHEMA)
-            .map_err(|_| unavailable())?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(SCHEMA)?;
         let present = columns(&transaction)?;
         for name in [
             "etag",
@@ -394,32 +537,24 @@ impl Cache {
         ] {
             if !present.contains(name) {
                 transaction
-                    .execute_batch(&format!("ALTER TABLE fetch_cache ADD COLUMN {name} TEXT"))
-                    .map_err(|_| unavailable())?;
+                    .execute_batch(&format!("ALTER TABLE fetch_cache ADD COLUMN {name} TEXT"))?;
             }
         }
-        let key = key(url, scope);
-        transaction
-            .execute("DELETE FROM fetch_cache WHERE key=?1", [&key])
-            .map_err(|_| unavailable())?;
-        let mut total: i64 = transaction
-            .query_row(
-                "SELECT COALESCE(SUM(size_bytes),0) FROM fetch_cache",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|_| unavailable())?;
+        transaction.execute("DELETE FROM fetch_cache WHERE key=?1", [key])?;
+        let mut total: i64 = transaction.query_row(
+            "SELECT COALESCE(SUM(size_bytes),0) FROM fetch_cache",
+            [],
+            |row| row.get(0),
+        )?;
         while total > self.capacity - size {
-            let oldest: Option<(String,i64)> = transaction.query_row("SELECT key,size_bytes FROM fetch_cache ORDER BY accessed_at ASC,rowid ASC LIMIT 1", [], |row| Ok((row.get(0)?,row.get(1)?))).optional().map_err(|_| unavailable())?;
+            let oldest: Option<(String,i64)> = transaction.query_row("SELECT key,size_bytes FROM fetch_cache ORDER BY accessed_at ASC,rowid ASC LIMIT 1", [], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
             let Some((key, removed)) = oldest else { break };
-            transaction
-                .execute("DELETE FROM fetch_cache WHERE key=?1", [key])
-                .map_err(|_| unavailable())?;
+            transaction.execute("DELETE FROM fetch_cache WHERE key=?1", [key])?;
             total = total.saturating_sub(removed);
         }
         transaction.execute("INSERT INTO fetch_cache (key,url,content,strategy_used,title,final_url,metadata,created_at,accessed_at,size_bytes,etag,last_modified,screenshot_path,static_content,browser_content) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8,?9,?10,?11,NULL,NULL,NULL)",
-            params![key,url,entry.content,entry.strategy_used,entry.title,entry.final_url,metadata,timestamp,size,entry.etag,entry.last_modified]).map_err(|_| unavailable())?;
-        transaction.commit().map_err(|_| unavailable())?;
+            params![key,url,entry.content,entry.strategy_used,entry.title,entry.final_url,metadata,timestamp,size,entry.etag,entry.last_modified])?;
+        transaction.commit()?;
         Ok(())
     }
 }
@@ -444,67 +579,66 @@ fn metadata_json(metadata: &Map<String, Value>) -> Result<String> {
     String::from_utf8(buffer.0).map_err(|_| unavailable())
 }
 
-fn columns(connection: &Connection) -> Result<HashSet<String>> {
-    let mut query = connection
-        .prepare("PRAGMA table_info(fetch_cache)")
-        .map_err(|_| unavailable())?;
-    query
-        .query_map([], |row| row.get(1))
-        .map_err(|_| unavailable())?
-        .collect::<std::result::Result<HashSet<String>, _>>()
-        .map_err(|_| unavailable())
+fn columns(connection: &Connection) -> Attempt<HashSet<String>> {
+    let mut query = connection.prepare("PRAGMA table_info(fetch_cache)")?;
+    Ok(query
+        .query_map([], |row| row.get(1))?
+        .collect::<std::result::Result<HashSet<String>, _>>()?)
 }
 
-fn touch_connection(connection: &mut Connection, key: &str, timestamp: i64) -> Result<()> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| unavailable())?;
-    transaction
-        .execute(
-            "UPDATE fetch_cache SET accessed_at=?2 WHERE key=?1",
-            params![key, timestamp],
-        )
-        .map_err(|_| unavailable())?;
-    transaction.commit().map_err(|_| unavailable())?;
+fn touch_connection(connection: &mut Connection, key: &str, timestamp: i64) -> Attempt<()> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute(
+        "UPDATE fetch_cache SET accessed_at=?2 WHERE key=?1",
+        params![key, timestamp],
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 
-fn open(path: &Path, flags: OpenFlags) -> Result<Connection> {
-    let connection = Connection::open_with_flags(path, flags).map_err(|_| unavailable())?;
-    connection
-        .busy_timeout(BUSY_TIMEOUT)
-        .map_err(|_| unavailable())?;
-    connection
-        .pragma_update(None, "trusted_schema", "OFF")
-        .map_err(|_| unavailable())?;
+#[cfg(test)]
+thread_local! {
+    /// Opens on this thread that fail as a file held by another process.
+    static HELD_OPENS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+fn open(path: &Path, flags: OpenFlags) -> Attempt<Connection> {
+    #[cfg(test)]
+    if HELD_OPENS.with(|left| left.replace(left.get().saturating_sub(1))) > 0 {
+        // ERROR_SHARING_VIOLATION on Windows; an interrupted call elsewhere.
+        #[cfg(windows)]
+        let error = std::io::Error::from_raw_os_error(32);
+        #[cfg(not(windows))]
+        let error = std::io::Error::from(std::io::ErrorKind::Interrupted);
+        return Err(error.into());
+    }
+    let connection = Connection::open_with_flags(path, flags)?;
+    connection.busy_timeout(BUSY_TIMEOUT)?;
+    connection.pragma_update(None, "trusted_schema", "OFF")?;
     Ok(connection)
 }
 
-fn empty_database(connection: &Connection) -> Result<bool> {
-    connection
-        .query_row(
-            "SELECT NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|_| unavailable())
+fn empty_database(connection: &Connection) -> Attempt<bool> {
+    Ok(connection.query_row(
+        "SELECT NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*')",
+        [],
+        |row| row.get(0),
+    )?)
 }
 
-fn configure_wal(connection: &Connection) -> Result<()> {
+fn configure_wal(connection: &Connection) -> Attempt<()> {
     let deadline = Instant::now() + BUSY_TIMEOUT;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            return Err(unavailable());
+            return Err(Fault::permanent(
+                "WAL mode stayed busy for the whole busy timeout",
+            ));
         }
-        connection
-            .busy_timeout(remaining)
-            .map_err(|_| unavailable())?;
+        connection.busy_timeout(remaining)?;
         match connection.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0)) {
             Ok(mode) if mode.eq_ignore_ascii_case("wal") => {
-                connection
-                    .busy_timeout(BUSY_TIMEOUT)
-                    .map_err(|_| unavailable())?;
+                connection.busy_timeout(BUSY_TIMEOUT)?;
                 return Ok(());
             }
             // SQLite may decline to invoke the busy handler while promoting
@@ -520,7 +654,8 @@ fn configure_wal(connection: &Connection) -> Result<()> {
                         .min(deadline.saturating_duration_since(Instant::now())),
                 );
             }
-            _ => return Err(unavailable()),
+            Ok(mode) => return Err(Fault::permanent(format!("journal mode stayed {mode}"))),
+            Err(error) => return Err(error.into()),
         }
     }
 }
@@ -528,7 +663,7 @@ fn configure_wal(connection: &Connection) -> Result<()> {
 /// The store holds URLs with their query tokens and credential-fetched pages.
 /// Writers narrow a store, and the SQLite side files present, to their owner,
 /// since earlier versions created them with the default mode. Links are refused.
-fn private(path: &Path) -> Result<()> {
+fn private(path: &Path) -> Attempt<()> {
     for suffix in ["", "-journal", "-wal", "-shm"] {
         let mut name = path.as_os_str().to_owned();
         name.push(suffix);
@@ -547,22 +682,23 @@ fn private(path: &Path) -> Result<()> {
                         )
                         .and_then(|opened| {
                             opened.set_permissions(std::fs::Permissions::from_mode(mode & 0o700))
-                        })
-                        .map_err(|_| unavailable())?;
+                        })?;
                     }
                 }
             }
-            _ => return Err(unavailable()),
+            Ok(_) => return Err(Fault::permanent("a store file is not a regular file")),
+            Err(error) => return Err(error.into()),
         }
     }
     Ok(())
 }
 
-fn existing(path: &Path, readonly: bool) -> Result<Option<Connection>> {
+fn existing(path: &Path, readonly: bool) -> Attempt<Option<Connection>> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        _ => return Err(unavailable()),
+        Ok(_) => return Err(Fault::permanent("the store is not a regular file")),
+        Err(error) => return Err(error.into()),
     }
     if !readonly {
         private(path)?;
@@ -585,16 +721,20 @@ fn megabytes(bytes: i64) -> f64 {
 /// Missing databases remain absent; callers retain the combined error envelope.
 pub fn stats(cfg: &Value) -> Result<Value> {
     let path = path(cfg);
-    let Some(connection) = existing(&path, true)? else {
-        return Ok(Value::Null);
-    };
-    let (count, size): (i64, i64) = connection
-        .query_row(
+    let counted = retrying(|| {
+        let Some(connection) = existing(&path, true)? else {
+            return Ok(None);
+        };
+        let counts: (i64, i64) = connection.query_row(
             "SELECT COUNT(*),COALESCE(SUM(size_bytes),0) FROM fetch_cache",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|_| unavailable())?;
+        )?;
+        Ok(Some(counts))
+    })?;
+    let Some((count, size)) = counted else {
+        return Ok(Value::Null);
+    };
     Ok(
         json!({"count":count,"size_bytes":size,"size_mb":megabytes(size),"max_size_mb":megabytes(capacity(cfg)),"db_path":path}),
     )
@@ -602,37 +742,33 @@ pub fn stats(cfg: &Value) -> Result<Value> {
 
 /// Check an existing store's table and write transaction without changing rows.
 pub fn preflight_clear(cfg: &Value) -> Result<()> {
-    let Some(mut connection) = existing(&path(cfg), false)? else {
-        return Ok(());
-    };
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| unavailable())?;
-    transaction
-        .query_row("SELECT COUNT(*) FROM fetch_cache", [], |row| {
+    let path = path(cfg);
+    retrying(|| {
+        let Some(mut connection) = existing(&path, false)? else {
+            return Ok(());
+        };
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.query_row("SELECT COUNT(*) FROM fetch_cache", [], |row| {
             row.get::<_, i64>(0)
-        })
-        .map_err(|_| unavailable())?;
-    transaction
-        .prepare("DELETE FROM fetch_cache")
-        .map_err(|_| unavailable())?;
-    transaction.rollback().map_err(|_| unavailable())?;
-    Ok(())
+        })?;
+        transaction.prepare("DELETE FROM fetch_cache")?;
+        transaction.rollback()?;
+        Ok(())
+    })
 }
 
 /// Clear one store transactionally. Cross-store coordination belongs to the CLI.
 pub fn clear(cfg: &Value) -> Result<u64> {
-    let Some(mut connection) = existing(&path(cfg), false)? else {
-        return Ok(0);
-    };
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| unavailable())?;
-    let removed = transaction
-        .execute("DELETE FROM fetch_cache", [])
-        .map_err(|_| unavailable())?;
-    transaction.commit().map_err(|_| unavailable())?;
-    Ok(removed as u64)
+    let path = path(cfg);
+    retrying(|| {
+        let Some(mut connection) = existing(&path, false)? else {
+            return Ok(0);
+        };
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let removed = transaction.execute("DELETE FROM fetch_cache", [])?;
+        transaction.commit()?;
+        Ok(removed as u64)
+    })
 }
 
 #[cfg(test)]
@@ -1018,21 +1154,127 @@ mod tests {
                     let barrier = barrier.clone();
                     std::thread::spawn(move || {
                         barrier.wait();
-                        Cache::from_config(&cfg).unwrap().set(
-                            &number.to_string(),
-                            None,
-                            &entry("page"),
-                        )
+                        let cache = Cache::from_config(&cfg).unwrap();
+                        let url = number.to_string();
+                        cache.set(&url, None, &entry("page"))?;
+                        // Readers meet the same first-use contention.
+                        cache.get(&url, None)
                     })
                 })
                 .collect();
-            let errors: Vec<_> = handles
+            let results: Vec<_> = handles
                 .into_iter()
-                .filter_map(|handle| handle.join().unwrap().err())
+                .map(|handle| handle.join().unwrap())
                 .collect();
-            assert!(errors.is_empty(), "round {round}: {errors:?}");
+            assert!(
+                results
+                    .iter()
+                    .all(|result| matches!(result, Ok(Some(entry)) if entry.content == "page")),
+                "round {round}: {results:?}"
+            );
             assert_eq!(stats(&cfg).unwrap()["count"], 8);
         }
+    }
+
+    #[test]
+    fn a_store_file_held_for_a_moment_delays_reads_and_writes_without_losing_them() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = cfg(&root.path().join("state"), 1024, 60);
+        let cache = Cache::from_config(&cfg).unwrap();
+        HELD_OPENS.with(|left| left.set(3));
+        cache.set("page", None, &entry("first")).unwrap();
+        HELD_OPENS.with(|left| left.set(3));
+        assert_eq!(cache.get("page", None).unwrap().unwrap().content, "first");
+        HELD_OPENS.with(|left| left.set(2));
+        cache.remove("page", None).unwrap();
+        assert!(cache.get("page", None).unwrap().is_none());
+        assert_eq!(HELD_OPENS.with(std::cell::Cell::get), 0);
+    }
+
+    #[test]
+    fn transient_failures_are_retried_for_a_bounded_time_and_others_fail_at_once() {
+        let busy = || Fault {
+            transient: true,
+            detail: "database is locked".into(),
+        };
+        let mut calls = 0;
+        let value = retrying(|| {
+            calls += 1;
+            if calls < 3 { Err(busy()) } else { Ok(calls) }
+        });
+        assert_eq!(value.unwrap(), 3);
+        let mut calls = 0;
+        let error = retrying(|| -> Attempt<()> {
+            calls += 1;
+            Err(Fault::permanent("file is not a database"))
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Persistent URL fetch cache is unavailable"
+        );
+        assert_eq!(calls, 1);
+        let started = Instant::now();
+        let mut calls = 0;
+        assert!(
+            retrying(|| -> Attempt<()> {
+                calls += 1;
+                Err(busy())
+            })
+            .is_err()
+        );
+        assert!(calls > 3, "{calls}");
+        assert!(started.elapsed() < RETRY_WINDOW + LONGEST_RETRY_WAIT);
+    }
+
+    #[test]
+    fn lock_contention_and_io_errors_are_transient_but_a_damaged_store_is_not() {
+        use rusqlite::ffi;
+        let sqlite = |code| rusqlite::Error::SqliteFailure(ffi::Error::new(code), None);
+        for code in [
+            ffi::SQLITE_BUSY,
+            ffi::SQLITE_BUSY_RECOVERY,
+            ffi::SQLITE_LOCKED,
+            ffi::SQLITE_PROTOCOL,
+            ffi::SQLITE_IOERR_SHMLOCK,
+            ffi::SQLITE_IOERR_DELETE,
+        ] {
+            assert!(transient_sqlite(&sqlite(code)), "{code}");
+        }
+        for code in [
+            ffi::SQLITE_NOTADB,
+            ffi::SQLITE_CORRUPT,
+            ffi::SQLITE_CONSTRAINT_TRIGGER,
+            ffi::SQLITE_FULL,
+            ffi::SQLITE_READONLY,
+            ffi::SQLITE_ERROR,
+        ] {
+            assert!(!transient_sqlite(&sqlite(code)), "{code}");
+        }
+        // Windows names a file a scanner or a closing connection holds as one
+        // it cannot open; elsewhere that is a lasting permission problem.
+        assert_eq!(
+            transient_sqlite(&sqlite(ffi::SQLITE_CANTOPEN)),
+            cfg!(windows)
+        );
+        assert!(!transient_io(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+        assert!(transient_io(&std::io::Error::from(
+            std::io::ErrorKind::Interrupted
+        )));
+        #[cfg(windows)]
+        for code in [5, 32, 33, 303] {
+            // Access denied, sharing and lock violations, delete pending.
+            assert!(
+                transient_io(&std::io::Error::from_raw_os_error(code)),
+                "{code}"
+            );
+        }
+        #[cfg(unix)]
+        assert!(!transient_io(&std::io::Error::from_raw_os_error(
+            libc::EACCES
+        )));
     }
 
     #[test]
