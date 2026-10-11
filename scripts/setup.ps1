@@ -59,19 +59,33 @@ function Test-OutputRedirected {
     try { return [Console]::IsOutputRedirected } catch { return $false }
 }
 
-# Unicode marks on any modern terminal and off Windows; ASCII in the legacy
-# console host and for TERM=dumb. Redirected output on Windows is read back in
-# the shell's code page (Get-Content in Windows PowerShell 5.1 reads ANSI), so
-# it gets Unicode marks only when that code page is UTF-8: the one the shell
-# had, since this script switches the console to UTF-8 for uv's output. An
-# SSH session counts as a modern terminal, but not for a file it writes.
+# The code page this script's output is written in: UTF-8 (65001) once the
+# switch at the top worked.
+function Get-OutputCodePage {
+    try { return [Console]::OutputEncoding.CodePage } catch { return 0 }
+}
+
+# Whether the console processes escape sequences. PowerShell switches them on
+# itself where the console allows it (Windows 10 version 1511 and later).
+function Test-VirtualTerminalConsole {
+    try { return [bool]$Host.UI.SupportsVirtualTerminal } catch { return $false }
+}
+
+# The same rule as markitai itself (Python and Rust): the Unicode marks
+# everywhere except TERM=dumb and a Windows console that cannot process
+# escape sequences (Windows before 10 version 1511, or the console host's
+# "Use legacy console"). Redirected output carries them like any other text
+# once it is UTF-8, which this script makes it for uv's output; only if that
+# switch failed are the bytes in a code page that has no marks. A reader
+# that decodes UTF-8 with another code page (Get-Content in Windows
+# PowerShell 5.1 without -Encoding UTF8) shows them wrongly, as it shows
+# every non-ASCII character.
 function Test-UnicodeMarks {
     if ($env:TERM -eq "dumb") { return $false }
     if (-not $script:OnWindows) { return $true }
-    if (Test-OutputRedirected) {
-        try { return ($script:OriginalOutputEncoding.CodePage -eq 65001) } catch { return $false }
-    }
-    return $script:ModernTerminal
+    if (Test-OutputRedirected) { return ((Get-OutputCodePage) -eq 65001) }
+    if ($script:ModernTerminal) { return $true }
+    return (Test-VirtualTerminalConsole)
 }
 
 # Colour is off for NO_COLOR, TERM=dumb and redirected output (unless
