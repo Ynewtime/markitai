@@ -54,7 +54,7 @@ from markitai.constants import (
     DEFAULT_RETRY_MAX_DELAY,
 )
 from markitai.llm.error_redaction import redact_provider_exception
-from markitai.llm.models import format_cost, get_response_cost
+from markitai.llm.models import format_cost, get_response_cost, stamp_sent_at
 from markitai.llm.router import MODEL_LEVEL_ERROR_PATTERNS, POOL_EXHAUSTED_PATTERN
 from markitai.llm.structured import router_structured_ladder
 from markitai.llm.types import LLMResponse
@@ -807,11 +807,13 @@ class LLMEngine:
 
         async def guarded(*args: Any, **kwargs: Any) -> Any:
             self._spend_request_budget(context)
+            sent_at = time.time()
             try:
                 response = await acompletion(*args, **kwargs)
             except Exception as e:
                 redact_provider_exception(e, kwargs.get("messages"))
                 raise
+            stamp_sent_at(response, sent_at)
             usage = getattr(response, "usage", None)
             if usage is not None:
                 self.track_usage(
@@ -1228,7 +1230,10 @@ class LLMEngine:
 
                     call_kwargs = dict(kwargs)
                     call_kwargs["metadata"] = {"call_id": call_id, "attempt": attempt}
+                    sent_at = time.time()
                     response = await active_router.acompletion(*args, **call_kwargs)
+                    # DeepSeek's price depends on when the request was sent
+                    stamp_sent_at(response, sent_at)
 
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     actual_model = getattr(response, "model", None) or model
