@@ -13,7 +13,8 @@ screenshots every state:
     action reported in the inspector, stop remaining (cancel), download all
     (ticket), an inline SVG drawing in the preview, settings model test
     (fake LLM), the provider picker (groups, brand marks, search), a saved
-    address shown without its credentials, history after a reload, token
+    address shown without its credentials, a provider beyond the first eight
+    connected with a key and an address, history after a reload, token
     prompt
 
 Notices must be strips at the bottom (never the page-wide banners the UI
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -1325,7 +1327,7 @@ def browse(
             _wait(
                 page,
                 lambda: (
-                    tiles.count() >= 7
+                    tiles.count() >= 8
                     and panel.locator(".provider-tile svg.brand-icon").count()
                     == tiles.count()
                 ),
@@ -1341,6 +1343,7 @@ def browse(
                 "OpenRouter",
                 "Azure OpenAI",
                 "Ollama",
+                "Mistral AI",
             ]
             if names != common:
                 raise AssertionError(f"Common shows {names}")
@@ -1348,10 +1351,26 @@ def browse(
                 " ".join(c.split())
                 for c in panel.locator(".filter-chip").all_inner_texts()
             ]
-            # Only cards with a group get filters: no chips means the server
-            # sent none and the picker fell back to All providers
-            if chips[:1] != ["All"] or "Local" not in chips:
+            # The groups of the Rust server's picker: every provider this
+            # build routes has a card (Subscriptions needs a runtime's extra)
+            subscriptions = any(
+                importlib.util.find_spec(name) is not None
+                for name in ("claude_agent_sdk", "copilot")
+            )
+            expected_chips = [
+                "All",
+                "Clouds",
+                "Inference",
+                "Gateways",
+                "Local",
+                *(["Subscriptions"] if subscriptions else []),
+                "Model makers",
+            ]
+            if chips != expected_chips:
                 raise AssertionError(f"filters: {chips}")
+            total = panel.get_by_role("searchbox").get_attribute("placeholder") or ""
+            if not re.search(r"\b(8[5-9]|9\d) providers\b", total):
+                raise AssertionError(f"the search offers {total!r}")
             panel.locator(".filter-chip").filter(has_text="Local").click()
             on = " ".join(panel.locator(".filter-chip.is-on").all_inner_texts()).strip()
             items = panel.locator(".provider-item")
@@ -1397,7 +1416,10 @@ def browse(
             )
             search.fill("")
             _no_banners(page)
-            return f"Common: {len(names)} providers with marks; filters {' · '.join(chips)}; search by prefix and alias"
+            return (
+                f"{total}; Common: {len(names)} providers with marks; "
+                f"filters {' · '.join(chips)}; search by prefix and alias"
+            )
 
         run.step(page, "provider-picker", picker)
         _dismiss(page)
@@ -1486,6 +1508,85 @@ def browse(
             )
 
         run.step(page, "settings-masked-address", masked_address)
+
+        # 13b. Add models: a provider beyond markitai's first eight connects
+        # with a key and an address of one's own, and lists its models (Groq,
+        # pointed at the fake LLM: nothing leaves the machine)
+        def connect_provider() -> str:
+            address = f"http://127.0.0.1:{llm_port}/v1"
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            _click_visible(page.get_by_role("button", name="Add models"))
+            panel = page.locator(".provider-picker")
+            panel.wait_for()
+            panel.get_by_role("searchbox").fill("groq")
+            _click_visible(panel.locator(".provider-item").filter(has_text="Groq"))
+            facts = page.locator(".provider-facts")
+            _wait(
+                page,
+                lambda: (
+                    facts.count() == 1
+                    and "https://api.groq.com/openai/v1" in facts.inner_text()
+                    and "GROQ_API_KEY" in facts.inner_text()
+                ),
+                timeout=10,
+                what="Groq's address and key variable",
+            )
+            page.get_by_placeholder("Paste the key").fill("gsk-e2e-0000-1111")
+            page.locator("summary").filter(has_text="Use a custom API base").click()
+            page.get_by_placeholder("https://api.groq.com/openai/v1").fill(address)
+            before = len(run.api)
+            page.get_by_role("button", name="Load models").click()
+            _wait(
+                page,
+                lambda: run.saw(
+                    "POST", r"^/api/settings/llm/model-discovery$", 200, since=before
+                ),
+                what="Groq's model list",
+            )
+            option = page.locator(".picker-option").filter(has_text="groq/fake-model")
+            option.wait_for(timeout=10000)
+            option.locator("input[type=checkbox]").check()
+            # Its own routing group, so later steps' jobs keep their model
+            page.locator("summary").filter(has_text="Advanced").click()
+            page.get_by_label("Routing group").fill("e2e-groq")
+            run.shot(page, "provider-connect-groq")
+            before = len(run.api)
+            page.locator(".form-actions").get_by_role("button", name="Save").click()
+            _wait(
+                page,
+                lambda: (
+                    run.saw(
+                        "POST",
+                        r"^/api/settings/llm/deployments/batch$",
+                        200,
+                        since=before,
+                    )
+                    # The page reloads the providers after a save; leaving
+                    # before that cancels the fetch (WebKit logs it)
+                    and run.saw(
+                        "GET", r"^/api/settings/llm/providers", 200, since=before
+                    )
+                ),
+                what="the saved models",
+            )
+            stored = json.loads(config.read_text(encoding="utf-8"))["llm"]
+            groq = [p for p in stored["providers"] if p.get("provider") == "groq"]
+            if [(p.get("api_key"), p.get("api_base")) for p in groq] != [
+                ("gsk-e2e-0000-1111", address)
+            ]:
+                raise AssertionError(f"saved connection: {groq}")
+            added = [
+                m
+                for m in stored["model_list"]
+                if m["litellm_params"]["model"] == "groq/fake-model"
+            ]
+            if [m["model_name"] for m in added] != ["e2e-groq"]:
+                raise AssertionError(f"saved models: {added}")
+            if "gsk-e2e-0000-1111" in page.content():
+                raise AssertionError("the key came back to the page")
+            return "Groq connected with a key and an address; its list loaded; one model saved"
+
+        run.step(page, "settings-connect-provider", connect_provider)
 
         # 14. History survives a reload
         def history() -> str:
