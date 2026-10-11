@@ -314,6 +314,8 @@ export function ModelsSettings({
     !cloud &&
     (provider.provider === "azure" || provider.provider === "custom" || (provider.default_base === null && !existing));
   const showsKey = provider !== null && !existing && !ollama && !subscription && (!cloud || Boolean(provider.key_variable));
+  // Every other new connection may move the address; its default shows as the placeholder.
+  const baseOptional = provider !== null && !needsBase && !existing && !subscription;
   const keyRequired = provider !== null && provider.provider !== "custom" && !local;
   const canLoad =
     provider !== null &&
@@ -937,9 +939,10 @@ export function ModelsSettings({
                           cloud,
                         })}
                       </p>
-                      {(provider.kind === "common" || provider.kind === "compatible") && (provider.default_base || provider.key_variable) && (
+                      {(provider.kind === "common" || provider.kind === "compatible") && ((provider.default_base && !baseOptional) || provider.key_variable) && (
                         <p class="provider-facts">
-                          {provider.default_base && <span class="provider-fact">{provider.default_base}</span>}
+                          {/* The address field shows the default itself. */}
+                          {provider.default_base && !baseOptional && <span class="provider-fact">{provider.default_base}</span>}
                           {provider.key_variable && <span class="provider-fact">{local ? t.optionalKeyVariable(provider.key_variable) : provider.key_variable}</span>}
                         </p>
                       )}
@@ -963,44 +966,41 @@ export function ModelsSettings({
                         </button>
                       ))}
                   </div>
-                  {showsKey && (
-                    <div class={needsBase ? "field-grid" : "field-grid is-single"}>
-                      <label class="field">
-                        <span class="field-label">
-                          {t.setApiKey}
-                          {keyRequired && <span class="field-required">{t.requiredField}</span>}
-                        </span>
-                        <input type="password" value={draftKey} placeholder={t.setKeyPh} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
-                      </label>
-                      {needsBase && (
+                  {(showsKey || baseOptional) && (
+                    // The key and the address side by side, on the same grid as the model ID and routing below.
+                    <div class={showsKey && (needsBase || baseOptional) ? "field-grid" : "field-grid is-single"}>
+                      {showsKey && (
+                        <label class="field">
+                          <span class="field-label">
+                            {t.setApiKey}
+                            <span class="field-required">{keyRequired ? t.requiredField : t.optionalField}</span>
+                          </span>
+                          <input type="password" value={draftKey} placeholder={t.setKeyPh} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
+                        </label>
+                      )}
+                      {((showsKey && needsBase) || baseOptional) && (
                         <label class="field">
                           <span class="field-label">
                             {t.setApiBase}
-                            <span class="field-required">{t.requiredField}</span>
+                            <span class="field-required">{needsBase ? t.requiredField : t.optionalField}</span>
                           </span>
                           <input
                             type="url"
                             value={draftBase}
-                            placeholder={provider.provider === "hosted_vllm" ? "http://127.0.0.1:8000/v1" : "https://example.com/v1"}
+                            placeholder={
+                              needsBase
+                                ? provider.provider === "hosted_vllm"
+                                  ? "http://127.0.0.1:8000/v1"
+                                  : "https://example.com/v1"
+                                : ollama
+                                  ? "http://127.0.0.1:11434"
+                                  : (provider.default_base ?? "https://example.com/v1")
+                            }
                             onInput={(event) => setDraftBase(event.currentTarget.value)}
                           />
                         </label>
                       )}
                     </div>
-                  )}
-                  {!needsBase && !existing && !subscription && (
-                    <details class="disclosure">
-                      <summary>{t.customApiBase}</summary>
-                      <label class="field disclosure-field">
-                        <span class="field-label">{t.setApiBase}</span>
-                        <input
-                          type="url"
-                          value={draftBase}
-                          placeholder={ollama ? "http://127.0.0.1:11434" : (provider.default_base ?? "https://example.com/v1")}
-                          onInput={(event) => setDraftBase(event.currentTarget.value)}
-                        />
-                      </label>
-                    </details>
                   )}
                 </section>
                 {discovering && discovery === null && (

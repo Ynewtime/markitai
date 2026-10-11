@@ -15,6 +15,7 @@ import { fmtBytes } from "../lib/format.ts";
 import { loadLibraries } from "../lib/markdown.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { Icon } from "./icons.tsx";
+import { Skeleton } from "./skeleton.tsx";
 import { MarkdownView, type Tab } from "./markdown-view.tsx";
 
 const descriptors = new Map<string, OriginalDescriptor>();
@@ -112,7 +113,7 @@ export function CompareView({
       {error ? (
         <p class="pane-note line-error">{describe(error).text}</p>
       ) : descriptor === null ? (
-        <p class="pane-note">{t.loading}</p>
+        <Skeleton label={t.loading} kind="page" />
       ) : (
         <OriginalBody
           t={t}

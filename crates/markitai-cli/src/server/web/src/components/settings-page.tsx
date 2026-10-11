@@ -92,17 +92,34 @@ export function AccessSettings({ t, unauthorized, onToken }: { t: Dict; unauthor
   const [value, setValue] = useState("");
   const [held, setHeld] = useState(hasToken);
   const [saved, setSaved] = useState(false);
+  // One status line: what this tab holds, with Forget beside it; one field with
+  // Save attached; one hint under the field.
+  const refused = unauthorized && !saved;
+  const state = refused ? t.accessRefused : saved ? t.tokenSaved : held ? t.accessHeld : t.accessNone;
+  const hint = refused ? t.accessRefusedHint : held ? t.replaceToken : t.accessExplain;
   return (
     <section class="settings-page" aria-labelledby="access-title">
       <div class="page-head">
         <h1 id="access-title">{t.navAccess}</h1>
       </div>
-      <div class="settings-body">
-        <p class={unauthorized ? "access-state is-error" : "access-state"} role="status">
-          <Icon name={unauthorized ? "Warning" : held ? "Check" : "Key"} size={15} />
-          {unauthorized ? t.accessRefused : held ? t.accessHeld : t.accessNone}
+      <div class="settings-body access">
+        <p class={refused ? "access-state is-error" : "access-state"} role="status">
+          <Icon name={refused ? "Warning" : held ? "Check" : "Key"} size={15} />
+          <span>{state}</span>
+          {held && (
+            <button
+              type="button"
+              class="text-link"
+              onClick={() => {
+                setToken("");
+                setHeld(false);
+                setSaved(false);
+              }}
+            >
+              {t.forgetToken}
+            </button>
+          )}
         </p>
-        <p class="settings-text">{t.accessExplain}</p>
         <form
           class="access-form"
           onSubmit={(event) => {
@@ -115,37 +132,29 @@ export function AccessSettings({ t, unauthorized, onToken }: { t: Dict; unauthor
             onToken();
           }}
         >
-          <label class="field">
-            <span class="field-label">{held ? t.replaceToken : t.tokenLabel}</span>
-            <input type="password" value={value} autoComplete="off" spellcheck={false} onInput={(event) => {
-              setValue(event.currentTarget.value);
-              setSaved(false);
-            }} />
+          <label class="field-label" for="access-token">
+            {t.tokenField}
           </label>
-          <div class="form-actions">
+          <div class="input-group">
+            <input
+              id="access-token"
+              type="password"
+              value={value}
+              autoComplete="off"
+              spellcheck={false}
+              aria-describedby="access-hint"
+              onInput={(event) => {
+                setValue(event.currentTarget.value);
+                setSaved(false);
+              }}
+            />
             <button type="submit" class="btn btn-primary" disabled={!value.trim()}>
-              {t.connect}
+              {t.save}
             </button>
-            {held && (
-              <button
-                type="button"
-                class="btn"
-                onClick={() => {
-                  setToken("");
-                  setHeld(false);
-                  setSaved(false);
-                }}
-              >
-                {t.forgetToken}
-              </button>
-            )}
           </div>
-          {saved && (
-            <p class="line-note" role="status">
-              {t.tokenSaved}
-            </p>
-          )}
-          <p class="dialog-dim">{t.tokenNote}</p>
+          <p id="access-hint" class="field-hint">
+            {hint} {t.tokenNote}
+          </p>
         </form>
       </div>
     </section>

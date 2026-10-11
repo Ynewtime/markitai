@@ -3,8 +3,8 @@ import test from "node:test";
 import { cliCommand, shellQuote } from "./cli.ts";
 import { compareLines } from "./diff.ts";
 import { isHiddenName, selectFolderFiles, stagedBatch, walkEntries } from "./files.ts";
-import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, splitName, timestampMs } from "./format.ts";
-import { artifactPath, drawingReference, drawingValue, loadArtifactImages, markdownPair, presentationFromStyle, rewrite, splitFrontmatter } from "./markdown.ts";
+import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, nameTail, splitName, timestampMs } from "./format.ts";
+import { artifactPath, drawingReference, drawingValue, imageByName, loadArtifactImages, markdownPair, presentationFromStyle, rewrite, splitFrontmatter } from "./markdown.ts";
 import { endpointFor, manualModelId, sameEndpoint } from "./models.ts";
 import {
   ADVANCED_DEFAULTS,
@@ -137,6 +137,45 @@ test("document references resolve only to listed artifacts", () => {
   assert.equal(artifactPath("../doc.md", "sub/x.md", allowed), "doc.md");
   for (const bad of ["https://evil.example/a.png", "//evil.example/a.png", "/etc/passwd", "assets\\a.png", "data:image/png;base64,AA", "missing.png", "%E0%A4%A"]) {
     assert.equal(artifactPath(bad, "doc.md", allowed), null, bad);
+  }
+});
+
+test("a picture whose paragraph repeats its alt text is decorative", () => {
+  const paragraph = { textContent: " 图2 散点图 " };
+  const image = Object.assign(fakeElement("img", { src: "assets/a.png", alt: "图2 散点图" }), { closest: () => paragraph });
+  const other = Object.assign(fakeElement("img", { src: "assets/a.png", alt: "封面" }), { closest: () => ({ textContent: "第一章 图表的语法" }) });
+  const fragment = { ownerDocument: { createElement: (tag: string) => fakeElement(tag) }, querySelectorAll: (selector: string) => (selector === "img" ? [image, other] : []) };
+  rewrite(fragment as never, {
+    documentPath: "doc.md",
+    artifacts: [{ relpath: "assets/a.png", size: 1 }],
+    imageURL: (path) => `/x/${path}`,
+    fileURL: (path) => `/x/${path}`,
+    placeholder: (alt) => `[${alt}]`,
+    fallbackAlt: "figure",
+    tableLabel: "table",
+    codeLabel: "code",
+  });
+  assert.equal(image.getAttribute("alt"), "");
+  assert.equal(other.getAttribute("alt"), "封面");
+});
+
+test("a long file name keeps its extensions and four characters before them", () => {
+  const name = "2025年度可持续发展报告（中英文对照版）——环境、社会及治理信息披露全文.pdf.llm.md";
+  assert.equal(name.slice(nameTail(name)), "信息披露全文.pdf.llm.md".slice(2));
+  assert.equal("report.final.v2.docx.md".slice(nameTail("report.final.v2.docx.md")), "inal.v2.docx.md");
+  assert.equal(nameTail("abc"), 0);
+  assert.equal("README".slice(nameTail("README")), "ADME");
+});
+
+test("an image whose folder does not match resolves by its unique file name only", () => {
+  const images = [".markitai/assets/cover.jpg", ".markitai/assets/图2-散点图.png", ".markitai/assets/a.png", "other/a.png"];
+  assert.equal(imageByName("assets/cover.jpg", images), ".markitai/assets/cover.jpg");
+  assert.equal(imageByName("../Images/%E5%9B%BE2-%E6%95%A3%E7%82%B9%E5%9B%BE.png", images), ".markitai/assets/图2-散点图.png");
+  assert.equal(imageByName("cover.jpg?x=1", images), ".markitai/assets/cover.jpg");
+  // Two listed images share the name: neither is guessed.
+  assert.equal(imageByName("img/a.png", images), null);
+  for (const bad of ["https://evil.example/cover.jpg", "//evil.example/cover.jpg", "/abs/cover.jpg", "..\\cover.jpg", "data:image/png;base64,AA", "missing.png", "notes.md", "%E0%A4%A"]) {
+    assert.equal(imageByName(bad, images), null, bad);
   }
 });
 

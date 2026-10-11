@@ -9,6 +9,7 @@ import { counts, hasNotices, isGroup, itemOrder, jobKey, navigationOrder, placeh
 import { costState, fmtUsd, itemCost, totalCost } from "./cost.ts";
 import { parseFrontMatter } from "./frontmatter.ts";
 import { groupNotices, template } from "./notices.ts";
+import { en } from "../i18n/en.ts";
 import { listQuery, parseListState, parseRoute, routePath } from "./route.ts";
 import { itemFromPayload, type SessionItem } from "./session.ts";
 import { capTables, MARKER, NUMERIC, tableSlice } from "./tables.ts";
@@ -103,6 +104,16 @@ test("warnings group by kind and template, counted, with their names", () => {
   assert.deepEqual(groups[1]?.models, ["fake-model", "fake-vision"]);
   assert.equal(groups[0]?.samples.length, 31);
   assert.equal(template("File 'a b.png' has 12 pages"), "File <q> has <n> pages");
+});
+
+test("a document no model answered reads as one notice beside its failure", () => {
+  const groups = groupNotices([
+    { itemKey: "j/a", itemName: "a.epub", text: "LLM enhancement failed: LLM request failed: connection refused (deployment openai/x at 127.0.0.1:9)" },
+    { itemKey: "j/a", itemName: "a.epub", text: "No model succeeded for this document; only the base Markdown was kept." },
+    { itemKey: "j/b", itemName: "b.pptx", text: "No model succeeded for this document; only the base Markdown was kept." },
+  ]);
+  assert.deepEqual(groups.map((group) => [group.kind, group.count, group.items.length]), [["no_model", 2, 2], ["other", 1, 1]]);
+  assert.equal(en.noticeTitle("no_model", 1, [], ""), "No model answered, so only the base Markdown was kept");
 });
 
 test("long tables are cut before parsing, with a marker and every row kept for Show all", () => {

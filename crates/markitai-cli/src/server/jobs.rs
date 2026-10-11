@@ -371,24 +371,19 @@ async fn convert_one(
             item.llm_enhanced = result.llm_output_path.is_some();
             item.cost_usd = Some(result.usage.cost_usd);
             item.pricing = crate::pricing::Pricing::from_usage(&result.usage);
-            item.models = super::types::models(&result.usage);
+            item.models = super::types::models(item.llm_enhanced, &result.usage);
             item.diagnostics = AttemptDiagnostics::completed(Operation::Convert, result.usage);
             item.warnings = result.warnings;
-            item.output = result.llm_output_path.or(result.output_path).and_then(|p| {
-                p.strip_prefix(job.folder.join("out"))
-                    .ok()
-                    .map(|p| p.to_string_lossy().into_owned())
-            });
+            item.output = result
+                .llm_output_path
+                .or(result.output_path)
+                .and_then(|p| store::relpath(&p, &job.folder.join("out")));
             assets = Some(
                 result
                     .assets
                     .into_iter()
                     .chain(result.screenshots)
-                    .filter_map(|p| {
-                        p.strip_prefix(job.folder.join("out"))
-                            .ok()
-                            .map(|p| p.to_string_lossy().into_owned())
-                    })
+                    .filter_map(|p| store::relpath(&p, &job.folder.join("out")))
                     .collect(),
             );
         }

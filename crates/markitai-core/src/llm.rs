@@ -470,6 +470,11 @@ pub(crate) fn analyze_images_with_runtime(
             "Image analysis returned no usable content".into(),
         ));
     }
+    if declined(&caption) {
+        return Err(Error::Conversion(
+            "Image analysis answer declined to describe the image".into(),
+        ));
+    }
     let usage = match (before, document_usage()) {
         (Some(before), Some(after)) => usage_difference(&after, &before),
         _ => ConversionUsage::default(),
@@ -480,6 +485,32 @@ pub(crate) fn analyze_images_with_runtime(
         extracted_text,
         usage,
     })
+}
+/// Whether a caption is the model declining the request instead of alt text.
+/// A caption is the model's own words, never transcribed image text, so one
+/// that opens with an apology or a refusal does not describe the picture.
+fn declined(caption: &str) -> bool {
+    let caption = caption.trim_start().replace('\u{2019}', "'").to_lowercase();
+    [
+        "i'm sorry",
+        "i am sorry",
+        "sorry, i ",
+        "i cannot ",
+        "i can't ",
+        "i can not ",
+        "i'm unable",
+        "i am unable",
+        "i'm not able to",
+        "i am not able to",
+        "as an ai",
+        "抱歉",
+        "对不起",
+        "我无法",
+        "我不能",
+        "申し訳",
+    ]
+    .iter()
+    .any(|opener| caption.starts_with(opener))
 }
 // Substitute only tokens in the user-owned template, never tokens occurring in
 // inserted document data. This also leaves unrecognized template syntax intact.
@@ -2417,6 +2448,27 @@ mod tests {
         assert_eq!(usage.output_tokens, 13);
         assert_eq!(usage.by_model["paid-model"]["requests"], 1);
         assert_eq!(mock.finish().len(), 1);
+    }
+
+    #[test]
+    fn a_caption_that_declines_the_request_is_not_alt_text() {
+        for caption in [
+            "I am sorry, I cannot help with that.",
+            "I\u{2019}m sorry, but I can't describe this image.",
+            "I can't view images.",
+            "As an AI, I cannot see pictures",
+            "抱歉，我无法查看这张图片",
+        ] {
+            assert!(declined(caption), "{caption}");
+        }
+        for caption in [
+            "Sorry sign on a shop window",
+            "A chart of clarity by site",
+            "Icon reading \"I can't even\"",
+            "无法通行标志",
+        ] {
+            assert!(!declined(caption), "{caption}");
+        }
     }
 
     #[test]

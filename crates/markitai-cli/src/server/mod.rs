@@ -83,6 +83,7 @@ api_routes! {
     post "/api/jobs/{job_id}/items/{item_id}/retry" => rerun::retry;
     delete "/api/jobs/{job_id}/items/{item_id}" => rerun::delete;
     get "/api/jobs/{job_id}/items/{item_id}/result" => files::result;
+    get "/api/jobs/{job_id}/items/{item_id}/assets/{*relpath}" => files::asset;
     get "/api/jobs/{job_id}/items/{item_id}/original" => original::descriptor;
     get "/api/jobs/{job_id}/items/{item_id}/original/file" => original::file;
     get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}" => original::page_image;

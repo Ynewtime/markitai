@@ -261,6 +261,15 @@ export const encodePath = (relpath: string): string => relpath.split("/").map(en
 export const filePath = (job: string, relpath: string): string => `/api/jobs/${enc(job)}/files/${encodePath(relpath)}`;
 export const eventsPath = (job: string): string => `/api/jobs/${enc(job)}/events`;
 
+/** Whether the service serves an item's own images on their own route (v1.6). */
+let itemAssets = false;
+export function setItemAssets(supported: boolean): void {
+  itemAssets = supported;
+}
+/** Where an image of an item's result is read: its asset route, else the job's file route. */
+export const imagePath = (job: string, item: string, relpath: string): string =>
+  itemAssets ? `/api/jobs/${enc(job)}/items/${enc(item)}/assets/${encodePath(relpath)}` : filePath(job, relpath);
+
 /** A single-use URL, valid for one minute, for a download the browser opens
  * itself: the ticket stands in for the token, which never enters a URL. */
 export async function downloadTicket(path: string): Promise<string> {

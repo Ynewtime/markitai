@@ -38,6 +38,23 @@ export function artifactPath(target: string, documentPath: string, allowed: Read
   return allowed.has(path) ? path : null;
 }
 
+/** An image reference whose folder does not match (a model rewrote `.markitai/assets/x.png`
+ * as `assets/x.png`, an e-book kept its own `../Images/x.png`) resolved by its file name to
+ * the one listed raster image of that name; nothing when the name is missing or not unique.
+ * Schemes, absolute paths and backslashes never resolve. */
+export function imageByName(target: string, images: readonly string[]): string | null {
+  if (/^[a-z][a-z\d+.-]*:/i.test(target) || target.startsWith("//") || target.startsWith("/") || target.includes("\\")) return null;
+  let name: string;
+  try {
+    name = decodeURIComponent(target.split(/[?#]/)[0]?.split("/").pop() ?? "");
+  } catch {
+    return null;
+  }
+  if (!name || !RASTER.test(name)) return null;
+  const found = images.filter((path) => path === name || path.endsWith(`/${name}`));
+  return found.length === 1 ? (found[0] ?? null) : null;
+}
+
 const RASTER = /\.(png|jpe?g|gif|webp|avif)$/i;
 
 export interface RenderContext {
@@ -233,9 +250,11 @@ function pinDrawings(fragment: DocumentFragment): void {
 export function rewrite(fragment: DocumentFragment, context: RenderContext): void {
   const doc = fragment.ownerDocument;
   const allowed = new Set(context.artifacts.map((artifact) => artifact.relpath));
+  const images = context.artifacts.map((artifact) => artifact.relpath).filter((path) => RASTER.test(path));
   pinDrawings(fragment);
   for (const image of [...fragment.querySelectorAll("img")]) {
-    const path = artifactPath(image.getAttribute("src") ?? "", context.documentPath, allowed);
+    const source = image.getAttribute("src") ?? "";
+    const path = artifactPath(source, context.documentPath, allowed) ?? imageByName(source, images);
     const alt = image.getAttribute("alt") || "";
     if (path && RASTER.test(path)) {
       const url = context.imageURL(path);
@@ -245,7 +264,11 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
       } else image.setAttribute("src", url);
       image.setAttribute("loading", "lazy");
       image.setAttribute("referrerpolicy", "no-referrer");
-      if (!alt) image.setAttribute("alt", context.fallbackAlt);
+      // A caption beside the picture that says exactly its alt text (an e-book's
+      // figure: `![Fig. 2](…)Fig. 2`) is read once: the picture becomes decorative.
+      const block = typeof image.closest === "function" ? image.closest("p, li, td, th") : null;
+      if (alt && block?.textContent?.trim() === alt.trim()) image.setAttribute("alt", "");
+      else if (!alt) image.setAttribute("alt", context.fallbackAlt);
     } else {
       const span = doc.createElement("span");
       span.className = "img-blocked";

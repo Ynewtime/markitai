@@ -182,6 +182,7 @@ export const en = {
   stagedCount: (n: number) => (n === 1 ? "1 file" : `${n} files`),
   stagedClear: (label: string) => `Remove ${label} from this submission`,
   histDeleteAria: (name: string) => `Permanently delete ${name}`,
+  deleteAction: "Delete",
   deleteItemTitle: (name: string) => `Delete ${name}?`,
   deleteItemDescription: "This removes the stored result and cannot be undone.",
   deletePermanently: "Delete permanently",
@@ -214,6 +215,8 @@ export const en = {
   filesTab: "Files",
   versionAria: "Markdown version",
   loading: "Loading…",
+  previewLoading: (size: string | null) => (size ? `Loading ${size}…` : "Loading…"),
+  previewRendering: "Rendering…",
   exportPdf: "Export PDF",
   pdfSettings: "PDF settings",
   pdfCustomHeaderFooter: "Custom header and footer",
@@ -318,12 +321,16 @@ export const en = {
   providerUnknown: "Unknown provider",
   customApiBase: "Use a custom API base",
   requiredField: "Required",
+  optionalField: "Optional",
   manualModelToggle: "Add a model ID manually",
+  manualAndRouting: "Model ID and routing",
+  manualModelLabel: "Add a model by ID",
   searchModels: "Search models",
   selectAll: "Select all",
   manualModelPh: "Full model ID",
   azureDeploymentPh: "Azure deployment name",
   addManual: "Add manually",
+  addModelId: "Add",
   modelsAvailable: "Available models",
   alreadyConfigured: "Configured",
   visionTag: "Vision",
@@ -539,6 +546,8 @@ export const en = {
   noticeTitle: (kind: string, count: number, models: string[], sample: string) => {
     const list = (names: string[]) => (names.length <= 2 ? names.join(" and ") : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`);
     switch (kind) {
+      case "no_model":
+        return count === 1 ? "No model answered, so only the base Markdown was kept" : `${count} documents got no model answer and kept only their base Markdown`;
       case "alt_kept":
         return count === 1 ? "1 image kept its original alt text: its analysis failed" : `${count} images kept their original alt text: their analysis failed`;
       case "cost_incomplete":
@@ -609,17 +618,19 @@ export const en = {
   themeHint: "Follow the system, or always use light or dark.",
   accessHeld: "This tab has an access token.",
   accessNone: "This tab has no access token.",
-  accessRefused: "The service refused this tab's access token.",
-  accessExplain: "Open the link printed by markitai serve; it carries the token. Or paste the token here.",
-  replaceToken: "Replace the access token",
-  forgetToken: "Forget the token",
-  tokenSaved: "Token saved for this tab.",
+  accessRefused: "The server refused this tab's token.",
+  accessRefusedHint: "Paste a new token.",
+  accessExplain: "Paste the token from the link markitai serve printed.",
+  replaceToken: "Paste a token to replace it.",
+  forgetToken: "Forget",
+  tokenSaved: "Token saved.",
 
   // token dialog
   tokenTitle: "Service access",
   tokenText: "Enter the access token printed when markitai serve started.",
   tokenLabel: "Access token",
-  tokenNote: "Kept for this browser tab only.",
+  tokenField: "Token",
+  tokenNote: "Kept in this tab only.",
   connect: "Connect",
 
   // crash surface (also read before the dictionary is available)

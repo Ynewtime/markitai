@@ -451,7 +451,7 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
     assert_eq!(
         capabilities["features"],
         json!({"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
-            "original":true,"result_excerpt":true,"job_labels":true})
+            "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true})
     );
     let id = server.submit(&[("report.pdf", PDF)], json!([]), json!({}))["job_id"]
         .as_str()

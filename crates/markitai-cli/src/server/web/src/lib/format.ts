@@ -109,3 +109,11 @@ export function fmtClock(value: string | null, locale: string, now: Date = new D
 export function fmtDay(ms: number, locale: string): string {
   return new Intl.DateTimeFormat(localeTag(locale), { month: "short", day: "numeric" }).format(new Date(ms));
 }
+
+/** Where the always-visible end of a long file name starts: its extensions
+ * (".pdf.llm.md") and the four characters before them. */
+export function nameTail(name: string): number {
+  const extensions = /(?:\.[A-Za-z0-9]{1,8}){1,3}$/.exec(name);
+  const start = extensions ? extensions.index : name.length;
+  return Math.max(0, start - 4);
+}

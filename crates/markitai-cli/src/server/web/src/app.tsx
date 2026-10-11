@@ -3,7 +3,7 @@
 // keeps the selected item and the open preview in its address, so reloads and
 // Back return to them. Notices sit in the page, never over its buttons.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, fetchCapabilities, filePath, NetworkError } from "./api/client.ts";
+import { ApiError, fetchCapabilities, filePath, NetworkError, setItemAssets } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
 import type { Capabilities, JobOptions } from "./api/types.ts";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
@@ -86,6 +86,7 @@ export function App() {
   const refreshCaps = useCallback(() => {
     fetchCapabilities().then(
       (value) => {
+        setItemAssets(value.features?.item_assets === true);
         setCaps(value);
         setUnauthorized(false);
       },
@@ -690,7 +691,9 @@ export function App() {
     const section = route.section ?? (phone ? null : "models");
     page =
       section === null ? (
-        <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} onNavigate={navigate} />
+        <div class="page">
+          <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} onNavigate={navigate} />
+        </div>
       ) : section === "models" ? (
         <div class="page">
           <ModelsSettings t={t} locale={locale} onSaved={refreshCaps} announce={announce} describe={describe} />

@@ -1,5 +1,6 @@
 // Choose models from a provider's catalogue: search, select what is visible,
-// add an identifier by hand, and set the routing group and weight. Models
+// add an identifier by hand, and set the routing group and weight (all in plain
+// sight, on the grid of the connection's key and address). Models
 // already configured with the same group and endpoint cannot be added twice.
 // The selection count sits with the dialog's pinned actions.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -139,53 +140,59 @@ export function ModelPicker({
         })}
         {visible.length === 0 && <p class="picker-note">{manualOnly && !needle ? t.manualModelsOnly : t.noModelsFound}</p>}
       </div>
-      {/* Both folds share one quiet line: an opened one takes the line below. */}
-      <div class="picker-folds">
-        <details class="disclosure" open={manualOnly}>
-          <summary>{t.manualModelToggle}</summary>
-          <div class="manual-row">
-            <input
-              type="text"
-              value={manual}
-              placeholder={provider === "azure" ? t.azureDeploymentPh : t.manualModelPh}
-              onInput={(event) => setManual(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  addManual();
-                }
-              }}
-            />
-            <button type="button" class="btn btn-ghost btn-sm" onClick={addManual}>
-              {t.addManual}
-            </button>
-          </div>
-        </details>
-        <div class="picker-foot">
-          <details class="disclosure">
-            <summary>{t.advanced}</summary>
-            <div class="field-grid">
-              <label class="field">
-                <span class="field-label">{t.routingGroup}</span>
-                <input type="text" value={group} onInput={(event) => onGroup(event.currentTarget.value)} />
-              </label>
-              <label class="field">
-                <span class="field-label">{t.weight}</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={weightDraft ?? weight}
-                  onInput={(event) => {
-                    setWeightDraft(event.currentTarget.value);
-                    onWeight(Math.max(0, Math.floor(Number(event.currentTarget.value)) || 0));
-                  }}
-                  onBlur={() => setWeightDraft(null)}
-                />
-              </label>
+      {/* Model IDs by hand and the routing settings, in plain sight on the same grid as the key and address. */}
+      <section class="picker-extra" aria-labelledby="picker-extra-title">
+        <h3 id="picker-extra-title" class="group-title">
+          {t.manualAndRouting}
+        </h3>
+        <div class="field-grid">
+          <div class="field">
+            <label class="field-label" for="manual-model">
+              {t.manualModelLabel}
+            </label>
+            <div class="input-group">
+              <input
+                id="manual-model"
+                type="text"
+                value={manual}
+                placeholder={provider === "azure" ? t.azureDeploymentPh : t.manualModelPh}
+                onInput={(event) => setManual(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addManual();
+                  }
+                }}
+              />
+              <button type="button" class="btn" disabled={!manual.trim()} onClick={addManual}>
+                {t.addModelId}
+              </button>
             </div>
-          </details>
+          </div>
+          <span class="field-grid-gap" aria-hidden="true" />
+          <label class="field">
+            <span class="field-label">{t.routingGroup}</span>
+            <input type="text" value={group} onInput={(event) => onGroup(event.currentTarget.value)} />
+          </label>
+          <label class="field">
+            <span class="field-label">{t.weight}</span>
+            <input
+              type="number"
+              min={0}
+              value={weightDraft ?? weight}
+              aria-describedby="weight-hint"
+              onInput={(event) => {
+                setWeightDraft(event.currentTarget.value);
+                onWeight(Math.max(0, Math.floor(Number(event.currentTarget.value)) || 0));
+              }}
+              onBlur={() => setWeightDraft(null)}
+            />
+          </label>
         </div>
-      </div>
+        <p id="weight-hint" class="field-hint">
+          {t.weightHint}
+        </p>
+      </section>
     </div>
   );
 }

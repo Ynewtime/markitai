@@ -348,11 +348,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                     "LLM enhancement did not produce an enhanced result",
                 ));
             }
-            let relative = |path: &FsPath| {
-                path.strip_prefix(&out)
-                    .ok()
-                    .map(|p| p.to_string_lossy().into_owned())
-            };
+            let relative = |path: &FsPath| store::relpath(path, &out);
             let selected = converted
                 .llm_output_path
                 .as_deref()
@@ -455,7 +451,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             item.finished_at = Some(now());
             item.cost_usd = Some(converted.usage.cost_usd);
             item.pricing = crate::pricing::Pricing::from_usage(&converted.usage);
-            item.models = super::types::models(&converted.usage);
+            item.models = super::types::models(item.llm_enhanced, &converted.usage);
             item.diagnostics = AttemptDiagnostics::completed(
                 work.operation.diagnostic_operation(),
                 converted.usage,

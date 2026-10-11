@@ -2,14 +2,14 @@ use super::{
     State, http,
     jobs::{self, Job},
     store,
-    types::{ApiError, ApiResult},
+    types::{ApiError, ApiResult, Item},
 };
 use axum::{
     Json,
     body::Body,
     extract::{Path, Query, State as ExtractState, rejection::QueryRejection},
-    http::{HeaderValue, header},
-    response::Response,
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use futures_util::stream;
 use serde_json::{Value, json};
@@ -17,6 +17,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
     io::Read,
+    path::PathBuf,
     sync::Arc,
 };
 use tokio::io::AsyncReadExt;
@@ -31,6 +32,17 @@ pub(super) fn body(
     file: File,
     temporary: Option<tempfile::NamedTempFile>,
     content_type: &str,
+    filename: &str,
+) -> ApiResult<Response> {
+    send(file, temporary, content_type, "attachment", filename)
+}
+/// Streams `file` with `Content-Disposition: <disposition>` (`attachment` or
+/// `inline`) naming `filename`.
+fn send(
+    file: File,
+    temporary: Option<tempfile::NamedTempFile>,
+    content_type: &str,
+    disposition: &str,
     filename: &str,
 ) -> ApiResult<Response> {
     let size = file.metadata().map_err(ApiError::internal)?.len();
@@ -58,7 +70,7 @@ pub(super) fn body(
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_str(&format!(
-            "attachment; filename*=UTF-8''{}",
+            "{disposition}; filename*=UTF-8''{}",
             encoded(filename)
         ))
         .map_err(ApiError::internal)?,
@@ -69,24 +81,38 @@ pub(super) fn body(
     );
     Ok(response)
 }
-fn content_type(path: &str) -> &'static str {
-    match path
-        .rsplit('.')
+/// The lowercased extension of a path's last segment.
+fn extension(path: &str) -> String {
+    path.rsplit('/')
         .next()
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "md" | "txt" => "text/plain; charset=utf-8",
+        .and_then(|name| name.rsplit_once('.'))
+        .map_or_else(String::new, |(_, extension)| extension.to_ascii_lowercase())
+}
+/// The media type of a raster image every browser shows, by extension: the
+/// set the workbench's Markdown view loads, which is all an item asset may be.
+fn raster_type(path: &str) -> Option<&'static str> {
+    Some(match extension(path).as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "webp" => "image/webp",
         "avif" => "image/avif",
+        _ => return None,
+    })
+}
+fn content_type(path: &str) -> &'static str {
+    raster_type(path).unwrap_or_else(|| match extension(path).as_str() {
+        "md" | "txt" => "text/plain; charset=utf-8",
         "svg" => "image/svg+xml",
         "pdf" => "application/pdf",
         _ => "application/octet-stream",
-    }
+    })
+}
+fn missing() -> ApiError {
+    ApiError::new(404, "file_not_found", "file not found")
+}
+fn unavailable() -> ApiError {
+    ApiError::new(404, "result_unavailable", "item result not available")
 }
 
 pub(super) async fn download(
@@ -98,7 +124,7 @@ pub(super) async fn download(
     let file = crate::task::blocking(move || {
         let _guard = job.access.lock().unwrap();
         if !public_member(&relative) {
-            return Err(ApiError::new(404, "file_not_found", "file not found"));
+            return Err(missing());
         }
         let path = store::safe_file(&job.folder.join("out"), &relative)?;
         File::open(path).map_err(ApiError::internal)
@@ -111,6 +137,89 @@ pub(super) async fn download(
         content_type(&filename),
         filename.rsplit('/').next().unwrap_or("download"),
     )
+}
+
+/// A weak validator of a file's bytes: its size and modification time.
+fn version_tag(metadata: &fs::Metadata) -> String {
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |time| time.as_nanos());
+    format!("W/\"{:x}-{modified:x}\"", metadata.len())
+}
+/// Whether `If-None-Match` names `tag` (weak comparison) or any version.
+fn current(headers: &HeaderMap, tag: &str) -> bool {
+    let ours = tag.trim_start_matches("W/");
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .any(|candidate| candidate == "*" || candidate.trim_start_matches("W/") == ours)
+}
+/// Item assets say nothing beyond a missing job or item: a result that is
+/// unavailable, inconsistent or too large to search owns nothing to serve.
+fn not_owned(error: ApiError) -> ApiError {
+    if error.reason == "item_not_found" || error.status.is_server_error() {
+        error
+    } else {
+        missing()
+    }
+}
+
+/// `GET /api/jobs/{job_id}/items/{item_id}/assets/{*relpath}`: one image of
+/// the item's own result, inline, for the workbench's Markdown view. Only a
+/// raster image among the artifacts `result` lists for this item is served,
+/// and only from inside the job's output.
+pub(super) async fn asset(
+    ExtractState(state): ExtractState<Arc<State>>,
+    Path((id, item_id, relative)): Path<(String, String, String)>,
+    request: HeaderMap,
+) -> ApiResult<Response> {
+    let job = jobs::get(&state, &id)?;
+    let filename = relative.rsplit('/').next().unwrap_or_default().to_owned();
+    let (file, media) = crate::task::blocking(move || {
+        let _guard = job.access.lock().unwrap();
+        let shown = shown(&job, &item_id).map_err(not_owned)?;
+        let media = raster_type(&relative).ok_or_else(missing)?;
+        if !shown
+            .artifacts(None)
+            .map_err(not_owned)?
+            .contains(&relative)
+        {
+            return Err(missing());
+        }
+        let path = store::safe_file(&shown.out, &relative)?;
+        Ok((File::open(path).map_err(ApiError::internal)?, media))
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    let tag = version_tag(&file.metadata().map_err(ApiError::internal)?);
+    let mut response = if current(&request, &tag) {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        send(file, None, media, "inline", &filename)?
+    };
+    let headers = response.headers_mut();
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&tag).map_err(ApiError::internal)?,
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-cache"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; sandbox"),
+    );
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    Ok(response)
 }
 
 #[derive(serde::Deserialize)]
@@ -162,6 +271,145 @@ fn excerpt(bytes: &[u8], limit: usize) -> Option<&str> {
     }
 }
 
+/// A done item's result as `result` reads it, resolved under `job.access`:
+/// the Markdown it shows and where its artifacts come from.
+struct Shown {
+    item: Item,
+    out: PathBuf,
+    variant: &'static str,
+    /// The shown Markdown file.
+    path: PathBuf,
+    /// `<base>.md` and `<base>.llm.md`, with their files when they exist.
+    base: (String, Option<PathBuf>),
+    enhanced: (String, Option<PathBuf>),
+    /// The item's asset index; older histories have none.
+    assets: Option<Vec<String>>,
+}
+
+fn shown(job: &Job, item_id: &str) -> ApiResult<Shown> {
+    // Copy this item's row; reading its files must not hold the data lock.
+    let (item, base, assets) = {
+        let data = job.data.lock().unwrap();
+        let item = data
+            .items
+            .iter()
+            .find(|item| item.item_id == item_id)
+            .ok_or_else(|| ApiError::new(404, "item_not_found", "item not found"))?
+            .clone();
+        let base = item_base(&data, &item);
+        (item, base, data.assets.get(item_id).cloned())
+    };
+    let selected = item
+        .output
+        .as_deref()
+        .filter(|_| item.status == "done")
+        .ok_or_else(unavailable)?;
+    let out = job.folder.join("out");
+    store::safe_file(&out, selected)?;
+    let base = base?;
+    let base_name = format!("{base}.md");
+    let enhanced_name = format!("{base}.llm.md");
+    let base_path = store::safe_file(&out, &base_name).ok();
+    let enhanced_path = store::safe_file(&out, &enhanced_name).ok();
+    let (variant, path) = match (&base_path, &enhanced_path) {
+        (_, Some(path)) if item.llm_enhanced => ("llm", path.clone()),
+        (Some(path), _) => ("base", path.clone()),
+        (None, Some(path)) => ("llm", path.clone()),
+        (None, None) => return Err(unavailable()),
+    };
+    Ok(Shown {
+        item,
+        out,
+        variant,
+        path,
+        base: (base_name, base_path),
+        enhanced: (enhanced_name, enhanced_path),
+        assets,
+    })
+}
+
+impl Shown {
+    /// The members of `out/` the result lists as this item's own, in order and
+    /// not yet opened: its Markdown, then its indexed assets, or for a history
+    /// without an index the assets its Markdown references. `markdown` is the
+    /// shown Markdown when the caller has already read it whole.
+    fn artifacts(&self, markdown: Option<&str>) -> ApiResult<Vec<String>> {
+        let mut names = Vec::new();
+        let mut seen = HashSet::new();
+        let mut add = |name: &str| {
+            if public_member(name) && seen.insert(name.to_owned()) {
+                names.push(name.to_owned());
+            }
+        };
+        if self.base.1.is_some() {
+            add(&self.base.0);
+        }
+        if self.item.llm_enhanced && self.enhanced.1.is_some() {
+            add(&self.enhanced.0);
+        }
+        match &self.assets {
+            Some(assets) => assets.iter().for_each(|name| add(name)),
+            None => self.referenced(markdown)?.iter().for_each(|name| add(name)),
+        }
+        Ok(names)
+    }
+
+    /// Older CLI/server histories lack an item asset index. Recover ownership
+    /// through actual destinations rather than exposing unrelated job assets.
+    fn referenced(&self, markdown: Option<&str>) -> ApiResult<Vec<String>> {
+        let candidates = store::files(&self.out)
+            .map_err(ApiError::internal)?
+            .into_iter()
+            .filter(|(name, _)| {
+                name.starts_with(".markitai/assets/")
+                    || name.starts_with(".markitai/screenshots/")
+                    || name.starts_with("assets/")
+            })
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Ok(candidates);
+        }
+        let mut text = match markdown {
+            Some(text) => text.to_owned(),
+            None => {
+                if fs::metadata(&self.path).map_err(ApiError::internal)?.len() > MAX_RESULT {
+                    return Err(too_large());
+                }
+                fs::read_to_string(&self.path).map_err(ApiError::internal)?
+            }
+        };
+        if self.item.llm_enhanced
+            && let Some(base) = &self.base.1
+            && *base != self.path
+            && fs::metadata(base).map_err(ApiError::internal)?.len() <= MAX_RESULT
+        {
+            text.push_str(&fs::read_to_string(base).map_err(ApiError::internal)?);
+        }
+        let marker = format!("MARKITAI-ARTIFACT-{}-", uuid::Uuid::new_v4().simple());
+        let replacements = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.clone(), format!("{marker}{i}-END")))
+            .collect::<HashMap<_, _>>();
+        let rewritten = markitai_core::output::rewrite_asset_references(&text, &replacements);
+        Ok(candidates
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| rewritten.contains(&format!("{marker}{index}-END")))
+            .map(|(_, name)| name)
+            .collect())
+    }
+}
+
+fn too_large() -> ApiError {
+    ApiError::new(
+        413,
+        "result_too_large",
+        "result is too large for JSON; use the file download endpoint",
+    )
+}
+
 pub(super) async fn result(
     ExtractState(state): ExtractState<Arc<State>>,
     Path((id, item_id)): Path<(String, String)>,
@@ -169,62 +417,53 @@ pub(super) async fn result(
 ) -> ApiResult<Json<Value>> {
     let limit = excerpt_limit(query)?;
     let job = jobs::get(&state, &id)?;
-    crate::task::blocking(move||{
-        let _guard=job.access.lock().unwrap();
-        // Copy this item's row; reading its files must not hold the data lock.
-        let (item,base,assets)={
-            let data=job.data.lock().unwrap();
-            let item=data.items.iter().find(|item|item.item_id==item_id).ok_or_else(||ApiError::new(404,"item_not_found","item not found"))?.clone();
-            let base=item_base(&data,&item);
-            (item,base,data.assets.get(&item_id).cloned())
-        };
-        let selected=item.output.as_deref().filter(|_|item.status=="done").ok_or_else(||ApiError::new(404,"result_unavailable","item result not available"))?;
-        let out=job.folder.join("out");store::safe_file(&out,selected)?;
-        let base=base?;
-        let base_name=format!("{base}.md");let enhanced_name=format!("{base}.llm.md");
-        let base_path=store::safe_file(&out,&base_name).ok();let enhanced_path=store::safe_file(&out,&enhanced_name).ok();
-        let (variant,path)=if item.llm_enhanced&&enhanced_path.is_some(){("llm",enhanced_path.clone().unwrap())}else if let Some(path)=base_path.clone(){("base",path)}else if let Some(path)=enhanced_path.clone(){("llm",path)}else{return Err(ApiError::new(404,"result_unavailable","item result not available"));};
-        let size=fs::metadata(&path).map_err(ApiError::internal)?.len();
+    crate::task::blocking(move || {
+        let _guard = job.access.lock().unwrap();
+        let shown = shown(&job, &item_id)?;
+        let size = fs::metadata(&shown.path).map_err(ApiError::internal)?.len();
         // Older histories find their artifacts in the whole text; an indexed
         // item's excerpt needs only its first bytes.
-        let excerpted=limit.filter(|limit|size>*limit&&assets.is_some());
-        if size>MAX_RESULT&&excerpted.is_none(){return Err(ApiError::new(413,"result_too_large","result is too large for JSON; use the file download endpoint"));}
-        let markdown=match excerpted {
-            Some(limit)=>{
-                let mut bytes=Vec::new();
-                File::open(&path).map_err(ApiError::internal)?.take(limit).read_to_end(&mut bytes).map_err(ApiError::internal)?;
-                excerpt(&bytes,limit as usize).ok_or_else(||ApiError::internal("result is not UTF-8 text"))?.to_owned()
+        let excerpted = limit.filter(|limit| size > *limit && shown.assets.is_some());
+        if size > MAX_RESULT && excerpted.is_none() {
+            return Err(too_large());
+        }
+        let markdown = match excerpted {
+            Some(limit) => {
+                let mut bytes = Vec::new();
+                File::open(&shown.path)
+                    .map_err(ApiError::internal)?
+                    .take(limit)
+                    .read_to_end(&mut bytes)
+                    .map_err(ApiError::internal)?;
+                excerpt(&bytes, limit as usize)
+                    .ok_or_else(|| ApiError::internal("result is not UTF-8 text"))?
+                    .to_owned()
             }
-            None=>fs::read_to_string(&path).map_err(ApiError::internal)?,
+            None => fs::read_to_string(&shown.path).map_err(ApiError::internal)?,
         };
-        let mut artifacts=Vec::new();let mut seen=HashSet::new();
-        let mut add=|relative:String|->ApiResult<()> {
-            if public_member(&relative)&&seen.insert(relative.clone())&&let Ok(path)=store::safe_file(&out,&relative){artifacts.push(json!({"relpath":relative,"size":fs::metadata(path).map_err(ApiError::internal)?.len()}));}Ok(())
+        let mut artifacts = Vec::new();
+        for relative in shown.artifacts(excerpted.is_none().then_some(markdown.as_str()))? {
+            if let Ok(path) = store::safe_file(&shown.out, &relative) {
+                let size = fs::metadata(path).map_err(ApiError::internal)?.len();
+                artifacts.push(json!({"relpath":relative,"size":size}));
+            }
+        }
+        let (markdown, truncated) = match limit {
+            Some(limit) if markdown.len() as u64 > limit => (
+                excerpt(markdown.as_bytes(), limit as usize)
+                    .unwrap_or_default()
+                    .to_owned(),
+                true,
+            ),
+            _ => (markdown, excerpted.is_some()),
         };
-        if base_path.is_some() {
-            add(base_name)?;
-        }
-        if item.llm_enhanced && enhanced_path.is_some() {
-            add(enhanced_name)?;
-        }
-        if let Some(assets)=assets{for asset in assets{add(asset)?;}}
-        else {
-            // Older CLI/server histories lack an item asset index. Recover ownership
-            // through actual destinations rather than exposing unrelated job assets.
-            let candidates=store::files(&out).map_err(ApiError::internal)?.into_iter().filter(|(name,_)|name.starts_with(".markitai/assets/")||name.starts_with(".markitai/screenshots/")||name.starts_with("assets/")).map(|(name,_)|name).collect::<Vec<_>>();
-            let marker=format!("MARKITAI-ARTIFACT-{}-",uuid::Uuid::new_v4().simple());
-            let replacements=candidates.iter().enumerate().map(|(i,name)|(name.clone(),format!("{marker}{i}-END"))).collect::<HashMap<_,_>>();
-            let mut text=markdown.clone();
-            if item.llm_enhanced&&let Some(base_path)=base_path&&base_path!=path&&fs::metadata(&base_path).map_err(ApiError::internal)?.len()<=MAX_RESULT{text.push_str(&fs::read_to_string(base_path).map_err(ApiError::internal)?);}
-            let rewritten=markitai_core::output::rewrite_asset_references(&text,&replacements);
-            for (index,name) in candidates.into_iter().enumerate(){if rewritten.contains(&format!("{marker}{index}-END")){add(name)?;}}
-        }
-        let (markdown,truncated)=match limit {
-            Some(limit) if markdown.len() as u64>limit => (excerpt(markdown.as_bytes(),limit as usize).unwrap_or_default().to_owned(),true),
-            _ => {let truncated=excerpted.is_some();(markdown,truncated)}
-        };
-        Ok(Json(json!({"name":item.name,"variant":variant,"markdown":markdown,"artifacts":artifacts,"truncated":truncated,"markdown_bytes":size})))
-    }).await.map_err(ApiError::internal)?
+        Ok(Json(
+            json!({"name":shown.item.name,"variant":shown.variant,"markdown":markdown,
+            "artifacts":artifacts,"truncated":truncated,"markdown_bytes":size}),
+        ))
+    })
+    .await
+    .map_err(ApiError::internal)?
 }
 
 fn zip_jobs(

@@ -285,7 +285,7 @@ impl Model {
                         entered.fetch_add(1,Ordering::SeqCst);
                         let mode=mode.load(Ordering::SeqCst);
                         if mode==2{let(lock,notify)=&*gate;let ready=lock.lock().unwrap_or_else(|e|e.into_inner());let(ready,_)=notify.wait_timeout_while(ready,WAIT,|ready|!*ready).unwrap_or_else(|e|e.into_inner());if !*ready{return;}}
-                        let (status,body)=if mode==1{("503 Service Unavailable",json!({"error":{"message":"fixture failure"}}))}else{("200 OK",json!({"choices":[{"message":{"content":model_content(&request,"# Enhanced fixture\n\nVerified model output.")},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":5}}))};
+                        let (status,body)=if mode==1{("503 Service Unavailable",json!({"error":{"message":"fixture failure"}}))}else if mode==3{("200 OK",json!({"choices":[{"message":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":0}}))}else{("200 OK",json!({"choices":[{"message":{"content":model_content(&request,"# Enhanced fixture\n\nVerified model output.")},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":5}}))};
                         let body=body.to_string();let response=format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());let _=stream.write_all(response.as_bytes());
                     }));
                     }
@@ -335,6 +335,103 @@ impl Drop for Model {
 }
 fn enhance() -> Value {
     json!({"operation":"enhance","options":{"llm":true,"alt":false,"desc":false}})
+}
+
+const NO_MODEL: &str = "No model succeeded for this document; only the base Markdown was kept.";
+
+#[test]
+fn no_model_answer_publishes_only_the_base_and_names_no_model_until_one_answers() {
+    let model = Model::start();
+    let temp = tempfile::tempdir().unwrap();
+    model.configure(temp.path());
+    let server = Server::start(temp.path());
+    // A paid empty answer: usage is recorded, yet no model answered.
+    model.mode.store(3, Ordering::SeqCst);
+    let created = server.submit(
+        &[("document.txt", b"Original conversion body.")],
+        json!([]),
+        json!({"llm":true,"alt":false,"desc":false}),
+    );
+    let id = created["job_id"].as_str().unwrap();
+    let item = server.done(id)["items"][0].clone();
+    assert_eq!(item["status"], "done");
+    assert_eq!(item["llm_enhanced"], false);
+    assert_eq!(item["output"], "document.txt.md");
+    assert!(item.get("models").is_none(), "{item}");
+    assert_eq!(item["diagnostics"]["last_attempt"]["usage"]["requests"], 1);
+    let warnings: Vec<_> = item["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        warnings.iter().filter(|w| **w == NO_MODEL).count(),
+        1,
+        "{warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.starts_with("LLM enhancement failed: ")),
+        "{warnings:?}"
+    );
+    let out = server.jobdir(id).join("out");
+    assert!(out.join("document.txt.md").is_file());
+    assert!(!out.join("document.txt.llm.md").exists());
+    assert_eq!(result(&server, id, "i1")["variant"], "base");
+    // A later answer enhances it and names its model.
+    model.mode.store(0, Ordering::SeqCst);
+    assert_eq!(retry(&server, id, "i1", Some(enhance())).status, 202);
+    let enhanced = server.done(id)["items"][0].clone();
+    assert_eq!(enhanced["llm_enhanced"], true);
+    assert_eq!(enhanced["output"], "document.txt.llm.md");
+    assert!(!enhanced["models"].as_array().unwrap().is_empty());
+    assert!(
+        !enhanced["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w == NO_MODEL)
+    );
+    let llm = std::fs::read(out.join("document.txt.llm.md")).unwrap();
+    // An enhance that no model answers keeps that result and its models.
+    model.mode.store(3, Ordering::SeqCst);
+    assert_eq!(retry(&server, id, "i1", Some(enhance())).status, 202);
+    let kept = server.done(id)["items"][0].clone();
+    assert_eq!(kept["rerun_failure"]["error_code"], "enhancement_failed");
+    assert_eq!(kept["output"], "document.txt.llm.md");
+    assert_eq!(kept["models"], enhanced["models"]);
+    assert_eq!(std::fs::read(out.join("document.txt.llm.md")).unwrap(), llm);
+    // A plain retry that no model answers replaces it with the base alone.
+    assert_eq!(retry(&server, id, "i1", None).status, 202);
+    let base = server.done(id)["items"][0].clone();
+    assert_eq!(base["llm_enhanced"], false);
+    assert_eq!(base["output"], "document.txt.md");
+    assert!(base.get("models").is_none(), "{base}");
+    assert!(
+        base["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w == NO_MODEL)
+    );
+    assert!(!out.join("document.txt.llm.md").exists());
+    server.stop();
+    // Saved rows from before this rule named the models of a base-only result.
+    let meta = temp
+        .path()
+        .join("home/serve/jobs")
+        .join(id)
+        .join("meta.json");
+    let mut saved: Value = serde_json::from_slice(&std::fs::read(&meta).unwrap()).unwrap();
+    saved["items"][0]["models"] = json!(["openai/fixture"]);
+    std::fs::write(&meta, saved.to_string()).unwrap();
+    let server = Server::start(temp.path());
+    let loaded = server.json(&format!("/api/jobs/{id}"))["items"][0].clone();
+    assert_eq!(loaded["llm_enhanced"], false);
+    assert!(loaded.get("models").is_none(), "{loaded}");
+    server.stop();
 }
 
 #[test]

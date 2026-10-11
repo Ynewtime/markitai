@@ -53,12 +53,15 @@ inspector.
   the actions (Preview, Compare, Download .md, Run again, Enhance with LLM,
   Delete; Retry, Add a model or Enable OCR and retry when that is the fix), the
   facts (source and its size, output, what else was saved, models, cost,
-  options, finished, kept until), its notices grouped by kind, and the start of
-  the result with its front matter. A selected submission shows its progress as
+  options, finished, kept until; a long output name stays on one line and gives
+  up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
+  the start of the result with its front matter and its own pictures. A selected
+  submission shows its progress as
   one bar (done, failed, stopped, converting, waiting), Download .zip, Retry
   failed, Stop remaining and Delete, the cost, its failures and the notices of
   all its items. With nothing selected it shows the same overview for the whole
-  list.
+  list; a click on the page's empty space (outside the list and the inspector),
+  or Escape in the list, lets go of the selection.
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N
   requests without a price", a model that ran without pricing "Unknown". An item
@@ -82,7 +85,9 @@ sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
 showing all of them adds the rest in steps of 1,000 so the page keeps answering,
 and the download and Source always hold every row. Numeric columns align right
 in tabular figures. Code blocks are highlighted by a 3 KB module loaded only when
-a preview contains code.
+a preview contains code. While a result loads, Rendered, Source and Files show
+its shape in grey lines inside the same frame (with the size of a large result),
+so nothing moves when it arrives.
 
 **Compare** puts the original beside the Markdown: a PDF's pages (drawn by the
 server, loaded as they scroll into view), an uploaded image, the HTML the server
@@ -93,10 +98,12 @@ accent colour; PDF positions come from the page's text layer, HTML by matching
 elements. An original that cannot be shown (a DOCX, a page the server did not
 keep) says why and offers its download.
 
-**On phones** the inspector is a bottom sheet: it slides up over the dimmed
-page to a fixed height with rounded top corners, a header with the name, previous, next and close,
-a body that scrolls inside the sheet, and a pinned action bar clear of the home
-indicator. Swiping it down (on the header, or on the body scrolled to its top),
+**On phones** the inspector is a bottom sheet: it slides up from the bottom edge
+over the dimmed page and the tab bar to a fixed height with rounded top corners,
+a header with the name, previous, next and close, a body that scrolls inside the
+sheet, and a pinned action bar clear of the home indicator with at most two
+buttons and "⋯" for the rest (Delete included). A long press on a shortened
+file name shows it whole. Swiping it down (on the header, or on the body scrolled to its top),
 tapping the dimmed page and Escape close it. Preview and Compare are full-screen
 views with previous and next; Compare places the original above the Markdown.
 
@@ -132,11 +139,15 @@ rows, the eight common providers as cards, then every other provider by name
 under a filter (All, Clouds, Inference, Gateways, Local, Subscriptions, Model
 makers) that scrolls sideways on a phone. Providers show their monochrome brand
 mark (vendored from lobehub icons, drawn in the text colour) or a monogram.
-Choosing one leads to the provider's page and its model catalogue, with a
-breadcrumb that Escape steps back through; a subscription needs no key or
+Choosing one leads to the provider's page: the key and the address side by side
+(the address optional, its default as the placeholder), then the model catalogue
+and, in plain sight under it, Model ID and routing (add a model by its ID, the
+routing group and weight), with a breadcrumb that Escape steps back through; a subscription needs no key or
 address, and Bedrock and Vertex AI take model IDs by hand. A backend that sends
 no provider `group` gets the common eight by name and everything else under All. Appearance and language chooses English, 中文 or 日本語 and the
-theme (Auto, Light, Dark); Access token shows and changes this tab's token.
+theme (Auto, Light, Dark); Access token says whether this tab holds a token
+(with Forget beside it) and takes a new one in one field with Save; it is kept in
+this tab only.
 
 ## Job controls
 
@@ -198,8 +209,12 @@ and sanitized with [DOMPurify 3.4.16](https://github.com/cure53/DOMPurify/releas
 both loaded from `/ui/marked.js` and `/ui/purify.js` the first time a result is
 shown. The sanitized fragment never contains scripts, styles, forms, frames or
 embedded media. Images and attachment links must resolve to an exact entry of the
-result's own artifact list; only raster images are shown, and anything else (an
-external or SVG image) becomes a labelled placeholder. Other links keep only
+result's own artifact list (an image whose folder does not match, such as an
+e-book's own `../Images/x.png`, resolves by file name to the one listed image of
+that name); only raster images are shown, and anything else (an external or SVG
+image) becomes a labelled placeholder. Images are read from the item's own asset
+route (`GET /api/jobs/{job}/items/{item}/assets/{relpath}`, inline, that item's
+raster images only) when the server offers it, otherwise from the file route. Other links keep only
 http(s)/mailto targets and open in a new tab without referrer; a link left
 without a target is plain text. An inline SVG drawing (a chart or diagram a web
 page kept as markup) is drawn: its drawing properties from `style` become
@@ -338,9 +353,10 @@ routes, payloads, event stream, authentication and error `reason` codes it
 reads, described by the server's [OpenAPI document](serve.md#machine-readable-api-description).
 What a backend offers beyond the base job API is announced in
 `GET /api/capabilities` under `features` (`cancel`, `download_tickets`,
-`url_lists`, `history_items`, `original`, `result_excerpt`, `job_labels`); a
-missing feature hides its control instead of failing (no Stop remaining, no
-Compare, archives saved through the page, history read job by job).
+`url_lists`, `history_items`, `original`, `result_excerpt`, `job_labels`,
+`item_assets`); a missing feature hides its control instead of failing (no Stop
+remaining, no Compare, archives saved through the page, history read job by job,
+images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation.
 
 `node scripts/package.mjs OUTDIR` packages a build for the other backend: a

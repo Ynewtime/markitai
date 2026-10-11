@@ -460,8 +460,13 @@ impl Item {
     }
 }
 
-/// The models a conversion's recorded usage names, in the record's order.
-pub(super) fn models(usage: &markitai_core::ConversionUsage) -> Vec<String> {
+/// The models whose requests produced a retained result, in the usage
+/// record's order: none unless it is `enhanced`, even when failed or rejected
+/// requests were paid for (their usage stays in the diagnostics and cost).
+pub(super) fn models(enhanced: bool, usage: &markitai_core::ConversionUsage) -> Vec<String> {
+    if !enhanced {
+        return Vec::new();
+    }
     usage.by_model.keys().cloned().collect()
 }
 

@@ -6,7 +6,8 @@
 // row here, or in the bottom sheet's pinned bar on phones.
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { filePath } from "../api/client.ts";
+import { fetchBlob, filePath, imagePath } from "../api/client.ts";
+import { hasToken } from "../api/token.ts";
 import type { ItemResult } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { itemErrorText, persistenceText } from "../i18n/errors.ts";
@@ -14,13 +15,17 @@ import { counts, isFailed, isStopped, presetOf, submissionLabel, type ConvJob, t
 import { costState, fmtUsd, itemCost, totalCost, type CostState } from "../lib/cost.ts";
 import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, timestampMs } from "../lib/format.ts";
 import { parseFrontMatter } from "../lib/frontmatter.ts";
-import { renderMarkdown, splitFrontmatter } from "../lib/markdown.ts";
+import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
+import { ActionMenu, type MenuDanger } from "./action-menu.tsx";
 import { ConfirmPopover } from "./confirm-popover.tsx";
+import { FileName } from "./file-name.tsx";
 import { Duration, glyphOf, StatusGlyph, statusWord, useElapsed } from "./item-bits.tsx";
+import type { IconName } from "./icon-paths.ts";
 import { Icon } from "./icons.tsx";
+import { Skeleton } from "./skeleton.tsx";
 
 type Described = { text: string; detail: string };
 
@@ -209,7 +214,7 @@ function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: No
   );
 }
 
-/** The first blocks of a result, rendered without loading images. */
+/** The first blocks of a result, with the item's own pictures as small figures. */
 function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionItem; onOpen: () => void }) {
   const { t } = ctx;
   const key = resultKey(item);
@@ -236,39 +241,49 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
     const target = body.current;
     if (!target || !split || !result) return;
     let stale = false;
+    let loads: ImageLoads | null = null;
+    const placeholder = (alt: string) => t.imagePlaceholder(alt || t.imageUnavailable);
     // About a screenful: cut at a blank line near 1,800 characters.
     const text = split.body.trimStart();
     const cut = text.length > 1800 ? text.slice(0, Math.max(text.lastIndexOf("\n\n", 1800), 600)) : text;
     renderMarkdown(cut, {
       documentPath: item.output ?? "",
       artifacts: result.artifacts,
-      imageURL: () => null,
+      imageURL: (path) => (hasToken() ? null : imagePath(item.jobId, item.itemId, path)),
       fileURL: (path) => filePath(item.jobId, path),
-      placeholder: (alt) => t.imagePlaceholder(alt || t.imageUnavailable),
+      placeholder,
       fallbackAlt: t.figureFrom(item.name),
       tableLabel: t.tableAria,
       codeLabel: t.codeAria,
     }).then(
       (fragment) => {
         if (stale) return;
-        for (const image of [...fragment.querySelectorAll("img")]) {
-          const span = document.createElement("span");
-          span.className = "img-blocked";
-          span.textContent = t.imagePlaceholder(image.getAttribute("alt") || t.imageUnavailable);
-          image.replaceWith(span);
-        }
         // Links inside an excerpt would compete with the excerpt's own action.
         for (const link of [...fragment.querySelectorAll("a")]) link.replaceWith(...link.childNodes);
+        // The excerpt clips its own overflow: its few pictures load at once.
+        for (const image of fragment.querySelectorAll("img")) image.setAttribute("loading", "eager");
         target.replaceChildren(fragment);
+        loads = loadArtifactImages(
+          target,
+          (path) => fetchBlob(imagePath(item.jobId, item.itemId, path)).then((file) => file.blob),
+          (image) => {
+            const span = document.createElement("span");
+            span.className = "img-blocked";
+            span.textContent = placeholder(image.getAttribute("alt") ?? "");
+            image.replaceWith(span);
+          },
+          { limit: 2 },
+        );
       },
       () => undefined,
     );
     return () => {
       stale = true;
+      loads?.dispose();
     };
   }, [split, result, item.jobId, item.output, item.name, t]);
   if (error) return <p class="pane-note line-error">{ctx.describe(error).text}</p>;
-  if (!result || !split) return <p class="pane-note">{t.loading}</p>;
+  if (!result || !split) return <Skeleton label={t.loading} kind="list" />;
   return (
     <div class="excerpt">
       {front && (front.title || front.description || front.tags.length > 0) && <FrontCard front={front} compact />}
@@ -298,6 +313,73 @@ export function FrontCard({ front, compact = false }: { front: NonNullable<Retur
   );
 }
 
+/** One action of a conversion, as a button in the row or an entry of the "⋯" menu. */
+interface Act {
+  key: string;
+  label: string;
+  icon?: IconName;
+  run: () => void;
+  primary?: boolean;
+  disabled?: boolean;
+  busy?: boolean;
+}
+
+/** In the phone sheet's bar, which secondary actions stay beside the primary one first. */
+const SHEET_ORDER = ["download", "plain", "retry-failed", "stop", "enhance", "compare", "again"];
+
+/** The actions as a row: every one as a button on a wide screen; in the phone
+ * sheet's pinned bar at most two, the rest (and Delete) in a "⋯" menu. */
+function ActionRow({ t, acts, sheet, danger }: { t: Dict; acts: Act[]; sheet: boolean; danger: Danger | null }) {
+  const button = (act: Act) => (
+    <button
+      key={act.key}
+      type="button"
+      class={act.primary ? "btn btn-primary" : "btn"}
+      disabled={act.disabled}
+      aria-busy={act.busy || undefined}
+      onClick={act.run}
+    >
+      {act.icon && <Icon name={act.icon} size={14} />}
+      {act.label}
+    </button>
+  );
+  if (!sheet) {
+    return (
+      <div class="insp-actions">
+        {acts.map(button)}
+        {danger && (
+          <ConfirmPopover
+            triggerLabel={danger.aria}
+            title={danger.title}
+            description={danger.description}
+            confirmLabel={danger.confirmLabel}
+            cancelLabel={danger.cancelLabel}
+            busyLabel={danger.busyLabel}
+            onConfirm={danger.onConfirm}
+          />
+        )}
+      </div>
+    );
+  }
+  const rank = (act: Act) => (act.primary ? -1 : SHEET_ORDER.indexOf(act.key) < 0 ? SHEET_ORDER.length : SHEET_ORDER.indexOf(act.key));
+  const ordered = [...acts].sort((a, b) => rank(a) - rank(b));
+  const shown = ordered.slice(0, 2);
+  const rest = ordered.slice(2);
+  return (
+    <div class="insp-actions is-sheet">
+      {shown.map(button)}
+      <ActionMenu
+        label={t.moreActions}
+        up
+        actions={rest.map((act) => ({ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled }))}
+        danger={danger ?? undefined}
+      />
+    </div>
+  );
+}
+
+type Danger = MenuDanger & { aria: string };
+
 /** The item's actions; `sheet` lays them out for the bottom sheet's pinned bar. */
 export function ItemActions({ ctx, item, actions, sheet = false }: { ctx: InspectorContext; item: SessionItem; actions: ItemActionsApi; sheet?: boolean }) {
   const { t } = ctx;
@@ -307,72 +389,35 @@ export function ItemActions({ ctx, item, actions, sheet = false }: { ctx: Inspec
   const noModel = item.status === "error" && item.errorCode === "no_model_configured";
   const imageOnly = item.skipped && item.skipReason === "image_only";
   const enhanceable = previewable && !item.llmEnhanced && item.retryable && ctx.llmReady;
-  const primary = previewable ? (
-    <button type="button" class="btn btn-primary" onClick={() => actions.preview(item)}>
-      <Icon name="Eye" size={14} />
-      {t.preview}
-    </button>
-  ) : retryable && !noModel && !imageOnly ? (
-    <button type="button" class="btn btn-primary" disabled={busy} aria-busy={busy || undefined} onClick={() => actions.retry(item)}>
-      <Icon name="ArrowCounterClockwise" size={14} />
-      {t.retryPlainVerb}
-    </button>
-  ) : null;
-  return (
-    <div class={sheet ? "insp-actions is-sheet" : "insp-actions"}>
-      {primary}
-      {noModel && retryable && (
-        <>
-          <button type="button" class="btn btn-primary" onClick={actions.openModels}>
-            {t.addModelAction}
-          </button>
-          <button type="button" class="btn" disabled={busy} onClick={() => actions.retryPlain(item)}>
-            {t.retryPlain}
-          </button>
-        </>
-      )}
-      {imageOnly && retryable && (
-        <button type="button" class="btn btn-primary" disabled={busy} onClick={() => actions.retryWithOcr(item)}>
-          {t.enableOcr}
-        </button>
-      )}
-      {previewable && ctx.compare && !sheet && (
-        <button type="button" class="btn" onClick={() => actions.compare(item)}>
-          <Icon name="Columns" size={14} />
-          {t.compare}
-        </button>
-      )}
-      {previewable && item.output && (
-        <button type="button" class="btn" onClick={() => actions.download(item, item.output as string)}>
-          <Icon name="DownloadSimple" size={14} />
-          {sheet ? t.downloadShort : t.downloadMd}
-        </button>
-      )}
-      {previewable && retryable === false && item.retryable && !sheet && (
-        <button type="button" class="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => actions.retry(item)}>
-          <Icon name="ArrowCounterClockwise" size={14} />
-          {t.runAgain}
-        </button>
-      )}
-      {enhanceable && (
-        <button type="button" class="btn" disabled={busy} onClick={() => actions.enhance(item)}>
-          <Icon name="MagicWand" size={14} />
-          {t.enhance}
-        </button>
-      )}
-      {item.status !== "running" && item.status !== "queued" && (
-        <ConfirmPopover
-          triggerLabel={t.histDeleteAria(item.name)}
-          title={t.deleteItemTitle(item.name)}
-          description={t.deleteItemDescription}
-          confirmLabel={t.deletePermanently}
-          cancelLabel={t.cancel}
-          busyLabel={t.deleting}
-          onConfirm={() => actions.remove(item)}
-        />
-      )}
-    </div>
-  );
+  const acts: Act[] = [];
+  if (previewable) acts.push({ key: "preview", label: t.preview, icon: "Eye", primary: true, run: () => actions.preview(item) });
+  else if (retryable && !noModel && !imageOnly)
+    acts.push({ key: "retry", label: t.retryPlainVerb, icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retry(item) });
+  if (noModel && retryable) {
+    acts.push({ key: "models", label: t.addModelAction, primary: true, run: actions.openModels });
+    acts.push({ key: "plain", label: t.retryPlain, disabled: busy, run: () => actions.retryPlain(item) });
+  }
+  if (imageOnly && retryable) acts.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
+  if (previewable && ctx.compare) acts.push({ key: "compare", label: t.compare, icon: "Columns", run: () => actions.compare(item) });
+  if (previewable && item.output)
+    acts.push({ key: "download", label: sheet ? t.downloadShort : t.downloadMd, icon: "DownloadSimple", run: () => actions.download(item, item.output as string) });
+  if (previewable && retryable === false && item.retryable)
+    acts.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, busy, run: () => actions.retry(item) });
+  if (enhanceable) acts.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
+  const danger: Danger | null =
+    item.status !== "running" && item.status !== "queued"
+      ? {
+          aria: t.histDeleteAria(item.name),
+          label: t.deleteAction,
+          title: t.deleteItemTitle(item.name),
+          description: t.deleteItemDescription,
+          confirmLabel: t.deletePermanently,
+          cancelLabel: t.cancel,
+          busyLabel: t.deleting,
+          onConfirm: () => actions.remove(item),
+        }
+      : null;
+  return <ActionRow t={t} acts={acts} sheet={sheet} danger={danger} />;
 }
 
 export function ItemInspector({
@@ -478,9 +523,9 @@ export function ItemInspector({
         {item.output && (
           <>
             <dt>{t.factOutput}</dt>
-            <dd class="mono">
-              {basename(item.output)}
-              {output && <span class="fact-dim"> · {fmtBytes(output.size)}</span>}
+            <dd class="mono fact-file">
+              <FileName name={basename(item.output)} />
+              {output && <span class="fact-dim fact-size">· {fmtBytes(output.size)}</span>}
             </dd>
           </>
         )}
@@ -490,7 +535,7 @@ export function ItemInspector({
             <dd>{also.join(", ")}</dd>
           </>
         )}
-        {(item.models.length > 0 || cost.kind !== "none") && (
+        {(item.models.length > 0 || (item.llmEnhanced && cost.kind !== "none")) && (
           <>
             <dt>{t.factModels}</dt>
             <dd>{item.models.length ? item.models.join(", ") : t.modelsNotReported}</dd>
@@ -682,39 +727,25 @@ export function JobActions({ ctx, job, items, actions, sheet = false }: { ctx: I
   const waiting = items.some((item) => item.status === "queued" && item.operation === "convert");
   const running = job.status === "running";
   const busy = ctx.busy.has(`job:${job.jobId}`);
-  return (
-    <div class={sheet ? "insp-actions is-sheet" : "insp-actions"}>
-      {!running && (
-        <button type="button" class="btn btn-primary" onClick={() => actions.zip(job.jobId)}>
-          <Icon name="DownloadSimple" size={14} />
-          {t.downloadZip}
-        </button>
-      )}
-      {retryable > 0 && (
-        <button type="button" class="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => actions.retryFailed(job.jobId)}>
-          <Icon name="ArrowCounterClockwise" size={14} />
-          {t.retryFailedN(retryable)}
-        </button>
-      )}
-      {waiting && ctx.cancel && (
-        <button type="button" class="btn" disabled={busy} title={t.stopTitle} onClick={() => actions.stop(job.jobId)}>
-          <Icon name="Stop" size={14} />
-          {t.stopRemaining}
-        </button>
-      )}
-      {!running && (
-        <ConfirmPopover
-          triggerLabel={t.deleteSubmissionAria(submissionLabel(job, items, ctx.labelWords))}
-          title={t.deleteSubmissionTitle(items.length)}
-          description={t.deleteItemDescription}
-          confirmLabel={t.deletePermanently}
-          cancelLabel={t.cancel}
-          busyLabel={t.deleting}
-          onConfirm={() => actions.remove(job.jobId)}
-        />
-      )}
-    </div>
-  );
+  const acts: Act[] = [];
+  if (!running) acts.push({ key: "zip", label: t.downloadZip, icon: "DownloadSimple", primary: true, run: () => actions.zip(job.jobId) });
+  if (retryable > 0)
+    acts.push({ key: "retry-failed", label: t.retryFailedN(retryable), icon: "ArrowCounterClockwise", disabled: busy, busy, run: () => actions.retryFailed(job.jobId) });
+  if (waiting && ctx.cancel) acts.push({ key: "stop", label: t.stopRemaining, icon: "Stop", disabled: busy, run: () => actions.stop(job.jobId) });
+  const label = submissionLabel(job, items, ctx.labelWords);
+  const danger: Danger | null = running
+    ? null
+    : {
+        aria: t.deleteSubmissionAria(label),
+        label: t.deleteAction,
+        title: t.deleteSubmissionTitle(items.length),
+        description: t.deleteItemDescription,
+        confirmLabel: t.deletePermanently,
+        cancelLabel: t.cancel,
+        busyLabel: t.deleting,
+        onConfirm: () => actions.remove(job.jobId),
+      };
+  return <ActionRow t={t} acts={acts} sheet={sheet} danger={danger} />;
 }
 
 /** Nothing selected: what the whole list adds up to, and what needs a look (A4). */

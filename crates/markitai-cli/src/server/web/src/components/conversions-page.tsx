@@ -64,6 +64,9 @@ export interface ConversionsPageProps {
   describe: (error: unknown) => { text: string; detail: string };
 }
 
+/** What a click may land on without being a click on the page's empty space. */
+const NOT_EMPTY = "button, a, input, textarea, select, label, summary, [role=tree], [role=treeitem], .conv-list, .insp, .preview, .page-head, .conv-composer, .toolbar, .state, .menu, .confirm-card";
+
 function summaryText(t: Dict, items: SessionItem[]): string {
   const tally = counts(items);
   if (!tally.total) return t.summaryEmpty;
@@ -92,6 +95,24 @@ export function ConversionsPage(props: ConversionsPageProps) {
     const split = document.querySelector<HTMLElement>(".split");
     if (split && split.getBoundingClientRect().top > 24) split.scrollIntoView({ block: "start" });
   }, [previewing, phone]);
+
+  // A click on the page's empty space (outside the list and the inspector) lets
+  // go of the selection, as Escape does in the list; the inspector returns to
+  // its overview. Ending a text selection is not such a click.
+  const canRelease = selected !== null && !phone && mode === "inspector";
+  const releaseOnEmpty = (event: MouseEvent) => {
+    if (!canRelease || event.button !== 0) return;
+    if ((event.target as Element | null)?.closest?.(NOT_EMPTY)) return;
+    if (String(window.getSelection?.() ?? "").trim()) return;
+    props.onSelect(null);
+  };
+  const releaseOnEscape = (event: KeyboardEvent) => {
+    if (!canRelease || event.key !== "Escape" || event.defaultPrevented) return;
+    if (!(event.target as Element | null)?.closest?.(".conv-list")) return;
+    if (document.querySelector(".menu, .confirm-card, .veil")) return;
+    event.preventDefault();
+    props.onSelect(null);
+  };
 
   const counters: Record<Filter, number> = { all: tally.total, failed: tally.failed, notices: tally.notices };
   const filterLabels: Record<Filter, string> = { all: t.filterAll, failed: t.filterFailed, notices: t.filterNotices };
@@ -168,7 +189,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
   );
 
   return (
-    <div class="page conversions">
+    <div class="page conversions" onClick={releaseOnEmpty} onKeyDown={releaseOnEscape}>
       <header class="page-head conv-head">
         <div class="conv-title">
           <h1>{t.conversions}</h1>

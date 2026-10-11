@@ -73,7 +73,7 @@ pub(super) async fn capabilities(
         "extras":{"browser":markitai_core::browser_available(),"svg":true},
         "limits":{"max_job_items":MAX_ITEMS,"history_retention_days":super::retention::DAYS},
         "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
-            "original":true,"result_excerpt":true,"job_labels":true},
+            "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true},
     }))
 }
 

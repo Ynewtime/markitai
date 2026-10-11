@@ -208,6 +208,8 @@ export interface Features {
   original: boolean;
   result_excerpt: boolean;
   job_labels: boolean;
+  /** v1.6: GET /api/jobs/{id}/items/{item}/assets/{relpath} serves the item's own images inline. */
+  item_assets?: boolean;
 }
 
 /** One entry of `GET /api/history`, newest first. */

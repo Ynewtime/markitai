@@ -69,7 +69,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `llm.model_list[].model_info.max_input_tokens` | `null` | 模型的输入窗口（token）。设置后文档分块还须放进所有启用部署中最小的窗口（扣除提示词后按保守估算取 90%），只会变小、不会超过 32,000 字符；见 [LLM：长文本](llm.md#structured-documents-and-complete-long-text) |
 | `llm.model_list[].litellm_params.reasoning_effort` | `null` | 推理模型的思考强度：`none`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。未设置时 `deepseek/` 关闭思考（清理不需要推理，且推理 token 会占用 `max_tokens`），其他供应商使用模型默认值；`anthropic/` 只接受 `none`，订阅运行时不接受此项；见 [LLM：供应商](llm.md#providers-and-request-parameters) |
 | `llm.keep_base` | `false` | 增强后同时保留基础 Markdown，同 `--keep-base` |
-| `llm.on_failure` | `fallback` | 增强失败时保留基础结果并警告；`fail` 判为失败 |
+| `llm.on_failure` | `fallback` | 增强失败时保留基础结果并警告（没有任何模型成功时只写基础 `.md`，不写 `.llm.md`）；`fail` 判为失败 |
 | `llm.concurrency` | `10` | 同时进行的模型请求上限 |
 | `llm.max_requests_per_document` | `50` | 每个文档的模型请求上限，`0` 不限 |
 | `llm.max_cost_per_document_usd` | `0` | 每个文档的美元上限，`0` 不限；见[定价](pricing.md) |

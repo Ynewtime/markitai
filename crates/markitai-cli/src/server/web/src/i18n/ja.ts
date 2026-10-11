@@ -178,6 +178,7 @@ export const ja: Dict = {
   stagedCount: (n: number) => `${n} 個のファイル`,
   stagedClear: (label: string) => `${label} を送信対象から外す`,
   histDeleteAria: (name: string) => `${name} を完全に削除`,
+  deleteAction: "削除",
   deleteItemTitle: (name: string) => `${name} を削除しますか？`,
   deleteItemDescription: "保存された結果を削除します。この操作は元に戻せません。",
   deletePermanently: "完全に削除",
@@ -211,6 +212,8 @@ export const ja: Dict = {
   filesTab: "ファイル",
   versionAria: "Markdown のバージョン",
   loading: "読み込み中…",
+  previewLoading: (size: string | null) => (size ? `${size} を読み込み中…` : "読み込み中…"),
+  previewRendering: "レイアウト中…",
   exportPdf: "PDF をエクスポート",
   pdfSettings: "PDF の設定",
   pdfCustomHeaderFooter: "カスタムのヘッダーとフッター",
@@ -312,12 +315,16 @@ export const ja: Dict = {
   providerUnknown: "不明なプロバイダー",
   customApiBase: "カスタムの API ベース URL を使用",
   requiredField: "必須",
+  optionalField: "任意",
   manualModelToggle: "モデル ID を手動で追加",
+  manualAndRouting: "モデル ID とルーティング",
+  manualModelLabel: "ID でモデルを追加",
   searchModels: "モデルを検索",
   selectAll: "すべて選択",
   manualModelPh: "完全なモデル ID",
   azureDeploymentPh: "Azure のデプロイ名",
   addManual: "手動で追加",
+  addModelId: "追加",
   modelsAvailable: "利用可能なモデル",
   alreadyConfigured: "設定済み",
   visionTag: "ビジョン",
@@ -537,6 +544,8 @@ export const ja: Dict = {
     // Model IDs are Latin, so a space separates them from the particle; the counted form ends in Japanese.
     const list = (names: string[]) => (names.length <= 2 ? `${names.join("、")} ` : `${names.slice(0, 2).join("、")} ほか ${names.length - 2} 個のモデル`);
     switch (kind) {
+      case "no_model":
+        return count === 1 ? "使えるモデルの回答がなかったため、基本の Markdown だけを残しました" : `${count} 件の文書は使えるモデルの回答がなかったため、基本の Markdown だけを残しました`;
       case "alt_kept":
         return `${count} 枚の画像は分析に失敗したため、元の代替テキストを残しました`;
       case "cost_incomplete":
@@ -608,17 +617,19 @@ export const ja: Dict = {
   themeHint: "システムに合わせるか、常にライトまたはダークを使用します。",
   accessHeld: "このタブにはアクセストークンがあります。",
   accessNone: "このタブにはアクセストークンがありません。",
-  accessRefused: "サービスがこのタブのアクセストークンを拒否しました。",
-  accessExplain: "markitai serve が表示したリンクを開いてください。リンクにトークンが含まれています。または、ここにトークンを貼り付けてください。",
-  replaceToken: "アクセストークンを置き換え",
-  forgetToken: "トークンを消去",
-  tokenSaved: "このタブ用にトークンを保存しました。",
+  accessRefused: "サーバーがこのタブのトークンを拒否しました。",
+  accessRefusedHint: "新しいトークンを貼り付けてください。",
+  accessExplain: "markitai serve が表示したリンクのトークンを貼り付けてください。",
+  replaceToken: "新しいトークンを貼り付けると置き換わります。",
+  forgetToken: "消去",
+  tokenSaved: "トークンを保存しました。",
 
   // token dialog
   tokenTitle: "サービスへのアクセス",
   tokenText: "markitai serve の起動時に表示されたアクセストークンを入力してください。",
   tokenLabel: "アクセストークン",
-  tokenNote: "このブラウザータブでのみ保持されます。",
+  tokenField: "トークン",
+  tokenNote: "このタブにのみ保持されます。",
   connect: "接続",
 
   // crash surface (also read before the dictionary is available)

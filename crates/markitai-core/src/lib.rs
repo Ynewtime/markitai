@@ -127,6 +127,12 @@ pub fn office_diagnostic() -> Result<Option<PathBuf>> {
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The warning of a conversion that requested model processing and kept only
+/// its base output because no model answered (see
+/// [`ConversionOutput::no_model_succeeded`]). Clients may match it exactly.
+const NO_MODEL_SUCCEEDED: &str =
+    "No model succeeded for this document; only the base Markdown was kept.";
+
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -652,6 +658,10 @@ fn convert_inner(
     let pending_analysis = llm_runtime
         .filter(|_| !image_input)
         .and_then(|runtime| image_enrichment::start(&doc, &result.markdown, source, &cfg, runtime));
+    // Whether a model answered for this file (fresh, shared or cached), and
+    // the failed step's warning that the no-answer summary may restate.
+    let mut model_answered = false;
+    let mut failed_step = None;
     if config::enabled(&cfg, "/llm/enabled") && !standalone_analysis {
         let source_context = if is_url {
             output::redact_url(source)
@@ -796,6 +806,7 @@ fn convert_inner(
         };
         match enhanced {
             Ok(enhancement) => {
+                model_answered = true;
                 let markdown = enhancement.markdown;
                 result.llm_cache_hit = enhancement.cache_hit;
                 result.warnings.extend(enhancement.warnings);
@@ -885,6 +896,10 @@ fn convert_inner(
                     }
                     return Err(error);
                 }
+                if !screenshot_only {
+                    failed_step =
+                        Some((result.warnings.len(), "LLM enhancement", error.to_string()));
+                }
                 result.warnings.push(if screenshot_only {
                     format!("LLM enhancement failed; captured screenshots retained: {error}")
                 } else {
@@ -893,7 +908,7 @@ fn convert_inner(
             }
         }
     }
-    if let Err(error) = image_enrichment::analyze(
+    match image_enrichment::analyze(
         &doc,
         &mut result,
         source,
@@ -902,35 +917,40 @@ fn convert_inner(
         llm_runtime,
         pending_analysis,
     ) {
-        if matches!(error, Error::NoModelConfigured | Error::Unsupported(_)) || output_dir.is_none()
-        {
-            return Err(error);
-        }
-        if cfg["llm"]["on_failure"] == "fail" {
-            output::apply_profiles(&mut result, &cfg);
-            if let Some(dir) = &output_dir {
-                output::write_document_mode(
-                    dir,
-                    &name,
-                    &mut result,
-                    &doc.assets,
-                    if pdf_input || office_media_requested {
-                        output::Screenshots::PublishedPages(&screenshots)
-                    } else {
-                        output::Screenshots::New(&screenshots)
-                    },
-                    &cfg,
-                    output::WritePolicy {
-                        publication,
-                        prepared: prepared.as_deref_mut(),
-                    },
-                )?;
+        Ok(answered) => model_answered |= answered,
+        Err(error) => {
+            if matches!(error, Error::NoModelConfigured | Error::Unsupported(_))
+                || output_dir.is_none()
+            {
+                return Err(error);
             }
-            return Err(error);
+            if cfg["llm"]["on_failure"] == "fail" {
+                output::apply_profiles(&mut result, &cfg);
+                if let Some(dir) = &output_dir {
+                    output::write_document_mode(
+                        dir,
+                        &name,
+                        &mut result,
+                        &doc.assets,
+                        if pdf_input || office_media_requested {
+                            output::Screenshots::PublishedPages(&screenshots)
+                        } else {
+                            output::Screenshots::New(&screenshots)
+                        },
+                        &cfg,
+                        output::WritePolicy {
+                            publication,
+                            prepared: prepared.as_deref_mut(),
+                        },
+                    )?;
+                }
+                return Err(error);
+            }
+            failed_step = Some((result.warnings.len(), "Image analysis", error.to_string()));
+            result.warnings.push(format!(
+                "Image analysis failed; base Markdown and assets retained: {error}"
+            ));
         }
-        result.warnings.push(format!(
-            "Image analysis failed; base Markdown and assets retained: {error}"
-        ));
     }
     if let Some(scope) = document_scope.as_ref() {
         result.usage = scope.usage();
@@ -947,6 +967,21 @@ fn convert_inner(
             {
                 result.warnings.push(warning);
             }
+        }
+    }
+    if config::enabled(&cfg, "/llm/enabled") && !model_answered && result.llm_markdown.is_none() {
+        result.no_model_succeeded = true;
+        // A screenshot-only page keeps its captures, not base Markdown; its
+        // warning already says so.
+        if !screenshot_only {
+            let at = match failed_step {
+                Some((index, step, error)) => {
+                    result.warnings[index] = format!("{step} failed: {error}");
+                    index + 1
+                }
+                None => result.warnings.len(),
+            };
+            result.warnings.insert(at, NO_MODEL_SUCCEEDED.into());
         }
     }
     if let Some(store) = stdout_assets {

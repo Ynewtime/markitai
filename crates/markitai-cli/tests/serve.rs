@@ -44,6 +44,8 @@ impl Server {
     fn start(root: &Path) -> Self {
         Self::start_with(root, &[])
     }
+    /// With `MARKITAI_SERVE_TOKEN` among `variables` the server requires that
+    /// token; otherwise it runs with `--no-auth`.
     fn start_with(root: &Path, variables: &[(&str, &std::ffi::OsStr)]) -> Self {
         if !root.join("config.json").exists() {
             configure(root);
@@ -70,8 +72,13 @@ impl Server {
                 "--port",
                 "0",
                 "--no-open",
-                "--no-auth",
             ])
+            .args(
+                (!variables
+                    .iter()
+                    .any(|(name, _)| *name == "MARKITAI_SERVE_TOKEN"))
+                .then_some("--no-auth"),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -1098,3 +1105,6 @@ mod gates;
 
 #[path = "serve/workbench.rs"]
 mod workbench;
+
+#[path = "serve/assets.rs"]
+mod assets;

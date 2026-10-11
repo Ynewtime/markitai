@@ -39,7 +39,7 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    the seven-day history retention (`limits`), and, for clients shared with other
    backends, `implementation: "rust"`, `docs_url`, `source_url` and `features` (`cancel`,
    `download_tickets`, `url_lists`, `history_items`, `original`,
-   `result_excerpt`, `job_labels`, all true).
+   `result_excerpt`, `job_labels`, `item_assets`, all true).
 2. `POST /api/jobs` accepts form fields `urls` (a JSON array), `options` (a JSON
    object) and `label`, plus repeated multipart `files`. `label` names the
    submission in history (a folder or `.urls` file name): plain text without
@@ -80,6 +80,13 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    there is one and never inside a UTF-8 sequence; `artifacts` stays complete.
    Fetch an artifact through `GET /api/jobs/{job_id}/files/{relpath}`. Download
    all output files through `GET /api/jobs/{job_id}/archive` after completion.
+   `GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}` shows one of that
+   item's own extracted images in a page: only a PNG, JPEG, GIF, WebP or AVIF
+   that the item's result lists, sent inline with
+   `Content-Security-Policy: default-src 'none'; sandbox`, `nosniff`,
+   `Cache-Control: private, no-cache` and an `ETag` (a matching `If-None-Match`
+   is 304); anything else, another item's image or a path leaving the job is
+   404 `file_not_found`. No download ticket names it.
 6. `POST /api/jobs/{job_id}/cancel` stops the job's original items that are still
    waiting for a conversion slot. It returns HTTP 202 with `job_id` and `stopping`,
    the number of such items when the request arrived. Each becomes an `error` item

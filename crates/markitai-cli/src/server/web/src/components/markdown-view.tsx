@@ -9,7 +9,7 @@ import type { ComponentChildren } from "preact";
 import { createPortal } from "preact/compat";
 import type { MutableRef } from "preact/hooks";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { fetchBlob, fetchText, filePath } from "../api/client.ts";
+import { fetchBlob, fetchText, filePath, imagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
@@ -19,10 +19,12 @@ import { basename, fmtBytes, localeTag } from "../lib/format.ts";
 import { parseFrontMatter } from "../lib/frontmatter.ts";
 import { type ImageLoads, loadArtifactImages, renderMarkdown, splitFrontmatter } from "../lib/markdown.ts";
 import { groupNotices } from "../lib/notices.ts";
+import { cachedExcerpt, resultKey } from "../lib/results.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { capTables, freezeColumns, markNumericColumns, MARKER, ROW_CHUNK, ROW_LIMIT, tableSlice, type CappedTable } from "../lib/tables.ts";
 import { FrontCard } from "./inspector.tsx";
 import { Icon, Logo } from "./icons.tsx";
+import { Skeleton } from "./skeleton.tsx";
 
 /** Larger sides are offered as downloads instead of being compared in the page. */
 const DIFF_BYTES = 8 * 1024 * 1024;
@@ -82,6 +84,8 @@ export function MarkdownView({
   const printable = useRef<HTMLDivElement>(null);
   const tabs = useRef<Record<Tab, HTMLButtonElement | null>>({ rendered: null, source: null, diff: null, files: null });
   const [renderError, setRenderError] = useState<unknown>(null);
+  /** The rendered body is in place; until then its skeleton holds the frame. */
+  const [ready, setReady] = useState(false);
   const [diff, setDiff] = useState<Comparison | { kind: "error"; error: unknown } | null>(null);
   const [expanding, setExpanding] = useState<Record<number, number>>({});
   const capped = useRef<CappedTable[]>([]);
@@ -102,6 +106,7 @@ export function MarkdownView({
     let loads: ImageLoads | null = null;
     let stopHighlight: (() => void) | null = null;
     setRenderError(null);
+    setReady(false);
     setExpanding({});
     const placeholder = (alt: string) => t.imagePlaceholder(alt || t.imageUnavailable);
     const cut = capTables(split.body);
@@ -111,7 +116,7 @@ export function MarkdownView({
       documentPath: path,
       artifacts: result.artifacts,
       // With a token, images are fetched with the header instead of a tokened URL.
-      imageURL: (relpath) => (hasToken() ? null : filePath(item.jobId, relpath)),
+      imageURL: (relpath) => (hasToken() ? null : imagePath(item.jobId, item.itemId, relpath)),
       fileURL: (relpath) => filePath(item.jobId, relpath),
       placeholder,
       fallbackAlt: t.figureFrom(item.name),
@@ -141,11 +146,12 @@ export function MarkdownView({
           if (table.rows.length > TALL_ROWS) wrap.classList.add("is-tall");
         }
         target.replaceChildren(fragment);
+        setReady(true);
         // Caption bars are drawn by Preact into the placeholders below.
         setExpanding(Object.fromEntries(cut.tables.map((_, index) => [index, -1])));
         loads = loadArtifactImages(
           target,
-          (relpath) => fetchBlob(filePath(item.jobId, relpath)).then((file) => file.blob),
+          (relpath) => fetchBlob(imagePath(item.jobId, item.itemId, relpath)).then((file) => file.blob),
           (image) => {
             const span = document.createElement("span");
             span.className = "img-blocked";
@@ -195,7 +201,7 @@ export function MarkdownView({
       const fragment = await renderMarkdown(tableSlice(table, from, to), {
         documentPath: path,
         artifacts: result.artifacts,
-        imageURL: (relpath) => (hasToken() ? null : filePath(item.jobId, relpath)),
+        imageURL: (relpath) => (hasToken() ? null : imagePath(item.jobId, item.itemId, relpath)),
         fileURL: (relpath) => filePath(item.jobId, relpath),
         placeholder: (alt) => t.imagePlaceholder(alt || t.imageUnavailable),
         fallbackAlt: t.figureFrom(item.name),
@@ -274,7 +280,12 @@ export function MarkdownView({
   );
 
   const failure = doc.error ?? renderError;
-  const note = (error: unknown) => <p class={error ? "pane-note line-error" : "pane-note"}>{error ? describe(error).text : t.loading}</p>;
+  // While the result loads: its size when the inspector already read its start.
+  const known = cachedExcerpt(resultKey(item));
+  const bytes = result?.markdown_bytes ?? known?.markdown_bytes ?? known?.artifacts.find((artifact) => artifact.relpath === item.output)?.size ?? null;
+  const loadingLabel = result === null ? t.previewLoading(bytes !== null && bytes > 256 * 1024 ? fmtBytes(bytes) : null) : t.previewRendering;
+  const note = (error: unknown, kind: "doc" | "source" | "list" = "doc") =>
+    error ? <p class="pane-note line-error">{describe(error).text}</p> : <Skeleton label={loadingLabel} kind={kind} />;
   const docName = basename(path || item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "");
   const onDocumentLink = (event: MouseEvent) => {
     const link = (event.target as Element | null)?.closest?.("a[data-artifact]");
@@ -308,7 +319,9 @@ export function MarkdownView({
         {markdown === null || renderError ? (
           note(failure)
         ) : (
-          <div ref={printable} class="pdf-doc">
+          <>
+          {!ready && <Skeleton label={t.previewRendering} />}
+          <div ref={printable} class={ready ? "pdf-doc" : "pdf-doc is-pending"}>
             <div class="print-head" aria-hidden="true">
               <span class="print-brand">
                 <Logo size={20} />
@@ -354,12 +367,13 @@ export function MarkdownView({
               </span>
             </div>
           </div>
+          </>
         )}
       </div>
 
       <div id={`${prefix}-pane-source`} role="tabpanel" aria-labelledby={`${prefix}-tab-source`} class="pane is-source" tabIndex={0} hidden={active !== "source"}>
         {markdown === null || split === null ? (
-          note(failure)
+          note(failure, "source")
         ) : (
           <pre class="source" aria-label={t.srcAria}>
             {split.frontmatter !== null && <span class="fm">{split.frontmatter}</span>}
@@ -371,7 +385,7 @@ export function MarkdownView({
       {!compact && pair && (
         <div id={`${prefix}-pane-diff`} role="tabpanel" aria-labelledby={`${prefix}-tab-diff`} class="pane" tabIndex={0} hidden={active !== "diff"}>
           {diff === null ? (
-            note(null)
+            <Skeleton label={t.loading} />
           ) : diff.kind === "error" ? (
             note(diff.error)
           ) : diff.kind === "too-large" ? (
@@ -404,7 +418,7 @@ export function MarkdownView({
       {!compact && (
         <div id={`${prefix}-pane-files`} role="tabpanel" aria-labelledby={`${prefix}-tab-files`} class="pane" tabIndex={0} hidden={active !== "files"}>
           {result === null ? (
-            note(doc.error)
+            note(doc.error, "list")
           ) : result.artifacts.length === 0 ? (
             <p class="pane-note">{t.filesNone}</p>
           ) : (

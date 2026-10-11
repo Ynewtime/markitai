@@ -169,6 +169,7 @@ export const zh: Dict = {
   stagedCount: (n) => `${n} 个文件`,
   stagedClear: (label) => `从本次提交中移除 ${label}`,
   histDeleteAria: (name) => `永久删除 ${name}`,
+  deleteAction: "删除",
   deleteItemTitle: (name) => `删除 ${name}？`,
   deleteItemDescription: "这会移除已保存的结果，且无法撤销。",
   deletePermanently: "永久删除",
@@ -196,6 +197,8 @@ export const zh: Dict = {
   filesTab: "文件",
   versionAria: "Markdown 版本",
   loading: "加载中…",
+  previewLoading: (size) => (size ? `正在加载 ${size}…` : "正在加载…"),
+  previewRendering: "正在排版…",
   exportPdf: "导出 PDF",
   pdfSettings: "PDF 设置",
   pdfCustomHeaderFooter: "自定义页眉页脚",
@@ -285,12 +288,16 @@ export const zh: Dict = {
   providerUnknown: "未知服务商",
   customApiBase: "使用自定义 API 地址",
   requiredField: "必填",
+  optionalField: "可选",
   manualModelToggle: "手动添加模型 ID",
+  manualAndRouting: "模型 ID 与路由",
+  manualModelLabel: "按 ID 添加模型",
   searchModels: "搜索模型",
   selectAll: "全选",
   manualModelPh: "完整模型 ID",
   azureDeploymentPh: "Azure 部署名称",
   addManual: "手动添加",
+  addModelId: "添加",
   modelsAvailable: "可用模型",
   alreadyConfigured: "已配置",
   visionTag: "Vision",
@@ -506,6 +513,8 @@ export const zh: Dict = {
   noticeTitle: (kind: string, count: number, models: string[], sample: string) => {
     const list = (names: string[]) => (names.length <= 2 ? names.join("、") : `${names.slice(0, 2).join("、")} 等 ${names.length} 个`);
     switch (kind) {
+      case "no_model":
+        return count === 1 ? "没有模型给出可用回答，只保留了基础 Markdown" : `${count} 个文档没有得到模型的可用回答，只保留了基础 Markdown`;
       case "alt_kept":
         return `${count} 张图片分析失败，保留了原有的替代文本`;
       case "cost_incomplete":
@@ -576,16 +585,18 @@ export const zh: Dict = {
   themeHint: "跟随系统，或始终使用浅色或深色。",
   accessHeld: "此标签页已有访问令牌。",
   accessNone: "此标签页没有访问令牌。",
-  accessRefused: "服务拒绝了此标签页的访问令牌。",
-  accessExplain: "打开 markitai serve 打印的链接，其中带有令牌；或者把令牌粘贴到这里。",
-  replaceToken: "替换访问令牌",
-  forgetToken: "忘记令牌",
-  tokenSaved: "令牌已保存到此标签页。",
+  accessRefused: "服务器拒绝了此标签页的令牌。",
+  accessRefusedHint: "请粘贴新的令牌。",
+  accessExplain: "粘贴 markitai serve 打印的链接中的令牌。",
+  replaceToken: "粘贴新令牌即可替换。",
+  forgetToken: "忘记",
+  tokenSaved: "令牌已保存。",
 
   tokenTitle: "服务访问",
   tokenText: "输入 markitai serve 启动时打印的访问令牌。",
   tokenLabel: "访问令牌",
-  tokenNote: "仅在当前浏览器标签页中保留。",
+  tokenField: "令牌",
+  tokenNote: "仅保存在此标签页。",
   connect: "连接",
 
 };
