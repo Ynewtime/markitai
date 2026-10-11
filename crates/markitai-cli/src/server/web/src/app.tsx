@@ -1,48 +1,51 @@
-// The workbench: a home view (`/`) and a workspace view (`/jobs`); settings,
-// previews and the token prompt are dialogs over either.
-import type { ComponentChildren } from "preact";
+// The workbench: a sidebar shell around three views — Convert (`/`),
+// Conversions (`/jobs`) and Settings (`/settings/…`). The Conversions view
+// keeps the selected item and the open preview in its address, so reloads and
+// Back return to them. Notices sit in the page, never over its buttons.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, fetchCapabilities, NetworkError } from "./api/client.ts";
+import { ApiError, fetchCapabilities, filePath, NetworkError } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
-import type { Capabilities, HistoryEntry, JobOptions } from "./api/types.ts";
-import { AppFooter, AppHeader } from "./components/app-header.tsx";
+import type { Capabilities, JobOptions } from "./api/types.ts";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
-import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
-import { historySummaryProblem } from "./lib/history-presentation.ts";
-import { prepareRetryBatch, submitRetryBatch, retryBatchAnnouncement } from "./lib/retry-batch.ts";
-import { hasCloudflareRequest } from "./lib/cloudflare.ts";
+import { ConversionsPage } from "./components/conversions-page.tsx";
+import { ConvertPage } from "./components/convert-page.tsx";
 import { DropOverlay } from "./components/drop-overlay.tsx";
-import { CapabilityHint, ErrorLine, InlineAction, NoticeLine } from "./components/feedback.tsx";
-import { ClearButton, JobStats, ZipButton } from "./components/job-actions.tsx";
-import { Ledger } from "./components/ledger.tsx";
-import { domKey } from "./components/ledger-row.tsx";
-import { Notification, type NotificationModel } from "./components/notification.tsx";
+import { Notes, type Note } from "./components/notes.tsx";
 import { OptionsPanel } from "./components/options-panel.tsx";
-import { PreviewModal } from "./components/preview-modal.tsx";
-import type { PreviewTarget } from "./components/markdown-view.tsx";
-import { SettingsModal } from "./components/settings-modal.tsx";
+import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
+import { ModelsSettings } from "./components/settings-models.tsx";
+import { Shell, useSidebar } from "./components/shell.tsx";
 import { TokenDialog } from "./components/token-dialog.tsx";
 import { UrlInput } from "./components/url-input.tsx";
-import { useArchive } from "./hooks/use-archive.ts";
+import type { InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
+import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
 import { useConnectivity } from "./hooks/use-connectivity.ts";
-import { useJobs } from "./hooks/use-jobs.ts";
-import { detectLocale, dicts, storeLocale, type Locale } from "./i18n/index.ts";
+import { useConversions } from "./hooks/use-conversions.ts";
+import { useMedia } from "./hooks/use-media.ts";
+import { detectLocale, dicts, loadLocale, storeLocale, type Locale } from "./i18n/index.ts";
 import { apiErrorText, persistenceText } from "./i18n/errors.ts";
+import { LANG_TAGS } from "./i18n/locale.ts";
+import { isFailed, jobKey, submissions, type Filter, type LabelWords } from "./lib/conversions.ts";
+import { download } from "./lib/download.ts";
 import { oversized, stagedBatch, type StagedSubmission, type Walked } from "./lib/files.ts";
-import { fmtBytes } from "./lib/format.ts";
+import { basename, fmtBytes } from "./lib/format.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
-import { canRetry, failedToRetry, isPreviewable, isSettled, settledIdentity, itemFromPayload, waitingJobs, type SessionItem } from "./lib/session.ts";
-import { itemNotification, publishNotice, quietRestored, terminalNotices, widenNotice, type ItemRequestFailure, type NotificationState } from "./lib/pricing.ts";
+import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
+import { listQuery, parseListState, parseRoute, routePath, type PaneMode, type Route } from "./lib/route.ts";
+import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
 import { parseUrls } from "./lib/urls.ts";
 
-type View = "home" | "workspace";
-const WORKSPACE = "/jobs";
-const viewOf = (): View => ((location.pathname.replace(/\/+$/, "") || "/") === WORKSPACE ? "workspace" : "home");
+const DEFAULT_DOCS = "https://markitai.dev";
+const DEFAULT_SOURCE = "https://github.com/Ynewtime/markitai-rust";
+/** Below this width the inspector is a bottom sheet and the preview a full-screen view. */
+const PHONE = "(max-width: 960px)";
 
 interface Upload {
   loaded: number;
   total: number;
 }
+
+let noteSequence = 0;
 
 export function App() {
   const [locale, setLocale] = useState<Locale>(() => detectLocale());
@@ -50,19 +53,30 @@ export function App() {
   const localeRef = useRef(locale);
   localeRef.current = locale;
   useEffect(() => {
-    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+    document.documentElement.lang = LANG_TAGS[locale];
   }, [locale]);
   const chooseLocale = useCallback((next: Locale) => {
-    setLocale(next);
     storeLocale(next);
+    // A pack that cannot load leaves the choice stored and the page in its current language.
+    void loadLocale(next).then(
+      () => setLocale(next),
+      () => undefined,
+    );
   }, []);
 
   // ---- live region: settled items, copies, retries
   const [live, setLive] = useState("");
-  const announce = useCallback((message: string) => setLive((previous) => (previous === message ? `${message} ` : message)), []);
-  // A past announcement belongs to the language in which it was emitted.
-  // Clear it on a language change instead of replaying an invented completion.
+  const announce = useCallback((message: string) => setLive((previous) => (previous === message ? `${message} ` : message)), []);
   useEffect(() => setLive(""), [locale]);
+
+  // ---- page notices
+  const [notes, setNotes] = useState<Note[]>([]);
+  const note = useCallback((next: Omit<Note, "id"> & { id?: string }) => {
+    const id = next.id ?? `note-${++noteSequence}`;
+    setNotes((previous) => [{ ...next, id }, ...previous.filter((entry) => entry.id !== id)].slice(0, 4));
+    return id;
+  }, []);
+  const dismiss = useCallback((id: string) => setNotes((previous) => previous.filter((entry) => entry.id !== id)), []);
 
   // ---- service capabilities
   const [caps, setCaps] = useState<Capabilities | null>(null);
@@ -85,6 +99,9 @@ export function App() {
   const llmReady = caps?.llm.routable === true;
   const maxItems = caps?.limits.max_job_items ?? 1000;
   const presets = caps?.preset_options;
+  const features = caps?.features ?? null;
+  const docsUrl = caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS;
+  const sourceUrl = caps?.source_url && /^https:\/\//.test(caps.source_url) ? caps.source_url : DEFAULT_SOURCE;
 
   // ---- composer options, remembered in this browser
   const [composer, setComposer] = useState<Composer>(() => initialComposer(readRemembered()));
@@ -98,13 +115,10 @@ export function App() {
 
   /** Text for any failure, in the interface language; the service's wording stays as detail. */
   const describe = useCallback((error: unknown): { text: string; detail: string } => {
-    const lang = localeRef.current;
-    const words = dicts[lang];
-    const historyProblem = historySummaryProblem(error, words);
-    if (historyProblem) return historyProblem;
+    const words = dicts[localeRef.current];
     if (error instanceof NetworkError) return { text: words.submitNetworkFailed, detail: "" };
     if (error instanceof ApiError) {
-      const known = apiErrorText(lang, error.body);
+      const known = apiErrorText(localeRef.current, error.body);
       if (known) return known;
       if (error.status === 413) return { text: words.submitTooLarge, detail: error.detail };
       if (error.status === 422) return { text: words.submitInvalid, detail: error.detail };
@@ -115,172 +129,88 @@ export function App() {
     return { text: error instanceof Error ? error.message : String(error), detail: "" };
   }, []);
 
-  const jobs = useJobs(
-    (done, failed, retained, skipped) => retained > 0 ? dicts[localeRef.current].notifyRetained(retained) : dicts[localeRef.current].notifyBody(done, failed, skipped),
+  const conversions = useConversions(
+    features,
+    caps !== null,
+    (done, failed, retained, skipped) => (retained > 0 ? dicts[localeRef.current].notifyRetained(retained) : dicts[localeRef.current].notifyBody(done, failed, skipped)),
     () => dicts[localeRef.current].connLost,
   );
-  const archive = useArchive(jobs.jobs);
-  const jobsRef = useRef(jobs);
-  jobsRef.current = jobs;
-
-  // ---- notifications (one at a time; the newest wins)
-  const [notification, setNotification] = useState<NotificationState>({ sequence: 0, note: null });
-  const note = notification.note;
-  const noticeOpener = useRef<HTMLElement | null>(null);
-  const setNote = useCallback((next: NotificationModel | null, opener?: HTMLElement) => {
-    if (next === null) noticeOpener.current = null;
-    else {
-      const active = opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
-      // An automatic replacement keeps the original trigger while the user reads the card.
-      if (active && active !== document.body && !active.closest(".notice-card")) noticeOpener.current = active;
-    }
-    setNotification((previous) => {
-      // A repeated conversion warning widens the card already on screen; its
-      // sequence stays, so it is not announced again for every row.
-      const widened = next === null ? null : widenNotice(previous.note, next);
-      return widened === null ? publishNotice(previous, next) : { ...previous, note: widened };
-    });
-  }, []);
-  const closeNote = useCallback(() => {
-    const restore = document.activeElement instanceof HTMLElement && document.activeElement.closest(".notice-card") ? noticeOpener.current : null;
-    setNote(null);
-    if (restore?.isConnected) restore.focus({ preventScroll: true });
-  }, [setNote]);
-  // Request refusal belongs to the UI action, not the successful retained artifact.
-  const [requestFailures, setRequestFailures] = useState<Record<string, ItemRequestFailure>>({});
-  const requestItem = useCallback(async (item: SessionItem, operation: ItemRequestFailure["operation"], request: () => Promise<unknown>) => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    setRequestFailures((previous) => {
-      if (!(item.key in previous)) return previous;
-      const next = { ...previous };
-      delete next[item.key];
-      return next;
-    });
-    let error: unknown;
-    try { error = await request(); } catch (reason) { error = reason; }
-    if (error !== null && error !== undefined) {
-      const current = jobsRef.current.items.find((row) => row.key === item.key) ?? item;
-      setRequestFailures((previous) => ({ ...previous, [item.key]: { operation, error, identity: settledIdentity(current) } }));
-      const model = itemNotification(current, dicts[localeRef.current], localeRef.current, { operation, ...describe(error) });
-      if (model) setNote(model, opener);
-    }
-    return error;
-  }, [describe, setNote]);
+  const conversionsRef = useRef(conversions);
+  conversionsRef.current = conversions;
 
   const cloudflare = useCloudflareConsent(caps?.remote_services?.cloudflare);
-  const authorizeCloudflare = cloudflare.authorize;
-
-  const retryItem = useCallback(
-    async (item: SessionItem, override?: JobOptions) => {
-      const jobOptions = item.options ?? jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current;
-      const base = publicOptions(override ?? jobOptions);
-      const next = item.skipped && item.skipReason === "image_only" ? withOcrFor(base) : base;
-      const authorized = await authorizeCloudflare(next, [{ name: item.name, kind: item.kind }], true);
-      if (authorized === null) return undefined;
-      return requestItem(item, "retry", () => jobsRef.current.retry(item, authorized));
-    },
-    [requestItem, authorizeCloudflare],
-  );
-  const showItemNotice = useCallback((item: SessionItem, opener?: HTMLElement) => {
-    const failure = requestFailures[item.key];
-    const actionProblem = failure && failure.identity === settledIdentity(item) ? { operation: failure.operation, ...describe(failure.error) } : undefined;
-    const model = itemNotification(item, dicts[localeRef.current], localeRef.current, actionProblem);
-    if (!model) return;
-    const words = dicts[localeRef.current];
-    if (!actionProblem && item.skipped && item.skipReason === "image_only") {
-      model.action = {
-        label: words.enableOcr,
-        run: () => {
-          setNote(null);
-          setComposer((state) => ({ ...state, ocr: true }));
-          void retryItem(item).then((error) => announce(error ? `${dicts[localeRef.current].retryFailed}: ${describe(error).text}` : dicts[localeRef.current].retryAria(item.name)));
-        },
-      };
-    } else if (!actionProblem && item.status === "error" && item.errorCode === "no_model_configured" && canRetry(item)) {
-      model.action = {
-        label: words.retryPlain,
-        run: () => {
-          setNote(null);
-          const base = publicOptions(item.options ?? jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
-          void retryItem(item, { ...base, llm: false, alt: null, desc: null }).then((error) => announce(error ? `${dicts[localeRef.current].retryFailed}: ${describe(error).text}` : dicts[localeRef.current].retryAria(item.name)));
-        },
-      };
-    }
-    setNote(model, opener);
-  }, [requestFailures, describe, setNote, retryItem, announce]);
-
-  // Announce/notify only a new terminal identity already observed by this tab.
-  // Locale changes, reconnect duplicates and first adopted history are quiet.
-  const settledBefore = useRef(new Map<string, string | null>());
-  const restoredQuiet = jobs.restoredQuiet;
-  useEffect(() => {
-    const { next, changed } = terminalNotices(settledBefore.current, jobs.items);
-    settledBefore.current = next;
-    const total = jobs.items.length;
-    const settled = jobs.items.filter(isSettled).length;
-    for (const item of quietRestored(changed, restoredQuiet)) {
-      const word = item.rerunFailure ? t.rerunRetained(item.rerunFailure.operation) : item.status === "error" ? t.statusFailed : item.skipped ? t.statusSkipped : t.statusDone;
-      announce(t.announceItem(item.name, word, settled, total));
-      showItemNotice(item);
-    }
-  }, [jobs.items, jobs.restoredQuiet, t, announce, showItemNotice]);
+  const authorize = cloudflare.authorize;
 
   // ---- connectivity
   const offline = useConnectivity(() => {
     refreshCaps();
-    void archive.refresh();
-    void jobsRef.current.retryRestore();
-    setNote({ tone: "success", title: dicts[localeRef.current].onlineTitle, message: dicts[localeRef.current].reconnected });
+    void conversionsRef.current.refresh();
+    void conversionsRef.current.retryRestore();
+    dismiss("offline");
+    note({ tone: "success", text: dicts[localeRef.current].reconnected });
   });
-
   useEffect(() => {
-    if (offline) setNote({ tone: "error", title: dicts[localeRef.current].offlineTitle, message: dicts[localeRef.current].submitNetworkFailed });
-  }, [offline]);
+    if (offline) note({ id: "offline", tone: "error", text: dicts[localeRef.current].submitNetworkFailed });
+  }, [offline, note]);
 
-  // ---- views
-  const [view, setView] = useState<View>(viewOf);
-  const navigate = useCallback((next: View) => {
-    const path = next === "workspace" ? WORKSPACE : "/";
-    if (location.pathname !== path) history.pushState(null, "", path);
-    setView(next);
+  // ---- routes
+  const [route, setRoute] = useState<Route>(() => parseRoute(location.pathname));
+  const [listState, setListState] = useState(() => parseListState(location.search));
+  const navigate = useCallback((next: Route) => {
+    const path = routePath(next);
+    if (location.pathname !== path || location.search) history.pushState(null, "", path);
+    setRoute(next);
+    if (next.view !== "jobs") setListState({ selected: null, mode: "inspector" });
+    requestAnimationFrame(() => document.getElementById("main")?.focus({ preventScroll: true }));
   }, []);
   useEffect(() => {
-    const onPop = () => setView(viewOf());
+    const onPop = () => {
+      setRoute(parseRoute(location.pathname));
+      setListState(parseListState(location.search));
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const gear = useRef<HTMLButtonElement>(null);
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
-  const closeSettings = useCallback(() => {
-    setSettingsOpen(false);
-    gear.current?.focus();
+  /** Selection and pane changes replace the address; opening a preview adds a history entry so Back closes it. */
+  const updateList = useCallback((next: { selected: string | null; mode: PaneMode }, push = false) => {
+    setListState(next);
+    const url = `/jobs${listQuery(next)}`;
+    if (location.pathname + location.search === url) return;
+    if (push) history.pushState(null, "", url);
+    else history.replaceState(null, "", url);
   }, []);
-  const [tokenOpen, setTokenOpen] = useState(false);
+  // A wide screen never shows the phone's settings index.
+  const phone = useMedia(PHONE);
+  useEffect(() => {
+    if (route.view === "settings" && route.section === null && !phone) {
+      history.replaceState(null, "", "/settings/models");
+      setRoute({ view: "settings", section: "models" });
+    }
+  }, [route, phone]);
 
-  const [focusKey, setFocusKey] = useState<string | null>(null);
-  const focusHandled = useCallback(() => setFocusKey(null), []);
-  const openWorkspace = useCallback(() => {
-    const already = view === "workspace";
-    navigate("workspace");
-    void archive.refresh();
-    requestAnimationFrame(() => {
-      const head = document.querySelector<HTMLElement>(".workspace .work-head");
-      head?.scrollIntoView?.({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-      (document.querySelector<HTMLElement>('.ledger [role="listbox"] [role="option"]') ?? document.querySelector<HTMLElement>(".workspace .url-box"))?.focus();
-      if (already) announce(t.historyCurrent);
+  const [collapsedSidebar, toggleSidebar] = useSidebar();
+  const [wide, setWide] = useState(false);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
+  const [busy, setBusy] = useState<Set<string>>(() => new Set());
+  const mark = (key: string, on: boolean) =>
+    setBusy((previous) => {
+      const next = new Set(previous);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
     });
-  }, [view, navigate, archive.refresh, announce, t.historyCurrent]);
-  const goHome = useCallback(() => navigate("home"), [navigate]);
+
+  const titles: Record<Route["view"], string> = { convert: t.titleHome, jobs: t.titleWorkspace, settings: t.titleSettings };
+  useEffect(() => {
+    const base = titles[route.view];
+    document.title = conversions.activeCount > 0 ? `${conversions.activeCount} · ${base}` : base;
+  }, [route.view, conversions.activeCount, t]);
 
   // ---- submissions
   const [urlText, setUrlText] = useState("");
   const urls = useMemo(() => parseUrls(urlText).urls, [urlText]);
-  const [dropNotice, setDropNotice] = useState<string | null>(null);
-  const [inputError, setInputError] = useState<string | null>(null);
-  // A batch that is waiting for Convert: a folder, several files or a `.urls`
-  // list. Nothing is sent until the button is pressed.
   const [staged, setStaged] = useState<StagedSubmission | null>(null);
   const controllers = useRef(new Set<AbortController>());
   const [upload, setUpload] = useState<Upload | null>(null);
@@ -300,7 +230,7 @@ export function App() {
       if (sending.current) return false;
       sending.current = true;
       try {
-        const authorized = await authorizeCloudflare(optionsRef.current, [
+        const authorized = await authorize(optionsRef.current, [
           ...files.map((file) => ({ name: file.name, kind: "file" as const })),
           ...list.map((name) => ({ name, kind: "url" as const })),
         ]);
@@ -310,39 +240,53 @@ export function App() {
         setSubmitting(true);
         setUpload(files.length ? { loaded: 0, total: 0 } : null);
         let last = 0;
-        const ok = await jobsRef.current.submit(files, list, authorized, {
-          signal: controller.signal,
-          onProgress: (loaded, total) => {
-            // Progress fires very often; redraw ten times a second, never dropping the end.
-            const now = Date.now();
-            if (now - last < 100 && !(total > 0 && loaded >= total)) return;
-            last = now;
-            setUpload({ loaded, total });
+        const jobId = await conversionsRef.current.submit(
+          files,
+          list,
+          authorized,
+          {
+            signal: controller.signal,
+            onProgress: (loaded, total) => {
+              const now = Date.now();
+              if (now - last < 100 && !(total > 0 && loaded >= total)) return;
+              last = now;
+              setUpload({ loaded, total });
+            },
           },
-        }, label);
+          label,
+        );
         controllers.current.delete(controller);
         setSubmitting(controllers.current.size > 0);
         if (!controllers.current.size) setUpload(null);
-        if (ok) navigate("workspace");
-        return ok;
-      } finally { sending.current = false; }
+        if (jobId !== null) {
+          // The new submission is selected in the list: one item, or its group.
+          const count = files.length + list.length;
+          setRoute({ view: "jobs" });
+          updateList({ selected: count > 1 ? jobKey(jobId) : `${jobId}/i1`, mode: "inspector" }, location.pathname !== "/jobs");
+          setFilter("all");
+          setQuery("");
+        }
+        return jobId !== null;
+      } finally {
+        sending.current = false;
+      }
     },
-    [navigate, authorizeCloudflare],
+    [authorize, updateList],
   );
 
   // The model went away since the page last asked: show the real state.
   useEffect(() => {
-    if (jobs.submitError instanceof ApiError && jobs.submitError.reason === "llm_unavailable") refreshCaps();
-  }, [jobs.submitError, refreshCaps]);
+    if (conversions.submitError instanceof ApiError && conversions.submitError.reason === "llm_unavailable") refreshCaps();
+  }, [conversions.submitError, refreshCaps]);
 
   const submitFiles = useCallback(
-    (files: File[], folder?: { hidden: number; unreadable: number; truncated: boolean; folder?: boolean }) => {
-      setInputError(null);
-      jobsRef.current.clearSubmitError();
+    (files: File[], folder?: { hidden: number; unreadable: number; truncated: boolean; folder?: boolean; name?: string }) => {
+      dismiss("input");
+      conversionsRef.current.clearSubmitError();
       const notes: string[] = [];
       let chosen = files;
       if (folder && files.length === 0) {
-        setDropNotice(t.dropEmptyFolder);
+        note({ id: "input", tone: "warning", text: t.dropEmptyFolder });
         return;
       }
       if (chosen.length > maxItems) {
@@ -351,337 +295,229 @@ export function App() {
       } else if (folder?.truncated) notes.push(t.dropLimit(chosen.length));
       if (folder?.hidden) notes.push(t.folderHidden(folder.hidden));
       if (folder?.unreadable) notes.push(t.folderUnreadable(folder.unreadable));
-      setDropNotice(notes.length ? notes.join(" · ") : null);
+      if (notes.length) note({ id: "drop", tone: "info", text: notes.join(" · "), ttl: 10_000 });
       const large = oversized(chosen);
       if (large.length) {
-        setInputError(t.filesTooLarge(large.map((file) => `${file.name} (${fmtBytes(file.size)})`).join(", ")));
+        note({ id: "input", tone: "error", text: t.filesTooLarge(large.map((file) => `${file.name} (${fmtBytes(file.size)})`).join(", ")) });
         return;
       }
-      // A folder, several files or a `.urls` list is a batch: it waits for
-      // Convert, so its options can be chosen and its size seen first. One file
-      // starts at once.
+      // A folder, several files or a `.urls` list waits for Convert; one file starts at once.
       const batch = stagedBatch(chosen, folder?.folder === true);
       if (batch) {
         setStaged(batch);
-        navigate("workspace");
         return;
       }
       void send(chosen, []);
     },
-    [maxItems, navigate, send, t],
+    [maxItems, send, t, note, dismiss],
   );
-  // Choosing the Folder entry is always a batch; a drop is one when it reached
-  // into a directory or carried several files.
-  const submitFolder = useCallback(
-    (files: File[], hidden: number) => submitFiles(files, { hidden, unreadable: 0, truncated: false, folder: true }),
-    [submitFiles],
-  );
+  const submitFolder = useCallback((files: File[], hidden: number) => submitFiles(files, { hidden, unreadable: 0, truncated: false, folder: true }), [submitFiles]);
   const submitWalked = useCallback((walked: Walked) => submitFiles(walked.files, walked), [submitFiles]);
 
   const submitUrls = useCallback(
     async (text: string) => {
-      setInputError(null);
-      jobsRef.current.clearSubmitError();
+      dismiss("input");
+      conversionsRef.current.clearSubmitError();
       const parsed = parseUrls(text);
       if (parsed.invalid) {
-        setInputError(parsed.invalid.reason === "badScheme" ? t.badScheme(parsed.invalid.value) : t.badUrl(parsed.invalid.value));
+        note({ id: "input", tone: "error", text: parsed.invalid.reason === "badScheme" ? t.badScheme(parsed.invalid.value) : t.badUrl(parsed.invalid.value) });
         return false;
       }
       let list = parsed.urls;
-      setDropNotice(null);
       if (list.length > maxItems) {
-        setDropNotice(t.dropTruncated(maxItems, list.length));
+        note({ id: "drop", tone: "info", text: t.dropTruncated(maxItems, list.length), ttl: 10_000 });
         list = list.slice(0, maxItems);
       }
       const files = staged?.files ?? [];
-      // A batch that named nothing is named by its own id in the ledger.
       const label = staged?.label.trim() ? staged.label : null;
       if (!list.length && !files.length) return false;
       const ok = await send(files, list, label);
       if (ok) setStaged(null);
       return ok;
     },
-    [maxItems, send, staged, t],
+    [maxItems, send, staged, t, note, dismiss],
   );
 
-  // ---- ledger actions
-  const enhanceItem = useCallback(
-    async (item: SessionItem) => {
-      const authorized = await authorizeCloudflare({ ...publicOptions(item.options ?? jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current), llm: true }, [{ name: item.name, kind: item.kind }], true);
-      if (authorized === null) return undefined;
-      return requestItem(item, "enhance", () => jobsRef.current.enhance(item, authorized));
-    },
-    [requestItem, authorizeCloudflare],
-  );
-  const removeItem = useCallback(
-    async (item: SessionItem) => {
-      const error = await requestItem(item, "delete", () => jobsRef.current.remove(item));
-      if (error === null) void archive.refresh();
+  // ---- item actions
+  const requestItem = useCallback(
+    async (item: SessionItem, request: () => Promise<unknown>, failure: string) => {
+      mark(item.key, true);
+      let error: unknown = null;
+      try {
+        error = await request();
+      } catch (reason) {
+        error = reason;
+      }
+      mark(item.key, false);
+      if (error !== null && error !== undefined) {
+        const text = describe(error);
+        note({ tone: "error", text: `${failure} · ${item.name} · ${text.text}`, detail: text.detail });
+      }
       return error;
     },
-    [archive.refresh, requestItem],
+    [describe, note],
   );
-  const [retryingAll, setRetryingAll] = useState(false);
-  const failed = useMemo(() => failedToRetry(jobs.items), [jobs.items]);
-  const retryingAllRef = useRef(false);
-  const retryAll = async () => {
-    if (retryingAllRef.current) return;
-    // Freeze identities and options before opening the shared confirmation.
-    const batch = prepareRetryBatch(jobsRef.current.items, jobsRef.current.jobs, optionsRef.current);
-    if (!batch.length) return;
-    retryingAllRef.current = true;
-    setRetryingAll(true);
-    try {
-      const authorized = await cloudflare.authorizeBatch(batch.map(({ item, options }) => ({ options, sources: [{ name: item.name, kind: item.kind }] })), true);
-      const result = await submitRetryBatch(batch, authorized, (item, options) => requestItem(item, "retry", () => jobsRef.current.retry(item, options)));
-      if (result) announce(retryBatchAnnouncement(batch, result, t));
-    } finally {
-      retryingAllRef.current = false;
-      setRetryingAll(false);
-    }
-  };
-  const waiting = useMemo(() => waitingJobs(jobs.items, jobs.jobs), [jobs.items, jobs.jobs]);
-  const [stopping, setStopping] = useState(false);
-  const stopRemaining = async () => {
-    if (stopping) return;
-    setStopping(true);
-    const result = await jobs.stop(waiting);
-    setStopping(false);
-    if (result.error) {
-      const text = describe(result.error);
-      setNote({ tone: "error", title: t.stopRemaining, message: text.text, detail: text.detail });
-    } else if (result.stopping > 0) announce(t.stopRequested(result.stopping));
+  const savedOptions = (item: SessionItem): JobOptions => publicOptions(item.options ?? conversionsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
+  const retry = useCallback(
+    async (item: SessionItem, override?: JobOptions) => {
+      const base = override ?? savedOptions(item);
+      const next = item.skipped && item.skipReason === "image_only" ? withOcrFor(base) : base;
+      const authorized = await authorize(next, [{ name: item.name, kind: item.kind }], true);
+      if (authorized === null) return;
+      const error = await requestItem(item, () => conversionsRef.current.retry(item, authorized), dicts[localeRef.current].retryFailed);
+      if (error === null) announce(dicts[localeRef.current].retryAria(item.name));
+    },
+    [authorize, requestItem, announce],
+  );
+  const itemActions: ItemActionsApi = {
+    preview: (item) => {
+      setRoute({ view: "jobs" });
+      updateList({ selected: item.key, mode: "preview" }, true);
+    },
+    compare: (item) => {
+      setRoute({ view: "jobs" });
+      updateList({ selected: item.key, mode: "compare" }, true);
+    },
+    download: (item, path) => {
+      void download(filePath(item.jobId, path), basename(path)).catch((error: unknown) => {
+        const text = describe(error);
+        note({ tone: "error", text: `${dicts[localeRef.current].downloadFailedFile} · ${text.text}`, detail: text.detail });
+      });
+    },
+    retry: (item) => void retry(item),
+    retryPlain: (item) => void retry(item, { ...savedOptions(item), llm: false, alt: null, desc: null }),
+    retryWithOcr: (item) => {
+      setComposer((state) => ({ ...state, ocr: true }));
+      void retry(item);
+    },
+    enhance: (item) => {
+      void (async () => {
+        const authorized = await authorize({ ...savedOptions(item), llm: true }, [{ name: item.name, kind: item.kind }], true);
+        if (authorized === null) return;
+        const error = await requestItem(item, () => conversionsRef.current.enhance(item, authorized), dicts[localeRef.current].llmEnhanceFailed);
+        if (error === null) announce(dicts[localeRef.current].enhanceWithLlm(item.name));
+      })();
+    },
+    remove: async (item) => {
+      const error = await requestItem(item, () => conversionsRef.current.removeItem(item), dicts[localeRef.current].deleteFailed);
+      if (error !== null) return false;
+      announce(dicts[localeRef.current].histDeleted(item.name));
+      updateList({ selected: null, mode: "inspector" });
+      return true;
+    },
+    openModels: () => navigate({ view: "settings", section: "models" }),
   };
 
-  // ---- preview
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ target: PreviewTarget; kind: "file" | "url"; createdAt: string | null } | null>(null);
-  const opener = useRef<HTMLElement | null>(null);
-  const returnKey = useRef<string | null>(null);
-  const toTarget = (item: SessionItem): PreviewTarget => ({
-    key: item.key,
-    jobId: item.jobId,
-    itemId: item.itemId,
-    name: item.name,
-    output: item.output,
-    finishedAt: item.finishedAt,
-    llmEnhanced: item.llmEnhanced,
-    operation: item.operation,
-  });
-  const openPreview = useCallback((key: string, from: HTMLElement) => {
-    const item = jobsRef.current.items.find((candidate) => candidate.key === key);
-    if (!item || !isPreviewable(item)) return;
-    setSelectedKey(key);
-    opener.current = from;
-    returnKey.current = key;
-    setPreview({ target: toTarget(item), kind: item.kind, createdAt: jobsRef.current.jobs[item.jobId]?.createdAt ?? null });
-  }, []);
-  const closePreview = useCallback(() => {
-    setPreview(null);
-    const from = opener.current;
-    const key = returnKey.current;
-    opener.current = null;
-    returnKey.current = null;
-    requestAnimationFrame(() => {
-      const fallback = key === null ? null : document.getElementById(domKey(key));
-      (from?.isConnected ? from : fallback)?.focus();
-    });
-  }, []);
-
-  // ---- saved jobs
-  const openArchived = useCallback(
-    async (jobId: string, from: HTMLElement) => {
-      const snapshot = await archive.open(jobId);
-      if (snapshot === null) return;
-      const openDocument = (item: NonNullable<(typeof snapshot.items)[number]>) => {
-        const key = `${snapshot.job_id}/${item.item_id}`;
-        setSelectedKey(key);
-        opener.current = from;
-        returnKey.current = key;
-        setPreview({
-          target: {
-            key,
-            jobId: snapshot.job_id,
-            itemId: item.item_id,
-            name: item.name,
-            output: item.output,
-            finishedAt: item.finished_at,
-            llmEnhanced: item.llm_enhanced,
-            operation: item.operation,
-          },
-          kind: item.kind,
-          createdAt: snapshot.created_at,
-        });
-      };
-      const finished = (item: (typeof snapshot.items)[number]) => item.status === "done" && item.output !== null && !item.skipped;
-      const single = snapshot.items.length === 1 ? snapshot.items[0] : null;
-      // A saved job of several items joins the session ledger, so each of its
-      // rows can be previewed, retried or deleted (an extension of the reference,
-      // which previews only the first result). A single item joins it only while
-      // it has something to report — its row's warning mark is what replays that
-      // notice — and the click still opens the document.
-      const worried = snapshot.items.length > 1 || (single !== null && (single.status === "error" || single.rerun_failure != null || (single.warnings?.length ?? 0) > 0));
-      if (worried) {
-        jobsRef.current.adopt(snapshot);
-        if (single === null || !finished(single)) {
-          const first = snapshot.items.find((candidate) => candidate.status === "error" || candidate.rerun_failure != null || (candidate.warnings?.length ?? 0) > 0) ?? snapshot.items.find(finished) ?? snapshot.items[0];
-          if (first) {
-            setFocusKey(`${snapshot.job_id}/${first.item_id}`);
-            showItemNotice(itemFromPayload(snapshot.job_id, first, Date.now()), from);
-          }
-          announce(t.adoptedJob(snapshot.items.length));
-          return;
-        }
-        announce(t.adoptedJob(snapshot.items.length));
+  const retryItems = useCallback(
+    async (items: SessionItem[], key: string) => {
+      const batch = prepareRetryBatch(items, conversionsRef.current.jobs, optionsRef.current);
+      if (!batch.length) return;
+      mark(key, true);
+      try {
+        const authorized = await cloudflare.authorizeBatch(batch.map(({ item, options }) => ({ options, sources: [{ name: item.name, kind: item.kind }] })), true);
+        const result = await submitRetryBatch(batch, authorized, (item, options) => conversionsRef.current.retry(item, options));
+        if (result) announce(retryBatchAnnouncement(batch, result, dicts[localeRef.current]));
+        if (result?.failed) note({ tone: "error", text: dicts[localeRef.current].announceRetryAllFailed(result.attempted, result.failed) });
+      } finally {
+        mark(key, false);
       }
-      const item = snapshot.items.find(finished);
-      if (!item) {
-        announce(t.nothingToPreview);
-        setNote({ tone: "warning", title: snapshot.items[0]?.name ?? snapshot.job_id, message: t.nothingToPreview });
-        return;
+    },
+    [cloudflare.authorizeBatch, announce, note],
+  );
+  const downloadArchive = useCallback(
+    (path: string, name: string) => {
+      void download(path, name, features?.download_tickets === true).catch((error: unknown) => {
+        const text = describe(error);
+        note({ tone: "error", text: `${dicts[localeRef.current].downloadFailed} · ${text.text}`, detail: text.detail });
+      });
+    },
+    [features, describe, note],
+  );
+  const stopJobs = useCallback(
+    async (jobIds: string[], key: string) => {
+      mark(key, true);
+      const result = await conversionsRef.current.stop(jobIds);
+      mark(key, false);
+      if (result.error) {
+        const text = describe(result.error);
+        note({ tone: "error", text: `${dicts[localeRef.current].stopRemaining} · ${text.text}`, detail: text.detail });
+      } else if (result.stopping > 0) announce(dicts[localeRef.current].stopRequested(result.stopping));
+    },
+    [describe, note, announce],
+  );
+  const jobActions: JobActionsApi = {
+    zip: (jobId) => downloadArchive(`/api/jobs/${encodeURIComponent(jobId)}/archive`, `markitai-${jobId}.zip`),
+    retryFailed: (jobId) => void retryItems(conversionsRef.current.items.filter((item) => item.jobId === jobId), `job:${jobId}`),
+    stop: (jobId) => void stopJobs([jobId], `job:${jobId}`),
+    remove: async (jobId) => {
+      const error = await conversionsRef.current.removeJob(jobId);
+      if (error !== null) {
+        const text = describe(error);
+        note({ tone: "error", text: `${dicts[localeRef.current].deleteFailed} · ${text.text}`, detail: text.detail });
+        return false;
       }
-      openDocument(item);
+      updateList({ selected: null, mode: "inspector" });
+      return true;
     },
-    [archive.open, announce, t, showItemNotice],
-  );
-  const retryArchived = useCallback(
-    async (jobId: string) => {
-      const snapshot = await archive.open(jobId);
-      if (snapshot === null) return t.jobLoadFailed;
-      const target = snapshot.items.find((item) => item.retryable && (item.status === "error" || (item.status === "done" && item.skipped)));
-      if (!target) return t.noFailedItem;
-      const base = publicOptions(target.options ?? snapshot.options);
-      const authorized = await authorizeCloudflare(target.skip_reason === "image_only" ? withOcrFor(base) : base, [{ name: target.name, kind: target.kind }], true);
-      if (authorized === null) return undefined;
-      const error = await jobsRef.current.retryArchived(snapshot, target.item_id, authorized);
-      if (error !== null) return error;
-      setFocusKey(`${snapshot.job_id}/${target.item_id}`);
-      announce(t.retryAria(target.name));
-      return null;
-    },
-    [archive.open, announce, describe, t, authorizeCloudflare],
-  );
-  const enhanceArchived = useCallback(
-    async (jobId: string) => {
-      const snapshot = await archive.open(jobId);
-      if (snapshot === null) return t.jobLoadFailed;
-      const target = snapshot.items.find((item) => item.retryable && item.status === "done" && item.output !== null && !item.skipped && !item.llm_enhanced);
-      if (!target) return t.noEnhanceableItem;
-      const authorized = await authorizeCloudflare({ ...publicOptions(target.options ?? snapshot.options), llm: true }, [{ name: target.name, kind: target.kind }], true);
-      if (authorized === null) return undefined;
-      const error = await jobsRef.current.retryArchived(snapshot, target.item_id, authorized, "enhance");
-      if (error !== null) return error;
-      setFocusKey(`${snapshot.job_id}/${target.item_id}`);
-      announce(t.enhanceWithLlm(target.name));
-      return null;
-    },
-    [archive.open, announce, describe, t, authorizeCloudflare],
-  );
-  const deleteArchived = useCallback(
-    async (entry: HistoryEntry) => {
-      const removed = await archive.remove(entry.job_id);
-      if (removed) announce(t.histDeleted(entry.names_preview[0] ?? entry.job_id));
-      return removed;
-    },
-    [archive.remove, announce, t],
-  );
-
-  const clearAll = () => {
-    if (jobs.running) {
-      if (!jobs.terminalJobCount) return;
-      jobs.clearSettled();
-    } else {
-      jobs.clear();
-      navigate("home");
-    }
-    setSelectedKey(null);
-    setPreview(null);
-    setDropNotice(null);
-    setInputError(null);
-    setNote(null);
-    void archive.refresh();
+    select: (key) => updateList({ selected: key, mode: "inspector" }),
   };
 
-  // A pointer elsewhere clears the ledger selection (Safari keeps focus on rows).
+  // Announce a newly settled item once (not on reloads or restored jobs).
+  const settledBefore = useRef(new Map<string, string>());
   useEffect(() => {
-    if (view !== "workspace") return;
-    const away = (event: PointerEvent) => {
-      if (!(event.target instanceof Element) || event.target.closest('.ledger [role="option"], .dialog-preview')) return;
-      setSelectedKey(null);
-      const active = document.activeElement;
-      if (active instanceof HTMLElement && active.closest('.ledger [role="option"]')) active.blur();
-    };
-    document.addEventListener("pointerdown", away, true);
-    return () => document.removeEventListener("pointerdown", away, true);
-  }, [view]);
+    const next = new Map<string, string>();
+    for (const item of conversions.items) {
+      const state = `${item.status}/${item.finishedAt ?? ""}`;
+      next.set(item.key, state);
+      const before = settledBefore.current.get(item.key);
+      if (before !== undefined && before !== state && (item.status === "done" || item.status === "error") && !conversions.restoredQuiet.has(item.jobId)) {
+        announce(t.announceSettled(item.name, isFailed(item) ? t.statusFailed : t.statusDone));
+      }
+    }
+    settledBefore.current = next;
+  }, [conversions.items, t, announce]);
 
-  // Moving between views moves focus to the new view's anchor.
-  const previousView = useRef(view);
-  useEffect(() => {
-    if (previousView.current === view) return;
-    previousView.current = view;
-    const frame = requestAnimationFrame(() => {
-      if (view === "workspace") {
-        if (focusKey === null) document.querySelector<HTMLElement>('.ledger [role="option"][tabindex="0"]')?.focus();
-      } else document.querySelector<HTMLElement>(".landing .url-box")?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [view, focusKey]);
-
-  useEffect(() => {
-    const base = view === "workspace" ? t.titleWorkspace : t.titleHome;
-    document.title = view === "workspace" && jobs.activeCount > 0 ? `${jobs.activeCount} · ${base}` : base;
-  }, [view, jobs.activeCount, t]);
-
-  // ---- feedback under the composer, the same in both views
+  // ---- notices from the store
+  const persistence = Object.values(conversions.jobs).filter((job) => job.persistenceError);
+  const submitError = conversions.submitError;
+  const submitText = submitError && !(submitError instanceof ApiError && submitError.status === 401) ? describe(submitError) : null;
+  const [tokenOpen, setTokenOpen] = useState(false);
   const uploadText = (() => {
     if (!upload) return t.submitting;
     if (!(upload.total > 0)) return upload.loaded > 0 ? t.uploadUnknown(fmtBytes(upload.loaded)) : t.submitting;
     if (upload.loaded >= upload.total) return t.uploadDone;
     return t.uploadProgress(Math.min(99, Math.floor((upload.loaded / upload.total) * 100)), fmtBytes(upload.loaded), fmtBytes(upload.total));
   })();
-  const submitError = jobs.submitError;
-  const submitText = submitError && !(submitError instanceof ApiError && submitError.status === 401) ? describe(submitError) : null;
-  const persistence = Object.values(jobs.jobs)
-    .filter((job) => job.persistenceError)
-    .map((job) => ({ id: job.jobId, ...persistenceText(locale, job.persistenceError ?? "") }));
-  const feedback = (
-    <>
-      {submitting && (
-        <NoticeLine busy>
-          <span>{uploadText}</span>
-          <InlineAction label={t.cancelSubmit} onClick={cancelSubmit} />
-        </NoticeLine>
-      )}
-      {jobs.restoreFailed.size > 0 && (
-        <NoticeLine>
-          <span>{t.restoreFailed}</span>
-          <InlineAction
-            label={t.restoreRetry}
-            onClick={() => void jobs.retryRestore().then((left) => left === 0 && announce(t.sessResults(jobs.items.length)))}
-          />
-        </NoticeLine>
-      )}
-      {(unauthorized || (submitError instanceof ApiError && submitError.status === 401)) && (
-        <ErrorLine text={tokenRefusal(locale)}>
-          {" · "}
-          <button type="button" class="text-link" onClick={() => setTokenOpen(true)}>
-            {t.enterToken}
-          </button>
-        </ErrorLine>
-      )}
-      {offline && !submitText && <ErrorLine text={t.submitNetworkFailed} />}
-      {submitText && <ErrorLine text={submitText.text} detail={submitText.detail} />}
-      {inputError && <ErrorLine text={inputError} />}
-      {persistence.map((entry) => (
-        <ErrorLine key={entry.id} text={entry.text} detail={entry.detail} />
-      ))}
-      {dropNotice && <NoticeLine>{dropNotice}</NoticeLine>}
-      {caps !== null && !caps.llm.routable && <CapabilityHint t={t} onOpen={openSettings} />}
-    </>
+  const [llmHintDismissed, setLlmHintDismissed] = useState(false);
+  const pageNotes: Note[] = [
+    ...(submitting ? [{ id: "upload", tone: "info" as const, text: uploadText, busy: true, action: { label: t.cancelSubmit, run: cancelSubmit } }] : []),
+    ...(unauthorized || (submitError instanceof ApiError && submitError.status === 401)
+      ? [{ id: "token", tone: "error" as const, text: apiErrorText(locale, { reason: "token_required" })?.text ?? "", action: { label: t.enterToken, run: () => setTokenOpen(true) } }]
+      : []),
+    ...(submitText ? [{ id: "submit", tone: "error" as const, text: submitText.text, detail: submitText.detail, action: { label: t.dismiss, run: () => conversions.clearSubmitError() } }] : []),
+    ...(conversions.restoreFailed.size > 0 ? [{ id: "restore", tone: "warning" as const, text: t.restoreFailed, action: { label: t.restoreRetry, run: () => void conversions.retryRestore() } }] : []),
+    ...persistence.map((job) => ({ id: `persist-${job.jobId}`, tone: "error" as const, ...persistenceText(locale, job.persistenceError ?? "") })),
+    ...(conversions.loadError && !(conversions.loadError instanceof NetworkError) && !unauthorized
+      ? [{ id: "history", tone: "error" as const, text: `${t.historyLoadFailed} · ${describe(conversions.loadError).text}`, action: { label: t.retryLoad, run: () => void conversions.refresh() } }]
+      : []),
+    ...(caps !== null && !caps.llm.routable && route.view !== "settings" && !llmHintDismissed
+      ? [{ id: "llm", tone: "info" as const, text: t.capHintText, ttl: 0, action: { label: t.capHintLink, run: () => navigate({ view: "settings", section: "models" }) } }]
+      : []),
+    ...notes,
+  ];
+  const noteArea = pageNotes.length > 0 && (
+    <Notes
+      t={t}
+      notes={pageNotes}
+      onDismiss={(id) => {
+        if (id === "submit") conversions.clearSubmitError();
+        if (id === "llm") setLlmHintDismissed(true);
+        dismiss(id);
+      }}
+    />
   );
 
-  const composerFor = (compact: boolean, heading?: ComponentChildren, actions?: ComponentChildren) => (
+  const composerFor = (compact: boolean) => (
     <OptionsPanel
       t={t}
       state={composer}
@@ -691,8 +527,6 @@ export function App() {
       urls={urls}
       announce={announce}
       busy={submitting || cloudflare.pending !== null}
-      heading={heading}
-      actions={actions}
       onChange={setComposer}
       onFiles={(files) => submitFiles(files)}
       onFolder={submitFolder}
@@ -712,42 +546,168 @@ export function App() {
     />
   );
 
-  const completedJobs = jobs.terminalJobCount + (archive.entries?.length ?? 0);
-  const llmAvailable = llmReady && composer.llm;
-  const llmDisabledReason = llmReady ? t.llmEnhanceTurnOn : t.llmEnhanceUnavailable;
-  const downloadError = useCallback(
-    (error: unknown) => {
-      const text = describe(error);
-      setNote({ tone: "error", title: dicts[localeRef.current].downloadFailed, message: text.text, detail: text.detail });
-    },
-    [describe],
-  );
+  const labelWords: LabelWords = { files: t.nFiles, pages: t.nPages, filesAndPages: t.filesAndPages };
+  const ctx: InspectorContext = {
+    t,
+    locale,
+    llmReady,
+    excerpts: features?.result_excerpt === true,
+    compare: features?.original === true,
+    cancel: features?.cancel === true,
+    retentionDays: caps?.limits.history_retention_days ?? null,
+    docsUrl,
+    busy,
+    labelWords,
+    describe,
+  };
+  const waiting = waitingJobs(conversions.items, conversions.jobs);
+  const retryable = conversions.items.filter((item) => (isFailed(item) || item.skipReason === "user_stopped") && canRetry(item));
+
+  // A selection that no longer exists (deleted, expired) falls back to the overview.
+  const selected = listState.selected;
+  useEffect(() => {
+    if (selected === null || !conversions.loaded) return;
+    const exists = selected.startsWith("job:") ? selected.slice(4) in conversions.jobs : conversions.items.some((item) => item.key === selected);
+    if (!exists && conversions.restoreFailed.size === 0) updateList({ selected: null, mode: "inspector" });
+  }, [selected, conversions.items, conversions.jobs, conversions.loaded]);
+
+  const recent = useMemo(() => submissions(conversions.jobs, conversions.items).slice(0, 3), [conversions.jobs, conversions.items]);
+
+  let page;
+  if (route.view === "jobs") {
+    page = (
+      <ConversionsPage
+        t={t}
+        locale={locale}
+        phone={phone}
+        jobs={conversions.jobs}
+        items={conversions.items}
+        loaded={conversions.loaded}
+        composer={composerFor(true)}
+        notes={noteArea}
+        selected={selected}
+        mode={listState.mode}
+        wide={wide}
+        filter={filter}
+        query={query}
+        collapsed={collapsedGroups}
+        ctx={ctx}
+        itemActions={itemActions}
+        jobActions={jobActions}
+        labelWords={labelWords}
+        compareAvailable={features?.original === true}
+        head={{
+          stopping: busy.has("all:stop"),
+          retrying: busy.has("all:retry"),
+          waiting: waiting.length > 0,
+          retryable: retryable.length,
+          canZip: conversions.items.some((item) => item.status === "done") && conversions.activeCount === 0,
+          onStop: () => void stopJobs(waiting, "all:stop"),
+          onRetry: () => void retryItems(conversions.items, "all:retry"),
+          onZip: () => downloadArchive("/api/history/archive", "markitai-all.zip"),
+        }}
+        onSelect={(key) => updateList({ selected: key, mode: key === null ? "inspector" : listState.mode === "inspector" ? "inspector" : listState.mode })}
+        onMode={(mode) => {
+          if (mode === "inspector") {
+            updateList({ selected, mode });
+            setWide(false);
+            requestAnimationFrame(() => (selected ? document.querySelector<HTMLElement>(`[data-key="${CSS.escape(selected)}"]`)?.focus() : null));
+          } else updateList({ selected, mode });
+        }}
+        onWide={() => setWide((value) => !value)}
+        onFilter={setFilter}
+        onQuery={setQuery}
+        onToggleGroup={(jobId, open) =>
+          setCollapsedGroups((previous) => {
+            const next = new Set(previous);
+            const shouldOpen = open ?? next.has(jobId);
+            if (shouldOpen) next.delete(jobId);
+            else next.add(jobId);
+            return next;
+          })
+        }
+        onShowItems={(keys) => {
+          const first = keys[0];
+          if (first) updateList({ selected: first, mode: "inspector" });
+          if (keys.length > 1) setFilter(keys.every((key) => conversions.items.find((item) => item.key === key && isFailed(item))) ? "failed" : "notices");
+        }}
+        onDownload={itemActions.download}
+        announce={announce}
+        describe={describe}
+      />
+    );
+  } else if (route.view === "settings") {
+    const section = route.section ?? (phone ? null : "models");
+    page =
+      section === null ? (
+        <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} onNavigate={navigate} />
+      ) : section === "models" ? (
+        <div class="page">
+          {noteArea}
+          <ModelsSettings t={t} locale={locale} onSaved={refreshCaps} announce={announce} describe={describe} />
+        </div>
+      ) : section === "appearance" ? (
+        <div class="page">
+          <AppearanceSettings t={t} locale={locale} onLocale={chooseLocale} />
+        </div>
+      ) : (
+        <div class="page">
+          <AccessSettings
+            t={t}
+            unauthorized={unauthorized}
+            onToken={() => {
+              setUnauthorized(false);
+              conversions.clearSubmitError();
+              refreshCaps();
+              void conversions.refresh();
+              void conversions.retryRestore();
+            }}
+          />
+        </div>
+      );
+  } else {
+    page = (
+      <ConvertPage
+        t={t}
+        locale={locale}
+        composer={composerFor(false)}
+        notes={noteArea}
+        recent={recent}
+        labelWords={labelWords}
+        onOpen={(key) => {
+          setRoute({ view: "jobs" });
+          updateList({ selected: key, mode: "inspector" }, true);
+        }}
+        onAll={() => navigate({ view: "jobs" })}
+      />
+    );
+  }
 
   return (
     <>
-      <AppHeader
+      <Shell
         t={t}
+        route={route}
         version={caps?.version ?? null}
-        locale={locale}
-        onLocale={chooseLocale}
-        onHome={goHome}
-        settingsOpen={settingsOpen}
-        onSettings={() => (settingsOpen ? closeSettings() : openSettings())}
-        gearRef={gear}
-      />
-      {cloudflare.pending && cloudflare.scope && <CloudflareDialog t={t} scope={cloudflare.scope} reason={cloudflare.reason} retry={cloudflare.pending.retry} requestCount={cloudflare.pending.requests.length} onClose={() => cloudflare.finish(false)} onConfirm={() => cloudflare.finish(true)} />}
-      {note && <Notification replay={notification.sequence} note={note} closeLabel={t.close} detailsLabel={t.notificationDetails} warningsLabel={t.itemWarningsTitle} onClose={closeNote} />}
-      {settingsOpen && <SettingsModal t={t} locale={locale} onClose={closeSettings} onSaved={refreshCaps} announce={announce} describe={describe} />}
-      {preview && (
-        <PreviewModal
+        docsUrl={docsUrl}
+        sourceUrl={sourceUrl}
+        active={conversions.activeCount}
+        total={conversions.items.length}
+        collapsed={collapsedSidebar}
+        onToggle={toggleSidebar}
+        onNavigate={navigate}
+      >
+        {page}
+      </Shell>
+      {cloudflare.pending && cloudflare.scope && (
+        <CloudflareDialog
           t={t}
-          locale={locale}
-          item={preview.target}
-          kind={preview.kind}
-          createdAt={preview.createdAt}
-          onClose={closePreview}
-          announce={announce}
-          describe={describe}
+          scope={cloudflare.scope}
+          reason={cloudflare.reason}
+          retry={cloudflare.pending.retry}
+          requestCount={cloudflare.pending.requests.length}
+          onClose={() => cloudflare.finish(false)}
+          onConfirm={() => cloudflare.finish(true)}
         />
       )}
       {tokenOpen && (
@@ -758,102 +718,16 @@ export function App() {
             setToken(value);
             setTokenOpen(false);
             setUnauthorized(false);
-            jobs.clearSubmitError();
+            conversions.clearSubmitError();
             refreshCaps();
-            void archive.refresh();
-            void jobs.retryRestore();
+            void conversions.refresh();
+            void conversions.retryRestore();
           }}
         />
       )}
-
-      {view === "home" ? (
-        <main class="landing page">
-          <h1 class="landing-title">{t.heroTitle}</h1>
-          <p class="landing-lede">{t.heroSub}</p>
-          <button type="button" class="session-link" onClick={openWorkspace}>
-            {jobs.items.length > 0
-              ? jobs.activeCount > 0
-                ? t.sessProgress(jobs.activeCount)
-                : t.sessResults(jobs.items.length)
-              : t.conversions}
-          </button>
-          <div class="landing-composer">
-            {composerFor(false)}
-            {feedback}
-          </div>
-        </main>
-      ) : (
-        <main class="workspace page">
-          <h1 class="sr-only">{t.titleWorkspace}</h1>
-          <div class="work-stack">
-            <div class="work-composer">
-              {composerFor(
-                true,
-                <JobStats t={t} running={jobs.running} stats={jobs.stats} externalCharges={jobs.items.some((item) => hasCloudflareRequest(item.remoteProcessing))} />,
-                jobs.items.length > 0 && (
-                  <>
-                    {waiting.length > 0 && (
-                      <button type="button" class="btn btn-ghost" title={t.stopTitle} disabled={stopping} aria-busy={stopping || undefined} onClick={() => void stopRemaining()}>
-                        {t.stopRemaining}
-                      </button>
-                    )}
-                    {failed.length > 0 && (
-                      <button type="button" class="btn btn-ghost" disabled={retryingAll} aria-busy={retryingAll || undefined} onClick={() => void retryAll()}>
-                        {failed.some((item) => item.skipReason === "user_stopped") ? t.retryFailedAndStopped(failed.length) : t.retryAllFailed(failed.length)}
-                      </button>
-                    )}
-                    <ClearButton t={t} activeCount={jobs.activeCount} finishedJobs={jobs.terminalJobCount} onClear={clearAll} />
-                  </>
-                ),
-              )}
-              {feedback}
-            </div>
-            <Ledger
-              t={t}
-              locale={locale}
-              items={jobs.items}
-              jobs={jobs.jobs}
-              archive={{
-                entries: archive.entries,
-                // While the service is unreachable the offline line already says so.
-                error: archive.error && !(archive.error instanceof NetworkError) ? describe(archive.error).text : null,
-                busy: archive.actions,
-                rowErrors: archive.rowErrors,
-                onRefresh: () => void archive.refresh(),
-                onOpen: (jobId, from) => void openArchived(jobId, from),
-                onRetry: retryArchived,
-                onEnhance: enhanceArchived,
-                onDelete: deleteArchived,
-              }}
-              stats={jobs.stats}
-              settled={!jobs.running}
-              selectedKey={selectedKey}
-              focusKey={focusKey}
-              llmAvailable={llmAvailable}
-              llmDisabledReason={llmDisabledReason}
-              onSelect={setSelectedKey}
-              onFocusHandled={focusHandled}
-              onPreview={openPreview}
-              onRetry={retryItem}
-              onEnhance={enhanceItem}
-              onDelete={removeItem}
-              describe={describe}
-              onDownloadError={downloadError}
-              requestFailures={requestFailures}
-              onItemNotice={showItemNotice}
-              onNotice={setNote}
-            />
-            <div class="zip-row">
-              <ZipButton t={t} available={completedJobs > 0 && jobs.activeCount === 0} activeCount={jobs.activeCount} onError={downloadError} />
-            </div>
-          </div>
-        </main>
-      )}
-
-      <AppFooter t={t} />
       <DropOverlay
         label={t.dropToConvert}
-        suspended={settingsOpen || preview !== null || tokenOpen || cloudflare.pending !== null}
+        suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || listState.mode !== "inspector"}
         limit={maxItems}
         onFiles={(files) => submitFiles(files)}
         onFolder={submitWalked}
@@ -865,7 +739,3 @@ export function App() {
   );
 }
 
-/** The refusal shown while this tab has no valid token. */
-function tokenRefusal(locale: Locale): string {
-  return apiErrorText(locale, { reason: "token_required" })?.text ?? "";
-}

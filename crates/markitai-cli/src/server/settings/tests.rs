@@ -171,11 +171,11 @@ fn connection_migration_updates_all_matching_rows_then_delete_keeps_other_connec
             provider
         );
     }
-    assert_eq!(
-        ok(store.credentials(&provider))["api_key"],
-        "fixture-next-key"
-    );
-    assert!(ok(store.credentials(&provider))["api_base"].is_null());
+    let credentials = ok(store.credentials(&provider));
+    assert_eq!(credentials["api_key_masked"], "fi\u{2026}-key");
+    assert_eq!(credentials["api_key"], credentials["api_key_masked"]);
+    assert!(!credentials.to_string().contains("fixture-next-key"));
+    assert!(credentials["api_base"].is_null());
     ok(store.mutate(Mutation::Provider {
         key: provider,
         revision: current(&store),
@@ -809,4 +809,226 @@ fn provider_base_updates_cannot_retarget_linked_deployment_overrides() {
         assert_eq!(probe["api_base"], "https://endpoint-a.example.test/v1");
         assert_eq!(probe["use_environment_credentials"], false);
     }
+}
+
+#[test]
+fn an_openai_compatible_endpoint_is_saved_as_a_custom_connection() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false}}));
+    let base = "http://127.0.0.1:9133/v1";
+    let view = ok(store.mutate(Mutation::Batch(json!({"expected_revision":current(&store),
+        "deployments":[{"provider":"custom","model":"openai/fake-model","api_key":"k","api_base":base,"model_name":"default","weight":1}]}))));
+    assert_eq!(view["deployments"][0]["model"], "openai/fake-model");
+    assert_eq!(view["deployments"][0]["api_base"], "http://127.0.0.1:9133");
+    assert_eq!(view["routable"], true);
+    let raw = saved(&store);
+    let connection = raw["llm"]["providers"][0].clone();
+    assert_eq!(connection["provider"], "custom");
+    assert_eq!(connection["api_base"], base);
+    let id = connection["id"].as_str().unwrap().to_owned();
+    assert_eq!(raw["llm"]["model_list"][0]["model_info"]["provider_id"], id);
+    let deployment = view["deployments"][0]["deployment_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The saved card is the endpoint; its credentials and discovery use it.
+    let cards = store.providers()["providers"].as_array().unwrap().clone();
+    let card = cards.iter().find(|card| card["provider_id"] == id).unwrap();
+    assert_eq!(
+        (card["provider"].clone(), card["model_count"].clone()),
+        (json!("custom"), json!(1))
+    );
+    assert_eq!(card["api_base"], "http://127.0.0.1:9133");
+    assert_eq!(ok(store.credentials(&id))["api_base"], base);
+    let discovery = ok(store.resolve_discovery(&json!({"provider":"custom","provider_id":id})));
+    assert_eq!(
+        (discovery["api_key"].clone(), discovery["api_base"].clone()),
+        (json!("k"), json!(base))
+    );
+    let discovery =
+        ok(store.resolve_discovery(&json!({"provider":"custom","deployment_id":deployment})));
+    assert_eq!(discovery["api_base"], base);
+    // More models of the endpoint, with or without naming the provider.
+    for reference in [
+        json!({"model_name":"default","model":"openai/second","credential_provider_id":id}),
+        json!({"model_name":"default","model":"openai/third","provider":"custom","credential_deployment_id":deployment}),
+        json!({"model_name":"default","model":"openai/fourth","credential_deployment_id":deployment}),
+    ] {
+        ok(store.mutate(Mutation::Batch(
+            json!({"expected_revision":current(&store),"deployments":[reference]}),
+        )));
+    }
+    let raw = saved(&store);
+    assert_eq!(raw["llm"]["providers"].as_array().unwrap().len(), 1);
+    for entry in raw["llm"]["model_list"].as_array().unwrap() {
+        assert_eq!(entry["model_info"]["provider_id"], id, "{entry}");
+        assert_eq!(entry["litellm_params"]["api_base"], base, "{entry}");
+    }
+    // Renaming a model keeps the endpoint and needs no new key.
+    ok(store.mutate(Mutation::Update {
+        key: deployment.clone(),
+        legacy: false,
+        body: json!({"expected_revision":current(&store),"model":"openai/renamed"}),
+    }));
+    let probe = ok(store.resolve_probe(&json!({"deployment_id":deployment})));
+    assert_eq!(
+        (
+            probe["model"].clone(),
+            probe["api_key"].clone(),
+            probe["api_base"].clone()
+        ),
+        (json!("openai/renamed"), json!("k"), json!(base))
+    );
+    // Conversions route to the endpoint.
+    let cfg = store.snapshot();
+    assert!(markitai_core::llm_capabilities(&cfg).routable);
+    let routed = cfg["llm"]["model_list"].as_array().unwrap();
+    assert_eq!(routed.len(), 4);
+    assert!(
+        routed
+            .iter()
+            .all(|entry| entry["litellm_params"]["api_base"] == base)
+    );
+    // Deleting the endpoint removes its models.
+    ok(store.mutate(Mutation::Provider {
+        key: id,
+        revision: current(&store),
+        body: None,
+    }));
+    assert!(
+        saved(&store)["llm"]["model_list"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn only_openai_models_belong_to_an_openai_compatible_endpoint() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false}}));
+    for deployment in [
+        json!({"provider":"custom","model":"anthropic/x","api_key":"k","api_base":"http://127.0.0.1:9/v1"}),
+        json!({"provider":"custom","model":"openai/x","api_key":"k"}),
+        json!({"provider":"custom","model":"openai/x","api_key":"k","api_base":""}),
+        json!({"provider":"anthropic","model":"openai/x","api_key":"k"}),
+        json!({"provider":"openai","model":"anthropic/x","api_key":"k"}),
+        json!({"provider":"groq","model":"openai/x","api_key":"k"}),
+    ] {
+        let mut entry = deployment.clone();
+        entry["model_name"] = json!("default");
+        let error = store
+            .mutate(Mutation::Batch(
+                json!({"expected_revision":current(&store),"deployments":[entry]}),
+            ))
+            .err()
+            .unwrap_or_else(|| panic!("accepted {deployment}"));
+        assert_eq!(
+            (error.status.as_u16(), error.reason),
+            (422, "invalid_settings_request"),
+            "{deployment}"
+        );
+    }
+    assert!(!store.source.path.exists() || saved(&store)["llm"].get("model_list").is_none());
+}
+
+#[test]
+fn saved_endpoints_keep_the_openai_and_compatible_cards_on_offer() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false}}));
+    ok(store.mutate(Mutation::Batch(json!({"expected_revision":current(&store),
+        "deployments":[
+            {"provider":"custom","model":"openai/fake-model","api_key":"k","api_base":"http://127.0.0.1:9133/v1","model_name":"default"},
+            {"model":"openai/gpt-test","api_key":"real-openai-test-key","model_name":"default"},
+            {"model":"anthropic/claude-test","api_key":"anthropic-test-key","model_name":"default"}
+        ]}))));
+    let cards = store.providers()["providers"].as_array().unwrap().clone();
+    let common = |name: &str| {
+        cards
+            .iter()
+            .any(|card| card["kind"] == "common" && card["provider"] == name)
+    };
+    assert!(common("custom") && common("openai"));
+    // A saved connection still hides the card of any other provider.
+    assert!(!common("anthropic"));
+    let configured: Vec<_> = cards
+        .iter()
+        .filter(|card| card["kind"] == "configured")
+        .map(|card| card["provider"].as_str().unwrap())
+        .collect();
+    assert_eq!(configured, ["custom", "openai", "anthropic"]);
+}
+
+#[test]
+fn stored_keys_are_shown_masked_as_the_reference_shows_them() {
+    for (key, shown) in [
+        ("sk-fixture-1234567890", "sk\u{2026}7890"),
+        ("twelve-chars", "tw\u{2026}hars"),
+        ("eleven-char", "\u{2026}ar"),
+        ("four", "\u{2026}ur"),
+        ("abc", "\u{2026}"),
+        ("", "\u{2026}"),
+        ("密钥密钥密钥密钥密钥密钥", "密钥\u{2026}密钥密钥"),
+        ("env:OPENAI_API_KEY", "env:OPENAI_API_KEY"),
+    ] {
+        assert_eq!(model::masked_key(key), shown, "{key}");
+    }
+}
+#[test]
+fn a_masked_key_sent_back_is_refused_and_a_missing_one_keeps_the_saved_key() {
+    let (_dir, store) = setup(fixture());
+    let id = format!(
+        "legacy:{}",
+        store.view()["deployments"][0]["deployment_id"]
+            .as_str()
+            .unwrap()
+    );
+    let shown = ok(store.credentials(&id))["api_key_masked"].clone();
+    assert_eq!(shown, "fi\u{2026}cret");
+    let before = fs::read(&store.source.path).unwrap();
+    let error = store
+        .mutate(Mutation::Provider {
+            key: id.clone(),
+            revision: current(&store),
+            body: Some(json!({"expected_revision":current(&store),"api_key":shown})),
+        })
+        .err()
+        .unwrap();
+    assert_eq!(
+        (error.status.as_u16(), error.reason),
+        (422, "invalid_settings_request")
+    );
+    assert_eq!(fs::read(&store.source.path).unwrap(), before);
+    let add = json!({"expected_revision":current(&store),"model":"openai/new","api_key":"sk\u{2026}7890","model_name":"masked"});
+    assert_eq!(
+        store
+            .mutate(Mutation::Add(add))
+            .err()
+            .unwrap()
+            .status
+            .as_u16(),
+        422
+    );
+    assert!(
+        store
+            .resolve_discovery(&json!({"provider":"openai","api_key":"sk\u{2026}7890"}))
+            .is_err()
+    );
+    // Saving only the address it already has keeps the stored key.
+    let base = saved(&store)["llm"]["model_list"][0]["litellm_params"]["api_base"].clone();
+    ok(store.mutate(Mutation::Provider {
+        key: id,
+        revision: current(&store),
+        body: Some(json!({"expected_revision":current(&store),"api_base":base})),
+    }));
+    let raw = saved(&store);
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_key"],
+        "fixture-secret"
+    );
+    let provider = raw["llm"]["providers"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        ok(store.credentials(&provider))["api_key_masked"],
+        "fi\u{2026}cret"
+    );
 }

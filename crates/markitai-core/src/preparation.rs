@@ -33,6 +33,7 @@ pub fn prepare_with_publication(
         Some(publication),
         &mut scope,
         Some(&mut plan),
+        None,
     );
     let usage = scope
         .as_ref()

@@ -144,7 +144,8 @@ impl PdfRasterSession {
         )
     }
 
-    fn frame(&self, page_1_based: usize, dpi: f64) -> Result<(&Page<'_>, RasterSize)> {
+    /// The page and its visible box (CropBox ∩ MediaBox) after rotation, in points.
+    fn visible(&self, page_1_based: usize) -> Result<(&Page<'_>, f64, f64)> {
         if page_1_based == 0 || page_1_based > self.pages {
             return Err(failure("page number is outside the document"));
         }
@@ -166,6 +167,17 @@ impl PdfRasterSession {
             Rotation::Horizontal | Rotation::FlippedHorizontal => (visible.1, visible.0),
             Rotation::None | Rotation::Flipped => visible,
         };
+        Ok((page, width, height))
+    }
+
+    /// The visible page box after rotation, in points.
+    pub(crate) fn page_size(&self, page_1_based: usize) -> Result<(f64, f64)> {
+        self.visible(page_1_based)
+            .map(|(_, width, height)| (width, height))
+    }
+
+    fn frame(&self, page_1_based: usize, dpi: f64) -> Result<(&Page<'_>, RasterSize)> {
+        let (page, width, height) = self.visible(page_1_based)?;
         let size = raster_size(width, height, dpi)?;
         if size.width > MAX_SIDE || size.height > MAX_SIDE {
             return Err(failure(

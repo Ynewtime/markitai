@@ -435,6 +435,16 @@ pub(crate) struct FetchOutcome {
     pub content: FetchContent,
     pub cache_hit: bool,
     pub screenshots: Vec<Asset>,
+    /// The HTML this process converted the page content from (static or
+    /// browser fetch), when it is at most [`MAX_KEPT_HTML`] bytes.
+    pub html: Option<String>,
+}
+
+/// The largest page HTML an outcome keeps for a caller's snapshot.
+pub(crate) const MAX_KEPT_HTML: usize = 10 * 1024 * 1024;
+
+fn kept(html: String) -> Option<String> {
+    (html.len() <= MAX_KEPT_HTML).then_some(html)
 }
 
 #[cfg(test)]
@@ -898,6 +908,7 @@ fn browser_response_outcome(
             }),
             cache_hit: false,
             screenshots: Vec::new(),
+            html: None,
         }),
     }
 }
@@ -947,6 +958,7 @@ fn browser_outcome(page: browser::BrowserPage, cfg: &Value) -> Result<FetchOutco
         content: FetchContent::Document(document),
         cache_hit: false,
         screenshots: page.screenshots,
+        html: kept(page.html),
     })
 }
 
@@ -963,6 +975,8 @@ struct StaticPage {
     /// Where a nearly empty page sent the reader with a `<meta>` refresh
     /// within two seconds; `content` is then only a placeholder.
     refresh: Option<Url>,
+    /// The HTML `content` was converted from (see `FetchOutcome::html`).
+    html: Option<String>,
 }
 
 /// Meta refreshes followed after one request.
@@ -1046,6 +1060,7 @@ fn fetch_static(
                 content,
                 cache_hit: true,
                 screenshots: Vec::new(),
+                html: None,
             });
         }
         entry => entry,
@@ -1074,6 +1089,7 @@ fn fetch_static(
                     content,
                     cache_hit: true,
                     screenshots: Vec::new(),
+                    html: None,
                 });
             }
             // A failed status, unreadable body or unusable extracted page takes
@@ -1125,6 +1141,7 @@ fn fetch_static(
         content: page.content,
         cache_hit: false,
         screenshots: Vec::new(),
+        html: page.html,
     })
 }
 
@@ -1337,6 +1354,7 @@ fn probe_pdf(
             content,
             cache_hit: false,
             screenshots: Vec::new(),
+            html: None,
         }),
         false,
     ))
@@ -1353,10 +1371,12 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
             etag: None,
             last_modified: None,
             refresh: None,
+            html: None,
         });
     }
     let kind = response.kind();
     let cache_eligible = kind != StaticKind::Other;
+    let mut converted_html = None;
     let mut doc = match kind {
         StaticKind::Html => {
             let (html, decode_warning) = decode_text(&response.bytes, &response.content_type, true);
@@ -1386,6 +1406,7 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
                     etag: None,
                     last_modified: None,
                     refresh: Some(target),
+                    html: None,
                 });
             }
             let mut document = match extracted {
@@ -1398,6 +1419,9 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
                 document.warnings.push(JS_SHELL.into());
             }
             document.warnings.extend(decode_warning);
+            if html.len() <= MAX_KEPT_HTML {
+                converted_html = Some(html.into_owned());
+            }
             document
         }
         StaticKind::Text => Document {
@@ -1441,6 +1465,7 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
         etag: response.etag,
         last_modified: response.last_modified,
         refresh: None,
+        html: converted_html,
     })
 }
 
@@ -1953,6 +1978,74 @@ mod cache_tests {
             .filter_map(|line| line.split_once(':'))
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.trim().into())
+    }
+
+    #[test]
+    fn only_html_this_process_converted_is_kept_for_a_snapshot() {
+        let (_directory, cfg) = settings();
+        let page = "<html><title>Kept</title><article><h1>Kept page</h1><p>The body of the page this process converted.</p></article></html>";
+        let server = Server::new(vec![Reply::html(page)]);
+        let fresh = run(&server, &cfg);
+        assert_eq!(fresh.html.as_deref(), Some(page));
+        // A page-cache hit holds Markdown only.
+        let cached = run(&server, &cfg);
+        assert!(cached.cache_hit && cached.html.is_none());
+        assert_eq!(server.requests().len(), 1);
+        let text = Server::new(vec![Reply::text("A plain text answer.")]);
+        assert!(run(&text, &cfg).html.is_none());
+        let large = format!(
+            "<html><article><p>{}</p></article></html>",
+            "word ".repeat(MAX_KEPT_HTML / 5)
+        );
+        let large_server = Server::new(vec![Reply::html(&large)]);
+        let mut uncached = cfg.clone();
+        uncached["cache"]["enabled"] = json!(false);
+        assert!(run(&large_server, &uncached).html.is_none());
+    }
+
+    #[test]
+    fn a_url_conversion_writes_its_snapshot_and_a_file_writes_none() {
+        let (directory, cfg) = settings();
+        let page = "<html><title>Snapshot</title><article><h1>Snapshot page</h1><p>Converted from this very HTML.</p></article></html>";
+        let server = Server::new(vec![Reply::html(page)]);
+        let snapshot = directory.path().join("page.html");
+        let options = || crate::ConvertOptions {
+            output_dir: Some(directory.path().join("out")),
+            config: Some(cfg.clone()),
+            ..Default::default()
+        };
+        let converted = crate::convert_with_html_snapshot(
+            &server.url("/page"),
+            options(),
+            crate::ConvertContext::default(),
+            &snapshot,
+        )
+        .map_err(|failure| failure.error)
+        .unwrap();
+        assert!(
+            converted
+                .markdown
+                .contains("Converted from this very HTML.")
+        );
+        assert_eq!(std::fs::read_to_string(&snapshot).unwrap(), page);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&snapshot).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0);
+        }
+        let source = directory.path().join("notes.html");
+        std::fs::write(&source, page).unwrap();
+        let other = directory.path().join("file.html");
+        crate::convert_with_html_snapshot(
+            source.to_str().unwrap(),
+            options(),
+            crate::ConvertContext::default(),
+            &other,
+        )
+        .map_err(|failure| failure.error)
+        .unwrap();
+        assert!(!other.exists());
     }
 
     #[test]

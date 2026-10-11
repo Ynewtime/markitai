@@ -51,6 +51,72 @@
     "obtained": "copied from the reference webapp installation (~/work/markitai/webapp/node_modules), integrity as recorded in its bun.lock"
   },
   {
+    "file": "inter-latin-ext-wght-normal.woff2",
+    "package": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+    "package_integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "member": "package/files/inter-latin-ext-wght-normal.woff2",
+    "bytes": 85068,
+    "sha256": "34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956",
+    "obtained": "downloaded with `npm pack @fontsource-variable/inter@5.3.0`; package integrity verified against the value above"
+  },
+  {
+    "file": "inter-cyrillic-wght-normal.woff2",
+    "package": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+    "package_integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "member": "package/files/inter-cyrillic-wght-normal.woff2",
+    "bytes": 18748,
+    "sha256": "71d5ee93cc1e9f1d520a3a8b66456de18c7879d8df09d57fcd2eaff75fef0075",
+    "obtained": "downloaded with `npm pack @fontsource-variable/inter@5.3.0`; package integrity verified against the value above"
+  },
+  {
+    "file": "inter-cyrillic-ext-wght-normal.woff2",
+    "package": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+    "package_integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "member": "package/files/inter-cyrillic-ext-wght-normal.woff2",
+    "bytes": 25960,
+    "sha256": "ca157063339ac4ad418f214f3abfed119b0798ab4d377386ce5c9e5a7a435ebd",
+    "obtained": "downloaded with `npm pack @fontsource-variable/inter@5.3.0`; package integrity verified against the value above"
+  },
+  {
+    "file": "inter-greek-wght-normal.woff2",
+    "package": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+    "package_integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "member": "package/files/inter-greek-wght-normal.woff2",
+    "bytes": 18996,
+    "sha256": "1be3448e292fbf05ffe176fe1e43f135013d50b1e7d324ad1a558f623d3bb6f6",
+    "obtained": "downloaded with `npm pack @fontsource-variable/inter@5.3.0`; package integrity verified against the value above"
+  },
+  {
+    "file": "inter-greek-ext-wght-normal.woff2",
+    "package": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+    "package_integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "member": "package/files/inter-greek-ext-wght-normal.woff2",
+    "bytes": 11232,
+    "sha256": "6e9e020a25f9b56d418f2c085b1d3c09725a4da23fe693a5b463064606732190",
+    "obtained": "downloaded with `npm pack @fontsource-variable/inter@5.3.0`; package integrity verified against the value above"
+  },
+  {
+    "file": "inter-vietnamese-wght-normal.woff2",
+    "package": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+    "package_integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "member": "package/files/inter-vietnamese-wght-normal.woff2",
+    "bytes": 10252,
+    "sha256": "5c66f9e07e90c6d4ac4922cc68d60de26c17b1858e677fb5e603fce3952b3ff2",
+    "obtained": "downloaded with `npm pack @fontsource-variable/inter@5.3.0`; package integrity verified against the value above"
+  },
+  {
     "file": "Inter-OFL.txt",
     "package": "@fontsource-variable/inter",
     "version": "5.3.0",
@@ -90,9 +156,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 11976,
-    "sha256": "e716fed774336e2c1aefa5f05ed43afff2fc6f80a9cde8115dda5d106150c88a",
-    "obtained": "generated: the SVG path strings of 27 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 20605,
+    "sha256": "a6f9349ac2f927d4cee0888943fcfa630ae2c4eef5343da37480a6a53c36435e",
+    "obtained": "generated: the SVG path strings of 55 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -228,6 +294,136 @@
         "member": "package/dist/defs/PlugsConnected.es.js",
         "bytes": 6225,
         "sha256": "d4cd541281c3cfea781d642570cc1ddaecf24cd0855ce2b25912437e00994a3e"
+      },
+      {
+        "member": "package/dist/defs/Plus.es.js",
+        "bytes": 1825,
+        "sha256": "22af97a8b619a93ed4dd512d19a39f8298ae1be9cc48b8dff876ec2d65b2fd47"
+      },
+      {
+        "member": "package/dist/defs/Files.es.js",
+        "bytes": 3661,
+        "sha256": "74d5087060aa80ef25a6e0b0cf4960ed5db92103f57abe6586606ee08c523c15"
+      },
+      {
+        "member": "package/dist/defs/Cpu.es.js",
+        "bytes": 3713,
+        "sha256": "85eb8df2a083c4843afad9b4a9570c69469702a43906f4ba0bd6006b369def27"
+      },
+      {
+        "member": "package/dist/defs/Palette.es.js",
+        "bytes": 4573,
+        "sha256": "bc097d1f0545899de804e3e4001463c5f36bc50358165945151533b7f4f7a02a"
+      },
+      {
+        "member": "package/dist/defs/Key.es.js",
+        "bytes": 4288,
+        "sha256": "5838a3ba7a2ffad0e7a86ed3c95a65813d0b61bf83ac74b80ad8e338913a1494"
+      },
+      {
+        "member": "package/dist/defs/BookOpen.es.js",
+        "bytes": 2859,
+        "sha256": "6f7dc1676fb8f22215ea15f221b7d047e947e225106809a56583d9fe5aee58fd"
+      },
+      {
+        "member": "package/dist/defs/GithubLogo.es.js",
+        "bytes": 5630,
+        "sha256": "d6fbf39f63cdd5d818765edae5d1ddc1a72b65674b253daa03828097d84981bf"
+      },
+      {
+        "member": "package/dist/defs/SidebarSimple.es.js",
+        "bytes": 1878,
+        "sha256": "ab32686c013e186ae2e68783fb7326a271dda9596eb7b7c1b65c54f98c93e6e9"
+      },
+      {
+        "member": "package/dist/defs/CaretUp.es.js",
+        "bytes": 1694,
+        "sha256": "e80de593840c7f3912dfbdc35cef758759fb00959e982cc46008889f1bb8646e"
+      },
+      {
+        "member": "package/dist/defs/CaretLeft.es.js",
+        "bytes": 1550,
+        "sha256": "2c4ee826d0057155b4ebc4f5b330b5a00f59a4b7f7cf6af3de22e45d96ce375b"
+      },
+      {
+        "member": "package/dist/defs/ArrowsOutSimple.es.js",
+        "bytes": 2519,
+        "sha256": "d79d90c288b9024427be28c1853f7e71732dd29b6f7202f6688c0db16bac28a6"
+      },
+      {
+        "member": "package/dist/defs/ArrowsInSimple.es.js",
+        "bytes": 2541,
+        "sha256": "f6f74ca69351f190e085b0924c8e18651aa87bdfbf028090243c2133723991b4"
+      },
+      {
+        "member": "package/dist/defs/Columns.es.js",
+        "bytes": 2654,
+        "sha256": "a152f080e2b91d3b165a4c6fb06822da73426e78f2320c0eebada351ef48682a"
+      },
+      {
+        "member": "package/dist/defs/Copy.es.js",
+        "bytes": 2040,
+        "sha256": "873646b9af69d8ed97314caaa993d09fc07675d9d88a729a481df07d20ce14b1"
+      },
+      {
+        "member": "package/dist/defs/DotsThree.es.js",
+        "bytes": 1958,
+        "sha256": "48d0d7432835bfcca5c8b8a096598c77b2b22718be7edaafdf93a4a49e61661c"
+      },
+      {
+        "member": "package/dist/defs/CircleNotch.es.js",
+        "bytes": 2159,
+        "sha256": "99557cbb08c2597843dc3cc89465bc989ed29fe41f2bf7716d2d8412a846a6b3"
+      },
+      {
+        "member": "package/dist/defs/MagnifyingGlass.es.js",
+        "bytes": 1869,
+        "sha256": "9a2164657c41f0ae2768095cde99cc8d68e6c351721da1480fd99509eb06900d"
+      },
+      {
+        "member": "package/dist/defs/ArrowLeft.es.js",
+        "bytes": 1786,
+        "sha256": "363082a249ed70e5b40267808be3295b43c6e804b5ae59046ef20e8389b19623"
+      },
+      {
+        "member": "package/dist/defs/Stop.es.js",
+        "bytes": 1828,
+        "sha256": "117a0c75d24b7346d0f9732a63c76a8957a8ae8a5542fd27e671c62782c29334"
+      },
+      {
+        "member": "package/dist/defs/MinusCircle.es.js",
+        "bytes": 1917,
+        "sha256": "b9839cdf4a541c98e1fca86e11ec58c1e56f4ba9642cd07af08f4b182a457f83"
+      },
+      {
+        "member": "package/dist/defs/ClockCountdown.es.js",
+        "bytes": 2822,
+        "sha256": "0c64888c6fa8f32f85d75d66e90fa80767bf5bd3b88708fe7b7936ab7e15613f"
+      },
+      {
+        "member": "package/dist/defs/Image.es.js",
+        "bytes": 3150,
+        "sha256": "0ab156a88e1f5005c1a5e2e315dbec49e7b56442df6b708dae2eb73c84767ee0"
+      },
+      {
+        "member": "package/dist/defs/FileCode.es.js",
+        "bytes": 3437,
+        "sha256": "753a1b4090ec924d596a646481f441f0cc19c548d3d452f79533cb0d24036e64"
+      },
+      {
+        "member": "package/dist/defs/Table.es.js",
+        "bytes": 2079,
+        "sha256": "de17ca93a7608769e2e4f6de373e6965b8e18e4a69edb30a859c8897a195ff8d"
+      },
+      {
+        "member": "package/dist/defs/CircleDashed.es.js",
+        "bytes": 5222,
+        "sha256": "0e0e9d77ca5a8834cf62055ca4b01b162a5e163c903631a072bbfbf2028d650e"
+      },
+      {
+        "member": "package/dist/defs/XCircle.es.js",
+        "bytes": 2694,
+        "sha256": "4f9dc9d4bf68de480b9978071e614a2a2ae4a0d030924aeec0b088553b07c9ce"
       }
     ]
   }

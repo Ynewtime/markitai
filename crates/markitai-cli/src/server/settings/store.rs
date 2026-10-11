@@ -112,8 +112,11 @@ impl Store {
                 detected = json!("environment");
             }
         }
+        // A stored key is never returned, only its masked form; an update
+        // without `api_key` keeps it.
+        let masked = key.as_str().map(model::masked_key);
         Ok(
-            json!({"api_key":key,"api_key_source":detected,"api_base":connection["api_base"],"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
+            json!({"api_key":masked,"api_key_masked":masked,"api_key_source":detected,"api_base":connection["api_base"],"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
         )
     }
     pub fn resolve_discovery(&self, body: &Value) -> ApiResult<Value> {
@@ -439,7 +442,7 @@ fn connection(data: &Data, id: &str, deployment: Option<&str>) -> ApiResult<Valu
     let entry = &data.models[model::find(&data.models, id, &HashMap::new())?];
     let params = probe_params(entry, &data.providers);
     Ok(
-        json!({"provider":model::provider(entry),"api_key":params["api_key"],"api_base":params["api_base"],"use_environment_credentials":params["use_environment_credentials"]}),
+        json!({"provider":model::connection_provider(entry, &data.providers),"api_key":params["api_key"],"api_base":params["api_base"],"use_environment_credentials":params["use_environment_credentials"]}),
     )
 }
 fn probe_params(entry: &Value, providers: &[Value]) -> Value {

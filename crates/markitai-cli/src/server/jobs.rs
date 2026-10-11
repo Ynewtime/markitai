@@ -4,6 +4,7 @@ use super::{
 };
 use crate::diagnostics::{AttemptDiagnostics, Operation};
 use futures_util::{StreamExt, stream::FuturesUnordered};
+use markitai_core::output::create_private_dir;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -30,6 +31,8 @@ pub(super) struct JobData {
     pub assets: HashMap<String, Vec<String>>,
     pub item_options: HashMap<String, Value>,
     pub transactions: Vec<String>,
+    /// What the submission is called in the history list, if it was named.
+    pub label: Option<String>,
 }
 impl JobData {
     pub fn progress(&self) -> Value {
@@ -46,20 +49,24 @@ impl JobData {
         item
     }
 
+    fn item_payloads(&self) -> Value {
+        self.items
+            .iter()
+            .map(|item| self.with_item_options(json!(item)))
+            .collect()
+    }
+
     pub fn snapshot(&self) -> Value {
         let mut value = self.progress();
         value["job_id"] = json!(self.id);
         value["created_at"] = json!(self.created_at);
         value["finished_at"] = json!(self.finished_at);
         value["options"] = public_options(&self.options);
-        value["items"] = self
-            .items
-            .iter()
-            .map(|item| self.with_item_options(json!(item)))
-            .collect();
+        value["items"] = self.item_payloads();
         if let Some(error) = &self.persistence_error {
             value["persistence_error"] = json!(error);
         }
+        value["label"] = json!(self.label);
         value
     }
     // Output totals must not silently omit old observations or price a failed
@@ -157,6 +164,16 @@ impl JobData {
         value["size_bytes"] = json!(self.size);
         value["origin"] = json!(self.options["origin"].as_str().unwrap_or("web"));
         value["retryable"] = json!(self.items.iter().any(|i| i.retryable));
+        value["label"] = json!(self.label);
+        value
+    }
+
+    /// A history entry with the job's options and every item, as the
+    /// snapshot shows them, so a list needs no request per job.
+    pub fn history_with_items(&self) -> Value {
+        let mut value = self.history();
+        value["options"] = public_options(&self.options);
+        value["items"] = self.item_payloads();
         value
     }
 }
@@ -247,13 +264,10 @@ pub(super) fn reserve_outputs(items: &[Item]) -> HashMap<String, String> {
     result
 }
 
+/// A registered job; one whose retention has ended is already gone.
 pub(super) fn get(state: &State, id: &str) -> ApiResult<Arc<Job>> {
-    state
-        .jobs
-        .lock()
-        .unwrap()
-        .get(id)
-        .cloned()
+    let job = state.jobs.lock().unwrap().get(id).cloned();
+    job.filter(|job| !super::retention::expired(job, std::time::SystemTime::now()))
         .ok_or_else(|| ApiError::new(404, "job_not_found", "job not found"))
 }
 
@@ -312,23 +326,31 @@ async fn convert_one(
     };
     let mut cfg = cfg;
     cfg["output"]["filename"] = json!(format!("{base}.md"));
+    // A URL item keeps the HTML it was converted from, for Compare.
+    let snapshots = job.folder.join("snapshots");
+    let snapshot = super::original::snapshot_name(&item.item_id)
+        .filter(|_| item.kind == "url")
+        .map(|name| snapshots.join(name));
     let result = crate::task::blocking(move || {
         let _permit = permit;
-        markitai_core::convert_with_context_detailed(
-            &target,
-            markitai_core::ConvertOptions {
-                output_dir: Some(out),
-                config: Some(cfg),
-                ..Default::default()
-            },
-            markitai_core::ConvertContext {
-                explicit_fetch_strategy: explicit.as_deref(),
-                llm_runtime: Some(&runtime),
-                browser_runtime: Some(&browser_runtime),
-                // Jobs always publish into their own folder.
-                stdout_assets: None,
-            },
-        )
+        let options = markitai_core::ConvertOptions {
+            output_dir: Some(out),
+            config: Some(cfg),
+            ..Default::default()
+        };
+        let context = markitai_core::ConvertContext {
+            explicit_fetch_strategy: explicit.as_deref(),
+            llm_runtime: Some(&runtime),
+            browser_runtime: Some(&browser_runtime),
+            // Jobs always publish into their own folder.
+            stdout_assets: None,
+        };
+        match snapshot.filter(|_| create_private_dir(&snapshots).is_ok()) {
+            Some(snapshot) => {
+                markitai_core::convert_with_html_snapshot(&target, options, context, &snapshot)
+            }
+            None => markitai_core::convert_with_context_detailed(&target, options, context),
+        }
     })
     .await;
     let mut data = job.data.lock().unwrap();
@@ -349,6 +371,7 @@ async fn convert_one(
             item.llm_enhanced = result.llm_output_path.is_some();
             item.cost_usd = Some(result.usage.cost_usd);
             item.pricing = crate::pricing::Pricing::from_usage(&result.usage);
+            item.models = super::types::models(&result.usage);
             item.diagnostics = AttemptDiagnostics::completed(Operation::Convert, result.usage);
             item.warnings = result.warnings;
             item.output = result.llm_output_path.or(result.output_path).and_then(|p| {
@@ -506,6 +529,7 @@ mod pricing_tests {
             assets: HashMap::new(),
             item_options: HashMap::new(),
             transactions: Vec::new(),
+            label: None,
         };
         let history = data.history();
         assert_eq!(history["cost_usd"], 0.5);
@@ -533,6 +557,7 @@ mod pricing_tests {
             assets: HashMap::new(),
             item_options: HashMap::new(),
             transactions: Vec::new(),
+            label: None,
         }
     }
     #[test]

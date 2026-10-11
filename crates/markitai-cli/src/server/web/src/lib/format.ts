@@ -15,10 +15,11 @@ export function durParts(ms: number): { minutes: number; seconds: number } {
   return { minutes: Math.floor(whole / 60), seconds: whole % 60 };
 }
 
-/** "4.2s", then "1:23", then "1:02:03". */
+/** "240 ms", "4.2 s", then "1:23", then "1:02:03". */
 export function fmtDur(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
   const { minutes, seconds } = durParts(ms);
-  if (minutes === 0) return `${seconds.toFixed(1)}s`;
+  if (minutes === 0) return `${seconds.toFixed(1)} s`;
   const s = String(seconds).padStart(2, "0");
   if (minutes < 60) return `${minutes}:${s}`;
   return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${s}`;
@@ -88,4 +89,23 @@ export const displayName = (name: string): string => name.replace(/^https?:\/\//
 
 export function basename(path: string): string {
   return path.split("/").pop() ?? path;
+}
+
+const LOCALE_TAGS: Record<string, string> = { en: "en", zh: "zh-CN", ja: "ja" };
+export const localeTag = (locale: string): string => LOCALE_TAGS[locale] ?? "en";
+
+/** "22:51" today, "Oct 9, 22:51" (in the reader's language) on another day; "" when absent. */
+export function fmtClock(value: string | null, locale: string, now: Date = new Date()): string {
+  const ms = timestampMs(value);
+  if (ms === null) return "";
+  const date = new Date(ms);
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (date.toDateString() === now.toDateString()) return time;
+  const day = new Intl.DateTimeFormat(localeTag(locale), { month: "short", day: "numeric", ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) }).format(date);
+  return `${day} ${time}`;
+}
+
+/** A whole date in the reader's language: "Oct 18". */
+export function fmtDay(ms: number, locale: string): string {
+  return new Intl.DateTimeFormat(localeTag(locale), { month: "short", day: "numeric" }).format(new Date(ms));
 }

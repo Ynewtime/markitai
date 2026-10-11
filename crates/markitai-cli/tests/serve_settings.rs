@@ -252,11 +252,36 @@ fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
         None,
     );
     assert_eq!(status, 200);
-    assert_eq!(credentials["api_key"], "authored-new-key");
+    // Never the stored key: its masked form, under both names.
+    assert_eq!(credentials["api_key_masked"], "au\u{2026}-key");
+    assert_eq!(credentials["api_key"], credentials["api_key_masked"]);
     assert_eq!(
         credentials["api_base"],
         "https://user:password@example.test/private?token=secret"
     );
+    for path in [
+        "/api/settings/llm".to_owned(),
+        "/api/settings/llm/providers".to_owned(),
+        "/api/settings/llm/detected".to_owned(),
+        format!("/api/settings/llm/providers/{provider}/credentials"),
+    ] {
+        let (status, body) = server.request("GET", &path, None);
+        assert_eq!(status, 200, "{path}");
+        assert!(!body.to_string().contains("authored-new-key"), "{path}");
+    }
+    // Sending the mask back would store it as the key: refused, unchanged.
+    let before = fs::read(dir.path().join("config.json")).unwrap();
+    let (status, error) = server.request(
+        "PATCH",
+        &format!("/api/settings/llm/providers/{provider}"),
+        Some(json!({"expected_revision":rev(&view),"api_key":credentials["api_key_masked"]})),
+    );
+    assert_eq!(
+        (status, error["reason"].clone()),
+        (422, json!("invalid_settings_request")),
+        "{error}"
+    );
+    assert_eq!(fs::read(dir.path().join("config.json")).unwrap(), before);
     let (status, view) = server.request(
         "PATCH",
         &format!("/api/settings/llm/providers/{provider}"),

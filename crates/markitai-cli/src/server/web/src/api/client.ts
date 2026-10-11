@@ -12,6 +12,8 @@ import type {
   JobOptions,
   JobSnapshot,
   NewDeployment,
+  OriginalDescriptor,
+  PageText,
   ProbeResult,
   ProviderCard,
   ProviderCredentials,
@@ -280,11 +282,15 @@ export async function fetchSnapshot(job: string): Promise<JobSnapshot | null> {
   }
 }
 
-export function createJob(files: File[], urls: string[], options: JobOptions, hooks: UploadHooks = {}) {
+/** `label` names the submission (a folder or URL list); sent only to backends that keep it. */
+export function createJob(files: File[], urls: string[], options: JobOptions, hooks: UploadHooks = {}, label: string | null = null) {
   const body = new FormData();
   for (const file of files) body.append("files", file, file.name);
   body.append("urls", JSON.stringify(urls));
   body.append("options", JSON.stringify(options));
+  // Backends refuse a label over 120 characters or with control characters.
+  const name = label?.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 120);
+  if (name) body.append("label", name);
   return upload<CreateJobResponse>("/api/jobs", body, hooks);
 }
 
@@ -298,10 +304,20 @@ export function retryItem(job: string, item: string, options?: JobOptions, opera
 export const deleteItem = (job: string, item: string) =>
   json<null>(`/api/jobs/${enc(job)}/items/${enc(item)}`, { method: "DELETE" });
 
-export const fetchResult = (job: string, item: string) =>
-  json<ItemResult>(`/api/jobs/${enc(job)}/items/${enc(item)}/result`);
+/** With `maxBytes`, a backend that supports excerpts sends only the start (`truncated`). */
+export const fetchResult = (job: string, item: string, maxBytes?: number) =>
+  json<ItemResult>(`/api/jobs/${enc(job)}/items/${enc(item)}/result${maxBytes === undefined ? "" : `?max_bytes=${maxBytes}`}`);
 
-export const fetchHistory = () => json<HistoryEntry[]>("/api/history");
+/** `items`: ask for every entry's item list in the same answer. */
+export const fetchHistory = (items = false) => json<HistoryEntry[]>(items ? "/api/history?include=items" : "/api/history");
+
+const itemPath = (job: string, item: string) => `/api/jobs/${enc(job)}/items/${enc(item)}`;
+export const fetchOriginal = (job: string, item: string) => json<OriginalDescriptor>(`${itemPath(job, item)}/original`);
+export const originalFilePath = (job: string, item: string) => `${itemPath(job, item)}/original/file`;
+export const originalPagePath = (job: string, item: string, page: number, width: number) =>
+  `${itemPath(job, item)}/original/pages/${page}?width=${width}`;
+export const fetchPageText = (job: string, item: string, page: number, abort?: AbortSignal) =>
+  json<PageText>(`${itemPath(job, item)}/original/pages/${page}/text`, { signal: abort });
 
 /** false when it was already gone. */
 export async function deleteHistoryJob(job: string): Promise<boolean> {

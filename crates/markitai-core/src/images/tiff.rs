@@ -80,6 +80,21 @@ impl<'a> Pages<'a> {
         Ok(())
     }
 
+    /// A page's displayed size, after its orientation, without decoding it.
+    pub(super) fn size(&self, index: usize) -> Result<(u32, u32)> {
+        let offset = *self
+            .offsets
+            .get(index)
+            .ok_or_else(|| error("TIFF page is out of range"))?;
+        let mut decoder = page_decoder(self.bytes, offset)?;
+        let (width, height) = decoder.dimensions();
+        Ok(if super::turned(decoder.orientation().map_err(error)?) {
+            (height, width)
+        } else {
+            (width, height)
+        })
+    }
+
     pub(super) fn decode(&self, index: usize) -> Result<DynamicImage> {
         let offset = *self
             .offsets

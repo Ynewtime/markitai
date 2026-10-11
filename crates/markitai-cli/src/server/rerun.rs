@@ -160,7 +160,7 @@ pub(super) async fn retry(
         }
         data.bases.insert(item_id.clone(),base.clone());
         let job_id=data.id.clone();
-        let item=&mut data.items[index];item.status="queued".into();item.error=None;item.error_code=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.rerun_failure=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.warnings.clear();
+        let item=&mut data.items[index];item.status="queued".into();item.error=None;item.error_code=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.rerun_failure=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.warnings.clear();item.models.clear();
         item.remote_processing=opts.remote_disclosure().or_else(||prior.remote_processing.clone());
         let created=json!({"job_id":job_id,"items":[item.created()]});
         let payload=json!(item);
@@ -272,21 +272,33 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             let browser_runtime =
                 markitai_core::BrowserRuntime::new(1).map_err(ApiError::internal)?;
             let explicit = work.explicit.as_deref();
-            let converted = match markitai_core::convert_with_context_detailed(
-                &source,
-                markitai_core::ConvertOptions {
-                    output_dir: Some(out.clone()),
-                    config: Some(work.cfg.clone()),
-                    ..Default::default()
-                },
-                markitai_core::ConvertContext {
-                    explicit_fetch_strategy: explicit,
-                    llm_runtime: Some(&work.runtime),
-                    browser_runtime: Some(&browser_runtime),
-                    // A rerun publishes into its job folder.
-                    stdout_assets: None,
-                },
-            ) {
+            let options = markitai_core::ConvertOptions {
+                output_dir: Some(out.clone()),
+                config: Some(work.cfg.clone()),
+                ..Default::default()
+            };
+            let context = markitai_core::ConvertContext {
+                explicit_fetch_strategy: explicit,
+                llm_runtime: Some(&work.runtime),
+                browser_runtime: Some(&browser_runtime),
+                // A rerun publishes into its job folder.
+                stdout_assets: None,
+            };
+            // A URL's new page snapshot replaces the old one with the result.
+            let page = super::original::snapshot_name(&work.prior.item_id)
+                .filter(|_| work.prior.kind == "url");
+            let staged = page
+                .as_ref()
+                .map(|page| stage.path().join("snapshots").join(page));
+            let attempt = match &staged {
+                Some(staged) => {
+                    create_private_dir(&stage.path().join("snapshots"))
+                        .map_err(ApiError::internal)?;
+                    markitai_core::convert_with_html_snapshot(&source, options, context, staged)
+                }
+                None => markitai_core::convert_with_context_detailed(&source, options, context),
+            };
+            let converted = match attempt {
                 Ok(result) => {
                     // Later checks and file publication can fail after the provider completed.
                     attempt_usage = result.usage.clone();
@@ -391,7 +403,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 }
             }
             let stale = format!("{}.llm.md", work.base);
-            let removals = if converted.llm_output_path.is_none()
+            let mut removals = if converted.llm_output_path.is_none()
                 && !shared.contains(&stale)
                 && store::safe_file(&worker.folder.join("out"), &stale).is_ok()
             {
@@ -399,6 +411,15 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             } else {
                 Vec::new()
             };
+            if let (Some(page), Some(staged)) = (&page, &staged) {
+                let name = format!("snapshots/{page}");
+                if staged.is_file() {
+                    retained.push((name, staged.clone()));
+                } else if store::safe_file(&worker.folder.join("snapshots"), page).is_ok() {
+                    // The new result was not converted from HTML here.
+                    removals.push(name);
+                }
+            }
             let published = transaction::publish(
                 &worker.folder,
                 stage,
@@ -434,6 +455,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             item.finished_at = Some(now());
             item.cost_usd = Some(converted.usage.cost_usd);
             item.pricing = crate::pricing::Pricing::from_usage(&converted.usage);
+            item.models = super::types::models(&converted.usage);
             item.diagnostics = AttemptDiagnostics::completed(
                 work.operation.diagnostic_operation(),
                 converted.usage,
@@ -592,6 +614,11 @@ pub(super) async fn delete(
         // The reference caches a job archive here; it would keep the deleted item.
         if store::safe_file(&job.folder, "archive.zip").is_ok() {
             removals.push("archive.zip".into());
+        }
+        if let Some(snapshot) = super::original::snapshot_name(&item_id)
+            && store::safe_file(&job.folder.join("snapshots"), &snapshot).is_ok()
+        {
+            removals.push(format!("snapshots/{snapshot}"));
         }
         let prior = data.clone();
         let stage = transaction::stage(&job.folder).map_err(ApiError::internal)?;

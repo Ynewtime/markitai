@@ -38,8 +38,9 @@ fn digest(ticket: &str) -> [u8; 32] {
 }
 
 /// Whether `path` is one of the download routes a ticket may name: a job's
-/// file, a job's archive or the history archive. Paths are compared as sent,
-/// so they must be the exact encoded form the browser will request.
+/// file, a job's archive, an item's original or the history archive. Paths
+/// are compared as sent, so they must be the exact encoded form the browser
+/// will request.
 pub(super) fn downloadable(path: &str) -> bool {
     if path.len() > MAX_PATH
         || !path.is_ascii()
@@ -64,6 +65,12 @@ pub(super) fn downloadable(path: &str) -> bool {
     }
     if rest == "archive" {
         return true;
+    }
+    if let Some(item) = rest
+        .strip_prefix("items/")
+        .and_then(|rest| rest.strip_suffix("/original/file"))
+    {
+        return !item.is_empty() && !item.contains('/') && item != "." && item != "..";
     }
     let Some(relpath) = rest.strip_prefix("files/") else {
         return false;
@@ -114,7 +121,7 @@ pub(super) async fn issue(
         ApiError::new(
             422,
             "invalid_ticket_path",
-            "a download ticket needs a JSON body {\"path\": …} naming a job file, a job archive or the history archive",
+            "a download ticket needs a JSON body {\"path\": …} naming a job file, a job archive, an item's original or the history archive",
         )
     };
     // The service's body limit admits uploads; this body names one path.
@@ -158,6 +165,7 @@ mod tests {
             "/api/jobs/0123456789ab/archive",
             "/api/jobs/0123456789ab/files/notes.md",
             "/api/jobs/0123456789ab/files/assets/a%20b.png",
+            "/api/jobs/0123456789ab/items/i1/original/file",
         ] {
             assert!(downloadable(path), "{path}");
         }
@@ -178,6 +186,13 @@ mod tests {
             "/jobs",
             "/api/jobs/x/files/a b",
             "/api/jobs/x/files/naïve.md",
+            "/api/jobs/0123456789ab/items/i1/original",
+            "/api/jobs/0123456789ab/items/i1/original/pages/1",
+            "/api/jobs/0123456789ab/items/i1/result",
+            "/api/jobs/0123456789ab/items//original/file",
+            "/api/jobs/0123456789ab/items/../original/file",
+            "/api/jobs/0123456789ab/items/a/b/original/file",
+            "/api/jobs/0123456789ab/items/i1/original/file/",
         ] {
             assert!(!downloadable(path), "{path}");
         }

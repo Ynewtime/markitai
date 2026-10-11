@@ -15,8 +15,8 @@ fn history(root: &Path, items: Vec<Value>, bases: Value) -> PathBuf {
     let folder = root.join("home/serve/jobs").join(ID);
     std::fs::create_dir_all(folder.join("out/assets")).unwrap();
     std::fs::create_dir_all(folder.join("uploads")).unwrap();
-    let mut metadata = json!({"job_id":ID,"created_at":"2025-03-04T05:06:07+08:00",
-        "finished_at":"2025-03-04T05:06:08+08:00","status":"done","version":2,
+    let mut metadata = json!({"job_id":ID,"created_at":hours_ago(2),
+        "finished_at":hours_ago(1),"status":"done","version":2,
         "options":{"origin":"cli","llm":false,"ocr":false},"items":items});
     if !bases.is_null() {
         metadata["native_bases"] = bases;

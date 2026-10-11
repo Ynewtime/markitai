@@ -289,9 +289,12 @@ pub(super) fn persist(folder: &Path, data: &JobData) -> std::io::Result<()> {
             .unwrap_or(&data.options)
             .clone();
     }
-    let meta = json!({"job_id":data.id,"created_at":data.created_at,"finished_at":data.finished_at,
+    let mut meta = json!({"job_id":data.id,"created_at":data.created_at,"finished_at":data.finished_at,
         "status":data.status,"options":data.options,"dir_size_bytes":data.size,"version":2,"items":items,
         "native_bases":data.bases,"native_assets":data.assets,"native_transactions":data.transactions});
+    if let Some(label) = &data.label {
+        meta["label"] = json!(label);
+    }
     let mut temporary = tempfile::NamedTempFile::new_in(folder)?;
     #[cfg(unix)]
     {
@@ -310,6 +313,14 @@ pub(super) fn persist(folder: &Path, data: &JobData) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Whether `name` is a job folder's name: twelve lowercase hex digits.
+pub(super) fn job_id(name: &str) -> bool {
+    name.len() == 12
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 pub(super) fn rehydrate(
     root: &Path,
     known: &Mutex<HashMap<String, Arc<Job>>>,
@@ -317,11 +328,7 @@ pub(super) fn rehydrate(
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let id = entry.file_name().to_string_lossy().into_owned();
-        if id.len() != 12
-            || !id
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
+        if !job_id(&id) {
             continue;
         }
         if known.lock().unwrap().contains_key(&id) {
@@ -443,6 +450,23 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
             if item.finished_at.is_none() {
                 item.finished_at = value["finished_at"].as_str().map(str::to_owned);
             }
+            // Histories written before items named their models: the retained
+            // result's own successful attempt names them.
+            if raw.get("models").is_none()
+                && item.status == "done"
+                && !item.skipped
+                && item.rerun_failure.is_none()
+                && let Some(diagnostics) = &item.diagnostics
+                && diagnostics.last_attempt.status == crate::diagnostics::Status::Done
+            {
+                item.models = super::types::models(&diagnostics.last_attempt.usage);
+            }
+            if raw.get("source_size").is_none() && item.kind == "file" {
+                item.source_size = safe_file(&folder.join("uploads"), &item.name)
+                    .ok()
+                    .and_then(|path| fs::metadata(path).ok())
+                    .map(|metadata| metadata.len());
+            }
             if interrupted && matches!(item.status.as_str(), "queued" | "running") {
                 item.status = "error".into();
                 item.error_code = Some("interrupted".into());
@@ -491,6 +515,10 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
             })
             .collect(),
         transactions: Vec::new(),
+        label: value["label"]
+            .as_str()
+            .and_then(super::types::label)
+            .flatten(),
     };
     if interrupted {
         data.finished_at = Some(now());
@@ -502,7 +530,7 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
 
 pub(super) fn measure(folder: &Path) -> std::io::Result<u64> {
     let mut size = 0u64;
-    for name in ["out", "uploads"] {
+    for name in ["out", "uploads", "snapshots"] {
         let path = folder.join(name);
         if !path.try_exists()? {
             continue;
@@ -641,6 +669,7 @@ mod recovery_tests {
             assets: HashMap::new(),
             item_options: HashMap::new(),
             transactions: Vec::new(),
+            label: None,
         };
         persist(&folder, &data).unwrap();
         let known = Mutex::new(HashMap::new());
@@ -698,6 +727,7 @@ mod recovery_tests {
                 assets: HashMap::new(),
                 item_options: HashMap::new(),
                 transactions: Vec::new(),
+                label: None,
             };
             persist(&folder, &data).unwrap();
             folder

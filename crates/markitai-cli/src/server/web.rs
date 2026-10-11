@@ -88,10 +88,26 @@ static INDEX: Asset = Asset::raw(dist!("index.html"), "text/html; charset=utf-8"
 static APP_JS: Asset = Asset::gzip(dist!("app.js.gz"), JS);
 static APP_CSS: Asset = Asset::gzip(dist!("app.css.gz"), "text/css; charset=utf-8");
 static BOOT_JS: Asset = Asset::raw(dist!("boot.js"), JS);
+static HIGHLIGHT_JS: Asset = Asset::gzip(dist!("highlight.js.gz"), JS);
+static I18N_ZH: Asset = Asset::gzip(dist!("i18n-zh.js.gz"), JS);
+static I18N_JA: Asset = Asset::gzip(dist!("i18n-ja.js.gz"), JS);
 static LOGO: Asset = Asset::raw(dist!("logo.svg"), "image/svg+xml");
 static MARKED: Asset = Asset::gzip(dist!("marked.js.gz"), JS);
 static PURIFY: Asset = Asset::gzip(dist!("purify.js.gz"), JS);
 static FONT: Asset = Asset::raw(vendor!("inter-latin-wght-normal.woff2"), "font/woff2");
+// The other Inter subsets: a browser fetches one only for text that needs it.
+static FONT_LATIN_EXT: Asset =
+    Asset::raw(vendor!("inter-latin-ext-wght-normal.woff2"), "font/woff2");
+static FONT_CYRILLIC: Asset = Asset::raw(vendor!("inter-cyrillic-wght-normal.woff2"), "font/woff2");
+static FONT_CYRILLIC_EXT: Asset = Asset::raw(
+    vendor!("inter-cyrillic-ext-wght-normal.woff2"),
+    "font/woff2",
+);
+static FONT_GREEK: Asset = Asset::raw(vendor!("inter-greek-wght-normal.woff2"), "font/woff2");
+static FONT_GREEK_EXT: Asset =
+    Asset::raw(vendor!("inter-greek-ext-wght-normal.woff2"), "font/woff2");
+static FONT_VIETNAMESE: Asset =
+    Asset::raw(vendor!("inter-vietnamese-wght-normal.woff2"), "font/woff2");
 
 /// Whether the request accepts gzip (`gzip` or `*` with a nonzero weight).
 fn accepts_gzip(headers: &HeaderMap) -> bool {
@@ -164,14 +180,30 @@ fn route(asset: &'static Asset) -> axum::routing::MethodRouter<Arc<State>> {
 
 pub(super) fn routes() -> Router<Arc<State>> {
     Router::new()
-        // The workspace view is a real address so reloads and Back keep it.
+        // Every view is a real address so reloads and Back keep it.
         .route("/", route(&INDEX))
         .route("/jobs", route(&INDEX))
+        .route("/settings", route(&INDEX))
+        .route("/settings/models", route(&INDEX))
+        .route("/settings/appearance", route(&INDEX))
+        .route("/settings/access", route(&INDEX))
         .route("/ui/app.js", route(&APP_JS))
         .route("/ui/app.css", route(&APP_CSS))
         .route("/ui/boot.js", route(&BOOT_JS))
+        .route("/ui/highlight.js", route(&HIGHLIGHT_JS))
+        .route("/ui/i18n-zh.js", route(&I18N_ZH))
+        .route("/ui/i18n-ja.js", route(&I18N_JA))
         .route("/ui/logo.svg", route(&LOGO))
         .route("/ui/inter-latin-wght.woff2", route(&FONT))
+        .route("/ui/inter-latin-ext-wght.woff2", route(&FONT_LATIN_EXT))
+        .route("/ui/inter-cyrillic-wght.woff2", route(&FONT_CYRILLIC))
+        .route(
+            "/ui/inter-cyrillic-ext-wght.woff2",
+            route(&FONT_CYRILLIC_EXT),
+        )
+        .route("/ui/inter-greek-wght.woff2", route(&FONT_GREEK))
+        .route("/ui/inter-greek-ext-wght.woff2", route(&FONT_GREEK_EXT))
+        .route("/ui/inter-vietnamese-wght.woff2", route(&FONT_VIETNAMESE))
         .route("/ui/marked.js", route(&MARKED))
         .route("/ui/purify.js", route(&PURIFY))
 }
@@ -222,7 +254,15 @@ mod tests {
         );
         assert!(not_modified(&list, &tag));
         assert!(!not_modified(&list, &other));
-        for asset in [&APP_JS, &APP_CSS, &MARKED, &PURIFY] {
+        for asset in [
+            &APP_JS,
+            &APP_CSS,
+            &HIGHLIGHT_JS,
+            &I18N_ZH,
+            &I18N_JA,
+            &MARKED,
+            &PURIFY,
+        ] {
             assert!(!asset.plain().is_empty() && asset.plain().len() > asset.bytes.len());
         }
         assert_eq!(MARKED.plain(), vendor!("marked.js"));
@@ -363,8 +403,11 @@ mod tests {
             assets: HashMap::new(),
             item_options: HashMap::new(),
             transactions: Vec::new(),
+            label: None,
         };
         full.status = "done".into();
+        full.models = vec!["m".into()];
+        full.source_size = Some(5);
         let priced = full.clone();
         let mut complete = job(vec![priced], Some("history could not be persisted".into()));
         complete
@@ -382,7 +425,15 @@ mod tests {
         assert_eq!(complete.snapshot()["items"][0], full_payload);
         assert_eq!(plain.snapshot()["items"][0], minimal_payload);
         agree("JobSnapshot", &complete.snapshot(), &plain.snapshot());
-        agree("HistoryEntry", &complete.history(), &plain.history());
+        agree(
+            "HistoryEntry",
+            &complete.history_with_items(),
+            &plain.history(),
+        );
+        assert_eq!(
+            complete.history_with_items()["items"][0],
+            complete.snapshot()["items"][0]
+        );
     }
 
     #[test]
@@ -405,7 +456,7 @@ mod tests {
             );
         }
         // Nested llm fields must not be mistaken for top-level capabilities.
-        assert_eq!(interface("Capabilities").len(), 7);
+        assert_eq!(interface("Capabilities").len(), 11);
         assert_eq!(interface("CloudflareCapability").len(), 6);
     }
 }

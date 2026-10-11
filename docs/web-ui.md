@@ -1,175 +1,116 @@
 # Browser workbench
 
-`markitai serve` includes a browser workbench at `/` (home) and `/jobs` (the
-workspace). It follows the reference project's web interface: the same layout,
-interaction model and visual language, with the Rust service's extra
-capabilities placed in that vocabulary. Every file it needs is compiled into the
-binary; running it needs no Node runtime, CDN or external font, and the page
-makes no request to another origin.
+`markitai serve` includes a browser workbench. It is the one frontend of both
+markitai backends: this Rust server embeds it, and Python markitai 1.2.1 serves
+the same build (see [one frontend, two backends](#one-frontend-two-backends)).
+Every file it needs is compiled into the binary; running it needs no Node
+runtime, CDN or external font, and the page makes no request to another origin.
 
 ## Layout and interaction
 
-The **home view** is one centered column: a one-line headline, one sentence and
-the source card. The source card holds the URL line (Enter converts, Shift+Enter
-starts a new line, a pasted list grows the field up to six rows), a bottom row
-with Options and Upload (a menu for files or a folder) on the left and Convert
-on the right, and the options drawer, which ends with the equivalent CLI command
-line. That line names a preset only while the request still equals it: changing
-one of its features spells the features out instead, so the line never claims a
-preset it then overrides. The preset row marks a preset only while the request
-still equals it: a customized request leaves all three unmarked and carries its
-own Custom chip, so no preset looks chosen in its place. Each option row's ⓘ
-explains the row and lists its
-choices; the choices
-themselves show no hover tooltip.
-Under it, one stack of monospaced lines reports, in this order: the upload in
-progress (percentage and bytes, with Cancel), a session that could not be
-restored (with Retry restore), a refusal from the service, an unreachable
-service, a rejected input, a job that could not be saved, a folder notice, and
-"LLM not configured · Configure LLM to enable enhancement" while no model is
-routable. One dropped or chosen file starts a job at once, except when the
-selected Cloudflare service needs the confirmation described below; a hairline
-veil with "Drop to convert" shows while files are dragged over the page, and
-drops are ignored while a dialog is open. A batch waits for Convert instead: the
-Upload menu's folder choice, a drop that reached into a folder, several chosen
-files, and a `.urls` list. The source card then shows one staged line naming the
-folder or list (`sample-folder · 43 files`) with a ✕ to drop it, Convert turns
-enabled, and pressing it sends the staged batch together with any typed URLs as
-one job. An uploaded `.urls` list is read as the list it is: one URL item per
-entry, a line starting with `#` and a blank line skipped, an entry that names an
-output (`https://example.com/report  Report`, or `{"url": …, "output_name": …}`
-in a JSON array) keeping that name, and a list with no usable URL refused with
-the file named instead of converting nothing.
+A **sidebar** frames every view: Convert and Conversions (with the number of
+conversions and a pulsing dot while something converts), the Settings sections
+(Models, Appearance and language, Access token), and Docs, GitHub and the
+version at the bottom. Its button collapses it to a 60px icon rail; each entry
+keeps its name for assistive technology and shows it as a tooltip on hover and
+keyboard focus, and the choice is remembered in this browser. On phones the
+sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
+Settings). Every view is an address (`/`, `/jobs`, `/settings/models`,
+`/settings/appearance`, `/settings/access`), so reloads, Back and new tabs keep
+it.
 
-The **workspace view** (`/jobs`, kept across reloads and Back) shows
-"Conversions" with the session counters (`Current session · 6/8 Done · 1 Skipped
-· 1 Failed`) and the actions Stop remaining (only
-while original items wait for a conversion slot), Retry all failed (N) and Clear
-all (Clear completed while something runs). Below the compact source card is one
-ledger for the session's jobs and the service's saved jobs, ordered by latest
-activity with running jobs first and numbered 01, 02, … in that order. One
-submission that carried several items reads as one group row — a folder, several
-files, a URL list or a batch of URLs — showing what the submission was called (a
-folder is named for the folder even when the submission holds a `.urls` list; a
-batch that named nothing reads as its job id, not as one file inside it), how
-many items it holds, and the same aggregated facts as other rows (total
-duration, latest finish, Base/LLM with the summed cost, and a dark pill such as
-`3 Done · 1 Failed`). Clicking the row, or pressing Enter or Space on it, opens
-it into its items; they are indented without a number of their own and keep
-every per-item action. Arrow Left and Right close and open a group. A name or
-status filter flattens groups and shows the items that match. Columns
-are Name, Duration (a running row counts live), Finished, LLM / Cost (Base, or
-LLM with its cost) and Status (✓, ×, a warning mark for skipped rows, a spinner,
-Queued). Row actions are Download .md, Enhance with LLM (disabled with the reason
-until LLM enhancement is available and switched on), Retry and Delete, which asks
-for confirmation in a card anchored to the row. Failed operations and conversion
-warnings use the shared notification card at the top right (docked at the bottom
-on phones), which hides itself after a few seconds unless it asks for a decision
-or the pointer rests on it. One warning shared by several rows reports once: the
-card keeps the first row's warning text, counts the rows it speaks for (`12
-items`), and lists them under its details, instead of a card per row; the rows
-keep their own warning marks, and each mark replays that row's notice. An
-incomplete-cost warning is added up rather than repeated: the card says which
-models have no reviewed price and how many requests each one accounts for
-(`3 requests to alpha have no reviewed price`), in the page's language, naming
-three models at most and counting the rest, while the rows' own names stay under
-its details. A row that reports a different problem keeps its own card. Clicking the status icon, or pressing Enter or Space on it, reopens
-the complete notice; clicking the row still opens the document preview. A failed
-enhancement that retains an earlier result keeps its download and retry available.
-Warnings from that result are labelled separately from the latest attempt's
-recorded cost. Above ten rows, a name filter and
-All/Done/Failed/Skipped chips appear. A Total row closes a ledger without saved
-jobs, and Download all (.zip) sits under the ledger.
+**Convert** (`/`) is a headline, one sentence and the composer: the URL field
+(Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
+to six rows), Options and Upload (files or a folder) on the left, Convert on the
+right, and the options drawer, which ends with the equivalent CLI command line.
+The latest three submissions follow, each one click from its details. One file
+starts a job at once; a folder, several files or a `.urls` list waits for
+Convert as one staged line (`sample-folder · 43 files`) that can be removed,
+and is sent together with any typed URLs as one job whose name is the folder or
+list. A `.urls` list becomes one URL item per entry (`#` lines and blank lines
+skipped, `https://example.com/report  Report` naming the output).
 
-Saved jobs use the same row language: names (`a.pdf, b.docx +3 more`), a CLI tag
-for jobs recorded by the command line, a status mark for one item or a dark pill
-such as `4 Done · 1 Skipped` for several. Clicking a saved job of one item opens
-its preview; a saved job of several items is brought into the session ledger so
-each of its items can be previewed, retried or deleted (an extension; the
-reference previews only the first result). A single item joins the ledger as well
-while it has something to report (conversion warnings, a retained failed
-attempt), so its warning mark can replay that notice; the click still opens the
-document rather than the notice. Retry and Enhance on a saved
-single-item job also bring it into the session.
+**Conversions** (`/jobs`) states what the list adds up to ("18 of 21 converted,
+3 failed.") beside Stop remaining (while original items wait for a slot), Retry
+failed (N) and Download all, then the compact composer and the filters: a name
+filter and All / Failed / Notices with their counts. Below sit the list and the
+inspector.
 
-A session restored after a reload reports itself quietly: the ledger rows and the
-session counters show what settled while the page was away, and no notice replays
-for a job this tab already knew about. A retry or enhancement the reader starts
-reports its outcome as usual.
+- The **list** shows every saved and running item, newest activity first,
+  running first: a status glyph (one shape per state: ✓ done, × failed, a
+  dashed minus for stopped, a warning sign for skipped, a spinner, a ring for
+  waiting), the name with its extension always visible (a long name loses its
+  middle, `blog-japanese-…ning.html`; a URL dims its host), a warning count, and
+  the duration or the state in words. A submission of several items is a header
+  (what was submitted: `report-materials`, `14 files`, `3 web pages`; the preset;
+  the time) with its items under it; a submission of one item is one row. It is
+  an ARIA tree with no controls inside rows: Up and Down move, Right and Left
+  open and close a submission, Home and End jump, Enter opens the preview.
+- The **inspector** shows the selected item: its state in a sentence
+  ("Converted with LLM in 14.6 s · 12 images", or the failure in plain words),
+  the actions (Preview, Compare, Download .md, Run again, Enhance with LLM,
+  Delete; Retry, Add a model or Enable OCR and retry when that is the fix), the
+  facts (source and its size, output, what else was saved, models, cost,
+  options, finished, kept until), its notices grouped by kind, and the start of
+  the result with its front matter. A selected submission shows its progress as
+  one bar (done, failed, stopped, converting, waiting), Download .zip, Retry
+  failed, Stop remaining and Delete, the cost, its failures and the notices of
+  all its items. With nothing selected it shows the same overview for the whole
+  list.
+- **Cost** is "unknown" whenever a model ran without a complete price, never
+  `$0`: complete coverage shows the amount, partial coverage "At least $x · N
+  requests without a price", a model that ran without pricing "Unknown". An item
+  that used no model says so.
+- **Notices** are counted by kind instead of repeated per row: 31 "image
+  analysis failed" warnings of one document read once as "31 images kept their
+  original alt text", an incomplete cost names the models without a reviewed
+  price and links to how to add one, and other warnings group by their wording
+  with a count. Each keeps its full original text behind Details.
 
-The **preview** is a 1120px dialog (a full-screen sheet on phones): "Preview
-mode", the file name (a URL links to its page), then a
-panel with the tabs Rendered, Source, Diff (only for an exact base/LLM pair) and
-Files. The bar on the right shows words and bytes, PDF settings (custom header
-and footer), Export PDF and Download
-.md; a paired result's Base | LLM switch floats at the lower right of the
-Rendered and Source panes, which show one version each (Diff and Files carry no
-switch: it has nothing to change there and would cover the content).
-Rendered shows the document without its YAML front matter; Source is an
-always-dark terminal card with the front matter dimmed and a Copy pill; Diff
-lists both line numbers with added and removed lines tinted; Files lists the
-result's files with sizes and downloads.
+**Preview** docks beside the list, which stays usable: Up and Down (outside the
+scrolling document) move to the previous or next item, Escape closes it, F
+gives it the full width and C turns on Compare; the header shows the position
+(`8 of 14`), Copy, Download .md and "⋯" (Export PDF and its header-and-footer
+choice, and Open the page for a URL). The frame has one fixed height, so the
+tabs never move it: Rendered, Source, Diff (only for an exact base/LLM pair) and
+Files, with the Base | LLM switch beside them for a pair. Rendered starts with
+the conversion's notices (collapsed to one line) and a front-matter card (title,
+description, tags). Tables over 500 rows show their first 500 rows under a
+sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
+showing all of them adds the rest in steps of 1,000 so the page keeps answering,
+and the download and Source always hold every row. Numeric columns align right
+in tabular figures. Code blocks are highlighted by a 3 KB module loaded only when
+a preview contains code.
 
-**Settings** is a 760px dialog with a breadcrumb (`Settings / Add models /
-OpenAI`); Escape steps back one level before it closes. The first level lists
-configured models (`routing group · model · Routing weight 1` with icon buttons
-for Test, Edit and Delete), models detected for this session (Save to config)
-and the configuration source (clicking the path asks the service to open it).
-Edit on a model row opens the provider's page, the same as Add models →
-provider. Add models shows provider cards grouped as configured environment
-credentials, saved
-providers (with their model count, Edit and Delete; Edit opens the provider's
-page), common providers (the
-reference's eight) and "More OpenAI-compatible providers": the sixteen further
-prefixes of the routing table ([LLM providers](llm.md#openai-compatible-prefixes)),
-each card naming its documented host (vLLM: "Server address required"). A
-provider's page shows the documented endpoint and key variable of a built-in
-provider and asks for what it needs: an API key (marked optional for LM Studio and
-vLLM, absent for Ollama), a base URL for Azure, OpenAI-compatible endpoints and vLLM,
-an optional custom base (prefilled hint: the documented endpoint). It loads the
-catalogue through the provider's `/models` (automatically for Ollama, LM
-Studio and a saved connection) and opens the model picker: search, Select all,
-Vision and Configured badges (models this group already routes at the connection
-head the list and come ticked), a manual model ID (also when the
-catalogue cannot be loaded), routing
-group and weight, and a footer that names what Save will do while anything is
-pending (`Add 2 models · Remove 1 model`); the list
-scrolls after about four models, and Cancel with Save stays pinned at the bottom
-of the dialog. Unticking a configured model marks its row and its badge
-(`Will be removed`) and saves as a removal; the two folds, manual entry and
-advanced, share one quiet line below the catalogue.
-A saved provider's page starts with a Connection section that manages the key
-and the address separately: the key shows as saved (with its last four
-characters), from an environment variable or not set, with Replace and Remove; a
-key the service finds in the environment (a process variable or a dotenv file)
-is reported as from that variable, with Add storing a literal key instead; the
-one key field says it replaces the saved key, and its Save and Cancel sit on the
-field's line inside an inset editor panel that keeps the connection table itself
-two clean rows; the
-address shows as custom, from an environment variable or the default, with
-Edit and Reset to default. Perplexity, Z.ai and Fireworks AI
-document no OpenAI-compatible model list, so their page opens the manual entry
-directly. A hand-typed ID gets the page's prefix unless it already has it, so an
-ID with slashes of its own (`meta-llama/…` on Together AI, `google/…` on
-OpenRouter) still routes to that provider. Test turns the button into ✓ or a
-warning and reports in a notification. API key fields accept literal keys;
-`env:` references belong in the server configuration, not browser requests.
-Environment and saved-provider cards use server-issued connection IDs, allowing
-model discovery without returning the key to the browser. These credentials stay
-bound to their configured endpoint: the address form therefore also asks for
-the key to use with the new address (required while a key is saved; left blank,
-the provider connects without one).
+**Compare** puts the original beside the Markdown: a PDF's pages (drawn by the
+server, loaded as they scroll into view), an uploaded image, the HTML the server
+kept for a web page (sanitized: no scripts, styles, frames, forms, links or
+remote images), a text file, or the page screenshots a conversion saved.
+Hovering a heading or a table on either side outlines it on both, in the one
+accent colour; PDF positions come from the page's text layer, HTML by matching
+elements. An original that cannot be shown (a DOCX, a page the server did not
+keep) says why and offers its download.
 
-The header holds the brand and version, Docs and GitHub (a footer band on
-phones) and two icon buttons: Appearance (language EN/中 and theme
-Auto/Light/Dark) and Settings. The appearance menu opens over the notice column,
-so a live notice never takes its clicks. The conversion tasks (the workspace) open from
-the entry under the composer on the home view. Notifications appear
-at the top right (bottom on phones) and stack: an image skipped for lack of text
-offers Enable OCR and retry, which also leaves OCR switched on for new jobs; an
-item that asked for LLM processing without a model offers Retry without LLM; the
-service becoming unreachable or reachable again, a failed model test and a
-failed archive download are reported the same way.
+**On phones** the inspector is a bottom sheet: it slides up over the dimmed
+page to a fixed height with rounded top corners, a header with the name, previous, next and close,
+a body that scrolls inside the sheet, and a pinned action bar clear of the home
+indicator. Swiping it down (on the header, or on the body scrolled to its top),
+tapping the dimmed page and Escape close it. Preview and Compare are full-screen
+views with previous and next; Compare places the original above the Markdown.
+
+**Notices about the page** (an upload in progress with Cancel, a refused
+request, an unreachable service, a session that could not be restored, a missing
+model with a link to Models) sit in the page under its title and push the
+content down; they never cover a button. Errors stay until dismissed; others
+clear themselves.
+
+**Settings** are pages. Models lists the configured models (Test, Edit, Delete),
+models detected for this session (Save to config) and the configuration source;
+Add models leads through provider cards (environment credentials, saved
+providers, common providers, more OpenAI-compatible providers) to the
+provider's page and its model catalogue, with a breadcrumb that Escape steps
+back through. Appearance and language chooses English, 中文 or 日本語 and the
+theme (Auto, Light, Dark); Access token shows and changes this tab's token.
 
 ## Job controls
 
@@ -180,25 +121,23 @@ failed archive download are reported the same way.
   files inside a folder (dot names, `Thumbs.db`, `desktop.ini`) are skipped and
   counted; unreadable entries are counted.
 - **Stop remaining** calls `POST /api/jobs/{id}/cancel` for every running job
-  with waiting original items; stopped items show "Stopped before conversion ·
-  retry to convert it" and can be retried. A 409 means nothing waited any more.
+  with waiting original items; stopped items read "Stopped before conversion.
+  Retry to convert it." and can be retried. A 409 means nothing waited any more.
 - **Retry** of an image skipped for lack of text resubmits the item's saved
-  options with OCR on. An unsupported file type offers no Retry: converting it again
-  cannot help, and Retry all failed leaves such rows out.
+  options with OCR on. An unsupported file type offers no Retry: converting it
+  again cannot help, and Retry failed leaves such items out.
 - **Errors** are worded from the service's stable codes in the interface
   language: an API error's `reason`, then a settings conflict's `detail.code`,
   then the status-derived `code`; a failed item's `error_code` or a recognizable
   message shape (HTTP statuses, refused connections, timeouts, model refusals,
-  missing OCR, size limits). The service's full wording stays available in the
-  notification's expandable details, and every warning remains readable in its
-  scrollable list. The status icon reopens a dismissed notice. Provider probe and
-  discovery phrases are translated the same way. A job whose history could not
-  be saved (`persistence_error`) reports the failure through the same notice.
-- **Offline**: a request that cannot reach the service shows an error line and a
-  notification; the page asks again every five seconds and says when the
-  service is back, then refreshes capabilities, history and the session. A broken
-  event stream triggers the same check and, once closed, reconciles the job from
-  its snapshot.
+  missing OCR, size limits). The service's full wording stays behind Details.
+  Provider probe and discovery phrases are translated the same way. A job whose
+  history could not be saved (`persistence_error`) reports it in the page.
+- **Offline**: a request that cannot reach the service shows a notice; the page
+  asks again every five seconds and says when the service is back, then
+  refreshes capabilities, the list and the session. A broken event stream
+  triggers the same check and, once closed, reconciles the job from its
+  snapshot.
 - **Settings conflicts**: every write carries the revision its draft started
   from. A `stale_revision` or `config_changed` refusal reloads the lists but keeps
   the draft and its revision; "Use current revision" adopts the new one and the
@@ -207,32 +146,35 @@ failed archive download are reported the same way.
   Remove and the address form each send only the field they change. An
   endpoint change with a retained server key is rejected, including when
   linked model deployments have their own credential overrides.
-- **Session restore**: the rows of jobs created in this tab are kept in
-  `sessionStorage` (`markitai.session`); after a reload each job is asked for
-  again. A job the service no longer knows is dropped; an unreachable service
-  keeps the rows with Retry restore.
+- **Saved conversions** come from `GET /api/history?include=items`, refreshed
+  when a watched job ends and when the window regains focus (at most every 20
+  seconds). The server keeps a job for `limits.history_retention_days` (7) after
+  it finished; the inspector shows the day it is kept until. Running jobs started
+  in this tab are kept in `sessionStorage` (`markitai.session`) so a reload
+  watches them again.
 
 ## Preview safety and printing
 
 Markdown is rendered with the vendored [marked 18.0.14](https://github.com/markedjs/marked/releases/tag/v18.0.14)
 and sanitized with [DOMPurify 3.4.16](https://github.com/cure53/DOMPurify/releases/tag/3.4.16),
-both loaded from `/ui/marked.js` and `/ui/purify.js` the first time a preview
-opens. The sanitized fragment never contains scripts, styles, forms, frames or
+both loaded from `/ui/marked.js` and `/ui/purify.js` the first time a result is
+shown. The sanitized fragment never contains scripts, styles, forms, frames or
 embedded media. Images and attachment links must resolve to an exact entry of the
 result's own artifact list; only raster images are shown, and anything else (an
-external or SVG image) becomes a labelled placeholder, a deliberate difference
-from the reference, which loads external images. Other links keep only
-http(s)/mailto targets and open in a new tab without referrer. Syntax highlighting
-of code blocks is not included.
+external or SVG image) becomes a labelled placeholder. Other links keep only
+http(s)/mailto targets and open in a new tab without referrer. Highlighting
+builds its spans from text and never reparses HTML. An HTML original in Compare
+is sanitized the same way and also loses its links and images, so it loads and
+navigates nowhere; the server sends originals as attachments with
+`Content-Security-Policy: sandbox` and HTML as plain text, so opening one
+directly never runs it.
 
 Export PDF prints a temporary clone of the rendered document through the
-browser's print dialog, on A4 with the reference's print styles (light palette,
-repeated table headers, wrapped code, the optional Markitai header and
-`Prepared with Markitai · Source: …` footer). Links are removed from the clone, so
-a generated PDF embeds no service URL, and printing waits up to ten seconds for
-every image and refuses rather than produce an incomplete document. A direct
-browser print of the page also hides any link that carries `token=` (none is
-produced any more; the rule stays as a guard).
+browser's print dialog, on A4 with light print styles (repeated table headers,
+wrapped code, the optional Markitai header and `Prepared with Markitai · Source:
+…` footer). Links are removed from the clone, so a generated PDF embeds no
+service URL, and printing waits up to ten seconds for every image and refuses
+rather than produce an incomplete document.
 
 ## Access token
 
@@ -252,24 +194,26 @@ URL the page requests or shows carries it:
   EventSource's behaviour: named events, a dropped connection retried after the
   stream's `retry:` delay (3 s by default) while a refused one (an HTTP error or
   another content type) is final, and no event after `close()`.
-- With a token, preview images are fetched with the header (four at a time) and
-  shown through `blob:` object URLs, which the policy already allows
-  (`img-src 'self' blob:`) and which are released when the preview changes;
-  Export PDF waits for them. An image that cannot be fetched becomes the
-  labelled placeholder.
-- Download links (rows, Files, Download .md, file links inside the rendered
-  document) point at the plain `/api/` path. With a token, a click or a
+- With a token, preview images and Compare's page images are fetched with the
+  header and shown through `blob:` object URLs, which the policy already allows
+  (`img-src 'self' blob:`) and which are released when the view changes; Export
+  PDF waits for them. An image that cannot be fetched becomes the labelled
+  placeholder.
+- Download links (the inspector, Files, Download .md, file links inside the
+  rendered document) point at the plain `/api/` path. With a token, a click or a
   middle-click fetches the file with the header and saves it as a Blob, so a
   refusal is reported. Plain download links work without a token only when the
   server was explicitly started with `--no-auth`.
-- Download all (.zip), which can be larger than memory, is left to the browser:
+- Download all and a submission's .zip, which can be larger than memory, are
+  left to the browser:
   with a token the page first asks `POST /api/download-tickets` for a
   single-use ticket and opens the returned `?ticket=` URL, valid for one GET of
   that archive within a minute (see [serve](serve.md#network-and-file-boundaries)),
   so what stays in the download list is a spent ticket.
 
-A 401 shows "Not authorized · reload the page with the access token link · Enter
-token"; Enter token opens a small dialog that stores a typed token for the tab.
+A 401 shows "Not authorized" with Enter token in the page notices; it opens a
+small dialog that stores a typed token for the tab. Settings → Access token shows
+whether the tab holds a token, and replaces or forgets it.
 After a server restart that generates a new token, reopen its new launch link
 or use Enter token. `--no-auth` explicitly disables API token enforcement; only
 direct loopback clients without forwarding headers receive the additional trust
@@ -281,19 +225,24 @@ request Host's hostname and effective port, or an operator-configured
 
 ## Language, appearance and stored values
 
-English and Chinese follow the reference's product copy. Without a stored
-choice, a browser whose first language starts with `zh` gets Chinese. The
-classic script `/ui/boot.js` applies the stored theme and language before first
-paint (the Content Security Policy allows no inline script). Values kept in this
-browser's `localStorage`: `markitai.lang`, `markitai.theme`, `markitai.options`
-(preset, LLM, OCR, output profile and the image overrides; fetch strategy,
-backend, cache and source choices are never remembered, so a revisit cannot
-silently re-enable a remote service), `markitai.pdf.custom-header-footer` and
-`markitai.notify-denied` (a refused desktop-notification permission, which is
-then never asked again). A finished job raises a system notification only while
-the tab is hidden and permission was granted; permission is asked on the first
-submission, never on load. Provider API keys are not retained in browser storage;
-the service access token is held for the tab as described above.
+The interface speaks English, Chinese and Japanese. Without a stored choice, a
+browser whose first language starts with `zh` gets Chinese and one with `ja`
+Japanese. English is part of the application; each other language is its own
+file (`/ui/i18n-zh.js`, `/ui/i18n-ja.js`, about 13 KB compressed), which the
+classic script `/ui/boot.js` asks for beside the application, so a reader
+downloads only their language. `boot.js` also applies the stored theme, the
+sidebar's collapsed state and the language before first paint (the Content
+Security Policy allows no inline script). Values kept in this browser's
+`localStorage`: `markitai.lang`, `markitai.theme`, `markitai.sidebar`,
+`markitai.options` (preset, LLM, OCR, output profile and the image overrides;
+fetch strategy, backend, cache and source choices are never remembered, so a
+revisit cannot silently re-enable a remote service),
+`markitai.pdf.custom-header-footer` and `markitai.notify-denied` (a refused
+desktop-notification permission, which is then never asked again). A finished
+job raises a system notification only while the tab is hidden and permission was
+granted; permission is asked on the first submission, never on load. Provider
+API keys are not retained in browser storage; the service access token is held
+for the tab as described above.
 
 ## Cloudflare processing
 
@@ -334,26 +283,24 @@ a later native conversion succeeds. It does not establish that Cloudflare was
 called, how many requests ran or what they cost; LLM cost and pricing coverage
 continue to describe recorded model work only.
 
-## Differences from the reference
+## One frontend, two backends
 
-- A request that asks for LLM processing while no model is routable is refused by
-  the service (422 `llm_unavailable`) instead of silently converting without the
-  model; the page then reloads the capabilities.
-- Folder upload, Stop remaining, upload progress and cancellation, the Files
-  tab, the Base | LLM switch, the token dialog, offline detection, the pricing
-  coverage in the cost cell's tooltip (`$0.012300 · all recorded requests
-  priced`, `Price unknown · …`) and the replayable failed-attempt notice are
-  additions. Model discovery that fails still leaves manual model entry.
-- Provider groups exist only as the service reports them (environment, saved,
-  common, compatible); the reference's local-CLI and OAuth groups do not occur,
-  and the compatible group (sixteen OpenAI-compatible prefixes) is an addition.
-- Previews block external images (see above); the reference renders them.
-- Event streams are read with `fetch` and images fetched as Blobs when a token is
-  held; the reference puts no token in its page at all (it has no remote
-  access token).
-- `node scripts/check-contrast.mjs` and the slightly deeper light `--text-3`
-  (`#6b6b73` for the reference's `#71717a`) and `.diff-no` colour are
-  accessibility fixes the reference does not have.
+Python markitai 1.2.1 serves this workbench before Rust 1.3.0 replaces it, so the
+page depends only on a written API contract that both servers implement: the
+routes, payloads, event stream, authentication and error `reason` codes it
+reads, described by the server's [OpenAPI document](serve.md#machine-readable-api-description).
+What a backend offers beyond the base job API is announced in
+`GET /api/capabilities` under `features` (`cancel`, `download_tickets`,
+`url_lists`, `history_items`, `original`, `result_excerpt`, `job_labels`); a
+missing feature hides its control instead of failing (no Stop remaining, no
+Compare, archives saved through the page, history read job by job).
+`docs_url` points the Docs link at the backend's own documentation.
+
+`node scripts/package.mjs OUTDIR` packages a build for the other backend: a
+reproducible tar.gz with `index.html`, every file served under `/ui/`, the
+licences, and a manifest naming the source commit, each file's SHA-256, the
+build command, the Content Security Policy and the page paths. It refuses a
+`dist/` that does not match its sources or uncommitted workbench changes.
 
 ## Building and checking the workbench
 

@@ -236,6 +236,7 @@ mod tests {
             }),
             cache_hit: false,
             screenshots: Vec::new(),
+            html: None,
         }
     }
 

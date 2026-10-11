@@ -20,8 +20,9 @@ Stdout Markdown, dry runs, empty work and invalid single-file inputs create no
 archive. JSON disk-output mode can record history without adding JSON fields or
 printing a success message. Ordinary mode prints the saved path to stderr unless
 quiet. The native `serve` command reads completed archives in place and exposes
-results, assets and downloads; see [service history](serve.md). Native bindings
-do not invoke the CLI archive writer.
+results, assets and downloads; see [service history](serve.md). A running service
+deletes an archive seven days after it finished, as it does its own jobs. Native
+bindings do not invoke the CLI archive writer.
 
 ## Which outcomes are saved
 

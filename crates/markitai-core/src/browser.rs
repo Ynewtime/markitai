@@ -131,43 +131,49 @@ pub(crate) fn discover() -> Option<PathBuf> {
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         caches.push(PathBuf::from(home).join(".cache/ms-playwright"));
     }
-    for cache in caches {
-        let Ok(entries) = std::fs::read_dir(cache) else {
-            continue;
-        };
-        let mut directories = entries
-            .filter_map(std::result::Result::ok)
-            .filter(|entry| {
-                entry.file_name().to_str().is_some_and(|name| {
-                    name.starts_with("chromium-") || name.starts_with("chromium_headless_shell-")
-                })
+    caches.iter().find_map(|cache| playwright_chromium(cache))
+}
+
+/// Where Playwright puts each platform's Chromium inside a revision directory
+/// (its registry's executable paths: Chrome for Testing builds, older Chromium
+/// builds, then the headless shell).
+const PLAYWRIGHT_EXECUTABLES: [&str; 15] = [
+    "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium",
+    "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+    "chrome-linux64/chrome",
+    "chrome-linux-arm64/chrome",
+    "chrome-linux/chrome",
+    "chrome-win64/chrome.exe",
+    "chrome-win/chrome.exe",
+    "chrome-headless-shell-mac-arm64/chrome-headless-shell",
+    "chrome-headless-shell-mac-x64/chrome-headless-shell",
+    "chrome-headless-shell-linux64/chrome-headless-shell",
+    "chrome-headless-shell-linux-arm64/chrome-headless-shell",
+    "chrome-headless-shell-win64/chrome-headless-shell.exe",
+];
+
+/// The newest Chromium in one Playwright browser cache.
+fn playwright_chromium(cache: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(cache).ok()?;
+    let mut directories = entries
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.starts_with("chromium-") || name.starts_with("chromium_headless_shell-")
             })
-            .map(|entry| entry.path())
-            .collect::<Vec<_>>();
-        crate::sort::by(&mut directories, |a, b| b.cmp(a));
-        for directory in directories {
-            for suffix in [
-                "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-                "chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-                "chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium",
-                "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
-                "chrome-headless-shell-mac-arm64/chrome-headless-shell",
-                "chrome-headless-shell-mac-x64/chrome-headless-shell",
-                "chrome-linux64/chrome",
-                "chrome-linux/chrome",
-                "chrome-win64/chrome.exe",
-                "chrome-win/chrome.exe",
-                "chrome-headless-shell-linux64/chrome-headless-shell",
-                "chrome-headless-shell-win64/chrome-headless-shell.exe",
-            ] {
-                let path = directory.join(suffix);
-                if executable(&path) {
-                    return Some(path);
-                }
-            }
-        }
-    }
-    None
+        })
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    crate::sort::by(&mut directories, |a, b| b.cmp(a));
+    directories.iter().find_map(|directory| {
+        PLAYWRIGHT_EXECUTABLES
+            .iter()
+            .map(|suffix| directory.join(suffix))
+            .find(|path| executable(path))
+    })
 }
 
 /// Check installed executables without launching a browser or opening a profile.
@@ -594,6 +600,43 @@ fn fetch_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn program(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    #[test]
+    fn every_playwright_layout_is_found_in_its_cache() {
+        // Linux arm64 and Intel macOS builds were missed before; on Windows
+        // only the `.exe` layouts can be launched.
+        for suffix in PLAYWRIGHT_EXECUTABLES {
+            let cache = tempfile::tempdir().unwrap();
+            let path = cache.path().join("chromium-1243").join(suffix);
+            program(&path);
+            let launchable = cfg!(not(windows)) || suffix.ends_with(".exe");
+            assert_eq!(
+                playwright_chromium(cache.path()),
+                launchable.then_some(path),
+                "{suffix}"
+            );
+        }
+        let cache = tempfile::tempdir().unwrap();
+        let suffix = if cfg!(windows) {
+            "chrome-win64/chrome.exe"
+        } else {
+            "chrome-linux-arm64/chrome"
+        };
+        program(&cache.path().join("firefox-1543").join(suffix));
+        assert_eq!(playwright_chromium(cache.path()), None);
+        let newest = cache.path().join("chromium-1243").join(suffix);
+        program(&cache.path().join("chromium-1200").join(suffix));
+        program(&newest);
+        assert_eq!(playwright_chromium(cache.path()), Some(newest));
+    }
     #[test]
     fn a_missing_browser_names_the_configured_executable_that_is_not_one() {
         let configured = missing_browser(Some(Path::new("/opt/none/chrome")));

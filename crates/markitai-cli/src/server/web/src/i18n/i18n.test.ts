@@ -2,50 +2,63 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { en } from "./en.ts";
-import { apiErrorText, isUnsupported, itemErrorText, MESSAGES, persistenceText, producibleKeys, serviceNote } from "./errors.ts";
+import { apiErrorText, isUnsupported, itemErrorText, MESSAGES, MESSAGES_EN, persistenceText, producibleKeys, registerMessages, serviceNote } from "./errors.ts";
+import { ja as jaMessages } from "./errors-ja.ts";
+import { zh as zhMessages } from "./errors-zh.ts";
+import { ja } from "./ja.ts";
 import { detectLocale } from "./locale.ts";
 import { zh } from "./zh.ts";
+
+// The browser loads these packs on demand; the tests register them directly.
+registerMessages("zh", zhMessages);
+registerMessages("ja", jaMessages);
 
 const placeholders = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort();
 const server = new URL("../../../", import.meta.url);
 const read = (relative: string, base: URL = server) => readFileSync(new URL(relative, base), "utf8");
 
-test("both interface languages define the same entries with the same shapes", () => {
-  assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort());
-  for (const [key, value] of Object.entries(en)) {
-    const other = (zh as Record<string, unknown>)[key];
-    assert.equal(typeof other, typeof value, key);
-    if (typeof value === "function") assert.equal((other as () => unknown).length, value.length, key);
-    else assert.ok((other as string).length > 0, key);
+test("every interface language defines the same entries with the same shapes", () => {
+  for (const table of [zh, ja]) {
+    assert.deepEqual(Object.keys(table).sort(), Object.keys(en).sort());
+    for (const [key, value] of Object.entries(en)) {
+      const other = (table as Record<string, unknown>)[key];
+      assert.equal(typeof other, typeof value, key);
+      if (typeof value === "function") assert.equal((other as () => unknown).length, value.length, key);
+      else assert.ok((other as string).length > 0, key);
+    }
   }
 });
 
 test("visible copy keeps the voice: no dashes as separators", () => {
-  for (const table of [en, zh]) {
+  for (const table of [en, zh, ja]) {
     for (const [key, value] of Object.entries(table)) {
       if (typeof value === "string") assert.ok(!/[–—]/.test(value), key);
     }
   }
-  assert.equal(en.sessResults(1), "1 item in session · View results");
+  assert.equal(en.summaryDone(3, 4, 1, 0, 0), "3 of 4 converted, 1 failed.");
   assert.equal(en.modelsToAdd(2), "Add 2 models");
   assert.equal(en.modelsToRemove(1), "Remove 1 model");
-  assert.equal(zh.retryAllFailed(3), "重试全部失败项（3）");
+  assert.equal(zh.retryFailedN(3), "重试失败项（3）");
 });
 
-test("service messages exist in both languages with the same placeholders", () => {
-  assert.deepEqual(Object.keys(MESSAGES.zh).sort(), Object.keys(MESSAGES.en).sort());
-  for (const [key, text] of Object.entries(MESSAGES.en)) {
-    assert.deepEqual(placeholders(MESSAGES.zh[key as keyof typeof MESSAGES.zh]), placeholders(text), key);
+test("service messages exist in every language with the same placeholders", () => {
+  for (const locale of ["zh", "ja"] as const) {
+    assert.deepEqual(Object.keys(MESSAGES[locale]).sort(), Object.keys(MESSAGES_EN).sort());
+    for (const [key, text] of Object.entries(MESSAGES_EN)) {
+      assert.deepEqual(placeholders(MESSAGES[locale][key as keyof typeof MESSAGES_EN] ?? ""), placeholders(text), `${locale} ${key}`);
+    }
   }
   const keys = producibleKeys();
   assert.ok(keys.length > 70, `only ${keys.length}`);
-  for (const key of keys) assert.ok(key in MESSAGES.en, key);
+  for (const key of keys) assert.ok(key in MESSAGES_EN, key);
 });
 
 test("an explicit language wins, otherwise the browser language decides", () => {
   assert.equal(detectLocale("zh", "en-US"), "zh");
   assert.equal(detectLocale("en", "zh-CN"), "en");
   assert.equal(detectLocale(null, "zh-TW"), "zh");
+  assert.equal(detectLocale(null, "ja-JP"), "ja");
+  assert.equal(detectLocale("ja", "en-US"), "ja");
   assert.equal(detectLocale("fr", "de-DE"), "en");
   assert.equal(detectLocale(null, undefined), "en");
 });
@@ -61,6 +74,8 @@ test("every reason the Rust service sends and every core error code has localize
     "jobs.rs",
     "providers.rs",
     "tickets.rs",
+    "original.rs",
+    "retention.rs",
     "settings.rs",
     ...readdirSync(new URL("settings/", server)).map((name) => `settings/${name}`),
   ]
@@ -156,23 +171,23 @@ test("the English phrases recognized here are still the ones the core and the se
 test("item errors are localized by code or shape, keeping the original wording", () => {
   const cases: [Parameters<typeof itemErrorText>[1], string][] = [
     [{ error: "cancelled (stopped by request)", error_code: "cancelled" }, "Stopped before conversion · retry to convert it"],
-    [{ error: "No model configured; set MODEL", error_code: "no_model_configured" }, MESSAGES.en.errNoModel],
+    [{ error: "No model configured; set MODEL", error_code: "no_model_configured" }, MESSAGES_EN.errNoModel],
     [{ error: "HTTP 404 for https://example.com/a: gone", kind: "url", error_code: "fetch_error" }, "The page was not found (HTTP 404)."],
     [{ error: "HTTP 429", kind: "url" }, "The website is limiting requests (HTTP 429). Try again later."],
     [{ error: "operation timed out", kind: "url" }, "Fetching this page took too long."],
     [{ error: "Office export timed out", kind: "file" }, "The conversion took too long and was stopped."],
-    [{ error: "LLM returned HTTP 403: the model is not available in this region" }, MESSAGES.en.errModelRegion.replace("{status}", "403")],
+    [{ error: "LLM returned HTTP 403: the model is not available in this region" }, MESSAGES_EN.errModelRegion.replace("{status}", "403")],
     [
       { error: "LLM returned HTTP 403: the model is not available in this region (deployment openrouter/test at openrouter.ai)" },
-      MESSAGES.en.errModelRegion.replace("{status}", "403"),
+      MESSAGES_EN.errModelRegion.replace("{status}", "403"),
     ],
     [
       { error: "LLM returned HTTP 500 (server_error): The server had an error. (deployment openai/test at api.openai.com)" },
-      MESSAGES.en.errModelServer.replace("{status}", "500"),
+      MESSAGES_EN.errModelServer.replace("{status}", "500"),
     ],
-    [{ error: "LLM request failed: connection refused (deployment openai/test at 127.0.0.1:9)" }, MESSAGES.en.probeUnreachable],
-    [{ error: "LLM request timed out: no response within 3 s (deployment openai/test at 127.0.0.1:9)" }, MESSAGES.en.errModelTimeout],
-    [{ error: "error sending request: tcp connect error: Connection refused", kind: "url" }, MESSAGES.en.errUnreachable],
+    [{ error: "LLM request failed: connection refused (deployment openai/test at 127.0.0.1:9)" }, MESSAGES_EN.probeUnreachable],
+    [{ error: "LLM request timed out: no response within 3 s (deployment openai/test at 127.0.0.1:9)" }, MESSAGES_EN.errModelTimeout],
+    [{ error: "error sending request: tcp connect error: Connection refused", kind: "url" }, MESSAGES_EN.errUnreachable],
     [{ error: "Input exceeds the 500 MiB limit", error_code: "invalid_input" }, "The input is larger than a supported limit (500 MiB)."],
     [{ error: "Malformed XML", error_code: "conversion_error" }, "The document could not be converted. Check that the original file opens correctly, then review the error details."],
   ];
@@ -195,7 +210,7 @@ test("current portable OCR errors explain the right recovery and keep the origin
   const path = "C:\\Markitai state\\models\\ocr\\ppocrv6-det-small-12345678\\model.onnx";
   const remedy = `run \`markitai doctor --fix\` where the network is reachable, or download https://example.test/model.onnx (SHA-256 ${"a".repeat(64)}, 9929594 bytes) to ${path}`;
   const repair = "; run `markitai doctor --fix` to replace this damaged managed model; ordinary OCR will not overwrite it";
-  const cases: [string, string, keyof typeof MESSAGES.en][] = [
+  const cases: [string, string, keyof typeof MESSAGES_EN][] = [
     ["MARKITAI_OCR_BACKEND=vision selects macOS Vision, which needs macOS 11 or later; unset it or choose paddle", "unsupported", "errOcrVisionSelection"],
     ["MARKITAI_OCR_BACKEND must be vision or paddle", "config_error", "errOcrBackendSetting"],
     [`Local OCR needs the model ${model}, which is not installed: ${remedy}`, "unsupported", "errOcrModelMissing"],
@@ -266,10 +281,10 @@ test("unsafe portable OCR paths require inspection, never blind automatic repair
 
 test("API refusals are read by reason, then structured code, then status code", () => {
   assert.deepEqual(apiErrorText("en", { detail: "file exceeds upload limit", code: "payload_too_large", reason: "file_too_large" }), {
-    text: MESSAGES.en.errFileTooLarge,
+    text: MESSAGES_EN.errFileTooLarge,
     detail: "file exceeds upload limit",
   });
-  assert.equal(apiErrorText("en", { detail: { code: "stale_revision", current_revision: "r2" }, code: "conflict" })?.text, MESSAGES.en.errStaleRevision);
+  assert.equal(apiErrorText("en", { detail: { code: "stale_revision", current_revision: "r2" }, code: "conflict" })?.text, MESSAGES_EN.errStaleRevision);
   assert.equal(apiErrorText("zh", { detail: "x", code: "rate_limited" })?.text, MESSAGES.zh.errBusy);
   assert.deepEqual(apiErrorText("en", { detail: "plain words" }), { text: "plain words", detail: "" });
   assert.equal(apiErrorText("en", null), null);
@@ -277,9 +292,9 @@ test("API refusals are read by reason, then structured code, then status code", 
 
 test("probe and discovery phrases are translated; unknown text is kept", () => {
   assert.deepEqual(serviceNote("en", "openai/gpt-x responded"), { text: "openai/gpt-x responded.", detail: "openai/gpt-x responded" });
-  assert.equal(serviceNote("en", "Model connection test timed out").text, MESSAGES.en.errModelTimeout);
+  assert.equal(serviceNote("en", "Model connection test timed out").text, MESSAGES_EN.errModelTimeout);
   assert.equal(serviceNote("zh", "Model connection returned HTTP 401").text, "服务商拒绝了凭据（HTTP 401）。请检查 API key。");
-  assert.equal(serviceNote("en", "Model connection request failed: connection refused").text, MESSAGES.en.probeUnreachable);
+  assert.equal(serviceNote("en", "Model connection request failed: connection refused").text, MESSAGES_EN.probeUnreachable);
   const refused = serviceNote("zh", "Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)");
   assert.equal(refused.text, "服务商拒绝了凭据（HTTP 401）。请检查 API key。");
   assert.equal(refused.detail, "Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)");
@@ -287,7 +302,7 @@ test("probe and discovery phrases are translated; unknown text is kept", () => {
   assert.deepEqual(serviceNote("en", undefined), { text: "", detail: "" });
   assert.equal(
     persistenceText("en", "history could not be persisted; completed artifacts remain available until shutdown").text,
-    MESSAGES.en.errHistoryNotSaved,
+    MESSAGES_EN.errHistoryNotSaved,
   );
   assert.deepEqual(persistenceText("en", "new failure"), { text: "new failure", detail: "" });
 });

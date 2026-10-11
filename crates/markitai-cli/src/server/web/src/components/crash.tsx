@@ -15,13 +15,14 @@ export class CrashBoundary extends Component<{ children: ComponentChildren }, { 
 
   override render() {
     if (this.state.error === null) return this.props.children;
-    const zh = document.documentElement.lang.startsWith("zh");
+    const lang = document.documentElement.lang;
+    const [title, reload] = lang.startsWith("zh") ? ["界面出错了", "重新加载"] : lang.startsWith("ja") ? ["問題が発生しました", "再読み込み"] : ["Something went wrong", "Reload"];
     return (
       <div class="crash" role="alert">
-        <h1>{zh ? "界面出错了" : "Something went wrong"}</h1>
+        <h1>{title}</h1>
         <p>{this.state.error.message}</p>
         <button type="button" class="btn btn-ghost" onClick={() => location.reload()}>
-          {zh ? "重新加载" : "Reload"}
+          {reload}
         </button>
       </div>
     );

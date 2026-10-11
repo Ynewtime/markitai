@@ -3,11 +3,16 @@ use super::{
     jobs::{self, Job, JobData},
     security::Trusted,
     store,
-    types::{ApiError, ApiResult, Item, JobOptions, MAX_ITEMS, MAX_UPLOAD, instant, now},
+    types::{
+        ApiError, ApiResult, Item, JobOptions, MAX_ITEMS, MAX_LABEL, MAX_UPLOAD, instant, now,
+    },
 };
 use axum::{
     Json,
-    extract::{FromRequest, Multipart, Path, Request, State as ExtractState},
+    extract::{
+        FromRequest, Multipart, Path, Query, Request, State as ExtractState,
+        rejection::QueryRejection,
+    },
     http::StatusCode,
     response::{
         IntoResponse, Response,
@@ -50,8 +55,30 @@ pub(super) async fn capabilities(
         .iter()
         .filter_map(|name| Some((name.to_string(), markitai_core::config::preset(&cfg, name)?)))
         .collect();
-    Json(
-        json!({"version":markitai_core::VERSION,"llm":llm,"remote_services":{"cloudflare":cloudflare},"presets":presets,"preset_options":options,"extras":{"browser":markitai_core::browser_available(),"svg":true},"limits":{"max_job_items":MAX_ITEMS}}),
+    Json(json!({
+        "version":markitai_core::VERSION,
+        "implementation":"rust",
+        "docs_url":DOCS_URL,
+        "source_url":SOURCE_URL,
+        "llm":llm,
+        "remote_services":{"cloudflare":cloudflare},
+        "presets":presets,
+        "preset_options":options,
+        "extras":{"browser":markitai_core::browser_available(),"svg":true},
+        "limits":{"max_job_items":MAX_ITEMS,"history_retention_days":super::retention::DAYS},
+        "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
+            "original":true,"result_excerpt":true,"job_labels":true},
+    }))
+}
+
+const DOCS_URL: &str = "https://github.com/Ynewtime/markitai-rust/blob/main/docs/index.md";
+const SOURCE_URL: &str = "https://github.com/Ynewtime/markitai-rust";
+
+fn invalid_label() -> ApiError {
+    ApiError::new(
+        422,
+        "invalid_label",
+        format!("label must be plain text of at most {MAX_LABEL} characters"),
     )
 }
 
@@ -157,6 +184,7 @@ pub(super) async fn create(
     let mut urls: Vec<(String, Option<String>)> = Vec::new();
     let mut url_field = None;
     let mut options = None;
+    let mut label = None;
     if request
         .headers()
         .get("content-type")
@@ -176,6 +204,8 @@ pub(super) async fn create(
                 url_field = Some(value.as_bytes().to_vec());
             } else if name == "options" {
                 options = Some(value.as_bytes().to_vec());
+            } else if name == "label" {
+                label = Some(value.as_bytes().to_vec());
             }
         }
     } else {
@@ -242,7 +272,9 @@ pub(super) async fn create(
                 }
                 // Flushing waits until the whole job is staged; see `store::sync_uploads`.
                 file.flush().await.map_err(ApiError::internal)?;
-                items.push(Item::new(items.len() + 1, filename, "file", None));
+                let mut item = Item::new(items.len() + 1, filename, "file", None);
+                item.source_size = Some(size as u64);
+                items.push(item);
             } else {
                 let mut bytes = Vec::new();
                 while let Some(chunk) = field
@@ -263,10 +295,20 @@ pub(super) async fn create(
                     url_field = Some(bytes);
                 } else if name == "options" {
                     options = Some(bytes);
+                } else if name == "label" {
+                    label = Some(bytes);
                 }
             }
         }
     }
+    let label = match label {
+        None => None,
+        Some(bytes) => String::from_utf8(bytes)
+            .ok()
+            .as_deref()
+            .and_then(super::types::label)
+            .ok_or_else(invalid_label)?,
+    };
     let listed: Vec<String> =
         match url_field.filter(|bytes| !bytes.iter().all(u8::is_ascii_whitespace)) {
             None => Vec::new(),
@@ -352,6 +394,7 @@ pub(super) async fn create(
         assets: HashMap::new(),
         item_options,
         transactions: Vec::new(),
+        label,
     };
     let publication_state = state.clone();
     let job = crate::task::blocking(move || {
@@ -574,7 +617,11 @@ pub(super) async fn refresh(state: &Arc<State>) -> ApiResult<()> {
 /// The registered jobs, copied out so that locking each one never holds the
 /// registry that every job route needs.
 pub(super) fn registered_jobs(state: &State) -> Vec<Arc<Job>> {
-    state.jobs.lock().unwrap().values().cloned().collect()
+    let jobs: Vec<_> = state.jobs.lock().unwrap().values().cloned().collect();
+    let now = std::time::SystemTime::now();
+    jobs.into_iter()
+        .filter(|job| !super::retention::expired(job, now))
+        .collect()
 }
 /// A registered job, else one another local process saved since the last
 /// scan; a known job needs no scan of every job folder.
@@ -585,15 +632,32 @@ pub(super) async fn registered(state: &Arc<State>, id: &str) -> ApiResult<Arc<Jo
     refresh(state).await?;
     jobs::get(state, id)
 }
+#[derive(serde::Deserialize)]
+pub(super) struct HistoryQuery {
+    /// `items` adds each job's options and item payloads to its entry.
+    include: Option<String>,
+}
 pub(super) async fn history(
     ExtractState(state): ExtractState<Arc<State>>,
+    query: Result<Query<HistoryQuery>, QueryRejection>,
 ) -> ApiResult<Json<Value>> {
+    // Anything but `include=items` keeps the plain summaries.
+    let include = query.ok().and_then(|query| query.0.include);
+    let items = include
+        .as_deref()
+        .is_some_and(|include| include.split(',').any(|part| part.trim() == "items"));
     refresh(&state).await?;
     let mut entries = registered_jobs(&state)
         .iter()
         .filter_map(|job| {
             let data = job.data.lock().unwrap();
-            (data.status == "done").then(|| data.history())
+            (data.status == "done").then(|| {
+                if items {
+                    data.history_with_items()
+                } else {
+                    data.history()
+                }
+            })
         })
         .collect::<Vec<_>>();
     crate::sort::by_key(&mut entries, |entry| {
@@ -664,6 +728,7 @@ mod deletion_tests {
             assets: HashMap::new(),
             item_options: HashMap::new(),
             transactions: Vec::new(),
+            label: None,
         };
         let first = Arc::new(Job::new(folder.clone(), data.clone()));
         let stale = first.clone();
@@ -738,6 +803,7 @@ mod error_code_tests {
             token: None,
             allowed_hosts: HashSet::new(),
             tickets: Default::default(),
+            previews: Default::default(),
         });
         let router = Router::new()
             .route("/api/jobs", post(create))
@@ -1070,10 +1136,17 @@ mod error_code_tests {
         let temp = tempfile::tempdir().unwrap();
         let (_state, router) = service(temp.path());
         // A CLI history records local time with its offset, the server UTC.
+        // Recent times: history expires seven days after a job finished.
+        let base = chrono::Utc::now() - chrono::Duration::days(1);
+        let at = |minutes: i64, hours: i32| {
+            (base + chrono::Duration::minutes(minutes))
+                .with_timezone(&chrono::FixedOffset::east_opt(hours * 3600).unwrap())
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        };
         for (id, created) in [
-            ("00000000000a", "2026-10-09T09:30:00.000+08:00"),
-            ("00000000000b", "2026-10-09T02:00:00.000Z"),
-            ("00000000000c", "2026-10-08T23:00:00.000-05:00"),
+            ("00000000000a", at(0, 8)),
+            ("00000000000b", at(30, 0)),
+            ("00000000000c", at(150, -5)),
         ] {
             let folder = temp.path().join(id);
             create_private_dir(&folder.join("out")).unwrap();
@@ -1096,7 +1169,7 @@ mod error_code_tests {
             .iter()
             .map(|entry| entry["job_id"].as_str().unwrap())
             .collect();
-        // 04:00Z, 02:00Z, 01:30Z: text order would put the +08:00 job first.
+        // Newest instant first; text order would put the +08:00 job first.
         assert_eq!(order, ["00000000000c", "00000000000b", "00000000000a"]);
         // The archive names same-named jobs oldest first.
         let response = router
@@ -1147,7 +1220,7 @@ mod error_code_tests {
         };
         std::fs::write(
             folder.join("meta.json"),
-            json!({"job_id":id,"created_at":"2026-10-09T02:00:00.000Z","finished_at":"2026-10-09T02:00:01.000Z",
+            json!({"job_id":id,"created_at":now(),"finished_at":now(),
                 "status":"done","version":2,"options":{},"items":[item("1","a"),item("2","b")],
                 "native_bases":{"1":"a","2":"b"}})
             .to_string(),

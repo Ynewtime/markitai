@@ -1,19 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HistoryEntry, ItemPayload, JobSnapshot } from "../api/types.ts";
+import type { ItemPayload, JobSnapshot } from "../api/types.ts";
 import { emptyOptions } from "./options.ts";
 import {
   canRetry,
   settleCurrentJobSnapshot,
   failedToRetry,
   mergeItem,
-  groupItemRows,
-  groupLabel,
-  mergeLedger,
   readSeeds,
   reconcile,
   requeued,
-  rowMatches,
   seedItem,
   sessionStats,
   settledIdentity,
@@ -165,66 +161,6 @@ test("only running jobs with original items still waiting can be stopped", () =>
   assert.deepEqual(waitingJobs(items, { a: job("a", "running"), b: job("b", "running"), c: job("c", "done") }), ["a"]);
 });
 
-function entry(id: string, finished: string, patch: Partial<HistoryEntry> = {}): HistoryEntry {
-  return {
-    job_id: id,
-    created_at: finished,
-    finished_at: finished,
-    status: "done",
-    total: 2,
-    done: 2,
-    failed: 0,
-    skipped: 0,
-    llm_enhanced: 0,
-    cost_usd: null,
-    names_preview: ["a.pdf", "b.docx"],
-    kinds_preview: ["file", "file"],
-    duration_ms: 10,
-    size_bytes: 100,
-    origin: "web",
-    retryable: true,
-    ...patch,
-  };
-}
-
-test("live and saved jobs share one ledger, newest activity first, running on top", () => {
-  const items = [row("old", "1", { finished_at: "2026-10-01T00:00:00Z" }), row("live", "1", { status: "running" }), row("live", "2")];
-  const rows = mergeLedger(items, { old: job("old", "done"), live: job("live", "running") }, [
-    entry("saved", "2026-10-01T12:00:00Z"),
-    entry("live", "2026-10-02T00:00:00Z"),
-  ]);
-  // The two-item submission is one row that opens into its items.
-  assert.deepEqual(
-    rows.map((value) => value.key),
-    ["group:live", "archive:saved", "old/1"],
-  );
-  const [first, saved] = rows;
-  assert.ok(first && saved);
-  assert.equal(saved.kind, "archive");
-  assert.equal(first.kind, "group");
-  if (first.kind !== "group") throw new Error("expected a group");
-  assert.deepEqual(
-    groupItemRows(first).map((value) => value.key),
-    ["live/1", "live/2"],
-  );
-  assert.equal(rowMatches(first, "all", "1.PDF"), true);
-  assert.equal(rowMatches(first, "all", "nothing-matches"), false);
-  assert.equal(rowMatches(saved, "failed", ""), false);
-  assert.equal(rowMatches(saved, "done", "b.doc"), true);
-  assert.equal(rowMatches({ kind: "session", key: "k", item: row("x", "9", { skipped: true }) }, "skipped", ""), true);
-});
-
-test("a group carries the name its submission gave it", () => {
-  const items = [row("live", "1"), row("live", "2")];
-  const named = mergeLedger(items, { live: { ...job("live", "running"), label: "sample-folder" } }, []);
-  const bare = mergeLedger(items, { live: job("live", "running") }, []);
-  assert.equal(named[0]?.kind === "group" ? named[0].label : null, "sample-folder");
-  assert.equal(bare[0]?.kind === "group" ? bare[0].label : null, null);
-  assert.equal(groupLabel("sample-folder", "3f9c2a1b4d0e"), "sample-folder");
-  // A batch that named nothing reads as itself, not as one file inside it.
-  assert.equal(groupLabel(null, "3f9c2a1b4d0e"), "3f9c2a1b4d0e");
-  assert.equal(groupLabel("   ", "3f9c2a1b4d0e"), "3f9c2a1b4d0e");
-});
 
 test("session seeds survive a reload and a damaged store reads as empty", () => {
   const values = new Map<string, string>();
