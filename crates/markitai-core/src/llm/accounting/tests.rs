@@ -21,6 +21,7 @@ fn entry() -> Deployment {
         max_tokens: None,
         reasoning_effort: None,
         supports_vision: None,
+        cloud: None,
     }
 }
 fn cfg(limit: f64) -> Value {

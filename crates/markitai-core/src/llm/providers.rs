@@ -771,13 +771,16 @@ pub(crate) fn listings() -> impl Iterator<Item = Listing> {
 /// Prefixes served by an installed official runtime instead of HTTP.
 pub(super) const SUBSCRIPTIONS: [&str; 3] = ["copilot", "claude-agent", "chatgpt"];
 
+/// Cloud platforms with their own authentication (`llm/cloud.rs`).
+pub(super) const CLOUDS: [&str; 3] = ["bedrock", "vertex_ai", "vertex_ai_beta"];
+
 pub(super) fn find(prefix: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|provider| provider.prefix == prefix)
 }
 
 /// Whether this build can route a model with this prefix.
 pub(crate) fn supported(prefix: &str) -> bool {
-    find(prefix).is_some() || SUBSCRIPTIONS.contains(&prefix)
+    find(prefix).is_some() || SUBSCRIPTIONS.contains(&prefix) || CLOUDS.contains(&prefix)
 }
 
 /// Whether a deployment needs no API key to be usable: local servers and the
@@ -941,11 +944,8 @@ pub(super) fn unsupported(prefix: &str) -> Error {
         ));
     }
     let reason = match prefix {
-        "bedrock" | "bedrock_converse" | "sagemaker" | "sagemaker_chat" => format!(
-            "LLM provider '{prefix}' (AWS) needs AWS Signature Version 4 request signing, which this build does not implement"
-        ),
-        "vertex_ai" | "vertex_ai_beta" => format!(
-            "LLM provider '{prefix}' (Google Vertex AI) needs Google Cloud service-account authentication, which this build does not implement; gemini/<model> with GEMINI_API_KEY reaches Gemini directly"
+        "sagemaker" | "sagemaker_chat" | "sagemaker_nova" => format!(
+            "LLM provider '{prefix}' (AWS SageMaker endpoints) is not implemented in this build; a SageMaker endpoint with an OpenAI-compatible route works as openai/<model> with its api_base, and Bedrock models as bedrock/<model>"
         ),
         "github_copilot" => format!(
             "LLM provider '{prefix}' signs in through LiteLLM; this build reaches GitHub Copilot as copilot/<model> through the official Copilot runtime"
@@ -1025,7 +1025,8 @@ mod tests {
         ] {
             assert!(supported(prefix) && !key_optional(prefix), "{prefix}");
         }
-        assert!(!supported("bedrock") && !supported("vertex_ai") && !supported("watsonx"));
+        assert!(supported("bedrock") && supported("vertex_ai") && !supported("watsonx"));
+        assert!(!key_optional("bedrock") && !key_optional("vertex_ai"));
     }
 
     #[test]
@@ -1245,7 +1246,7 @@ mod tests {
 
     #[test]
     fn refusals_name_the_openai_compatible_workaround() {
-        for prefix in ["bedrock", "vertex_ai", "cohere"] {
+        for prefix in ["sagemaker", "watsonx", "replicate"] {
             let Error::Unsupported(message) = unsupported(prefix) else {
                 panic!("{prefix} must be unsupported");
             };
@@ -1255,13 +1256,9 @@ mod tests {
                 "{message}"
             );
         }
-        let Error::Unsupported(bedrock) = unsupported("bedrock") else {
+        let Error::Unsupported(sagemaker) = unsupported("sagemaker") else {
             unreachable!()
         };
-        assert!(bedrock.contains("Signature Version 4"), "{bedrock}");
-        let Error::Unsupported(vertex) = unsupported("vertex_ai") else {
-            unreachable!()
-        };
-        assert!(vertex.contains("gemini/<model>"), "{vertex}");
+        assert!(sagemaker.contains("bedrock/<model>"), "{sagemaker}");
     }
 }

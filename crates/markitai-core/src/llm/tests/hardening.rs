@@ -174,10 +174,10 @@ fn local_servers_route_without_a_key_and_hosted_apis_need_one() {
 }
 
 #[test]
-fn bedrock_and_vertex_fail_with_the_openai_compatible_route() {
+fn unimplemented_providers_fail_with_the_openai_compatible_route() {
     for model in [
-        "bedrock/anthropic.claude-test",
-        "vertex_ai/gemini-test",
+        "sagemaker/endpoint-test",
+        "replicate/meta/llama-test",
         "watsonx/ibm/granite-test",
     ] {
         let cfg = single(json!({"model":model,"api_key":"k"}));
@@ -192,12 +192,12 @@ fn bedrock_and_vertex_fail_with_the_openai_compatible_route() {
     }
     // A supported sibling still serves the pool.
     let cfg = config::normalize(&json!({"llm":{"model_list":[
-        {"model_name":"default","litellm_params":{"model":"bedrock/x","api_key":"k"}},
+        {"model_name":"default","litellm_params":{"model":"watsonx/x","api_key":"k"}},
         {"model_name":"default","litellm_params":{"model":"mistral/m","api_key":"k"}}
     ]}}))
     .unwrap();
     assert_eq!(deployments(&cfg, &HashMap::new()).unwrap().len(), 1);
-    assert!(config::llm_provider_supported("groq") && !config::llm_provider_supported("bedrock"));
+    assert!(config::llm_provider_supported("groq") && !config::llm_provider_supported("watsonx"));
 }
 
 #[test]
@@ -301,6 +301,7 @@ fn entry(provider: &str, endpoint: &str) -> Deployment {
         max_tokens: None,
         reasoning_effort: None,
         supports_vision: None,
+        cloud: None,
     }
 }
 

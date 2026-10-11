@@ -546,6 +546,7 @@ impl PythonPlan {
             max_tokens: None,
             reasoning_effort: None,
             supports_vision: None,
+            cloud: None,
         }
     }
 

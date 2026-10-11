@@ -318,7 +318,7 @@ How some of them name models and endpoints:
   `BEDROCK_MANTLE_REGION`, `AWS_REGION_NAME`, `AWS_REGION`, then `us-east-1`.
   GPT-5/6, Gemma 4 and Grok 4 models are served under `/openai/v1`, the others
   under `/v1` (the routes LiteLLM's price map records). This is Amazon
-  Bedrock with a Bedrock API key; see [unsupported prefixes](#unsupported-prefixes)
+  Bedrock with a Bedrock API key; see [Bedrock and Vertex AI](#bedrock-and-vertex-ai)
   for `bedrock/` itself.
 - `cloudflare/@cf/<publisher>/<model>` needs `CLOUDFLARE_ACCOUNT_ID` (or an
   `api_base`); the key is a Workers AI API token.
@@ -341,21 +341,88 @@ documents use the JSON-text mode described below, and none is in the [pricing
 catalog](pricing.md): with `llm.max_cost_per_document_usd` above zero they are
 refused before any request, like every other unpriced model.
 
+### Bedrock and Vertex AI
+
+`bedrock/<model ID>` calls Amazon Bedrock's Converse API
+(`POST https://bedrock-runtime.<region>.amazonaws.com/model/<ID>/converse`),
+which serves every chat model on Bedrock: foundation model IDs, cross-region
+inference profiles (`us.anthropic.…`) and ARNs. LiteLLM's route segments
+`bedrock/converse/<ID>` and `bedrock/invoke/<ID>` are accepted and also use
+Converse.
+
+- Credentials, first match wins, as the AWS SDKs (and so the reference's
+  LiteLLM) look for them: the deployment's `api_key` (a Bedrock API key, `env:`
+  references allowed); `AWS_BEARER_TOKEN_BEDROCK`; `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY` (with `AWS_SESSION_TOKEN`); then the profile
+  `AWS_PROFILE` or `default` of `~/.aws/credentials` and `~/.aws/config`
+  (`AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`): static keys,
+  `credential_process`, or, for SSO and role profiles, the AWS CLI's
+  `aws configure export-credentials`. Credential programs run only when a
+  request needs them, and their answer is reused until five minutes before it
+  expires. API keys are sent as Bearer tokens; AWS keys sign each request with
+  Signature Version 4 (service `bedrock`). Like the reference's configuration,
+  `litellm_params` holds no other AWS setting.
+- Region: `AWS_REGION_NAME`, `AWS_REGION`, `AWS_DEFAULT_REGION`, the profile's
+  `region`, else `us-east-1`. Endpoint: `api_base` or
+  `AWS_BEDROCK_RUNTIME_ENDPOINT` (for a VPC endpoint), else the region's
+  runtime host.
+- The request carries the system prompt, the text and images (PNG, JPEG, GIF,
+  WebP) and `max_tokens` as `inferenceConfig.maxTokens`; structured documents
+  use the JSON-text mode. Usage includes cache read and write tokens. A
+  guardrail intervention or content filter is a refusal, a `max_tokens` or
+  context-window stop a truncation.
+- Not implemented: web-identity, instance and container credentials directly
+  (an AWS CLI profile that exports them works), Bedrock batch inference and
+  SageMaker endpoints.
+
+`vertex_ai/<model>` (or `vertex_ai_beta/`) calls Google Vertex AI: Gemini and
+the other Model Garden models through its OpenAI-compatible endpoint
+(`https://<location>-aiplatform.googleapis.com/v1/projects/<project>/locations/<location>/endpoints/openapi/chat/completions`,
+model `google/<model>` unless the name has its publisher), and Claude models
+(`vertex_ai/claude-…@<version>`) through Anthropic's Messages API behind
+`…/publishers/anthropic/models/<model>:rawPredict` with
+`anthropic_version: vertex-2023-10-16`.
+
+- Credentials, in Application Default Credentials order:
+  `GOOGLE_APPLICATION_CREDENTIALS` (a service-account or user credentials
+  file), gcloud's application default credentials (`gcloud auth
+  application-default login`; `CLOUDSDK_CONFIG` moves them), else
+  `gcloud auth application-default print-access-token`. A service account
+  signs a token request (RS256 JWT); user credentials use their refresh token.
+  Access tokens are cached in the process until a minute before they expire.
+- Project: `VERTEXAI_PROJECT`, `VERTEX_PROJECT`, `GOOGLE_CLOUD_PROJECT`, or the
+  credentials' project. Location: `VERTEXAI_LOCATION`, `VERTEX_LOCATION`, else
+  `us-central1`; `global` uses `aiplatform.googleapis.com`. `api_base` replaces
+  the host.
+- Not implemented: workload identity federation (`external_account`
+  credentials), the Compute Engine metadata server, and Vertex AI's native
+  `generateContent` API, which LiteLLM uses for Gemini (the OpenAI-compatible
+  endpoint serves the same models).
+
+Neither cloud is in the [pricing catalog](pricing.md): usage is recorded and
+its cost is unknown, as for other unpriced models. Both were tested offline:
+the signer against the AWS Signature Version 4 test suite and curl's
+`--aws-sigv4`, the Converse mapping against the API reference's shapes, and
+token minting against a local token endpoint. Acceptance by AWS and Google
+has not been checked live.
+
 ### Unsupported prefixes
 
 Any other prefix fails when no usable deployment remains, with an error that
 names the working route for an OpenAI-compatible endpoint, `openai/<model>`
-with `api_base`. Bedrock (`bedrock/`, `bedrock_converse/`, `sagemaker/`) is
-refused because it needs AWS Signature Version 4 signing, and Vertex AI
-(`vertex_ai/`, `vertex_ai_beta/`) because it needs Google Cloud service-account
-authentication; neither is implemented. Gemini itself is reachable directly as
-`gemini/<model>` with `GEMINI_API_KEY`.
+with `api_base` (a LiteLLM proxy in front of the provider works this way).
+SageMaker (`sagemaker/`, `sagemaker_chat/`) is refused: a SageMaker endpoint
+with an OpenAI-compatible route works as `openai/<model>` with its `api_base`.
+Gemini itself is reachable directly as `gemini/<model>` with
+`GEMINI_API_KEY`.
 
 These tables describe implemented request shapes, not live compatibility tests
 against every vendor. No provider network call is required by the test suite.
 `markitai doctor` accepts every prefix of this build, and so do `markitai init`'s
-guided and interactive model prompts. The browser workbench of `serve` offers
-every prefix of the first table as a provider card with its default base URL and
+guided and interactive model prompts, except `bedrock/` and `vertex_ai/`, whose
+cloud credentials are configured in the configuration file or environment.
+The browser workbench of `serve` offers every prefix of the first table as a
+provider card with its default base URL and
 first key variable; model discovery lists a provider's models through
 `GET <base>/models` with the key as Bearer (Together AI's bare-array answer
 included), using the base variable when no `api_base` is given. Perplexity, Z.ai

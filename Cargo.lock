@@ -2180,6 +2180,7 @@ dependencies = [
  "regex",
  "reqwest",
  "resvg",
+ "ring",
  "rusqlite",
  "scraper",
  "serde",

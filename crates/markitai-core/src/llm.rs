@@ -4,6 +4,7 @@ pub(crate) mod batch;
 mod chatgpt;
 mod chunks;
 mod claude;
+mod cloud;
 mod copilot;
 mod degeneration;
 mod diagnosis;
@@ -93,6 +94,9 @@ struct Deployment {
     /// `litellm_params.reasoning_effort`, or the provider's clean-up default.
     reasoning_effort: Option<String>,
     supports_vision: Option<bool>,
+    /// Bedrock or Vertex AI: request signing and wire format beyond `key`,
+    /// which then only identifies the credential.
+    cloud: Option<Arc<cloud::Cloud>>,
 }
 
 /// Debug output names whether a key is set, never the key, and shows the
@@ -113,6 +117,7 @@ impl std::fmt::Debug for Deployment {
             .field("max_tokens", &self.max_tokens)
             .field("reasoning_effort", &self.reasoning_effort)
             .field("supports_vision", &self.supports_vision)
+            .field("cloud", &self.cloud)
             .finish()
     }
 }
@@ -863,6 +868,18 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             continue;
         };
         let (provider, model_name) = model.split_once('/').unwrap_or(("openai", model));
+        if providers::CLOUDS.contains(&provider) {
+            let provider = if provider == "bedrock" {
+                "bedrock"
+            } else {
+                "vertex_ai"
+            };
+            match cloud::deployment(entry, provider, model_name, env, grouped) {
+                Ok(deployment) => result.push(deployment),
+                Err(error) => last_error = Some(error),
+            }
+            continue;
+        }
         if matches!(provider, "copilot" | "claude-agent" | "chatgpt") {
             let deployment = if provider == "copilot" {
                 copilot::deployment(entry, env, grouped)
@@ -1012,6 +1029,7 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             supports_vision: entry
                 .pointer("/model_info/supports_vision")
                 .and_then(Value::as_bool),
+            cloud: None,
         });
     }
     if result.is_empty() {
@@ -1676,21 +1694,39 @@ fn request_with_mode(
     timeout: u64,
     mut observation: Option<&mut routing::Observation>,
 ) -> std::result::Result<String, Failure> {
-    let mut request = client.post(&entry.endpoint);
-    if let Some(key) = &entry.key {
-        request = match entry.protocol {
-            Protocol::Anthropic => request.header("x-api-key", key),
-            Protocol::Azure => request.header("api-key", key),
-            Protocol::Chat => request.bearer_auth(key),
-        };
-    }
-    if entry.protocol == Protocol::Anthropic {
-        request = request.header("anthropic-version", "2023-06-01");
-    }
-    let request = request.json(&structured.map_or_else(
+    let body = structured.map_or_else(
         || payload(entry, prompts),
         |wire| wire.payload(entry, prompts),
-    ));
+    );
+    let mut request = client.post(&entry.endpoint);
+    let request = if let Some(cloud) = entry.cloud.as_deref() {
+        // Signing or a token exchange that fails is this deployment's
+        // credential problem, never a reason to resend the document.
+        cloud::prepare(cloud, client, request, entry, body).map_err(|error| {
+            Failure {
+                kind: FailureKind::Authentication,
+                error,
+                retryable: false,
+                fatal: false,
+                document_fatal: true,
+                retry_after: None,
+                deployment: None,
+            }
+            .at(entry)
+        })?
+    } else {
+        if let Some(key) = &entry.key {
+            request = match entry.protocol {
+                Protocol::Anthropic => request.header("x-api-key", key),
+                Protocol::Azure => request.header("api-key", key),
+                Protocol::Chat => request.bearer_auth(key),
+            };
+        }
+        if entry.protocol == Protocol::Anthropic {
+            request = request.header("anthropic-version", "2023-06-01");
+        }
+        request.json(&body)
+    };
     let started = observation.as_ref().map(|_| std::time::Instant::now());
     let response = request.send().map_err(|error| {
         if error.is_timeout()
@@ -1830,6 +1866,10 @@ fn request_with_mode(
         ))
         .at(entry)
     })?;
+    let data = match entry.cloud.as_deref() {
+        Some(cloud) => cloud::response(cloud, data, entry),
+        None => data,
+    };
     record_usage(usage, entry, &data);
     let envelope = match entry.protocol {
         Protocol::Anthropic => data.get("content").is_some_and(Value::is_array),
@@ -2118,6 +2158,7 @@ fn record_usage_class(
 #[cfg(test)]
 mod tests {
     mod auth_fallback;
+    mod cloud_auth;
     mod hardening;
     mod reasoning;
     mod resend;
