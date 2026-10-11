@@ -1174,16 +1174,13 @@ def _run_install_python(
         "sys.exit(code)\n",
         encoding="utf-8",
     )
-    if sys.platform == "win32":
-        (stub_dir / "uv.cmd").write_text(
-            f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8"
-        )
-    else:
-        launcher = stub_dir / "uv"
-        launcher.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8"
-        )
-        launcher.chmod(0o755)
+    # A PowerShell script, not a uv.cmd: cmd.exe read the unquoted
+    # ">=3.11,<3.14" request as redirections. PowerShell hands it over
+    # whole, as it does to the real uv.exe.
+    (stub_dir / "uv.ps1").write_text(
+        f"& '{sys.executable}' '{script}' @args\nexit $LASTEXITCODE\n",
+        encoding="utf-8",
+    )
     body = (
         f"function Test-WindowsOnArm {{ return ${str(on_arm).lower()} }}\n"
         "function Test-CommandExists { return $true }\n"
