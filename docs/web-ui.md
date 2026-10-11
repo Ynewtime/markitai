@@ -149,6 +149,12 @@ theme (Auto, Light, Dark); Access token shows and changes this tab's token.
   missing OCR, size limits). The service's full wording stays behind Details.
   Provider probe and discovery phrases are translated the same way. A job whose
   history could not be saved (`persistence_error`) reports it in the page.
+- **A failed action on one conversion** (Retry, Delete, Download, Enhance, Copy;
+  for a submission Retry failed, Stop, ZIP and Delete) adds one line at the top of
+  its inspector, phone sheet or preview, in the style of the conversion's own
+  failure reason: a red ✕, one sentence, Full details. It stays until the action
+  is tried again or another conversion is chosen, the polite live region reads
+  it, and no page notice is shown for it.
 - **Offline**: a request that cannot reach the service shows a notice with Try
   now; the page also asks again every five seconds and says when the service is
   back, then

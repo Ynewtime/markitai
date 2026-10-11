@@ -1529,6 +1529,28 @@ main:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* a failed action on this conversion: the same line as its own failure reason */
+.action-error {
+  margin-bottom: 16px;
+  color: var(--err);
+}
+.action-error-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.action-error-line .glyph {
+  margin-top: 2px;
+}
+.action-error .notice-details {
+  margin-top: 4px;
+}
+.preview .action-error {
+  margin: 12px 24px 0;
+}
+.preview.is-phone .action-error {
+  margin: 12px 16px 0;
+}
 .insp.is-sheet .insp-line {
   display: flex;
   align-items: flex-start;

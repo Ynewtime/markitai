@@ -28,6 +28,7 @@ export interface ItemActionsApi {
   preview(item: SessionItem): void;
   compare(item: SessionItem): void;
   download(item: SessionItem, path: string): void;
+  copyFailed(item: SessionItem): void;
   retry(item: SessionItem): void;
   retryPlain(item: SessionItem): void;
   retryWithOcr(item: SessionItem): void;
@@ -44,6 +45,34 @@ export interface JobActionsApi {
   select(key: string): void;
 }
 
+/** An action on this conversion that failed (Retry, Delete, Download, Enhance,
+ * Copy): one sentence, and the service's full wording behind Full details. */
+export interface ActionFailure {
+  key: string;
+  text: string;
+  detail: string;
+}
+
+/** The failed action, in the style of the conversion's own failure reason: a
+ * red ✕, one sentence, Full details. No box: it reads as part of the inspector. */
+export function ActionError({ t, failure }: { t: Dict; failure: ActionFailure | null }) {
+  if (!failure) return null;
+  return (
+    <div class="action-error">
+      <p class="action-error-line">
+        <StatusGlyph glyph="failed" />
+        <span>{failure.text}</span>
+      </p>
+      {failure.detail && (
+        <details class="notice-details">
+          <summary>{t.notificationDetails}</summary>
+          <p class="raw">{failure.detail}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export interface InspectorContext {
   t: Dict;
   locale: Locale;
@@ -56,6 +85,8 @@ export interface InspectorContext {
   busy: ReadonlySet<string>;
   labelWords: LabelWords;
   describe: (error: unknown) => Described;
+  /** The selected conversion's failed action, if any. */
+  failure: ActionFailure | null;
 }
 
 const docsPage = (docsUrl: string, page: string) => (/\/index\.md$/.test(docsUrl) ? docsUrl.replace(/index\.md$/, `${page}.md`) : docsUrl);
@@ -365,6 +396,7 @@ export function ItemInspector({
   const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
   return (
     <section class={sheet ? "insp is-sheet" : "insp"} aria-labelledby={headingId}>
+      <ActionError t={t} failure={ctx.failure?.key === item.key ? ctx.failure : null} />
       <header class="insp-head">
         {/* In the sheet the name is the sheet's own heading. */}
         {!sheet && (
@@ -530,6 +562,7 @@ export function JobInspector({
   const preset = presetOf(job.options);
   return (
     <section class={sheet ? "insp is-sheet" : "insp"} aria-labelledby={headingId}>
+      <ActionError t={t} failure={ctx.failure?.key === `job:${job.jobId}` ? ctx.failure : null} />
       <header class="insp-head">
         {!sheet && (
           <h2 id={headingId} class="insp-title">

@@ -16,6 +16,7 @@ import { CompareView } from "./compare-view.tsx";
 import { Icon } from "./icons.tsx";
 import { MarkdownView, type RenderedState, type Tab } from "./markdown-view.tsx";
 import { readFurniture, storeFurniture } from "./pdf-settings.tsx";
+import { ActionError, type ActionFailure } from "./inspector.tsx";
 
 const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
@@ -36,6 +37,10 @@ export interface PreviewProps {
   onMode: (mode: "preview" | "compare") => void;
   onWide: () => void;
   onDownload: (item: SessionItem, path: string) => void;
+  /** Copy did not reach the clipboard: the failure line of this conversion. */
+  onCopyFailed: (item: SessionItem) => void;
+  /** This conversion's failed action, shown under the toolbar. */
+  failure: ActionFailure | null;
   announce: (message: string) => void;
   describe: (error: unknown) => { text: string; detail: string };
 }
@@ -117,7 +122,7 @@ function MoreMenu({ t, disabled, furniture, url, onExport, onFurniture }: { t: D
 }
 
 export function PreviewPane(props: PreviewProps) {
-  const { t, locale, item, createdAt, position, mode, wide, phone, compareAvailable, onPrevious, onNext, onClose, onMode, onWide, onDownload, announce, describe } = props;
+  const { t, locale, item, createdAt, position, mode, wide, phone, compareAvailable, onPrevious, onNext, onClose, onMode, onWide, onDownload, onCopyFailed, failure, announce, describe } = props;
   const doc = useResultDocument(item);
   const [tab, setTab] = useState<Tab>("rendered");
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
@@ -231,7 +236,8 @@ export function PreviewPane(props: PreviewProps) {
             onClick={() =>
               void copyText(doc.markdown ?? "").then((ok) => {
                 setCopied(ok ? "copied" : "failed");
-                announce(ok ? t.copied : t.copyFailed);
+                if (ok) announce(t.copied);
+                else onCopyFailed(item);
               })
             }
           >
@@ -262,6 +268,7 @@ export function PreviewPane(props: PreviewProps) {
           </button>
         </div>
       </header>
+      <ActionError t={t} failure={failure?.key === item.key ? failure : null} />
       {error && (
         <p class="viewer-alert line-error" role="alert">
           {error}
@@ -308,6 +315,7 @@ function PhonePreview({
   onClose,
   onMode,
   onDownload,
+  failure,
   describe,
   doc,
   tab,
@@ -356,6 +364,7 @@ function PhonePreview({
             {t.downloadShort}
           </button>
         </div>
+        <ActionError t={t} failure={failure?.key === item.key ? failure : null} />
         {error && (
           <p class="viewer-alert line-error" role="alert">
             {error}

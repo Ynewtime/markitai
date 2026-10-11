@@ -19,7 +19,7 @@ import type { PanelState } from "./components/conversions-page.tsx";
 import { StateBlock } from "./components/state-block.tsx";
 import { TokenDialog } from "./components/token-dialog.tsx";
 import { UrlInput } from "./components/url-input.tsx";
-import type { InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
+import type { ActionFailure, InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
 import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
 import { useConnectivity } from "./hooks/use-connectivity.ts";
 import { useConversions } from "./hooks/use-conversions.ts";
@@ -342,9 +342,25 @@ export function App() {
     [maxItems, send, staged, t, note, dismiss],
   );
 
+  // ---- a failed action on one conversion: one line in its inspector (no
+  // notice), until the action is tried again or another conversion is chosen
+  const [actionFailure, setActionFailure] = useState<ActionFailure | null>(null);
+  const failAction = useCallback(
+    (key: string, failure: string, error?: unknown) => {
+      const words = error === undefined ? { text: "", detail: "" } : describe(error);
+      const [first = "", ...rest] = words.text.split(/(?<=[.!?。！？])\s*/);
+      const text = first ? `${failure} · ${first}` : failure;
+      setActionFailure({ key, text, detail: [rest.join(" ").trim(), words.detail].filter(Boolean).join("\n") });
+      announce(text);
+    },
+    [describe, announce],
+  );
+  const clearFailure = useCallback((key: string) => setActionFailure((previous) => (previous?.key === key ? null : previous)), []);
+
   // ---- item actions
   const requestItem = useCallback(
     async (item: SessionItem, request: () => Promise<unknown>, failure: string) => {
+      clearFailure(item.key);
       mark(item.key, true);
       let error: unknown = null;
       try {
@@ -353,13 +369,10 @@ export function App() {
         error = reason;
       }
       mark(item.key, false);
-      if (error !== null && error !== undefined) {
-        const text = describe(error);
-        note({ tone: "error", text: `${failure} · ${item.name} · ${text.text}`, detail: text.detail });
-      }
+      if (error !== null && error !== undefined) failAction(item.key, failure, error);
       return error;
     },
-    [describe, note],
+    [clearFailure, failAction],
   );
   const savedOptions = (item: SessionItem): JobOptions => publicOptions(item.options ?? conversionsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
   const retry = useCallback(
@@ -383,11 +396,10 @@ export function App() {
       updateList({ selected: item.key, mode: "compare" }, true);
     },
     download: (item, path) => {
-      void download(filePath(item.jobId, path), basename(path)).catch((error: unknown) => {
-        const text = describe(error);
-        note({ tone: "error", text: `${dicts[localeRef.current].downloadFailedFile} · ${text.text}`, detail: text.detail });
-      });
+      clearFailure(item.key);
+      void download(filePath(item.jobId, path), basename(path)).catch((error: unknown) => failAction(item.key, dicts[localeRef.current].downloadFailedFile, error));
     },
+    copyFailed: (item) => failAction(item.key, dicts[localeRef.current].copyFailed),
     retry: (item) => void retry(item),
     retryPlain: (item) => void retry(item, { ...savedOptions(item), llm: false, alt: null, desc: null }),
     retryWithOcr: (item) => {
@@ -419,45 +431,52 @@ export function App() {
       mark(key, true);
       try {
         const authorized = await cloudflare.authorizeBatch(batch.map(({ item, options }) => ({ options, sources: [{ name: item.name, kind: item.kind }] })), true);
+        if (key.startsWith("job:")) clearFailure(key);
         const result = await submitRetryBatch(batch, authorized, (item, options) => conversionsRef.current.retry(item, options));
         if (result) announce(retryBatchAnnouncement(batch, result, dicts[localeRef.current]));
-        if (result?.failed) note({ tone: "error", text: dicts[localeRef.current].announceRetryAllFailed(result.attempted, result.failed) });
+        // One submission's retries fail in its inspector; all of them, in the page.
+        if (result?.failed && key.startsWith("job:")) failAction(key, dicts[localeRef.current].announceRetryAllFailed(result.attempted, result.failed));
+        else if (result?.failed) note({ tone: "error", text: dicts[localeRef.current].announceRetryAllFailed(result.attempted, result.failed) });
       } finally {
         mark(key, false);
       }
     },
-    [cloudflare.authorizeBatch, announce, note],
+    [cloudflare.authorizeBatch, announce, note, clearFailure, failAction],
   );
   const downloadArchive = useCallback(
-    (path: string, name: string) => {
+    (path: string, name: string, key?: string) => {
+      if (key) clearFailure(key);
       void download(path, name, features?.download_tickets === true).catch((error: unknown) => {
+        if (key) return failAction(key, dicts[localeRef.current].downloadFailed, error);
         const text = describe(error);
         note({ tone: "error", text: `${dicts[localeRef.current].downloadFailed} · ${text.text}`, detail: text.detail });
       });
     },
-    [features, describe, note],
+    [features, describe, note, clearFailure, failAction],
   );
   const stopJobs = useCallback(
     async (jobIds: string[], key: string) => {
+      if (key.startsWith("job:")) clearFailure(key);
       mark(key, true);
       const result = await conversionsRef.current.stop(jobIds);
       mark(key, false);
-      if (result.error) {
+      if (result.error && key.startsWith("job:")) failAction(key, dicts[localeRef.current].stopRemaining, result.error);
+      else if (result.error) {
         const text = describe(result.error);
         note({ tone: "error", text: `${dicts[localeRef.current].stopRemaining} · ${text.text}`, detail: text.detail });
       } else if (result.stopping > 0) announce(dicts[localeRef.current].stopRequested(result.stopping));
     },
-    [describe, note, announce],
+    [describe, note, announce, clearFailure, failAction],
   );
   const jobActions: JobActionsApi = {
-    zip: (jobId) => downloadArchive(`/api/jobs/${encodeURIComponent(jobId)}/archive`, `markitai-${jobId}.zip`),
+    zip: (jobId) => downloadArchive(`/api/jobs/${encodeURIComponent(jobId)}/archive`, `markitai-${jobId}.zip`, `job:${jobId}`),
     retryFailed: (jobId) => void retryItems(conversionsRef.current.items.filter((item) => item.jobId === jobId), `job:${jobId}`),
     stop: (jobId) => void stopJobs([jobId], `job:${jobId}`),
     remove: async (jobId) => {
+      clearFailure(`job:${jobId}`);
       const error = await conversionsRef.current.removeJob(jobId);
       if (error !== null) {
-        const text = describe(error);
-        note({ tone: "error", text: `${dicts[localeRef.current].deleteFailed} · ${text.text}`, detail: text.detail });
+        failAction(`job:${jobId}`, dicts[localeRef.current].deleteFailed, error);
         return false;
       }
       updateList({ selected: null, mode: "inspector" });
@@ -564,6 +583,7 @@ export function App() {
     busy,
     labelWords,
     describe,
+    failure: actionFailure,
   };
   const waiting = waitingJobs(conversions.items, conversions.jobs);
   const retryable = conversions.items.filter((item) => (isFailed(item) || item.skipReason === "user_stopped") && canRetry(item));
@@ -572,6 +592,7 @@ export function App() {
   // overview; when it came with the address (a bookmark, a shared link), a
   // notice says why the page shows something else.
   const selected = listState.selected;
+  useEffect(() => setActionFailure((previous) => (previous && previous.key !== selected ? null : previous)), [selected]);
   const linked = useRef(listState.selected);
   const [gone, setGone] = useState(false);
   useEffect(() => {

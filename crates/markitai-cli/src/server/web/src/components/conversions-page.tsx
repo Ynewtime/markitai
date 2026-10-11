@@ -114,6 +114,8 @@ export function ConversionsPage(props: ConversionsPageProps) {
       onMode={props.onMode}
       onWide={props.onWide}
       onDownload={props.onDownload}
+      onCopyFailed={props.itemActions.copyFailed}
+      failure={ctx.failure}
       announce={props.announce}
       describe={props.describe}
     />
