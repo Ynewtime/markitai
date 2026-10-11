@@ -781,7 +781,7 @@ class TestWindowsPathLength:
         deep = Path(tmp_path.anchor) / ("d" * 150)
         other = self.LONG.replace("example.com", "example.org")
         with patch("sys.platform", "win32"):
-            short = screenshot_path_for(tmp_path, "example.com_page.full.jpg")
+            short = screenshot_path_for(deep, "example.com_page.full.jpg")
             fitted = screenshot_path_for(deep, self.LONG)
             fitted_other = screenshot_path_for(deep, other)
         assert short.name == "example.com_page.full.jpg"
@@ -813,7 +813,13 @@ class TestWindowsPathLength:
             Image.new("RGB", (40, 30), "white").save(path, "JPEG")
 
         page.screenshot = AsyncMock(side_effect=screenshot)
-        deep = tmp_path / ("d" * 120)
+        # A folder that leaves the name 60 characters on every machine: a
+        # fixed depth under the temporary folder (macOS's is over 110
+        # characters) left room for no name at all there
+        depth = 259 - 4 - len(str(tmp_path.resolve())) - 2 - 60
+        if depth < 1:
+            pytest.skip("the temporary folder alone leaves no room for a name")
+        deep = tmp_path.resolve() / ("d" * depth)
         url = "https://example.com/" + "a-long-article-slug/" * 10 + "?page=2"
         with patch("sys.platform", "win32"):
             path, tiles = await _capture_screenshot(
@@ -822,3 +828,4 @@ class TestWindowsPathLength:
         assert path is not None and path.is_file()
         assert tiles == [path]
         assert len(str(path)) + 4 <= 259
+        assert path.name.startswith("example.com_a-long-article-slug_")
