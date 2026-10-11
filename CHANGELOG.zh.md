@@ -18,8 +18,11 @@
 
 - **React 网页应用退役。** `webapp/` 及其在 `markitai/serve/static/` 的构建产物已从仓库和安装包中移除；工作台在 markitai-rust 仓库构建，连同记录每个文件摘要的清单一起放在 `markitai/serve/workbench/`（`scripts/sync_workbench.py` 负责更新和校验），构建 markitai 不需要 Node 或 Rust。你会注意到：上面描述的新布局；设置是独立页面（`/settings/models` 等），不再是弹窗；预览在列表旁打开，不再盖住列表；1.2 界面的 `/assets/…` 地址不再存在。wheel 从 1.51 MB 变为 1.64 MB：工作台的每个脚本同时附带原文和 gzip 压缩版，服务端直接发送压缩版，不用在请求时压缩。
 - **没有可用模型时拒绝 LLM 请求**：`POST /api/jobs` 要求 LLM 处理（`llm: true`，或开启 LLM 的预设）而没有任何已配置模型可用时，现在返回 422 `llm_unavailable`，不保存任何内容。此前会不用模型直接转换并报告成功。服务端配置开启了 LLM 却没有模型时，仍和以前一样不用模型转换。
-- **`serve` 中的 Cloudflare 需要逐次确认**：选用 Cloudflare 抓取策略或文件后端的任务，必须在同一请求的选项里带上 `"remote_processing": "cloudflare"`（工作台会先征得你的确认）；没有令牌的调用方会被拒绝（费用记在服务端的 Cloudflare 账户上）；Cloudflare 未配置时返回 `cloudflare_unavailable`。确认不会被保存，所以重试这类条目要再次确认。
-- `markitai serve` 的错误在 `detail`、`code` 之外带上稳定的 `reason`（`llm_unavailable`、`file_too_large`、`ticket_invalid` 等），工作台据此显示本地化的说明。被请求结构拒绝的请求，`detail` 改为一句点名字段的说明，不再是 pydantic 的列表，也不会回显提交的值。任务选项严格校验（此前 `"llm": "yes"` 会被当成 true）；URL 在提交时就校验（`invalid_url`、`unsupported_url_scheme`），不再变成失败条目；超过 120 个字符或含控制字符的标签会被拒绝（`invalid_label`）。超过 64 MiB 的条目结果不再以 JSON 返回（413 `result_too_large`；请下载文件，或用 `?max_bytes=` 取开头）。
+- **`serve` 中的 Cloudflare 需要逐次确认**：选用 Cloudflare 抓取策略或文件后端的任务（或重试），必须在同一请求的选项里带上新选项 `"remote_processing": "cloudflare"`；工作台会先征得你的确认，缺少时返回 422 `remote_processing_confirmation_required`。服务端不信任的调用方（没有令牌的其他机器）会被拒绝（403 `remote_processing_forbidden`），因为费用记在服务端的 Cloudflare 账户上；Cloudflare 未配置时返回 422 `cloudflare_unavailable`（服务端设置了 `MARKITAI_NO_REMOTE_FETCH=1` 或 `fetch.remote_consent: never` 时为 `remote_processing_disabled`）。确认不会被保存，所以重试这类条目要再次确认。
+- `markitai serve` 的错误在 `detail`、`code` 之外带上稳定的 `reason`（`llm_unavailable`、`file_too_large`、`ticket_invalid` 等），工作台据此显示本地化的说明。
+- **任务选项严格校验**：`POST /api/jobs` 和重试请求里，未知的选项名或类型不对的值会以 422 拒绝（任务为 `invalid_options`，重试为 `invalid_retry_body`），不再被忽略或自动转换；此前 `"llm": "yes"` 会被当成 true。URL 在提交时就校验（422 `invalid_url`、`unsupported_url_scheme`），不再变成失败条目；超过 120 个字符或含控制字符的标签会被拒绝（422 `invalid_label`）。
+- **422 用一句话说明原因**：被请求结构拒绝的请求，`detail` 是一句逐个点名字段及其问题的说明（如 `invalid options: colour: Extra inputs are not permitted; llm: Input should be a valid boolean`，最多五项），不再是 pydantic 的对象列表，也绝不回显提交的值（它可能是 API key）。
+- **超过 64 MiB 的结果不再以 JSON 返回**：`GET /api/jobs/{job_id}/items/{item_id}/result` 对超过 64 MiB 的 Markdown 结果返回 413 `result_too_large`，不再拼出这么大的响应；请改为下载文件，或用 `?max_bytes=` 取开头部分。
 - 仍在等待提供商批处理（`--llm-batch`）的条目不能再从网页重试或增强（409 `batch_pending`），否则同一份增强会付两次费。
 - 凭据接口在 `api_key_masked` 之外，也以工作台读取的 `api_key` 字段返回同一个打码后的 key。
 - PyYAML、beautifulsoup4、soupsieve、defusedxml、PyMuPDF、openpyxl、numpy 和 olefile 改为声明的依赖。markitai 直接导入它们，此前只是随其他包间接安装，上游某次发布去掉其中一个就可能让 `import markitai` 失败。
