@@ -5,8 +5,9 @@ This product is licensed under the MIT License (see LICENSE).
 
 This NOTICE records third-party licence obligations that the MIT licence of
 markitai's own source code does not, by itself, satisfy: dependencies whose
-licence terms flow through to you as a user, and third-party code that was
-ported into this repository under an attribution-requiring licence.
+licence terms flow through to you as a user, and third-party code and data
+ported into or bundled with this repository under an attribution-requiring
+licence.
 
 
 ================================================================================
@@ -279,3 +280,24 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+7. Bundled web workbench: libraries, icons and font
+================================================================================
+
+`markitai serve` ships a prebuilt web UI, built in the markitai-rust
+repository and vendored under markitai/serve/workbench/. It bundles these
+works; each one's licence text travels with it in
+markitai/serve/workbench/LICENSES/ (named after the dash):
+
+- Preact (MIT), Copyright (c) 2015-present Jason Miller - preact-LICENSE
+- marked (MIT), Copyright (c) 2018+, MarkedJS; Copyright (c) 2011-2018,
+  Christopher Jeffrey - marked-LICENSE
+- DOMPurify (Apache-2.0 or MPL-2.0), Cure53 and other contributors -
+  DOMPurify-LICENSE
+- Phosphor Icons (MIT), Copyright (c) 2020 Phosphor Icons - phosphor-LICENSE
+- LobeHub Icons (MIT), Copyright (c) 2023 LobeHub: the providers' brand marks
+  in the model settings - lobehub-icons-LICENSE. The marks are trademarks of
+  their owners and only name the provider each one stands for.
+- Inter (SIL Open Font License 1.1), Copyright 2016 The Inter Project
+  Authors - Inter-OFL.txt

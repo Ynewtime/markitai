@@ -10,9 +10,11 @@ away from the one that gates every pull request::
 from __future__ import annotations
 
 import argparse
+import json
 import zipfile
 from pathlib import Path
 
+WORKBENCH = "markitai/serve/workbench/"
 REQUIRED_FILES = {
     "markitai/serve/workbench/manifest.json",
     "markitai/serve/workbench/index.html",
@@ -35,8 +37,17 @@ def check_wheel(wheel_path: Path) -> None:
         if entry_points_path is None:
             raise SystemExit("wheel is missing dist-info/entry_points.txt")
         entry_points = wheel_file.read(entry_points_path).decode()
+        manifest = f"{WORKBENCH}manifest.json"
+        listed = (
+            json.loads(wheel_file.read(manifest))["files"] if manifest in names else {}
+        )
 
     missing = sorted(REQUIRED_FILES - names)
+    # Every file of the vendored workbench its manifest lists: brand marks,
+    # fonts and licences included, not only the few named above
+    missing += sorted(
+        f"{WORKBENCH}{name}" for name in listed if f"{WORKBENCH}{name}" not in names
+    )
     # The app script ships plain, gzip-only, or both (the bundle decides).
     if not names & {
         "markitai/serve/workbench/ui/app.js",
