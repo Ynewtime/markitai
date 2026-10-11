@@ -30,6 +30,7 @@
 - MCP Registry 条目运行它所标明的版本（`uvx --from "markitai[mcp]==1.2.1"`），不再运行 PyPI 上的最新版。
 - 移除未使用的 Python API：`LLMProcessor.clean_markdown`、`get_usage`、`get_total_cost` 和 `reset_call_counter`（按文档统计的用量仍由 `get_context_usage`/`get_context_cost` 提供）、`LLMProcessor.enhance_url_with_vision`、从未被赋值的 `FetchResult.static_content`/`browser_content` 字段、`BatchProcessor.process_batch`（连同 `markitai.batch.ProcessFunc`）、`ImageProcessor.process_and_save_async`、`OCRProcessor.is_scanned_pdf`、`BaseConverter.can_convert`、`PromptManager.list_prompts`、`collect_user_notices`、`markitai.llm.MarkitaiLLMLogger`（它被注册为全局 LiteLLM 回调），以及从未抛出过的 `QuotaError`、`ProviderTimeoutError` 和 `SDKNotAvailableError`。`SingleFileWorkflow` 现在必须传入 `processor=`，不再接受 `no_cache`/`no_cache_patterns`。`prompts.url_enhance_system`/`url_enhance_user` 设置及其提示词文件也已移除：没有任何代码路径会发送它们，仍设置了它们的配置照常加载。
 - `markitai serve` 的 LLM 设置接口（`/api/settings/llm…`，包括已存凭据）对所有客户端都要求访问令牌，本机也不例外：本机任何程序、另一个 `localhost` 端口上的网页同样经回环地址连入。启动时打开的浏览器和打印出的令牌 URL 都带有令牌；使用 `--no-auth` 时，本机仍可不带令牌访问设置。没有客户端地址的请求不再被当作来自本机。
+- **`markitai serve --no-auth` 只为本机抓取 URL**：其他机器提交带 URL 的任务或重试会收到 403 `remote_url_forbidden`，公网地址和内网地址一样，与共享工作台的 API 约定一致。此前其他机器只是限于公网地址，任何能连上服务器的人仍可借它抓取网页。本机仍可提交任意 URL，其他机器仍可上传文件；启用令牌认证（默认）时，持有令牌的机器保有全部权限。
 - 升级须知：LLM 缓存键现在覆盖全文和图片字节，所以已有的 `cache.db` 条目在升级后首次运行时都不会命中，已处理过的文档第一次重跑会重新调用 LLM。`markitai serve` 的历史改为从任务完成时间起算，不再看目录修改时间，所以完成超过七天的历史会在首次启动时删除，即使其目录最近被改动过。
 
 ### 修复

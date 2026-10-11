@@ -290,13 +290,42 @@ class TestOrigin:
 
 
 class TestUntrustedCallers:
-    async def test_inward_urls_are_refused(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "url", ["http://192.168.1.4/admin", "https://example.com/post"]
+    )
+    async def test_urls_are_refused(self, tmp_path: Path, url: str) -> None:
         async with _client(_make_app(tmp_path, token=None), peer=LAN_PEER) as client:
+            response = await client.post(
+                "/api/jobs", files=[("urls", (None, json.dumps([url])))]
+            )
+        check_error(response, 403, "remote_url_forbidden")
+
+    async def test_this_machine_still_submits_urls(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fake_process_url_item(url, cfg, out_dir, shared, url_ctx, **_):
+            from markitai.batch import ProcessResult
+
+            out = out_dir / "page.md"
+            out.write_text("# page\n", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(out))
+
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_url_item", fake_process_url_item
+        )
+        async with _client(_make_app(tmp_path, token=None)) as client:
             response = await client.post(
                 "/api/jobs",
                 files=[("urls", (None, json.dumps(["http://192.168.1.4/admin"])))],
             )
-        check_error(response, 403, "remote_url_forbidden")
+            assert response.status_code == 201, response.text
+            job_id = response.json()["job_id"]
+            for _ in range(200):
+                snapshot = (await client.get(f"/api/jobs/{job_id}")).json()
+                if snapshot["status"] != "running":
+                    break
+                await asyncio.sleep(0.02)
+        assert snapshot["status"] == "done"
 
 
 class TestOriginalsAreNeverRendered:

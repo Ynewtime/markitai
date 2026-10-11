@@ -32,7 +32,7 @@ At startup the server prints a URL that ends in `#token=…`, and the browser it
 
 A tab opened without the token asks for it where it is needed (**Settings → Access token** holds it for that tab). Downloads opened by the browser use a single-use link that expires after a minute, so the token itself never appears in a URL, the browser history or the download list.
 
-Set `MARKITAI_SERVE_TOKEN` to keep the same token across restarts. `--no-auth` drops the token entirely: other devices can still upload, download and use history, but their URL targets are limited to public addresses and LLM settings are locked. This machine then reaches the LLM settings without a token.
+Set `MARKITAI_SERVE_TOKEN` to keep the same token across restarts. `--no-auth` drops the token entirely: other devices can still upload, download and use history, but they cannot submit URLs (public or private) and LLM settings are locked. This machine then reaches the LLM settings without a token.
 
 ## Accessing from Other Devices
 

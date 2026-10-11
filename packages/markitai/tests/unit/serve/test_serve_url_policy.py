@@ -3,9 +3,10 @@
 The Host/Origin guard (test_serve_security.py) only stops a malicious *web
 page* from driving the browser. A LAN user talking to the API directly is not
 covered by it, so ``markitai serve --host 0.0.0.0`` would otherwise let anyone
-on the network make the server fetch intranet addresses. The rule under test:
-a loopback peer may target private/local URLs (it is the operator's own
-machine), a non-loopback peer may not.
+on the network make the server fetch for them. The rule under test (contract
+§2): a loopback peer may submit any URL (it is the operator's own machine); an
+untrusted non-loopback peer may submit none, public or private (403
+``remote_url_forbidden``).
 
 These apps are built without a token (``--no-auth`` / embedder semantics), the
 only mode in which an unauthenticated non-loopback peer reaches the routes at
@@ -18,6 +19,7 @@ httpx.ASGITransport, whose ``client=`` tuple is the TCP peer the app sees.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -75,8 +77,6 @@ async def _serve_client(
 
 
 def _url_job(urls: list[str]) -> list[tuple[str, Any]]:
-    import json
-
     return [
         ("urls", (None, json.dumps(urls))),
         ("options", (None, "{}")),
@@ -114,69 +114,113 @@ async def _drain(client: httpx.AsyncClient, job_id: str) -> dict[str, Any]:
     pytest.fail(f"job {job_id} did not finish")
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[FastAPI]:
+    async with app.router.lifespan_context(app):
+        yield app
+
+
+def _client_for(app: FastAPI, peer: tuple[str, int] | None) -> httpx.AsyncClient:
+    """A client on an app whose lifespan already runs (see ``_lifespan``)."""
+    transport = (
+        httpx.ASGITransport(app=app, client=peer)
+        if peer is not None
+        else httpx.ASGITransport(app=app)
+    )
+    return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1")
+
+
+def _assert_url_refused(resp: httpx.Response) -> None:
+    assert resp.status_code == 403, resp.text
+    body = resp.json()
+    assert body["reason"] == "remote_url_forbidden"
+    # The message must explain *why* and what to do instead.
+    assert "--no-auth" in body["detail"]
+    assert "markitai serve" in body["detail"]
+    assert "loopback" in body["detail"]
+
+
 class TestNonLoopbackPeerUrlPolicy:
-    """A peer that is not the local machine cannot aim the fetcher inward."""
+    """A peer that is not the local machine cannot make the server fetch."""
 
     @pytest.mark.parametrize(
-        "url", [PRIVATE_URL, METADATA_URL, "http://localhost:9200"]
+        "url", [PUBLIC_URL, PRIVATE_URL, METADATA_URL, "http://localhost:9200"]
     )
-    async def test_private_target_rejected(self, tmp_path: Path, url: str) -> None:
-        async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
-            resp = await client.post("/api/jobs", files=_url_job([url]))
-        assert resp.status_code == 403
-        detail = resp.json()["detail"]
-        # The message must explain *why* and what to do instead.
-        assert "loopback" in detail
-        assert "markitai serve" in detail
-
-    async def test_hostname_resolving_to_private_address_rejected(
-        self, tmp_path: Path
-    ) -> None:
-        """DNS-level SSRF: a public name whose records point inward."""
-        with patch(
-            "markitai.fetch_policy.resolve_hostname_addresses",
-            new_callable=AsyncMock,
-            return_value=("10.0.0.5",),
-        ):
-            async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
-                resp = await client.post(
-                    "/api/jobs", files=_url_job(["https://rebind.example/x"])
-                )
-        assert resp.status_code == 403
-        assert "loopback" in resp.json()["detail"]
-
-    async def test_public_target_allowed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            "markitai.serve.jobs.process_url_item", _fake_url_converter()
-        )
+    async def test_every_url_is_refused(self, tmp_path: Path, url: str) -> None:
         with patch(
             "markitai.fetch_policy.resolve_hostname_addresses",
             new_callable=AsyncMock,
             return_value=("93.184.216.34",),
-        ):
+        ) as resolver:
             async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
-                resp = await client.post("/api/jobs", files=_url_job([PUBLIC_URL]))
-                assert resp.status_code == 201, resp.text
-                await _drain(client, resp.json()["job_id"])
-
-    async def test_one_private_url_rejects_the_whole_job(self, tmp_path: Path) -> None:
-        """No partial job: the rejected URL must not be created at all."""
-        with patch(
-            "markitai.fetch_policy.resolve_hostname_addresses",
-            new_callable=AsyncMock,
-            return_value=("93.184.216.34",),
-        ):
-            async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
-                resp = await client.post(
-                    "/api/jobs", files=_url_job([PUBLIC_URL, PRIVATE_URL])
-                )
-                assert resp.status_code == 403
+                resp = await client.post("/api/jobs", files=_url_job([url]))
                 history = await client.get("/api/history")
+        _assert_url_refused(resp)
+        assert history.json() == []
+        # Refused before any lookup: no DNS answer decides what gets through
+        resolver.assert_not_awaited()
+
+    async def test_a_url_list_file_is_refused(self, tmp_path: Path) -> None:
+        async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
+            resp = await client.post(
+                "/api/jobs",
+                files=[
+                    ("files", ("links.urls", f"{PUBLIC_URL}\n".encode(), "text/plain")),
+                    ("options", (None, "{}")),
+                ],
+            )
+        _assert_url_refused(resp)
+
+    async def test_one_url_refuses_the_whole_job(self, tmp_path: Path) -> None:
+        """No partial job: the uploaded file must not be stored either."""
+        async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
+            resp = await client.post(
+                "/api/jobs",
+                files=[
+                    ("files", ("doc.txt", b"hello", "text/plain")),
+                    ("urls", (None, json.dumps([PUBLIC_URL]))),
+                    ("options", (None, "{}")),
+                ],
+            )
+            history = await client.get("/api/history")
+        _assert_url_refused(resp)
         assert history.json() == []
 
-    async def test_retry_cannot_smuggle_a_private_url(
+    async def test_files_still_convert_with_public_only_fetches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Uploads stay open; images they reference are fetched public-only."""
+        from markitai.fetch_policy import public_network_only
+
+        seen: list[bool] = []
+
+        async def fake_process_file_item(
+            file_path: Path, cfg: Any, out_dir: Path, shared: Any
+        ):
+            from markitai.batch import ProcessResult
+
+            seen.append(public_network_only.get())
+            out = out_dir / f"{file_path.name}.md"
+            out.write_text("# converted\n", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(out))
+
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", fake_process_file_item
+        )
+        async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
+            resp = await client.post(
+                "/api/jobs",
+                files=[
+                    ("files", ("doc.txt", b"hello", "text/plain")),
+                    ("options", (None, "{}")),
+                ],
+            )
+            assert resp.status_code == 201, resp.text
+            job = await _drain(client, resp.json()["job_id"])
+        assert job["status"] == "done"
+        assert seen == [True]
+
+    async def test_retry_of_a_url_item_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The retry route re-fetches item.name and needs the same gate."""
@@ -184,26 +228,23 @@ class TestNonLoopbackPeerUrlPolicy:
             "markitai.serve.jobs.process_url_item", _fake_url_converter()
         )
         app = _make_app(tmp_path)
-        with patch(
-            "markitai.fetch_policy.resolve_hostname_addresses",
-            new_callable=AsyncMock,
-            return_value=("93.184.216.34",),
-        ):
-            async with _serve_client(app, peer=LAN_PEER) as client:
-                created = await client.post("/api/jobs", files=_url_job([PUBLIC_URL]))
+        async with _lifespan(app):
+            async with _client_for(app, None) as local:
+                created = await local.post("/api/jobs", files=_url_job([PUBLIC_URL]))
                 assert created.status_code == 201, created.text
                 job_id = created.json()["job_id"]
-                await _drain(client, job_id)
-                job = (await client.get(f"/api/jobs/{job_id}")).json()
-                item_id = job["items"][0]["item_id"]
-                # Rewrite the ledger the way a tampered/rehydrated meta would.
-                registered = app.state.markitai.registry.get(job_id)
-                registered.items[0].name = PRIVATE_URL
-                resp = await client.post(
+                job = await _drain(local, job_id)
+            item_id = job["items"][0]["item_id"]
+            async with _client_for(app, LAN_PEER) as remote:
+                retry = await remote.post(
                     f"/api/jobs/{job_id}/items/{item_id}/retry", json={}
                 )
-                assert resp.status_code == 403
-                assert "loopback" in resp.json()["detail"]
+                enhance = await remote.post(
+                    f"/api/jobs/{job_id}/items/{item_id}/retry",
+                    json={"operation": "enhance"},
+                )
+        _assert_url_refused(retry)
+        _assert_url_refused(enhance)
 
 
 class TestLoopbackPeerUrlPolicy:
@@ -239,46 +280,3 @@ class TestLoopbackPeerUrlPolicy:
                 assert resp.status_code == 201, resp.text
                 await _drain(client, resp.json()["job_id"])
         resolver.assert_not_awaited()
-
-
-async def test_remote_job_rejects_private_redirect_before_connecting(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import json
-
-    from markitai.fetch_policy import public_network_only
-
-    visited = []
-
-    def transport(request: httpx.Request) -> httpx.Response:
-        visited.append(str(request.url))
-        assert request.url.host == "93.184.216.34"
-        assert request.headers["host"] == "public.example"
-        return httpx.Response(
-            302, headers={"location": "http://127.0.0.1:8080/private"}
-        )
-
-    monkeypatch.setattr(
-        "markitai.fetch_http._public_http_client",
-        lambda _proxy, _timeout: httpx.AsyncClient(
-            transport=httpx.MockTransport(transport)
-        ),
-    )
-    monkeypatch.setattr(
-        "markitai.fetch_policy.resolve_hostname_addresses",
-        AsyncMock(return_value=["93.184.216.34"]),
-    )
-    async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
-        response = await client.post(
-            "/api/jobs",
-            data={
-                "urls": json.dumps(["http://public.example/start"]),
-                "options": json.dumps({"strategy": "static", "llm": False}),
-            },
-        )
-        assert response.status_code == 201, response.text
-        snapshot = await _drain(client, response.json()["job_id"])
-    assert snapshot["items"][0]["status"] == "error"
-    assert len(visited) == 1
-    assert "127.0.0.1" not in visited[0]
-    assert public_network_only.get() is False

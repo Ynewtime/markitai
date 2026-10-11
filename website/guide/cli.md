@@ -555,7 +555,7 @@ markitai serve                    # http://127.0.0.1:3600, opens the browser
 | `--host <interface>` | `127.0.0.1` | Interface to bind. Use `0.0.0.0` for other devices; they then need the printed access token |
 | `--port <n>` | `3600` | Port |
 | `--no-open` | off | Do not open the browser |
-| `--no-auth` | off | Disable the access token. Remote clients are then limited to public URL targets and cannot change LLM settings |
+| `--no-auth` | off | Disable the access token. Remote clients then cannot submit URLs or change LLM settings |
 | `--allowed-host <hostname>` | — | Extra hostname to accept when you browse by DNS name (repeatable) |
 
 ### `markitai mcp`
