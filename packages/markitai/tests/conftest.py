@@ -54,7 +54,8 @@ def sample_config_dict() -> dict:
 # so this runs before any test module imports markitai rather than in a
 # fixture. Tests that check colour or wrapping set their own environment.
 # GITHUB_ACTIONS stays, so CI still exercises it (rich-click forces colour
-# under it; assertions on rendered help strip ANSI).
+# under it; assertions on rendered help strip ANSI). A markitai child process
+# gets tests.terminal_env.plain_env(), without any of them.
 _FORCED_COLOUR_ENV = ("FORCE_COLOR", "PY_COLORS", "CLICOLOR_FORCE", "TTY_COMPATIBLE")
 
 

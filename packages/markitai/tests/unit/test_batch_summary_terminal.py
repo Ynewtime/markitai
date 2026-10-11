@@ -15,6 +15,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from click import unstyle
+
+from tests.terminal_env import plain_env
 
 _ESCAPES = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
 _WARNING = (
@@ -37,8 +40,8 @@ def _inputs(tmp_path: Path) -> Path:
 def _env(tmp_path: Path) -> dict[str, str]:
     env = {
         key: value
-        for key, value in os.environ.items()
-        if key not in {"COLUMNS", "LINES", "FORCE_COLOR", "NO_COLOR", "TTY_COMPATIBLE"}
+        for key, value in plain_env().items()
+        if key not in {"COLUMNS", "LINES", "NO_COLOR"}
     }
     env.update(
         HOME=str(tmp_path / "home"),
@@ -65,7 +68,7 @@ def test_piped_summary_keeps_each_warning_on_one_line(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert _WARNING in result.stderr.splitlines()
+    assert _WARNING in unstyle(result.stderr).splitlines()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pseudo-terminals are POSIX only")

@@ -8,7 +8,6 @@ a request the key check let through would reach the stub, never DeepSeek.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import threading
@@ -24,6 +23,7 @@ from markitai.constants import PROVIDER_API_KEY_ENV_NAMES
 from markitai.providers.api_keys import env_set_command
 from markitai.workflow.llm_failure import NO_MODEL_SUCCEEDED
 from tests.local_http import LocalHTTPServer
+from tests.terminal_env import plain_env
 
 AUTH_FAILS = "Authentication Fails (governor)"
 FAKE_KEY = "kv-" + "cli-test-not-a-key-" * 2
@@ -133,7 +133,7 @@ def _run(
     home = workspace / "home"
     base = {
         k: v
-        for k, v in os.environ.items()
+        for k, v in plain_env().items()
         if k not in {n for names in PROVIDER_API_KEY_ENV_NAMES.values() for n in names}
         and k != "MODEL"
     }
@@ -159,7 +159,9 @@ def _run(
 
 
 def _lines(text: str) -> list[str]:
-    return [line for line in text.splitlines() if line.strip()]
+    from click import unstyle
+
+    return [line for line in unstyle(text).splitlines() if line.strip()]
 
 
 class TestMissingKey:

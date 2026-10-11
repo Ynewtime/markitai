@@ -11,12 +11,14 @@ own console keeps its code page. The faked cases are in tests/unit/utils.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from click import unstyle
+
+from tests.terminal_env import plain_env
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32", reason="Windows consoles and code pages"
@@ -43,12 +45,11 @@ def _validate_in_console(tmp_path: Path, code_page: int) -> str:
     )
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
-    env = {
-        **os.environ,
-        "USERPROFILE": str(home),
-        "HOME": str(home),
-        "MARKITAI_HOME": str(home / ".markitai"),
-    }
+    env = plain_env(
+        USERPROFILE=str(home),
+        HOME=str(home),
+        MARKITAI_HOME=str(home / ".markitai"),
+    )
     env.pop("TERM", None)
     result = subprocess.run(
         ["cmd", "/d", "/c", str(script)],
@@ -59,7 +60,7 @@ def _validate_in_console(tmp_path: Path, code_page: int) -> str:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    return out.read_bytes().decode("utf-8")
+    return unstyle(out.read_bytes().decode("utf-8"))
 
 
 @pytest.mark.parametrize(
