@@ -503,9 +503,9 @@ class _TokenAuthMiddleware:
     ``protect_local_settings`` gates on the token for every peer. The static
     app shell stays reachable so a browser can load the UI from the tokened
     URL — only ``/api/`` carries anything worth protecting. A ``token`` of
-    None disables the gate entirely (``--no-auth``): remote peers then fall
-    back to the legacy public-URL-only policy enforced by
-    ``_guard_fetch_targets`` and the loopback-only settings middleware.
+    None disables the gate entirely (``--no-auth``): remote peers then may
+    not submit URLs at all (``_guard_fetch_targets``) nor reach the settings
+    (the loopback-only settings middleware).
 
     A ``?ticket=`` (see :mod:`markitai.serve.tickets`) stands in for the
     token on exactly one GET of the path it was issued for; presenting it
@@ -568,10 +568,10 @@ def _is_loopback_peer(request: Request) -> bool:
 def _is_trusted_request(request: Request) -> bool:
     """Loopback peer, or a remote peer that presented the serve token.
 
-    Token-bearing remote peers get the loopback trust model: they may aim the
-    fetcher at private/credentialed URLs and use the settings routes. With
-    token auth disabled (``--no-auth``) only loopback is trusted, which is the
-    pre-token behavior.
+    Token-bearing remote peers get the loopback trust model: they may submit
+    URLs, private and credentialed ones included, and use the settings
+    routes. With token auth disabled (``--no-auth``) only loopback is
+    trusted.
     """
     if _is_loopback_peer(request):
         return True
@@ -608,70 +608,37 @@ def _ran_out_of_open_files(exc: BaseException) -> bool:
     return False
 
 
-def _url_rejection_detail(url: str, reason: str | None) -> str:
+def _url_rejection_detail(url: str) -> str:
     """Explain why a remote caller's URL was refused, and what to do instead."""
     shown = url if len(url) <= 120 else f"{url[:117]}..."
-    if reason == "invalid_url":
-        cause = "only absolute public http(s) URLs can be fetched"
-    elif reason == "credential_material":
-        cause = (
-            "it carries credential material (userinfo, token, key or "
-            "signature) that would be stored in this server's conversion "
-            "history, which every caller can read"
-        )
-    elif reason == "hostname_resolution_failed":
-        cause = "its hostname does not resolve to a public address"
-    else:
-        cause = (
-            "it points at a private, local or link-local address, and this "
-            "server is listening beyond loopback — fetching it for a remote "
-            "caller would turn the server into an SSRF proxy into its own "
-            "network"
-        )
     return (
-        f"refusing to fetch '{shown}': {cause}. Requests from other machines "
-        "may only target public URLs; to convert intranet URLs restart "
-        "`markitai serve` with token auth enabled (drop --no-auth) and open "
-        "the printed token URL, or use the server from its own machine over "
-        "loopback (the default bind)."
+        f"refusing to fetch '{shown}': this server runs without token auth "
+        "(--no-auth), so it fetches URLs only for its own machine; restart "
+        "`markitai serve` without --no-auth and open the printed token URL, or "
+        "submit the URL on the server's own machine over loopback."
     )
 
 
 async def _guard_fetch_targets(request: Request, urls: Sequence[str]) -> None:
-    """Reject inward-facing fetch targets requested by an untrusted peer.
+    """Refuse any URL fetch requested by an untrusted peer.
 
     The Host/Origin guard only defends against a malicious *page* driving the
     victim's browser; a caller that talks to the API directly (curl, another
     LAN host) bypasses it entirely. With token auth active this gate is moot
     (an unauthenticated remote peer never reaches the route), but under
-    ``--no-auth`` it is the one rule keeping ``--host 0.0.0.0`` from turning
-    the server into an SSRF proxy: only trusted callers may aim the fetcher
-    at private/local addresses.
-
-    ``assess_url_for_remote`` is reused whole rather than re-implemented from
-    its parts: it already combines the private/local netloc test with a
-    full-DNS-record global-address check (closing the "public name, private
-    A record" hole), and its extra credential rule is desirable here for the
-    same reason — a remote caller's URL is persisted into a job history that
-    every other caller can read.
+    ``--no-auth`` it keeps ``--host 0.0.0.0`` from turning the server into a
+    fetch proxy for anyone on the network: public and private targets alike
+    are refused (contract §2, 403 ``remote_url_forbidden``), so no DNS answer
+    or redirect can decide what an anonymous caller reaches.
     """
-    if _is_trusted_request(request):
+    if not urls or _is_trusted_request(request):
         return
-
-    from markitai.fetch_policy import assess_url_for_remote
-
-    assessments = await asyncio.gather(*(assess_url_for_remote(url) for url in urls))
-    for url, assessment in zip(urls, assessments):
-        if assessment.allowed:
-            continue
-        logger.warning(
-            "[Serve] Refused URL fetch for non-loopback peer {}: {}",
-            request.client.host if request.client is not None else "?",
-            assessment.reason,
-        )
-        raise ApiError(
-            403, "remote_url_forbidden", _url_rejection_detail(url, assessment.reason)
-        )
+    logger.warning(
+        "[Serve] Refused {} URL(s) for untrusted non-loopback peer {}",
+        len(urls),
+        request.client.host if request.client is not None else "?",
+    )
+    raise ApiError(403, "remote_url_forbidden", _url_rejection_detail(urls[0]))
 
 
 def _get_job(request: Request, job_id: str) -> Job:

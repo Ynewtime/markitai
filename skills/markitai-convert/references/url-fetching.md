@@ -17,7 +17,7 @@ Read this when a URL conversion fails, returns junk (login wall, CAPTCHA, empty 
 - The first remote attempt in a process prints a stderr disclosure naming every service it may use (defuddle.md, Jina, Cloudflare, FxTwitter, Twitter oEmbed). Services are tried one at a time.
 - `fetch.remote_consent`: `always` (default) / `ask` (one interactive confirmation; non-interactive runs skip remote) / `never` (config-driven remote off; explicit CLI `-s` still allowed).
 - `--no-remote-fetch` or `MARKITAI_NO_REMOTE_FETCH=1` blocks remote URL extraction even for explicit `-s` flags. It does not disable an explicitly enabled LLM or `-b cloudflare`.
-- Anonymous remote `serve --no-auth` requests also enforce public targets on redirects and browser subrequests. They use isolated browser contexts with Service Workers and WebSockets disabled, and do not reuse trusted fetch caches.
+- `serve --no-auth` refuses URLs from other machines (403 `remote_url_forbidden`, public and private alike). Images embedded in files those machines upload are fetched from public addresses only, redirects included.
 - If a VPN maps public domains to fake IPs such as `198.18.0.0/15`, remote eligibility checks refuse them. A skipped E2E remote-service step is not a passing live integration check.
 
 ## Failure recovery, in order

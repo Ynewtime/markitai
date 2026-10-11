@@ -302,9 +302,9 @@ def _open_browser_when_ready(
     default=False,
     help=(
         "Disable the access token. Requests from other machines then need no "
-        "credential. Their URL targets must be public and LLM settings stay "
-        "blocked, but uploads and history access, downloads and deletion remain "
-        "available; loopback keeps full access, LLM settings included."
+        "credential. They cannot submit URLs or reach LLM settings, but uploads "
+        "and history access, downloads and deletion remain available; loopback "
+        "keeps full access, URLs and LLM settings included."
     ),
 )
 @click.option(

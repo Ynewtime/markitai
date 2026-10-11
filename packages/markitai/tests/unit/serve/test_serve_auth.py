@@ -334,7 +334,7 @@ class TestRemotePeerWithToken:
 
 
 class TestAuthDisabled:
-    """``token=None`` restores the pre-1.0 remote-peer surface."""
+    """``token=None``: remote peers need no token, but get no URLs or settings."""
 
     async def test_remote_reads_pass_without_token(self, tmp_path: Path) -> None:
         async with _serve_client(_make_app(tmp_path, None), peer=LAN_PEER) as client:
@@ -349,11 +349,13 @@ class TestAuthDisabled:
         assert resp.status_code == 403
         assert "loopback" in resp.json()["detail"]
 
-    async def test_remote_private_url_stays_rejected(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("url", [PRIVATE_URL, "https://example.com/post"])
+    async def test_remote_urls_stay_rejected(self, tmp_path: Path, url: str) -> None:
         """A token presented while auth is off grants nothing."""
         async with _serve_client(_make_app(tmp_path, None), peer=LAN_PEER) as client:
             resp = await client.post(
-                "/api/jobs", files=_url_job([PRIVATE_URL]), headers=AUTH_HEADER
+                "/api/jobs", files=_url_job([url]), headers=AUTH_HEADER
             )
         assert resp.status_code == 403
+        assert resp.json()["reason"] == "remote_url_forbidden"
         assert "loopback" in resp.json()["detail"]
