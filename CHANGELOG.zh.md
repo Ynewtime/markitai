@@ -23,19 +23,27 @@
 - Cloudflare URL/文件转换及 Jina/Defuddle 抓取回退，遵循远程处理授权和仅本地策略。工作台按操作请求授权，隐私提示说明图片和 URL 何时发往远程服务。
 - 加权模型路由、回退组、重试、并发和请求预算、自定义提示词、结构化文档元数据及图片描述。持久化抓取/LLM 缓存和相同请求合并减少重复处理。
 - 新增多种 OpenAI 兼容提供商、模型发现及连接探测；可通过受支持的官方运行时使用 Copilot、Claude 和 ChatGPT 订阅转换，并查询认证状态、委托官方登录。
+- Python markitai 经 LiteLLM 可用的其余 OpenAI 兼容前缀现在也能路由（新增 69 个，从 `ai21/`、`volcengine/` 到 `cohere/`、`huggingface/`、`bedrock_mantle/`、`cloudflare/`、`databricks/`、`llamafile/` 与 `docker_model_runner/`），模型命名与密钥变量沿用 LiteLLM。各基础 URL 已于 2026-10-11 对照提供商文档核对；提供商文档给出比 LiteLLM 更新的主机或密钥名时，使用文档中的写法或优先读取它。`huggingface/<provider>/<org>/<model>` 让路由器使用指定的推理提供商，`bedrock_mantle/<region>/<model>` 与 AWS 区域变量决定 Bedrock 区域，Workers AI 读取 `CLOUDFLARE_ACCOUNT_ID`。已停止服务的前缀（GitHub Models、Meta 的 Llama API、Lambda 与 Hyperbolic 推理等）会给出原因并拒绝，而不是笼统报错。
+- `bedrock/<model>` 与 `vertex_ai/<model>` 无需各自的 SDK 即可使用，与 Python markitai 经 LiteLLM 的用法一致。Bedrock 通过 Converse API 调用所有对话模型（基础模型、推理配置文件、ARN），使用 Bedrock API 密钥，或以 Signature Version 4 签名的 AWS 密钥；凭据按 AWS SDK 的顺序查找：部署的 `api_key`、`AWS_BEARER_TOKEN_BEDROCK`、AWS 密钥变量与 `~/.aws` 配置（静态密钥、`credential_process`，SSO 与角色配置经 AWS CLI 获取）。Vertex AI 通过其 OpenAI 兼容端点提供 Gemini 与 Model Garden 模型，通过 `rawPredict` 提供 Claude；访问令牌由服务账号、用户凭据或 gcloud 应用默认凭据签发，或取自 gcloud CLI。两者均已离线验证（AWS 签名测试集、curl 自带的签名实现、本地令牌端点）；其费用尚未收入价格目录。
 - OpenAI 文本 Batch 提交、收集和重启续接，附私有请求记录、状态核对及输出归属检查；区分已观测用量、未知定价和失败尝试成本。
+- `--llm-batch` 对 `anthropic/<model>` 部署也会提交到 Anthropic Message Batches，与 Python markitai 相同：提交、等待、`--llm-batch-collect`、`--resume` 与 `llm.on_failure` 的处理都一样，请求沿用实时请求的结构化模式，成本按批处理价计算。请求在唯一一次创建调用中随附发送，发送前与已保存的摘要核对；每个 custom ID 都带有本次提交的 nonce，因此创建结果不确定时，通过打开同等规模、已结束批次的结果来核对，绝不重新创建。errored、canceled、expired 的请求是没有用量的条目失败，Anthropic 不对它们计费。
+- 升级后可以收回 Python markitai 1.2.x 提交后未收回的批处理：`--llm-batch-collect ID -o DIR`（目录里只有一个时也可用 `--llm-batch --resume -o DIR`）只读取 Python 的 `.markitai/batch-<ID>/` 状态、不做改动，将其转为同一 OpenAI 或 Anthropic 模型的原生任务，并用 Python 已付费的回答发布 `.llm.md`。Python 的图片与页码/幻灯片占位符按其自身规则重新计算（并与其保存的请求核对），每个都必须原样返回一次；该次运行的 `--alt` 标题与 `--desc` 描述按 Python 的方式应用。向这样的目录做普通 `--llm-batch` 运行时，会提示待收回的批处理及其收回命令。
+- 收回供应商批处理时会逐条打印文档的警告（回答失败后保留基础 Markdown、图片分析失败），与 Python 一致；运行报告仍不记录警告。
 - CLI 报告、可选历史、目录/URL 列表批量续跑、受控中断、输出锁及恢复凭据；共享资源和标准输出引用的图片保存在隔离的 Markitai 状态目录中。
 - 中英文 CLI 帮助和引导式转换、配置初始化/编辑/验证、能力诊断及私有轮转日志。Windows 支持原生控制台处理、订阅命令包装器、恢复和进程树清理。
 
 ### 变更
 
+- 便携 OCR 引擎（Windows、Linux）的本地 OCR 单个文件约快 18%，批量扫描件约快 13%：tract 的算子（`tract-core`）改为在体积预算内按速度优化（`opt-level = "s"`），不再按最小体积优化。Linux arm64 发布版 CLI 增大 4.7 MB（38.7 MB 增至 43.4 MB）；完全按速度优化会再多 2.3 MB，速度提升不到一个百分点。识别出的文字不变。
+- CLI 打印的每一行都遵循同一套终端样式，与 Python markitai 1.2.1 一致，两者看起来相同。由标记说明每行的含义（`✓` 成功、`!` 警告、`✗` 错误、`→` 下一步或正在进行的操作、`•` 事实、`○` 有意跳过、`?` 等待输入、`◆` 标题），颜色只是重复这一含义：绿色只表示成功，黄色只表示警告，红色只表示错误，青色用于标题标记、提示与可复制的命令，灰色用于细节，节标题加粗不着色；不用品红、蓝色和亮色，浅色与深色主题读起来一样。`doctor` 现在显示标题、版本与配置文件、「可选能力」「LLM」「认证状态」三节、每条命令单独一行的修复方法，以及结论行（只缺可选项时为绿色的 `✓ 已就绪。以下可选功能不可用：…`，与 Python markitai 一致；配置要求的检查未就绪时为 `✗ 未就绪：请先修复 …`）。stderr 诊断以 `  ! …`、`  ✗ …` 代替 `Warning:`、`Error:`（文件日志保留这些标签，便于检索）；批处理摘要先给结论、最后给输出目录；`init`、`-I`、`config edit`、`cache`、`auth`、参数错误与 `--help` 使用相同的标记和颜色；`serve` 把要打开的地址单独成行，复制时保持完整。终端上长行在正文下方缩进折行；管道输出每条消息一行。`NO_COLOR` 关闭颜色（标记保留），`FORCE_COLOR` 在管道中开启颜色，`TERM=dumb` 既无颜色也不折行；无法显示这些标记的输出（Unix 上字符集不是 UTF-8 的 locale；不能处理转义序列的 Windows 控制台，即 Windows 10 1511 之前的版本或勾选了“使用旧版控制台”）改用 `+ ! x > - o ? *`；Windows 的管道与文件输出与 macOS/Linux 一样是 UTF-8、使用 Unicode 标记，与控制台代码页无关。由 locale 选中的中文在输出无法显示中文时（Unix 上的 `zh_CN.GBK`、代码页既非 CJK 也非 UTF-8 的旧版控制台）回退为英文。
 - `markitai serve` 的历史记录保留七天，与参考服务一致：任务在完成七天后删除（启动时和每小时清理一次），并从那一刻起不再出现在历史、任务接口和归档中；运行中的任务和待处理的重试永不过期。此前历史会一直保留到手动删除。能力接口报告 `limits.history_retention_days: 7`。
 - 未配置 `llm.model_list` 时的默认模型换成各家当前的小模型：`anthropic/claude-haiku-5-5`、`openai/gpt-6-luna`、`deepseek/deepseek-flash`（DeepSeek 模型列表给出的 ID）和 `openrouter/google/gemini-3.5-flash-lite`；Gemini 仍用 `gemini-flash-lite-latest`。`claude-haiku-5-5` 从强制命名工具起步：在 Haiku 4.5 的工具回答出错的那份演示文稿上实测，它的工具回答按顺序保留了全部 9 个受保护的文档标记，因此该文档只需一个请求，而 Haiku 4.5 还需要第二个 JSON schema 请求；工具回答若丢失标记，仍会带警告退回 JSON schema。
-- 内置价格快照改用 LiteLLM 1.106.0.dev2 的数据（`pricing_snapshot` 为 `litellm-1.106.0.dev2-selected-2026-10-09`），并于 2026-10-09 对照各家官方价格重新核对；原有八行价格不变。它是开发预发布版，是 PyPI 上最新的、带有 `claude-haiku-5-5` 行的版本。
+- 内置价格快照改用 LiteLLM 1.106.0.dev2 的数据（`pricing_snapshot` 为 `litellm-1.106.0.dev2-selected-2026-10-11`），并于 2026-10-11 对照各家官方价格重新核对；此前已有价格的八行不变。它是开发预发布版，仍是 PyPI 上最新的、带有 `claude-haiku-5-5` 和 `claude-sonnet-5-5` 行的版本。
 - 默认 OpenAI 模型 `openai/gpt-6-luna` 现在有价格：每百万 token 输入 $0.10、缓存读取 $0.01、缓存写入 $0.125、输出 $0.50；提示超过 272K token 时，整次请求改按 $0.20 / $0.02 / $0.25 / $0.75 计价。缓存写入（`prompt_tokens_details.cache_write_tokens`）按自身单价计费，不再当作普通输入；提示在 272,001 到 278,528 token 之间（278,528 = 272 × 1,024，即“272K”的另一种读法）时价格保持未知，以免误用较低的档位。把提示再按文本与图像拆分计数的响应，也不再被当作未知计费类别拒绝。
 - 默认 Anthropic 模型 `anthropic/claude-haiku-5-5` 现在有价格，不再显示为未知：每百万 token 输入 $0.10、缓存读取 $0.01、5 分钟 / 1 小时缓存写入 $0.125 / $0.20、输出 $0.50；提示（含缓存读取与写入）超过 100,000 token 时，整次请求改按 $0.50 / $0.05 / $0.625 / $1 / $2.50 计价。Messages 响应带有 `output_tokens_details`、服务器工具请求数为零或缓存计数为 null 时照常计价，不再被拒绝；只要有服务器工具请求，费用仍为未知。
+- 用户可能配置的模型现在都有价格，每一行都对照了服务商自己的价格页（逐行记在 `licenses/pricing/provenance.json`），因此 Python markitai 1.2.1 能计价的这些模型，这里也都能计价：API 仍提供的所有 Claude 模型（Fable 5.1 与 5，Opus 5.5、5、4.8、4.7、4.6 与 4.5，Sonnet 5.5、5 与 4.6），以及 OpenAI 的 `gpt-6-astra`、`gpt-6.1-sol`、`gpt-6-sol` 和 GPT-5.6 Sol、Terra、Luna（含 `gpt-5.6` 别名），两家都带批处理价格；Gemini 3.5 与 3.1 Flash-Lite、3.8 与 3.6 Flash，以及 `gemini-flash-lite-latest`、`gemini-flash-latest` 别名，其思考 token 不在 OpenAI 兼容接口的 `completion_tokens` 中，按输出计费，Flash 的推广价到 2026 年底不再采用；以及 DeepSeek Flash（含 `deepseek-v4-flash`）和 V4 Pro，按请求在北京时间的运行时段取高峰价或空闲价。2026 年以后工作日的高峰时段在核对 2027 年中国法定节假日之前保持未计价，跨越两个时段的请求也是如此（`request time falls outside a reviewed price period`）。OpenRouter 请求按 OpenRouter 报告的实际扣费（`usage.cost`）计价，适用于任何模型；自带密钥（BYOK）的请求保持未计价。
 - SVG 的本地 OCR 改为按其自身宽度的两倍渲染（最多 2048 像素，与参考实现一致），不再使用 2048 像素的视觉预览图：语料中 426 字节的 SVG 耗时由 1.8 秒、445 MB 降至 0.29 秒、162 MB，识别文本不变。
-- 便携引擎的本地 OCR 更快：文字检测使用多线程，在检测首张图片时并行准备方向分类器与识别模型，PDF 扫描页两页同时识别。在基准语料的 7 个位图与扫描 PDF 的 OCR 输入上耗时由 14.4 秒降至 9.4 秒（Python 1.2 为 9.4 秒），识别文本不变。
+- 便携引擎的本地 OCR 在全部基准输入上都快于参考实现：文字检测（含逐通道卷积）使用多线程，文本行的裁切、方向分类与识别并行进行，在检测首张图片时并行准备方向分类器与识别模型，PDF 扫描页两页同时识别。12 页扫描件由 12.2 秒降至 5.8 秒（Python 1.2 为 8.3 秒），3 页扫描件由 4.4 秒降至 2.3 秒（Python 为 4.8 秒），15 份扫描件以 `-j 4` 批量转换由 16.4 秒降至 8.8 秒（Python 为 15.0 秒），识别文本不变，内存占用更低（12 页扫描件峰值 1.4 GB，Python 为 2.6 GB）。发布版 CLI 增大约 95 KB。
 - 大型 XLSX 工作表的内存占用大幅降低：在 XML 解析器关闭每一行时即读取该行，而不是先构建整张表的树，解析后的 XML 也不再保留多余容量。2 万行的工作簿（9 MB 表格 XML）峰值内存由 384 MB 降至 84 MB，输出不变。
 - 最终 Markdown 默认不再包含 PDF 页码和幻灯片编号注释；可通过 `output.page_markers` 或 `--page-markers` 保留。内部页面对齐、RAG 页码溯源和代码示例不受影响。
 - 换行（`<br>`、Word/ODT/RTF/EPUB 中的手动换行）改为 Markdown 行尾两个空格的硬换行，不再输出行尾反斜杠；常规输出会保留它们，HTML 列表项内同样适用。
@@ -58,6 +66,16 @@
 
 ### 修复
 
+- 在 ChatGPT、Claude 或 Copilot 订阅请求运行期间中断或终止 CLI（Ctrl-C、SIGTERM、SIGHUP、关闭 Windows 控制台）时，该请求的私有工作目录（为运行时写入的系统提示、设置与文档图片）不再遗留在临时目录中：这些文件会随运行时的进程树一起删除。仍含有被终止的运行时自行写入的文件的工作目录，或因 `kill -9`、崩溃而遗留的工作目录，会在下一次启动运行时的运行中删除，条件是其所属进程（现已写入 `markitai-<runtime>-<pid>-…` 名称）已经结束且目录已存在两小时。中断测试此前每次运行会在本机临时目录留下六个这样的目录，现在改用各自的临时目录。
+- 若图片或页面的整图识别未保留任何文字，本地 OCR 会像参考实现一样，以较低阈值在相互重叠的分块上再试一次，因此大而几乎空白的图片上只有几像素高的说明文字也能识别：语料中的 `sample.jpg` 此前识别不到任何文字。没有清晰边缘的分块会被跳过，空白页不产生重试，重试所需内存也不超过整图识别。
+- HTML：X 在 2026 年于帖子页中提供的长文（`twitterArticleRichTextView`）输出其标题、封面和完整正文（含标题、列表和代码块），不再只有标题和一张图片。
+- HTML：其他账号对 X 帖子的回复，以及作者在第一条他人回复之后的回复，按参考实现的写法以 `## Comments` 跟在帖子后面，每条为以 `**名称 @账号** · [日期](链接)` 开头的引用块，界面为其他语言时也是如此；此前会被丢弃。
+- HTML：GitHub issue 输出其首帖，然后在 `## Comments` 下输出评论（`**作者** · [日期](链接)`），不再带有 issue 查看器的头像、仅供读屏的标题、“opened on … · edited by …”行和徽章；其中指向文件若干行的永久链接摘录输出为代码块。
+- HTML：独占一块且显示文字的内联 SVG 图表或示意图按参考实现保留为图（置于 HTML 块中、经净化的 SVG 标记，并解析出丢失样式表所赋予的颜色），不再只剩零散的坐标轴标签。
+- HTML：arXiv 的 LaTeXML 脚注和致谢注释输出为 Markdown 脚注，脚注标记只输出标记本身，不再重复两次标记并带上字面的“footnotemark: 2”。
+- HTML：段落中的 `link` 或 `meta` 元素（MediaWiki 会在每个行内模板前写一个）不再把段落拆开；此前维基百科的句子会被拆断，mediawiki.org 上包住行内代码的链接也无法显示。只含空白的段落不再输出为一行空格。
+- HTML：此前被保留的页面附属内容现在会被去掉：arXiv 摘要页的服务栏和 arXivLabs 标签页、直播页标题上方的多城市时钟、结尾处标题加站外推荐链接的列表、“Was this page helpful?”投票及由 BEM `hidden` 修饰类隐藏的文字、RSS 图标，以及含站点名称和搜索框的站点横幅。
+- HTML：标记在 `<code>` 之后立即换行时，代码块不再以空行开头；代码块上方的 `markdown`（或 `diff`、`dockerfile` 等）标签被识别为其语言，不再成为多余的一行。
 - 在服务设置中保存 OpenAI 兼容端点（provider 为 `custom`、模型带 `openai/` 前缀）会以“provider must match the model provider”失败；现在它保存为 `custom` 连接，其模型路由到该端点地址。保存一个端点后，OpenAI 和 OpenAI 兼容端点卡片仍可继续添加。
 - HTML：懒加载图片的地址位于站点自定义的 `data-` 属性（如 `data-image-loader`）、`src` 仅为内联占位图时，图片会被保留，不再随占位图一起丢弃。
 - 资源中绑定了大图但从未绘制它的 PDF 页面按正常文本页读取，不再给出“看起来像扫描页而按纯文本读取”的警告（如参考 `sample.pdf` 第 5 页）。
@@ -81,7 +99,7 @@
 - 从源码构建 Node.js 绑定（在 `bindings/node` 中运行 `npm run build`）与其他文档所列构建一样向 Cargo 传入 `--locked`，与清单不一致的 `Cargo.lock` 会使构建停止，而不是被悄悄更新。
 - 若 SVG 文本使用的通用 serif、sans-serif 或 monospace 字体族在主机上没有 fontdb 默认名称的字体，现在改用第一个覆盖基本拉丁字母的字体，而不是最先加载的任意字体，因此图标字体（FontAwesome、Weather Icons、Material Icons）不再成为文本排版的主字体。只装有图标字体的主机仍会报告文本所需字体不可用。
 - 消息中指向账单页面的 LLM 限流响应（HTTP 429；OpenAI 低等级账户会建议添加付款方式以提高限额）现在按限流重试，不再被当作配额或账单拒绝而终止整个文档及其同批请求。带有 `insufficient_quota` 代码的 429 以及任何 HTTP 402 仍会立即停止。
-- LLM 请求在提供商返回空回答或回答被拒绝后，不再原样重新发送。没有任何文本的 JSON 文本回答（Gemini 对一份 3 页扫描件就返回过这样的回答）现在发送一次即失败，不再重复发送同一请求直到 `llm.max_requests_per_document` 耗尽；空的纯文本回答只会转到组内尚未尝试过的其他部署，且不退避；结构化或视觉回答被拒绝后，下一次请求会在系统提示词中说明拒绝原因，因此是一个不同的请求。错误信息会说明空回答的结束方式，例如 `LLM returned no text (finish reason: stop)`。
+- LLM 请求在提供商返回空回答或回答被拒绝后，不再原样重新发送。没有任何文本的 JSON 文本回答（Gemini 对一份 3 页扫描件就返回过这样的回答）现在发送一次即失败，不再重复发送同一请求直到 `llm.max_requests_per_document` 耗尽；空的纯文本回答只会转到组内尚未尝试过的其他部署，且不退避；结构化或视觉回答被拒绝后，下一次请求会在系统提示词中说明拒绝原因，因此是一个不同的请求；同一拒绝原因再次出现时，尝试随即结束，不会第三次发送同一请求（图片分析随即改为分别请求说明文字和描述：共 4 次请求而非 5 次）。错误信息会说明空回答的结束方式，例如 `LLM returned no text (finish reason: stop)`。
 - 被服务商内容过滤器拦截的回答现在如实报告，不再被当作无效的结构化响应：Gemini 兼容 OpenAI 的接口把过滤原因写成 `content_filter: RECITATION` 等形式，此前只能匹配完全等于 `content_filter` 的值。实测基准中的 3 页扫描件是一份被广泛转载的示例 PDF，Gemini 将其转写视为复述已发表文本而拦截；错误现在显示为 `LLM provider withheld the answer (finish reason: content_filter: RECITATION): it resembles existing published text, which the provider does not reproduce`，且该请求不会重新发送。
 - 每个被重新发送的 LLM 请求现在都会在其文档上产生一条警告，并照常计入 `llm.max_requests_per_document`：传输重试、空回答后转到另一部署、结构化回答未通过校验（警告会说明原因及下一次请求所用的模式，例如 `LLM tool-call answer was rejected (…); the request was sent again in JSON-schema mode`）、视觉批次被拒绝，以及图片分析回退为单独的说明与描述请求。此前用 Claude Haiku 4.5 增强演示文稿时，会在另一种结构化模式下悄悄多花一次完整的文档请求。
 - 失败的 LLM 请求现在会在 CLI 消息、报告与 `--json` 错误以及日志中说明原因，不再只显示 `LLM request failed` 或 `LLM returned HTTP 400`。没有收到响应的请求会说明是连接被拒绝、主机名无法解析、TLS 握手失败（附 TLS 库给出的原因）、连接提前关闭，还是在超时时间内没有响应（附时限）。HTTP 拒绝会附上服务商的错误类型和经过清理的错误消息：部署的密钥及其他形似凭据的词被替换，URL 去掉查询部分，超过 40 个字符的引文被删去，若消息重复了提示词或文档中的任意片段则整条不显示。不是 JSON 的响应只给出状态码、内容类型、大小和 HTML 页面标题，从不显示其正文。这些失败都以部署及其主机结尾，例如 `LLM request failed: connection refused (deployment openai/gpt-6-luna at 127.0.0.1:4000)`。`serve` 的模型连接测试也同样说明未收到响应的原因（`Model connection request failed: connection refused`），并给出拒绝的错误类型或代码（`Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)`），仍不显示服务商的消息。Python 1.2 对连接被拒绝、无法解析、TLS 失败和连接被重置一律只报告 `Connection error.`。

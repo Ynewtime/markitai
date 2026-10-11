@@ -6,8 +6,16 @@ fn invoke(root: &Path, args: &[&str]) -> Output {
     invoke_env(root, args, &[])
 }
 fn invoke_env(root: &Path, args: &[&str], overrides: &[(&str, &str)]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_markitai"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
+    // The messages asserted here are English with the Unicode marks: no
+    // language, locale or terminal setting of the machine running the tests
+    // may choose otherwise (Windows would fall back to its display language).
+    for name in ["LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LANG", "TERM"] {
+        command.env_remove(name);
+    }
+    command
         .current_dir(root)
+        .env("MARKITAI_LANG", "en")
         .env("MARKITAI_HOME", root.join("home"))
         .env_remove("MARKITAI_CONFIG")
         .env_remove("MODEL")
@@ -135,7 +143,7 @@ fn a_file_that_is_not_an_image_is_an_error_and_not_a_skip() {
         assert_eq!(output.status.code(), Some(1), "{name}");
         let message = String::from_utf8_lossy(&output.stderr);
         assert!(
-            message.starts_with(&format!("Error: {reason}")),
+            message.starts_with(&format!("  ✗ {reason}")),
             "{name}: {message}"
         );
         assert!(!message.contains("Skipped"), "{message}");
@@ -153,7 +161,7 @@ fn a_file_that_is_not_an_image_is_an_error_and_not_a_skip() {
     assert_eq!(output.status.code(), Some(10));
     let message = String::from_utf8_lossy(&output.stderr);
     assert!(
-        message.contains("Error: empty.png: File is empty (0 bytes)"),
+        message.contains("  ✗ empty.png: File is empty (0 bytes)"),
         "{message}"
     );
     assert!(

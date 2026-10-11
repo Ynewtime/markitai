@@ -22,14 +22,21 @@ and in the batch report under `out/.markitai/reports/`.
 Standard output behaves as with other Unix tools. A reader that stops early
 (`markitai big.txt | head -1`) ends the run quietly with the status it already
 had, 0 after a successful conversion. Any other failure to write it, such as a
-full disk behind `> file`, prints `Error: Cannot write to standard output: …`
+full disk behind `> file`, prints `✗ Cannot write to standard output: …`
 and exits 1.
+
+Messages on stderr start with a mark that says what they are: `✗` an error,
+`!` a warning, `→` what to do next, `•` a fact, `○` something skipped on
+purpose (`x`, `!`, `>`, `-`, `o` where the output cannot draw the Unicode
+marks). The headings below quote them that way. The file log (`log.dir`) keeps
+the English `Error:` and `Warning:` labels instead, so a search finds them; the
+[terminal style](cli.md#终端样式) lists the colours and when they are off.
 
 ## Common problems
 
 **An image produces no output.** A standalone image has no text unless you ask
 for recognition; Markitai says on stderr that it skipped the image, by file
-name (`Skipped photo.png: an image has no text to extract …`), and exits 0
+name (`! Skipped photo.png: an image has no text to extract …`), and exits 0
 because nothing went wrong. Add `--ocr` (Vision on macOS; Paddle on Windows/Linux
 with prepared models) or `--llm`
 (vision model). With `--json` the item shows `"skip_reason": "image_only"`; the
@@ -39,30 +46,30 @@ extension is an error instead: `File is empty (0 bytes)` or `File is not a valid
 image: …` (also `the file appears to be damaged or truncated` when the format is
 recognized but the data does not decode).
 
-**`Error: File is empty (0 bytes)`.** The input has no content. An empty `.txt`,
+**`✗ File is empty (0 bytes)`.** The input has no content. An empty `.txt`,
 `.md`, `.csv` or `.tsv` is still converted to an empty document; every other
 format needs content to read.
 
-**`Error: The file appears to be damaged or truncated (…)`.** The reader could
+**`✗ The file appears to be damaged or truncated (…)`.** The reader could
 not make sense of the container: a ZIP-based document (`.docx`, `.xlsx`,
 `.pptx`, `.odt`, `.epub`) whose end is missing, or a PDF without a usable
 cross-reference table. The reader's own wording follows in parentheses. A
 download that stopped early or a file that was saved twice is the usual cause;
 open it in its application, or fetch it again.
 
-**`Warning: The content is a PDF document although the file name ends in .docx; …`.**
+**`! The content is a PDF document although the file name ends in .docx; …`.**
 The file name and the content disagree between document types (a PDF saved as
 `.docx`, a Word file saved as `.pdf`, a modern package saved as `.doc`). Markitai
 reads the content as what it is and says so once; rename the file to silence
 the warning. Page screenshots and page OCR need the right extension.
 
-**`Warning: PDF pages 2-3, 5: native text was not recovered …`.** These pages
+**`! PDF pages 2-3, 5: native text was not recovered …`.** These pages
 have no extractable text (scans, or pages made only of pictures). Run again with
 `--ocr` to read them. Windows/Linux require the local Paddle models first.
 The terminal shows one line per document; the
 report and `--json` keep one warning per page.
 
-**`Warning: PDF pages 1-3: the text was read from the invisible OCR text layer laid over each page image …`.**
+**`! PDF pages 1-3: the text was read from the invisible OCR text layer laid over each page image …`.**
 The PDF is a searchable scan: a scanning or OCR program (named in brackets when
 the file says which) laid its recognized words, invisibly, over each page image.
 Markitai used those words as the pages' text after checking that they sit on
@@ -74,12 +81,12 @@ Markitai does not decode (JBIG2, CCITT fax, JPEG 2000) or the page has several
 images. To read such pages with Markitai's own OCR instead, run with `--ocr` and
 `ocr.per_page_routing` set to `false`; see [PDF OCR](pdf-ocr.md).
 
-**`Warning: PDF page 2: an invisible OCR text layer lies over the page image, but it does not line up with the text in the image …`.**
+**`! PDF page 2: an invisible OCR text layer lies over the page image, but it does not line up with the text in the image …`.**
 The page carries hidden words that are not where the image's print is (a layer
 from another page, a misplaced layer, or text hidden on purpose), so they were
 not used and the page is treated as a scan; run with `--ocr` to read it.
 
-**`Warning: PDF page 4: 2 text runs (37 characters) could not be decoded and were omitted; …`.**
+**`! PDF page 4: 2 text runs (37 characters) could not be decoded and were omitted; …`.**
 Some text on the page is in a font whose characters cannot be identified (no
 character map the reader knows, or one that maps its codes to nothing usable).
 That text is left out and the rest of the page is kept. A variant says that
@@ -109,19 +116,19 @@ the directory and the reason, often a symbolic link refused while
 relative image paths. See [images on stdout](images.md#images-on-stdout).
 
 **The output is named `….v2.md`.** The target already existed and the default
-conflict policy is `rename`. A single conversion says `Wrote out/a.docx.v2.md
+conflict policy is `rename`. A single conversion says `✓ Wrote out/a.docx.v2.md
 (a.docx.md already exists)`, a batch lists the renamed results in its summary
-(`Renamed 3 items (output already exists): …`), and `--dry-run` shows the name
+(`• Renamed 3 items (output already exists): …`), and `--dry-run` shows the name
 in advance. Choose `overwrite` or `skip` with
 `markitai config set output.on_conflict overwrite`, or for one run with
 `--config-json '{"output":{"on_conflict":"overwrite"}}'`.
 
-**`Error: No model configured; set MODEL and a provider API key, or llm.model_list`.**
+**`✗ No model configured; set MODEL and a provider API key, or llm.model_list`.**
 `--llm` (or `llm.enabled`) needs a model. Set an API key such as
 `OPENAI_API_KEY` and run `markitai init --yes`, or configure `llm.model_list`;
 see [quick start](quickstart.md#7-enhance-with-a-language-model) and [LLM](llm.md).
 
-**`Warning: LLM enhancement failed; base Markdown retained: Environment variable not found: …`.**
+**`! LLM enhancement failed; base Markdown retained: Environment variable not found: …`.**
 A configured model refers to `env:NAME` and that variable is not set. The base
 Markdown is still written because `llm.on_failure` defaults to `fallback`; set
 it to `fail` to make this an error. Put the key in the environment, in `.env`
@@ -161,7 +168,7 @@ The model spent the whole output budget thinking before it wrote the answer.
 Lower or remove `litellm_params.reasoning_effort`, or raise `max_tokens`; see
 [LLM](llm.md#providers-and-request-parameters).
 
-**`Warning: Cost is incomplete: …`.** The named model or endpoint is not in the
+**`! Cost is incomplete: …`.** The named model or endpoint is not in the
 bundled [price catalog](pricing.md), so `cost_usd` only counts the requests whose
 price is known. It does not mean the call was free. The warning names the model
 the provider reports and how many requests are affected; `reported no usage
@@ -173,9 +180,9 @@ one.
 `--playwright`, `--static`, `--jina`, `--defuddle` and `--cloudflare` switches
 are now values of `-s/--strategy`. `--kreuzberg` is gone because RTF is read
 natively. Like other usage errors, it is printed in the argument parser's own
-form: `error: …` (lower case, not `Error: …`), then the usage line, exit status 2.
+form: `error: …` (lower case, in red on a terminal), then the usage line, exit status 2.
 
-**`Error: HTTP 404 for https://…: the page may have been removed or is not public`.**
+**`✗ HTTP 404 for https://…: the page may have been removed or is not public`.**
 The site answered with that status. The message names the page (without
 credentials, and with secret-looking query values replaced) and, for the common
 statuses, says what it usually means: 404/410, removed or not public; 401/403,
@@ -187,7 +194,7 @@ because the peer cut it off (such as `tls handshake eof`) is retried, twice; a
 status is reported at once. See
 [URL fetching](fetch.md#failures-retries-and-redirects).
 
-**`Error: HTTP 403 for https://www.zhihu.com/…: Zhihu refuses automated clients; open the page in your browser and save it …`.**
+**`✗ HTTP 403 for https://www.zhihu.com/…: Zhihu refuses automated clients; open the page in your browser and save it …`.**
 The site is known to turn away programs (Zhihu, WeChat, Douban, Bilibili, Weibo,
 Toutiao, Reddit, Quora, Stack Overflow, Medium and Hashnode are named; any site behind a
 Cloudflare bot check says so). Markitai does not pretend to be a browser, solve
@@ -201,7 +208,7 @@ signed-in cookies with `fetch.playwright.cookies` and use `-s playwright` (see
 [your own cookies](fetch.md#your-own-cookies-for-the-local-browser)). A JSON body
 the site sent with the refusal is quoted in the message as `the site said: …`.
 
-**`Error: <Site> served a verification page instead of the content`** (or **`a login page`**).
+**`✗ <Site> served a verification page instead of the content`** (or **`a login page`**).
 The site answered with status 200 but its page is a security or human check
 (WeChat's `环境异常`, Douban's `sec.douban.com`, Weibo's visitor check, Reddit's
 "Prove your humanity", Toutiao's script challenge, Zhihu's `安全验证` login
@@ -225,7 +232,7 @@ snapshot of `example.com` was a test page). Run with `--no-cache` (or
 cache is bypassed for a URL, Jina is sent `X-No-Cache: true` too. defuddle.md
 has no such opt-out; its answers may be up to five minutes old.
 
-**`Error: The page needs JavaScript; use -s playwright or the default auto strategy`.**
+**`✗ The page needs JavaScript; use -s playwright or the default auto strategy`.**
 `-s static` read a page that is empty or asks for JavaScript. Use `-s playwright`
 or the default `-s auto`, which renders it with a local Chrome or Chromium. With
 `auto` and no browser installed the message says that none was found: install
@@ -295,7 +302,7 @@ Install one, set `MARKITAI_BROWSER_EXECUTABLE` to its executable, or run
 points to a missing file is not replaced automatically; fix or unset it first.
 See [browser installation](browser-installation.md).
 
-**`Warning: … need LibreOffice (soffice on PATH) …`.** Page images and page OCR
+**`! … need LibreOffice (soffice on PATH) …`.** Page images and page OCR
 of Word, PowerPoint and spreadsheet files are exported through an installed
 LibreOffice and the selected PDF renderer (CoreGraphics on macOS by default,
 built-in hayro on Windows/Linux). Without it the document's own text is
@@ -317,15 +324,15 @@ an image sequence coded with inter prediction, or 16-bit extended precision),
 and AVIF images built as an overlay (`iovl`) rather than a single image or a
 grid, fail with an explicit unsupported error.
 
-**`Error: ocr.lang is not supported by the installed macOS Vision text recognizer`.**
+**`✗ ocr.lang is not supported by the installed macOS Vision text recognizer`.**
 `ocr.lang` must be a language the macOS Vision recognizer supports, such as
 `en`, `zh`, `ja` or `de`; see [local OCR](ocr.md#language-selection).
 
-**`Error: Interactive configuration requires a terminal`.** `-I`, `config edit`
+**`✗ Interactive configuration requires a terminal`.** `-I`, `config edit`
 and `init` without `--yes` need an interactive terminal. In scripts use
 `config set` or `init --yes`.
 
-**`Error: Configuration file does not exist: …`.** `-c` must name an existing
+**`✗ Configuration file does not exist: …`.** `-c` must name an existing
 file (except for `config set` and `config edit`, which create it). Run
 `markitai config path` to see which file is in use; `config validate FILE`
 checks a file. See [configuration](configuration.md).
@@ -344,13 +351,13 @@ every model, prompt or output-profile setting; to reprocess after such a change,
 use a new output directory without `--resume`. On Unix, after Ctrl-C or SIGTERM the
 closing summary lists
 what was done and then the items that were never started, for example
-`Not processed 72 items: a.pdf, b.pdf and 70 more. Run the same command with --resume to continue.`
+`! Not processed 72 items: a.pdf, b.pdf and 70 more. Run the same command with --resume to continue.`
 (exit status 130 or 143; `-v` lists every name). The resumed run starts with
-`Resuming: 6 already done, 72 remaining` and its closing line counts all items
-(`Done: 78/78 files`). `--quiet` leaves the summary out, and `--json` carries
+`→ Resuming: 6 already done, 72 remaining` and its closing line counts all items
+(`✓ Done: 78/78 files`). `--quiet` leaves the summary out, and `--json` carries
 only the items that finished.
 
-**`Error: Native PDF conversion failed: the PDF is encrypted and needs a password to open …`.**
+**`✗ Native PDF conversion failed: the PDF is encrypted and needs a password to open …`.**
 The PDF asks for a password before it can be read. Markitai has no password
 option: remove the password with the tool that created the file, or print the
 document to a new PDF, and convert that. A PDF that only restricts printing or
@@ -372,7 +379,7 @@ files (`~$report.docx`). Give a glob that spells the name out to include them,
 for example `-g '.notes/**/*.md'` or `-g '**/node_modules/**/*.md'`; pointing the
 command at such a directory itself (`markitai .notes -o out`) also works.
 
-**A directory called `~` appeared, or `Error: Cannot expand ~ …`.** A leading
+**A directory called `~` appeared, or `✗ Cannot expand ~ …`.** A leading
 `~` in `-o` and in `output.dir` means your home directory, whether or not the
 shell expanded it (`--output=~/x` and a value in `config.json` are never
 expanded by the shell). Markitai expands it once, before anything is created; it
@@ -385,7 +392,15 @@ and not with `-q`, `--json` or `TERM=dumb`. Piped or redirected output carries o
 lines described above, unchanged. A single conversion that takes longer than two
 seconds shows a spinner line the same way.
 
-**`Error: Unsupported file format: '.xyz'`.** The message lists every recognized
+**`Γ£ô` instead of `✓` in PowerShell.** Piped and redirected output is UTF-8 on every
+system, as Python markitai writes it. Windows PowerShell and PowerShell 7 decode the
+output of a program they capture (`$out = markitai …`, `markitai … | Select-String …`)
+with `[Console]::OutputEncoding`, the console's code page (437 or 936 by default), so
+the marks and every other non-ASCII character (Chinese, file names, Markdown on
+stdout) come out wrong. Run `[Console]::OutputEncoding = [Text.Encoding]::UTF8`
+first (in cmd, `chcp 65001`). Output shown in the console itself is not affected.
+
+**`✗ Unsupported file format: '.xyz'`.** The message lists every recognized
 extension. Rename files that have the wrong extension.
 
 ## Caches, logs and state

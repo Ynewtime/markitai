@@ -97,8 +97,8 @@ Batch processing:
       --max-depth <N>
           Directory scan depth; 0 scans only the input directory
       --llm-batch
-          Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
-          in -o
+          Submit directory text enhancement to the OpenAI or Anthropic Batch API; --resume continues
+          frozen work in -o
       --llm-batch-timeout <SECONDS>
           Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
       --llm-batch-collect <BATCH_ID>
@@ -267,8 +267,8 @@ Batch processing:
           Directory scan depth; 0 scans only the input directory
 
       --llm-batch
-          Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
-          in -o
+          Submit directory text enhancement to the OpenAI or Anthropic Batch API; --resume continues
+          frozen work in -o
 
       --llm-batch-timeout <SECONDS>
           Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
@@ -1429,8 +1429,8 @@ Batch processing:
       --max-depth <N>
           Directory scan depth; 0 scans only the input directory
       --llm-batch
-          Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
-          in -o
+          Submit directory text enhancement to the OpenAI or Anthropic Batch API; --resume continues
+          frozen work in -o
       --llm-batch-timeout <SECONDS>
           Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
       --llm-batch-collect <BATCH_ID>
@@ -1571,8 +1571,8 @@ Batch processing:
       --max-depth <N>
           Directory scan depth; 0 scans only the input directory
       --llm-batch
-          Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
-          in -o
+          Submit directory text enhancement to the OpenAI or Anthropic Batch API; --resume continues
+          frozen work in -o
       --llm-batch-timeout <SECONDS>
           Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
       --llm-batch-collect <BATCH_ID>

@@ -3,6 +3,7 @@ use crate::{
     diagnostics::AttemptDiagnostics,
     pricing::{self, Pricing},
     report_store,
+    term::Mark,
 };
 use markitai_core::ConversionUsage;
 use serde::ser::{Serialize, SerializeMap, Serializer};
@@ -1291,7 +1292,12 @@ pub(crate) struct Resumed {
 /// resumed batch reports all of its items. A group names its first two items
 /// and counts the rest, or lists them all when `verbose`. The wording follows
 /// `lang`; item names and paths are shown as they are.
-pub(crate) fn batch_summary(
+///
+/// Each line carries its mark: the first is the verdict (`✓` everything
+/// finished, `!` some items did not, `✗` none did and some failed), then `!`
+/// for items left without a document, `○` for those skipped by choice, `✗`
+/// for failures and `→` for the remedy; the output line has none.
+pub(crate) fn batch_summary_lines(
     records: &[RunItem],
     unprocessed: &[&str],
     resumed: Resumed,
@@ -1299,7 +1305,7 @@ pub(crate) fn batch_summary(
     elapsed: std::time::Duration,
     output: &Path,
     lang: Lang,
-) -> Vec<String> {
+) -> Vec<(Option<Mark>, String)> {
     const EXAMPLES: usize = 2;
     let list_separator = match lang {
         Lang::En => ", ",
@@ -1397,9 +1403,28 @@ pub(crate) fn batch_summary(
         }
         parts.join(list_separator)
     };
-    let mut lines = vec![text!(
-        lang => "Done: {converted} ({detail})",
-        "完成：{converted}（{detail}）"
+    let failures = records
+        .iter()
+        .filter(|record| record.status == ItemStatus::Failed)
+        .count();
+    let unfinished = unprocessed.len()
+        + records
+            .iter()
+            .filter(|record| record.status == ItemStatus::Pending)
+            .count();
+    let verdict = if failures + unfinished == 0 {
+        Mark::Success
+    } else if finished == 0 && failures > 0 {
+        Mark::Error
+    } else {
+        Mark::Warning
+    };
+    let mut lines = vec![(
+        Some(verdict),
+        text!(
+            lang => "Done: {converted} ({detail})",
+            "完成：{converted}（{detail}）"
+        ),
     )];
     let mut skipped: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for record in records
@@ -1441,9 +1466,18 @@ pub(crate) fn batch_summary(
             _ => String::new(),
         };
         let (count, shown) = (items(names.len()), examples(&names));
-        lines.push(text!(
-            lang => "Skipped {count} ({why}): {shown}.{hint}",
-            "已跳过 {count}（{why}）：{shown}。{hint}"
+        // Skipped by the conflict policy or waiting for a batch is by choice;
+        // anything else left an item without its document.
+        let mark = match reason {
+            "exists" | "pending_batch" => Mark::Skip,
+            _ => Mark::Warning,
+        };
+        lines.push((
+            Some(mark),
+            text!(
+                lang => "Skipped {count} ({why}): {shown}.{hint}",
+                "已跳过 {count}（{why}）：{shown}。{hint}"
+            ),
         ));
     }
     // Results that took a new name because their file already existed: a
@@ -1460,19 +1494,24 @@ pub(crate) fn batch_summary(
     if !renamed.is_empty() {
         let names: Vec<&str> = renamed.iter().map(String::as_str).collect();
         let (count, shown) = (items(names.len()), examples(&names));
-        lines.push(text!(
-            lang => "Renamed {count} (output already exists): {shown}. Set output.on_conflict to overwrite or skip to change this.",
-            "已改名 {count}（输出已存在）：{shown}。将 output.on_conflict 设为 overwrite 或 skip 可改变这一行为。"
+        lines.push((
+            Some(Mark::Info),
+            text!(
+                lang => "Renamed {count} (output already exists): {shown}. Set output.on_conflict to overwrite or skip to change this.",
+                "已改名 {count}（输出已存在）：{shown}。将 output.on_conflict 设为 overwrite 或 skip 可改变这一行为。"
+            ),
         ));
     }
-    for (status, label, hint) in [
+    for (status, mark, label, hint) in [
         (
             ItemStatus::Failed,
+            Mark::Error,
             text!(lang => "Failed", "失败"),
             text!(lang => " See the errors above.", "详见上方的错误信息。"),
         ),
         (
             ItemStatus::Pending,
+            Mark::Warning,
             text!(lang => "Not finished", "未完成"),
             String::new(),
         ),
@@ -1486,17 +1525,23 @@ pub(crate) fn batch_summary(
             continue;
         }
         let (count, shown) = (items(names.len()), examples(&names));
-        lines.push(text!(
-            lang => "{label} {count}: {shown}.{hint}",
-            "{label} {count}：{shown}。{hint}"
+        lines.push((
+            Some(mark),
+            text!(
+                lang => "{label} {count}: {shown}.{hint}",
+                "{label} {count}：{shown}。{hint}"
+            ),
         ));
     }
     // Completed items stay completed; a resumed run picks up the rest.
     if !unprocessed.is_empty() {
         let (count, shown) = (items(unprocessed.len()), examples(unprocessed));
-        lines.push(text!(
-            lang => "Not processed {count}: {shown}. Run the same command with --resume to continue.",
-            "未处理 {count}：{shown}。使用相同命令并加上 --resume 可继续。"
+        lines.push((
+            Some(Mark::Warning),
+            text!(
+                lang => "Not processed {count}: {shown}. Run the same command with --resume to continue.",
+                "未处理 {count}：{shown}。使用相同命令并加上 --resume 可继续。"
+            ),
         ));
     }
     // Every item failing for want of a model has one cause and one remedy.
@@ -1505,19 +1550,105 @@ pub(crate) fn batch_summary(
         .iter()
         .any(|record| record.error.as_deref() == Some(no_model.as_str()))
     {
-        lines.push(text!(
-            lang => "No LLM model is configured: set a provider API key such as OPENAI_API_KEY (optionally with MODEL) or configure llm.model_list, or rerun without --llm.",
-            "未配置 LLM 模型：请设置供应商的 API key（如 OPENAI_API_KEY，可同时设置 MODEL）或配置 llm.model_list，也可以不加 --llm 重新运行。"
+        lines.push((
+            Some(Mark::Action),
+            text!(
+                lang => "No LLM model is configured: set a provider API key such as OPENAI_API_KEY (optionally with MODEL) or configure llm.model_list, or rerun without --llm.",
+                "未配置 LLM 模型：请设置供应商的 API key（如 OPENAI_API_KEY，可同时设置 MODEL）或配置 llm.model_list，也可以不加 --llm 重新运行。"
+            ),
         ));
     }
     let output = output.display();
-    lines.push(text!(lang => "Output: {output}", "输出目录：{output}"));
+    lines.push((
+        None,
+        text!(lang => "Output: {output}", "输出目录：{output}"),
+    ));
     lines
+}
+
+/// The text of [`batch_summary_lines`], without the marks.
+#[cfg(test)]
+pub(crate) fn batch_summary(
+    records: &[RunItem],
+    unprocessed: &[&str],
+    resumed: Resumed,
+    verbose: bool,
+    elapsed: std::time::Duration,
+    output: &Path,
+    lang: Lang,
+) -> Vec<String> {
+    batch_summary_lines(
+        records,
+        unprocessed,
+        resumed,
+        verbose,
+        elapsed,
+        output,
+        lang,
+    )
+    .into_iter()
+    .map(|(_, text)| text)
+    .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_summary_marks_say_the_outcome_and_what_each_line_is() {
+        let marks = |records: &[RunItem], unprocessed: &[&str]| {
+            batch_summary_lines(
+                records,
+                unprocessed,
+                Resumed::default(),
+                false,
+                std::time::Duration::ZERO,
+                Path::new("out"),
+                Lang::En,
+            )
+            .into_iter()
+            .map(|(mark, _)| mark)
+            .collect::<Vec<_>>()
+        };
+        let mut records: Vec<RunItem> = (0..3)
+            .map(|index| item(index, ItemKind::File, &format!("k{index}")))
+            .collect();
+        // Everything finished: a success, then the output line without a mark.
+        assert_eq!(marks(&records, &[]), [Some(Mark::Success), None]);
+        // Skipped by the conflict policy is by choice; an image without text
+        // is a warning; a failure makes the verdict a warning while others
+        // converted.
+        records[0].status = ItemStatus::Skipped;
+        records[0].skip_reason = Some("exists".into());
+        records[1].status = ItemStatus::Skipped;
+        records[1].skip_reason = Some("image_only".into());
+        records[2].status = ItemStatus::Failed;
+        assert_eq!(
+            marks(&records, &[]),
+            [
+                Some(Mark::Error),
+                Some(Mark::Skip),
+                Some(Mark::Warning),
+                Some(Mark::Error),
+                None
+            ]
+        );
+        records[0].status = ItemStatus::Completed;
+        records[0].skip_reason = None;
+        assert_eq!(marks(&records, &[])[0], Some(Mark::Warning));
+        // Interrupted with nothing failed: not a success.
+        records[2].status = ItemStatus::Completed;
+        assert_eq!(
+            marks(&records, &["late.txt"]),
+            [
+                Some(Mark::Warning),
+                Some(Mark::Warning),
+                Some(Mark::Warning),
+                None
+            ]
+        );
+    }
 
     #[test]
     fn batch_summary_names_counts_time_cost_skips_and_failures() {

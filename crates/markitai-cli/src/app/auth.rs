@@ -1,5 +1,6 @@
 //! Authentication stays with the official runtime; no token store is inspected here.
 use super::{CliResult, runtime};
+use crate::term::{Mark, Style, Tone};
 use clap::Subcommand;
 use markitai_core::{config, subscription};
 use std::collections::HashMap;
@@ -73,31 +74,58 @@ pub(super) fn chatgpt_status(env: &HashMap<String, String>) -> subscription::Aut
         })
 }
 
-fn display(status: &subscription::AuthStatus) {
+/// `✓ provider: authenticated`, or `unavailable` with the mark `missing`
+/// stands for, and under it the account, the runtime's reason and the
+/// sign-in command. The overview lists each provider as an item; one asked
+/// for alone is the command's verdict, at column 0.
+fn display(status: &subscription::AuthStatus, style: Style, indent: usize, missing: Mark) {
+    let (mark, state) = if status.authenticated {
+        (Mark::Success, "authenticated")
+    } else {
+        (missing, "unavailable")
+    };
+    let under = indent + 2;
     println!(
-        "{}: {}",
-        status.provider,
-        if status.authenticated {
-            "authenticated"
-        } else {
-            "unavailable"
-        }
+        "{}",
+        style.line(
+            indent,
+            Some(mark),
+            &format!("{}: {state}", status.provider),
+            None
+        )
     );
     if let Some(user) = &status.user {
-        println!("  Account: {}", terminal_text(user));
+        println!(
+            "{}",
+            style.line(
+                under,
+                None,
+                &format!("Account: {}", terminal_text(user)),
+                None
+            )
+        );
     }
     if let Some(error) = &status.error {
-        println!("  {}", terminal_text(error));
+        println!(
+            "{}",
+            style.line(under, None, &terminal_text(error), Some(Tone::Secondary))
+        );
         // A signed-out runtime is one command away from working.
         if error.contains("not signed in") {
             let name = status
                 .provider
                 .strip_suffix("-agent")
                 .unwrap_or(status.provider);
-            println!("  Next: markitai auth {name} login");
+            println!(
+                "{}{} {}",
+                " ".repeat(under),
+                style.mark(Mark::Action),
+                style.paint(Tone::Accent, &format!("markitai auth {name} login"))
+            );
         }
     }
 }
+
 fn terminal_text(value: &str) -> String {
     value
         .chars()
@@ -108,10 +136,16 @@ fn terminal_text(value: &str) -> String {
 
 pub(super) fn run(command: Option<&Command>) -> CliResult<i32> {
     let env = config::environment();
+    let style = Style::stdout();
     let Some(command) = command else {
-        display(&claude_status(&env));
-        display(&chatgpt_status(&env));
-        display(&copilot_status(&env));
+        println!("{}\n", style.title("Provider Authentication"));
+        for status in [
+            claude_status(&env),
+            chatgpt_status(&env),
+            copilot_status(&env),
+        ] {
+            display(&status, style, 2, Mark::Warning);
+        }
         return Ok(0);
     };
     let (provider, action) = match command {
@@ -142,7 +176,7 @@ pub(super) fn run(command: Option<&Command>) -> CliResult<i32> {
         // The reference's JSON status exits zero even for unavailable authentication.
         Ok(0)
     } else {
-        display(&status);
+        display(&status, style, 0, Mark::Error);
         Ok(if status.authenticated { 0 } else { 1 })
     }
 }

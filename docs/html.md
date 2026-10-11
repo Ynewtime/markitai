@@ -115,12 +115,40 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   `title` or `aria-label`, else `Video` or `Audio`: `[![Video](poster.jpg)](movie.mp4)`.
   The text inside it is what a browser without media support shows ("Your
   browser does not support video.") and is left out.
-- An inline SVG drawing is written as the text it shows: its title, then its
+- An inline SVG chart or diagram that shows text (a `text` or `foreignObject`
+  label) and stands in the flow of blocks (every element around it a block
+  container: not in a table cell, a link, a heading or a sentence) is kept as a
+  drawing, as the reference keeps it, instead of its loose axis labels: SVG
+  markup on one line inside `<div>…</div>`, which CommonMark takes as an HTML
+  block, with Markdown's punctuation in its text written as character
+  references (`&#91;`), so no reader finds a link or emphasis in a label. The
+  markup is rebuilt from an allow-list: drawing elements and presentation
+  attributes, values that call only colour, transform and arithmetic functions
+  (no `image-set()`), references only to fragments of the drawing, plain
+  formatting inside a `foreignObject`; no scripts, event attributes,
+  animations, images, style sheets, filters or `url()` to another document.
+  Each `id` and the references to it get a prefix of their own drawing
+  (`m1a2b3c4d-clip0`), so two drawings do not take each other's gradients and an
+  `id` does not shadow a script's global. Colours a lost style sheet gave it
+  are resolved as the reference resolves them (a CSS variable's fallback,
+  Tailwind palette variables and `fill-`/`stroke-` classes with Tailwind CSS
+  3.4.19's palette, see [its notice](../licenses/tailwind/README.md);
+  `light-dark()` as its light colour, a background variable as `Canvas`,
+  otherwise `currentColor`), and when a class-styled shape has no paint of its
+  own, text gets `currentColor`, lines a faint stroke and open paths a stroke
+  instead of a black fill. A drawing nested more than 64 levels deep, with more than 20,000
+  elements or longer than 512 KB of markup is written as text; one bounded walk
+  decides that before anything else reads it.
+  Any other drawing is written as the text it shows: its title, then its
   labels (each `text` element, a `tspan` placed on a line of its own, the text of
   a `foreignObject`, only the first child of a `switch`) set apart by spaces,
   where the markup ran them together (`Start hereFinish there`); definitions,
   styles and inner tooltips draw nothing. A drawing in a block of its own is a
   paragraph, one inside a line of text (an icon in a link) its words.
+- `link`, `meta` and `base` elements in the body (MediaWiki's TemplateStyles
+  `link` before an inline template, microdata) draw nothing and are not
+  written, so they no longer end the paragraph they stand in; a paragraph of
+  only white space (no-break spaces too) is not written either.
 - Soft hyphens (U+00AD) are removed from text: they only mark where a browser
   may break a word. Code keeps its characters.
 - A table with header cells is written to htmd as a regular grid, since htmd
@@ -238,7 +266,13 @@ MediaWiki's section edit links, tagline, redirect note, skip links and the menu
 of the article in other languages (`#p-lang-btn`, `mw-portlet-lang`: the "57
 languages" list the Vector 2022 skin writes above the article) and its notices
 to editors (`ambox`: "This article relies excessively on references to primary
-sources… Find sources: …") are page chrome. So is the page's banner: a `header`
+sources… Find sources: …") are page chrome, and so are arXiv's abstract-page
+column of download, browse, citation and bookmark links, its arXivLabs tool tabs
+and its endorser and MathJax switches (`extra-services`, `labstabs`,
+`endorsers`, which the reference removes by name), a picture-only link to the
+site's feed (an RSS icon) and a poll: a block with two or more buttons and only
+a prompt of at most twelve words and a heading besides ("Was this page
+helpful?" with Yes and No). So is the page's banner: a `header`
 whose nearest sectioning element is the body (or `role="banner"`) with no
 heading that has text outside a link (a site name linked home is a logo; a
 page title in the banner keeps it), and an element that Bulma's `is-hidden` or
@@ -258,12 +292,12 @@ their tables of contents.
 
 On a full page, framework classes that hide an element are honored as defuddle
 reads them: `hidden` or `invisible`, also behind a variant (`md:hidden`, a site's
-own `not-machine:hidden`), or a CSS-module `isHidden-…` name, unless a responsive
-class shows it again (`hidden md:block`). Arbitrary variants (`[&_.x]:hidden`)
+own `not-machine:hidden`), a CSS-module `isHidden-…` name or a BEM `hidden`
+modifier (`feedback--response__hidden`, `menu--hidden`; not `visually--hidden`
+or `overflow--hidden`), unless a responsive class shows it again
+(`hidden md:block`). Arbitrary variants (`[&_.x]:hidden`)
 target other elements, and math keeps its hidden accessible copies. Fragments
 come without the site's style sheet and keep such elements.
-A GitHub issue keeps its complete discussion, where defuddle keeps only the
-opening post: the thread is usually what an issue link is converted for.
 
 On a full page an image smaller than 33px on either axis by what it declares
 (attributes, inline style, an SVG viewBox, a `1x` srcset URL's width) is a
@@ -271,7 +305,7 @@ spacer, pixel or icon and is not written; an emoji image keeps its character,
 percentages are not pixels, equation images stay, and fragments keep all
 images.
 
-Three sites have their own reader. A Substack note page (by host, note
+Four sites have their own reader. A Substack note page (by host, note
 permalink container or CDN assets, without a rendered article body) is its
 main note and attached image. An X post page (an x.com or twitter.com status
 or Article URL, or, for a page saved without an address, X's own column markup
@@ -290,12 +324,19 @@ buttons, text in `div[dir=auto]`, the date as the text of its `/status/<id>`
 link, a quoted post as a nested `article` in `div[role=link][data-href]`).
 Following the reference's thread policy, the author's own consecutive posts
 right after the main one continue it, each after a `---` rule; the first reply
-from anyone else ends the thread, and replies from other accounts are left out.
+from anyone else ends the thread. It and the replies after it (the author's own
+among them) follow under `## Comments`, as the reference writes them: each a
+block quote headed `**Name @handle** · [date](permalink)` with its text, media
+and quoted post, up to the first heading outside a post (X's "Discover more"),
+also in a timeline whose labels are in another language.
 Posts of the thread that come before the requested one are not included.
 An X Article embedded in a status page or opened through `/article/<id>` uses
-its own heading, cover and dedicated body. The requested post ID distinguishes
+its own heading, cover and dedicated body: an `x-article-body` beside its `h1`,
+or the read view of 2026 (`twitterArticleReadView`, its title in
+`twitter-article-title`, its cover photo above the `twitterArticleRichTextView`
+body). The requested post ID distinguishes
 it from replies and repeated layouts; lists, quotations, code and body images
-retain their document structure. Author controls and discussion are excluded.
+retain their document structure. Author controls and the discussion are excluded.
 Older Article pages without a dedicated body use the ordinary document reader.
 Articles retain their actual title and ordinary document enhancement behavior.
 For ordinary posts, the frontmatter uses the reference's fields: `title: Post by @handle on X`,
@@ -308,7 +349,16 @@ added as `author_name`, which the reference does not write. A
 Hacker News story or comment page is the story link and text (or the comment
 with its author and date) followed by its comments as blockquotes nested by
 reply level, read from each comment's indent; a story list is numbered with
-each story's source, points, submitter and comment link. A Gmail thread saved
+each story's source, points, submitter and comment link. A GitHub issue
+(GitHub's issue viewer, `data-testid=issue-viewer-issue-container`, recognized
+by its markup) is its opening post's body, then its comments under
+`## Comments`, each a block quote headed `**author** · [date](permalink)` (the
+UTC day of its timestamp), with the author and date in the frontmatter; the
+viewer's avatars, screen-reader headings ("octocat commented on …"), "opened on
+… · edited by …" lines, badges and edit-history and reaction controls are left
+out, and so are timeline events (labels, references, closing). The reference
+keeps only the opening post of a page it reads without its GitHub address; the
+thread is usually what an issue link is converted for. A Gmail thread saved
 from the browser is read as a page, without the quoted history and trimmed
 content that Gmail folds away in each message
 ([mail threads](html-article.md#furniture-beside-the-article-body)).
@@ -455,6 +505,9 @@ Supported structures include footnote/reference lists, `doc-footnote` and
 `doc-noteref` roles, `fn:`/`fn-`/`ftnt` identifiers, named anchors, Word export
 backlinks, Google Docs notes, WordPress/Easy Footnotes lists, standalone
 `footnote-definition` blocks, inline popovers, Org-style labels and sidenotes,
+LaTeXML notes (arXiv: an `ltx_note` span is the reference and its
+`ltx_note_content` the definition, without the mark, kind and number it repeats;
+a `footnotemark` note, whose content repeats only those, is its visible mark),
 `aside > ol[start]`, and `data-definition` references to hidden asides. A labeled
 footnote section outside the selected article can supply definitions, while
 unrelated external content stays outside the article.

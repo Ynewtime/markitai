@@ -135,12 +135,14 @@ fn invalid_paid_responses_retain_all_attempts_and_old_error_category() {
     let config = cfg(&server, root.path());
     let failure = convert_detailed(path.to_str().unwrap(), options(config.clone())).unwrap_err();
     assert!(matches!(failure.error, Error::Conversion(_)));
-    assert_usage(&failure.usage, 3, 21, 15);
+    // Two attempts: the second rejection repeats the first, so a third request
+    // would be the second one again.
+    assert_usage(&failure.usage, 2, 14, 10);
     let old = convert(path.to_str().unwrap(), options(config)).unwrap_err();
     assert!(matches!(old, Error::Conversion(_)));
     assert_eq!(old.code(), failure.code());
     assert_eq!(old.to_string(), failure.to_string());
-    assert_eq!(server.count(), 6);
+    assert_eq!(server.count(), 4);
 }
 
 #[test]

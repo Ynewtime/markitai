@@ -74,7 +74,7 @@ fn a_relative_markitai_home_is_resolved_to_an_absolute_path() {
     );
     let created = text
         .lines()
-        .find_map(|line| line.strip_prefix("Configuration created: "))
+        .find_map(|line| line.strip_prefix("✓ Configuration created: "))
         .unwrap_or_else(|| panic!("{text}"));
     // Before: `relative-home/config.json`, a path that changes meaning with
     // the working directory and fails every "inside the home" check.

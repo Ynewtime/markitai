@@ -159,8 +159,16 @@ mod terminal {
         fn send(&mut self, script: &str) {
             self.master.write_all(script.as_bytes()).unwrap();
         }
+        /// The transcript without the colours of the terminal style.
         fn text(&self) -> String {
-            String::from_utf8_lossy(&self.transcript.lock().unwrap()).into_owned()
+            String::from_utf8_lossy(&self.transcript.lock().unwrap())
+                .split("\u{1b}[")
+                .enumerate()
+                .map(|(index, part)| match part.split_once('m') {
+                    Some((_, rest)) if index > 0 => rest,
+                    _ => part,
+                })
+                .collect()
         }
         fn wait_for(&self, text: &str) {
             let start = Instant::now();

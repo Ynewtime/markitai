@@ -75,7 +75,7 @@ full repository checkout; internal work records are not copied into packages.
 - [Pricing](pricing.md): price catalog and dollar limits.
 - [Subscriptions](subscriptions.md) and [ChatGPT adapter](subscription-chatgpt.md):
   GitHub Copilot, Claude and ChatGPT through their official runtimes.
-- [Provider Batch](provider-batch.md): OpenAI Batch API for folders.
+- [Provider Batch](provider-batch.md): OpenAI and Anthropic Batch APIs for folders.
 - [Cache](cache.md): reuse of model answers.
 
 ## Output and records

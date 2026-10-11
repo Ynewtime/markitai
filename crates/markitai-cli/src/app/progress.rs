@@ -7,9 +7,8 @@
 //! line instead of being glued to the status.
 
 use super::i18n::{self, Lang};
+use crate::term::{Stream, Style, Tone, char_width as width};
 use std::io::{self, IsTerminal, Write};
-#[cfg(windows)]
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -30,53 +29,9 @@ const SPINNER_AFTER: Duration = Duration::from_secs(2);
 /// with spaces instead of printing escape sequences as ordinary text.
 static LAST_WIDTH: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(windows)]
-fn enable_vt(which: u32) -> bool {
-    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-    use windows_sys::Win32::System::Console::{
-        ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, SetConsoleMode,
-    };
-    // SAFETY: these APIs inspect process-owned console handles; pointers refer
-    // to initialized local storage and no handle ownership is transferred.
-    unsafe {
-        let handle = GetStdHandle(which);
-        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return false;
-        }
-        let mut mode = 0;
-        GetConsoleMode(handle, &mut mode) != 0
-            && (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0
-                || SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0)
-    }
-}
-
+/// Whether stderr reads escape sequences (enabled on first use on Windows).
 fn ansi() -> bool {
-    #[cfg(windows)]
-    {
-        static ANSI: OnceLock<bool> = OnceLock::new();
-        *ANSI.get_or_init(|| enable_vt(windows_sys::Win32::System::Console::STD_ERROR_HANDLE))
-    }
-    #[cfg(not(windows))]
-    {
-        true
-    }
-}
-
-/// Prepare both console streams before clap writes its first colored help or
-/// error. If an attached console cannot enable VT, request plain clap text.
-pub(super) fn initialize() -> bool {
-    #[cfg(windows)]
-    {
-        static STDOUT_ANSI: OnceLock<bool> = OnceLock::new();
-        let stdout_ansi = *STDOUT_ANSI
-            .get_or_init(|| enable_vt(windows_sys::Win32::System::Console::STD_OUTPUT_HANDLE));
-        let stderr_ansi = ansi();
-        (!io::stdout().is_terminal() || stdout_ansi) && (!io::stderr().is_terminal() || stderr_ansi)
-    }
-    #[cfg(not(windows))]
-    {
-        true
-    }
+    crate::term::vt(Stream::Stderr)
 }
 
 /// Erase the line without touching the shown flag. The Windows termination
@@ -115,49 +70,7 @@ pub(super) fn wanted(quiet: bool, json: bool) -> bool {
 
 /// Terminal's visible width in columns, 80 when it cannot be read.
 pub(super) fn columns() -> usize {
-    #[cfg(unix)]
-    {
-        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-        if unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut size) } == 0
-            && size.ws_col > 0
-        {
-            return usize::from(size.ws_col);
-        }
-    }
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::System::Console::{
-            CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo, GetStdHandle, STD_ERROR_HANDLE,
-        };
-        let mut size: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
-        // The viewport, not the scrollback buffer, is the width users see.
-        if unsafe { GetConsoleScreenBufferInfo(GetStdHandle(STD_ERROR_HANDLE), &mut size) } != 0
-            && let Some(width) = viewport_width(size.srWindow.Left, size.srWindow.Right)
-        {
-            return width;
-        }
-    }
-    80
-}
-
-#[cfg(any(windows, test))]
-fn viewport_width(left: i16, right: i16) -> Option<usize> {
-    usize::try_from(i32::from(right) - i32::from(left) + 1)
-        .ok()
-        .filter(|n| *n > 0)
-}
-
-/// Columns a character occupies: wide East Asian characters take two.
-fn width(character: char) -> usize {
-    if u32::from(character) >= 0x1100
-        && (matches!(u32::from(character), 0x1100..=0x115f | 0x2e80..=0xa4cf | 0xac00..=0xd7a3
-            | 0xf900..=0xfaff | 0xfe30..=0xfe6f | 0xff00..=0xff60 | 0xffe0..=0xffe6
-            | 0x1f300..=0x1faff | 0x20000..=0x3fffd))
-    {
-        2
-    } else {
-        1
-    }
+    crate::term::columns(Stream::Stderr)
 }
 
 /// `text` cut to `limit` columns, keeping its end (the file name) and marking
@@ -193,26 +106,28 @@ fn clock(seconds: u64) -> String {
     }
 }
 
-fn redraw_text(line: &str, ansi: bool, previous: usize) -> String {
+/// `styled` drawn over the previous line; `line` is the same text without
+/// colour, which decides how many columns it covers.
+fn redraw_text(line: &str, styled: &str, ansi: bool, previous: usize) -> String {
     if ansi {
-        format!("\r{line}\x1b[K")
+        format!("\r{styled}\x1b[K")
     } else {
         let current: usize = line.chars().map(width).sum();
         let padding = " ".repeat(previous.saturating_sub(current));
         if padding.is_empty() {
-            format!("\r{line}")
+            format!("\r{styled}")
         } else {
-            format!("\r{line}{padding}\r{line}")
+            format!("\r{styled}{padding}\r{styled}")
         }
     }
 }
 
-fn draw(line: &str) {
+fn draw(line: &str, styled: &str) {
     let current: usize = line.chars().map(width).sum();
     let previous = LAST_WIDTH
         .swap(current, Ordering::SeqCst)
         .min(columns().saturating_sub(1));
-    let text = redraw_text(line, ansi(), previous);
+    let text = redraw_text(line, styled, ansi(), previous);
     let mut stderr = io::stderr().lock();
     let _ = stderr.write_all(text.as_bytes());
     let _ = stderr.flush();
@@ -222,7 +137,8 @@ fn draw(line: &str) {
 /// `[12/340] name  elapsed 0:41`, cut to the terminal width. `elapsed` is
 /// the time the batch has taken so far: a remaining-time estimate swings with
 /// each item's size and with model requests, so it is not shown.
-pub(super) fn batch_line(
+#[cfg(test)]
+fn batch_line(
     done: usize,
     total: usize,
     name: &str,
@@ -230,6 +146,19 @@ pub(super) fn batch_line(
     lang: Lang,
     columns: usize,
 ) -> String {
+    let (head, tail) = batch_parts(done, total, name, elapsed, lang, columns);
+    head + &tail
+}
+
+/// [`batch_line`] as the counter and name, and the clock, which is shown in gray.
+fn batch_parts(
+    done: usize,
+    total: usize,
+    name: &str,
+    elapsed: Duration,
+    lang: Lang,
+    columns: usize,
+) -> (String, String) {
     let counter = format!("[{done}/{total}]");
     let elapsed = clock(elapsed.as_secs());
     let tail = match lang {
@@ -245,11 +174,11 @@ pub(super) fn batch_line(
         // still says how far along.
         let limit = columns.saturating_sub(1);
         if counter.len() + tail_width <= limit {
-            return format!("{counter}{tail}");
+            return (counter, tail);
         }
-        return fit(&counter, limit);
+        return (fit(&counter, limit), String::new());
     }
-    format!("{counter} {}{tail}", fit(name, room))
+    (format!("{counter} {}", fit(name, room)), tail)
 }
 
 /// The status line of a batch. Dropping it erases the line.
@@ -283,11 +212,13 @@ impl Progress {
         self.drawn = Some(Instant::now());
         let done = done.min(self.total);
         let elapsed = self.started.elapsed();
-        let line = batch_line(done, self.total, current, elapsed, i18n::lang(), columns());
+        let (head, tail) = batch_parts(done, self.total, current, elapsed, i18n::lang(), columns());
+        let line = format!("{head}{tail}");
         // The clock changes once a second; an identical line is not worth
         // terminal traffic (unless something erased it since).
         if line != self.line || !SHOWN.load(Ordering::SeqCst) {
-            draw(&line);
+            let styled = format!("{head}{}", Style::stderr().paint(Tone::Secondary, &tail));
+            draw(&line, &styled);
             self.line = line;
         }
     }
@@ -305,7 +236,9 @@ impl Drop for Progress {
     }
 }
 
-/// A line for one long conversion: `⠋ Converting name … 7s`. It appears only
+/// A line for one long conversion: `⠋ Converting name … 7s`, the spinner in
+/// the accent colour (`| / - \\` where the output takes no Unicode marks) and
+/// the seconds in gray. It appears only
 /// after the conversion has taken [`SPINNER_AFTER`], runs on its own thread
 /// and erases itself when dropped.
 pub(super) struct Spinner {
@@ -329,6 +262,13 @@ impl Spinner {
                 return;
             }
             const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            const ASCII_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+            let style = Style::stderr();
+            let frames: &[char] = if style.unicode {
+                &FRAMES
+            } else {
+                &ASCII_FRAMES
+            };
             let mut frame = 0;
             loop {
                 let seconds = started.elapsed().as_secs();
@@ -338,12 +278,20 @@ impl Spinner {
                 };
                 let room = columns().saturating_sub(1);
                 let tail = format!(" {seconds}s");
-                let head = format!("{} {label} ", FRAMES[frame % FRAMES.len()]);
+                let spinner = frames[frame % frames.len()].to_string();
+                let head = format!("{spinner} {label} ");
                 let name = fit(
                     &name,
                     room.saturating_sub(head.chars().map(width).sum::<usize>() + tail.len()),
                 );
-                draw(&format!("{head}{name}{tail}"));
+                draw(
+                    &format!("{head}{name}{tail}"),
+                    &format!(
+                        "{} {label} {name}{}",
+                        style.paint(Tone::Accent, &spinner),
+                        style.paint(Tone::Secondary, &tail)
+                    ),
+                );
                 frame += 1;
                 if stopped.recv_timeout(Duration::from_millis(120))
                     != Err(mpsc::RecvTimeoutError::Timeout)
@@ -375,13 +323,15 @@ mod tests {
 
     #[test]
     fn consoles_without_vt_clear_previous_columns_without_escape_sequences() {
-        assert_eq!(redraw_text("报告", true, 9), "\r报告\x1b[K");
-        assert_eq!(redraw_text("报告", false, 9), "\r报告     \r报告");
-        assert_eq!(redraw_text("longer", false, 3), "\rlonger");
+        assert_eq!(redraw_text("报告", "报告", true, 9), "\r报告\x1b[K");
+        assert_eq!(redraw_text("报告", "报告", false, 9), "\r报告     \r报告");
+        assert_eq!(redraw_text("longer", "longer", false, 3), "\rlonger");
         assert_eq!(erase_text(false, 4), "\r    \r");
-        assert_eq!(viewport_width(30, 109), Some(80));
-        assert_eq!(viewport_width(10, 9), None);
-        assert_eq!(viewport_width(10, 8), None);
+        // Colour does not count as columns to clear.
+        assert_eq!(
+            redraw_text("a 1s", "a \x1b[90m1s\x1b[0m", false, 6),
+            "\ra \x1b[90m1s\x1b[0m  \ra \x1b[90m1s\x1b[0m"
+        );
     }
 
     #[test]

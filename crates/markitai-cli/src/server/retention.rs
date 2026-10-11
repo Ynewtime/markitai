@@ -132,8 +132,8 @@ pub(super) async fn sweep_now(state: &Arc<super::State>) {
     .await;
     match swept {
         Ok(Ok(_)) => {}
-        Ok(Err(error)) => eprintln!("Serve: history retention sweep failed: {error}"),
-        Err(error) => eprintln!("Serve: history retention sweep failed: {error}"),
+        Ok(Err(error)) => eprintln!("Warning: Serve: history retention sweep failed: {error}"),
+        Err(error) => eprintln!("Warning: Serve: history retention sweep failed: {error}"),
     }
 }
 

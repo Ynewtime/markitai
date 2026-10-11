@@ -16,6 +16,7 @@
 //! [`read_default`].
 
 mod classify;
+mod depthwise;
 mod detect;
 pub(crate) mod models;
 mod recognize;
@@ -91,7 +92,8 @@ fn parse(name: &str, role: models::Role) -> Result<InferenceModel> {
 }
 
 /// `model` optimized for inputs of `shape`, where `None` is a dimension that
-/// varies from run to run.
+/// varies from run to run, with its depthwise convolutions spread over the
+/// OCR threads ([`depthwise`]).
 fn plan(mut model: InferenceModel, shape: [Option<usize>; 4], name: &str) -> Result<Plan> {
     let dims: TVec<TDim> = shape
         .iter()
@@ -103,7 +105,12 @@ fn plan(mut model: InferenceModel, shape: [Option<usize>; 4], name: &str) -> Res
         .collect();
     let built = model
         .set_input_fact(0, f32::fact(dims).into())
-        .and_then(|_| model.into_optimized())
+        .and_then(|_| model.into_typed())
+        .and_then(|typed| typed.into_decluttered())
+        .and_then(|mut typed| {
+            depthwise::split(&mut typed)?;
+            typed.into_optimized()
+        })
         .and_then(|typed| typed.into_runnable());
     built.map_err(|error| engine_error(&format!("cannot prepare the model {name}"), error))
 }
@@ -166,7 +173,7 @@ impl Detector {
         Ok(plan)
     }
 
-    fn regions(&self, image: &RgbImage) -> Result<(Vec<detect::Region>, bool)> {
+    fn regions(&self, image: &RgbImage, box_threshold: f32) -> Result<(Vec<detect::Region>, bool)> {
         // Bound cold optimization and input planes as well as the inference itself.
         let _turn = DetectionTurn::take();
         let layout = detect::Layout::of(image.width(), image.height());
@@ -179,9 +186,10 @@ impl Detector {
         if !detection_shape(&out, map.len(), layout.width, layout.height) {
             return Err(failure("detection model returned a map of the wrong size"));
         }
-        detect::regions(
+        detect::regions_scoring(
             &map[..layout.width as usize * layout.height as usize],
             &layout,
+            box_threshold,
         )
     }
 }
@@ -430,6 +438,32 @@ struct Cut {
     flagged: bool,
 }
 
+/// `region` of `image`, cut out upright.
+fn cut_of(image: &RgbImage, region: &detect::Region) -> Result<Cut> {
+    let [tl, tr, _, bl] = region.corners;
+    let mut cut = recognize::cut(image, &region.corners)?;
+    let mut direction = [tr[0] - tl[0], tr[1] - tl[1]];
+    if cut.height() as f32 >= recognize::UPRIGHT_RATIO * cut.width() as f32 {
+        cut = recognize::turn_counter_clockwise(&cut);
+        direction = [bl[0] - tl[0], bl[1] - tl[1]];
+    }
+    let xs = region.corners.map(|p| p[0]);
+    let ys = region.corners.map(|p| p[1]);
+    let (w, h) = (image.width() as f32, image.height() as f32);
+    let bounds = [
+        xs.iter().copied().fold(f32::MAX, f32::min).clamp(0.0, w),
+        ys.iter().copied().fold(f32::MAX, f32::min).clamp(0.0, h),
+        xs.iter().copied().fold(f32::MIN, f32::max).clamp(0.0, w),
+        ys.iter().copied().fold(f32::MIN, f32::max).clamp(0.0, h),
+    ];
+    Ok(Cut {
+        image: cut,
+        bounds,
+        direction,
+        flagged: false,
+    })
+}
+
 /// The text lines of `image`, cut out upright, and whether it had more than
 /// [`detect::MAX_REGIONS`]. The classifier and the recognizer `reader` load
 /// on their own threads while the detector reads the image, the first time
@@ -439,7 +473,7 @@ fn cuts(engine: &Engine, image: &RgbImage, reader: &'static str) -> Result<(Vec<
         let classifier = scope.spawn(classifier);
         // A failure is reported when the lines are read with it.
         let reader = scope.spawn(move || recognizer(reader).map(drop));
-        let detected = engine.detector.regions(image);
+        let detected = engine.detector.regions(image, detect::BOX_THRESHOLD);
         let _ = reader.join();
         let classifier = classifier
             .join()
@@ -447,36 +481,22 @@ fn cuts(engine: &Engine, image: &RgbImage, reader: &'static str) -> Result<(Vec<
         (detected, classifier)
     });
     let (regions, capped) = detected?;
-    let classifier = classifier?;
-    let mut cuts = Vec::with_capacity(regions.len());
-    for region in &regions {
-        let [tl, tr, _, bl] = region.corners;
-        let mut cut = recognize::cut(image, &region.corners)?;
-        let mut direction = [tr[0] - tl[0], tr[1] - tl[1]];
-        if cut.height() as f32 >= recognize::UPRIGHT_RATIO * cut.width() as f32 {
-            cut = recognize::turn_counter_clockwise(&cut);
-            direction = [bl[0] - tl[0], bl[1] - tl[1]];
-        }
-        let xs = region.corners.map(|p| p[0]);
-        let ys = region.corners.map(|p| p[1]);
-        let (w, h) = (image.width() as f32, image.height() as f32);
-        let bounds = [
-            xs.iter().copied().fold(f32::MAX, f32::min).clamp(0.0, w),
-            ys.iter().copied().fold(f32::MAX, f32::min).clamp(0.0, h),
-            xs.iter().copied().fold(f32::MIN, f32::max).clamp(0.0, w),
-            ys.iter().copied().fold(f32::MIN, f32::max).clamp(0.0, h),
-        ];
-        cuts.push(Cut {
-            image: cut,
-            bounds,
-            direction,
-            flagged: false,
-        });
-    }
-    let size = classify::BATCH * 3 * (classify::HEIGHT * classify::WIDTH) as usize;
-    for batch in cuts.chunks_mut(classify::BATCH) {
+    Ok((classified(&*classifier?, image, &regions)?, capped))
+}
+
+/// `regions` of `image` cut out upright and direction-classified. Batches of
+/// lines are cut out and classified side by side.
+fn classified(classifier: &Plan, image: &RgbImage, regions: &[detect::Region]) -> Result<Vec<Cut>> {
+    let batches = spread(regions.len().div_ceil(classify::BATCH), |batch| {
+        let start = batch * classify::BATCH;
+        let regions = &regions[start..(start + classify::BATCH).min(regions.len())];
+        let mut cuts = regions
+            .iter()
+            .map(|region| cut_of(image, region))
+            .collect::<Result<Vec<Cut>>>()?;
+        let size = classify::BATCH * 3 * (classify::HEIGHT * classify::WIDTH) as usize;
         let mut data = Vec::with_capacity(size);
-        for cut in batch.iter() {
+        for cut in &cuts {
             data.extend(classify::input(&cut.image));
         }
         data.resize(size, 0.0);
@@ -486,13 +506,14 @@ fn cuts(engine: &Engine, image: &RgbImage, reader: &'static str) -> Result<(Vec<
             classify::HEIGHT as usize,
             classify::WIDTH as usize,
         ];
-        let (answers, _) = run(&classifier, &shape, data, CLASSIFIER)?;
-        let turned = classify::upside_down(&answers, batch.len())?;
-        for (cut, over) in batch.iter_mut().zip(turned) {
+        let (answers, _) = run(classifier, &shape, data, CLASSIFIER)?;
+        let turned = classify::upside_down(&answers, cuts.len())?;
+        for (cut, over) in cuts.iter_mut().zip(turned) {
             cut.flagged = over;
         }
-    }
-    Ok((cuts, capped))
+        Ok(cuts)
+    })?;
+    Ok(batches.into_iter().flatten().collect())
 }
 
 /// Threads reading lines in this process, beyond the callers' own.
@@ -538,20 +559,8 @@ fn read_cut(recognizer: &Recognizer, cut: &Cut) -> Result<Line> {
     })
 }
 
-/// Read each cut-out line with `recognizer`, on this thread and up to
-/// [`MAX_HELPERS_PER_IMAGE`] more; one line per cut, in order.
+/// Read each cut-out line with `recognizer`; one line per cut, in order.
 fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
-    let next = AtomicUsize::new(0);
-    let work = || -> Result<Vec<(usize, Line)>> {
-        let mut done = Vec::new();
-        loop {
-            let index = next.fetch_add(1, Ordering::Relaxed);
-            let Some(cut) = cuts.get(index) else {
-                return Ok(done);
-            };
-            done.push((index, read_cut(recognizer, cut)?));
-        }
-    };
     // One or two lines (a label, a caption) share the detector's threads;
     // more are read side by side, one thread each.
     if cuts.len() <= 2 {
@@ -559,10 +568,27 @@ fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
             cuts.iter().map(|cut| read_cut(recognizer, cut)).collect()
         });
     }
-    let helpers = take_helpers(MAX_HELPERS_PER_IMAGE.min(cuts.len().saturating_sub(1)));
-    let results: Vec<Result<Vec<(usize, Line)>>> = std::thread::scope(|scope| {
-        let spawned: Vec<_> = (0..helpers).map(|_| scope.spawn(work)).collect();
-        let mut results = vec![work()];
+    spread(cuts.len(), |index| read_cut(recognizer, cuts[index]))
+}
+
+/// `work` of each index below `count`, in order, computed on this thread and
+/// up to [`MAX_HELPERS_PER_IMAGE`] more, each taking the next index.
+fn spread<T: Send>(count: usize, work: impl Fn(usize) -> Result<T> + Sync) -> Result<Vec<T>> {
+    let next = AtomicUsize::new(0);
+    let worker = || -> Result<Vec<(usize, T)>> {
+        let mut done = Vec::new();
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            if index >= count {
+                return Ok(done);
+            }
+            done.push((index, work(index)?));
+        }
+    };
+    let helpers = take_helpers(MAX_HELPERS_PER_IMAGE.min(count.saturating_sub(1)));
+    let results: Vec<Result<Vec<(usize, T)>>> = std::thread::scope(|scope| {
+        let spawned: Vec<_> = (0..helpers).map(|_| scope.spawn(worker)).collect();
+        let mut results = vec![worker()];
         for handle in spawned {
             results.push(
                 handle
@@ -573,15 +599,15 @@ fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
         results
     });
     HELPERS.fetch_sub(helpers, Ordering::AcqRel);
-    let mut lines: Vec<Option<Line>> = (0..cuts.len()).map(|_| None).collect();
+    let mut values: Vec<Option<T>> = (0..count).map(|_| None).collect();
     for result in results {
-        for (index, line) in result? {
-            lines[index] = Some(line);
+        for (index, value) in result? {
+            values[index] = Some(value);
         }
     }
-    lines
+    values
         .into_iter()
-        .map(|line| line.ok_or_else(|| failure("a line was not read")))
+        .map(|value| value.ok_or_else(|| failure("a line was not read")))
         .collect()
 }
 
@@ -722,7 +748,9 @@ pub(super) fn choice(spelling: &str) -> Result<Choice> {
     })
 }
 
-/// Recognize upright RGB pixels in the language `spelling` names.
+/// Recognize upright RGB pixels in the language `spelling` names. A
+/// full-image pass that keeps no text is tried again on overlapping tiles
+/// ([`tiled`]), as the reference does.
 pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
     let choice = choice(spelling)?;
     models::preflight(&needed(spelling)?)?;
@@ -732,16 +760,142 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
         Choice::Default => MULTILINGUAL,
     };
     let (cuts, capped) = cuts(&engine, image, reader)?;
-    let (lines, language, unread) = match choice {
-        Choice::Model(name) => {
-            let all: Vec<&Cut> = cuts.iter().collect();
-            (read_lines(&*recognizer(name)?, &all)?, name, false)
-        }
-        Choice::Default => read_default(&cuts)?,
-    };
-    let mut result = finish(lines, image, language, unread)?;
+    let (lines, language, unread) = recognize(choice, &cuts)?;
+    if !lines.iter().any(|line| line.confidence >= TEXT_SCORE)
+        && let Some(((lines, language, unread), capped)) = tiled(&engine, image, choice)?
+    {
+        let mut result = finish(lines, image, language, unread, TILE_TEXT_SCORE)?;
+        result.capped = capped;
+        return Ok(result);
+    }
+    let mut result = finish(lines, image, language, unread, TEXT_SCORE)?;
     result.capped = capped;
     Ok(result)
+}
+
+/// The lines read, the recognizer that read them, and whether the default
+/// language found text it cannot read.
+type Reading = (Vec<Line>, &'static str, bool);
+
+/// Every cut read in the chosen language.
+fn recognize(choice: Choice, cuts: &[Cut]) -> Result<Reading> {
+    match choice {
+        Choice::Model(name) => {
+            let all: Vec<&Cut> = cuts.iter().collect();
+            Ok((read_lines(&*recognizer(name)?, &all)?, name, false))
+        }
+        Choice::Default => read_default(cuts),
+    }
+}
+
+/// The reference's detection side: RapidOCR scales an input's shorter side
+/// to this. A tile is scaled up toward it (by at most [`TILE_UPSCALE`]), so
+/// text a few pixels high on a mostly empty page is large enough to find.
+/// When several tiles are searched, two at a time, each is enlarged at most
+/// so that the two hold no more pixels than the full-image pass did: the
+/// retry then needs about that pass's memory, not twice it.
+const TILE_SHORT_SIDE: f32 = 736.0;
+const TILE_UPSCALE: f32 = 2.0;
+/// The reference's thresholds for its tiled retry: a region, and a line,
+/// may be a little less certain than in a full-image pass.
+const TILE_BOX_THRESHOLD: f32 = 0.35;
+const TILE_TEXT_SCORE: f32 = 0.45;
+
+/// The tiled retry of a sparse image ([`detect::tiles`]): each tile is
+/// scaled up and searched for text, its regions are cut from the image itself
+/// and read, and a line two overlapping tiles both found is kept once (the
+/// more confident reading). `None` when the image is too small to tile.
+fn tiled(engine: &Engine, image: &RgbImage, choice: Choice) -> Result<Option<(Reading, bool)>> {
+    let tiles = detect::tiles(image.width(), image.height());
+    if tiles.is_empty() {
+        return Ok(None);
+    }
+    // Tiles without a sharp edge (a gradient, a blank margin) hold no text;
+    // the others are searched side by side, two detections at a time.
+    let tiles: Vec<[u32; 4]> = tiles
+        .into_iter()
+        .filter(|tile| detect::has_edges(image, *tile))
+        .collect();
+    let budget = if tiles.len() > 1 {
+        let full = detect::Layout::of(image.width(), image.height());
+        let window = tiles
+            .iter()
+            .map(|[x0, y0, x1, y1]| f64::from(x1 - x0) * f64::from(y1 - y0))
+            .fold(1.0, f64::max);
+        (f64::from(full.width) * f64::from(full.height) / (2.0 * window)).sqrt() as f32
+    } else {
+        f32::INFINITY
+    };
+    let found = spread(tiles.len(), |index| {
+        let [x0, y0, x1, y1] = tiles[index];
+        let tile = image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image();
+        let short = tile.width().min(tile.height()).max(1) as f32;
+        let factor = (TILE_SHORT_SIDE / short)
+            .min(TILE_UPSCALE)
+            .min(budget)
+            .max(1.0);
+        let scaled = if factor > 1.0 {
+            let side = |n: u32| ((n as f32 * factor).round() as u32).max(1);
+            resize(&tile, side(tile.width()), side(tile.height()))
+        } else {
+            tile
+        };
+        let (found, more) = engine.detector.regions(&scaled, TILE_BOX_THRESHOLD)?;
+        let (scale_x, scale_y) = (
+            scaled.width() as f32 / (x1 - x0) as f32,
+            scaled.height() as f32 / (y1 - y0) as f32,
+        );
+        let regions: Vec<detect::Region> = found
+            .into_iter()
+            .map(|region| detect::Region {
+                corners: region
+                    .corners
+                    .map(|[x, y]| [x / scale_x + x0 as f32, y / scale_y + y0 as f32]),
+                score: region.score,
+            })
+            .collect();
+        Ok((regions, more))
+    })?;
+    let capped = found.iter().any(|(_, more)| *more);
+    let regions: Vec<detect::Region> = found.into_iter().flat_map(|(regions, _)| regions).collect();
+    if regions.is_empty() {
+        return Ok(None);
+    }
+    let cuts = classified(&*classifier()?, image, &regions)?;
+    let (lines, language, unread) = recognize(choice, &cuts)?;
+    Ok(Some(((distinct(lines), language, unread), capped)))
+}
+
+/// `lines` without repeats: a line whose text matches a kept one (case and
+/// spacing aside) and overlaps it by a third or more of the smaller box is
+/// the same line, found again by an overlapping tile.
+fn distinct(lines: Vec<Line>) -> Vec<Line> {
+    let key = |line: &Line| {
+        line.text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let overlap = |a: [f32; 4], b: [f32; 4]| {
+        let width = (a[2].min(b[2]) - a[0].max(b[0])).max(0.0);
+        let height = (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+        let area = |r: [f32; 4]| ((r[2] - r[0]) * (r[3] - r[1])).max(1.0);
+        width * height / area(a).min(area(b))
+    };
+    let mut kept: Vec<Line> = Vec::new();
+    for line in lines {
+        let text = key(&line);
+        match kept
+            .iter_mut()
+            .find(|other| key(other) == text && overlap(other.bounds, line.bounds) >= 0.35)
+        {
+            Some(other) if line.confidence > other.confidence => *other = line,
+            Some(_) => {}
+            None => kept.push(line),
+        }
+    }
+    kept
 }
 
 /// The default language. The multilingual recognizer reads Latin script,
@@ -854,15 +1008,16 @@ fn unread(lines: &[Line], read: &[bool]) -> bool {
     !lines.is_empty() && doubtful.len() * 2 >= lines.len() && doubtful.iter().any(wide)
 }
 
-/// The result of the reading used: lines below the text score dropped, the
-/// rest laid out.
+/// The result of the reading used: lines below `score` dropped, the rest
+/// laid out.
 fn finish(
     mut lines: Vec<Line>,
     image: &RgbImage,
     language: &str,
     unread: bool,
+    score: f32,
 ) -> Result<OcrResult> {
-    lines.retain(|line| line.confidence >= TEXT_SCORE);
+    lines.retain(|line| line.confidence >= score);
     let mut result = super::assemble(lines, image.width(), image.height())?;
     result.language = language.to_owned();
     result.unread = unread;
@@ -1059,6 +1214,71 @@ mod tests {
         assert!(blank.text.is_empty() && blank.boxes.is_empty() && !blank.unread);
         // A written language reads with its recognizer alone.
         assert_eq!(read(&rgb, "en-us").unwrap().language, MULTILINGUAL);
+    }
+
+    /// A caption a few pixels high on a large, mostly empty image (white ink
+    /// on a dark gradient, like the corpus's `sample.jpg`): the full-image
+    /// pass finds nothing, the tiled retry reads it, as the reference does.
+    #[test]
+    #[ignore = "needs the PaddleOCR models installed under MARKITAI_HOME"]
+    fn a_small_caption_on_a_mostly_empty_image_is_read_on_tiles() {
+        for model in models::defaults() {
+            assert!(models::present(model), "install {} first", model.name);
+        }
+        let fixture =
+            super::super::pixels::upright(include_bytes!("../fixtures/english.png")).unwrap();
+        let expected = include_str!("../fixtures/english.txt");
+        let small = |n: u32| (n as f32 * 0.12).round() as u32;
+        let caption = image::imageops::resize(
+            &fixture,
+            small(fixture.width()),
+            small(fixture.height()),
+            image::imageops::FilterType::Triangle,
+        );
+        let mut page = RgbImage::from_fn(1024, 768, |x, y| {
+            image::Rgb([
+                (229.5 * x as f32 / 1023.0) as u8,
+                (30.0 + 120.0 * y as f32 / 767.0) as u8,
+                (60.0 + 120.0 * (x + y) as f32 / 1790.0) as u8,
+            ])
+        });
+        // The fixture's dark letters become white ink over the gradient.
+        for (x, y, pixel) in caption.enumerate_pixels() {
+            let ink = 1.0 - pixel.0.iter().map(|&c| f32::from(c)).sum::<f32>() / 765.0;
+            let target = page.get_pixel_mut(40 + x, 40 + y);
+            for channel in &mut target.0 {
+                *channel = (f32::from(*channel) * (1.0 - ink) + 255.0 * ink).round() as u8;
+            }
+        }
+        let (cuts, _) = cuts(&engine().unwrap(), &page, MULTILINGUAL).unwrap();
+        let (lines, _, _) = recognize(Choice::Default, &cuts).unwrap();
+        assert!(
+            !lines.iter().any(|line| line.confidence >= TEXT_SCORE),
+            "the full-image pass already reads the caption, so this does not test the retry"
+        );
+        let result = read(&page, "en").unwrap();
+        assert_eq!(words(&result.text), words(expected), "{}", result.text);
+        assert!(!result.unread);
+    }
+
+    #[test]
+    fn a_line_two_overlapping_tiles_found_is_kept_once() {
+        let kept = distinct(vec![
+            line("Total  Due", 0.8, [10.0, 10.0, 100.0, 20.0]),
+            // The same line found again by the next tile, more confidently.
+            line("total due", 0.95, [40.0, 10.0, 100.0, 20.0]),
+            // The same words elsewhere on the page are another line.
+            line("Total Due", 0.7, [10.0, 300.0, 100.0, 310.0]),
+            line("Other", 0.6, [10.0, 10.0, 100.0, 20.0]),
+        ]);
+        let texts: Vec<(&str, f32)> = kept
+            .iter()
+            .map(|line| (line.text.as_str(), line.confidence))
+            .collect();
+        assert_eq!(
+            texts,
+            [("total due", 0.95), ("Total Due", 0.7), ("Other", 0.6)]
+        );
     }
 
     #[test]

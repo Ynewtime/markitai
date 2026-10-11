@@ -11,6 +11,10 @@
 //! here therefore start from a known disposition instead of inheriting the
 //! one the test runner happened to be launched with: a gate started as a
 //! background job would otherwise run the CLI with SIGINT ignored.
+//!
+//! The runtime's private workspace (its prompt and settings files) must not
+//! outlive the CLI either; each CLI gets a temporary directory of its own to
+//! check that, and so that nothing a failure leaves reaches the machine's.
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
@@ -33,6 +37,7 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         fake_runtime::install(&root.path().join("runtime"), &json!({"name":"sleep"}));
         std::fs::create_dir(root.path().join("inputs")).unwrap();
+        std::fs::create_dir(root.path().join("tmp")).unwrap();
         std::fs::write(root.path().join("inputs/source.md"), "# Title\n\nBody.\n").unwrap();
         std::fs::write(
             root.path().join("config.json"),
@@ -64,16 +69,16 @@ impl Fixture {
             "HOME",
             "PATH",
             "LANG",
-            "TMPDIR",
             "SystemRoot",
-            "TEMP",
-            "TMP",
             "USERPROFILE",
             "LOCALAPPDATA",
         ] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
+        }
+        for key in ["TMPDIR", "TEMP", "TMP"] {
+            command.env(key, self.path("tmp"));
         }
         command
             .env("MARKITAI_HOME", self.path("home"))
@@ -110,6 +115,19 @@ impl Fixture {
         #[cfg(not(unix))]
         assert!(!ignore_sigint, "inherited dispositions are a Unix notion");
         command.spawn().unwrap()
+    }
+
+    /// Fail if a runtime workspace outlived the CLI.
+    fn assert_no_workspace(&self) {
+        let left: Vec<_> = std::fs::read_dir(self.path("tmp"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().starts_with("markitai-"))
+            .collect();
+        assert!(
+            left.is_empty(),
+            "runtime workspaces outlived the CLI: {left:?}"
+        );
     }
 
     /// The runtime's descendant, once the hanging turn has started.
@@ -192,6 +210,7 @@ fn single_conversion_interrupt_kills_runtime_group_and_keeps_signal_exit() {
     let status = wait(&mut child, &[grandchild]);
     assert_interrupted(status);
     assert_gone(grandchild);
+    f.assert_no_workspace();
 }
 
 /// A signal inherited as ignored stays ignored, as for any Unix tool started
@@ -213,6 +232,7 @@ fn inherited_ignored_interrupt_is_kept_and_terminate_still_cleans_up() {
     let status = wait(&mut child, &[grandchild]);
     assert_eq!(status.signal(), Some(libc::SIGTERM), "{status:?}");
     assert_gone(grandchild);
+    f.assert_no_workspace();
 }
 
 #[cfg(unix)]
@@ -226,6 +246,7 @@ fn single_conversion_hangup_and_terminate_also_clean_up() {
         let status = wait(&mut child, &[grandchild]);
         assert_eq!(status.signal(), Some(sent), "{status:?}");
         assert_gone(grandchild);
+        f.assert_no_workspace();
     }
 }
 
@@ -246,6 +267,7 @@ fn batch_first_interrupt_waits_and_second_forces_exit_without_orphans() {
     let status = wait(&mut child, &[grandchild]);
     assert_eq!(status.code(), Some(130), "{status:?}");
     assert_gone(grandchild);
+    f.assert_no_workspace();
 }
 
 /// MCP drains on its own interrupt; termination (SIGTERM on Unix) or, on
@@ -285,5 +307,6 @@ fn mcp_terminate_kills_runtime_group_started_by_a_tool_call() {
     #[cfg(not(unix))]
     assert_eq!(status.code(), Some(130), "{status:?}");
     assert_gone(grandchild);
+    f.assert_no_workspace();
     drop(input);
 }

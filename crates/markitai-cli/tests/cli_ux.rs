@@ -240,7 +240,7 @@ fn a_tilde_that_cannot_be_expanded_is_refused_instead_of_becoming_a_directory() 
 // ---- progress and warnings on the terminal ----------------------------------
 
 #[test]
-fn without_a_terminal_a_batch_writes_exactly_the_lines_it_always_did() {
+fn without_a_terminal_a_batch_writes_plain_lines_without_a_status_line() {
     let setup = Setup::new();
     for index in 0..30 {
         setup.write(&format!("in/doc{index:02}.txt"), format!("Text {index}\n"));
@@ -252,10 +252,12 @@ fn without_a_terminal_a_batch_writes_exactly_the_lines_it_always_did() {
         !text.contains('\r') && !text.contains('\u{1b}') && !text.contains("[1/"),
         "{text:?}"
     );
+    // The verdict and the output directory, each after one blank line.
     let lines: Vec<_> = text.lines().collect();
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    assert!(lines[0].starts_with("Done: 30 files ("), "{lines:?}");
-    assert!(lines[1].starts_with("Output: "), "{lines:?}");
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert_eq!((lines[0], lines[2]), ("", ""), "{lines:?}");
+    assert!(lines[1].starts_with("✓ Done: 30 files ("), "{lines:?}");
+    assert!(lines[3].starts_with("  Output: "), "{lines:?}");
 }
 
 #[cfg(unix)]
@@ -358,10 +360,13 @@ mod terminal {
         // and the summary are never glued to a status line.
         let tail = text.rsplit("\u{1b}[K").next().unwrap();
         assert!(
-            tail.starts_with("Warning: zz-pages.pdf: PDF pages 2-3: "),
+            tail.starts_with("  \u{1b}[33m!\u{1b}[0m zz-pages.pdf: PDF pages 2-3: "),
             "{tail:?}"
         );
-        assert!(tail.contains("Done: 801 files ("), "{tail:?}");
+        assert!(
+            tail.contains("\r\n\u{1b}[32m✓\u{1b}[0m Done: 801 files ("),
+            "{tail:?}"
+        );
         assert!(tail.trim_end().ends_with("Output: out"), "{tail:?}");
     }
 
@@ -407,11 +412,11 @@ fn pages_that_need_ocr_become_one_warning_that_names_the_ranges_and_the_flag() {
     let text = stderr(&output);
     let warnings: Vec<_> = text
         .lines()
-        .filter(|line| line.starts_with("Warning:"))
+        .filter(|line| line.starts_with("  ! "))
         .collect();
     assert_eq!(warnings.len(), 1, "{text}");
     assert!(
-        warnings[0].starts_with("Warning: PDF pages 2-3, 5-6: native text was not recovered ("),
+        warnings[0].starts_with("  ! PDF pages 2-3, 5-6: native text was not recovered ("),
         "{text}"
     );
     assert!(warnings[0].contains("--ocr"), "{text}");
@@ -433,15 +438,15 @@ fn pages_that_need_ocr_become_one_warning_that_names_the_ranges_and_the_flag() {
     let text = stderr(&batch);
     let warnings: Vec<_> = text
         .lines()
-        .filter(|line| line.starts_with("Warning:"))
+        .filter(|line| line.starts_with("  ! "))
         .collect();
     assert_eq!(warnings.len(), 2, "{text}");
     assert!(
-        warnings[0].starts_with("Warning: a.pdf: PDF pages 2, 4-5: "),
+        warnings[0].starts_with("  ! a.pdf: PDF pages 2, 4-5: "),
         "{text}"
     );
     assert!(
-        warnings[1].starts_with("Warning: b.pdf: PDF pages 2-4: "),
+        warnings[1].starts_with("  ! b.pdf: PDF pages 2-4: "),
         "{text}"
     );
     assert!(!text.contains("PDF page 2:"), "{text}");
@@ -468,7 +473,7 @@ fn resume_says_where_it_picks_up_and_counts_every_item() {
     assert!(resumed.status.success(), "{}", stderr(&resumed));
     let text = stderr(&resumed);
     assert!(
-        text.starts_with("Resuming: 2 already done, 1 remaining\n"),
+        text.starts_with("  → Resuming: 2 already done, 1 remaining\n"),
         "{text}"
     );
     // All three items count, not just the one converted now.
@@ -477,7 +482,7 @@ fn resume_says_where_it_picks_up_and_counts_every_item() {
     let again = setup.run(&["in", "-o", "out", "--resume"]);
     let text = stderr(&again);
     assert!(
-        text.starts_with("Resuming: 3 already done, 0 remaining\n"),
+        text.starts_with("  → Resuming: 3 already done, 0 remaining\n"),
         "{text}"
     );
     assert!(text.contains("Done: 3/3 items ("), "{text}");
@@ -511,7 +516,7 @@ fn an_empty_file_a_wrong_extension_and_a_damaged_file_are_each_described() {
         assert_eq!(output.status.code(), Some(1), "{name}");
         assert_eq!(
             stderr(&output).trim(),
-            "Error: File is empty (0 bytes)",
+            "✗ File is empty (0 bytes)",
             "{name}"
         );
     }
@@ -524,9 +529,7 @@ fn an_empty_file_a_wrong_extension_and_a_damaged_file_are_each_described() {
     assert!(pdf_as_docx.status.success(), "{}", stderr(&pdf_as_docx));
     let text = stderr(&pdf_as_docx);
     assert!(
-        text.contains(
-            "Warning: The content is a PDF document although the file name ends in .docx"
-        ),
+        text.contains("  ! The content is a PDF document although the file name ends in .docx"),
         "{text}"
     );
     let markdown = std::fs::read_to_string(setup.path("out/really-a-pdf.docx.md")).unwrap();
@@ -534,9 +537,8 @@ fn an_empty_file_a_wrong_extension_and_a_damaged_file_are_each_described() {
     let docx_as_pdf = setup.run(&["really-a-docx.pdf", "-o", "out"]);
     assert!(docx_as_pdf.status.success(), "{}", stderr(&docx_as_pdf));
     assert!(
-        stderr(&docx_as_pdf).contains(
-            "Warning: The content is a Word document although the file name ends in .pdf"
-        ),
+        stderr(&docx_as_pdf)
+            .contains("  ! The content is a Word document although the file name ends in .pdf"),
         "{}",
         stderr(&docx_as_pdf)
     );
@@ -555,7 +557,7 @@ fn an_empty_file_a_wrong_extension_and_a_damaged_file_are_each_described() {
         let output = setup.run(&[name, "-o", "out"]);
         assert_eq!(output.status.code(), Some(1), "{name}");
         assert!(
-            stderr(&output).starts_with("Error: The file appears to be damaged or truncated ("),
+            stderr(&output).starts_with("  ✗ The file appears to be damaged or truncated ("),
             "{name}: {}",
             stderr(&output)
         );
@@ -572,18 +574,18 @@ fn an_image_that_is_not_one_is_an_error_and_a_real_one_is_skipped_by_name() {
     let skipped = setup.run(&[setup.path("pic.png").to_str().unwrap(), "-o", "out"]);
     assert!(skipped.status.success(), "genuine skip keeps exit status 0");
     assert!(
-        stderr(&skipped).starts_with("Skipped pic.png: an image has no text to extract"),
+        stderr(&skipped).starts_with("  ! Skipped pic.png: an image has no text to extract"),
         "{}",
         stderr(&skipped)
     );
     // A skip leaves nothing behind: no output directory, no ownership files.
     assert!(!setup.path("out").exists());
     for (name, message) in [
-        ("empty.png", "Error: File is empty (0 bytes)"),
-        ("fake.png", "Error: File is not a valid image: "),
+        ("empty.png", "  ✗ File is empty (0 bytes)"),
+        ("fake.png", "  ✗ File is not a valid image: "),
         (
             "cut.png",
-            "Error: File is not a valid image: the file appears to be damaged or truncated",
+            "  ✗ File is not a valid image: the file appears to be damaged or truncated",
         ),
     ] {
         let output = setup.run(&[name, "-o", "out"]);
@@ -619,7 +621,7 @@ fn screenshots_without_libreoffice_still_publish_the_text_with_one_warning() {
         let text = stderr(&output);
         let warnings: Vec<_> = text
             .lines()
-            .filter(|line| line.starts_with("Warning:"))
+            .filter(|line| line.starts_with("  ! "))
             .collect();
         assert_eq!(warnings.len(), 1, "{args:?}: {text}");
         assert!(
@@ -636,14 +638,12 @@ fn screenshots_without_libreoffice_still_publish_the_text_with_one_warning() {
     assert!(batch.status.success(), "{}", stderr(&batch));
     let text = stderr(&batch);
     assert_eq!(
-        text.lines()
-            .filter(|line| line.starts_with("Warning:"))
-            .count(),
+        text.lines().filter(|line| line.starts_with("  ! ")).count(),
         1,
         "{text}"
     );
     assert!(
-        text.contains("Warning: a.docx, b.docx: Page screenshots"),
+        text.contains("  ! a.docx, b.docx: Page screenshots"),
         "{text}"
     );
     assert!(text.contains("Done: 2 files ("), "{text}");
@@ -681,7 +681,7 @@ fn a_preview_names_each_final_file_and_what_would_be_skipped() {
     );
     assert_eq!(
         stderr(&preview),
-        "Dry run: 2 files would be converted and 1 skipped; nothing was written.\n"
+        "\n• Dry run: 2 files would be converted and 1 skipped; nothing was written.\n"
     );
     // The policy decides what a name that is taken becomes.
     let skip = setup.run(&[
@@ -702,7 +702,7 @@ fn a_preview_names_each_final_file_and_what_would_be_skipped() {
     );
     assert_eq!(
         stderr(&skip),
-        "Dry run: nothing would be converted, 1 skipped; nothing was written.\n"
+        "\n• Dry run: nothing would be converted, 1 skipped; nothing was written.\n"
     );
     let overwrite = setup.run(&[
         "in/report.txt",
@@ -728,7 +728,7 @@ fn a_preview_names_each_final_file_and_what_would_be_skipped() {
     );
     assert_eq!(
         stderr(&single),
-        "Dry run: 1 file would be converted; nothing was written.\n"
+        "\n• Dry run: 1 file would be converted; nothing was written.\n"
     );
     let to_stdout = setup.run(&["in/new.txt", "--dry-run"]);
     assert_eq!(stdout(&to_stdout), "in/new.txt -> stdout\n");
@@ -813,7 +813,7 @@ fn a_rename_names_the_file_in_the_way_and_a_mistyped_command_is_suggested() {
     assert_eq!(
         stderr(&second).trim(),
         format!(
-            "Wrote {} (note.txt.md already exists)",
+            "✓ Wrote {} (note.txt.md already exists)",
             native("out/note.txt.v2.md")
         )
     );
@@ -822,7 +822,7 @@ fn a_rename_names_the_file_in_the_way_and_a_mistyped_command_is_suggested() {
     let rerun = setup.run(&["in", "-o", "batch"]);
     let text = stderr(&rerun);
     assert!(
-        text.contains("Renamed 1 item (output already exists): a.txt.v2.md. Set output.on_conflict to overwrite or skip to change this."),
+        text.contains("\n  • Renamed 1 item (output already exists): a.txt.v2.md. Set output.on_conflict to overwrite or skip to change this.\n"),
         "{text}"
     );
     // The typo: the error stays, and a hint follows it.
@@ -830,20 +830,17 @@ fn a_rename_names_the_file_in_the_way_and_a_mistyped_command_is_suggested() {
     assert_eq!(typo.status.code(), Some(1));
     assert_eq!(
         stderr(&typo),
-        "Error: Input file not found: docter\nHint: did you mean 'markitai doctor'?\n"
+        "  ✗ Input file not found: docter\n  → Did you mean 'markitai doctor'?\n"
     );
     let zh = setup.run_env(&["docter"], &[("MARKITAI_LANG", "zh")]);
     assert!(
-        stderr(&zh).contains("Hint: 你是想运行 'markitai doctor' 吗？"),
+        stderr(&zh).contains("  → 你是想运行 'markitai doctor' 吗？"),
         "{}",
         stderr(&zh)
     );
     // Unrelated missing files get no guess.
     let other = setup.run(&["missing.txt"]);
-    assert_eq!(
-        stderr(&other).trim(),
-        "Error: Input file not found: missing.txt"
-    );
+    assert_eq!(stderr(&other).trim(), "✗ Input file not found: missing.txt");
 }
 
 // ---- configuration and account commands -------------------------------------
@@ -858,7 +855,7 @@ fn config_set_and_config_path_say_which_file_and_where_files_are_looked_for() {
     assert_eq!(
         stderr(&set).trim(),
         format!(
-            "Saved to {}",
+            "✓ Saved to {}",
             under(&setup.path("mh"), "config.json").display()
         )
     );
@@ -866,18 +863,18 @@ fn config_set_and_config_path_say_which_file_and_where_files_are_looked_for() {
         &["config", "set", "output.on_conflict", "rename"],
         &[("MARKITAI_LANG", "zh")],
     );
-    assert!(stderr(&zh).starts_with("已保存到 "), "{}", stderr(&zh));
+    assert!(stderr(&zh).starts_with("✓ 已保存到 "), "{}", stderr(&zh));
     // With no file, the search order is listed; with one, only its path.
     let fresh = Setup::new();
     let none = fresh.run(&["config", "path"]);
     let text = stdout(&none);
     assert!(
-        text.starts_with("No configuration file found; using built-in defaults."),
+        text.starts_with("• No configuration file found; using built-in defaults."),
         "{text}"
     );
     assert!(
         text.contains(
-            "Searched in this order: -c FILE, the MARKITAI_CONFIG variable, ./markitai.json, "
+            "\n  Searched in this order: -c FILE, the MARKITAI_CONFIG variable, ./markitai.json, "
         ),
         "{text}"
     );

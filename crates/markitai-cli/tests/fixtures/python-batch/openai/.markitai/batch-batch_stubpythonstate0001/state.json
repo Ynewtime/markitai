@@ -1,0 +1,43 @@
+{
+  "batch_id": "batch_stubpythonstate0001",
+  "model": "gpt-5.6-luna",
+  "mode": "tool_call",
+  "provider": "openai",
+  "created_at": "2026-10-11T09:30:37.251524+08:00",
+  "items": [
+    {
+      "custom_id": "doc_0_deck_pptx",
+      "source": "deck.pptx",
+      "input_md": "inputs/0.md",
+      "base_md": "deck.pptx.md",
+      "kind": "doc",
+      "image": "",
+      "document_context": "",
+      "answer": null
+    },
+    {
+      "custom_id": "img_1_deck_pptx_0001",
+      "source": "deck.pptx",
+      "input_md": "",
+      "base_md": "deck.pptx.md",
+      "kind": "image",
+      "image": ".markitai/assets/deck.pptx.0001.jpg",
+      "document_context": "<!-- Slide number: 1 --> # Batch import deck <!-- Slide number: 2 --> # Second slide Revenue grew in every region.",
+      "answer": null
+    },
+    {
+      "custom_id": "doc_2_notes_md",
+      "source": "notes.md",
+      "input_md": "inputs/2.md",
+      "base_md": "notes.md.md",
+      "kind": "doc",
+      "image": "",
+      "document_context": "",
+      "answer": null
+    }
+  ],
+  "collected_at": null,
+  "ended_status": null,
+  "alt_enabled": true,
+  "desc_enabled": false
+}

@@ -1,8 +1,10 @@
-//! Offline public-list pricing for a deliberately explicit provider/model set.
+//! Offline public-list pricing for a deliberately explicit provider/model set,
+//! and OpenRouter's own report of what it charged.
 //! Missing prices and incomplete usage remain unknown, not known zero charges.
 mod catalog;
 
 use serde_json::{Map, Value};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const PICODOLLARS_PER_USD: u128 = 1_000_000_000_000;
 
@@ -66,6 +68,26 @@ pub(crate) enum BillingClass {
     Batch,
 }
 
+/// When a request was sent and its response read, in Unix seconds. Dated and
+/// peak-hour tariffs need both ends to fall in one price period.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Span {
+    pub sent: u64,
+    pub done: u64,
+}
+impl Span {
+    pub(crate) fn since(sent: SystemTime) -> Option<Self> {
+        let seconds = |at: SystemTime| at.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs());
+        Some(Self {
+            sent: seconds(sent)?,
+            done: seconds(SystemTime::now())?,
+        })
+    }
+}
+
+/// OpenRouter's `usage.cost` is the amount it charged, not a catalog price.
+const OPENROUTER_REPORTED: &str = "openrouter-reported-cost";
+
 // Intentionally no Debug: callers can hold a secret-bearing endpoint supplied
 // by configuration; unknown identities never appear in error messages.
 pub(crate) struct Identity<'a> {
@@ -82,6 +104,7 @@ pub(crate) enum UnknownPrice {
     ResponseModel,
     ServiceTier,
     Context,
+    Period,
     MissingUsage,
     InvalidUsage,
     CacheDetails,
@@ -97,6 +120,7 @@ impl UnknownPrice {
             Self::ResponseModel => "response model differs from the reviewed requested tariff",
             Self::ServiceTier => "service tier has no reviewed tariff",
             Self::Context => "context size exceeds the reviewed price band",
+            Self::Period => "request time falls outside a reviewed price period",
             Self::MissingUsage => "provider did not report complete token usage",
             Self::InvalidUsage => "provider reported contradictory or invalid token usage",
             Self::CacheDetails => "cache creation duration or counters cannot be priced exactly",
@@ -119,12 +143,19 @@ pub(crate) enum Quote {
 enum Provider {
     OpenAi,
     Anthropic,
+    Gemini,
+    DeepSeek,
+    OpenRouter,
 }
 
-fn resolve(identity: &Identity<'_>) -> Result<(Provider, catalog::Tariff), UnknownPrice> {
+/// The catalog tariff, or `None` for OpenRouter, which reports its charge.
+fn resolve(identity: &Identity<'_>) -> Result<(Provider, Option<catalog::Tariff>), UnknownPrice> {
     let provider = match identity.provider {
         "openai" => Provider::OpenAi,
         "anthropic" => Provider::Anthropic,
+        "gemini" => Provider::Gemini,
+        "deepseek" => Provider::DeepSeek,
+        "openrouter" => Provider::OpenRouter,
         _ => return Err(UnknownPrice::Provider),
     };
     // Exact final endpoints deliberately exclude proxies, alternate regions,
@@ -132,12 +163,28 @@ fn resolve(identity: &Identity<'_>) -> Result<(Provider, catalog::Tariff), Unkno
     let valid = match provider {
         Provider::OpenAi => identity.endpoint == "https://api.openai.com/v1/chat/completions",
         Provider::Anthropic => identity.endpoint == "https://api.anthropic.com/v1/messages",
+        Provider::Gemini => {
+            identity.endpoint
+                == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        }
+        // DeepSeek documents both base URLs for its OpenAI format.
+        Provider::DeepSeek => matches!(
+            identity.endpoint,
+            "https://api.deepseek.com/chat/completions"
+                | "https://api.deepseek.com/v1/chat/completions"
+        ),
+        Provider::OpenRouter => {
+            identity.endpoint == "https://openrouter.ai/api/v1/chat/completions"
+        }
     };
     if !valid {
         return Err(UnknownPrice::Endpoint);
     }
+    if provider == Provider::OpenRouter {
+        return Ok((provider, None));
+    }
     let tariff = catalog::lookup(provider, identity.model).ok_or(UnknownPrice::Model)?;
-    Ok((provider, tariff))
+    Ok((provider, Some(tariff)))
 }
 
 /// Preflight checks tariff identity only; quote validates observed counters,
@@ -146,11 +193,22 @@ pub(crate) fn preflight(identity: &Identity<'_>, _class: BillingClass) -> Result
     resolve(identity).map(|_| ())
 }
 
+/// A quote without request times: dated and peak-hour tariffs stay unknown.
+#[cfg(test)]
 pub(crate) fn quote(identity: &Identity<'_>, response: &Value, class: BillingClass) -> Quote {
-    match calculate(identity, response, class) {
-        Ok((amount, tariff)) => Quote::Known {
+    quote_at(identity, response, class, None)
+}
+
+pub(crate) fn quote_at(
+    identity: &Identity<'_>,
+    response: &Value,
+    class: BillingClass,
+    span: Option<Span>,
+) -> Quote {
+    match calculate(identity, response, class, span) {
+        Ok((amount, snapshot, tariff)) => Quote::Known {
             amount,
-            snapshot: catalog::SNAPSHOT,
+            snapshot,
             tariff,
         },
         Err(reason) => Quote::Unknown(reason),
@@ -230,12 +288,53 @@ fn allowed_keys(usage: &Map<String, Value>, keys: &[&str]) -> Result<(), Unknown
     Ok(())
 }
 
+/// OpenRouter's charge for the request, in USD credits, rounded to the
+/// nearest picodollar. Bring-your-own-key requests are also billed by the
+/// upstream provider, outside this figure, so they stay unpriced.
+fn reported(response: &Value, class: BillingClass) -> Result<Usd, UnknownPrice> {
+    if class != BillingClass::Standard {
+        return Err(UnknownPrice::ServiceTier);
+    }
+    let usage = response
+        .get("usage")
+        .and_then(Value::as_object)
+        .ok_or(UnknownPrice::MissingUsage)?;
+    match usage.get("is_byok") {
+        None | Some(Value::Null | Value::Bool(false)) => {}
+        Some(Value::Bool(true)) => return Err(UnknownPrice::UnsupportedUsage),
+        Some(_) => return Err(UnknownPrice::InvalidUsage),
+    }
+    let cost = match usage.get("cost") {
+        None | Some(Value::Null) => return Err(UnknownPrice::MissingUsage),
+        Some(value) => value.as_f64().ok_or(UnknownPrice::InvalidUsage)?,
+    };
+    if !cost.is_finite() || cost < 0.0 {
+        return Err(UnknownPrice::InvalidUsage);
+    }
+    // Far beyond any single request; keeps the conversion exact to a picodollar.
+    if cost > 1000.0 {
+        return Err(UnknownPrice::Overflow);
+    }
+    Ok(Usd((cost * PICODOLLARS_PER_USD as f64).round() as u128))
+}
+
 fn calculate(
     identity: &Identity<'_>,
     response: &Value,
     class: BillingClass,
-) -> Result<(Usd, &'static str), UnknownPrice> {
+    span: Option<Span>,
+) -> Result<(Usd, &'static str, &'static str), UnknownPrice> {
     let (provider, tariff) = resolve(identity)?;
+    let Some(tariff) = tariff else {
+        return Ok((
+            reported(response, class)?,
+            OPENROUTER_REPORTED,
+            "openrouter/usage.cost",
+        ));
+    };
+    if class == BillingClass::Batch && !tariff.batch {
+        return Err(UnknownPrice::ServiceTier);
+    }
     if let Some(model) = response.get("model") {
         let model = model.as_str().ok_or(UnknownPrice::ResponseModel)?;
         if catalog::lookup(provider, model).is_none_or(|actual| actual.family != tariff.family) {
@@ -397,6 +496,108 @@ fn calculate(
             };
             (input, cached, write5, write1, output)
         }
+        Provider::Gemini => {
+            allowed_keys(
+                usage,
+                &[
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "prompt_tokens_details",
+                    "completion_tokens_details",
+                    "service_tier",
+                ],
+            )?;
+            let input = required(usage, "prompt_tokens", None)?;
+            let completion = required(usage, "completion_tokens", None)?;
+            // The OpenAI-compatible endpoint leaves thinking out of
+            // completion_tokens but counts it in total_tokens; Google bills
+            // thinking as output, so the total is required.
+            let total = required(usage, "total_tokens", None)?;
+            let mut cached = 0;
+            if let Some(details) = object(usage, "prompt_tokens_details")? {
+                allowed_keys(
+                    details,
+                    &[
+                        "cached_tokens",
+                        "audio_tokens",
+                        "text_tokens",
+                        "image_tokens",
+                    ],
+                )?;
+                // Audio input has its own rate on some models.
+                if optional(details, "audio_tokens")? != 0 {
+                    return Err(UnknownPrice::UnsupportedUsage);
+                }
+                let modalities = add(
+                    optional(details, "text_tokens")?,
+                    optional(details, "image_tokens")?,
+                )?;
+                if modalities > input {
+                    return Err(UnknownPrice::InvalidUsage);
+                }
+                cached = optional(details, "cached_tokens")?;
+            }
+            if cached > input {
+                return Err(UnknownPrice::InvalidUsage);
+            }
+            let thinking = total
+                .checked_sub(add(input, completion)?)
+                .ok_or(UnknownPrice::InvalidUsage)?;
+            let mut reasoning = None;
+            if let Some(details) = object(usage, "completion_tokens_details")? {
+                allowed_keys(details, &["reasoning_tokens"])?;
+                reasoning = number(details.get("reasoning_tokens"))?;
+            }
+            // A reasoning count is either part of completion_tokens (nothing
+            // left over) or exactly the tokens total_tokens adds.
+            match reasoning {
+                Some(count) if thinking == 0 && count <= completion => {}
+                Some(count) if count == thinking => {}
+                Some(_) => return Err(UnknownPrice::InvalidUsage),
+                None => {}
+            }
+            (input - cached, cached, 0, 0, add(completion, thinking)?)
+        }
+        Provider::DeepSeek => {
+            allowed_keys(
+                usage,
+                &[
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "prompt_tokens_details",
+                    "completion_tokens_details",
+                    "prompt_cache_hit_tokens",
+                    "prompt_cache_miss_tokens",
+                ],
+            )?;
+            let input = required(usage, "prompt_tokens", None)?;
+            let output = required(usage, "completion_tokens", None)?;
+            let mut hits = [number(usage.get("prompt_cache_hit_tokens"))?, None];
+            if let Some(details) = object(usage, "prompt_tokens_details")? {
+                allowed_keys(details, &["cached_tokens"])?;
+                hits[1] = number(details.get("cached_tokens"))?;
+            }
+            let hit = agree(hits)?;
+            if hit > input {
+                return Err(UnknownPrice::InvalidUsage);
+            }
+            if let Some(miss) = number(usage.get("prompt_cache_miss_tokens"))?
+                && add(hit, miss)? != input
+            {
+                return Err(UnknownPrice::InvalidUsage);
+            }
+            // Reasoning is part of completion_tokens.
+            if let Some(details) = object(usage, "completion_tokens_details")? {
+                allowed_keys(details, &["reasoning_tokens"])?;
+                if optional(details, "reasoning_tokens")? > output {
+                    return Err(UnknownPrice::InvalidUsage);
+                }
+            }
+            (input - hit, hit, 0, 0, output)
+        }
+        Provider::OpenRouter => unreachable!("OpenRouter reports its charge"),
     };
     let all_input = add(add(add(base, cached)?, written)?, written_1h)?;
     if tariff
@@ -405,9 +606,28 @@ fn calculate(
     {
         return Err(UnknownPrice::Context);
     }
-    let rates = match tariff.long {
-        Some(long) if all_input >= long.long_from => long.rates,
-        Some(long) if all_input > long.short_max => return Err(UnknownPrice::Context),
+    if let Some(until) = tariff.until
+        && span.is_none_or(|span| span.done >= until)
+    {
+        return Err(UnknownPrice::Period);
+    }
+    let rates = match (tariff.long, tariff.off_peak) {
+        (Some(long), _) if all_input >= long.long_from => long.rates,
+        (Some(long), _) if all_input > long.short_max => return Err(UnknownPrice::Context),
+        // Both ends of the request must fall in one known period.
+        (_, Some(off_peak)) => {
+            let span = span
+                .filter(|span| span.sent <= span.done)
+                .ok_or(UnknownPrice::Period)?;
+            match (
+                catalog::deepseek_peak(span.sent),
+                catalog::deepseek_peak(span.done),
+            ) {
+                (Some(false), Some(false)) => off_peak,
+                (Some(true), Some(true)) => tariff.rates,
+                _ => return Err(UnknownPrice::Period),
+            }
+        }
         _ => tariff.rates,
     };
     let rates = match class {
@@ -433,7 +653,7 @@ fn calculate(
         (written_1h, write_rate(written_1h, rates.cache_write_1h)?),
         (output, rates.output),
     ])?;
-    Ok((amount, tariff.family))
+    Ok((amount, catalog::SNAPSHOT, tariff.family))
 }
 
 #[cfg(test)]
@@ -871,6 +1091,275 @@ mod tests {
         assert_eq!(
             quote(&anthropic(), &response, BillingClass::Standard),
             Quote::Unknown(UnknownPrice::Overflow)
+        );
+    }
+
+    #[test]
+    fn current_claude_and_openai_models_are_priced_at_their_listed_rates() {
+        let claude = |model: &'static str| Identity {
+            model,
+            ..anthropic()
+        };
+        let usage = |model: &str| {
+            json!({"model":model,"usage":{"input_tokens":1000,"output_tokens":100,
+                "cache_read_input_tokens":2000,"cache_creation_input_tokens":300,
+                "cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":100}}})
+        };
+        // (model, input, output, cache read, 5m write, 1h write) per token.
+        for (model, rates) in [
+            (
+                "claude-fable-5-1",
+                [10_000_000, 50_000_000, 250_000, 12_500_000, 20_000_000],
+            ),
+            (
+                "claude-opus-5-5",
+                [4_000_000, 20_000_000, 200_000, 5_000_000, 8_000_000],
+            ),
+            (
+                "claude-sonnet-5-5",
+                [2_000_000, 10_000_000, 100_000, 2_500_000, 4_000_000],
+            ),
+            (
+                "claude-sonnet-4-6",
+                [3_000_000, 15_000_000, 300_000, 3_750_000, 6_000_000],
+            ),
+        ] {
+            let [input, output, read, five, hour] = rates;
+            let standard = 1000 * input + 100 * output + 2000 * read + 200 * five + 100 * hour;
+            assert_eq!(
+                amount(&claude(model), &usage(model), BillingClass::Standard),
+                standard,
+                "{model}"
+            );
+            assert_eq!(
+                amount(&claude(model), &usage(model), BillingClass::Batch),
+                standard / 2,
+                "{model}"
+            );
+            // The whole 1M-token window is at the listed rates.
+            let mut long = usage(model);
+            long["usage"]["input_tokens"] = json!(900_000);
+            assert!(matches!(
+                quote(&claude(model), &long, BillingClass::Standard),
+                Quote::Known { .. }
+            ));
+        }
+        // GPT-5.6 routes to GPT-5.6 Sol and is answered as that model.
+        let alias = Identity {
+            model: "gpt-5.6",
+            ..openai()
+        };
+        let answered =
+            json!({"model":"gpt-5.6-sol","usage":{"prompt_tokens":1000,"completion_tokens":10}});
+        assert_eq!(
+            amount(&alias, &answered, BillingClass::Standard),
+            1000 * 4_000_000 + 10 * 20_000_000
+        );
+    }
+
+    fn gemini() -> Identity<'static> {
+        Identity {
+            provider: "gemini",
+            endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            model: "gemini-flash-lite-latest",
+        }
+    }
+    fn at(seconds: u64) -> Option<Span> {
+        Some(Span {
+            sent: seconds,
+            done: seconds + 30,
+        })
+    }
+
+    #[test]
+    fn gemini_thinking_missing_from_completion_tokens_is_billed_as_output() {
+        let price =
+            |response: &Value| match quote_at(&gemini(), response, BillingClass::Standard, None) {
+                Quote::Known { amount, .. } => Ok(amount.picodollars()),
+                Quote::Unknown(reason) => Err(reason),
+            };
+        // The usage Gemini's OpenAI-compatible endpoint returned on 2026-10-09
+        // (an answer withheld by its recitation filter).
+        let withheld = json!({"model":"gemini-flash-lite-latest","usage":{
+            "completion_tokens":0,"prompt_tokens":3903,"total_tokens":3903}});
+        assert_eq!(price(&withheld), Ok(3903 * 300_000));
+        // total_tokens counts 500 thinking tokens completion_tokens leaves out.
+        let thinking = json!({"usage":{"prompt_tokens":1000,"completion_tokens":100,
+            "total_tokens":1600,"prompt_tokens_details":{"cached_tokens":400}}});
+        let billed = 600 * 300_000 + 400 * 30_000 + 600 * 2_500_000;
+        assert_eq!(price(&thinking), Ok(billed));
+        let mut counted = thinking.clone();
+        counted["usage"]["completion_tokens_details"] = json!({"reasoning_tokens":500});
+        assert_eq!(price(&counted), Ok(billed));
+        let mut included = json!({"usage":{"prompt_tokens":1000,"completion_tokens":600,
+            "total_tokens":1600,"completion_tokens_details":{"reasoning_tokens":500}}});
+        assert_eq!(price(&included), Ok(1000 * 300_000 + 600 * 2_500_000));
+        included["usage"]["completion_tokens_details"]["reasoning_tokens"] = json!(601);
+        assert_eq!(price(&included), Err(UnknownPrice::InvalidUsage));
+        counted["usage"]["completion_tokens_details"]["reasoning_tokens"] = json!(499);
+        assert_eq!(price(&counted), Err(UnknownPrice::InvalidUsage));
+        for usage in [
+            json!({"prompt_tokens":10,"completion_tokens":1}),
+            json!({"prompt_tokens":10,"completion_tokens":1,"total_tokens":10}),
+            json!({"prompt_tokens":10,"completion_tokens":1,"total_tokens":11,
+                "prompt_tokens_details":{"audio_tokens":3}}),
+        ] {
+            assert!(price(&json!({"usage":usage})).is_err());
+        }
+        // markitai submits no Gemini Batch; its cache rate there is not half.
+        assert_eq!(
+            quote(&gemini(), &withheld, BillingClass::Batch),
+            Quote::Unknown(UnknownPrice::ServiceTier)
+        );
+    }
+
+    #[test]
+    fn gemini_flash_introductory_prices_end_with_2026() {
+        let flash = Identity {
+            model: "gemini-3.8-flash",
+            ..gemini()
+        };
+        let response =
+            json!({"usage":{"prompt_tokens":1000,"completion_tokens":100,"total_tokens":1100}});
+        let listed = 1000 * 750_000 + 100 * 3_750_000;
+        let at_time = |span| match quote_at(&flash, &response, BillingClass::Standard, span) {
+            Quote::Known { amount, .. } => Some(amount.picodollars()),
+            Quote::Unknown(reason) => {
+                assert_eq!(reason, UnknownPrice::Period);
+                None
+            }
+        };
+        assert_eq!(at_time(at(1_791_763_200)), Some(listed));
+        // 2027-01-01T00:00:00Z, when the doubled price starts.
+        assert_eq!(at_time(at(1_798_761_600 - 30)), None);
+        assert_eq!(at_time(at(1_798_761_600 - 31)), Some(listed));
+        assert_eq!(at_time(None), None);
+    }
+
+    fn deepseek() -> Identity<'static> {
+        Identity {
+            provider: "deepseek",
+            endpoint: "https://api.deepseek.com/v1/chat/completions",
+            model: "deepseek-flash",
+        }
+    }
+
+    #[test]
+    fn deepseek_is_priced_by_its_peak_hours_in_beijing_time() {
+        // The usage DeepSeek returned on Saturday 2026-10-10.
+        let response = json!({"model":"deepseek-flash","usage":{"prompt_tokens":1585,
+            "completion_tokens":401,"total_tokens":1986,"prompt_tokens_details":{"cached_tokens":1408},
+            "completion_tokens_details":{"reasoning_tokens":211},
+            "prompt_cache_hit_tokens":1408,"prompt_cache_miss_tokens":177}});
+        let price = |span| match quote_at(&deepseek(), &response, BillingClass::Standard, span) {
+            Quote::Known { amount, .. } => Ok(amount.picodollars()),
+            Quote::Unknown(reason) => Err(reason),
+        };
+        let off_peak = 177 * 150_000 + 1408 * 3_000 + 401 * 600_000;
+        assert_eq!(price(at(1_791_616_141)), Ok(off_peak));
+        // Monday 2026-10-12, 10:00 in Beijing.
+        let peak = 177 * 300_000 + 1408 * 6_000 + 401 * 1_200_000;
+        assert_eq!(price(at(1_791_763_200 + 2 * 3600)), Ok(peak));
+        assert_eq!(peak, 2 * off_peak);
+        // A request that runs past 12:00 in Beijing spans both prices.
+        assert_eq!(
+            price(at(1_791_763_200 + 4 * 3600 - 10)),
+            Err(UnknownPrice::Period)
+        );
+        assert_eq!(price(None), Err(UnknownPrice::Period));
+        // Both base URLs DeepSeek documents reach the same tariff.
+        let unversioned = Identity {
+            endpoint: "https://api.deepseek.com/chat/completions",
+            ..deepseek()
+        };
+        assert!(matches!(
+            quote_at(
+                &unversioned,
+                &response,
+                BillingClass::Standard,
+                at(1_791_616_141)
+            ),
+            Quote::Known { .. }
+        ));
+        let mut split = response.clone();
+        split["usage"]["prompt_cache_miss_tokens"] = json!(178);
+        let mut details = response;
+        details["usage"]["prompt_tokens_details"]["cached_tokens"] = json!(1407);
+        for invalid in [split, details] {
+            assert_eq!(
+                quote_at(
+                    &deepseek(),
+                    &invalid,
+                    BillingClass::Standard,
+                    at(1_791_616_141)
+                ),
+                Quote::Unknown(UnknownPrice::InvalidUsage)
+            );
+        }
+    }
+
+    fn openrouter() -> Identity<'static> {
+        Identity {
+            provider: "openrouter",
+            endpoint: "https://openrouter.ai/api/v1/chat/completions",
+            model: "google/gemini-3.5-flash-lite",
+        }
+    }
+
+    #[test]
+    fn openrouter_requests_cost_what_openrouter_reports_charging() {
+        // The usage OpenRouter returned on 2026-10-10.
+        let response = json!({"model":"google/gemini-3.5-flash-lite","usage":{
+            "prompt_tokens":1233,"completion_tokens":152,"total_tokens":1385,"cost":0.0007499,
+            "is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,
+                "audio_tokens":0,"video_tokens":0},
+            "cost_details":{"upstream_inference_cost":0.0007499,
+                "upstream_inference_prompt_cost":0.0003699,"upstream_inference_completions_cost":0.00038},
+            "completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}});
+        assert_eq!(
+            quote(&openrouter(), &response, BillingClass::Standard),
+            Quote::Known {
+                amount: Usd(749_900_000),
+                snapshot: OPENROUTER_REPORTED,
+                tariff: "openrouter/usage.cost",
+            }
+        );
+        // Any routed model: OpenRouter's figure is the charge.
+        let alias = Identity {
+            model: "~anthropic/claude-haiku-latest",
+            ..openrouter()
+        };
+        assert!(matches!(
+            quote(&alias, &response, BillingClass::Standard),
+            Quote::Known { .. }
+        ));
+        let mut byok = response.clone();
+        byok["usage"]["is_byok"] = json!(true);
+        let mut missing = response.clone();
+        missing["usage"].as_object_mut().unwrap().remove("cost");
+        let mut negative = response.clone();
+        negative["usage"]["cost"] = json!(-0.1);
+        for (invalid, reason) in [
+            (byok, UnknownPrice::UnsupportedUsage),
+            (missing, UnknownPrice::MissingUsage),
+            (negative, UnknownPrice::InvalidUsage),
+        ] {
+            assert_eq!(
+                quote(&openrouter(), &invalid, BillingClass::Standard),
+                Quote::Unknown(reason)
+            );
+        }
+        assert_eq!(
+            quote(&openrouter(), &response, BillingClass::Batch),
+            Quote::Unknown(UnknownPrice::ServiceTier)
+        );
+        let proxied = Identity {
+            endpoint: "https://proxy.example/api/v1/chat/completions",
+            ..openrouter()
+        };
+        assert_eq!(
+            quote(&proxied, &response, BillingClass::Standard),
+            Quote::Unknown(UnknownPrice::Endpoint)
         );
     }
 

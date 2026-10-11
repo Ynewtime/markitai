@@ -470,7 +470,7 @@ pub(super) async fn create(
             // Only this transaction's newly created UUID directory is removed.
             // Existing jobs were excluded before rename while holding the lock.
             if let Err(cleanup) = std::fs::remove_dir_all(&folder) {
-                eprintln!("Serve: rejected upload cleanup failed: {cleanup}");
+                eprintln!("Warning: Serve: rejected upload cleanup failed: {cleanup}");
             }
             let _ = markitai_core::platform::sync_directory(&publication_state.root);
             return Err(ApiError::internal(error));
@@ -487,8 +487,10 @@ pub(super) async fn create(
         let folder = job.folder.clone();
         match crate::task::blocking(move || std::fs::remove_dir_all(folder)).await {
             Ok(Ok(())) => {}
-            Ok(Err(cleanup)) => eprintln!("Serve: rejected job cleanup failed: {cleanup}"),
-            Err(cleanup) => eprintln!("Serve: rejected job cleanup task failed: {cleanup}"),
+            Ok(Err(cleanup)) => eprintln!("Warning: Serve: rejected job cleanup failed: {cleanup}"),
+            Err(cleanup) => {
+                eprintln!("Warning: Serve: rejected job cleanup task failed: {cleanup}")
+            }
         }
         return Err(error);
     }

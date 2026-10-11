@@ -27,6 +27,7 @@ import zipfile
 from ci_process import run_logged, write_summary
 from pricing_attribution import pricing_files
 from codex_attribution import codex_files
+from tailwind_attribution import tailwind_files
 from license_overlay import upstream_files
 from portable_attribution import portable_files
 from executable_identity import WINDOWS_TARGETS, verify_target_executable, verify_windows_cli_runtime
@@ -359,10 +360,12 @@ def supplement_wheel_licenses(source, destination, licenses):
 
 def package_attribution(root):
     """Attribution every package carries: the project's license and notice,
-    pricing data, Codex, portable engines and vendored upstream licenses."""
+    pricing data, Codex, the Tailwind palette, portable engines and vendored
+    upstream licenses."""
     licenses = {name: (root / name).read_bytes() for name in ["LICENSE", "NOTICE"]}
     licenses.update(pricing_files(root))
     licenses.update(codex_files(root))
+    licenses.update(tailwind_files(root))
     licenses.update(upstream_files(root))
     licenses.update(portable_files(root))
     return licenses

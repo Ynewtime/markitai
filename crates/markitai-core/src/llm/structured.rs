@@ -194,130 +194,138 @@ impl Wire {
         protocol: Protocol,
         data: &Value,
     ) -> std::result::Result<String, Failure> {
-        if data
-            .pointer("/choices/0/finish_reason")
-            .and_then(Value::as_str)
-            == Some("length")
-            || data.get("stop_reason").and_then(Value::as_str) == Some("max_tokens")
-        {
-            return Err(blocked(FailureKind::Truncated, &truncation(data)));
-        }
-        if let Some(message) = filtered(data) {
-            return Err(blocked(FailureKind::Refusal, &message));
-        }
-        if data
-            .pointer("/choices/0/message/refusal")
-            .and_then(Value::as_str)
-            .is_some_and(|value| !value.is_empty())
-            || data.get("stop_reason").and_then(Value::as_str) == Some("refusal")
-        {
-            return Err(blocked(
-                FailureKind::Refusal,
-                "LLM declined the structured request",
-            ));
-        }
-        let invalid = || Failure::terminal("LLM returned an invalid structured response envelope");
-        if self.mode == Mode::Tools {
-            if protocol == Protocol::Anthropic {
-                let blocks = data
-                    .get("content")
-                    .and_then(Value::as_array)
-                    .ok_or_else(invalid)?;
-                let mut calls = blocks
-                    .iter()
-                    .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"));
-                let call = calls.next().ok_or_else(invalid)?;
-                if calls.next().is_some()
-                    || call.get("name").and_then(Value::as_str) != Some(self.schema.name())
-                {
-                    return Err(invalid());
-                }
-                return call
-                    .get("input")
-                    .filter(|value| value.is_object())
-                    .map(Value::to_string)
-                    .ok_or_else(invalid);
-            }
-            let calls = data
-                .pointer("/choices/0/message/tool_calls")
-                .and_then(Value::as_array)
-                .ok_or_else(invalid)?;
-            if calls.len() != 1
-                || calls[0].get("type").and_then(Value::as_str) != Some("function")
-                || calls[0].pointer("/function/name").and_then(Value::as_str)
-                    != Some(self.schema.name())
-            {
-                return Err(invalid());
-            }
-            return calls[0]
-                .pointer("/function/arguments")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .ok_or_else(invalid);
-        }
+        decode_as(self.mode, self.schema.name(), protocol, data)
+    }
+}
+
+/// The answer text of `data`: the arguments of the one forced tool called
+/// `name`, or the message text in the JSON modes.
+pub(super) fn decode_as(
+    mode: Mode,
+    name: &str,
+    protocol: Protocol,
+    data: &Value,
+) -> std::result::Result<String, Failure> {
+    if data
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        == Some("length")
+        || data.get("stop_reason").and_then(Value::as_str) == Some("max_tokens")
+    {
+        return Err(blocked(FailureKind::Truncated, &truncation(data)));
+    }
+    if let Some(message) = filtered(data) {
+        return Err(blocked(FailureKind::Refusal, &message));
+    }
+    if data
+        .pointer("/choices/0/message/refusal")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty())
+        || data.get("stop_reason").and_then(Value::as_str) == Some("refusal")
+    {
+        return Err(blocked(
+            FailureKind::Refusal,
+            "LLM declined the structured request",
+        ));
+    }
+    let invalid = || Failure::terminal("LLM returned an invalid structured response envelope");
+    if mode == Mode::Tools {
         if protocol == Protocol::Anthropic {
             let blocks = data
                 .get("content")
                 .and_then(Value::as_array)
                 .ok_or_else(invalid)?;
-            if blocks
+            let mut calls = blocks
                 .iter()
-                .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
-            {
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"));
+            let call = calls.next().ok_or_else(invalid)?;
+            if calls.next().is_some() || call.get("name").and_then(Value::as_str) != Some(name) {
                 return Err(invalid());
             }
-            let text = blocks
-                .iter()
-                .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-                .filter_map(|block| block.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if text.trim().is_empty() {
-                Err(Failure::terminal(&empty_answer(data)))
-            } else {
-                Ok(text)
-            }
+            return call
+                .get("input")
+                .filter(|value| value.is_object())
+                .map(Value::to_string)
+                .ok_or_else(invalid);
+        }
+        let calls = data
+            .pointer("/choices/0/message/tool_calls")
+            .and_then(Value::as_array)
+            .ok_or_else(invalid)?;
+        if calls.len() != 1
+            || calls[0].get("type").and_then(Value::as_str) != Some("function")
+            || calls[0].pointer("/function/name").and_then(Value::as_str) != Some(name)
+        {
+            return Err(invalid());
+        }
+        return calls[0]
+            .pointer("/function/arguments")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(invalid);
+    }
+    if protocol == Protocol::Anthropic {
+        let blocks = data
+            .get("content")
+            .and_then(Value::as_array)
+            .ok_or_else(invalid)?;
+        if blocks
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        {
+            return Err(invalid());
+        }
+        let text = blocks
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if text.trim().is_empty() {
+            Err(Failure::terminal(&empty_answer(data)))
         } else {
-            if data
-                .pointer("/choices/0/message/tool_calls")
-                .and_then(Value::as_array)
-                .is_some_and(|calls| !calls.is_empty())
-            {
-                return Err(invalid());
-            }
-            let Some(content) = data
-                .pointer("/choices/0/message/content")
-                .filter(|content| !content.is_null())
-            else {
-                return Err(
-                    if data
-                        .pointer("/choices/0/message")
-                        .is_some_and(Value::is_object)
-                    {
-                        Failure::terminal(&empty_answer(data))
-                    } else {
-                        invalid()
-                    },
-                );
-            };
-            let text = content
-                .as_str()
-                .map(str::to_owned)
-                .or_else(|| {
-                    content.as_array().map(|blocks| {
-                        blocks
-                            .iter()
-                            .filter_map(|block| block.get("text").and_then(Value::as_str))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    })
+            Ok(text)
+        }
+    } else {
+        if data
+            .pointer("/choices/0/message/tool_calls")
+            .and_then(Value::as_array)
+            .is_some_and(|calls| !calls.is_empty())
+        {
+            return Err(invalid());
+        }
+        let Some(content) = data
+            .pointer("/choices/0/message/content")
+            .filter(|content| !content.is_null())
+        else {
+            return Err(
+                if data
+                    .pointer("/choices/0/message")
+                    .is_some_and(Value::is_object)
+                {
+                    Failure::terminal(&empty_answer(data))
+                } else {
+                    invalid()
+                },
+            );
+        };
+        let text = content
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| {
+                content.as_array().map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|block| block.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 })
-                .ok_or_else(invalid)?;
-            if text.trim().is_empty() {
-                Err(Failure::terminal(&empty_answer(data)))
-            } else {
-                Ok(text)
-            }
+            })
+            .ok_or_else(invalid)?;
+        if text.trim().is_empty() {
+            Err(Failure::terminal(&empty_answer(data)))
+        } else {
+            Ok(text)
         }
     }
 }
@@ -417,8 +425,17 @@ pub(super) fn run<T>(
                     last = error;
                 }
             }
+            // The follow-up names this rejection; the same rejection again
+            // would make it the very request that was just answered, so the
+            // mode ends here instead.
+            let next = (mode == Mode::JsonText).then(|| super::corrected(request.prompts, &last));
+            let repeated = next.as_ref().is_some_and(|next| {
+                corrected
+                    .as_ref()
+                    .is_some_and(|sent: &super::Prompts| sent.system == next.system)
+            });
             if mode == Mode::JsonText
-                && attempt + 1 == attempts
+                && (attempt + 1 == attempts || repeated)
                 && let Some(value) = repair(&text)
                 && let Ok(answer) = validate(&value)
             {
@@ -432,8 +449,11 @@ pub(super) fn run<T>(
                     "{last}; LLM per-document request budget exhausted during structured validation"
                 ))));
             }
-            if mode == Mode::JsonText {
-                corrected = Some(super::corrected(request.prompts, &last));
+            if repeated {
+                break;
+            }
+            if let Some(next) = next {
+                corrected = Some(next);
             }
         }
     }

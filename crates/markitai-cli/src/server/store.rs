@@ -344,7 +344,7 @@ pub(super) fn rehydrate(
                 static REPORTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
                 let mut reported = REPORTED.lock().unwrap();
                 if !reported.contains(&id) {
-                    eprintln!("Serve: skipped unreadable history job {id}: {error}");
+                    eprintln!("Warning: Serve: skipped unreadable history job {id}: {error}");
                     reported.push(id);
                 }
                 continue;
@@ -408,7 +408,7 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
         {
             // An invalid optional observation does not erase the retained output row.
             object.as_object_mut().unwrap().remove("diagnostics");
-            eprintln!("Serve: ignored invalid stored attempt diagnostics");
+            eprintln!("Warning: Serve: ignored invalid stored attempt diagnostics");
         }
         if let Some(failure) = object.get("rerun_failure")
             && !failure.is_null()
@@ -419,7 +419,7 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
         {
             // A damaged optional outcome must not hide valid retained output.
             object.as_object_mut().unwrap().remove("rerun_failure");
-            eprintln!("Serve: ignored invalid stored rerun failure");
+            eprintln!("Warning: Serve: ignored invalid stored rerun failure");
         }
         if let Ok(mut item) = serde_json::from_value::<Item>(object) {
             // Older history writers saved the actual enhanced name in both
@@ -557,7 +557,7 @@ pub(super) fn finish(job: &Job) -> std::io::Result<()> {
         persist(&job.folder, &data)
     });
     if let Err(error) = &result {
-        eprintln!("Serve: history persistence failed: {error}");
+        eprintln!("Error: Serve: history persistence failed: {error}");
         data.status = "error".into();
         data.persistence_error = Some(
             "history could not be persisted; completed artifacts remain available until shutdown"

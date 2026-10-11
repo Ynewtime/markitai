@@ -138,20 +138,26 @@ fn perform(entry: &Deployment) -> Result<()> {
     let mut call = client
         .post(&entry.endpoint)
         .header("accept", "application/json");
-    if let Some(key) = &entry.key {
-        call = match entry.protocol {
-            Protocol::Anthropic => call.header("x-api-key", key),
-            Protocol::Azure => call.header("api-key", key),
-            Protocol::Chat => call.bearer_auth(key),
-        };
-    }
-    if entry.protocol == Protocol::Anthropic {
-        call = call.header("anthropic-version", "2023-06-01");
+    if let Some(cloud) = entry.cloud.as_deref() {
+        call = super::cloud::prepare(cloud, &client, call, entry, body)
+            .map_err(|_| failure("Model connection credentials could not be used"))?;
+    } else {
+        if let Some(key) = &entry.key {
+            call = match entry.protocol {
+                Protocol::Anthropic => call.header("x-api-key", key),
+                Protocol::Azure => call.header("api-key", key),
+                Protocol::Chat => call.bearer_auth(key),
+            };
+        }
+        if entry.protocol == Protocol::Anthropic {
+            call = call.header("anthropic-version", "2023-06-01");
+        }
+        call = call.json(&body);
     }
     // A failure names its cause as conversion's does (diagnosis), but the
     // provider's own wording is never shown here: only its error type or
     // code, without the endpoint, the key or the probe's prompt.
-    let response = call.json(&body).send().map_err(|error| {
+    let response = call.send().map_err(|error| {
         if error.is_timeout() {
             return failure("Model connection test timed out");
         }
@@ -184,6 +190,10 @@ fn perform(entry: &Deployment) -> Result<()> {
         .ok_or_else(|| failure("Model connection response exceeds 1 MiB"))?;
     let data: Value = serde_json::from_slice(&bytes)
         .map_err(|_| failure("Model connection response is not valid JSON"))?;
+    let data = match entry.cloud.as_deref() {
+        Some(cloud) => super::cloud::response(cloud, data, entry),
+        None => data,
+    };
     let complete = if entry.protocol == Protocol::Anthropic {
         data.get("content").and_then(Value::as_array).is_some()
     } else {

@@ -1,6 +1,8 @@
 //! Configuration-aware diagnostics; explicit browser repair uses the native installer.
 use super::i18n::{Lang, lang};
+use super::logging::{self, Shape};
 use super::{CliResult, runtime};
+use crate::term::{Mark, Style};
 use indexmap::IndexMap;
 use markitai_core::config;
 use serde::Serialize;
@@ -23,7 +25,29 @@ struct Check {
     models: Option<Vec<String>>,
     #[serde(skip)]
     required: bool,
+    /// The remedy as the terminal shows it, with each command on its own line;
+    /// empty when `install_hint` reads well as it is.
+    #[serde(skip)]
+    fix: Vec<Fix>,
 }
+
+/// One line of a remedy on the terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Fix {
+    Text(String),
+    /// A command to copy, never wrapped.
+    Command(String),
+}
+
+impl Fix {
+    fn text(text: impl Into<String>) -> Self {
+        Self::Text(text.into())
+    }
+    fn command(command: impl Into<String>) -> Self {
+        Self::Command(command.into())
+    }
+}
+
 impl Check {
     fn new(
         name: &'static str,
@@ -42,14 +66,63 @@ impl Check {
             path: None,
             models: None,
             required: false,
+            fix: Vec::new(),
         }
     }
     fn failed(&self) -> bool {
         self.required && self.status != "ok"
     }
+    /// The remedy on the terminal: [`Check::fix`], or the hint as written.
+    fn remedy(&self) -> Vec<Fix> {
+        if self.fix.is_empty() {
+            vec![Fix::text(&self.install_hint)]
+        } else {
+            self.fix.clone()
+        }
+    }
 }
 
+/// The report's sections in the order Python markitai shows them; the JSON
+/// keeps the order of the checks.
+const SECTIONS: [(&str, &str, &[&str]); 3] = [
+    (
+        "Optional Capabilities",
+        "可选能力",
+        &[
+            "rapidocr",
+            "vlm-ocr",
+            "playwright",
+            "libreoffice",
+            "anydoc",
+            "serve",
+        ],
+    ),
+    (
+        "LLM",
+        "LLM",
+        &[
+            "llm-api",
+            "vision-model",
+            "claude-agent-sdk",
+            "copilot-sdk",
+            "chatgpt-runtime",
+        ],
+    ),
+    (
+        "Authentication",
+        "认证状态",
+        &["claude-agent-auth", "copilot-auth", "chatgpt-auth"],
+    ),
+];
+
 pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> CliResult<i32> {
+    let lang = lang();
+    let style = Style::stdout();
+    if !json {
+        for line in heading(path, lang, style) {
+            println!("{line}");
+        }
+    }
     let (browser, office) = std::thread::scope(|scope| {
         let browser = scope.spawn(markitai_core::browser_diagnostic);
         let office = scope.spawn(markitai_core::office_diagnostic);
@@ -58,35 +131,52 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
     let mut browser = browser.map_err(|_| runtime("Browser diagnostic did not complete"))?;
     let office = office.map_err(|_| runtime("Office diagnostic did not complete"))?;
     let repair_missing = fix && !matches!(&browser, Ok(Some(_)));
-    let mut repair_failed = false;
+    let mut repair_failed = Vec::new();
+    if fix {
+        logging::blank();
+        say!(Shape::SECTION; "Repairing", "自动修复");
+    }
     if repair_missing {
-        eprintln!(
-            "{}",
-            text!(
-                "Installing the official Chrome headless shell in the private Markitai home...",
-                "正在 Markitai 私有目录中安装官方 Chrome headless shell……"
-            )
+        say!(
+            Shape::item(Mark::Action);
+            "Installing the official Chrome headless shell in the private Markitai home...",
+            "正在 Markitai 私有目录中安装官方 Chrome headless shell……"
         );
         match markitai_core::install_browser() {
             Ok(path) => {
                 let shown = path.display();
-                eprintln!(
-                    "{}",
-                    text!("Installed and verified {shown}", "已安装并验证 {shown}")
+                say!(
+                    Shape::item(Mark::Success);
+                    "Installed and verified {shown}",
+                    "已安装并验证 {shown}"
                 );
                 browser = Ok(Some(path));
             }
             Err(error) => {
-                repair_failed = true;
-                eprintln!(
-                    "{}",
-                    text!("Browser repair failed: {error}", "浏览器修复失败：{error}")
+                repair_failed.push("Chromium (native CDP)");
+                say!(
+                    Shape::item(Mark::Error);
+                    "Error: Browser repair failed: {error}",
+                    "浏览器修复失败：{error}"
                 );
             }
         }
+    } else if fix {
+        say!(
+            Shape::item(Mark::Success);
+            "Chromium launches successfully; no browser repair is needed.",
+            "Chromium 可以正常启动，无需修复浏览器。"
+        );
+    }
+    if fix && !repair_ocr_models(cfg) {
+        repair_failed.push("Local OCR");
     }
     if fix {
-        repair_failed |= !repair_ocr_models(cfg);
+        say!(
+            Shape::item(Mark::Info);
+            "Other diagnostic hints require manual action.",
+            "其他诊断提示需要手动处理。"
+        );
     }
     let env = config::environment();
     let checks = checks(
@@ -104,120 +194,203 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
             serde_json::to_string_pretty(&checks).map_err(runtime)?
         );
     } else {
-        let lang = lang();
-        let version = markitai_core::VERSION;
-        println!(
-            "{}",
+        for line in report(&checks, &repair_failed, lang, style) {
+            println!("{line}");
+        }
+    }
+    Ok(i32::from(failed || !repair_failed.is_empty()))
+}
+
+/// The title, then the version and configuration lines.
+fn heading(path: Option<&Path>, lang: Lang, style: Style) -> [String; 4] {
+    let version = markitai_core::VERSION;
+    let source = match path {
+        Some(path) => path.display().to_string(),
+        None => {
+            let home = config::home().join("config.json");
+            let home = home.display();
             text!(lang =>
-                "Markitai {version} — native diagnostics",
-                "Markitai {version} — 原生诊断"
+                "defaults (no config file found; create one with 'markitai init' at {home} or ./markitai.json)",
+                "默认配置（未找到配置文件；可运行 'markitai init' 在 {home} 或 ./markitai.json 创建）"
             )
-        );
-        let source = match path {
-            Some(path) => {
-                let path = path.display();
-                text!(lang => "Configuration: {path}", "配置文件：{path}")
-            }
-            None => text!(lang =>
-                "Configuration: built-in defaults (no configuration file; create one with `markitai init`)",
-                "配置文件：内建默认值（未找到配置文件；可运行 `markitai init` 创建）"
-            ),
-        };
-        println!("{source}");
-        for check in checks.values() {
-            println!("{}", check_line(check, lang));
-            if !check.install_hint.is_empty() {
-                println!("  {}", check.install_hint);
-            }
         }
-        println!("{}", summary(&checks, lang));
-    }
-    if fix && !repair_missing {
-        eprintln!(
-            "{}",
-            text!(
-                "Chromium launches successfully; no browser repair is needed. Other diagnostic hints require manual action.",
-                "Chromium 可以正常启动，无需修复浏览器。其他诊断提示需要手动处理。"
-            )
-        );
-    }
-    Ok(i32::from(failed || repair_failed))
+    };
+    [
+        style.title(&text!(lang => "System Check", "系统检查")),
+        String::new(),
+        style.item(
+            Mark::Info,
+            &text!(lang => "Version: markitai {version} (native)", "版本：markitai {version}（原生）"),
+        ),
+        style.item(
+            Mark::Info,
+            &text!(lang => "Config: {source}", "配置文件：{source}"),
+        ),
+    ]
 }
 
-/// "Name: status — message". The name, message and hint are the JSON values
-/// and stay in English; the status word and the requirement note follow the
-/// terminal language.
-fn check_line(check: &Check, lang: Lang) -> String {
-    let (name, message) = (check.name, &check.message);
-    match lang {
-        Lang::En => {
-            let status = check.status;
-            let required = if check.required {
-                " (required by configuration)"
-            } else {
-                ""
-            };
-            format!("{name}: {status}{required} — {message}")
+/// The checks by section, the remedies and the verdict, one string per line
+/// ("" between blocks). Names, messages and hints are the JSON values and stay
+/// in English; the frame follows the terminal language.
+fn report(
+    checks: &IndexMap<&'static str, Check>,
+    repair_failed: &[&str],
+    lang: Lang,
+    style: Style,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    // A check no section names is shown in the first one rather than lost.
+    let listed = |key: &str| SECTIONS.iter().any(|(_, _, keys)| keys.contains(&key));
+    let mut shown: Vec<&Check> = Vec::new();
+    for (index, (english, chinese, keys)) in SECTIONS.iter().enumerate() {
+        let members: Vec<&Check> = keys
+            .iter()
+            .filter_map(|key| checks.get(key))
+            .chain(
+                checks
+                    .iter()
+                    .filter(|(key, _)| index == 0 && !listed(key))
+                    .map(|(_, check)| check),
+            )
+            .collect();
+        if members.is_empty() {
+            continue;
         }
-        Lang::Zh => {
-            let status = match check.status {
-                "ok" => "正常",
-                "warning" => "警告",
-                "missing" => "缺失",
-                "error" => "错误",
-                other => other,
-            };
-            let required = if check.required {
-                "（配置要求）"
-            } else {
-                ""
-            };
-            format!("{name}：{status}{required} — {message}")
+        lines.push(String::new());
+        lines.push(style.section(match lang {
+            Lang::En => english,
+            Lang::Zh => chinese,
+        }));
+        for check in members {
+            lines.push(style.item(mark(check), &check_line(check, lang)));
+            // An optional next step for a check that is ready.
+            if check.status == "ok" && !check.install_hint.is_empty() {
+                lines.push(style.detail(&check.install_hint));
+            }
+            shown.push(check);
         }
     }
-}
-
-/// One closing line that states the verdict the exit status encodes.
-fn summary(checks: &IndexMap<&'static str, Check>, lang: Lang) -> String {
-    let failed: Vec<_> = checks
-        .values()
+    // One entry per distinct remedy: checks that share one are named together.
+    let mut remedies: Vec<(String, Vec<Fix>)> = Vec::new();
+    for check in shown
+        .iter()
+        .filter(|check| check.status != "ok" && !check.install_hint.is_empty())
+    {
+        let remedy = check.remedy();
+        match remedies.iter_mut().find(|(_, fix)| *fix == remedy) {
+            Some((names, _)) => {
+                names.push_str(", ");
+                names.push_str(check.name);
+            }
+            None => remedies.push((check.name.to_owned(), remedy)),
+        }
+    }
+    let failed: Vec<&str> = shown
+        .iter()
         .filter(|check| check.failed())
         .map(|check| check.name)
         .collect();
-    let ok = checks.values().filter(|check| check.status == "ok").count();
-    let attention = checks.len() - ok;
-    if failed.is_empty() && attention == 0 {
-        text!(lang =>
-            "Summary: all {ok} checks ok.",
-            "总结：全部 {ok} 项检查正常。"
-        )
-    } else if failed.is_empty() {
-        let noun = if attention == 1 { "check" } else { "checks" };
-        text!(lang =>
-            "Summary: nothing the configuration requires is blocked; {ok} ok, {attention} optional {noun} not ready (see the hints above).",
-            "总结：配置要求的检查均已就绪；{ok} 项正常，{attention} 项可选检查未就绪（见上方提示）。"
-        )
-    } else {
-        let count = failed.len();
-        let (noun, verb) = if count == 1 {
-            ("check", "is")
+    if !remedies.is_empty() {
+        lines.push(String::new());
+        lines.push(style.section(&if failed.is_empty() {
+            text!(lang => "To enable what is missing", "启用缺失的功能")
         } else {
-            ("checks", "are")
+            text!(lang => "To fix", "修复方法")
+        }));
+        let colon = match lang {
+            Lang::En => ": ",
+            Lang::Zh => "：",
         };
-        match lang {
-            Lang::En => {
-                let names = failed.join(", ");
-                format!(
-                    "Summary: {count} {noun} required by the configuration {verb} not ready: {names}. Fix the hints above, then rerun `markitai doctor`."
-                )
+        for (names, remedy) in remedies {
+            let mut rest = remedy.iter();
+            match rest.next() {
+                Some(Fix::Text(text)) => {
+                    lines.push(style.item(Mark::Info, &format!("{names}{colon}{text}")))
+                }
+                Some(Fix::Command(command)) => {
+                    lines.push(style.item(Mark::Info, &format!("{names}{}", colon.trim_end())));
+                    lines.push(style.command(4, command));
+                }
+                None => lines.push(style.item(Mark::Info, &names)),
             }
-            Lang::Zh => {
-                let names = failed.join("、");
-                format!(
-                    "总结：{count} 项配置要求的检查未就绪：{names}。请按上方提示处理后重新运行 `markitai doctor`。"
-                )
+            for line in rest {
+                lines.push(match line {
+                    Fix::Text(text) => style.line(4, None, text, None),
+                    Fix::Command(command) => style.command(4, command),
+                });
             }
         }
+    }
+    lines.push(String::new());
+    let (verdict, text) = verdict(&shown, &failed, repair_failed, lang);
+    lines.push(style.summary(verdict, &text));
+    lines
+}
+
+fn mark(check: &Check) -> Mark {
+    if check.status == "ok" {
+        Mark::Success
+    } else if check.failed() {
+        Mark::Error
+    } else {
+        Mark::Warning
+    }
+}
+
+/// "Name: message", noting a check the configuration requires. The name,
+/// message and hint are the JSON values and stay in English; the note follows
+/// the terminal language.
+fn check_line(check: &Check, lang: Lang) -> String {
+    let (name, message) = (check.name, &check.message);
+    match (lang, check.required) {
+        (Lang::En, false) => format!("{name}: {message}"),
+        (Lang::En, true) => format!("{name}: {message} (required by the configuration)"),
+        (Lang::Zh, false) => format!("{name}：{message}"),
+        (Lang::Zh, true) => format!("{name}：{message}（配置要求）"),
+    }
+}
+
+/// The closing line: the verdict the exit status encodes, with its mark.
+fn verdict(
+    shown: &[&Check],
+    failed: &[&str],
+    repair_failed: &[&str],
+    lang: Lang,
+) -> (Mark, String) {
+    let separator = match lang {
+        Lang::En => ", ",
+        Lang::Zh => "、",
+    };
+    let missing: Vec<&str> = shown
+        .iter()
+        .filter(|check| check.status != "ok" && !check.failed())
+        .map(|check| check.name)
+        .collect();
+    if !failed.is_empty() {
+        let names = failed.join(separator);
+        (
+            Mark::Error,
+            text!(lang => "Not ready: fix {names} first (see above)", "未就绪：请先修复 {names}（见上文）"),
+        )
+    } else if !repair_failed.is_empty() {
+        let names = repair_failed.join(separator);
+        (
+            Mark::Error,
+            text!(lang => "Repair failed: {names}", "修复失败：{names}"),
+        )
+    } else if !missing.is_empty() {
+        // Ready is a success, as in Python markitai: what is missing is
+        // optional and already listed with its remedy above.
+        let names = missing.join(separator);
+        (
+            Mark::Success,
+            text!(lang => "Ready. Not available (optional): {names}", "已就绪。以下可选功能不可用：{names}"),
+        )
+    } else {
+        (
+            Mark::Success,
+            text!(lang => "Ready. Everything is available.", "已就绪，所有功能均可用。"),
+        )
     }
 }
 
@@ -256,6 +429,7 @@ fn local_ocr_check(available: bool, translated: bool) -> Check {
 /// The optional local OCR check of the portable engine: whether the model
 /// files the configured `ocr.lang` needs are installed. It never loads them.
 fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrModel>>) -> Check {
+    let mut fix = Vec::new();
     let (status, message, hint, path) = match models {
         Err(error) => (
             "warning",
@@ -295,10 +469,22 @@ fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrM
                     .map(|model| model.detail.as_deref().unwrap_or("damaged model file"))
                     .collect::<Vec<_>>()
                     .join("; ");
+                fix = vec![
+                    Fix::text(
+                        "Replace only the damaged managed model files, after verifying each new size and SHA-256:",
+                    ),
+                    Fix::command("markitai doctor --fix"),
+                ];
                 ("warning", format!("Portable PaddleOCR engine (tract): {} damaged model file(s); {detail}; ordinary OCR will not overwrite them", corrupt.len()),
                     "Run markitai doctor --fix to replace only damaged managed model files, after verifying each new size and SHA-256".to_owned(), folder)
             } else if !missing.is_empty() {
                 let bytes: u64 = missing.iter().map(|model| model.bytes).sum();
+                fix = vec![
+                    Fix::text(
+                        "Download them now from the official PaddleOCR mirror (each verified by SHA-256):",
+                    ),
+                    Fix::command("markitai doctor --fix"),
+                ];
                 ("warning", format!("Portable PaddleOCR engine (tract): {} of the {} model files the configured ocr.lang needs ({:.1} MB) are not installed; the first OCR downloads them", missing.len(), models.len(), bytes as f64 / 1e6),
                     "Run markitai doctor --fix to download them now from the official PaddleOCR mirror (each verified by SHA-256)".to_owned(), folder)
             } else {
@@ -323,6 +509,7 @@ fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrM
     );
     check.optional = Some(true);
     check.path = path;
+    check.fix = fix;
     check
 }
 
@@ -346,12 +533,10 @@ fn repair_ocr_models(cfg: &Value) -> bool {
         Ok(None) => return true,
         Ok(Some(models)) => models,
         Err(error) => {
-            eprintln!(
-                "{}",
-                text!(
-                    "Local OCR model check failed: {error}",
-                    "本地 OCR 模型检查失败：{error}"
-                )
+            say!(
+                Shape::item(Mark::Error);
+                "Error: Local OCR model check failed: {error}",
+                "本地 OCR 模型检查失败：{error}"
             );
             return false;
         }
@@ -366,12 +551,10 @@ fn repair_ocr_models(cfg: &Value) -> bool {
     }
     if let Some(unsafe_path) = models.iter().find(|model| model.state == State::Unsafe) {
         let detail = unsafe_path.detail.as_deref().unwrap_or("unsafe model path");
-        eprintln!(
-            "{}",
-            text!(
-                "Local OCR model repair refused: {detail}",
-                "已拒绝修复本地 OCR 模型：{detail}"
-            )
+        say!(
+            Shape::item(Mark::Error);
+            "Error: Local OCR model repair refused: {detail}",
+            "已拒绝修复本地 OCR 模型：{detail}"
         );
         return false;
     }
@@ -380,34 +563,55 @@ fn repair_ocr_models(cfg: &Value) -> bool {
         "{:.1}",
         missing.iter().map(|model| model.bytes).sum::<u64>() as f64 / 1e6
     );
-    eprintln!(
-        "{}",
-        text!(
-            "Downloading {count} local OCR model file(s) ({megabytes} MB) from the official PaddleOCR mirror into the private Markitai home...",
-            "正在从 PaddleOCR 官方镜像下载 {count} 个本地 OCR 模型文件（{megabytes} MB）到 Markitai 私有目录……"
-        )
+    say!(
+        Shape::item(Mark::Action);
+        "Downloading {count} local OCR model file(s) ({megabytes} MB) from the official PaddleOCR mirror into the private Markitai home...",
+        "正在从 PaddleOCR 官方镜像下载 {count} 个本地 OCR 模型文件（{megabytes} MB）到 Markitai 私有目录……"
     );
     match markitai_core::install_local_ocr_models(cfg) {
         Ok(paths) => {
             for path in paths {
                 let shown = path.display();
-                eprintln!(
-                    "{}",
-                    text!("Installed and verified {shown}", "已安装并验证 {shown}")
+                say!(
+                    Shape::item(Mark::Success);
+                    "Installed and verified {shown}",
+                    "已安装并验证 {shown}"
                 );
             }
             true
         }
         Err(error) => {
-            eprintln!(
-                "{}",
-                text!(
-                    "Local OCR model download failed: {error}",
-                    "本地 OCR 模型下载失败：{error}"
-                )
+            say!(
+                Shape::item(Mark::Error);
+                "Error: Local OCR model download failed: {error}",
+                "本地 OCR 模型下载失败：{error}"
             );
             false
         }
+    }
+}
+
+/// The LibreOffice remedy on the terminal: the install command (one per
+/// distribution family on Linux), each on its own line.
+fn office_fix(platform: &str) -> Vec<Fix> {
+    const NOTE: &str = "Office screenshots also require the native PDF page renderer";
+    match platform {
+        "windows" => vec![
+            Fix::text(format!("Install LibreOffice ({NOTE}):")),
+            Fix::command("winget install --id TheDocumentFoundation.LibreOffice --exact"),
+        ],
+        "macos" => vec![
+            Fix::text(format!("Install LibreOffice ({NOTE}):")),
+            Fix::command("brew install --cask libreoffice"),
+        ],
+        _ => vec![
+            Fix::text(format!(
+                "Install LibreOffice with the distribution's package manager and put soffice on PATH ({NOTE}):"
+            )),
+            Fix::command("sudo apt install libreoffice  # Debian, Ubuntu"),
+            Fix::command("sudo dnf install libreoffice  # Fedora"),
+            Fix::command("sudo pacman -S libreoffice-fresh  # Arch"),
+        ],
     }
 }
 
@@ -472,15 +676,26 @@ fn checks(
             );
         }
         browser.install_hint = "MARKITAI_BROWSER_EXECUTABLE is set, so only that path is tried and doctor --fix will not replace it: point it at a working Chrome/Chromium executable, or unset it to use an installed browser or markitai doctor --fix".into();
+    } else if browser.status != "ok" {
+        browser.fix = vec![
+            Fix::text("Install the official headless shell:"),
+            Fix::command("markitai doctor --fix"),
+            Fix::text(
+                "or set MARKITAI_BROWSER_EXECUTABLE to an installed Chrome/Chromium executable.",
+            ),
+        ];
     }
     result.insert("playwright", browser);
-    let office = backend(
+    let mut office = backend(
         "LibreOffice",
         "Office page and slide rendering",
         office,
         "Installed executable responds to --version in an isolated profile; document export fidelity is not tested",
         office_install_hint(std::env::consts::OS),
     );
+    if office.status != "ok" {
+        office.fix = office_fix(std::env::consts::OS);
+    }
     result.insert("libreoffice", office);
     result.insert("rapidocr", local_ocr(cfg));
     let mut legacy = Check::new(
@@ -527,6 +742,7 @@ fn checks(
                 "Run markitai auth copilot login",
             );
             identity.required = true;
+            identity.fix = vec![Fix::command("markitai auth copilot login")];
             result.insert("copilot-sdk", adapter);
             result.insert("copilot-auth", identity);
             continue;
@@ -549,6 +765,7 @@ fn checks(
             let mut identity=Check::new("Claude subscription authentication", "Configured local provider", if auth.authenticated {"ok"} else {"error"},
                 auth.error.unwrap_or_else(|| "Official runtime reports an authenticated subscription; model access was not probed".into()), "Run markitai auth claude login");
             identity.required = true;
+            identity.fix = vec![Fix::command("markitai auth claude login")];
             result.insert("claude-agent-sdk", adapter);
             result.insert("claude-agent-auth", identity);
             continue;
@@ -575,6 +792,7 @@ fn checks(
                 "Run markitai auth chatgpt login",
             );
             identity.required = true;
+            identity.fix = vec![Fix::command("markitai auth chatgpt login")];
             result.insert("chatgpt-runtime", adapter);
             result.insert("chatgpt-auth", identity);
         }
@@ -952,27 +1170,242 @@ mod tests {
     }
 
     #[test]
-    fn summaries_state_the_same_verdict_in_both_languages() {
-        let all = checks_of(&[("A", "ok", true), ("B", "ok", false)]);
-        assert_eq!(summary(&all, Lang::En), "Summary: all 2 checks ok.");
-        assert_eq!(summary(&all, Lang::Zh), "总结：全部 2 项检查正常。");
-        let one = checks_of(&[("A", "ok", false), ("B", "warning", false)]);
+    fn verdicts_state_the_same_outcome_in_both_languages() {
+        let verdict_of = |states: &[(&'static str, &'static str, bool)], repair: &[&str], lang| {
+            let checks = checks_of(states);
+            let shown: Vec<&Check> = checks.values().collect();
+            let failed: Vec<&str> = shown
+                .iter()
+                .filter(|check| check.failed())
+                .map(|check| check.name)
+                .collect();
+            verdict(&shown, &failed, repair, lang)
+        };
+        let all = [("A", "ok", true), ("B", "ok", false)];
         assert_eq!(
-            summary(&one, Lang::En),
-            "Summary: nothing the configuration requires is blocked; 1 ok, 1 optional check not ready (see the hints above)."
+            verdict_of(&all, &[], Lang::En),
+            (Mark::Success, "Ready. Everything is available.".into())
         );
         assert_eq!(
-            summary(&one, Lang::Zh),
-            "总结：配置要求的检查均已就绪；1 项正常，1 项可选检查未就绪（见上方提示）。"
+            verdict_of(&all, &[], Lang::Zh),
+            (Mark::Success, "已就绪，所有功能均可用。".into())
         );
-        let blocked = checks_of(&[("A", "missing", true), ("B", "error", true)]);
+        // Optional checks that are not ready leave the verdict a success
+        // that names them.
+        let optional = [
+            ("A", "ok", false),
+            ("B", "warning", false),
+            ("C", "missing", false),
+        ];
         assert_eq!(
-            summary(&blocked, Lang::En),
-            "Summary: 2 checks required by the configuration are not ready: A, B. Fix the hints above, then rerun `markitai doctor`."
+            verdict_of(&optional, &[], Lang::En),
+            (
+                Mark::Success,
+                "Ready. Not available (optional): B, C".into()
+            )
         );
         assert_eq!(
-            summary(&blocked, Lang::Zh),
-            "总结：2 项配置要求的检查未就绪：A、B。请按上方提示处理后重新运行 `markitai doctor`。"
+            verdict_of(&optional, &[], Lang::Zh),
+            (Mark::Success, "已就绪。以下可选功能不可用：B、C".into())
+        );
+        let blocked = [("A", "missing", true), ("B", "error", true)];
+        assert_eq!(
+            verdict_of(&blocked, &[], Lang::En),
+            (Mark::Error, "Not ready: fix A, B first (see above)".into())
+        );
+        assert_eq!(
+            verdict_of(&blocked, &[], Lang::Zh),
+            (Mark::Error, "未就绪：请先修复 A、B（见上文）".into())
+        );
+        assert_eq!(
+            verdict_of(&all, &["Local OCR"], Lang::En),
+            (Mark::Error, "Repair failed: Local OCR".into())
+        );
+    }
+
+    /// A report with every kind of line: ready, optional and required checks,
+    /// a detail, a shared remedy, commands and a verdict.
+    fn sample() -> IndexMap<&'static str, Check> {
+        let mut checks = IndexMap::new();
+        let mut browser = Check::new(
+            "Chromium (native CDP)",
+            "d",
+            "missing",
+            "No installed executable was found",
+            "Run markitai doctor --fix to install the official headless shell",
+        );
+        browser.fix = vec![
+            Fix::text("Install the official headless shell:"),
+            Fix::command("markitai doctor --fix"),
+        ];
+        checks.insert("playwright", browser);
+        let mut office = Check::new(
+            "LibreOffice",
+            "d",
+            "missing",
+            "No installed executable was found",
+            "x",
+        );
+        office.fix = office_fix("linux");
+        checks.insert("libreoffice", office);
+        checks.insert(
+            "rapidocr",
+            Check::new(
+                "Local OCR",
+                "d",
+                "ok",
+                "Portable PaddleOCR engine (tract): the 4 model files are verified",
+                "",
+            ),
+        );
+        checks.insert(
+            "llm-api",
+            Check::new(
+                "LLM API",
+                "d",
+                "ok",
+                "No llm.model_list; --llm uses openai/gpt-6-luna detected from provider API keys",
+                "Optional: run markitai init to save the detected model in a configuration file",
+            ),
+        );
+        let hint = "Configure a supported vision model";
+        checks.insert(
+            "vision-model",
+            Check::new(
+                "Vision Model",
+                "d",
+                "warning",
+                "No routable vision model is configured",
+                hint,
+            ),
+        );
+        checks.insert(
+            "vlm-ocr",
+            Check::new(
+                "VLM OCR",
+                "d",
+                "warning",
+                "Unavailable without a routable vision model",
+                hint,
+            ),
+        );
+        let mut auth = Check::new(
+            "Claude subscription authentication",
+            "d",
+            "error",
+            "Claude Code is not signed in",
+            "Run markitai auth claude login",
+        );
+        auth.required = true;
+        auth.fix = vec![Fix::command("markitai auth claude login")];
+        checks.insert("claude-agent-auth", auth);
+        checks
+    }
+
+    #[test]
+    fn the_report_renders_sections_remedies_and_the_verdict_in_one_style() {
+        let plain = Style {
+            color: false,
+            unicode: true,
+            width: None,
+            bright: false,
+        };
+        let lines = |style| {
+            let mut lines = heading(Some(Path::new("/cfg/config.json")), Lang::En, style).to_vec();
+            lines.extend(report(&sample(), &[], Lang::En, style));
+            lines.join("\n")
+        };
+        let version = markitai_core::VERSION;
+        assert_eq!(
+            lines(plain),
+            format!(
+                "◆ System Check
+
+  • Version: markitai {version} (native)
+  • Config: /cfg/config.json
+
+Optional Capabilities
+  ✓ Local OCR: Portable PaddleOCR engine (tract): the 4 model files are verified
+  ! VLM OCR: Unavailable without a routable vision model
+  ! Chromium (native CDP): No installed executable was found
+  ! LibreOffice: No installed executable was found
+
+LLM
+  ✓ LLM API: No llm.model_list; --llm uses openai/gpt-6-luna detected from provider API keys
+    Optional: run markitai init to save the detected model in a configuration file
+  ! Vision Model: No routable vision model is configured
+
+Authentication
+  ✗ Claude subscription authentication: Claude Code is not signed in (required by the configuration)
+
+To fix
+  • VLM OCR, Vision Model: Configure a supported vision model
+  • Chromium (native CDP): Install the official headless shell:
+    markitai doctor --fix
+  • LibreOffice: Install LibreOffice with the distribution's package manager and put soffice on PATH (Office screenshots also require the native PDF page renderer):
+    sudo apt install libreoffice  # Debian, Ubuntu
+    sudo dnf install libreoffice  # Fedora
+    sudo pacman -S libreoffice-fresh  # Arch
+  • Claude subscription authentication:
+    markitai auth claude login
+
+✗ Not ready: fix Claude subscription authentication first (see above)"
+            )
+        );
+        // With colour: the marks and commands in their colours, structure bold,
+        // details gray; the text itself stays uncoloured.
+        let colored = lines(Style {
+            color: true,
+            ..plain
+        });
+        for expected in [
+            "\x1b[36m◆\x1b[0m \x1b[1mSystem Check\x1b[0m\n",
+            "\n\x1b[1mOptional Capabilities\x1b[0m\n",
+            "\n  \x1b[32m✓\x1b[0m Local OCR: ",
+            "\n  \x1b[33m!\x1b[0m VLM OCR: ",
+            "\n  \x1b[31m✗\x1b[0m Claude subscription authentication: ",
+            "\n    \x1b[90mOptional: run markitai init",
+            "\n  \x1b[90m•\x1b[0m Chromium (native CDP): Install the official headless shell:\n    \x1b[36mmarkitai doctor --fix\x1b[0m\n",
+            "\n\x1b[1mTo fix\x1b[0m\n",
+            "\n\x1b[31m✗\x1b[0m Not ready: fix ",
+        ] {
+            assert!(colored.contains(expected), "{expected:?} in\n{colored}");
+        }
+        assert_eq!(
+            colored
+                .replace("\x1b[0m", "")
+                .split("\x1b[")
+                .map(|part| part.split_once('m').map_or(part, |(_, rest)| rest))
+                .collect::<String>(),
+            lines(plain)
+        );
+        // ASCII marks at 40 columns: wrapped under the text, commands whole.
+        let narrow = lines(Style {
+            unicode: false,
+            width: Some(40 + crate::term::EDGE),
+            ..plain
+        });
+        assert!(narrow.starts_with("* System Check\n"), "{narrow}");
+        assert!(
+            narrow.contains("\n  + Local OCR: Portable PaddleOCR engine\n    (tract): the 4 model files are\n    verified\n"),
+            "{narrow}"
+        );
+        assert!(
+            narrow.contains("\n    sudo pacman -S libreoffice-fresh  # Arch\n"),
+            "{narrow}"
+        );
+        assert!(
+            narrow.ends_with(
+                "\nx Not ready: fix Claude subscription\n  authentication first (see above)"
+            ),
+            "{narrow}"
+        );
+        assert!(
+            narrow
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("sudo "))
+                .all(|line| line.chars().count() <= 40),
+            "{narrow}"
         );
     }
 
@@ -1024,37 +1457,28 @@ mod tests {
     }
 
     #[test]
-    fn check_lines_translate_only_the_status_and_requirement() {
-        let states = checks_of(&[
-            ("A", "ok", false),
-            ("B", "warning", false),
-            ("C", "missing", true),
-            ("D", "error", false),
-        ]);
+    fn check_lines_translate_only_the_requirement_note() {
+        let states = checks_of(&[("A", "ok", false), ("C", "missing", true)]);
         let lines = |lang| {
             states
                 .values()
                 .map(|check| check_line(check, lang))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            lines(Lang::Zh),
-            [
-                "A：正常 — message",
-                "B：警告 — message",
-                "C：缺失（配置要求） — message",
-                "D：错误 — message"
-            ]
-        );
+        assert_eq!(lines(Lang::Zh), ["A：message", "C：message（配置要求）"]);
         assert_eq!(
             lines(Lang::En),
-            [
-                "A: ok — message",
-                "B: warning — message",
-                "C: missing (required by configuration) — message",
-                "D: error — message"
-            ]
+            ["A: message", "C: message (required by the configuration)"]
         );
+        let marks: Vec<_> = checks_of(&[
+            ("A", "ok", true),
+            ("B", "warning", false),
+            ("C", "error", true),
+        ])
+        .values()
+        .map(mark)
+        .collect();
+        assert_eq!(marks, [Mark::Success, Mark::Warning, Mark::Error]);
     }
 
     #[test]

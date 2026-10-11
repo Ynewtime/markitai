@@ -37,6 +37,12 @@ vendor/rav1d/MARKITAI-PATCH.md. Its Rust API derives from dav1d-rs (MIT,
 Luca Barbato); both notices are in vendor/rav1d/COPYING and
 vendor/rav1d/LICENSE-dav1d-rs.
 
+The HTML reader resolves Tailwind CSS colour classes and variables in the
+inline SVG drawings it keeps with the default colour palette of Tailwind CSS
+3.4.19 (MIT, Copyright (c) Tailwind Labs, Inc.), embedded as data in
+crates/markitai-core/src/formats/html/svg.rs. The complete license, the exact
+source identity and a digest of the embedded values are in licenses/tailwind/.
+
 The Numbers reader uses iwork 0.2.1 (MIT), pinned in Cargo.lock. Its independently
 sourced regression documents are from numbers-parser (MIT), with the original
 license and exact source identities in

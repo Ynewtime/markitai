@@ -344,7 +344,7 @@ fn llm_failures_name_their_cause_and_deployment_in_every_channel_without_secrets
         let plain = invoke(root.path(), cfg, &["note.md", "-o", "out", "--llm"], &env);
         assert_eq!(plain.status.code(), Some(1));
         let stderr = String::from_utf8_lossy(&plain.stderr);
-        assert!(stderr.contains(&format!("Error: {expected}")), "{stderr}");
+        assert!(stderr.contains(&format!("  ✗ {expected}")), "{stderr}");
         let rows = serde_json::to_string(&records(&logs)).unwrap();
         assert!(rows.contains(&expected), "{rows}");
         for channel in [

@@ -1,0 +1,33 @@
+{
+  "batch_id": "msgbatch_01StubPythonState00000",
+  "model": "claude-haiku-5-5",
+  "mode": "tool_call",
+  "provider": "anthropic",
+  "created_at": "2026-10-11T09:30:40.345135+08:00",
+  "items": [
+    {
+      "custom_id": "doc_0_deck_pptx",
+      "source": "deck.pptx",
+      "input_md": "inputs/0.md",
+      "base_md": "deck.pptx.md",
+      "kind": "doc",
+      "image": "",
+      "document_context": "",
+      "answer": null
+    },
+    {
+      "custom_id": "doc_1_notes_md",
+      "source": "notes.md",
+      "input_md": "inputs/1.md",
+      "base_md": "notes.md.md",
+      "kind": "doc",
+      "image": "",
+      "document_context": "",
+      "answer": null
+    }
+  ],
+  "collected_at": null,
+  "ended_status": null,
+  "alt_enabled": false,
+  "desc_enabled": false
+}

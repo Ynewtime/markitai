@@ -500,7 +500,9 @@ fn added_prefixes_count_as_routable_by_key_or_local_address() {
             true,
         ),
         ("ollama_chat/llama", json!({}), true),
-        ("bedrock/x", json!({"api_key":"literal-test-key"}), false),
+        // A Bedrock API key routes Bedrock; an unimplemented prefix never routes.
+        ("bedrock/x", json!({"api_key":"literal-test-key"}), true),
+        ("watsonx/x", json!({"api_key":"literal-test-key"}), false),
     ] {
         let mut params = json!({"model":model});
         for (key, value) in extra.as_object().unwrap() {

@@ -1,4 +1,4 @@
-use super::types::{ENDPOINT, Error, Limits, custom_id};
+use super::types::{Api, ENDPOINT, Error, Limits, custom_id};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -27,9 +27,10 @@ pub(super) fn line(reader: &mut impl BufRead, cap: usize) -> Result<Vec<u8>, Err
     Ok(bytes)
 }
 
-/// Validate the same anonymous, private snapshot later supplied to multipart.
-/// A mutable source pathname is never reopened after this function returns.
-pub(super) fn snapshot(path: &Path, limits: Limits) -> Result<Input, Error> {
+/// Validate the same anonymous, private snapshot later supplied to multipart
+/// (OpenAI) or inlined into the create call (Anthropic). A mutable source
+/// pathname is never reopened after this function returns.
+pub(super) fn snapshot(path: &Path, limits: Limits, api: Api) -> Result<Input, Error> {
     let before = std::fs::symlink_metadata(path).map_err(|_| Error::Input)?;
     if !before.is_file() || before.file_type().is_symlink() {
         return Err(Error::Invalid(
@@ -89,11 +90,24 @@ pub(super) fn snapshot(path: &Path, limits: Limits) -> Result<Input, Error> {
         let object = value
             .as_object()
             .ok_or(Error::Invalid("Batch input row must be an object"))?;
-        if object.len() != 4 || value["method"] != "POST" || value["url"] != ENDPOINT {
-            return Err(Error::Invalid(
-                "Batch input must contain only custom_id, method, url and body for Chat Completions",
-            ));
-        }
+        let body = match api {
+            Api::OpenAi => {
+                if object.len() != 4 || value["method"] != "POST" || value["url"] != ENDPOINT {
+                    return Err(Error::Invalid(
+                        "Batch input must contain only custom_id, method, url and body for Chat Completions",
+                    ));
+                }
+                "body"
+            }
+            Api::Anthropic => {
+                if object.len() != 2 || !object.contains_key("params") {
+                    return Err(Error::Invalid(
+                        "Message Batch input must contain only custom_id and params",
+                    ));
+                }
+                "params"
+            }
+        };
         let id = value["custom_id"]
             .as_str()
             .filter(|id| custom_id(id))
@@ -103,9 +117,20 @@ pub(super) fn snapshot(path: &Path, limits: Limits) -> Result<Input, Error> {
                 "Batch input contains duplicate custom_id values",
             ));
         }
-        let body = value["body"]
+        let body = value[body]
             .as_object()
             .ok_or(Error::Invalid("Batch request body must be an object"))?;
+        // Anthropic has no default output limit; every request must name one.
+        if api == Api::Anthropic
+            && body
+                .get("max_tokens")
+                .and_then(Value::as_u64)
+                .is_none_or(|tokens| tokens == 0)
+        {
+            return Err(Error::Invalid(
+                "Message Batch requests need a positive max_tokens",
+            ));
+        }
         let name = body
             .get("model")
             .and_then(Value::as_str)

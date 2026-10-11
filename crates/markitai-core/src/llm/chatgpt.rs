@@ -70,6 +70,7 @@ pub(super) fn deployment(
         supports_vision: entry
             .pointer("/model_info/supports_vision")
             .and_then(Value::as_bool),
+        cloud: None,
     })
 }
 fn observe(
@@ -217,6 +218,7 @@ mod tests {
             max_tokens: None,
             reasoning_effort: None,
             supports_vision: None,
+            cloud: None,
         }
     }
     #[test]

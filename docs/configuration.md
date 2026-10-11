@@ -65,7 +65,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `output.page_markers` | `false` | 在最终 Markdown 中保留 PDF/多页 TIFF 页码注释和 PPTX/PPT/ODP 幻灯片编号注释；`--page-markers` 开启，`--no-page-markers` 关闭；显式参数优先于配置 |
 | `output.report` | `null` | 批量报告；`null` 表示目录/URL 列表开启、单项关闭 |
 | `llm.enabled` | `false` | 模型增强，同 `--llm` |
-| `llm.model_list` | `[]` | 模型部署；为空时按 `MODEL` 和供应商密钥自动选择。前缀见 [LLM：供应商](llm.md#providers-and-request-parameters)，其中包括 `groq/`、`mistral/`、`xai/`、`together_ai/` 等兼容 OpenAI 的前缀 |
+| `llm.model_list` | `[]` | 模型部署；为空时按 `MODEL` 和供应商密钥自动选择。前缀见 [LLM：供应商](llm.md#providers-and-request-parameters)，其中包括 `groq/`、`mistral/`、`xai/`、`together_ai/` 等兼容 OpenAI 的前缀，以及 `bedrock/`、`vertex_ai/`（凭据见 [Bedrock 与 Vertex AI](llm.md#bedrock-and-vertex-ai)） |
 | `llm.model_list[].model_info.max_input_tokens` | `null` | 模型的输入窗口（token）。设置后文档分块还须放进所有启用部署中最小的窗口（扣除提示词后按保守估算取 90%），只会变小、不会超过 32,000 字符；见 [LLM：长文本](llm.md#structured-documents-and-complete-long-text) |
 | `llm.model_list[].litellm_params.reasoning_effort` | `null` | 推理模型的思考强度：`none`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。未设置时 `deepseek/` 关闭思考（清理不需要推理，且推理 token 会占用 `max_tokens`），其他供应商使用模型默认值；`anthropic/` 只接受 `none`，订阅运行时不接受此项；见 [LLM：供应商](llm.md#providers-and-request-parameters) |
 | `llm.keep_base` | `false` | 增强后同时保留基础 Markdown，同 `--keep-base` |
@@ -100,7 +100,7 @@ markitai config edit                 # 终端中的交互编辑器
 ### 配置键的运行状态
 
 `config validate` 先验证类型、枚举和范围；无效配置仍是错误并退出非零。
-对于结构合法、但当前没有运行效果的兼容键，它在 stderr 输出 `Warning:`，
+对于结构合法、但当前没有运行效果的兼容键，它在 stderr 输出警告（终端为 `!`，文件日志为 `Warning:`），
 stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-json` 的原始内容，
 不把自动填充的默认键当成用户设置；普通转换、`config list` 和库加载不显示这些警告。
 显式写出一个无效用键，即使值等于默认值，也会得到提示。
@@ -136,6 +136,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 | `PLAYWRIGHT_BROWSERS_PATH` | 额外搜索的 Playwright 浏览器缓存目录 |
 | `MODEL` | 未配置 `llm.model_list` 时使用的模型，如 `openai/gpt-4.1-mini` |
 | `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY` | 供应商密钥；未配置模型时据此自动选择模型 |
+| `AWS_BEARER_TOKEN_BEDROCK`、`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN`、`AWS_PROFILE`、`AWS_REGION_NAME`、`AWS_REGION`；`GOOGLE_APPLICATION_CREDENTIALS`、`VERTEXAI_PROJECT`、`VERTEXAI_LOCATION` | `bedrock/` 与 `vertex_ai/` 部署的凭据、区域与项目（部署本身只读取 `api_key`、`api_base`）；见 [Bedrock 与 Vertex AI](llm.md#bedrock-and-vertex-ai) |
 | `AZURE_API_KEY`、`AZURE_API_VERSION`、`OLLAMA_API_KEY` | Azure 与 Ollama 部署的凭据和 API 版本 |
 | `GROQ_API_KEY`、`MISTRAL_API_KEY`、`XAI_API_KEY`、`TOGETHER_API_KEY` 等 | 兼容 OpenAI 的前缀的密钥（完整列表及 LiteLLM 的别名见 [LLM：兼容 OpenAI 的前缀](llm.md#openai-compatible-prefixes)）；不参与自动选择，需用 `MODEL` 或 `llm.model_list` 指定模型。`hosted_vllm/`、`lm_studio/` 无需密钥 |
 | `<PREFIX>_API_BASE`、`OPENAI_BASE_URL` | 部署未设置 `api_base` 时的端点；内置供应商为 `<PREFIX>_API_BASE`（OpenAI 另读 `OPENAI_BASE_URL`，`ollama_chat` 另读 `OLLAMA_API_BASE`），兼容前缀的变量名见上述表格。`hosted_vllm/` 没有默认端点，须设置 `api_base` 或 `HOSTED_VLLM_API_BASE` |

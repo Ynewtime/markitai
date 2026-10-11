@@ -112,24 +112,26 @@ fn a_local_server_prints_the_address_the_data_location_and_how_to_stop() {
         lines[1].starts_with("Remote access token: ") && lines[1].len() == 21 + 64,
         "{lines:?}"
     );
+    // The address to open sits on a line of its own, so it copies whole.
+    assert_eq!(lines[2], "Open in your browser:");
     assert_eq!(
-        lines[2],
+        lines[3],
         format!(
-            "Open in your browser: http://127.0.0.1:{port}/#token={}",
+            "    http://127.0.0.1:{port}/#token={}",
             lines[1].strip_prefix("Remote access token: ").unwrap()
         )
     );
     assert_eq!(
-        lines[3],
+        lines[4],
         format!(
             "Jobs and history are stored in {}",
             temp.path().join("home/serve/jobs").display()
         )
     );
-    assert!(lines[4].starts_with("Press Ctrl-C to stop"), "{lines:?}");
+    assert!(lines[5].starts_with("Press Ctrl-C to stop"), "{lines:?}");
     assert_eq!(
         lines.len(),
-        5,
+        6,
         "a loopback server has nothing to warn about: {lines:?}"
     );
     // The data location is real: the service created it.
@@ -147,12 +149,10 @@ fn the_terminal_language_changes_the_sentences_but_not_the_scripted_lines() {
     let lines = serve.until("Ctrl-C");
     assert!(lines[0].starts_with("Markitai server listening on http://127.0.0.1:"));
     assert!(lines[1].starts_with("Remote access token: "));
-    assert!(
-        lines[2].starts_with("在浏览器中打开：http://127.0.0.1:"),
-        "{lines:?}"
-    );
-    assert!(lines[3].starts_with("任务和历史保存在 "), "{lines:?}");
-    assert!(lines[4].starts_with("按 Ctrl-C 停止"), "{lines:?}");
+    assert_eq!(lines[2], "在浏览器中打开：", "{lines:?}");
+    assert!(lines[3].starts_with("    http://127.0.0.1:"), "{lines:?}");
+    assert!(lines[4].starts_with("任务和历史保存在 "), "{lines:?}");
+    assert!(lines[5].starts_with("按 Ctrl-C 停止"), "{lines:?}");
 }
 
 #[test]
@@ -167,29 +167,36 @@ fn listening_beyond_this_computer_warns_and_hands_out_the_token_only_where_it_is
     );
     assert!(
         lines[1].starts_with(&format!(
-            "Warning: binding to 0.0.0.0:{port} makes this server reachable"
+            "! Binding to 0.0.0.0:{port} makes this server reachable"
         )),
         "{lines:?}"
     );
-    assert!(lines[2].contains("like a password"), "{lines:?}");
-    assert!(lines[3].starts_with("Remote access token: "));
-    // Local and remote browsers both receive the token in a fragment.
     assert!(
-        lines.iter().any(|line| line
-            == &format!(
-                "Open in your browser: http://127.0.0.1:{port}/#token={}",
-                lines[3].strip_prefix("Remote access token: ").unwrap()
-            )),
+        lines[2].starts_with("  Other machines") && lines[2].contains("like a password"),
         "{lines:?}"
     );
-    // Any address offered to other devices carries the token, and says so.
-    for line in lines
+    assert!(lines[3].starts_with("Remote access token: "));
+    // Local and remote browsers both receive the token in a fragment.
+    let token = lines[3].strip_prefix("Remote access token: ").unwrap();
+    let local = lines
         .iter()
-        .filter(|line| line.starts_with("From another device"))
+        .position(|line| line == "Open in your browser:")
+        .unwrap_or_else(|| panic!("{lines:?}"));
+    assert_eq!(
+        lines[local + 1],
+        format!("    http://127.0.0.1:{port}/#token={token}")
+    );
+    // Any address offered to other devices carries the token, and says so.
+    for (index, line) in lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("From another device"))
     {
+        assert!(line.contains("contains the access token"), "{line}");
         assert!(
-            line.contains("#token=") && line.contains("contains the access token"),
-            "{line}"
+            lines[index + 1].starts_with("    http://")
+                && lines[index + 1].ends_with(&format!("#token={token}")),
+            "{lines:?}"
         );
     }
 }

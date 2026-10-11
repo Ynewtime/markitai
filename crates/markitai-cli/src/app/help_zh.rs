@@ -523,7 +523,7 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
     (
         ROOT,
         "llm_batch",
-        "把目录的文本增强提交给 OpenAI Batch API；--resume 会在 -o 目录中继续已冻结的任务",
+        "把目录的文本增强提交给 OpenAI 或 Anthropic Batch API；--resume 会在 -o 目录中继续已冻结的任务",
     ),
     (
         ROOT,

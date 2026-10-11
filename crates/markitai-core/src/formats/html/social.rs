@@ -13,10 +13,12 @@
 //! a status page can embed the complete Article instead of ordinary post text.
 
 use super::Attribute;
+use super::hacker_news::escaped;
 use super::{Announcement, Landmarks, render_clean, selector};
 use crate::Result;
 use scraper::{ElementRef, Html};
 use serde_json::{Map, Value};
+use std::collections::HashSet;
 use url::Url;
 
 fn inside(element: ElementRef<'_>, container: Option<ElementRef<'_>>) -> bool {
@@ -546,6 +548,41 @@ fn reply_slot(article: &ElementRef<'_>) -> bool {
         })
 }
 
+/// An Article's title and cover pictures beside its body: the `h1` and
+/// pictures around an `x-article-body`, or, on the 2026 page, the
+/// `twitter-article-title` and the photo above `twitterArticleRichTextView` in
+/// their `twitterArticleReadView`.
+fn article_heading(body: ElementRef<'_>) -> Option<(ElementRef<'_>, Vec<ElementRef<'_>>)> {
+    if body
+        .value()
+        .classes()
+        .any(|class| class == "x-article-body")
+    {
+        let container = body.parent().and_then(ElementRef::wrap)?;
+        let heading = container
+            .child_elements()
+            .find(|child| child.value().name() == "h1" && !text_of(*child).is_empty())?;
+        let covers = container
+            .child_elements()
+            .filter(|child| child.value().name() == "img")
+            .collect();
+        return Some((heading, covers));
+    }
+    let view = body
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .find(|node| node.value().attribute("data-testid") == Some("twitterArticleReadView"))?;
+    let heading = view
+        .select(&selector(r#"[data-testid="twitter-article-title"]"#))
+        .find(|title| !text_of(*title).is_empty())?;
+    let covers = view
+        .select(&selector(r#"[data-testid="tweetPhoto"] img"#))
+        .filter(|photo| !inside(*photo, Some(body)))
+        .take(1)
+        .collect();
+    Some((heading, covers))
+}
+
 /// An embedded long-form Article, scoped by its own body and the requested
 /// post id. The page can repeat it in responsive layouts or surround it with
 /// replies containing other Articles. Its author chrome is outside the body.
@@ -562,7 +599,9 @@ fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announceme
         (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())).then(|| id.to_owned())
     });
     let candidates: Vec<_> = document
-        .select(&selector(".x-article-body"))
+        .select(&selector(
+            r#".x-article-body, [data-testid="twitterArticleRichTextView"]"#,
+        ))
         .filter_map(|body| {
             if body
                 .ancestors()
@@ -571,10 +610,7 @@ fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announceme
             {
                 return None;
             }
-            let container = body.parent().and_then(ElementRef::wrap)?;
-            let heading = container
-                .child_elements()
-                .find(|child| child.value().name() == "h1" && !text_of(*child).is_empty())?;
+            let (heading, covers) = article_heading(body)?;
             let mut owners = body
                 .ancestors()
                 .filter_map(ElementRef::wrap)
@@ -591,7 +627,7 @@ fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announceme
                     .map(str::to_owned)
                     .or_else(|| own_permalink(owner, Some(body)).and_then(status_id))
             });
-            Some((body, container, heading, owner, id))
+            Some((body, heading, covers, owner, id))
         })
         .collect();
     let selected = if let Some(wanted) = &wanted {
@@ -625,7 +661,7 @@ fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announceme
             main.is_some() && candidate.3.map(|owner| owner.id()) == main.map(|post| post.id())
         })
     };
-    let Some((body, container, heading, owner, id)) = selected else {
+    let Some((body, heading, covers, owner, id)) = selected else {
         return Ok(None);
     };
     // Preserve the document's block structure; post text_markdown deliberately
@@ -634,12 +670,22 @@ fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announceme
     if body_markdown.is_empty() {
         return Ok(None);
     }
-    let mut blocks = vec![render_clean(*heading, base)?];
-    for cover in container
-        .child_elements()
-        .filter(|child| child.value().name() == "img")
-    {
-        let markdown = render_clean(cover, base)?;
+    let mut blocks = vec![if heading.value().name() == "h1" {
+        render_clean(*heading, base)?
+    } else {
+        format!("# {}", text_of(*heading).replace('#', "\\#"))
+    }];
+    for cover in covers {
+        let markdown = if heading.value().name() == "h1" {
+            render_clean(*cover, base)?
+        } else {
+            cover
+                .value()
+                .attribute("src")
+                .filter(|src| src.trim().starts_with("https://"))
+                .map(|src| image_markdown(&original_image(src.trim())))
+                .unwrap_or_default()
+        };
         if !markdown.is_empty() {
             blocks.push(markdown);
         }
@@ -686,10 +732,81 @@ fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announceme
     }))
 }
 
+/// A reply under `## Comments`, as the reference writes it: `**Name @handle**
+/// · [date](permalink)`, then the reply's text, media and quoted post.
+fn comment(reply: &Post<'_>, base: Option<&Url>) -> Result<Option<Vec<String>>> {
+    let mut header = Vec::new();
+    let who = match (&reply.name, &reply.handle) {
+        (Some(name), Some(handle)) => format!("{name} {handle}"),
+        (Some(one), None) | (None, Some(one)) => one.clone(),
+        (None, None) => String::new(),
+    };
+    if !who.is_empty() {
+        header.push(format!("**{}**", escaped(&who)));
+    }
+    let (iso, shown) = shown_date(reply.element, reply.quote);
+    let id = own_id(reply.element);
+    if let Some(date) = published(iso.as_deref(), id.as_deref(), None).or(shown) {
+        let permalink = own_permalink(reply.element, reply.quote).and_then(|href| {
+            Url::parse("https://x.com")
+                .ok()
+                .and_then(|x| super::safe_url(href, Some(&x)))
+        });
+        header.push(match permalink {
+            Some(url) => format!("[{date}]({url})"),
+            None => date,
+        });
+    }
+    let blocks = reply.blocks(base)?;
+    if header.is_empty() && blocks.is_empty() {
+        return Ok(None);
+    }
+    let mut lines = Vec::new();
+    if !header.is_empty() {
+        lines.push(header.join(" · "));
+    }
+    for block in blocks {
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.extend(block.lines().map(str::to_owned));
+    }
+    Ok(Some(lines))
+}
+
+/// The posts that follow `main` in the conversation: those before the first
+/// heading outside a post after it, where X starts "Discover more" and other
+/// timelines, as the reference stops there.
+fn conversation(scope: ElementRef<'_>, main: ElementRef<'_>) -> HashSet<usize> {
+    let mut posts = HashSet::new();
+    let mut after_main = false;
+    for node in scope.descendants().filter_map(ElementRef::wrap) {
+        if node == main {
+            after_main = true;
+        } else if after_main {
+            match node.value().name() {
+                "article" => {
+                    posts.insert(super::element_key(node));
+                }
+                "h2" if !node
+                    .ancestors()
+                    .filter_map(ElementRef::wrap)
+                    .any(|parent| parent.value().name() == "article") =>
+                {
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    posts
+}
+
 /// The post of an X status page as Markdown with its metadata: the post, then
 /// the posts the author continued it with, each after a rule. Replies from
 /// other accounts, and the author's own replies after the first of them, are
-/// the discussion around the post and are left out.
+/// the discussion around the post: they follow under `## Comments`, as the
+/// reference writes them.
 pub(super) fn post(
     document: &Html,
     page: &Landmarks<'_>,
@@ -750,16 +867,24 @@ pub(super) fn post(
     // the first post of anyone else ends the thread. A page can repeat the
     // main post, which is not a continuation of itself.
     let mut seen = vec![main_id.clone()];
+    let in_conversation = conversation(scope, main.element);
+    let mut comments: Vec<Vec<String>> = Vec::new();
+    let mut thread_ended = false;
     for article in &timeline[position + 1..] {
         let id = own_id(*article);
         if id.is_some() && seen.contains(&id) {
             continue;
         }
-        let reply = Post::read(*article);
-        if !reply.same_author(&main) {
+        if !in_conversation.contains(&super::element_key(*article)) {
             break;
         }
         seen.push(id);
+        let reply = Post::read(*article);
+        thread_ended |= !reply.same_author(&main);
+        if thread_ended {
+            comments.extend(comment(&reply, base)?);
+            continue;
+        }
         let blocks = reply.blocks(base)?;
         if !blocks.is_empty() {
             sections.push(blocks.join("\n\n"));
@@ -789,10 +914,28 @@ pub(super) fn post(
     }
     // The body is already the post; a language model keeps it as it is.
     metadata.insert("content_profile".into(), "social_post".into());
-    Ok(Some(Announcement {
-        markdown: sections.join("\n\n---\n\n"),
-        metadata,
-    }))
+    let mut markdown = sections.join("\n\n---\n\n");
+    if !comments.is_empty() {
+        markdown.push_str("\n\n---\n\n## Comments\n\n");
+        let quoted: Vec<String> = comments
+            .iter()
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| {
+                        if line.is_empty() {
+                            ">".to_owned()
+                        } else {
+                            format!("> {line}")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect();
+        markdown.push_str(&quoted.join("\n\n"));
+    }
+    Ok(Some(Announcement { markdown, metadata }))
 }
 
 #[cfg(test)]
@@ -856,7 +999,7 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         let doc = extract_html(page, Some("https://x.com/ada/status/1")).unwrap();
         assert_eq!(
             doc.markdown,
-            "First line of the post.\n\nSecond line with [example.com/tool](https://example.com/tool)\n\n![](https://pbs.twimg.com/amplify_video_thumb/9/img/p.jpg)\n\n> **Grace @grace** · Jun 19\n>\n> The quoted post.\n>\n> ![](https://pbs.twimg.com/media/Q?format=jpg&name=orig)\n>\n> [https://x.com/grace/status/2](https://x.com/grace/status/2)"
+            "First line of the post.\n\nSecond line with [example.com/tool](https://example.com/tool)\n\n![](https://pbs.twimg.com/amplify_video_thumb/9/img/p.jpg)\n\n> **Grace @grace** · Jun 19\n>\n> The quoted post.\n>\n> ![](https://pbs.twimg.com/media/Q?format=jpg&name=orig)\n>\n> [https://x.com/grace/status/2](https://x.com/grace/status/2)\n\n---\n\n## Comments\n\n> A reply."
         );
         assert_eq!(doc.metadata["title"], "Post by @ada on X");
         assert_eq!(doc.metadata["author"], "@ada");
@@ -986,7 +1129,7 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
     }
 
     #[test]
-    fn the_authors_own_replies_continue_the_post_and_other_accounts_do_not() {
+    fn the_authors_own_replies_continue_the_post_and_the_rest_are_comments() {
         let main = article("ada", "Ada", ID, "3:04 AM · Feb 25, 2025", "Part one", "");
         let replies = format!(
             "{}{}{}{}{}",
@@ -1001,9 +1144,14 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         let earlier = card("ada", "Ada", "1894221971766083999", "Earlier");
         let html = page(&main, &replies).replace("<main>", &format!("<main><ul>{earlier}</ul>"));
         let doc = extract_html(&html, Some(STATUS)).unwrap();
+        // The first reply from another account ends the thread: it and every
+        // reply after it, the author's own included, are comments.
         assert_eq!(
             doc.markdown,
-            "Part one\n\n---\n\nPart two\n\n---\n\nPart three"
+            "Part one\n\n---\n\nPart two\n\n---\n\nPart three\n\n---\n\n## Comments\n\n\
+             > **Grace @grace** · [2025-02-25](https://x.com/grace/status/1894221971766084052)\n>\n> A comment\n\n\
+             > **Ada @ada** · [2025-02-25](https://x.com/ada/status/1894221971766084053)\n>\n> Thanks Grace\n\n\
+             > **Linus @linus** · [2025-02-25](https://x.com/linus/status/1894221971766084054)\n>\n> Another comment"
         );
         assert_eq!(doc.metadata["description"], "Part one");
         assert_eq!(doc.metadata["published"], "2025-02-25");
@@ -1025,7 +1173,10 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
             post("Ada", "ada", "Answer")
         );
         let doc = extract_html(&html, Some("https://twitter.com/ada/status/7")).unwrap();
-        assert_eq!(doc.markdown, "Opening\n\n---\n\nContinued");
+        assert_eq!(
+            doc.markdown,
+            "Opening\n\n---\n\nContinued\n\n---\n\n## Comments\n\n> **Grace @grace**\n>\n> Question\n\n> **Ada @ada**\n>\n> Answer"
+        );
         assert_eq!(doc.metadata["content_profile"], "social_post");
     }
 
@@ -1177,7 +1328,10 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
             Some("https://x.com/article/status/1894221971766084049"),
         ] {
             let doc = extract_html(&html, base).unwrap();
-            assert_eq!(doc.markdown, "The actual post.");
+            assert_eq!(
+                doc.markdown,
+                "The actual post.\n\n---\n\n## Comments\n\n> **Grace @grace** · [Feb 25, 2025](https://x.com/grace/status/77)\n>\n> Reply"
+            );
             assert_eq!(doc.metadata["content_profile"], "social_post");
         }
         assert!(
@@ -1218,6 +1372,63 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         let other = extract_html(html, Some("https://example.org/article/1234")).unwrap();
         assert_eq!(other.metadata["title"], "Original page title");
         assert!(other.metadata.get("author").is_none());
+    }
+
+    #[test]
+    fn a_reply_in_a_localized_timeline_is_a_comment_and_discover_more_is_not() {
+        // The main post is in the conversation's `section` too, and the
+        // timeline's label is not English.
+        let post = |name: &str, handle: &str, id: &str, text: &str| {
+            format!(
+                r#"<div data-testid="cellInnerDiv"><article data-testid="tweet"><div data-testid="User-Name"><a href="/{handle}">{name}</a><a href="/{handle}">@{handle}</a></div>
+                <a href="/{handle}/status/{id}"><time datetime="2026-05-16T12:00:00.000Z">5月16日</time></a><div data-testid="tweetText">{text}</div></article></div>"#
+            )
+        };
+        let html = format!(
+            r#"<html lang="zh-Hans"><body><main><section aria-label="时间线：对话">{}<div data-testid="cellInnerDiv"><div role="separator"></div></div>{}<div data-testid="cellInnerDiv"><h2>发现更多</h2></div>{}</section></main></body></html>"#,
+            post("Main", "main_user", "1234567890", "主帖"),
+            post("Reply", "reply_user", "1234567891", "回复"),
+            post("Other", "other", "1234567892", "推荐"),
+        );
+        let doc = extract_html(&html, Some("https://x.com/main_user/status/1234567890")).unwrap();
+        assert_eq!(
+            doc.markdown,
+            "主帖\n\n---\n\n## Comments\n\n> **Reply @reply\\_user** · [2026-05-16](https://x.com/reply_user/status/1234567891)\n>\n> 回复"
+        );
+        assert_eq!(doc.metadata["title"], "Post by @main_user on X");
+    }
+
+    #[test]
+    fn a_2026_article_in_its_status_page_is_its_title_cover_and_whole_body() {
+        // The read view of early 2026: title and cover above the rich text,
+        // counters between them, the body in Draft.js blocks.
+        let view = r#"<div data-testid="twitterArticleReadView">
+            <a href="/ada/article/1894221971766084049/media/5"><div data-testid="tweetPhoto">
+              <img src="https://pbs.twimg.com/media/C?format=jpg&amp;name=medium"></div></a>
+            <div dir="auto" data-testid="twitter-article-title"><span>Notes on notes</span></div>
+            <div role="group" aria-label="3 replies"><button data-testid="reply">3</button></div>
+            <div data-testid="twitterArticleRichTextView"><div data-testid="longformRichTextComponent">
+              <div class="longform-unstyled"><div class="public-DraftStyleDefault-block"><span>First paragraph.</span></div></div>
+              <div dir="ltr"><h2 class="longform-header-two"><div><span>A section</span></div></h2></div>
+              <ul><li><div><span>one</span></div></li><li><div><span>two</span></div></li></ul>
+              <div data-testid="markdown-code-block"><div><div dir="ltr"><span>markdown</span></div>
+                <div><button aria-label="Copy to clipboard"></button></div></div>
+                <pre><code class="language-markdown"><span>
+vault/
+└── notes/</span></code></pre></div>
+              <div class="longform-unstyled"><div><span>Last paragraph.</span></div></div>
+            </div></div></div>"#;
+        let main = article("ada", "Ada", ID, "Feb 25, 2025", "", view);
+        let html = page(&main, "");
+        let doc = extract_html(&html, Some(STATUS)).unwrap();
+        assert_eq!(
+            doc.markdown,
+            "# Notes on notes\n\n![](https://pbs.twimg.com/media/C?format=jpg&name=orig)\n\nFirst paragraph.\n\n## A section\n\n* one\n\n* two\n\n```markdown\nvault/\n└── notes/\n```\n\nLast paragraph."
+        );
+        assert_eq!(doc.metadata["title"], "Notes on notes");
+        assert_eq!(doc.metadata["author"], "@ada");
+        assert_eq!(doc.metadata["site"], "X (Twitter)");
+        assert!(doc.metadata.get("content_profile").is_none());
     }
 
     #[test]

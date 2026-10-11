@@ -213,8 +213,9 @@ fn runtime_terminal_error_and_semantic_retries_retain_observed_usage() {
     assert!(!result.to_string().contains("do-not-disclose"));
     mode("invalid");
     let failed = convert_detailed(path.to_str().unwrap(), options(config())).unwrap_err();
-    assert_unknown(&failed.usage, 3);
-    assert_eq!(sends(), 4);
+    // The second rejection repeats the first; a third request would repeat the second.
+    assert_unknown(&failed.usage, 2);
+    assert_eq!(sends(), 3);
 }
 #[test]
 fn unknown_tariff_budget_blocks_before_runtime_start() {

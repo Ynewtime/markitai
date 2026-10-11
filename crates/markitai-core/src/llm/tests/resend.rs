@@ -239,10 +239,11 @@ fn transport_retries_and_image_analysis_fallbacks_are_warned() {
     assert_eq!(server.finish().len(), 2);
     drop(scope);
 
+    // The second rejection repeats the first: a third request would be the
+    // second one again, so the separate requests follow at once.
     let server = Mock::new(vec![
         (200, success("not structured JSON")),
         (200, success("still not structured JSON")),
-        (200, success("never structured JSON")),
         (200, success("Caption")),
         (200, success("Description")),
     ]);
@@ -266,5 +267,52 @@ fn transport_retries_and_image_analysis_fallbacks_are_warned() {
         ],
         "{warnings:?}"
     );
-    assert_eq!(server.finish().len(), 5);
+    let requests = server.finish();
+    assert_eq!(requests.len(), 4);
+    assert_ne!(requests[0].1, requests[1].1);
+}
+
+#[test]
+fn a_repeated_rejection_is_never_answered_by_the_same_request() {
+    // The same rejection twice ends the structured attempts after two
+    // requests; a different one earns a third, which names it. The separate
+    // caption and description requests follow either way.
+    let wrong_type = json!({"caption": 1, "description": "d", "extracted_text": ""}).to_string();
+    for (structured, total) in [
+        (vec!["no JSON", "no JSON either"], 4),
+        (vec!["no JSON", wrong_type.as_str(), "no JSON again"], 5),
+    ] {
+        let answers = structured
+            .iter()
+            .chain(&["Caption", "Description"])
+            .map(|text| (200, success(text)))
+            .collect();
+        let server = Mock::new(answers);
+        let cfg = super::cfg("openai/test", &server.base);
+        let scope = DocumentScope::new(&cfg);
+        analyze_images_with_runtime(
+            "context",
+            "source",
+            &[("image/png", b"bytes")],
+            &cfg,
+            None,
+            None,
+        )
+        .unwrap();
+        drop(scope);
+        let requests = server.finish();
+        assert_eq!(requests.len(), total);
+        let sent: Vec<&Value> = requests[..structured.len()]
+            .iter()
+            .map(|(_, body)| body)
+            .collect();
+        for (index, request) in sent.iter().enumerate() {
+            for earlier in &sent[..index] {
+                assert_ne!(
+                    request, earlier,
+                    "a structured request was sent twice unchanged"
+                );
+            }
+        }
+    }
 }

@@ -506,7 +506,7 @@ impl ApiError {
         }
     }
     pub fn internal(error: impl std::fmt::Display) -> Self {
-        eprintln!("Serve: {error}");
+        eprintln!("Error: Serve: {error}");
         Self::new(500, "internal_error", "internal server error")
     }
     /// A request body the multipart reader rejected; an exceeded body limit stays

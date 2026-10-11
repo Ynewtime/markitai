@@ -1,0 +1,217 @@
+{
+ "generator": "markitai 1.2.1 DocumentEnhancer._protect_image_positions + llm.content.protect_content",
+ "cases": [
+  {
+   "input": "# Plain\n\nNo protected content here.\n",
+   "document": "# Plain\n\nNo protected content here.\n",
+   "document_mapping": [],
+   "vision": "# Plain\n\nNo protected content here.\n",
+   "vision_mapping": []
+  },
+  {
+   "input": "<!-- Slide number: 1 -->\n\n# Deck\n\n![chart](.markitai/assets/deck.pptx.0001.jpg)\n\n<!-- Slide number: 2 -->\n\nText.\n",
+   "document": "__MARKITAI_SLIDENUM_0__\n\n# Deck\n\n__MARKITAI_IMG_0__\n\n__MARKITAI_SLIDENUM_1__\n\nText.\n",
+   "document_mapping": [
+    [
+     "__MARKITAI_IMG_0__",
+     "![chart](.markitai/assets/deck.pptx.0001.jpg)"
+    ],
+    [
+     "__MARKITAI_SLIDENUM_0__",
+     "<!-- Slide number: 1 -->"
+    ],
+    [
+     "__MARKITAI_SLIDENUM_1__",
+     "<!-- Slide number: 2 -->"
+    ]
+   ],
+   "vision": "__MARKITAI_SLIDENUM_0__\n\n# Deck\n\n![chart](.markitai/assets/deck.pptx.0001.jpg)\n\n__MARKITAI_SLIDENUM_1__\n\nText.\n",
+   "vision_mapping": [
+    [
+     "__MARKITAI_SLIDENUM_0__",
+     "<!-- Slide number: 1 -->"
+    ],
+    [
+     "__MARKITAI_SLIDENUM_1__",
+     "<!-- Slide number: 2 -->"
+    ]
+   ]
+  },
+  {
+   "input": "<!-- Page number: 1 -->\n# A\n<!--Page number:2-->\n## B\n<!--  Page number:  3  -->\n",
+   "document": "__MARKITAI_PAGENUM_0__\n# A\n__MARKITAI_PAGENUM_1__\n## B\n__MARKITAI_PAGENUM_2__\n",
+   "document_mapping": [
+    [
+     "__MARKITAI_PAGENUM_0__",
+     "<!-- Page number: 1 -->"
+    ],
+    [
+     "__MARKITAI_PAGENUM_1__",
+     "<!--Page number:2-->"
+    ],
+    [
+     "__MARKITAI_PAGENUM_2__",
+     "<!--  Page number:  3  -->"
+    ]
+   ],
+   "vision": "__MARKITAI_PAGENUM_0__\n# A\n__MARKITAI_PAGENUM_1__\n## B\n__MARKITAI_PAGENUM_2__\n",
+   "vision_mapping": [
+    [
+     "__MARKITAI_PAGENUM_0__",
+     "<!-- Page number: 1 -->"
+    ],
+    [
+     "__MARKITAI_PAGENUM_1__",
+     "<!--Page number:2-->"
+    ],
+    [
+     "__MARKITAI_PAGENUM_2__",
+     "<!--  Page number:  3  -->"
+    ]
+   ]
+  },
+  {
+   "input": "![a](x.png) twice ![a](x.png) and ![b](y.png)\n",
+   "document": "__MARKITAI_IMG_0__ twice __MARKITAI_IMG_1__ and __MARKITAI_IMG_2__\n",
+   "document_mapping": [
+    [
+     "__MARKITAI_IMG_0__",
+     "![a](x.png)"
+    ],
+    [
+     "__MARKITAI_IMG_1__",
+     "![a](x.png)"
+    ],
+    [
+     "__MARKITAI_IMG_2__",
+     "![b](y.png)"
+    ]
+   ],
+   "vision": "![a](x.png) twice ![a](x.png) and ![b](y.png)\n",
+   "vision_mapping": []
+  },
+  {
+   "input": "![s](.markitai/screenshots/doc.page0001.png)\n![a](.markitai/assets/a.png)\n",
+   "document": "![s](.markitai/screenshots/doc.page0001.png)\n__MARKITAI_IMG_1__\n",
+   "document_mapping": [
+    [
+     "__MARKITAI_IMG_1__",
+     "![a](.markitai/assets/a.png)"
+    ]
+   ],
+   "vision": "![s](.markitai/screenshots/doc.page0001.png)\n![a](.markitai/assets/a.png)\n",
+   "vision_mapping": []
+  },
+  {
+   "input": "<!-- Page images for reference -->\n<!-- ![Page 1](.markitai/screenshots/p.page0001.jpg) -->\n<!-- ![Page 2](.markitai/screenshots/p.page0002.jpg) -->\n<!-- Screenshot for reference -->\n<!-- ![Screenshot](.markitai/screenshots/s.png) -->\n",
+   "document": "__MARKITAI_PAGE_0__\n__MARKITAI_PAGE_1__\n__MARKITAI_PAGE_2__\n__MARKITAI_PAGE_3__\n__MARKITAI_PAGE_4__\n",
+   "document_mapping": [
+    [
+     "__MARKITAI_PAGE_0__",
+     "<!-- Page images for reference -->"
+    ],
+    [
+     "__MARKITAI_PAGE_1__",
+     "<!-- ![Page 1](.markitai/screenshots/p.page0001.jpg) -->"
+    ],
+    [
+     "__MARKITAI_PAGE_2__",
+     "<!-- ![Page 2](.markitai/screenshots/p.page0002.jpg) -->"
+    ],
+    [
+     "__MARKITAI_PAGE_3__",
+     "<!-- Screenshot for reference -->"
+    ],
+    [
+     "__MARKITAI_PAGE_4__",
+     "<!-- ![Screenshot](.markitai/screenshots/s.png) -->"
+    ]
+   ],
+   "vision": "__MARKITAI_PAGE_0__\n__MARKITAI_PAGE_1__\n__MARKITAI_PAGE_2__\n__MARKITAI_PAGE_3__\n__MARKITAI_PAGE_4__\n",
+   "vision_mapping": [
+    [
+     "__MARKITAI_PAGE_0__",
+     "<!-- Page images for reference -->"
+    ],
+    [
+     "__MARKITAI_PAGE_1__",
+     "<!-- ![Page 1](.markitai/screenshots/p.page0001.jpg) -->"
+    ],
+    [
+     "__MARKITAI_PAGE_2__",
+     "<!-- ![Page 2](.markitai/screenshots/p.page0002.jpg) -->"
+    ],
+    [
+     "__MARKITAI_PAGE_3__",
+     "<!-- Screenshot for reference -->"
+    ],
+    [
+     "__MARKITAI_PAGE_4__",
+     "<!-- ![Screenshot](.markitai/screenshots/s.png) -->"
+    ]
+   ]
+  },
+  {
+   "input": "```\n![in code](code.png)\n<!-- Slide number: 7 -->\n```\n",
+   "document": "```\n__MARKITAI_IMG_0__\n__MARKITAI_SLIDENUM_0__\n```\n",
+   "document_mapping": [
+    [
+     "__MARKITAI_IMG_0__",
+     "![in code](code.png)"
+    ],
+    [
+     "__MARKITAI_SLIDENUM_0__",
+     "<!-- Slide number: 7 -->"
+    ]
+   ],
+   "vision": "```\n![in code](code.png)\n__MARKITAI_SLIDENUM_0__\n```\n",
+   "vision_mapping": [
+    [
+     "__MARKITAI_SLIDENUM_0__",
+     "<!-- Slide number: 7 -->"
+    ]
+   ]
+  },
+  {
+   "input": "Ünïcödé ![图片](资产/图.png) <!-- Slide number: 3 --> 文本\n",
+   "document": "Ünïcödé __MARKITAI_IMG_0__ __MARKITAI_SLIDENUM_0__ 文本\n",
+   "document_mapping": [
+    [
+     "__MARKITAI_IMG_0__",
+     "![图片](资产/图.png)"
+    ],
+    [
+     "__MARKITAI_SLIDENUM_0__",
+     "<!-- Slide number: 3 -->"
+    ]
+   ],
+   "vision": "Ünïcödé ![图片](资产/图.png) __MARKITAI_SLIDENUM_0__ 文本\n",
+   "vision_mapping": [
+    [
+     "__MARKITAI_SLIDENUM_0__",
+     "<!-- Slide number: 3 -->"
+    ]
+   ]
+  },
+  {
+   "input": "![nested ![x](y)](z.png) ![](empty-alt.png) ![a](<angle.png>)\n",
+   "document": "__MARKITAI_IMG_0__](z.png) __MARKITAI_IMG_1__ __MARKITAI_IMG_2__\n",
+   "document_mapping": [
+    [
+     "__MARKITAI_IMG_0__",
+     "![nested ![x](y)"
+    ],
+    [
+     "__MARKITAI_IMG_1__",
+     "![](empty-alt.png)"
+    ],
+    [
+     "__MARKITAI_IMG_2__",
+     "![a](<angle.png>)"
+    ]
+   ],
+   "vision": "![nested ![x](y)](z.png) ![](empty-alt.png) ![a](<angle.png>)\n",
+   "vision_mapping": []
+  }
+ ]
+}

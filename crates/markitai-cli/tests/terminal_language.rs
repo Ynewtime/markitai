@@ -58,25 +58,30 @@ fn doctor_frame_is_chinese_while_check_values_and_exit_status_are_unchanged() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let text = stdout(&output);
     let lines: Vec<_> = text.lines().collect();
-    assert!(lines[0].ends_with("— 原生诊断"), "{text}");
-    assert_eq!(
-        lines[1],
-        "配置文件：内建默认值（未找到配置文件；可运行 `markitai init` 创建）"
-    );
-    // The status word is translated; the name and message are the JSON values.
+    assert_eq!(lines[..2], ["◆ 系统检查", ""], "{text}");
+    assert!(lines[2].starts_with("  • 版本：markitai "), "{text}");
     assert!(
-        text.contains("LLM API：缺失 — No models configured in llm.model_list"),
+        lines[3].starts_with("  • 配置文件：默认配置（未找到配置文件；可运行 'markitai init' 在 "),
         "{text}"
     );
-    assert!(text.contains("Serve：正常 — "), "{text}");
-    assert!(text.contains("Vision Model：警告 — "), "{text}");
+    // The frame is translated; the name and message are the JSON values.
+    for line in [
+        "\n可选能力\n",
+        "\nLLM\n",
+        "  ! LLM API：No models configured in llm.model_list\n",
+        "  ✓ Serve：Native server and embedded web interface are included\n",
+        "  ! Vision Model：No routable vision model is configured\n",
+        "\n启用缺失的功能\n",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
     // How many optional backends are ready depends on the platform.
     let summary = lines.last().copied().unwrap_or_default();
     assert!(
-        summary.starts_with("总结：配置要求的检查均已就绪；")
-            && summary.ends_with(" 项可选检查未就绪（见上方提示）。"),
+        summary.starts_with("✓ 已就绪。以下可选功能不可用："),
         "{text}"
     );
+    assert!(summary.contains("LLM API、Vision Model"), "{text}");
 
     let saved = dir.path().join("markitai.json");
     std::fs::write(&saved, r#"{"fetch":{"strategy":"playwright"}}"#).unwrap();
@@ -84,24 +89,27 @@ fn doctor_frame_is_chinese_while_check_values_and_exit_status_are_unchanged() {
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
     assert!(
-        text.lines().nth(1).unwrap().starts_with("配置文件："),
+        text.lines().nth(3).unwrap().starts_with("  • 配置文件："),
         "{text}"
     );
     assert!(text.contains("markitai.json"), "{text}");
+    let browser = text
+        .lines()
+        .find(|line| line.starts_with("  ✗ Chromium (native CDP)："))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(browser.ends_with("（配置要求）"), "{text}");
+    assert!(text.contains("\n修复方法\n"), "{text}");
     assert!(
-        text.contains("Chromium (native CDP)：缺失（配置要求） — "),
+        text.ends_with("\n\n✗ 未就绪：请先修复 Chromium (native CDP)（见上文）\n"),
         "{text}"
     );
+    let english = stdout(&run(dir.path(), EN, &["doctor"]));
     assert!(
-        text.contains(
-            "总结：1 项配置要求的检查未就绪：Chromium (native CDP)。请按上方提示处理后重新运行 `markitai doctor`。"
-        ),
-        "{text}"
-    );
-    let english = run(dir.path(), EN, &["doctor"]);
-    assert_eq!(english.status.code(), Some(1));
-    assert!(
-        stdout(&english).contains("Chromium (native CDP): missing (required by configuration) — ")
+        english
+            .lines()
+            .any(|line| line.starts_with("  ✗ Chromium (native CDP): ")
+                && line.ends_with(" (required by the configuration)")),
+        "{english}"
     );
 }
 
@@ -117,19 +125,20 @@ fn doctor_summary_joins_several_blocked_checks() {
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
     assert!(
-        text.contains("总结：2 项配置要求的检查未就绪：Chromium (native CDP)、LLM API。"),
+        text.ends_with("\n✗ 未就绪：请先修复 Chromium (native CDP)、LLM API（见上文）\n"),
         "{text}"
     );
-    assert!(text.contains("LLM API：错误（配置要求） — "), "{text}");
+    assert!(
+        text.contains("  ✗ LLM API：Missing environment variable(s) used by active models: I18N_ABSENT_KEY（配置要求）"),
+        "{text}"
+    );
     let english = stdout(&run(
         dir.path(),
         EN,
         &["--config-json", &cfg.to_string(), "doctor"],
     ));
     assert!(
-        english.contains(
-            "Summary: 2 checks required by the configuration are not ready: Chromium (native CDP), LLM API."
-        ),
+        english.ends_with("\n✗ Not ready: fix Chromium (native CDP), LLM API first (see above)\n"),
         "{english}"
     );
 }
@@ -179,12 +188,16 @@ fn json_and_exit_codes_do_not_depend_on_the_language() {
     assert_eq!(
         stderr(&output),
         format!(
-            "已写入 {}\n",
+            "  ✓ 已写入 {}\n",
             std::path::Path::new("out").join("note.txt.md").display()
         )
     );
     let output = run(dir.path(), EN, &["note.txt", "-o", "out"]);
-    assert!(stderr(&output).starts_with("Wrote "), "{}", stderr(&output));
+    assert!(
+        stderr(&output).starts_with("  ✓ Wrote "),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -194,7 +207,7 @@ fn cache_statistics_and_clearing_speak_chinese() {
     assert!(stats.status.success());
     assert_eq!(
         stdout(&stats),
-        "缓存：已启用\nLLM 缓存：0 条（0 B）\nURL 抓取缓存：0 条（0 B）\n"
+        "◆ 缓存统计\n\n  • 缓存：已启用\n  • LLM 缓存：0 条（0 B）\n  • URL 抓取缓存：0 条（0 B）\n"
     );
     let disabled = run(
         dir.path(),
@@ -206,11 +219,11 @@ fn cache_statistics_and_clearing_speak_chinese() {
             "stats",
         ],
     );
-    assert!(stdout(&disabled).starts_with("缓存：已禁用\n"));
+    assert!(stdout(&disabled).starts_with("◆ 缓存统计\n\n  • 缓存：已禁用\n"));
     let english = run(dir.path(), EN, &["cache", "stats"]);
     assert_eq!(
         stdout(&english),
-        "Cache enabled: true\nLLM cache: 0 entries (0 B)\nURL fetch cache: 0 entries (0 B)\n"
+        "◆ Cache Statistics\n\n  • Cache enabled: true\n  • LLM cache: 0 entries (0 B)\n  • URL fetch cache: 0 entries (0 B)\n"
     );
 
     let clear = run(
@@ -221,7 +234,7 @@ fn cache_statistics_and_clearing_speak_chinese() {
     assert!(clear.status.success(), "{}", stderr(&clear));
     assert_eq!(
         stdout(&clear),
-        "已清理 0 条缓存\n已清理 0 个已学习的 SPA 域名\n"
+        "✓ 已清理 0 条缓存\n✓ 已清理 0 个已学习的 SPA 域名\n"
     );
 
     let mut child = command(dir.path(), ZH)
@@ -234,8 +247,8 @@ fn cache_statistics_and_clearing_speak_chinese() {
     let declined = child.wait_with_output().unwrap();
     assert!(declined.status.success());
     let text = stdout(&declined);
-    assert!(text.starts_with("清理 LLM 与 URL 抓取缓存（"), "{text}");
-    assert!(text.ends_with("）？[y/N]：已取消\n"), "{text}");
+    assert!(text.starts_with("? 清理 LLM 与 URL 抓取缓存（"), "{text}");
+    assert!(text.ends_with("）？[y/N]：○ 已取消\n"), "{text}");
 
     let mut child = command(dir.path(), ZH)
         .args(["cache", "clear", "--include-spa-domains"])
@@ -248,10 +261,10 @@ fn cache_statistics_and_clearing_speak_chinese() {
     assert!(accepted.status.success());
     let text = stdout(&accepted);
     assert!(
-        text.starts_with("清理 LLM 与 URL 抓取缓存及已学习的浏览器域名（"),
+        text.starts_with("? 清理 LLM 与 URL 抓取缓存及已学习的浏览器域名（"),
         "{text}"
     );
-    assert!(text.contains("？[y/N]：已清理 0 条缓存\n"), "{text}");
+    assert!(text.contains("？[y/N]：✓ 已清理 0 条缓存\n"), "{text}");
 }
 
 #[test]
@@ -259,12 +272,12 @@ fn learned_browser_domains_list_and_clear_in_chinese() {
     let dir = tempfile::tempdir().unwrap();
     let list = run(dir.path(), ZH, &["cache", "spa-domains"]);
     assert!(list.status.success());
-    assert_eq!(stdout(&list), "没有已学习的 SPA 域名。\n");
+    assert_eq!(stdout(&list), "• 没有已学习的 SPA 域名。\n");
     let clear = run(dir.path(), ZH, &["cache", "spa-domains", "--clear"]);
     assert!(clear.status.success());
-    assert_eq!(stdout(&clear), "已清理 0 个已学习的 SPA 域名\n");
+    assert_eq!(stdout(&clear), "✓ 已清理 0 个已学习的 SPA 域名\n");
     let english = run(dir.path(), EN, &["cache", "spa-domains", "--clear"]);
-    assert_eq!(stdout(&english), "Cleared 0 learned SPA domains\n");
+    assert_eq!(stdout(&english), "✓ Cleared 0 learned SPA domains\n");
 }
 
 #[test]
@@ -274,7 +287,8 @@ fn config_path_and_validate_speak_chinese_but_keep_paths_and_errors() {
     assert!(path.status.success());
     let message = stdout(&path);
     assert!(
-        message.starts_with("未找到配置文件，正在使用内建默认值。可运行 `markitai init` 创建。\n"),
+        message
+            .starts_with("• 未找到配置文件，正在使用内建默认值。可运行 `markitai init` 创建。\n"),
         "{message}"
     );
     // Where a file is looked for, in the order it is used, and which one
@@ -286,7 +300,7 @@ fn config_path_and_validate_speak_chinese_but_keep_paths_and_errors() {
     );
     let valid = run(dir.path(), ZH, &["config", "validate"]);
     assert!(valid.status.success());
-    assert_eq!(stdout(&valid), "配置有效\n");
+    assert_eq!(stdout(&valid), "✓ 配置有效\n");
 
     std::fs::write(dir.path().join("markitai.json"), "{}").unwrap();
     let path = run(dir.path(), ZH, &["config", "path"]);
@@ -315,46 +329,64 @@ fn config_path_and_validate_speak_chinese_but_keep_paths_and_errors() {
 fn lc_all_precedes_lc_messages_and_lang_and_markitai_lang_wins() {
     let dir = tempfile::tempdir().unwrap();
     let valid = |envs: &[(&str, &str)]| stdout(&run(dir.path(), envs, &["config", "validate"]));
-    assert_eq!(valid(&[]), "Configuration is valid\n");
-    assert_eq!(valid(&[("LANG", "zh_CN.UTF-8")]), "配置有效\n");
-    assert_eq!(valid(&[("LC_ALL", "zh_TW.UTF-8")]), "配置有效\n");
-    assert_eq!(valid(&[("MARKITAI_LANG", "ZH")]), "配置有效\n");
+    assert_eq!(valid(&[]), "✓ Configuration is valid\n");
+    assert_eq!(valid(&[("LANG", "zh_CN.UTF-8")]), "✓ 配置有效\n");
+    assert_eq!(valid(&[("LC_ALL", "zh_TW.UTF-8")]), "✓ 配置有效\n");
+    assert_eq!(valid(&[("MARKITAI_LANG", "ZH")]), "✓ 配置有效\n");
     assert_eq!(
         valid(&[("MARKITAI_LANG", "en_US"), ("LANG", "zh_CN.UTF-8")]),
-        "Configuration is valid\n"
+        "✓ Configuration is valid\n"
     );
     assert_eq!(
         valid(&[("MARKITAI_LANG", "fr"), ("LANG", "zh_CN.UTF-8")]),
-        "Configuration is valid\n"
+        "✓ Configuration is valid\n"
     );
     assert_eq!(
         valid(&[("MARKITAI_LANG", ""), ("LANG", "zh_CN.UTF-8")]),
-        "配置有效\n"
+        "✓ 配置有效\n"
     );
     // As in POSIX, LC_ALL overrides LC_MESSAGES, which overrides LANG; the
     // reference read LANG first, so a user who exported LC_ALL got English.
     assert_eq!(
         valid(&[("LANG", "en_US.UTF-8"), ("LC_ALL", "zh_CN.UTF-8")]),
-        "配置有效\n"
+        "✓ 配置有效\n"
     );
     assert_eq!(
         valid(&[("LANG", "en_US.UTF-8"), ("LC_MESSAGES", "zh_CN.UTF-8")]),
-        "配置有效\n"
+        "✓ 配置有效\n"
     );
     assert_eq!(
         valid(&[("LC_ALL", "en_US.UTF-8"), ("LANG", "zh_CN.UTF-8")]),
-        "Configuration is valid\n"
+        "✓ Configuration is valid\n"
     );
     // The C and POSIX locales name no language, so they never hide a later one.
     assert_eq!(
         valid(&[("LANG", "C"), ("LC_ALL", "zh_CN.UTF-8")]),
-        "配置有效\n"
+        "✓ 配置有效\n"
     );
     assert_eq!(
         valid(&[("LC_ALL", "POSIX"), ("LANG", "zh_CN.UTF-8")]),
-        "配置有效\n"
+        "✓ 配置有效\n"
     );
-    assert_eq!(valid(&[("LANG", "C")]), "Configuration is valid\n");
+    assert_eq!(valid(&[("LANG", "C")]), "✓ Configuration is valid\n");
+    // On Unix a terminal set to another character set cannot draw Chinese (or
+    // the marks): English and the ASCII marks, unless MARKITAI_LANG asks.
+    // Windows writes UTF-8 whatever the locale names, so there the locale
+    // only chooses the language.
+    let (other_charset, asked) = if cfg!(windows) {
+        ("✓ 配置有效\n", "✓ 配置有效\n")
+    } else {
+        ("+ Configuration is valid\n", "+ 配置有效\n")
+    };
+    assert_eq!(valid(&[("LANG", "zh_CN.GBK")]), other_charset);
+    assert_eq!(
+        valid(&[("LC_ALL", "zh_TW.Big5"), ("LANG", "zh_TW.UTF-8")]),
+        other_charset
+    );
+    assert_eq!(
+        valid(&[("MARKITAI_LANG", "zh"), ("LANG", "zh_CN.GBK")]),
+        asked
+    );
 }
 
 #[test]
@@ -363,9 +395,9 @@ fn dotenv_files_supply_the_language_after_the_process_environment() {
     std::fs::create_dir_all(dir.path().join("home")).unwrap();
     std::fs::write(dir.path().join("home/.env"), "MARKITAI_LANG=zh\n").unwrap();
     let valid = |envs: &[(&str, &str)]| stdout(&run(dir.path(), envs, &["config", "validate"]));
-    assert_eq!(valid(&[]), "配置有效\n");
-    assert_eq!(valid(EN), "Configuration is valid\n");
+    assert_eq!(valid(&[]), "✓ 配置有效\n");
+    assert_eq!(valid(EN), "✓ Configuration is valid\n");
     // The current directory's .env is read before the one in MARKITAI_HOME.
     std::fs::write(dir.path().join(".env"), "MARKITAI_LANG=en\n").unwrap();
-    assert_eq!(valid(&[]), "Configuration is valid\n");
+    assert_eq!(valid(&[]), "✓ Configuration is valid\n");
 }
