@@ -1074,24 +1074,31 @@ def _batch_usage(
 ) -> tuple[int, int, float | None]:
     """Token counts and list-price cost (None: unknown) for one batch result.
 
-    The two providers report usage under different names, and only the
-    OpenAI-shaped body can be handed to litellm's cost calculator; an
-    Anthropic result is priced from the same table the rest of markitai
-    estimates with. Caller applies the batch discount.
+    The two providers report usage under different names. An Anthropic
+    result's usage goes through LiteLLM's own Anthropic conversion, as a live
+    answer's does, so its cache reads and 5-minute and 1-hour cache writes are
+    priced too: pricing only input_tokens and output_tokens left them out
+    (input_tokens excludes the cached part). Caller applies the batch
+    discount.
     """
-    usage = body.get("usage") or {}
-    if provider == "anthropic":
-        from markitai.providers import estimate_model_cost
-
-        input_tokens = int(usage.get("input_tokens", 0) or 0)
-        output_tokens = int(usage.get("output_tokens", 0) or 0)
-        estimate = estimate_model_cost(model, input_tokens, output_tokens)
-        cost = None if estimate.source == "none" else estimate.cost_usd
-        return input_tokens, output_tokens, cost
-
     import litellm
 
     from markitai.llm.models import get_response_cost
+
+    usage = body.get("usage") or {}
+    if provider == "anthropic":
+        from litellm.llms.anthropic.chat.transformation import AnthropicConfig
+
+        converted = AnthropicConfig().calculate_usage(usage, None)
+        response = litellm.ModelResponse(
+            model=body.get("model") or model, usage=converted
+        )
+        response._hidden_params = {"custom_llm_provider": "anthropic"}
+        return (
+            int(converted.prompt_tokens or 0),
+            int(converted.completion_tokens or 0),
+            get_response_cost(response),
+        )
 
     return (
         int(usage.get("prompt_tokens", 0) or 0),
