@@ -340,8 +340,10 @@ fn invalid_tool_results_descend_then_bounded_repair_keeps_literal_content() {
     let mut config = cfg(&server, dir.path(), "openai/gpt-4.1");
     config["cache"]["enabled"] = json!(true);
     let first = run(&input, config.clone(), None).unwrap();
-    assert_eq!(server.count(), 5);
-    assert_eq!(first.usage.requests, 5);
+    // The second JSON-text answer is rejected for the same reason as the
+    // first, so it is repaired instead of asked for a third, identical time.
+    assert_eq!(server.count(), 4);
+    assert_eq!(first.usage.requests, 4);
     assert!(
         first
             .llm_markdown
@@ -352,7 +354,7 @@ fn invalid_tool_results_descend_then_bounded_repair_keeps_literal_content() {
     let second = run(&input, config, None).unwrap();
     assert!(second.llm_cache_hit());
     assert_eq!(first.llm_markdown, second.llm_markdown);
-    assert_eq!(server.count(), 5);
+    assert_eq!(server.count(), 4);
 }
 
 #[test]

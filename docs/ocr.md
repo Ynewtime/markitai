@@ -273,12 +273,24 @@ still receives the ordinary no-text warning.
 - First recognition and first model loading can be much slower than subsequent
   calls. Download time, cold caches and parallel work are separate costs.
 - Work is spread over the processor's cores: text detection runs its matrix
-  kernels on up to eight threads, the direction classifier and the first
-  recognizer are prepared while the first image's text is detected, lines are
-  read side by side (an image with one or two lines uses the detection threads),
-  and a PDF's scanned pages are recognized two at a time while the next page
-  renders. Results are the same as on one thread; a multi-page scan holds two
-  pages' detection memory at once (about 300 bytes per page pixel each).
+  kernels and depthwise convolutions on up to eight threads, the direction
+  classifier and the first recognizer are prepared while the first image's
+  text is detected, lines are cut out, classified and read side by side (an
+  image with one or two lines uses the detection threads), and a PDF's scanned
+  pages are recognized two at a time while the next page renders. Results are
+  the same as on one thread; a multi-page scan holds two pages' detection
+  memory at once (about 300 bytes per page pixel each).
+- An image or page whose full-image pass keeps no text is read again in
+  overlapping tiles, as the reference does: about 800 by 600 pixels each (at
+  most four by four, overlapping by 6 %), each enlarged toward a 736-pixel
+  shorter side for detection, with the reference's lower thresholds for the
+  retry (region 0.35, line 0.45); a line two tiles both found is kept once.
+  A caption a few pixels high on a large, mostly empty picture is found this
+  way. A tile without sharp edges (a gradient, a blank margin) cannot hold
+  text and is skipped, so a blank page costs no retry; the other tiles are
+  searched two at a time, each enlarged at most so that the two hold no more
+  pixels than the full-image pass did, which keeps the retry within about
+  that pass's memory.
 - Model files are additional installed disk space, separate from the CLI binary.
 
 Measured quality and performance have specific source, platform and corpus

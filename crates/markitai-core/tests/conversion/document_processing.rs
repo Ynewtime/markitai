@@ -361,12 +361,13 @@ fn failed_chunk_never_publishes_partial_and_retry_reuses_completed_chunks() {
     let mut options = options_cfg(config.clone());
     options.output_dir = Some(out.clone());
     assert!(convert(path.to_str().unwrap(), options).is_err());
-    assert_eq!(server.count(), 5);
+    // The failing chunk is asked twice: its second rejection repeats the first.
+    assert_eq!(server.count(), 4);
     assert!(!out.join("long.md.llm.md").exists());
     failing.store(false, Ordering::Release);
     config["llm"]["max_requests_per_document"] = json!(2);
     let output = convert(path.to_str().unwrap(), options_cfg(config)).unwrap();
-    assert_eq!(server.count(), 6);
+    assert_eq!(server.count(), 5);
     assert!(!output.llm_cache_hit());
     assert_eq!(output.usage.requests, 1);
     assert!(output.llm_markdown.unwrap().contains("TAIL"));
