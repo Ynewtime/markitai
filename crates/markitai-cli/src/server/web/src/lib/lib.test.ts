@@ -379,3 +379,45 @@ test("a drawing's style becomes drawing attributes, never references or other pr
   assert.deepEqual(presentationFromStyle("fill:url(#g) url(https://evil.example/a);stroke:url(https://evil.example/s.svg#g)"), []);
   assert.deepEqual(presentationFromStyle("no declaration; :empty; fill:"), []);
 });
+
+test("an empty header cell becomes a plain cell; a named one stays a header", () => {
+  const made: Array<{ tag: string; attributes: Record<string, string>; children: unknown[] }> = [];
+  const cell = (text: string, image = false) => {
+    const replaced: unknown[] = [];
+    return {
+      textContent: text,
+      attributes: [{ name: "align", value: "right" }],
+      childNodes: text ? [text] : [],
+      querySelector: (selector: string) => (image && selector.includes("img") ? {} : null),
+      replaceWith: (node: unknown) => replaced.push(node),
+      replaced,
+    };
+  };
+  const empty = cell("  ");
+  const named = cell("Column B");
+  const pictured = cell("", true);
+  const fragment = {
+    ownerDocument: {
+      createElement: (tag: string) => {
+        const element = { tag, attributes: {} as Record<string, string>, children: [] as unknown[], setAttribute(name: string, value: string) { element.attributes[name] = value; }, append(...nodes: unknown[]) { element.children.push(...nodes); } };
+        made.push(element);
+        return element;
+      },
+    },
+    querySelectorAll: (selector: string) => (selector === "th" ? [empty, named, pictured] : []),
+  };
+  rewrite(fragment as never, {
+    documentPath: "doc.md",
+    artifacts: [],
+    imageURL: () => null,
+    fileURL: (path) => path,
+    placeholder: (alt) => alt,
+    fallbackAlt: "figure",
+    tableLabel: "table",
+    codeLabel: "code",
+  });
+  assert.equal(empty.replaced.length, 1);
+  assert.deepEqual(made[0], { ...made[0], tag: "td", attributes: { align: "right" } });
+  assert.equal(named.replaced.length, 0);
+  assert.equal(pictured.replaced.length, 0);
+});

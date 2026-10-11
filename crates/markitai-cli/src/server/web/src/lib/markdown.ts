@@ -285,6 +285,14 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
     link.setAttribute("rel", "noopener noreferrer");
     link.setAttribute("referrerpolicy", "no-referrer");
   }
+  // A header cell without text names nothing: it stays a plain cell in the header row.
+  for (const cell of [...fragment.querySelectorAll("th")]) {
+    if (cell.textContent?.trim() || cell.querySelector("img, svg")) continue;
+    const plain = doc.createElement("td");
+    for (const attribute of [...cell.attributes]) plain.setAttribute(attribute.name, attribute.value);
+    plain.append(...cell.childNodes);
+    cell.replaceWith(plain);
+  }
   for (const table of [...fragment.querySelectorAll("table")]) {
     const wrap = doc.createElement("div");
     wrap.className = "table-scroll";

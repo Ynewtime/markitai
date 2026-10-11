@@ -1808,7 +1808,8 @@ kbd {
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
 }
-.doc-body .table-scroll.is-tall thead th {
+.doc-body .table-scroll.is-tall thead th,
+.doc-body .table-scroll.is-tall thead td {
   position: sticky;
   top: 0;
   z-index: 1;
@@ -3903,7 +3904,9 @@ kbd {
   width: 100%;
   margin-bottom: 16px;
 }
-.doc-body th {
+/* an empty header cell is a plain cell (it names nothing), in the header row's place */
+.doc-body th,
+.doc-body thead td {
   padding: 0 12px 8px 0;
   border-bottom: 1px solid var(--accent);
   font-size: var(--text-base);
@@ -4658,7 +4661,8 @@ kbd {
   .pane-note {
     padding: 20px 16px 32px;
   }
-  .doc-body th {
+  .doc-body th,
+  .doc-body thead td {
     padding: 0 8px 8px 0;
   }
   .doc-body td {
