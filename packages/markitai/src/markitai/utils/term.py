@@ -8,8 +8,9 @@ for their existing callers.
 
 from __future__ import annotations
 
+import os
 import sys
-from typing import IO
+from typing import IO, Any
 
 from rich.console import Console
 from rich.text import Text
@@ -24,6 +25,69 @@ def is_terminal(stream: IO[str]) -> bool:
         return False
 
 
+# SetConsoleMode flag: the console processes ANSI escape sequences
+_ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+_STD_OUTPUT_HANDLE = -11
+_STD_ERROR_HANDLE = -12
+
+
+def _console_mode(std_handle: int) -> int | None:
+    """The mode of a Windows standard handle, None when it is no console.
+
+    A pipe, a file, NUL or an msys terminal (a pipe that mintty reads) has
+    no console mode.
+    """
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    mode = wintypes.DWORD()
+    if not kernel32.GetConsoleMode(
+        kernel32.GetStdHandle(std_handle), ctypes.byref(mode)
+    ):
+        return None
+    return mode.value
+
+
+def _set_console_mode(std_handle: int, mode: int) -> bool:
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    return bool(kernel32.SetConsoleMode(kernel32.GetStdHandle(std_handle), mode))
+
+
+def _legacy_windows_console(std_handle: int) -> bool:
+    """Whether a standard handle is a console that cannot read escape codes.
+
+    Only a real console is asked: a pipe or a file carries UTF-8 (the CLI
+    reconfigures its streams on Windows), as on macOS and Linux. A console
+    that does not process escape sequences yet has them switched on first,
+    which every console host since Windows 10 version 1511 allows; only one
+    that refuses (older Windows, conhost's "Use legacy console") is legacy.
+    It gets the ASCII marks and Rich's win32 rendering (markitai-rust follows
+    the same rule).
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        mode = _console_mode(std_handle)
+        if mode is None or mode & _ENABLE_VIRTUAL_TERMINAL_PROCESSING:
+            return False
+        return not _set_console_mode(
+            std_handle, mode | _ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        )
+    except (OSError, AttributeError):  # no console API to ask
+        return False
+
+
+_LEGACY_STDOUT = _legacy_windows_console(_STD_OUTPUT_HANDLE)
+_LEGACY_STDERR = _legacy_windows_console(_STD_ERROR_HANDLE)
+
+
 class _SoftWrapConsole(Console):
     """Console that only hard-wraps on a real terminal.
 
@@ -31,7 +95,19 @@ class _SoftWrapConsole(Console):
     break long messages mid-sentence, so ``print`` soft-wraps there instead:
     one line per message. Checked per print because ``sys.stdout`` and
     ``sys.stderr`` can be swapped after creation.
+
+    On Windows, Rich takes every stream that is not a console with escape
+    sequences already on (a pipe, a file, a console nobody switched over)
+    for a legacy console: square panel corners, win32 colour calls. Its
+    stream's own answer (``_legacy_windows_console``) is used instead.
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        if "legacy_windows" not in kwargs:
+            kwargs["legacy_windows"] = (
+                _LEGACY_STDERR if kwargs.get("stderr") else _LEGACY_STDOUT
+            )
+        super().__init__(*args, **kwargs)
 
     @property
     def soft_wrap(self) -> bool:
@@ -72,25 +148,26 @@ def get_stderr_console() -> Console:
     return _stderr_console
 
 
-def _streams_take_unicode() -> bool:
+def _streams_take_unicode(legacy_stdout: bool = _LEGACY_STDOUT) -> bool:
     """Whether stdout and stderr can carry the Unicode status marks.
 
-    A non-UTF-8 locale (``LANG=en_US.ISO-8859-1``, ``PYTHONIOENCODING=ascii``)
-    gives Python a stream that cannot encode them, and printing one raised
-    UnicodeEncodeError; old Windows consoles without VT support cannot show
-    them. Both get the ASCII set (see the terminal style guide).
+    The marks mean the same on every platform, so only output that really
+    cannot show them gets the ASCII set (see the terminal style guide):
+    ``TERM=dumb``; a stream that cannot encode them (a non-UTF-8 locale such
+    as ``LANG=en_US.ISO-8859-1``, or ``PYTHONIOENCODING=ascii``: printing one
+    raised UnicodeEncodeError); and a Windows console that cannot process
+    escape sequences (``_legacy_windows_console``). Windows pipes and files
+    keep them. ``NO_COLOR`` turns colour off, never the marks.
     """
+    if os.environ.get("TERM") == "dumb":
+        return False
     for stream in (sys.stdout, sys.stderr):
         encoding = getattr(stream, "encoding", None) or "utf-8"
         try:
             "✓✗•◆│→○".encode(encoding)
         except (UnicodeEncodeError, LookupError):
             return False
-    if sys.platform == "win32":
-        from rich.console import detect_legacy_windows
-
-        return not detect_legacy_windows()
-    return True
+    return not legacy_stdout
 
 
 _UNICODE_MARKS = _streams_take_unicode()

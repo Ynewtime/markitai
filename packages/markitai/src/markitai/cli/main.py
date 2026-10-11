@@ -8,27 +8,6 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-# Fix Windows console encoding for Unicode output
-if sys.platform == "win32":
-    # Set UTF-8 mode for Windows console
-    # sys.stdout/stderr are actually io.TextIOWrapper which has reconfigure()
-    # but typed as TextIO for compatibility. hasattr check ensures safety.
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-else:
-    # A non-UTF-8 locale (LANG=en_US.ISO-8859-1, PYTHONIOENCODING=ascii):
-    # a character the stream cannot encode (a dash, a CJK file name) is
-    # replaced instead of crashing the run; the status marks switch to
-    # ASCII (markitai.utils.term)
-    for _stream in (sys.stdout, sys.stderr):
-        _encoding = (getattr(_stream, "encoding", None) or "utf-8").lower()
-        if not _encoding.replace("-", "").startswith("utf") and hasattr(
-            _stream, "reconfigure"
-        ):
-            _stream.reconfigure(errors="replace")  # type: ignore[union-attr]
-
 # Suppress noisy messages before imports
 # Note: Most warning filters are now centralized in logging_config.setup_logging()
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
@@ -41,8 +20,15 @@ prepare_litellm_import()
 import rich_click as click
 from dotenv import load_dotenv
 
+from markitai.utils import term as _term
+
 # Grouped --help output (rendered by rich-click)
 click.rich_click.STYLE_OPTIONS_PANEL_BORDER = "dim"
+# Rich takes every Windows pipe for a legacy console (square panel corners);
+# help and usage errors follow markitai's own answer, as its other output
+# does (markitai.utils.term)
+_legacy_windows = _term._LEGACY_STDOUT or _term._LEGACY_STDERR
+click.rich_click.LEGACY_WINDOWS = _legacy_windows  # type: ignore[attr-defined]
 # Uniform helptext spacing: exactly one blank line between paragraphs.
 # rich-click's default ("\n") renders plain paragraphs with NO blank line
 # between them while \b blocks get TWO trailing blank lines, so section

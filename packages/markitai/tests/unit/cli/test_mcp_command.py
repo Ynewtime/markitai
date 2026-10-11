@@ -121,3 +121,17 @@ def test_usage_error_keeps_the_panel_on_a_terminal() -> None:
     assert result.exit_code == 2
     assert "╭" in result.output
     assert "--config-json is not supported" in _plain(result.output)
+
+
+def test_a_windows_pipe_keeps_the_rounded_panel() -> None:
+    """Rich calls every Windows pipe a legacy console and squares the box."""
+    with (
+        patch("rich.console.detect_legacy_windows", return_value=True),
+        patch("markitai.cli.framework.is_terminal", return_value=True),
+        patch.dict(sys.modules, {"markitai.mcp.server": _fake_server()}),
+    ):
+        result = CliRunner().invoke(
+            app, ["--config-json", '{"llm": {"enabled": true}}', "mcp"]
+        )
+    assert result.exit_code == 2
+    assert "╭" in result.output and "┌" not in result.output

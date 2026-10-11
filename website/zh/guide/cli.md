@@ -374,6 +374,12 @@ markitai https://example.com -o ./output --no-remote-fetch
 | `2` | 命令行用法错误（未知选项、互相冲突的参数），或 Batch API 等待超时（或失联）、需要 `--llm-batch-collect`。它优先于 `10`：同时失败的条目在 `--json` 和 stderr 里报出 |
 | `10` | 批量部分失败；成功的条目保留 |
 
+## 终端输出
+
+状态行以符号开头，各处含义相同：`✓` 成功、`!` 警告、`✗` 错误、`•` 信息、`→` 下一步、`○` 有意跳过。在终端中符号带颜色；通过管道或重定向输出，以及设置了 `NO_COLOR` 时，去掉颜色但保留符号，每条消息一行。
+
+只有无法显示 Unicode 符号时才改用 ASCII 符号（`+ ! x - > o`）：`TERM=dumb`；输出编码写不出这些符号（非 UTF-8 的 locale、`PYTHONIOENCODING=ascii`）；无法处理转义序列的 Windows 控制台（Windows 10 1511 之前的版本，或控制台主机开启了“使用旧版控制台”）。Windows Terminal、VS Code、SSH 会话、当前的控制台主机，以及 Windows 上的管道和文件都使用 Unicode 符号。markitai 在 Windows 上向管道和文件写入 UTF-8，读取保存下来的日志时请按 UTF-8 解码（在 Windows PowerShell 5.1 中，捕获命令输出前先执行 `[Console]::OutputEncoding = [Text.Encoding]::UTF8`）。
+
 ## 初始化命令
 
 ### `markitai init`

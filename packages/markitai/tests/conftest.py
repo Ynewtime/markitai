@@ -61,6 +61,10 @@ def pytest_configure(config: pytest.Config) -> None:
     for name in _FORCED_COLOUR_ENV:
         os.environ.pop(name, None)
     os.environ["COLUMNS"] = "80"
+    # TERM=dumb (some editors' consoles) picks the ASCII marks at import;
+    # tests that want them set it themselves
+    if os.environ.get("TERM") == "dumb":
+        del os.environ["TERM"]
 
 
 # pytest puts the running test's id in PYTEST_CURRENT_TEST; Windows refuses
