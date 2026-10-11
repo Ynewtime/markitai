@@ -55,3 +55,21 @@ def test_license_files_declares_both_without_escaping_the_package() -> None:
             f"{entry!r} escapes the package root; hatchling would write a "
             f"path-traversal entry into the wheel's dist-info"
         )
+
+
+def test_every_bundled_workbench_licence_is_disclosed() -> None:
+    """NOTICE names each licence the vendored workbench carries.
+
+    A new workbench bundle can bring a new library, icon set or font (the
+    brand marks arrived with LobeHub Icons); its licence file must then be
+    named in NOTICE's workbench section, not only copied along.
+    """
+    licences = PACKAGE_ROOT / "src" / "markitai" / "serve" / "workbench" / "LICENSES"
+    notice = (REPO_ROOT / "NOTICE").read_text(encoding="utf-8")
+    undisclosed = sorted(
+        path.name for path in licences.iterdir() if path.name not in notice
+    )
+    assert not undisclosed, (
+        f"NOTICE does not name {undisclosed}; add them to its section on the "
+        f"bundled web workbench"
+    )
