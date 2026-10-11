@@ -177,12 +177,12 @@ class TestScreenshotHasItsOwnBudget:
         finished: list[str] = []
 
         async def slow_capture(*args, **kwargs):
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.6)
             finished.append("capture")
             return shot, [shot]
 
         async def slow_title():
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
             finished.append("title")
             return "Title"
 
@@ -194,21 +194,23 @@ class TestScreenshotHasItsOwnBudget:
         ):
             result = await renderer.fetch(
                 "https://example.com/page",
-                timeout=300,
+                timeout=1000,
                 extra_wait_ms=0,
                 skip_auto_scroll=True,
                 screenshot_config=ScreenshotConfig(enabled=True),
                 output_dir=tmp_path,
             )
         # Both ran in full, one after the other: together they outlasted the
-        # 300 ms page budget, and the fetch still succeeded
+        # 1 s page budget, and the fetch still succeeded. The capture keeps
+        # 0.4 s of its own 1 s budget spare: 50 ms (0.25 s of 0.3 s) was too
+        # little for a loaded, emulated Windows on Arm machine.
         assert finished == ["capture", "title"]
         # asyncio fires a timer up to one clock tick early and the clock
-        # itself moves in ticks (15.6 ms on Windows): 0.35 s of sleeps can
-        # measure 0.344 s there. Three ticks of margin still leave > 0.3 s.
+        # itself moves in ticks (15.6 ms on Windows): 0.35 s of sleeps
+        # measured 0.344 s there. Three ticks of margin still leave > 1 s.
         tick = time.get_clock_info("monotonic").resolution
-        assert loop.time() - started >= 0.35 - 3 * tick
-        assert result.screenshot_path == shot
+        assert loop.time() - started >= 1.1 - 3 * tick
+        assert result.screenshot_path == shot, result.metadata.get("screenshot_error")
         assert "screenshot_error" not in result.metadata
         assert "Test content." in result.content
 
