@@ -813,6 +813,22 @@ main:focus {
   }
 }
 
+/* "Full details" of a failure or a notice, and the service's own wording */
+.notice-details summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.raw {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ------------------------------------------------------------ states */
 
 /* One panel for every empty or blocked state: icon, title, one line, actions,
