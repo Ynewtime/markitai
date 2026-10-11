@@ -193,7 +193,9 @@ class LLMModelUpdate(BaseModel):
             raise ValueError("value cannot be null; omit the field to keep it")
         return _require_non_blank(value) or ""
 
-    @field_validator("model_name", "model", "api_key", "api_base", "expected_revision")
+    # A masked api_base is checked by the route: sent back as shown, it keeps
+    # the stored base
+    @field_validator("model_name", "model", "api_key", "expected_revision")
     @classmethod
     def _no_mask_char(cls, value: str | None) -> str | None:
         return _reject_mask_char(value)
@@ -216,7 +218,7 @@ class LLMModelDiscoveryRequest(BaseModel):
     def _provider_not_blank(cls, value: str) -> str:
         return _require_non_blank(value) or ""
 
-    @field_validator("provider_id", "deployment_id", "api_key", "api_base")
+    @field_validator("provider_id", "deployment_id", "api_key")
     @classmethod
     def _no_mask_char(cls, value: str | None) -> str | None:
         return _reject_mask_char(value)
@@ -231,10 +233,17 @@ class LLMProviderUpdate(BaseModel):
     api_base: str | None = None
     expected_revision: str
 
-    @field_validator("api_key", "api_base", "expected_revision")
+    @field_validator("api_key", "expected_revision")
     @classmethod
     def _valid_value(cls, value: str | None) -> str | None:
         value = _reject_mask_char(value)
+        return _require_non_blank(value) if value is not None else None
+
+    @field_validator("api_base")
+    @classmethod
+    def _valid_base(cls, value: str | None) -> str | None:
+        # A masked base is checked by the route: sent back as shown, it keeps
+        # the stored base
         return _require_non_blank(value) if value is not None else None
 
     @model_validator(mode="after")
@@ -405,7 +414,9 @@ class LLMProviderCredentials(BaseModel):
     # ``api_key`` is the same display value under the shared workbench's name.
     api_key: str | None
     api_key_masked: str | None
-    api_base: str | None  # RAW saved base; null when on the provider default
+    # Saved base without userinfo or secret parameters (``…``); null when on
+    # the provider default
+    api_base: str | None
     api_base_placeholder: str | None  # provider default, for the editor only
 
 

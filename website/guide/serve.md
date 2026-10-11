@@ -81,7 +81,7 @@ Every option has hover or tap help that says what it depends on, where the data 
 
 **Settings → Models** edits the same configuration as `markitai config`: discover providers, browse model lists, set weights and test connections without exposing stored keys. Changes apply to web jobs and to later CLI runs alike.
 
-The provider editor shows a saved key only in masked form (`sk…7890`; an `env:` reference is shown as is). Leave the field as it is to keep the saved key, type a new key to replace it, or clear it to remove the key.
+The provider editor shows a saved key only in masked form (`sk…7890`; an `env:` reference is shown as is). Leave the field as it is to keep the saved key, type a new key to replace it, or clear it to remove the key. A saved API base address is shown without its credentials (`https://…@proxy.example/v1?api_key=…`): left as shown it keeps the saved address; to change it, type the whole address.
 
 A key is tied to the address it was saved with, so the settings page never sends a key you didn't type to a server you picked. It refuses (HTTP 422) to pair an `env:` reference with a custom address, to use an `env:` variable other than the provider key variables (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, ...), and to change the address of a connection without re-entering its key. To use such a pairing, either enter the key itself together with the new address, or write the pair in the config file (`markitai config edit`, or edit it by hand; see [Custom API Endpoint](/guide/configuration#custom-api-endpoint)). Pairs already in the config file keep working from the settings page.
 

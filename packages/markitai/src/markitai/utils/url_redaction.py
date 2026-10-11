@@ -5,9 +5,12 @@ from __future__ import annotations
 import re
 from contextlib import suppress
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
-from markitai.fetch_policy import sensitive_path_segment_indexes
+from markitai.fetch_policy import (
+    is_sensitive_query_key,
+    sensitive_path_segment_indexes,
+)
 from markitai.utils.secret_redaction import redact_secrets
 
 _HTTP_URL_IN_TEXT = re.compile(r"https?://[^\s<>'\"]+")
@@ -49,6 +52,79 @@ def redact_urls_in_text(message: str) -> str:
     """
     message = _HTTP_URL_IN_TEXT.sub(lambda match: redact_url(match.group(0)), message)
     return _TOKEN_QUERY_PARAM.sub(rf"\1{_REDACTED_PATH_SEGMENT}", message)
+
+
+_MASK = "\u2026"
+# markitai-rust's rule for a secret parameter (any name containing one of
+# these), on top of the fetch policy's: Azure's `subscription-key`, say
+_SECRET_NAME_PARTS = ("token", "key", "secret", "password", "signature", "credential")
+
+
+def _is_secret_parameter(name: str) -> bool:
+    lowered = name.lower()
+    return is_sensitive_query_key(name) or any(
+        part in lowered for part in _SECRET_NAME_PARTS
+    )
+
+
+def _mask_parameters(text: str) -> str:
+    pairs = []
+    for pair in text.split("&"):
+        name = pair.partition("=")[0]
+        secret = _is_secret_parameter(unquote_plus(name))
+        pairs.append(f"{name}={_MASK}" if secret else pair)
+    return "&".join(pairs)
+
+
+def mask_url_credentials(source: str) -> str:
+    """A configured address as a settings screen may show it.
+
+    The text stays as written, with the userinfo and the value of every secret
+    query or fragment parameter replaced by ``…``, so
+    ``https://user:pw@host/v1?token=x&v=2`` reads ``https://…@host/v1?token=…&v=2``.
+    An ``env:NAME`` reference names a variable and is returned as it is. The
+    same text as markitai-rust's ``masked_url``: both serve the same UI.
+    """
+    if source.lstrip().startswith("env:"):
+        return source
+    rest, has_fragment, fragment = source.partition("#")
+    rest, has_query, query = rest.partition("?")
+    scheme_end = rest.find("://")
+    scheme, after = (
+        (rest[: scheme_end + 3], rest[scheme_end + 3 :])
+        if scheme_end >= 0
+        else ("", rest)
+    )
+    authority, slash, path = after.partition("/")
+    at = authority.rfind("@")
+    if at >= 0:
+        authority = _MASK + authority[at:]
+    masked = scheme + authority + slash + path
+    if has_query:
+        masked += "?" + _mask_parameters(query)
+    if has_fragment:
+        masked += "#" + _mask_parameters(fragment)
+    return masked
+
+
+def url_credential_values(source: str) -> list[str]:
+    """The secret parts :func:`mask_url_credentials` hides, as plain text."""
+    values: list[str] = []
+    rest, _, fragment = source.partition("#")
+    rest, _, query = rest.partition("?")
+    try:
+        parsed = urlsplit(rest)
+        for part in (parsed.username, parsed.password):
+            if part:
+                values += {part, unquote_plus(part)}
+    except ValueError:
+        pass
+    for text in (query, fragment):
+        for pair in text.split("&"):
+            name, _, value = pair.partition("=")
+            if value and _is_secret_parameter(unquote_plus(name)):
+                values += {value, unquote_plus(value)}
+    return values
 
 
 def _redact_text(text: str) -> str:
