@@ -957,8 +957,8 @@ class TestPlaywrightRenderer:
 
             # The render wait ends once the page settles, at most 1.0s
             settle.assert_awaited_once()
-            assert settle.await_args.args[0] is mock_page
-            assert settle.await_args.args[2] == 1.0
+            assert settle.await_args_list[0].args[0] is mock_page
+            assert settle.await_args_list[0].args[2] == 1.0
 
     @pytest.mark.asyncio
     async def test_fetch_no_extra_wait_when_zero(self):
