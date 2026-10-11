@@ -10,8 +10,9 @@ screenshots every state:
     convert page, staged files + URLs, live progress, finished list,
     inspector, preview, compare (original page beside the Markdown),
     retry of a failed item, stop remaining (cancel), download all (ticket),
-    settings model test (fake LLM), a saved address shown without its
-    credentials, history after a reload, token prompt
+    an inline SVG drawing in the preview, settings model test (fake LLM), a
+    saved address shown without its credentials, history after a reload,
+    token prompt
 
 It fails on a page error, a 5xx answer or a step whose check does not hold.
 
@@ -56,6 +57,14 @@ SLOW_PAGE_S = 2.5
 # it masked and never send these parts to the browser
 CONNECTION_ID = "00000000-0000-4000-8000-0000000000c1"
 BASE_SECRETS = ("e2e-user", "e2e-pass-0000", "e2e-base-secret-0000")
+
+
+DRAWING = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60" viewBox="0 0 240 60">'
+    '<rect width="240" height="60" style="fill:#2563eb"/>'
+    '<text x="16" y="36" fill="#ffffff">Q3 drawing</text>'
+    '<script>alert("drawing script ran")</script></svg>'
+)
 
 
 def saved_base(llm_port: int) -> str:
@@ -362,8 +371,10 @@ def make_inputs(directory: Path, pages_port: int) -> dict[str, Path]:
     photo = directory / "bar-chart.png"
     image.save(photo)
     notes = directory / "meeting-notes.md"
+    # The drawing must render in the preview, its script never
     notes.write_text(
-        "# Meeting notes\n\n- Ship 1.2.1\n- Review the workbench\n\n```python\nprint('hello')\n```\n",
+        "# Meeting notes\n\n- Ship 1.2.1\n- Review the workbench\n\n```python\nprint('hello')\n```\n\n"
+        f"{DRAWING}\n",
         encoding="utf-8",
     )
     broken = directory / "damaged.pdf"
@@ -713,10 +724,13 @@ class Run:
         )
         print(f"[{self.width}] {'ok  ' if ok else 'FAIL'} {state}: {note}", flush=True)
 
-    def saw(self, method: str, pattern: str, status: int | None = None) -> bool:
+    def saw(
+        self, method: str, pattern: str, status: int | None = None, since: int = 0
+    ) -> bool:
+        """Whether an API answer matched, among those from index *since* on."""
         return any(
             m == method and re.search(pattern, path) and (status is None or s == status)
-            for m, path, s in self.api
+            for m, path, s in self.api[since:]
         )
 
 
@@ -1114,7 +1128,32 @@ def browse(
 
         run.step(page, "llm-cost-unknown", llm_cost)
 
-        # 11. Settings: test the configured model
+        # 11. A drawing in the Markdown renders in the preview, sanitized
+        def drawing() -> str:
+            dialogs: list[str] = []
+            page.on(
+                "dialog",
+                lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()),
+            )
+            _open(page, lambda: page.goto(f"{base}/jobs"))
+            _item(page, "meeting-notes.md").click()
+            _heading(page, "meeting-notes.md").wait_for()
+            _click_visible(page.get_by_role("button", name="Preview", exact=True))
+            svg = page.locator("svg", has_text="Q3 drawing").first
+            svg.wait_for(timeout=15000)
+            if svg.locator("script").count():
+                raise AssertionError("the drawing kept its script")
+            fill = svg.locator("rect").first.get_attribute("fill")
+            if fill != "#2563eb":
+                raise AssertionError(f"the drawing's style paint became fill={fill!r}")
+            page.wait_for_timeout(500)
+            if dialogs:
+                raise AssertionError(f"a script ran: {dialogs}")
+            return "inline SVG drawn in the Rendered view, its paint kept, its script removed"
+
+        run.step(page, "preview-drawing", drawing)
+
+        # 12. Settings: test the configured model
         def settings() -> str:
             _open(page, lambda: page.goto(f"{base}/settings/models"))
             _click_visible(page.get_by_role("button", name=re.compile(r"^Test ")))
@@ -1128,7 +1167,7 @@ def browse(
 
         run.step(page, "settings-test", settings)
 
-        # 12. Settings: a saved address shows no credentials, and saving a
+        # 13. Settings: a saved address shows no credentials, and saving a
         # new key with the address left as shown keeps the stored address
         def masked_address() -> str:
             shown = shown_base(llm_port)
@@ -1171,7 +1210,15 @@ def browse(
             noted = (
                 _visible(page.get_by_text("Parts shown as … are hidden")) is not None
             )
-            page.locator("#conn-base-key").fill("sk-e2e-conn-0001")
+            # The form focuses the address a frame after it opens; typing the
+            # key before that lands in the address (WebKit lost that race)
+            # (a locator, not wait_for_function: the page's CSP forbids eval)
+            page.locator("#conn-base:focus").wait_for(timeout=5000)
+            key = page.locator("#conn-base-key")
+            key.fill("sk-e2e-conn-0001")
+            if field.input_value() != shown or key.input_value() != "sk-e2e-conn-0001":
+                raise AssertionError("the key was not typed into its own field")
+            before = len(run.api)
             page.locator("#conn-base-form").get_by_role("button", name="Save").click()
             _wait(
                 page,
@@ -1179,6 +1226,18 @@ def browse(
                     "PATCH", f"^/api/settings/llm/providers/{CONNECTION_ID}$", 200
                 ),
                 what="the saved key",
+            )
+            # After a save the editor reloads the connection and its models;
+            # leaving before that cancels them, which WebKit logs as errors
+            _wait(
+                page,
+                lambda: (
+                    run.saw("GET", f"^{re.escape(credentials)}$", 200, since=before)
+                    and run.saw(
+                        "POST", r"^/api/settings/llm/model-discovery$", since=before
+                    )
+                ),
+                what="the editor's reload after the save",
             )
             stored = json.loads(config.read_text(encoding="utf-8"))["llm"]["providers"]
             if stored[0].get("api_base") != saved_base(llm_port):
@@ -1193,9 +1252,16 @@ def browse(
 
         run.step(page, "settings-masked-address", masked_address)
 
-        # 13. History survives a reload
+        # 14. History survives a reload
         def history() -> str:
+            before = len(run.api)
             _open(page, lambda: page.goto(f"{base}/jobs"))
+            # Reloading before the list's answer would cancel it (see above)
+            _wait(
+                page,
+                lambda: run.saw("GET", r"^/api/history\?include=items$", since=before),
+                what="the history",
+            )
             _open(page, page.reload)
             _items(page).first.wait_for()
             count = _items(page).count()
@@ -1207,7 +1273,7 @@ def browse(
 
         run.step(page, "history", history)
 
-        # 14. A new tab without the token: settings ask for it
+        # 15. A new tab without the token: settings ask for it
         def token_prompt() -> str:
             fresh = browser.new_context(
                 viewport={"width": width, "height": 844 if phone else 900},
