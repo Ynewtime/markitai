@@ -131,11 +131,12 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   (`m1a2b3c4d-clip0`), so two drawings do not take each other's gradients and an
   `id` does not shadow a script's global. Colours a lost style sheet gave it
   are resolved as the reference resolves them (a CSS variable's fallback,
-  Tailwind palette variables and `fill-`/`stroke-` classes, `light-dark()` as
-  its light colour, a background variable as `Canvas`, otherwise
-  `currentColor`), and when a class-styled shape has no paint of its own, text
-  gets `currentColor`, lines a faint stroke and open paths a stroke instead of a
-  black fill. A drawing nested more than 64 levels deep, with more than 20,000
+  Tailwind palette variables and `fill-`/`stroke-` classes with Tailwind CSS
+  3.4.19's palette, see [its notice](../licenses/tailwind/README.md);
+  `light-dark()` as its light colour, a background variable as `Canvas`,
+  otherwise `currentColor`), and when a class-styled shape has no paint of its
+  own, text gets `currentColor`, lines a faint stroke and open paths a stroke
+  instead of a black fill. A drawing nested more than 64 levels deep, with more than 20,000
   elements or longer than 512 KB of markup is written as text; one bounded walk
   decides that before anything else reads it.
   Any other drawing is written as the text it shows: its title, then its

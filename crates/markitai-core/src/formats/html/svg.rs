@@ -462,7 +462,9 @@ fn local_references(value: &str, prefix: &str) -> String {
 }
 
 /// Tailwind's default palette: (name, the hex colours of shades 50, 100, 200
-/// … 900, 950). Tailwind CSS is MIT-licensed (Tailwind Labs).
+/// … 900, 950), from Tailwind CSS 3.4.19 (MIT, Copyright (c) Tailwind Labs,
+/// Inc.). Its license and source identity are in `licenses/tailwind/`, whose
+/// digest of these values `scripts/tailwind_attribution.py` checks.
 const PALETTE: &[(&str, [&str; 11])] = &[
     (
         "slate",
