@@ -17,6 +17,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
 
 from markitai.config import MarkitaiConfig
+from markitai.utils.term import MARK_ERROR, MARK_SUCCESS
 
 # Sections to skip entirely (too complex or too advanced for inline editing)
 _SKIP_SECTIONS = {"presets", "prompts", "domain_profiles"}
@@ -577,12 +578,13 @@ def run_config_editor(config_path: Path | None = None) -> None:
                     f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
                     for err in ve.errors()
                 )
-                console.print(f"  [red]✗[/] Invalid value: {errors}")
+                console.print(f"  [red]{MARK_ERROR}[/] Invalid value: {errors}")
             else:
                 manager.save(config_path)
                 console.print(
-                    f"  [green]✓[/] {selected_key} = {format_display_value(new_value)}"
+                    f"  [green]{MARK_SUCCESS}[/] {selected_key} = "
+                    f"{format_display_value(new_value)}"
                 )
         except Exception as e:
-            console.print(f"  [red]✗[/] Error: {e}")
+            console.print(f"  [red]{MARK_ERROR}[/] Error: {e}")
         cfg = manager.config

@@ -193,6 +193,11 @@ class _SoftWrapConsole(Console):
     sequences already on (a pipe, a file, a console nobody switched over)
     for a legacy console: square panel corners, win32 colour calls. Its
     stream's own answer (``_legacy_windows_console``) is used instead.
+
+    Progress bars, rules, boxes and panels are drawn with the same choice as
+    the status marks: Rich draws them in ASCII for a non-UTF-8 ``encoding``,
+    which this console reports while the marks are ASCII. Rich reads the
+    encoding only for that choice; the stream itself stays UTF-8.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -201,6 +206,10 @@ class _SoftWrapConsole(Console):
                 _LEGACY_STDERR if kwargs.get("stderr") else _LEGACY_STDOUT
             )
         super().__init__(*args, **kwargs)
+
+    @property
+    def encoding(self) -> str:
+        return super().encoding if _UNICODE_MARKS else "ascii"
 
     @property
     def soft_wrap(self) -> bool:
@@ -296,6 +305,10 @@ MARK_TITLE = "◆" if _UNICODE_MARKS else "*"  # Diamond
 MARK_LINE = "│" if _UNICODE_MARKS else "|"  # Vertical line
 MARK_ARROW = "→" if _UNICODE_MARKS else ">"  # Next action
 MARK_SKIP = "○" if _UNICODE_MARKS else "o"  # Skipped on purpose
+# Drawn around the marks, with the same choice
+ELLIPSIS = "…" if _UNICODE_MARKS else "..."
+#: Rich spinner of progress displays: braille dots, or ASCII - \ | /
+SPINNER = "dots" if _UNICODE_MARKS else "line"
 
 # Colour per mark (Rich styles): green only for success, yellow only for
 # warnings, red only for errors; info, guides and skips stay neutral.
