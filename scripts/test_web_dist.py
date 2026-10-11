@@ -110,7 +110,9 @@ class WebDistTest(unittest.TestCase):
             target = (VENDOR / entry["file"]).resolve()
             self.assertTrue(target.is_file(), entry["file"])
             self.assertEqual(entry["sha256"], sha256(target.read_bytes()), entry["file"])
-            self.assertTrue(entry["source"].startswith("https://registry.npmjs.org/"), entry["file"])
+            # A package that ships no licence text names its repository's file at a pinned commit.
+            pinned = re.fullmatch(r"https://raw\.githubusercontent\.com/[\w.-]+/[\w.-]+/[0-9a-f]{40}/[\w./-]+", entry["source"])
+            self.assertTrue(entry["source"].startswith("https://registry.npmjs.org/") or pinned, entry["file"])
 
     @unittest.skipUnless(shutil.which("node") and (WEB / "node_modules/esbuild").is_dir(), "Node or the pinned toolchain is not installed")
     def test_a_rebuild_reproduces_dist(self):

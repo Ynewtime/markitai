@@ -22,6 +22,7 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { endpointFor, sameEndpoint } from "../lib/models.ts";
+import { isSubscription, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
   deploymentCredentials,
@@ -35,6 +36,7 @@ import {
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker } from "./model-picker.tsx";
+import { loadBrandMarks } from "./brand-icon.tsx";
 import { manageable, providerLabel, ProviderPicker } from "./provider-picker.tsx";
 import { StateBlock } from "./state-block.tsx";
 
@@ -143,6 +145,8 @@ export function ModelsSettings({
       (error: unknown) => !stale && setLoadError(error),
     );
     void refreshProviders();
+    // The provider marks load with this page, before Add models needs them.
+    void loadBrandMarks();
     return () => {
       stale = true;
     };
@@ -296,13 +300,20 @@ export function ModelsSettings({
   const ollama = provider?.provider === "ollama";
   // A local server with a known address (Ollama, LM Studio) needs no key.
   const local = provider?.key_optional === true;
+  // A subscription runtime signs in by itself; Bedrock and Vertex AI read the
+  // server's cloud credentials (a Bedrock API key is optional).
+  const subscription = provider !== null && isSubscription(provider);
+  const cloud = provider !== null && usesCloudCredentials(provider);
   // The provider lists no models: IDs are entered by hand.
   const manualOnly = provider !== null && provider.supports_discovery === false;
-  const autoLoads = !manualOnly && (existing || (local && Boolean(provider?.default_base)));
+  const autoLoads = !manualOnly && (existing || subscription || (local && Boolean(provider?.default_base)));
   // Azure, a custom endpoint and servers without a default address (vLLM) need one.
   const needsBase =
-    provider !== null && (provider.provider === "azure" || provider.provider === "custom" || (provider.default_base === null && !existing));
-  const showsKey = provider !== null && !existing && !ollama;
+    provider !== null &&
+    !subscription &&
+    !cloud &&
+    (provider.provider === "azure" || provider.provider === "custom" || (provider.default_base === null && !existing));
+  const showsKey = provider !== null && !existing && !ollama && !subscription && (!cloud || Boolean(provider.key_variable));
   const keyRequired = provider !== null && provider.provider !== "custom" && !local;
   const canLoad =
     provider !== null &&
@@ -917,7 +928,15 @@ export function ModelsSettings({
                   <div class="provider-detail-head">
                     <div class="provider-detail-copy">
                       <h2 class="group-title">{autoLoads ? t.modelCatalogTitle : t.connectProviderTitle(label)}</h2>
-                      <p>{t.providerDetailHint(provider.kind, provider.provider, provider.source, { local, manualOnly, needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom" })}</p>
+                      <p>
+                        {t.providerDetailHint(provider.kind, provider.provider, provider.source, {
+                          local,
+                          manualOnly,
+                          needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom",
+                          subscription,
+                          cloud,
+                        })}
+                      </p>
                       {(provider.kind === "common" || provider.kind === "compatible") && (provider.default_base || provider.key_variable) && (
                         <p class="provider-facts">
                           {provider.default_base && <span class="provider-fact">{provider.default_base}</span>}
@@ -969,7 +988,7 @@ export function ModelsSettings({
                       )}
                     </div>
                   )}
-                  {!needsBase && !existing && (
+                  {!needsBase && !existing && !subscription && (
                     <details class="disclosure">
                       <summary>{t.customApiBase}</summary>
                       <label class="field disclosure-field">

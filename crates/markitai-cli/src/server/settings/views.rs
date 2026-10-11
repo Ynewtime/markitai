@@ -1,26 +1,23 @@
 use super::{SettingsSource, identity, model, store::Data};
 use markitai_core::provider_management::{
-    ProviderEntry, catalog, provider_default_base, provider_label,
+    catalog, provider_default_base, provider_entry as entry, provider_label,
 };
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-fn entry(name: &str) -> Option<ProviderEntry> {
-    let name = if name == "ollama_chat" {
-        "ollama"
-    } else {
-        name
-    };
-    catalog().into_iter().find(|entry| entry.provider == name)
-}
 fn set(variable: &str) -> bool {
     std::env::var(variable).is_ok_and(|value| !value.trim().is_empty())
 }
-/// What a card says about its provider beyond the connection: the documented
-/// endpoint, the key variable, whether a key is needed, whether models can be
-/// listed.
+/// What a card says about its provider beyond the connection: the picker
+/// group, brand mark and search names, the documented endpoint, the key
+/// variable, whether a key is needed, whether models can be listed.
 fn facts(name: &str, card: &mut Value) {
     let entry = entry(name);
+    if let Some(entry) = &entry {
+        card["group"] = json!(entry.group);
+        card["icon"] = json!(entry.icon);
+        card["aliases"] = json!(entry.aliases);
+    }
     let variable = entry.as_ref().and_then(|entry| {
         entry
             .key_variables
@@ -36,8 +33,7 @@ fn facts(name: &str, card: &mut Value) {
         .get("supports_discovery")
         .is_none_or(|value| value == true)
     {
-        card["supports_discovery"] =
-            json!(!model::local(name) && entry.as_ref().is_none_or(|entry| entry.discovery));
+        card["supports_discovery"] = json!(entry.as_ref().is_none_or(|entry| entry.discovery));
     }
 }
 fn nonempty(value: &Value) -> bool {
@@ -80,8 +76,12 @@ fn keyed_deployment(data: &Data) -> bool {
                     return false;
                 }
                 let name = model::provider(entry);
-                let Some(known) = self::entry(&name).filter(|known| known.provider != "custom")
-                else {
+                // Subscription runtimes and the clouds' own credentials are
+                // the conversion side's to report.
+                let Some(known) = self::entry(&name).filter(|known| {
+                    !matches!(known.provider, "custom" | "bedrock" | "vertex_ai")
+                        && !model::local(known.provider)
+                }) else {
                     return false;
                 };
                 let linked = model::linked(entry)
@@ -146,8 +146,10 @@ pub(super) fn providers(data: &Data) -> Value {
     for known in &catalog {
         let name = known.provider;
         // A saved connection hides its provider's card, except that another
-        // OpenAI-compatible endpoint, or OpenAI itself, can always be added.
-        let repeatable = matches!(name, "openai" | "custom");
+        // OpenAI-compatible endpoint, or OpenAI itself, can always be added,
+        // and a subscription runtime, which keeps no saved connection, can
+        // always add more of its models.
+        let repeatable = matches!(name, "openai" | "custom") || model::local(name);
         if !repeatable
             && (data.providers.iter().any(|p| p["provider"] == name)
                 || data.models.iter().any(|p| model::provider(p) == name))
@@ -155,12 +157,12 @@ pub(super) fn providers(data: &Data) -> Value {
         {
             continue;
         }
-        let label = match name {
-            "azure" => "Azure OpenAI".to_owned(),
-            "custom" => "OpenAI-compatible endpoint".to_owned(),
-            _ => provider_label(name),
-        };
-        let status = if known.key_optional && known.default_base.is_some() {
+        let label = known.label;
+        // A local server at its default address, a subscription runtime or a
+        // cloud's own credentials may already work; only a check tells.
+        let status = if known.key_optional
+            && (known.default_base.is_some() || matches!(known.group, "subscriptions" | "clouds"))
+        {
             "unknown"
         } else {
             "needs_credentials"

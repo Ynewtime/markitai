@@ -268,8 +268,16 @@ export const ja: Dict = {
     kind: string,
     provider: string,
     source: string,
-    { local = false, manualOnly = false, needsBase = false }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean } = {},
+    {
+      local = false,
+      manualOnly = false,
+      needsBase = false,
+      subscription = false,
+      cloud = false,
+    }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean; subscription?: boolean; cloud?: boolean } = {},
   ) => {
+    if (subscription) return "サーバー上の公式アプリのサインインを使用します。モデルは自動で読み込まれます。";
+    if (cloud) return "サーバーが見つけたクラウドの認証情報を使用します。下のキーは任意です。使用するモデル ID を下に追加してください。";
     if (manualOnly) return "このプロバイダーはモデルの一覧を提供していません。使用するモデル ID を下に追加してください。";
     if (kind === "configured") return "保存済みの接続から、利用可能なモデルを自動で読み込みます。";
     if (kind === "environment") return `${source} の認証情報を使用しています。`;
@@ -281,15 +289,25 @@ export const ja: Dict = {
   optionalKeyVariable: (variable: string) => `${variable}（任意）`,
   manualModelsOnly: "このプロバイダーからはモデルの一覧を取得できません · 下にモデル ID を追加してください",
   serverAddressRequired: "サーバーのアドレスが必要です",
-  providerGroup: (kind: string) =>
+  searchProviders: (n: number) => `${n} 件のプロバイダーを検索`,
+  providersFound: (n: number) => `${n} 件のプロバイダーが見つかりました`,
+  providersNoMatch: "一致するプロバイダーはありません",
+  providersSaved: "保存済み",
+  providersCommon: "よく使うプロバイダー",
+  providersAll: (n: number) => `すべてのプロバイダー（${n}）`,
+  providerFilterAria: "プロバイダーの種類",
+  providerFilter: (group: string) =>
     (
       ({
-        environment: "設定済みの環境変数の認証情報",
-        configured: "保存済みのプロバイダー",
-        common: "主なプロバイダー",
-        compatible: "その他の OpenAI 互換プロバイダー",
+        all: "すべて",
+        clouds: "クラウド",
+        inference: "推論サービス",
+        gateways: "ゲートウェイ",
+        local: "ローカル",
+        subscriptions: "サブスクリプション",
+        makers: "モデル開発元",
       }) as Record<string, string>
-    )[kind] ?? kind,
+    )[group] ?? group,
   providerCustom: "OpenAI 互換エンドポイント",
   providerUnknown: "不明なプロバイダー",
   customApiBase: "カスタムの API ベース URL を使用",

@@ -17,42 +17,15 @@ use std::collections::HashMap;
 const MAX_FIELD: usize = 8192;
 /// Conventional labels, without credential or account information.
 pub fn provider_label(provider: &str) -> String {
-    match provider {
-        "openai" => "OpenAI",
-        "anthropic" => "Anthropic",
-        "gemini" => "Gemini",
-        "deepseek" => "DeepSeek",
-        "openrouter" => "OpenRouter",
-        "azure" => "Azure",
-        "ollama" | "ollama_chat" => "Ollama",
-        "groq" => "Groq",
-        "mistral" => "Mistral AI",
-        "xai" => "xAI",
-        "together_ai" => "Together AI",
-        "perplexity" => "Perplexity",
-        "cerebras" => "Cerebras",
-        "fireworks_ai" => "Fireworks AI",
-        "deepinfra" => "DeepInfra",
-        "nebius" => "Nebius",
-        "moonshot" => "Moonshot AI",
-        "sambanova" => "SambaNova",
-        "zai" => "Z.ai",
-        "nvidia_nim" => "NVIDIA NIM",
-        "novita" => "Novita AI",
-        "hosted_vllm" => "vLLM",
-        "lm_studio" => "LM Studio",
-        "custom" => "Custom",
-        "claude-agent" => "Claude Agent",
-        "copilot" => "Copilot",
-        "chatgpt" => "ChatGPT",
-        _ => "Unknown provider",
-    }
-    .into()
+    lookup(provider)
+        .map_or("Unknown provider", |entry| entry.label)
+        .into()
 }
 
-/// The providers first offered by the settings surfaces, in the reference's
-/// order; `custom` is any other OpenAI-compatible endpoint.
-const POPULAR: [&str; 8] = [
+/// The reference's popular providers; `custom` is any other OpenAI-compatible
+/// endpoint. Their cards are `common` in the settings API, like the
+/// providers that are not OpenAI-compatible HTTP APIs.
+const REFERENCE: [&str; 8] = [
     "openai",
     "anthropic",
     "gemini",
@@ -66,61 +39,238 @@ const POPULAR: [&str; 8] = [
 /// endpoint (checked 2026-10-02): their model IDs are entered by hand.
 const MANUAL_MODELS: [&str; 3] = ["perplexity", "zai", "fireworks_ai"];
 
+/// The groups of the provider picker, in its order: the providers most
+/// people start with, then subscription runtimes, model makers' own APIs,
+/// cloud platforms, inference hosts, gateways and local servers.
+pub const PROVIDER_GROUPS: [&str; 7] = [
+    "common",
+    "subscriptions",
+    "makers",
+    "clouds",
+    "inference",
+    "gateways",
+    "local",
+];
+
 /// One provider the settings surfaces can connect, with what its card shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderEntry {
     /// The model prefix, or `custom` for an OpenAI-compatible endpoint.
     pub provider: &'static str,
+    /// The provider's name as the settings surfaces show it.
+    pub label: &'static str,
+    /// One of [`PROVIDER_GROUPS`].
+    pub group: &'static str,
+    /// The brand mark the workbench draws (a key of its vendored marks), or
+    /// `None` for a monogram.
+    pub icon: Option<&'static str>,
+    /// Further model prefixes routed the same way, then other names the
+    /// provider is searched by.
+    pub aliases: &'static [&'static str],
     /// The documented inference endpoint; `None` when every server has its own.
     pub default_base: Option<&'static str>,
     /// Environment variables that replace the endpoint, in order.
     pub base_variables: &'static [&'static str],
-    /// Environment variables read for the key, in order (empty for `custom`).
+    /// Environment variables read for the key, in order (empty when the
+    /// provider takes none, as for `custom`).
     pub key_variables: &'static [&'static str],
-    /// A local server that works without a key.
+    /// No key needs to be entered: a local server, a subscription runtime, or
+    /// a cloud that also reads its own credentials.
     pub key_optional: bool,
     /// `discover` can list its models; otherwise model IDs are entered by hand.
     pub discovery: bool,
-    /// One of the OpenAI-compatible prefixes added after the reference's list.
+    /// An OpenAI-compatible prefix beyond the reference's popular list.
     pub compatible: bool,
 }
 
-/// Every connectable provider: the reference's popular list first, then the
-/// further OpenAI-compatible prefixes in the order of the routing table.
-pub fn catalog() -> Vec<ProviderEntry> {
-    let listed: Vec<_> = crate::llm::providers::listings().collect();
-    let entry = |name: &'static str, compatible: bool| {
-        let listing = listed.iter().find(|listing| listing.prefix == name);
-        ProviderEntry {
-            provider: name,
-            default_base: listing.and_then(|listing| listing.base),
-            base_variables: listing.map_or(&[], |listing| listing.base_vars),
-            key_variables: listing.map_or(&[], |listing| listing.key_vars),
-            key_optional: listing.is_some_and(|listing| listing.key_optional),
-            discovery: !MANUAL_MODELS.contains(&name),
-            compatible,
-        }
-    };
-    let mut entries: Vec<_> = POPULAR.iter().map(|name| entry(name, false)).collect();
-    for listing in &listed {
-        if listing.openai_compatible
-            && !POPULAR.contains(&listing.prefix)
-            && listing.prefix != "ollama_chat"
-        {
-            entries.push(entry(listing.prefix, true));
-        }
-    }
-    entries
+/// How the settings surfaces present one provider.
+struct Shown {
+    provider: &'static str,
+    label: &'static str,
+    group: &'static str,
+    icon: Option<&'static str>,
+    aliases: &'static [&'static str],
 }
 
-fn compatible_entry(provider: &str) -> Option<ProviderEntry> {
-    catalog()
-        .into_iter()
-        .find(|entry| entry.compatible && entry.provider == provider)
+const fn shown(
+    provider: &'static str,
+    label: &'static str,
+    group: &'static str,
+    icon: Option<&'static str>,
+    aliases: &'static [&'static str],
+) -> Shown {
+    Shown {
+        provider,
+        label,
+        group,
+        icon,
+        aliases,
+    }
+}
+
+/// Every connectable provider in picker order: the common eight as the
+/// workbench shows them, then each further group by label. Icons are keys of
+/// the lobehub marks the workbench vendors (`src/components/brand-marks.ts`).
+#[rustfmt::skip]
+static SHOWN: [Shown; 95] = [
+    shown("openai", "OpenAI", "common", Some("openai"), &[]),
+    shown("anthropic", "Anthropic", "common", Some("anthropic"), &["claude"]),
+    shown("gemini", "Gemini", "common", Some("gemini"), &["google", "google ai studio"]),
+    shown("deepseek", "DeepSeek", "common", Some("deepseek"), &[]),
+    shown("openrouter", "OpenRouter", "common", Some("openrouter"), &[]),
+    shown("azure", "Azure OpenAI", "common", Some("azure"), &["microsoft"]),
+    shown("ollama", "Ollama", "common", Some("ollama"), &["ollama_chat"]),
+    shown("mistral", "Mistral AI", "common", Some("mistral"), &[]),
+    shown("chatgpt", "ChatGPT", "subscriptions", Some("openai"), &["codex", "openai"]),
+    shown("claude-agent", "Claude", "subscriptions", Some("claude"), &["claude code", "anthropic"]),
+    shown("copilot", "GitHub Copilot", "subscriptions", Some("githubcopilot"), &["github"]),
+    shown("ai21", "AI21 Labs", "makers", Some("ai21"), &["ai21_chat", "jamba"]),
+    shown("amazon_nova", "Amazon Nova", "makers", Some("nova"), &["amazon", "aws"]),
+    shown("codestral", "Codestral", "makers", Some("mistral"), &["mistral"]),
+    shown("cognition", "Cognition", "makers", None, &["swe"]),
+    shown("cohere", "Cohere", "makers", Some("cohere"), &["cohere_chat", "command"]),
+    shown("compactifai", "CompactifAI", "makers", None, &["multiverse computing"]),
+    shown("inception", "Inception", "makers", Some("inception"), &["mercury"]),
+    shown("meta", "Meta Llama API", "makers", Some("meta"), &["llama"]),
+    shown("minimax", "MiniMax", "makers", Some("minimax"), &[]),
+    shown("moonshot", "Moonshot AI", "makers", Some("moonshot"), &["kimi"]),
+    shown("morph", "Morph", "makers", Some("morph"), &[]),
+    shown("perplexity", "Perplexity", "makers", Some("perplexity"), &["sonar"]),
+    shown("sarvam", "Sarvam AI", "makers", None, &[]),
+    shown("xai", "xAI", "makers", Some("xai"), &["grok"]),
+    shown("xiaomi_mimo", "Xiaomi MiMo", "makers", None, &["xiaomi"]),
+    shown("zai", "Z.ai", "makers", Some("zai"), &["zhipu", "glm", "bigmodel"]),
+    shown("dashscope", "Alibaba Cloud Model Studio", "clouds", Some("bailian"), &["bailian", "aliyun", "qwen"]),
+    shown("bedrock", "Amazon Bedrock", "clouds", Some("bedrock"), &["aws"]),
+    shown("azure_ai", "Azure AI Foundry", "clouds", Some("azureai"), &["microsoft", "foundry"]),
+    shown("bedrock_mantle", "Bedrock Mantle", "clouds", Some("bedrock"), &["aws", "amazon bedrock"]),
+    shown("cloudflare", "Cloudflare Workers AI", "clouds", Some("workersai"), &["workers ai"]),
+    shown("databricks", "Databricks", "clouds", None, &[]),
+    shown("datarobot", "DataRobot", "clouds", None, &[]),
+    shown("gradient_ai", "DigitalOcean Gradient", "clouds", Some("digitalocean"), &["digitalocean"]),
+    shown("heroku", "Heroku", "clouds", None, &[]),
+    shown("ovhcloud", "OVHcloud", "clouds", None, &["ovh"]),
+    shown("qwen_ai_platform", "Qwen AI Platform", "clouds", Some("qwen"), &["alibaba", "dashscope"]),
+    shown("qwencloud", "Qwen Cloud", "clouds", Some("qwen"), &["alibaba", "dashscope"]),
+    shown("scaleway", "Scaleway", "clouds", None, &[]),
+    shown("tencent", "Tencent Cloud", "clouds", Some("tencentcloud"), &["hunyuan", "tokenhub"]),
+    shown("vertex_ai", "Vertex AI", "clouds", Some("vertexai"), &["vertex_ai_beta", "google cloud", "gcp"]),
+    shown("volcengine", "Volcano Engine", "clouds", Some("volcengine"), &["ark", "doubao", "byteplus", "bytedance"]),
+    shown("abliteration", "Abliteration", "inference", None, &[]),
+    shown("baseten", "Baseten", "inference", Some("baseten"), &[]),
+    shown("cerebras", "Cerebras", "inference", Some("cerebras"), &[]),
+    shown("chutes", "Chutes", "inference", Some("chutes"), &[]),
+    shown("crusoe", "Crusoe", "inference", Some("crusoe"), &[]),
+    shown("darkbloom", "Darkbloom", "inference", None, &[]),
+    shown("deepinfra", "DeepInfra", "inference", Some("deepinfra"), &[]),
+    shown("empiriolabs", "Empirio Labs", "inference", None, &[]),
+    shown("featherless_ai", "Featherless", "inference", Some("featherless"), &[]),
+    shown("fireworks_ai", "Fireworks AI", "inference", Some("fireworks"), &[]),
+    shown("friendliai", "FriendliAI", "inference", Some("friendli"), &[]),
+    shown("galadriel", "Galadriel", "inference", None, &[]),
+    shown("gmi", "GMI Cloud", "inference", Some("gmicloud"), &[]),
+    shown("groq", "Groq", "inference", Some("groq"), &[]),
+    shown("libertai", "LibertAI", "inference", None, &[]),
+    shown("modelscope", "ModelScope", "inference", Some("modelscope"), &[]),
+    shown("nebius", "Nebius", "inference", Some("nebius"), &["token factory"]),
+    shown("neosantara", "Neosantara", "inference", None, &[]),
+    shown("novita", "Novita AI", "inference", Some("novita"), &[]),
+    shown("nscale", "Nscale", "inference", None, &[]),
+    shown("nvidia_nim", "NVIDIA NIM", "inference", Some("nvidia"), &[]),
+    shown("parasail", "Parasail", "inference", Some("parasail"), &[]),
+    shown("pinstripes", "Pinstripes", "inference", None, &[]),
+    shown("publicai", "PublicAI", "inference", None, &[]),
+    shown("sambanova", "SambaNova", "inference", Some("sambanova"), &[]),
+    shown("scx-ai", "SCX.ai", "inference", None, &[]),
+    shown("synthetic", "Synthetic", "inference", None, &[]),
+    shown("tensormesh", "Tensormesh", "inference", None, &[]),
+    shown("together_ai", "Together AI", "inference", Some("together"), &[]),
+    shown("veniceai", "Venice AI", "inference", Some("venice"), &[]),
+    shown("wandb", "W&B Inference", "inference", Some("wandb"), &["weights & biases", "coreweave"]),
+    shown("aiml", "AI/ML API", "gateways", None, &["aimlapi"]),
+    shown("aihubmix", "AiHubMix", "gateways", Some("aihubmix"), &[]),
+    shown("apertis", "Apertis", "gateways", Some("apertis"), &["stima"]),
+    shown("assemblyai", "AssemblyAI", "gateways", Some("assemblyai"), &[]),
+    shown("cometapi", "CometAPI", "gateways", Some("cometapi"), &[]),
+    shown("edenai", "Eden AI", "gateways", None, &[]),
+    shown("helicone", "Helicone", "gateways", None, &[]),
+    shown("huggingface", "Hugging Face", "gateways", Some("huggingface"), &["hf"]),
+    shown("litellm_proxy", "LiteLLM Proxy", "gateways", None, &["litellm"]),
+    shown("nadir", "Nadir", "gateways", None, &[]),
+    shown("nano-gpt", "NanoGPT", "gateways", None, &[]),
+    shown("poe", "Poe", "gateways", Some("poe"), &[]),
+    shown("vercel_ai_gateway", "Vercel AI Gateway", "gateways", Some("vercel"), &[]),
+    shown("docker_model_runner", "Docker Model Runner", "local", None, &["docker"]),
+    shown("lemonade", "Lemonade", "local", None, &[]),
+    shown("llamafile", "llamafile", "local", None, &[]),
+    shown("lm_studio", "LM Studio", "local", Some("lmstudio"), &[]),
+    shown("custom", "OpenAI-compatible endpoint", "local", None, &["openai_like", "custom", "self-hosted", "llama.cpp"]),
+    shown("oobabooga", "text-generation-webui", "local", None, &["oobabooga", "textgen"]),
+    shown("hosted_vllm", "vLLM", "local", Some("vllm"), &[]),
+    shown("xinference", "Xinference", "local", Some("xinference"), &[]),
+];
+
+static CATALOG: std::sync::LazyLock<Vec<ProviderEntry>> = std::sync::LazyLock::new(|| {
+    let listed: Vec<_> = crate::llm::providers::listings().collect();
+    SHOWN
+        .iter()
+        .map(|shown| {
+            let name = shown.provider;
+            let listing = listed.iter().find(|listing| listing.prefix == name);
+            // Bedrock also signs with AWS credentials and Vertex AI uses
+            // Google's; neither publishes a model list this build reads.
+            let (base_variables, key_variables): (&[&str], &[&str]) = match name {
+                "bedrock" => (
+                    &["AWS_BEDROCK_RUNTIME_ENDPOINT"],
+                    &["AWS_BEARER_TOKEN_BEDROCK"],
+                ),
+                _ => listing.map_or((&[], &[]), |listing| (listing.base_vars, listing.key_vars)),
+            };
+            ProviderEntry {
+                provider: name,
+                label: shown.label,
+                group: shown.group,
+                icon: shown.icon,
+                aliases: shown.aliases,
+                default_base: listing.and_then(|listing| listing.base),
+                base_variables,
+                key_variables,
+                key_optional: listing.is_some_and(|listing| listing.key_optional)
+                    || matches!(shown.group, "subscriptions")
+                    || matches!(name, "bedrock" | "vertex_ai"),
+                discovery: !MANUAL_MODELS.contains(&name)
+                    && !matches!(name, "bedrock" | "vertex_ai"),
+                compatible: listing.is_some_and(|listing| listing.openai_compatible)
+                    && !REFERENCE.contains(&name),
+            }
+        })
+        .collect()
+});
+
+/// Every connectable provider, in the picker's order (see [`PROVIDER_GROUPS`]).
+pub fn catalog() -> Vec<ProviderEntry> {
+    CATALOG.clone()
+}
+
+/// The catalog entry of a provider, or of the provider a further prefix
+/// (`ollama_chat/`, `cohere_chat/`, …) is routed with.
+pub fn provider_entry(provider: &str) -> Option<ProviderEntry> {
+    lookup(provider).cloned()
+}
+
+fn lookup(provider: &str) -> Option<&'static ProviderEntry> {
+    CATALOG
+        .iter()
+        .find(|entry| entry.provider == provider)
+        .or_else(|| {
+            CATALOG.iter().find(|entry| {
+                entry.aliases.contains(&provider) && crate::llm::providers::supported(provider)
+            })
+        })
 }
 
 /// Discovery bases; Gemini and Ollama inference use different endpoint paths.
-/// The added OpenAI-compatible prefixes list `/models` beside their inference
+/// The other OpenAI-compatible prefixes list `/models` beside their inference
 /// endpoint.
 pub fn provider_default_base(provider: &str) -> Option<&'static str> {
     match provider {
@@ -130,7 +280,10 @@ pub fn provider_default_base(provider: &str) -> Option<&'static str> {
         "deepseek" => Some("https://api.deepseek.com"),
         "openrouter" => Some("https://openrouter.ai/api/v1"),
         "ollama" => Some("http://127.0.0.1:11434"),
-        _ => compatible_entry(provider).and_then(|entry| entry.default_base),
+        _ => CATALOG
+            .iter()
+            .find(|entry| entry.provider == provider)
+            .and_then(|entry| entry.default_base),
     }
 }
 
@@ -208,8 +361,8 @@ pub(super) fn checked_url(base: &str) -> Result<url::Url> {
 }
 
 fn discovery_base_variable(provider: &str, env: &HashMap<String, String>) -> Option<&'static str> {
-    catalog()
-        .into_iter()
+    CATALOG
+        .iter()
         .find(|entry| entry.provider == provider)
         .and_then(|entry| {
             entry
@@ -227,8 +380,8 @@ pub fn environment_key_variable(
     provider: &str,
     env: &HashMap<String, String>,
 ) -> Option<&'static str> {
-    catalog()
-        .into_iter()
+    CATALOG
+        .iter()
         .find(|entry| entry.provider == provider)
         .and_then(|entry| {
             entry
@@ -258,25 +411,9 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         .ok_or_else(|| Error::InvalidInput("Provider is required".into()))?
         .trim()
         .to_ascii_lowercase();
-    let compatible = compatible_entry(&provider);
-    if compatible.is_none()
-        && !matches!(
-            provider.as_str(),
-            "openai"
-                | "anthropic"
-                | "gemini"
-                | "deepseek"
-                | "openrouter"
-                | "azure"
-                | "ollama"
-                | "custom"
-                | "claude-agent"
-                | "copilot"
-                | "chatgpt"
-        )
-    {
+    let Some(entry) = CATALOG.iter().find(|entry| entry.provider == provider) else {
         return Err(Error::InvalidInput("Unknown provider".into()));
-    }
+    };
     let refresh = match request.get("refresh") {
         None => false,
         Some(Value::Bool(value)) => *value,
@@ -349,7 +486,7 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
             }
         });
     }
-    if let Some(entry) = compatible.as_ref().filter(|entry| !entry.discovery) {
+    if !entry.discovery {
         // Validate the request as for any other provider, then say why no
         // list follows: the client offers manual model entry instead.
         resolve(field(request, "api_key")?, None, &env)?;
@@ -360,27 +497,16 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
             json!({"provider":entry.provider,"status":"unavailable","source":"manual","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"This provider does not publish a model list; enter model IDs manually"}),
         );
     }
-    let variable = match provider.as_str() {
-        "openai" => Some("OPENAI_API_KEY"),
-        "anthropic" => Some("ANTHROPIC_API_KEY"),
-        "gemini" => Some("GEMINI_API_KEY"),
-        "deepseek" => Some("DEEPSEEK_API_KEY"),
-        "openrouter" => Some("OPENROUTER_API_KEY"),
-        "azure" => Some("AZURE_API_KEY"),
-        "ollama" => Some("OLLAMA_API_KEY"),
-        // The first of the provider's key variables that holds a value.
-        _ => compatible.as_ref().and_then(|entry| {
-            entry
-                .key_variables
-                .iter()
-                .find(|name| {
-                    env.get(**name)
-                        .is_some_and(|value| !value.trim().is_empty())
-                })
-                .or(entry.key_variables.first())
-                .copied()
-        }),
-    };
+    // The first of the provider's key variables that holds a value.
+    let variable = entry
+        .key_variables
+        .iter()
+        .find(|name| {
+            env.get(**name)
+                .is_some_and(|value| !value.trim().is_empty())
+        })
+        .or(entry.key_variables.first())
+        .copied();
     let key = resolve(field(request, "api_key")?, variable, &env)?;
     // Built-in and additional providers share inference's endpoint variables.
     let base_variable = discovery_base_variable(&provider, &env);

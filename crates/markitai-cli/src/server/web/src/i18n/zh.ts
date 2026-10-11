@@ -248,7 +248,9 @@ export const zh: Dict = {
     if (status === "ready") return "可用";
     return status.replaceAll("_", " ");
   },
-  providerDetailHint: (kind, provider, source, { local = false, manualOnly = false, needsBase = false } = {}) => {
+  providerDetailHint: (kind, provider, source, { local = false, manualOnly = false, needsBase = false, subscription = false, cloud = false } = {}) => {
+    if (subscription) return "使用服务器上官方应用的登录状态，模型会自动加载。";
+    if (cloud) return "使用服务器找到的云平台凭据，下方的 key 可不填。请在下方添加要使用的模型 ID。";
     if (manualOnly) return "这个服务商不提供模型列表，请在下方添加要使用的模型 ID。";
     if (kind === "configured") return "已从保存的连接自动加载可用模型。";
     if (kind === "environment") return `使用 ${source} 中的凭据。`;
@@ -260,15 +262,25 @@ export const zh: Dict = {
   optionalKeyVariable: (variable) => `${variable}（可选）`,
   manualModelsOnly: "这个服务商不提供模型列表，请在下方添加模型 ID",
   serverAddressRequired: "需要服务器地址",
-  providerGroup: (kind) =>
+  searchProviders: (n) => `搜索 ${n} 个服务商`,
+  providersFound: (n) => `找到 ${n} 个服务商`,
+  providersNoMatch: "没有匹配的服务商",
+  providersSaved: "已保存",
+  providersCommon: "常用",
+  providersAll: (n) => `全部服务商（${n}）`,
+  providerFilterAria: "服务商类型",
+  providerFilter: (group) =>
     (
       ({
-        environment: "已配置的环境变量凭据",
-        configured: "已保存的服务商",
-        common: "常用服务商",
-        compatible: "更多 OpenAI 兼容服务商",
+        all: "全部",
+        clouds: "云平台",
+        inference: "推理服务",
+        gateways: "网关",
+        local: "本地",
+        subscriptions: "订阅",
+        makers: "模型厂商",
       }) as Record<string, string>
-    )[kind] ?? kind,
+    )[group] ?? group,
   providerCustom: "OpenAI 兼容接口",
   providerUnknown: "未知服务商",
   customApiBase: "使用自定义 API 地址",

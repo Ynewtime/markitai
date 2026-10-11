@@ -274,8 +274,16 @@ export const en = {
     kind: string,
     provider: string,
     source: string,
-    { local = false, manualOnly = false, needsBase = false }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean } = {},
+    {
+      local = false,
+      manualOnly = false,
+      needsBase = false,
+      subscription = false,
+      cloud = false,
+    }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean; subscription?: boolean; cloud?: boolean } = {},
   ) => {
+    if (subscription) return "Uses the official app's sign-in on the server; its models load automatically.";
+    if (cloud) return "Uses the cloud credentials the server finds; a key below is optional. Add the model IDs you want to use below.";
     if (manualOnly) return "This provider does not list its models. Add the model IDs you want to use below.";
     if (kind === "configured") return "Available models load automatically from this saved connection.";
     if (kind === "environment") return `Using credentials from ${source}.`;
@@ -287,15 +295,25 @@ export const en = {
   optionalKeyVariable: (variable: string) => `${variable} (optional)`,
   manualModelsOnly: "No model list from this provider · add a model ID below",
   serverAddressRequired: "Server address required",
-  providerGroup: (kind: string) =>
+  searchProviders: (n: number) => `Search ${n} providers`,
+  providersFound: (n: number) => `${n} ${plural(n, "provider", "providers")} found`,
+  providersNoMatch: "No providers match",
+  providersSaved: "Saved",
+  providersCommon: "Common",
+  providersAll: (n: number) => `All providers (${n})`,
+  providerFilterAria: "Provider type",
+  providerFilter: (group: string) =>
     (
       ({
-        environment: "Configured environment credentials",
-        configured: "Saved providers",
-        common: "Common providers",
-        compatible: "More OpenAI-compatible providers",
+        all: "All",
+        clouds: "Clouds",
+        inference: "Inference",
+        gateways: "Gateways",
+        local: "Local",
+        subscriptions: "Subscriptions",
+        makers: "Model makers",
       }) as Record<string, string>
-    )[kind] ?? kind,
+    )[group] ?? group,
   providerCustom: "OpenAI-compatible endpoint",
   providerUnknown: "Unknown provider",
   customApiBase: "Use a custom API base",

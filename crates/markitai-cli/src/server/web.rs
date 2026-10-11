@@ -89,6 +89,7 @@ static APP_JS: Asset = Asset::gzip(dist!("app.js.gz"), JS);
 static APP_CSS: Asset = Asset::gzip(dist!("app.css.gz"), "text/css; charset=utf-8");
 static BOOT_JS: Asset = Asset::raw(dist!("boot.js"), JS);
 static HIGHLIGHT_JS: Asset = Asset::gzip(dist!("highlight.js.gz"), JS);
+static BRANDS_JS: Asset = Asset::gzip(dist!("brands.js.gz"), JS);
 static I18N_ZH: Asset = Asset::gzip(dist!("i18n-zh.js.gz"), JS);
 static I18N_JA: Asset = Asset::gzip(dist!("i18n-ja.js.gz"), JS);
 static LOGO: Asset = Asset::raw(dist!("logo.svg"), "image/svg+xml");
@@ -218,6 +219,7 @@ pub(super) fn routes() -> Router<Arc<State>> {
         .route("/ui/app.css", route(&APP_CSS))
         .route("/ui/boot.js", route(&BOOT_JS))
         .route("/ui/highlight.js", route(&HIGHLIGHT_JS))
+        .route("/ui/brands.js", route(&BRANDS_JS))
         .route("/ui/i18n-zh.js", route(&I18N_ZH))
         .route("/ui/i18n-ja.js", route(&I18N_JA))
         .route("/ui/logo.svg", route(&LOGO))
@@ -285,6 +287,7 @@ mod tests {
             &APP_JS,
             &APP_CSS,
             &HIGHLIGHT_JS,
+            &BRANDS_JS,
             &I18N_ZH,
             &I18N_JA,
             &MARKED,
@@ -471,6 +474,7 @@ mod tests {
             ("CloudflareCapability", "CloudflareCapabilities"),
             ("RemoteProcessing", "RemoteProcessingDisclosure"),
             ("JobOptions", "JobOptions"),
+            ("ProviderCard", "ProviderCard"),
         ] {
             let declared: std::collections::BTreeSet<_> = interface(interface_name)
                 .into_iter()

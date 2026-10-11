@@ -451,5 +451,501 @@
         "sha256": "2203a4403e3e0cdd97d2388492225cdd96acdf400caa66788dc205a4afd8e393"
       }
     ]
+  },
+  {
+    "file": "lobehub-icons-LICENSE",
+    "package": "@lobehub/icons-static-svg",
+    "version": "1.95.1",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/49a2130df7bfa5eb1b088261bff20a37e2967789/LICENSE",
+    "package_integrity": "sha512-Hw7EPPgVnC4NZLXBfTNJG6hyQgqECfUPC11VVXodPSr1aebKcFxDZlSpxhWwYNdCc6bhxps/x5TtXoPmfKH2ag==",
+    "member": "LICENSE",
+    "bytes": 1064,
+    "sha256": "add9d7531d1b21646317a8958e38fc727506fa39d24bdecb44154d943c82753a",
+    "obtained": "the npm package declares MIT (package.json `license`) but ships no licence text; this is the repository's LICENSE at the package's gitHead 49a2130df7bfa5eb1b088261bff20a37e2967789 as the registry metadata records it"
+  },
+  {
+    "file": "../../crates/markitai-cli/src/server/web/src/components/brand-marks.ts",
+    "package": "@lobehub/icons-static-svg",
+    "version": "1.95.1",
+    "source": "https://registry.npmjs.org/@lobehub/icons-static-svg/-/icons-static-svg-1.95.1.tgz",
+    "package_integrity": "sha512-Hw7EPPgVnC4NZLXBfTNJG6hyQgqECfUPC11VVXodPSr1aebKcFxDZlSpxhWwYNdCc6bhxps/x5TtXoPmfKH2ag==",
+    "member": "package/icons/<key>.svg (the path data of the listed monochrome marks)",
+    "bytes": 64010,
+    "sha256": "2276e1efa98fd4601d7f91dd573a8de29f834972441e87249f4d26d32a5346f9",
+    "obtained": "generated: the path data of 59 monochrome marks (no colour variants) was extracted from the members below, dropping titles and one unused gradient; each member's mark and brand site are lobehub's page for it at gitHead 49a2130; bundled into dist/app.js",
+    "derived_from": [
+      {
+        "member": "package/icons/ai21.svg",
+        "bytes": 1235,
+        "sha256": "6c80f2c0d8b11d1bee179666049b00e0ab7f58f5ee8c307ca0dd3327bb49f282",
+        "mark": "Ai21Labs (Jamba)",
+        "brand_site": "https://huggingface.co/ai21labs",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Ai21/index.mdx"
+      },
+      {
+        "member": "package/icons/aihubmix.svg",
+        "bytes": 1433,
+        "sha256": "41ad4cc30733cde03b3b08efd0c873936b66c54ee42efaa3033cd9e101006089",
+        "mark": "AiHubMix (推理时代)",
+        "brand_site": "https://aihubmix.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/AiHubMix/index.mdx"
+      },
+      {
+        "member": "package/icons/anthropic.svg",
+        "bytes": 368,
+        "sha256": "e833fdfa7e7187a86a05b870925067556a506dcd4239089aed73e1e58c9366a3",
+        "mark": "Anthropic",
+        "brand_site": "https://anthropic.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Anthropic/index.mdx"
+      },
+      {
+        "member": "package/icons/apertis.svg",
+        "bytes": 486,
+        "sha256": "7e98c1d7ff54bfa567d9a5577f68b10bbe933a62d23b8c742e9895a3a5cdd58b",
+        "mark": "Apertis",
+        "brand_site": "https://apertis.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Apertis/index.mdx"
+      },
+      {
+        "member": "package/icons/assemblyai.svg",
+        "bytes": 502,
+        "sha256": "f8de76658b69139eef9bcdeffd3ebb37a77f7459a623215dbbbcf593bd4c5b1f",
+        "mark": "AssemblyAI",
+        "brand_site": "https://assemblyai.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/AssemblyAI/index.mdx"
+      },
+      {
+        "member": "package/icons/azure.svg",
+        "bytes": 703,
+        "sha256": "a48fa106b32093acac4cb858df39c4ee6bf1049d2ecec92ad556190f7c4d9a0e",
+        "mark": "Microsoft Azure",
+        "brand_site": "https://azure.microsoft.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Azure/index.mdx"
+      },
+      {
+        "member": "package/icons/azureai.svg",
+        "bytes": 652,
+        "sha256": "86369e6bb5862eb88b0bb9dc873bc0025d21f343c7a158b05c8689ba77445272",
+        "mark": "AzureAI",
+        "brand_site": "https://ai.azure.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/AzureAI/index.mdx"
+      },
+      {
+        "member": "package/icons/bailian.svg",
+        "bytes": 1378,
+        "sha256": "e9a43dd5ed7a39e01f8be3cc7e875ac195ba276e4832d2a906e9fcdf94e21063",
+        "mark": "Bailian (阿里云百炼)",
+        "brand_site": "https://bailian.console.aliyun.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Bailian/index.mdx"
+      },
+      {
+        "member": "package/icons/baseten.svg",
+        "bytes": 559,
+        "sha256": "d560883f6df500c1290b2fb2018836d853c72697c1fc252793538fabf53ff28d",
+        "mark": "Baseten",
+        "brand_site": "https://baseten.co",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Baseten/index.mdx"
+      },
+      {
+        "member": "package/icons/bedrock.svg",
+        "bytes": 1999,
+        "sha256": "b07f07bb6b77a1ee83916430250dc9adfc799ec43fbc5932947af099bcfcb9f9",
+        "mark": "Bedrock (AWS)",
+        "brand_site": "https://aws.amazon.com/bedrock",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Bedrock/index.mdx"
+      },
+      {
+        "member": "package/icons/cerebras.svg",
+        "bytes": 1235,
+        "sha256": "05af9593eca3fefdb30c5ad042040f008beea2b27e0a6b7315c319492f7a44ff",
+        "mark": "Cerebras",
+        "brand_site": "https://cerebras.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Cerebras/index.mdx"
+      },
+      {
+        "member": "package/icons/chutes.svg",
+        "bytes": 772,
+        "sha256": "b1827890cee5c1e68caba645e60c1b263e9993b266739100efba6458a980a37f",
+        "mark": "Chutes",
+        "brand_site": "https://chutes.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Chutes/index.mdx"
+      },
+      {
+        "member": "package/icons/claude.svg",
+        "bytes": 1701,
+        "sha256": "365a70a7eb3956d9b9a96086058ebe04e1dbd8e291a756ad964e8a283fbd6d38",
+        "mark": "Claude",
+        "brand_site": "https://claude.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Claude/index.mdx"
+      },
+      {
+        "member": "package/icons/cohere.svg",
+        "bytes": 724,
+        "sha256": "72851dd36d6ab017f535202744765eead8f99cfb5ced77e1840bfdb70db7a85c",
+        "mark": "Cohere",
+        "brand_site": "https://cohere.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Cohere/index.mdx"
+      },
+      {
+        "member": "package/icons/cometapi.svg",
+        "bytes": 1663,
+        "sha256": "841ac39e46df8ec3f5d1d786c0d085e4d0749875a3a8af6c18f432f02c9c1b7d",
+        "mark": "Comet API",
+        "brand_site": "https://cometapi.com/",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/CometAPI/index.mdx"
+      },
+      {
+        "member": "package/icons/crusoe.svg",
+        "bytes": 609,
+        "sha256": "8885a6e2ed4d9f11612d68cab36e4083e6dc8eadeeb511b84a77e4c8aff0c2b2",
+        "mark": "Crusoe",
+        "brand_site": "https://crusoe.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Crusoe/index.mdx"
+      },
+      {
+        "member": "package/icons/deepinfra.svg",
+        "bytes": 3425,
+        "sha256": "2a20be86e90b3c2085d5b3213f52c75e4f0041b239d6140475f5809863d45392",
+        "mark": "DeepInfra",
+        "brand_site": "https://deepinfra.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/DeepInfra/index.mdx"
+      },
+      {
+        "member": "package/icons/deepseek.svg",
+        "bytes": 2189,
+        "sha256": "8f9443e351b6dacce71871790201b799d92e8bf96a45ef79aeb5e9bf4db423e2",
+        "mark": "DeepSeek",
+        "brand_site": "https://deepseek.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/DeepSeek/index.mdx"
+      },
+      {
+        "member": "package/icons/digitalocean.svg",
+        "bytes": 539,
+        "sha256": "33e12e29c0cdacd1539863407d7911a82f7a5896af2d7cb9d062f1ddae5373d9",
+        "mark": "DigitalOcean",
+        "brand_site": "https://digitalocean.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/DigitalOcean/index.mdx"
+      },
+      {
+        "member": "package/icons/featherless.svg",
+        "bytes": 1012,
+        "sha256": "22f864afda9bf71b9295825d0f737fdf99b74574e1ce0c219f296260341dac69",
+        "mark": "Featherless.ai",
+        "brand_site": "https://featherless.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Featherless/index.mdx"
+      },
+      {
+        "member": "package/icons/fireworks.svg",
+        "bytes": 597,
+        "sha256": "9991ab2a8331096d3f408e07a5f2e1cb54c369143dd9fc7a97f6458478b33fe3",
+        "mark": "Fireworks",
+        "brand_site": "https://fireworks.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Fireworks/index.mdx"
+      },
+      {
+        "member": "package/icons/friendli.svg",
+        "bytes": 1473,
+        "sha256": "0ea6e5b955988d330951c463ea99babb3292e9859008cf8b66c85bf853d4a4aa",
+        "mark": "Friendli",
+        "brand_site": "https://friendli.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Friendli/index.mdx"
+      },
+      {
+        "member": "package/icons/gemini.svg",
+        "bytes": 651,
+        "sha256": "87d5b3c4be75a66f54c1936482a263df68185545b741129badd1b7c2449c18d3",
+        "mark": "Gemini (Google)",
+        "brand_site": "https://deepmind.google/technologies/gemini",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Gemini/index.mdx"
+      },
+      {
+        "member": "package/icons/githubcopilot.svg",
+        "bytes": 2019,
+        "sha256": "bbc7fddc13448236e5edea8c399d2072dc40aa5da5bca07f7a2f412405c500a3",
+        "mark": "Github Copilot",
+        "brand_site": "https://github.com/features/copilot",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/GithubCopilot/index.mdx"
+      },
+      {
+        "member": "package/icons/gmicloud.svg",
+        "bytes": 886,
+        "sha256": "22b0d7150d3d04fc8a498ab5de03c130b25127910c356660df913f2f769d4f61",
+        "mark": "GMI Cloud",
+        "brand_site": "https://gmicloud.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/GmiCloud/index.mdx"
+      },
+      {
+        "member": "package/icons/groq.svg",
+        "bytes": 568,
+        "sha256": "078d5cf6e7a54905040c15ddacf5ea33c13042fe7739e820cedc2096e4406651",
+        "mark": "Groq",
+        "brand_site": "https://wow.groq.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Groq/index.mdx"
+      },
+      {
+        "member": "package/icons/huggingface.svg",
+        "bytes": 4589,
+        "sha256": "de7f2c60f974b75b385116ef0dc6a9fa62f2fd7bf58156b5623301a5436b91c4",
+        "mark": "HuggingFace",
+        "brand_site": "https://huggingface.co",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/HuggingFace/index.mdx"
+      },
+      {
+        "member": "package/icons/inception.svg",
+        "bytes": 309,
+        "sha256": "aa491f544e8b77f520e7d7d1dc2362a2212dc6cd1a9373b97bb447c3f848d213",
+        "mark": "Inception Labs",
+        "brand_site": "https://inceptionlabs.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Inception/index.mdx"
+      },
+      {
+        "member": "package/icons/lmstudio.svg",
+        "bytes": 1253,
+        "sha256": "4a575e8382b52ce742ac5d21d361a7d2a08cea7c12390ee1bbb755ef7d3cc25b",
+        "mark": "LM Studio",
+        "brand_site": "https://lmstudio.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/LmStudio/index.mdx"
+      },
+      {
+        "member": "package/icons/meta.svg",
+        "bytes": 1735,
+        "sha256": "805ef9a35305393eb5a89be46b0708c9b119b3308ca44aaedd1457ff04857060",
+        "mark": "Meta",
+        "brand_site": "https://llama.meta.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Meta/index.mdx"
+      },
+      {
+        "member": "package/icons/minimax.svg",
+        "bytes": 1334,
+        "sha256": "bb96e2005081494716de6af5fd030701ae551ee68393ad61b325c07325607848",
+        "mark": "Minimax",
+        "brand_site": "https://api.minimax.chat",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Minimax/index.mdx"
+      },
+      {
+        "member": "package/icons/mistral.svg",
+        "bytes": 418,
+        "sha256": "a06cfa54e7deff7f7544175b006b7f8a03fbc5624c44f7d553a44d07ea96e629",
+        "mark": "Mistral",
+        "brand_site": "https://mistral.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Mistral/index.mdx"
+      },
+      {
+        "member": "package/icons/modelscope.svg",
+        "bytes": 634,
+        "sha256": "e2f89ef46b3fd764c1847b6d1f6390d1c5a9f5b012c9d3dec373e804fd3d7c23",
+        "mark": "ModelScope (魔搭)",
+        "brand_site": "https://modelscope.cn",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/ModelScope/index.mdx"
+      },
+      {
+        "member": "package/icons/moonshot.svg",
+        "bytes": 4028,
+        "sha256": "435f41b74e6a87639b6bf860e9628f20cbe7d6229bece412d548f4cea3081852",
+        "mark": "Moonshot (月之暗面)",
+        "brand_site": "https://moonshot.cn",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Moonshot/index.mdx"
+      },
+      {
+        "member": "package/icons/morph.svg",
+        "bytes": 1802,
+        "sha256": "0ea3a68085c7eeec7869aba92cc61a85ba1a84b68fe8bb1ee4dedc62c8ee231c",
+        "mark": "Morph",
+        "brand_site": "https://morphllm.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Morph/index.mdx"
+      },
+      {
+        "member": "package/icons/nebius.svg",
+        "bytes": 519,
+        "sha256": "4213ea25ec4c782688a7dafdad4bb828096151639077001c4df9c10a315f1af1",
+        "mark": "Nebius",
+        "brand_site": "https://nebius.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Nebius/index.mdx"
+      },
+      {
+        "member": "package/icons/nova.svg",
+        "bytes": 1302,
+        "sha256": "20cebca353897d5ef61c6617b2b128e128e73044961c53756cf87c499e404088",
+        "mark": "Nova (AWS)",
+        "brand_site": "https://nova.amazon.com/",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Nova/index.mdx"
+      },
+      {
+        "member": "package/icons/novita.svg",
+        "bytes": 291,
+        "sha256": "118af2fde0c68b129f85d28154eedd52f9c0456ecc4870823424c81c7f7bc523",
+        "mark": "Novita",
+        "brand_site": "https://novita.ai/",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Novita/index.mdx"
+      },
+      {
+        "member": "package/icons/nvidia.svg",
+        "bytes": 1030,
+        "sha256": "5a419b99e0ffdbfbe8caa7ec25581054eae03024da59cb860c54ea55ac8e7e73",
+        "mark": "Nvidia (Nemotron)",
+        "brand_site": "https://nvidia.com/en-us/ai-on-rtx/chat-with-rtx-generative-ai/",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Nvidia/index.mdx"
+      },
+      {
+        "member": "package/icons/ollama.svg",
+        "bytes": 3290,
+        "sha256": "3a268218fb2e6e81fa31df70f70b51331625047794db81db21d35359428fae7a",
+        "mark": "Ollama",
+        "brand_site": "https://ollama.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Ollama/index.mdx"
+      },
+      {
+        "member": "package/icons/openai.svg",
+        "bytes": 1687,
+        "sha256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186",
+        "mark": "OpenAI (ChatGPT)",
+        "brand_site": "https://openai.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/OpenAI/index.mdx"
+      },
+      {
+        "member": "package/icons/openrouter.svg",
+        "bytes": 382,
+        "sha256": "ae671cc83de9bd45db97a47ed5e38a4e1bd9f93a12be495ba4b4f8b284026bca",
+        "mark": "OpenRouter",
+        "brand_site": "https://openrouter.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/OpenRouter/index.mdx"
+      },
+      {
+        "member": "package/icons/parasail.svg",
+        "bytes": 444,
+        "sha256": "0083857f48835c3c4f83bc4263331cfdbebdb6e4768e200e0279c1d152972231",
+        "mark": "Parasail",
+        "brand_site": "https://parasail.io/",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Parasail/index.mdx"
+      },
+      {
+        "member": "package/icons/perplexity.svg",
+        "bytes": 608,
+        "sha256": "c66c64e9e3c273ef6c235f743808d67ffa7d482e8cbe4a79496a42b60333e1fe",
+        "mark": "Perplexity",
+        "brand_site": "https://perplexity.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Perplexity/index.mdx"
+      },
+      {
+        "member": "package/icons/poe.svg",
+        "bytes": 1627,
+        "sha256": "d427b1abf53b3d52b30e9bf2a5756577a588fbde04640e8e1f9c688ecd4e9b51",
+        "mark": "Poe",
+        "brand_site": "https://poe.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Poe/index.mdx"
+      },
+      {
+        "member": "package/icons/qwen.svg",
+        "bytes": 1790,
+        "sha256": "dcb3ba2f2b55ccbacbade0ca0bf98921fbaf8a07848972974b4a9bf8077376cf",
+        "mark": "Qwen (千问)",
+        "brand_site": "https://huggingface.co/Qwen",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Qwen/index.mdx"
+      },
+      {
+        "member": "package/icons/sambanova.svg",
+        "bytes": 1597,
+        "sha256": "4f82732325bba2496cb91f2e72636d05c03276763562b75795c37f764ae4357f",
+        "mark": "SambaNova",
+        "brand_site": "https://sambanova.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/SambaNova/index.mdx"
+      },
+      {
+        "member": "package/icons/tencentcloud.svg",
+        "bytes": 2119,
+        "sha256": "0563b1dbaa01aff4f20352bc9eb49bec17debeb3901a9ee80b044ac4d792c97d",
+        "mark": "TencentCloud (腾讯云)",
+        "brand_site": "https://cloud.tencent.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/TencentCloud/index.mdx"
+      },
+      {
+        "member": "package/icons/together.svg",
+        "bytes": 577,
+        "sha256": "b3ec218e7e0b0432a2ce07f5ec98a1dcd24f808c74d5fee624ab31e4947feef3",
+        "mark": "together.ai",
+        "brand_site": "https://together.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Together/index.mdx"
+      },
+      {
+        "member": "package/icons/venice.svg",
+        "bytes": 2653,
+        "sha256": "2199c468fef49ebadfdabd4280461d700c290daaf9ab03fbf94564f9230538ee",
+        "mark": "Venice",
+        "brand_site": "https://venice.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Venice/index.mdx"
+      },
+      {
+        "member": "package/icons/vercel.svg",
+        "bytes": 225,
+        "sha256": "4874d52d8b2ce7c309cbd10c424fee123b2c9483e76d76ad0dca41794483eb24",
+        "mark": "Vercel",
+        "brand_site": "https://sdk.vercel.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Vercel/index.mdx"
+      },
+      {
+        "member": "package/icons/vertexai.svg",
+        "bytes": 2051,
+        "sha256": "3a78043e65f2dad8a6278f5eaf7b5d636810a7b901efe03430ef2f40f3b38b2e",
+        "mark": "VertexAI (Google)",
+        "brand_site": "https://cloud.google.com/generative-ai-studio",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/VertexAI/index.mdx"
+      },
+      {
+        "member": "package/icons/vllm.svg",
+        "bytes": 296,
+        "sha256": "5b025970b51c270775d0528a68ad96583372c94a2a94c4d92b40b74cbe9f7153",
+        "mark": "vLLM",
+        "brand_site": "https://github.com/vllm-project",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Vllm/index.mdx"
+      },
+      {
+        "member": "package/icons/volcengine.svg",
+        "bytes": 944,
+        "sha256": "f29d0bdc284b33d8664ef221add7fbf06a5b370ef92767fa33f6020c914d3d33",
+        "mark": "Volcengine (火山引擎)",
+        "brand_site": "https://volcengine.com",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Volcengine/index.mdx"
+      },
+      {
+        "member": "package/icons/wandb.svg",
+        "bytes": 1723,
+        "sha256": "6e8af96d0cb208468c2a6bfdcefda688262a5c59257bdbe72e093e408498bf97",
+        "mark": "Weights & Biases",
+        "brand_site": "https://wandb.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Wandb/index.mdx"
+      },
+      {
+        "member": "package/icons/workersai.svg",
+        "bytes": 783,
+        "sha256": "dd630bc6ad3d584ebeacbff07a50976485cc300e069e3ec9b7012263cd58643d",
+        "mark": "WorkersAI (Cloudflare)",
+        "brand_site": "https://developers.cloudflare.com/workers-ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/WorkersAI/index.mdx"
+      },
+      {
+        "member": "package/icons/xai.svg",
+        "bytes": 372,
+        "sha256": "89eb7de9f0d02a41cfecd9109e253d7fd3529e27467dee4254faa67f3ac21451",
+        "mark": "xAI",
+        "brand_site": "https://x.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/XAI/index.mdx"
+      },
+      {
+        "member": "package/icons/xinference.svg",
+        "bytes": 1783,
+        "sha256": "cfe962cb02a55aaee029c9ea74ce97f440ca1ba42fc0aa39afb976b35e44374b",
+        "mark": "Xinference",
+        "brand_site": "https://github.com/xorbitsai/inference",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Xinference/index.mdx"
+      },
+      {
+        "member": "package/icons/zai.svg",
+        "bytes": 319,
+        "sha256": "e748cb5108ce37b116d7a5ba97d37e0ae97eadf6849b0de11afb248e244a01e1",
+        "mark": "Z.ai",
+        "brand_site": "https://z.ai",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/ZAI/index.mdx"
+      }
+    ]
   }
 ]

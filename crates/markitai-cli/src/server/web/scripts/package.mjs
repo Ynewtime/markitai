@@ -55,7 +55,7 @@ files.set("ui/purify.js", readFileSync(join(vendor, "purify.js")));
 for (const subset of ["latin", "latin-ext", "cyrillic", "cyrillic-ext", "greek", "greek-ext", "vietnamese"]) {
   files.set(`ui/inter-${subset}-wght.woff2`, readFileSync(join(vendor, `inter-${subset}-wght-normal.woff2`)));
 }
-for (const name of ["marked-LICENSE", "DOMPurify-LICENSE", "Inter-OFL.txt", "phosphor-LICENSE", "preact-LICENSE"]) {
+for (const name of ["marked-LICENSE", "DOMPurify-LICENSE", "Inter-OFL.txt", "phosphor-LICENSE", "lobehub-icons-LICENSE", "preact-LICENSE"]) {
   files.set(`LICENSES/${name}`, readFileSync(join(vendor, name)));
 }
 

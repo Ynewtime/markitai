@@ -235,9 +235,8 @@ The other OpenAI-compatible prefixes the reference reaches through LiteLLM
 variables. Their bases were checked against each provider's documentation on
 2026-10-11; where the documented host or key name is newer than LiteLLM's,
 the documented one is used or listed first, and where a provider documents
-none, LiteLLM's default is used and the last column says so. They are not
-offered as `serve` provider cards; configure them by name (or use the
-OpenAI-compatible endpoint card with the base URL).
+none, LiteLLM's default is used and the last column says so. The `serve`
+provider picker offers them like the prefixes of the first table.
 
 | Prefix | Default base URL | Key variables | Base variable | Checked against |
 |---|---|---|---|---|
@@ -421,15 +420,22 @@ against every vendor. No provider network call is required by the test suite.
 `markitai doctor` accepts every prefix of this build, and so do `markitai init`'s
 guided and interactive model prompts, except `bedrock/` and `vertex_ai/`, whose
 cloud credentials are configured in the configuration file or environment.
-The browser workbench of `serve` offers every prefix of the first table as a
-provider card with its default base URL and
-first key variable; model discovery lists a provider's models through
+The browser workbench of `serve` offers every routed provider in its provider
+picker (95: both tables above, Bedrock, Vertex AI, the subscription runtimes
+and any OpenAI-compatible endpoint; `ollama_chat/`, `ai21_chat/`, `cohere_chat/`,
+`vertex_ai_beta/` and `openai_like/` are found under the provider they route
+like), grouped as common providers, subscriptions, model makers, clouds,
+inference hosts, gateways and local servers, each with its default base URL and
+first key variable. Model discovery lists a provider's models through
 `GET <base>/models` with the key as Bearer (Together AI's bare-array answer
-included), using the base variable when no `api_base` is given. Perplexity, Z.ai
+included), using the base variable when no `api_base` is given; a provider
+whose list request fails can still take model IDs by hand. Perplexity, Z.ai
 and Fireworks AI document no OpenAI-compatible model list (checked 2026-10-02:
-Fireworks lists models only through its account API), so discovery answers
-`unavailable` with `source: "manual"` without a request, and their model IDs are
-entered by hand. The connection check works for every prefix.
+Fireworks lists models only through its account API), and Bedrock and Vertex AI
+are not listed either, so discovery answers `unavailable` with
+`source: "manual"` without a request, and their model IDs are entered by hand.
+The subscription runtimes list their models through the installed runtime. The
+connection check works for every prefix.
 
 Deployment `api_key` and `api_base` take precedence. A saved provider selected
 by `model_info.provider_id` can supply missing deployment credentials and base

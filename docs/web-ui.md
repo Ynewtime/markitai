@@ -126,10 +126,16 @@ column's width.
 
 **Settings** are pages. Models lists the configured models (Test, Edit, Delete),
 models detected for this session (Save to config) and the configuration source;
-Add models leads through provider cards (environment credentials, saved
-providers, common providers, more OpenAI-compatible providers) to the
-provider's page and its model catalogue, with a breadcrumb that Escape steps
-back through. Appearance and language chooses English, 中文 or 日本語 and the
+Add models opens the provider picker: one search over every provider (name,
+model prefix and other names), saved connections and environment credentials as
+rows, the eight common providers as cards, then every other provider by name
+under a filter (All, Clouds, Inference, Gateways, Local, Subscriptions, Model
+makers) that scrolls sideways on a phone. Providers show their monochrome brand
+mark (vendored from lobehub icons, drawn in the text colour) or a monogram.
+Choosing one leads to the provider's page and its model catalogue, with a
+breadcrumb that Escape steps back through; a subscription needs no key or
+address, and Bedrock and Vertex AI take model IDs by hand. A backend that sends
+no provider `group` gets the common eight by name and everything else under All. Appearance and language chooses English, 中文 or 日本語 and the
 theme (Auto, Light, Dark); Access token shows and changes this tab's token.
 
 ## Job controls

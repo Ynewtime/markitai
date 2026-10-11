@@ -419,7 +419,7 @@ fn clearing_provider_only_deployment_detaches_without_changing_siblings() {
 }
 
 #[test]
-fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery() {
+fn every_routed_provider_is_offered_with_its_group_mark_endpoint_key_and_discovery() {
     let (_dir, store) = setup(json!({"llm":{"enabled":false,"model_list":[]}}));
     let cards = store.providers()["providers"].as_array().unwrap().clone();
     let card = |name: &str| {
@@ -429,7 +429,32 @@ fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery
             .unwrap_or_else(|| panic!("no {name} card"))
             .clone()
     };
-    // The reference's eight stay first and "common"; the added ones follow.
+    // One card per catalog provider, from the environment or built in.
+    let catalog = markitai_core::provider_management::catalog();
+    assert_eq!(cards.len(), catalog.len());
+    for known in &catalog {
+        let offered = cards
+            .iter()
+            .find(|card| card["provider"] == known.provider)
+            .unwrap();
+        assert_eq!(offered["group"], known.group, "{}", known.provider);
+        assert_eq!(offered["icon"], json!(known.icon), "{}", known.provider);
+        assert_eq!(
+            offered["aliases"],
+            json!(known.aliases),
+            "{}",
+            known.provider
+        );
+    }
+    // Every mark the catalog names is one the workbench vendors.
+    let marks = include_str!("../web/src/components/brand-marks.ts");
+    for known in &catalog {
+        if let Some(icon) = known.icon {
+            assert!(marks.contains(&format!("\n  {icon}: {{ viewBox")), "{icon}");
+        }
+    }
+    // The reference's providers and those that are not OpenAI-compatible
+    // HTTP APIs are "common"; the added OpenAI-compatible ones "compatible".
     let common: Vec<_> = cards
         .iter()
         .filter(|card| card["kind"] == "common")
@@ -441,18 +466,50 @@ fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery
             "openai",
             "anthropic",
             "gemini",
-            "ollama",
             "deepseek",
             "openrouter",
             "azure",
+            "ollama",
+            "chatgpt",
+            "claude-agent",
+            "copilot",
+            "bedrock",
+            "vertex_ai",
             "custom"
         ]
     );
-    let compatible = cards
-        .iter()
-        .filter(|card| card["kind"] == "compatible")
-        .count();
-    assert_eq!(compatible, 16);
+    assert_eq!(card("mistral")["kind"], "compatible");
+    assert_eq!(card("mistral")["group"], "common");
+    assert_eq!(card("azure")["label"], "Azure OpenAI");
+    assert_eq!(card("custom")["label"], "OpenAI-compatible endpoint");
+    assert_eq!(card("databricks")["icon"], Value::Null);
+    assert!(
+        card("ollama")["aliases"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("ollama_chat"))
+    );
+    // A subscription runtime signs in by itself and lists its own models;
+    // the clouds read their own credentials and take model IDs by hand.
+    let copilot = card("copilot");
+    assert_eq!(
+        (
+            copilot["status"].clone(),
+            copilot["key_optional"].clone(),
+            copilot["supports_discovery"].clone(),
+            copilot["key_variable"].clone()
+        ),
+        (json!("unknown"), json!(true), json!(true), Value::Null)
+    );
+    let bedrock = card("bedrock");
+    assert_eq!(
+        (
+            bedrock["supports_discovery"].clone(),
+            bedrock["key_optional"].clone(),
+            bedrock["default_base"].clone()
+        ),
+        (json!(false), json!(true), Value::Null)
+    );
     let groq = card("groq");
     assert_eq!(groq["label"], "Groq");
     assert_eq!(groq["default_base"], "https://api.groq.com/openai/v1");
@@ -481,6 +538,24 @@ fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery
     );
     assert_eq!(card("custom")["key_variable"], Value::Null);
     assert_eq!(card("openai")["key_variable"], "OPENAI_API_KEY");
+}
+
+#[test]
+fn a_subscription_with_models_stays_offered_but_a_saved_provider_does_not() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false,"model_list":[
+        {"model_name":"default","litellm_params":{"model":"copilot/gpt-5"}},
+        {"model_name":"default","litellm_params":{"model":"groq/llama","api_key":"literal-test-key"}}
+    ]}}));
+    let cards = store.providers()["providers"].as_array().unwrap().clone();
+    let kinds = |name: &str| {
+        cards
+            .iter()
+            .filter(|card| card["provider"] == name)
+            .map(|card| card["kind"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds("copilot"), ["common"]);
+    assert_eq!(kinds("groq"), ["configured"]);
 }
 
 #[test]

@@ -28,8 +28,6 @@ pub(super) struct Provider {
     pub key_optional: bool,
     /// How the base URL or the model sent depend on the model or environment.
     pub special: Special,
-    /// Offered as a provider card in the `serve` settings.
-    pub card: bool,
 }
 
 /// Base URLs and model names that a plain table entry cannot express.
@@ -65,22 +63,17 @@ const fn chat(
         key_vars,
         key_optional: false,
         special: Special::None,
-        card: true,
     }
 }
 
-/// An OpenAI-compatible API added on 2026-10-11, routed but not offered as
-/// a provider card.
+/// An OpenAI-compatible API added on 2026-10-11.
 const fn more(
     prefix: &'static str,
     base: &'static str,
     base_vars: &'static [&'static str],
     key_vars: &'static [&'static str],
 ) -> Provider {
-    Provider {
-        card: false,
-        ..chat(prefix, base, base_vars, key_vars)
-    }
+    chat(prefix, base, base_vars, key_vars)
 }
 
 /// A server that listens wherever it was started and checks a key only
@@ -124,7 +117,6 @@ static PROVIDERS: [Provider; 93] = [
         key_vars: &["ANTHROPIC_API_KEY"],
         key_optional: false,
         special: Special::None,
-        card: true,
     },
     chat(
         "gemini",
@@ -152,7 +144,6 @@ static PROVIDERS: [Provider; 93] = [
         key_vars: &["AZURE_API_KEY"],
         key_optional: false,
         special: Special::None,
-        card: true,
     },
     Provider {
         key_optional: true,
@@ -280,7 +271,6 @@ static PROVIDERS: [Provider; 93] = [
         key_vars: &["HOSTED_VLLM_API_KEY"],
         key_optional: true,
         special: Special::None,
-        card: true,
     },
     Provider {
         key_optional: true,
@@ -752,20 +742,16 @@ pub(crate) struct Listing {
     pub openai_compatible: bool,
 }
 
-/// The HTTP prefixes offered as provider cards, in table order. The further
-/// OpenAI-compatible prefixes are routed but configured by name.
+/// Every HTTP prefix, in table order.
 pub(crate) fn listings() -> impl Iterator<Item = Listing> {
-    PROVIDERS
-        .iter()
-        .filter(|provider| provider.card)
-        .map(|provider| Listing {
-            prefix: provider.prefix,
-            base: provider.base,
-            base_vars: provider.base_vars,
-            key_vars: provider.key_vars,
-            key_optional: provider.key_optional,
-            openai_compatible: provider.protocol == Protocol::Chat,
-        })
+    PROVIDERS.iter().map(|provider| Listing {
+        prefix: provider.prefix,
+        base: provider.base,
+        base_vars: provider.base_vars,
+        key_vars: provider.key_vars,
+        key_optional: provider.key_optional,
+        openai_compatible: provider.protocol == Protocol::Chat,
+    })
 }
 
 /// Prefixes served by an installed official runtime instead of HTTP.
@@ -1140,8 +1126,7 @@ mod tests {
             assert!(!supported(prefix), "{prefix}");
             assert!(message.contains("is not routed: "), "{message}");
         }
-        let cards = listings().count();
-        assert_eq!(cards, 24, "the serve cards stay the 2026-10-02 set");
+        assert_eq!(listings().count(), PROVIDERS.len());
     }
 
     #[test]

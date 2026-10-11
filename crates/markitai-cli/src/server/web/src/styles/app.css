@@ -3333,21 +3333,35 @@ kbd {
   font-weight: 650;
   color: var(--text-2);
 }
-.provider-groups {
+/* The provider picker: one search, saved connections as rows, the common
+   providers as cards, then every other provider in a compact list under a
+   segmented filter. Rows and cards share hairline dividers. */
+.provider-picker {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-width: 0;
 }
-.provider-grid {
+/* sections never grow to the filter's width: it scrolls inside them */
+.provider-picker > section {
+  min-width: 0;
+}
+.provider-search {
+  width: 100%;
+}
+.provider-rows,
+.provider-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
   background: var(--hairline);
 }
-.provider-card {
+.provider-tiles {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.provider-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -3355,21 +3369,31 @@ kbd {
   background: var(--surface);
   transition: background-color var(--dur-fast) ease;
 }
-.provider-card:last-child:nth-child(odd) {
-  grid-column: 1 / -1;
+.provider-tiles > li {
+  display: flex;
+  min-width: 0;
+  background: var(--surface);
+  transition: background-color var(--dur-fast) ease;
 }
 .provider-pick {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
+  align-items: center;
+  gap: 12px;
   width: 100%;
   min-width: 0;
-  padding: 13px 14px;
+  padding: 11px 14px;
   text-align: left;
 }
-.provider-pick:disabled {
+.provider-pick:disabled,
+.provider-tile:disabled,
+.provider-item:disabled {
   opacity: 0.62;
+}
+.provider-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 .provider-tools {
   display: inline-flex;
@@ -3378,9 +3402,13 @@ kbd {
   padding: 8px 10px 8px 0;
 }
 .provider-name {
+  max-width: 100%;
+  overflow: hidden;
   font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .provider-meta {
   max-width: 100%;
@@ -3390,6 +3418,88 @@ kbd {
   color: var(--text-3);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.provider-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 64px;
+  padding: 14px 16px;
+  text-align: left;
+}
+/* the group filter scrolls sideways when it is wider than the page */
+.provider-filter {
+  display: flex;
+  margin-bottom: 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.provider-filter .chips {
+  flex: none;
+}
+.provider-filter .filter-chip {
+  flex: none;
+  white-space: nowrap;
+}
+.provider-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px 8px;
+}
+.provider-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 8px;
+  border-radius: var(--r-xs);
+  text-align: left;
+  transition: background-color var(--dur-fast) ease;
+}
+.provider-item-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-base);
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A provider's mark in the text colour, or its monogram in a hairline tile. */
+.brand-icon,
+.brand-tile {
+  flex: none;
+}
+.brand-icon {
+  color: var(--text-1);
+}
+.brand-icon.is-32,
+.brand-tile.is-32 {
+  width: 32px;
+  height: 32px;
+}
+.brand-icon.is-22,
+.brand-tile.is-22 {
+  width: 22px;
+  height: 22px;
+}
+.brand-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-xs);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-2);
+}
+.brand-tile.is-22 {
+  font-size: var(--text-2xs);
 }
 .provider-detail {
   display: flex;
@@ -4355,7 +4465,9 @@ kbd {
     background: color-mix(in srgb, var(--text-1) 6%, transparent);
     color: var(--text-1);
   }
-  .provider-card:hover {
+  .provider-row:hover,
+  .provider-tiles > li:not(.provider-fill):hover,
+  .provider-item:not(:disabled):hover {
     background: var(--strip);
   }
   .dotted-link:hover {
@@ -4403,6 +4515,8 @@ kbd {
 .doc-body pre:focus-visible,
 .doc-body .table-scroll:focus-visible,
 .provider-pick:focus-visible,
+.provider-tile:focus-visible,
+.provider-item:focus-visible,
 .secret-toggle:focus-visible,
 .inline-action:focus-visible {
   outline: 2px solid var(--text-2);
@@ -4687,9 +4801,22 @@ kbd {
   .settings-page .btn {
     min-height: 44px;
   }
-  .provider-grid,
   .field-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .provider-tiles,
+  .provider-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .provider-fill.is-wide {
+    display: none;
+  }
+  .provider-tile {
+    min-height: 60px;
+    padding: 12px 14px;
+  }
+  .provider-item {
+    height: 44px;
   }
   .picker-tools,
   .provider-detail-head {
