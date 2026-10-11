@@ -371,3 +371,58 @@ fn manual_binding_waits_for_the_end_and_then_requires_the_nonce() {
         Err(Error::Invalid(_))
     ));
 }
+
+/// The live batch of 2026-10-11, replayed: its create body is what this
+/// transport sends for the same rows, and its status and results files parse
+/// into the shared shape with every documented and undocumented field.
+#[test]
+fn a_recorded_live_batch_replays_through_the_transport() {
+    let live = "69e09eb6-6ddf-4601-aaa4-61af0324f81b";
+    let recorded = fixture_json("recorded/create-request.json");
+    let rows = recorded["requests"].as_array().unwrap().clone();
+    let root = tempfile::tempdir().unwrap();
+    let path = write_requests(root.path(), &rows);
+    let server = Server::new(
+        |request, _| match (request.method.as_str(), request.path.as_str()) {
+            ("POST", "/prefix/v1/messages/batches") => {
+                Reply::text(fixture("recorded/create-response.json"))
+            }
+            ("GET", "/prefix/v1/messages/batches/msgbatch_01TQbBNGTfhn72tnQdnhgCpg") => {
+                Reply::text(fixture("recorded/status-ended.json"))
+            }
+            ("GET", "/prefix/v1/messages/batches/msgbatch_01TQbBNGTfhn72tnQdnhgCpg/results") => {
+                Reply::Chunked(fixture("recorded/results.jsonl").into_bytes())
+            }
+            (method, path) => panic!("unexpected {method} {path}"),
+        },
+    );
+    let client = client(&server);
+    let uploaded = client.upload(&path).unwrap();
+    let created = client.create(&uploaded, live, &path).unwrap();
+    assert_eq!(created.status, BatchStatus::InProgress);
+    assert_eq!((created.total, created.completed), (Some(2), Some(0)));
+    let sent: Value = serde_json::from_slice(&server.requests()[0].body).unwrap();
+    assert_eq!(sent, recorded);
+    let ended = client.retrieve(&created.id).unwrap();
+    assert_eq!(ended.status, BatchStatus::Completed);
+    assert_eq!(
+        (ended.total, ended.completed, ended.failed),
+        (Some(2), Some(2), Some(0))
+    );
+    let results = client
+        .download_results(&ended, &uploaded.custom_ids)
+        .unwrap();
+    assert!(results.missing.is_empty());
+    // The file lists the second request first; results keep submission order.
+    assert_eq!(results.items[0].custom_id, uploaded.custom_ids[0]);
+    assert_eq!(
+        results.items[1].request_id.as_deref(),
+        Some("msg_011CfufaEiAbKKyZpQ5xapDZ")
+    );
+    for item in &results.items {
+        assert_eq!(item.http_status, Some(200));
+        let body = item.body.as_ref().unwrap();
+        assert_eq!(body["usage"]["service_tier"], "batch");
+        assert_eq!(body["content"][0]["name"], "MarkitaiDocument");
+    }
+}

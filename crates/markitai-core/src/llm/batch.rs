@@ -760,6 +760,75 @@ mod tests {
         assert!(unlimited.request("nonce-0").is_err());
     }
 
+    /// The answer of the live batch of 2026-10-11 decodes against a plan
+    /// rebuilt from the same document, and is priced at Haiku 5.5's batch rate
+    /// on the first-party endpoint (the live run went through a proxy, whose
+    /// prices are unknown by design).
+    #[test]
+    fn a_recorded_live_answer_decodes_and_is_priced_at_batch_rates() {
+        let fixture = |name: &str| {
+            std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/anthropic-batches/recorded")
+                    .join(name),
+            )
+            .unwrap()
+        };
+        let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":"anthropic/claude-haiku-5-5","api_key":"fixture-api-secret","max_tokens":1024}}]},"cache":{"enabled":false}});
+        let session = Session::configured(&cfg, &HashMap::new()).unwrap();
+        let text = "# Release notes\n\nThe importer keeps [the changelog](https://example.test/changelog) linked.\n\n```python\nprint(\"unchanged code\")\n```\n\nPlain prose that a model may tidy up.\n";
+        let Prepared::Request(plan) = session
+            .prepare(
+                text,
+                "inputs/release-notes.md",
+                &serde_json::Map::new(),
+                &cfg,
+            )
+            .unwrap()
+        else {
+            panic!("cache is disabled");
+        };
+        let id = "69e09eb66ddf4601aaa461af0324f81b-1";
+        let recorded: Value = serde_json::from_str(&fixture("create-request.json")).unwrap();
+        let sent = recorded["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["custom_id"] == id)
+            .unwrap();
+        assert_eq!(plan.request(id).unwrap(), *sent);
+        let line = fixture("results.jsonl")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|row| row["custom_id"] == id)
+            .unwrap();
+        let item = crate::provider_batch::ResultItem {
+            custom_id: id.into(),
+            http_status: Some(200),
+            body: Some(line["result"]["message"].clone()),
+            error: None,
+            request_id: None,
+        };
+        let decoded = plan.decode(&item, &cfg).unwrap();
+        assert!(
+            decoded
+                .markdown
+                .contains("[the changelog](https://example.test/changelog)")
+        );
+        assert!(decoded.markdown.contains("print(\"unchanged code\")"));
+        assert_eq!(
+            (decoded.usage.input_tokens, decoded.usage.output_tokens),
+            (1023, 175)
+        );
+        // 1,023 x $0.05 + 175 x $0.25 per million tokens.
+        assert!(
+            (decoded.usage.cost_usd - 0.00009490).abs() < 1e-12,
+            "{}",
+            decoded.usage.cost_usd
+        );
+        assert!(decoded.usage.cost_complete());
+    }
+
     #[test]
     fn other_providers_are_refused_before_any_batch_work() {
         let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":"gemini/gemini-3.8-flash","api_key":"fixture"}}]}});
