@@ -160,7 +160,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
     // Under the lifetime lock: no other server sweeps this history.
     let _ = &service_lock;
     if let Err(error) = retention::sweep(&state.root, &state.jobs, std::time::SystemTime::now()) {
-        eprintln!("Serve: history retention sweep failed: {error}");
+        eprintln!("Warning: Serve: history retention sweep failed: {error}");
     }
     retention::start(&state);
     let router = Router::new()

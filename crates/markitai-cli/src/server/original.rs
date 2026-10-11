@@ -323,7 +323,7 @@ fn no_page() -> ApiError {
     ApiError::new(404, "page_not_found", "page not found")
 }
 fn render_failed(error: impl std::fmt::Display) -> ApiError {
-    eprintln!("Serve: page preview failed: {error}");
+    eprintln!("Warning: Serve: page preview failed: {error}");
     ApiError::new(422, "render_failed", "the page cannot be drawn")
 }
 fn busy() -> Response {
