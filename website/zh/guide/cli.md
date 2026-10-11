@@ -378,7 +378,16 @@ markitai https://example.com -o ./output --no-remote-fetch
 
 状态行以符号开头，各处含义相同：`✓` 成功、`!` 警告、`✗` 错误、`•` 信息、`→` 下一步、`○` 有意跳过。在终端中符号带颜色；通过管道或重定向输出，以及设置了 `NO_COLOR` 时，去掉颜色但保留符号，每条消息一行。
 
-只有无法显示 Unicode 符号时才改用 ASCII 符号（`+ ! x - > o`）：`TERM=dumb`；输出编码写不出这些符号（非 UTF-8 的 locale、`PYTHONIOENCODING=ascii`）；无法处理转义序列的 Windows 控制台（Windows 10 1511 之前的版本，或控制台主机开启了“使用旧版控制台”）。Windows Terminal、VS Code、SSH 会话、当前的控制台主机，以及 Windows 上的管道和文件都使用 Unicode 符号。markitai 在 Windows 上向管道和文件写入 UTF-8，读取保存下来的日志时请按 UTF-8 解码（在 Windows PowerShell 5.1 中，捕获命令输出前先执行 `[Console]::OutputEncoding = [Text.Encoding]::UTF8`）。
+无法显示或无法被正确读出 Unicode 符号时改用 ASCII 符号（`+ ! x - > o`）：`TERM=dumb`；输出编码写不出这些符号（非 UTF-8 的 locale、`PYTHONIOENCODING=ascii`）；无法处理转义序列的 Windows 控制台（Windows 10 1511 之前的版本，或控制台主机开启了“使用旧版控制台”）；以及 Windows 上控制台输出代码页不是 UTF-8（65001）时的管道和文件。Windows Terminal、VS Code、SSH 会话、当前的控制台主机和 mintty（Git Bash）都显示 Unicode 符号。一次运行只用一套符号：stdout 或 stderr 任一需要 ASCII 时，两者都用 ASCII。
+
+**Windows 上的管道和文件。** markitai 向它们写入 UTF-8，但 Windows PowerShell 5.1 按控制台的代码页（`[Console]::OutputEncoding`，英文系统上为 437）解码程序经管道输出的内容，`✓` 会变成 `Γ£ô`；因此除非这个代码页是 UTF-8，管道和文件都使用 ASCII 符号。要在 PowerShell 5.1 中得到 Unicode 符号（并正确解码其余文字，包括中文），在捕获命令输出前先执行：
+
+```powershell
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+markitai doctor | Out-File -Encoding utf8 doctor.txt
+```
+
+在 cmd 中，`chcp 65001` 的效果相同。没有附加控制台的输出（服务、脱离控制台的进程）没有代码页可依，仍使用 Unicode 符号。
 
 ## 初始化命令
 
