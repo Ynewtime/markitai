@@ -29,7 +29,7 @@ const ENVIRONMENT: [(&str, &str); 4] = [
     ("OPENAI_API_KEY", "sk-test-env-openai-0000"),
     ("GROQ_API_KEY", "gsk-test-env-groq-0000"),
     ("LM_STUDIO_API_KEY", "lm-test-env-lmstudio-0000"),
-    ("ANTHROPIC_API_KEY", "sk-ant-test-env-anthropic-0000"),
+    ("ANTHROPIC_API_KEY", "sk-ant-test-env-0000"),
 ];
 const DOTENV: (&str, &str) = ("MISTRAL_API_KEY", "dotenv-test-mistral-0000");
 
