@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from markitai.constants import PROVIDER_API_KEY_ENV_NAMES
+from markitai.providers.api_keys import env_set_command
 from tests.local_http import LocalHTTPServer
 
 AUTH_FAILS = "Authentication Fails (governor)"
@@ -171,7 +172,10 @@ class TestMissingKey:
         assert result.returncode == 1
         [line] = _lines(result.stderr)
         assert line.startswith("Error: DEEPSEEK_API_KEY is not set")
-        assert "DEEPSEEK_API_KEY=your_key" in line
+        # The shell's own form ($env: in PowerShell, export elsewhere), and
+        # the line for ~/.markitai/.env
+        assert env_set_command("DEEPSEEK_API_KEY") in line
+        assert "add DEEPSEEK_API_KEY=your_key to ~/.markitai/.env" in line
         envelope = json.loads(result.stdout)
         assert envelope["ok"] is False
         assert envelope["error"].startswith("DEEPSEEK_API_KEY is not set")
@@ -243,7 +247,7 @@ class TestRefusedKey:
         stderr = result.stderr
         assert stderr.count(AUTH_FAILS) == 1
         assert stderr.count("rejected the API key in DEEPSEEK_API_KEY") == 1
-        assert "DEEPSEEK_API_KEY=your_key" in stderr
+        assert f"set a valid one with: {env_set_command('DEEPSEEK_API_KEY')}" in stderr
         for repeated in (
             "Authentication failed for model",
             "LLM processing failed",
