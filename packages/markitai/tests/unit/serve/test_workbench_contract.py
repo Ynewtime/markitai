@@ -1812,6 +1812,44 @@ class TestStaticUi:
         assert old_assets.status_code == 404
         assert head.status_code == 200
 
+    @pytest.mark.parametrize("path", ["/does-not-exist", "/jobs/abc", "/settings/nope"])
+    async def test_an_unknown_page_is_the_shell_with_404(
+        self, tmp_path: Path, path: str
+    ) -> None:
+        """Contract v1.4: the UI shows its own "Page not found" view."""
+        async with _client(self._app(tmp_path)) as client:
+            page = await client.get(
+                path,
+                headers={
+                    "Accept": "text/html,application/xhtml+xml",
+                    "If-None-Match": "*",
+                    "Accept-Encoding": "identity",
+                },
+            )
+        assert page.status_code == 404
+        assert page.text == "<!doctype html><title>Markitai</title>"
+        assert page.headers["content-type"] == "text/html; charset=utf-8"
+        assert page.headers["content-security-policy"] == CSP
+        assert page.headers["x-content-type-options"] == "nosniff"
+
+    @pytest.mark.parametrize(
+        ("method", "path", "accept"),
+        [
+            ("GET", "/does-not-exist", "application/json"),
+            ("GET", "/does-not-exist", "*/*"),
+            ("GET", "/ui/nope.js", "text/html"),
+            ("GET", "/api/nope", "text/html"),
+            ("GET", "/api", "text/html"),
+            ("POST", "/does-not-exist", "text/html"),
+        ],
+    )
+    async def test_other_misses_stay_json(
+        self, tmp_path: Path, method: str, path: str, accept: str
+    ) -> None:
+        async with _client(self._app(tmp_path)) as client:
+            response = await client.request(method, path, headers={"Accept": accept})
+        check_error(response, 404, "route_not_found")
+
     async def test_static_needs_no_token(self, tmp_path: Path) -> None:
         app_js = b"x"
         bundle = _bundle(

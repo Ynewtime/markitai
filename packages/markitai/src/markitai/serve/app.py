@@ -110,7 +110,12 @@ from markitai.serve.schemas import (
 )
 from markitai.serve.tickets import LIFETIME_S as TICKET_LIFETIME_S
 from markitai.serve.tickets import DownloadTickets, downloadable
-from markitai.serve.workbench import BUNDLED_DIR, Workbench, mount_workbench
+from markitai.serve.workbench import (
+    BUNDLED_DIR,
+    Workbench,
+    missing_page,
+    mount_workbench,
+)
 from markitai.utils.url_redaction import (
     mask_url_credentials,
     redact_log_record,
@@ -2200,12 +2205,18 @@ def create_app(
     @app.exception_handler(StarletteHTTPException)
     async def _http_error_with_code(
         request: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
+    ) -> Response:
         """Answer every refusal with ``{detail, code, reason}``.
 
         ``detail`` stays the human sentence; ``code`` follows the status and
-        ``reason`` is the stable cause clients translate.
+        ``reason`` is the stable cause clients translate. A browser asking
+        for a page that does not exist gets the workbench instead, still 404.
         """
+        workbench = getattr(request.app.state, "workbench", None)
+        if exc.status_code == 404 and workbench is not None:
+            page = missing_page(workbench, request)
+            if page is not None:
+                return page
         if exc.status_code == 400 and _ran_out_of_open_files(exc):
             # Not a malformed body: the server lacked the file descriptors
             logger.warning(
