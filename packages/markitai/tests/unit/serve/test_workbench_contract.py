@@ -66,6 +66,9 @@ def null(kind: Any) -> F:
 
 
 ITEM_KIND = frozenset({"file", "url"})
+PROVIDER_GROUP = frozenset(
+    {"common", "subscriptions", "makers", "clouds", "inference", "gateways", "local"}
+)
 OPTION_KEYS = (
     "preset",
     "llm",
@@ -243,6 +246,31 @@ SHAPES: dict[str, dict[str, F]] = {
         "width": F("num"),
         "height": F("num"),
         "lines": F(["@PageTextLine"]),
+    },
+    "ProviderCard": {
+        "id": F("str"),
+        "provider_id": opt("str"),
+        "deployment_id": opt("str"),
+        "provider": F("str"),
+        "label": F("str"),
+        # The contract's four kinds, and Python's "local_cli" and "oauth" for
+        # its subscription runtimes: the UI treats every kind but configured
+        # and environment as a provider to connect
+        "kind": F("str"),
+        "status": F("str"),
+        "source": F("str"),
+        "credential": opt("str"),
+        "api_key_configured": opt("bool"),
+        "api_base_configured": opt("bool"),
+        "api_base": opt("str"),
+        "model_count": opt("int"),
+        "supports_discovery": F("bool"),
+        "default_base": opt("str"),
+        "key_variable": opt("str"),
+        "key_optional": opt("bool"),
+        "group": opt(PROVIDER_GROUP),
+        "icon": opt("str"),
+        "aliases": opt(["str"]),
     },
     "ProviderCredentials": {
         "api_key": null("str"),
@@ -1660,6 +1688,8 @@ class TestSettings:
                 f"/api/settings/llm/deployments/nope?expected_revision={view['revision']}"
             )
             config_open = await client.post("/api/settings/llm/config/open")
+        for listed in cards["providers"]:
+            check_shape("ProviderCard", listed, f"ProviderCard {listed['id']}")
         check_shape("ProviderCredentials", credentials.json())
         assert credentials.json()["api_key"] == "sk…cret"
         assert "secret" not in credentials.text.replace("sk…cret", "")

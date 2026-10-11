@@ -44,6 +44,7 @@ COMPONENTS: dict[str, str] = {
     "OriginalDescriptor": "OriginalDescriptor",
     "PageTextLine": "PageTextLine",
     "PageText": "PageText",
+    "ProviderCard": "ProviderConnection",
     "ProviderCredentials": "LLMProviderCredentials",
     "SettingsView": "LLMSettingsPayload",
 }
@@ -51,11 +52,14 @@ COMPONENTS: dict[str, str] = {
 #: Contract fields only the Rust server sends (the UI treats them as optional).
 RUST_ONLY: dict[str, set[str]] = {
     "JobSnapshot": {"persistence_error"},
+    "ProviderCard": {"default_base", "key_variable", "key_optional"},
     "ProviderCredentials": {"api_key_source"},
 }
 
 #: Fields this server sends beyond the contract (the UI ignores them).
 PYTHON_EXTRAS: dict[str, set[str]] = {
+    # The model a subscription runtime's card starts with
+    "ProviderCard": {"default_model"},
     # Python 1.2's name for the credentials display value, kept for 1.2 clients
     "ProviderCredentials": {"api_key_masked"},
 }

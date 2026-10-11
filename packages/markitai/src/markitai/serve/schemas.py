@@ -446,6 +446,23 @@ class ProviderConnection(BaseModel):
     api_base_configured: bool | None = None
     api_base: str | None = None
     model_count: int | None = None
+    # Provider picker (contract v1.5, markitai.serve.provider_catalog): the
+    # catalog group, the brand mark's key (None: a monogram) and further
+    # model prefixes and searched names
+    group: (
+        Literal[
+            "common",
+            "subscriptions",
+            "makers",
+            "clouds",
+            "inference",
+            "gateways",
+            "local",
+        ]
+        | None
+    ) = None
+    icon: str | None = None
+    aliases: list[str] | None = None
 
 
 class ProviderConnectionList(BaseModel):

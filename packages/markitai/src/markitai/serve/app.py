@@ -2356,6 +2356,7 @@ def create_app(
             detect_provider_connections,
             provider_label,
         )
+        from markitai.serve.provider_catalog import annotate_card
 
         state = _state(request)
         detected = await detect_provider_connections(
@@ -2465,7 +2466,7 @@ def create_app(
                     "supports_discovery": True,
                 }
             )
-        return {"providers": providers}
+        return {"providers": [annotate_card(dict(card)) for card in providers]}
 
     @app.get(
         "/api/settings/llm/providers/{provider_id}/credentials",
