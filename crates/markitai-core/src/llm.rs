@@ -928,18 +928,29 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                 continue;
             }
         };
-        let endpoint_base = endpoint_base
-            .or_else(|| {
-                known.base_vars.iter().find_map(|name| {
-                    allow_environment
-                        .then(|| env.get(*name))
-                        .flatten()
-                        .filter(|value| !value.is_empty())
-                        .cloned()
-                })
+        let endpoint_base = endpoint_base.or_else(|| {
+            known.base_vars.iter().find_map(|name| {
+                allow_environment
+                    .then(|| env.get(*name))
+                    .flatten()
+                    .filter(|value| !value.is_empty())
+                    .cloned()
             })
-            .or_else(|| known.base.map(str::to_owned));
-        let Some(endpoint_base) = endpoint_base else {
+        });
+        let endpoint_base = match endpoint_base {
+            Some(base) => Some(base),
+            None => match providers::default_base(known, model_name, env, allow_environment) {
+                Ok(base) => base,
+                Err(error) => {
+                    last_error = Some(error);
+                    continue;
+                }
+            },
+        };
+        let model_name = providers::wire_model(known, model_name);
+        let model_name = model_name.as_str();
+        let Some(endpoint_base) = endpoint_base.map(|base| providers::normalize_base(known, base))
+        else {
             last_error = Some(Error::Config(format!(
                 "LLM provider '{provider}' has no default endpoint; set api_base or {}",
                 known.base_vars.join(" or ")

@@ -227,11 +227,114 @@ Notes on individual entries:
 - `hosted_vllm/`, `lm_studio/`, `ollama/` and `ollama_chat/` deployments are
   usable without a key; the hosted APIs count as routable only with one.
   `ollama_chat/` also reads `OLLAMA_API_BASE`, as LiteLLM does.
-- Left out because a fixed default could not be verified: DashScope (its
-  current documentation gives workspace-specific hosts), GitHub Models, and the
-  smaller LiteLLM entries (Codestral, llamafile, Featherless, Hyperbolic, Lambda,
-  Nscale, Volcengine and others). Each still works as `openai/<model>` with its
-  `api_base`.
+
+### Further OpenAI-compatible prefixes
+
+The other OpenAI-compatible prefixes the reference reaches through LiteLLM
+1.104.2 are routed the same way, with LiteLLM's model naming and key
+variables. Their bases were checked against each provider's documentation on
+2026-10-11; where the documented host or key name is newer than LiteLLM's,
+the documented one is used or listed first, and where a provider documents
+none, LiteLLM's default is used and the last column says so. They are not
+offered as `serve` provider cards; configure them by name (or use the
+OpenAI-compatible endpoint card with the base URL).
+
+| Prefix | Default base URL | Key variables | Base variable | Checked against |
+|---|---|---|---|---|
+| `ai21_chat/`, `ai21/` | `https://api.ai21.com/studio/v1` | `AI21_API_KEY` | `AI21_API_BASE` | docs.ai21.com/reference/jamba-1-6-api-ref |
+| `volcengine/` | `https://ark.cn-beijing.volces.com/api/v3` | `ARK_API_KEY`, `VOLCENGINE_API_KEY` | `VOLCENGINE_API_BASE` | volcengine.com/docs/82379/1330626 (BytePlus: `https://ark.ap-southeast.bytepluses.com/api/v3` as `api_base`) |
+| `codestral/` | `https://codestral.mistral.ai/v1` | `CODESTRAL_API_KEY` | `CODESTRAL_API_BASE` | LiteLLM's default; Mistral's current docs name only `api.mistral.ai` |
+| `tencent/` | `https://tokenhub-intl.tencentcloudmaas.com/v1` | `TOKENHUB_API_KEY`, `TENCENT_API_KEY` | `TENCENT_API_BASE` | tencentcloud.com/document/product/1300/78941 |
+| `friendliai/` | `https://api.friendli.ai/serverless/v1` | `FRIENDLIAI_API_KEY`, `FRIENDLI_TOKEN` | `FRIENDLI_API_BASE` | friendli.ai/docs/guides/openai-compatibility |
+| `galadriel/` | `https://api.galadriel.com/v1/verified` | `GALADRIEL_API_KEY` | `GALADRIEL_API_BASE` | docs.galadriel.com/for-agents-developers/quickstart (LiteLLM omits `/verified`) |
+| `baseten/` | `https://inference.baseten.co/v1`; an 8-character model ID is a dedicated deployment at `https://model-<id>.api.baseten.co/environments/production/sync/v1` | `BASETEN_API_KEY` | `BASETEN_API_BASE` | docs.baseten.co/inference/model-apis/overview |
+| `meta/` | `https://api.meta.ai/v1` | `MODEL_API_KEY`, `META_API_KEY` | `META_API_BASE` | dev.meta.ai/docs/api-reference |
+| `featherless_ai/` | `https://api.featherless.ai/v1` | `FEATHERLESS_API_KEY`, `FEATHERLESS_AI_API_KEY` | `FEATHERLESS_AI_API_BASE`, `FEATHERLESS_API_BASE` | featherless.ai/docs/getting-started |
+| `nscale/` | `https://inference.api.nscale.com/v1` | `NSCALE_SERVICE_TOKEN`, `NSCALE_API_KEY` | `NSCALE_API_BASE` | docs.nscale.com/docs/use-cases/chat |
+| `dashscope/` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `DASHSCOPE_API_KEY` | `DASHSCOPE_API_BASE` | LiteLLM's default; Model Studio now documents per-workspace regional hosts (alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope), set yours as `api_base` |
+| `qwencloud/` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | `QWENCLOUD_API_KEY`, `DASHSCOPE_API_KEY` | `QWENCLOUD_API_BASE` | LiteLLM's default (Model Studio's Singapore host) |
+| `qwen_ai_platform/` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `QWEN_AI_PLATFORM_API_KEY`, `DASHSCOPE_API_KEY` | `QWEN_AI_PLATFORM_API_BASE` | LiteLLM's default |
+| `modelscope/` | `https://api-inference.modelscope.cn/v1` | `MODELSCOPE_API_KEY` | `MODELSCOPE_API_BASE` | LiteLLM's default (modelscope.cn renders its docs only in a browser) |
+| `morph/` | `https://api.morphllm.com/v1` | `MORPH_API_KEY` | `MORPH_API_BASE` | docs.morphllm.com/llms.txt |
+| `inception/` | `https://api.inceptionlabs.ai/v1` | `INCEPTION_API_KEY` | `INCEPTION_API_BASE` | docs.inceptionlabs.ai/api-reference/chat/create-a-chat-completion |
+| `aiml/` | `https://api.aimlapi.com/v1` | `AIML_API_KEY` | `AIML_API_BASE` | docs.aimlapi.com/quickstart/simple-model |
+| `edenai/` | `https://api.edenai.run/v3` | `EDENAI_API_KEY` | `EDENAI_API_BASE` | edenai.co/docs/v3/llms/chat-completions |
+| `wandb/` | `https://api.inference.wandb.ai/v1` | `WANDB_API_KEY` | `WANDB_API_BASE` | docs.coreweave.com/products/inference/serverless/api-reference |
+| `publicai/` | `https://api.publicai.co/v1` | `PUBLICAI_API_KEY` | `PUBLICAI_API_BASE` | platform.publicai.co/docs |
+| `veniceai/` | `https://api.venice.ai/api/v1` | `VENICE_API_KEY`, `VENICE_AI_API_KEY` | `VENICEAI_API_BASE` | docs.venice.ai/getting-started/quick-start |
+| `xiaomi_mimo/` | `https://api.xiaomimimo.com/v1` | `MIMO_API_KEY`, `XIAOMI_MIMO_API_KEY` | `XIAOMI_MIMO_API_BASE` | mimo.mi.com/static/docs/quick-start/summary/first-api-call.md |
+| `scaleway/` | `https://api.scaleway.ai/v1` | `SCW_SECRET_KEY` | `SCALEWAY_API_BASE` | scaleway.com/en/docs/generative-apis/api-cli/using-chat-api |
+| `synthetic/` | `https://api.synthetic.new/openai/v1` | `SYNTHETIC_API_KEY` | `SYNTHETIC_API_BASE` | dev.synthetic.new/docs/api/overview |
+| `apertis/` | `https://api.apertis.ai/v1` | `STIMA_API_KEY` | `APERTIS_API_BASE` | docs.apertis.ai/getting-started/quick-start (LiteLLM: `api.stima.tech`) |
+| `nano-gpt/` | `https://nano-gpt.com/api/v1` | `NANOGPT_API_KEY` | `NANOGPT_API_BASE` | docs.nano-gpt.com/api-reference/endpoint/chat-completion |
+| `poe/` | `https://api.poe.com/v1` | `POE_API_KEY` | `POE_API_BASE` | creator.poe.com/docs/external-applications/openai-compatible-api |
+| `chutes/` | `https://llm.chutes.ai/v1` | `CHUTES_API_KEY` | `CHUTES_API_BASE` | chutes.ai/docs/api-reference/authentication |
+| `abliteration/` | `https://api.abliteration.ai/v1` | `ABLIT_KEY`, `ABLITERATION_API_KEY` | `ABLITERATION_API_BASE` | abliteration.ai/docs |
+| `gmi/` | `https://api.gmi-serving.com/v1` | `GMI_API_KEY` | `GMI_API_BASE` | docs.gmicloud.ai/inference-engine/api-reference/llm-api-reference |
+| `sarvam/` | `https://api.sarvam.ai/v1` | `SARVAM_API_KEY` | `SARVAM_API_BASE` | docs.sarvam.ai/api-reference-docs/chat/chat-completions (Bearer accepted) |
+| `assemblyai/` | `https://llm-gateway.assemblyai.com/v1` | `ASSEMBLYAI_API_KEY` | `ASSEMBLYAI_API_BASE` | assemblyai.com/docs/llm-gateway/quickstart (EU: `https://llm-gateway.eu.assemblyai.com/v1`) |
+| `aihubmix/` | `https://aihubmix.com/v1` | `AIHUBMIX_API_KEY` | `AIHUBMIX_API_BASE` | docs.aihubmix.com/cn/quick-start |
+| `crusoe/` | `https://api.inference.crusoecloud.com/v1` | `CRUSOE_API_KEY` | `CRUSOE_API_BASE` | docs.crusoecloud.com/quickstart/getting-started-with-serverless-inference (LiteLLM's host is older) |
+| `darkbloom/` | `https://api.darkbloom.dev/v1` | `DARKBLOOM_API_KEY` | `DARKBLOOM_API_BASE` | docs.darkbloom.dev/api/chat-completions |
+| `neosantara/` | `https://api.neosantara.xyz/v1` | `NEOSANTARA_API_KEY` | `NEOSANTARA_API_BASE` | docs.neosantara.xyz/id/gateway/chat-completions |
+| `tensormesh/` | `https://serverless.tensormesh.ai/v1` | `TENSORMESH_INFERENCE_API_KEY` | `TENSORMESH_SERVERLESS_BASE_URL` | LiteLLM's default (Tensormesh documents no serverless API) |
+| `parasail/` | `https://api.parasail.io/v1` | `PARASAIL_API_KEY` | `PARASAIL_API_BASE` | docs.parasail.io/parasail-docs/api-reference/authentication |
+| `libertai/` | `https://api.libertai.io/v1` | `LIBERTAI_API_KEY` | `LIBERTAI_API_BASE` | docs.libertai.io/apis/text/usage.html |
+| `empiriolabs/` | `https://api.empiriolabs.ai/v1` | `EMPIRIOLABS_API_KEY` | `EMPIRIOLABS_API_BASE` | docs.empiriolabs.ai/getting-started |
+| `cognition/` | `https://api.cognition.ai/v1` | `COGNITION_API_KEY` | `COGNITION_API_BASE` | LiteLLM's default (Cognition documents no chat API) |
+| `pinstripes/` | `https://api.pinstripes.io/v1` | `PINSTRIPES_API_KEY` | `PINSTRIPES_API_BASE` | pinstripes.io (LiteLLM omits `api.`) |
+| `scx-ai/` | `https://api.scx.ai/v1` | `SCX_API_KEY` | `SCX_API_BASE` | scx.ai model pages |
+| `nadir/` | `https://api.getnadir.com/v1` | `NADIR_API_KEY` | `NADIR_API_BASE` | getnadir.com/docs |
+| `amazon_nova/` | `https://api.nova.amazon.com/v1` | `NOVA_API_KEY`, `AMAZON_NOVA_API_KEY` | `AMAZON_NOVA_API_BASE` | github.com/amazon-nova-api/getting-started-with-nova-api |
+| `minimax/` | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` | `MINIMAX_API_BASE` | platform.minimax.io/docs/api-reference/text-openai-api (China: `https://api.minimax.cn/v1` as `api_base`) |
+| `ovhcloud/` | `https://oai.endpoints.kepler.ai.cloud.ovh.net/v1` | `OVH_AI_ENDPOINTS_ACCESS_TOKEN`, `OVHCLOUD_API_KEY` | `OVHCLOUD_API_BASE` | docs.ovhcloud.com AI Endpoints guides |
+| `compactifai/` | `https://api.compactif.ai/v1` | `COMPACTIFAI_API_KEY` | `COMPACTIFAI_API_BASE` | docs.compactif.ai/api_reference |
+| `gradient_ai/` | `https://inference.do-ai.run/v1` | `MODEL_ACCESS_KEY`, `GRADIENT_AI_API_KEY`, `DIGITALOCEAN_TOKEN` | `GRADIENT_AI_API_BASE` | docs.digitalocean.com/products/inference/how-to/use-chat-completions-api (LiteLLM omits `/v1`) |
+| `helicone/` | `https://ai-gateway.helicone.ai` | `HELICONE_API_KEY` | `HELICONE_API_BASE` | docs.helicone.ai/gateway/overview |
+| `vercel_ai_gateway/` | `https://ai-gateway.vercel.sh/v1` | `AI_GATEWAY_API_KEY`, `VERCEL_AI_GATEWAY_API_KEY`, `VERCEL_OIDC_TOKEN` | `VERCEL_AI_GATEWAY_API_BASE` | vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions |
+| `cometapi/` | `https://api.cometapi.com/v1` | `COMETAPI_KEY`, `COMETAPI_API_KEY` | `COMETAPI_API_BASE`, `COMETAPI_BASE_URL` | apidoc.cometapi.com/guides/use-cometapi-with-openai-sdk |
+| `cohere/`, `cohere_chat/` | `https://api.cohere.ai/compatibility/v1` | `COHERE_API_KEY`, `CO_API_KEY` | `COHERE_API_BASE` | docs.cohere.com/docs/compatibility-api |
+| `huggingface/` | `https://router.huggingface.co/v1` | `HF_TOKEN`, `HUGGINGFACE_API_KEY` | `HF_API_BASE`, `HUGGINGFACE_API_BASE` | huggingface.co/docs/inference-providers |
+| `bedrock_mantle/` | `https://bedrock-mantle.<region>.api.aws/v1` (`/openai/v1` for some models) | `AWS_BEARER_TOKEN_BEDROCK`, `BEDROCK_MANTLE_API_KEY` | `BEDROCK_MANTLE_API_BASE` | docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions.html |
+| `cloudflare/` | `https://api.cloudflare.com/client/v4/accounts/<CLOUDFLARE_ACCOUNT_ID>/ai/v1` | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_API_TOKEN` | `CLOUDFLARE_API_BASE` | developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility |
+| `datarobot/` | `https://app.datarobot.com/api/v2/genai/llmgw` | `DATAROBOT_API_TOKEN` | `DATAROBOT_ENDPOINT` | docs.datarobot.com/en/docs/agentic-ai/genai-code/dr-llm-gateway.html |
+| `databricks/` | none: `https://<workspace>/serving-endpoints` | `DATABRICKS_TOKEN`, `DATABRICKS_API_KEY` | `DATABRICKS_API_BASE` | docs.databricks.com/aws/en/large-language-models/llm-serving-intro |
+| `heroku/` | none: `<INFERENCE_URL>/v1` | `INFERENCE_KEY`, `HEROKU_API_KEY` | `HEROKU_API_BASE` | devcenter.heroku.com/articles/heroku-inference-api-v1-chat-completions |
+| `azure_ai/` | none: `https://<resource>.openai.azure.com/openai/v1` | `AZURE_INFERENCE_CREDENTIAL`, `AZURE_AI_API_KEY` | `AZURE_AI_API_BASE` | learn.microsoft.com/azure/foundry/openai/api-version-lifecycle |
+| `litellm_proxy/` | none (key optional) | `LITELLM_PROXY_API_KEY` | `LITELLM_PROXY_API_BASE` | LiteLLM proxy |
+| `openai_like/` | none (key optional) | `OPENAI_LIKE_API_KEY` | `OPENAI_LIKE_API_BASE` | LiteLLM |
+| `llamafile/` | `http://127.0.0.1:8080/v1` | `LLAMAFILE_API_KEY` (optional) | `LLAMAFILE_API_BASE` | github.com/mozilla-ai/llamafile docs/api.md |
+| `docker_model_runner/` | `http://localhost:12434/engines/v1` | `DOCKER_MODEL_RUNNER_API_KEY` (optional) | `DOCKER_MODEL_RUNNER_API_BASE` | docs.docker.com/ai/model-runner/api-reference (LiteLLM's port 22088 is not documented) |
+| `lemonade/` | `http://localhost:13305/api/v1` | `LEMONADE_API_KEY` (optional) | `LEMONADE_API_BASE` | github.com/lemonade-sdk/lemonade docs/api/openai.md (LiteLLM: port 8000) |
+| `xinference/` | `http://127.0.0.1:9997/v1` | `XINFERENCE_API_KEY` (optional) | `XINFERENCE_API_BASE` | inference.readthedocs.io, getting started |
+| `oobabooga/` | `http://127.0.0.1:5000/v1` | `OOBABOOGA_API_KEY` (optional) | `OOBABOOGA_API_BASE` | github.com/oobabooga/textgen wiki, OpenAI API |
+
+How some of them name models and endpoints:
+
+- `huggingface/<provider>/<org>/<model>` is sent as `<org>/<model>:<provider>`,
+  the router's way of choosing an inference provider; `huggingface/<org>/<model>`
+  lets the router choose. Unlike LiteLLM, no provider mapping is fetched first.
+- `bedrock_mantle/<region>/<model>` chooses the AWS region; otherwise
+  `BEDROCK_MANTLE_REGION`, `AWS_REGION_NAME`, `AWS_REGION`, then `us-east-1`.
+  GPT-5/6, Gemma 4 and Grok 4 models are served under `/openai/v1`, the others
+  under `/v1` (the routes LiteLLM's price map records). This is Amazon
+  Bedrock with a Bedrock API key; see [unsupported prefixes](#unsupported-prefixes)
+  for `bedrock/` itself.
+- `cloudflare/@cf/<publisher>/<model>` needs `CLOUDFLARE_ACCOUNT_ID` (or an
+  `api_base`); the key is a Workers AI API token.
+- `datarobot/` accepts `DATAROBOT_ENDPOINT` as the usual API endpoint
+  (`…/api/v2`) and adds the LLM gateway path, as LiteLLM does.
+- `azure_ai/` expects the v1 base (`…/openai/v1`): Microsoft retired the Azure
+  AI Inference route LiteLLM's default used. Azure OpenAI deployments keep
+  `azure/`.
+- `databricks/` and `heroku/` have no fixed host; set `api_base` (for Heroku,
+  `INFERENCE_URL` with `/v1`) or the base variable.
+- Prefixes of services that ended are refused with the reason: `github/`
+  (GitHub Models retired 2026-07-30), `meta_llama/` (replaced by `meta/`),
+  `lambda_ai/`, `hyperbolic/`, `anyscale/`, `empower/`, `clarifai/`, `v0/` and
+  `llamagate/` (its domain no longer serves the provider, so no key is sent
+  there). `github_copilot/` names LiteLLM's own sign-in; Copilot is
+  `copilot/<model>` here.
 
 None of these prefixes has a structured-output capability entry, so their
 documents use the JSON-text mode described below, and none is in the [pricing
@@ -252,7 +355,7 @@ These tables describe implemented request shapes, not live compatibility tests
 against every vendor. No provider network call is required by the test suite.
 `markitai doctor` accepts every prefix of this build, and so do `markitai init`'s
 guided and interactive model prompts. The browser workbench of `serve` offers
-every prefix of the table above as a provider card with its default base URL and
+every prefix of the first table as a provider card with its default base URL and
 first key variable; model discovery lists a provider's models through
 `GET <base>/models` with the key as Bearer (Together AI's bare-array answer
 included), using the base variable when no `api_base` is given. Perplexity, Z.ai

@@ -22,6 +22,7 @@
 - Cloudflare URL/文件转换及 Jina/Defuddle 抓取回退，遵循远程处理授权和仅本地策略。工作台按操作请求授权，隐私提示说明图片和 URL 何时发往远程服务。
 - 加权模型路由、回退组、重试、并发和请求预算、自定义提示词、结构化文档元数据及图片描述。持久化抓取/LLM 缓存和相同请求合并减少重复处理。
 - 新增多种 OpenAI 兼容提供商、模型发现及连接探测；可通过受支持的官方运行时使用 Copilot、Claude 和 ChatGPT 订阅转换，并查询认证状态、委托官方登录。
+- Python markitai 经 LiteLLM 可用的其余 OpenAI 兼容前缀现在也能路由（新增 69 个，从 `ai21/`、`volcengine/` 到 `cohere/`、`huggingface/`、`bedrock_mantle/`、`cloudflare/`、`databricks/`、`llamafile/` 与 `docker_model_runner/`），模型命名与密钥变量沿用 LiteLLM。各基础 URL 已于 2026-10-11 对照提供商文档核对；提供商文档给出比 LiteLLM 更新的主机或密钥名时，使用文档中的写法或优先读取它。`huggingface/<provider>/<org>/<model>` 让路由器使用指定的推理提供商，`bedrock_mantle/<region>/<model>` 与 AWS 区域变量决定 Bedrock 区域，Workers AI 读取 `CLOUDFLARE_ACCOUNT_ID`。已停止服务的前缀（GitHub Models、Meta 的 Llama API、Lambda 与 Hyperbolic 推理等）会给出原因并拒绝，而不是笼统报错。
 - OpenAI 文本 Batch 提交、收集和重启续接，附私有请求记录、状态核对及输出归属检查；区分已观测用量、未知定价和失败尝试成本。
 - `--llm-batch` 对 `anthropic/<model>` 部署也会提交到 Anthropic Message Batches，与 Python markitai 相同：提交、等待、`--llm-batch-collect`、`--resume` 与 `llm.on_failure` 的处理都一样，请求沿用实时请求的结构化模式，成本按批处理价计算。请求在唯一一次创建调用中随附发送，发送前与已保存的摘要核对；每个 custom ID 都带有本次提交的 nonce，因此创建结果不确定时，通过打开同等规模、已结束批次的结果来核对，绝不重新创建。errored、canceled、expired 的请求是没有用量的条目失败，Anthropic 不对它们计费。
 - 升级后可以收回 Python markitai 1.2.x 提交后未收回的批处理：`--llm-batch-collect ID -o DIR`（目录里只有一个时也可用 `--llm-batch --resume -o DIR`）只读取 Python 的 `.markitai/batch-<ID>/` 状态、不做改动，将其转为同一 OpenAI 或 Anthropic 模型的原生任务，并用 Python 已付费的回答发布 `.llm.md`。Python 的图片与页码/幻灯片占位符按其自身规则重新计算（并与其保存的请求核对），每个都必须原样返回一次；该次运行的 `--alt` 标题与 `--desc` 描述按 Python 的方式应用。向这样的目录做普通 `--llm-batch` 运行时，会提示待收回的批处理及其收回命令。
