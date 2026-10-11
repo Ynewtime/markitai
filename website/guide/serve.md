@@ -107,6 +107,7 @@ The workbench runs on a small REST + SSE API that scripts can call directly. Err
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | Retry an item, or LLM-enhance it with `operation: "enhance"` |
 | `DELETE /api/jobs/{job_id}/items/{item_id}` | Permanently remove an item with its upload, outputs, images and screenshots |
 | `GET /api/jobs/{job_id}/items/{item_id}/result` | Item result (`?max_bytes=` for an excerpt); sibling assets via `GET /api/jobs/{job_id}/files/{path}` |
+| `GET /api/jobs/{job_id}/items/{item_id}/assets/{path}` | One of the item's own extracted images (PNG, JPEG, GIF, WebP, AVIF), inline, for display |
 | `GET /api/jobs/{job_id}/items/{item_id}/original` | What can be shown of the item's original; `/original/file`, `/original/pages/{n}?width=` and `/original/pages/{n}/text` serve it |
 | `GET /api/jobs/{job_id}/archive` | Download the job as a zip |
 | `POST /api/download-tickets` | A single-use, one-minute `?ticket=` link for one download |

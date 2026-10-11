@@ -161,6 +161,7 @@ class TestCapabilitiesAndRoot:
             "original": True,
             "result_excerpt": True,
             "job_labels": True,
+            "item_assets": True,
         }
         # Loopback is trusted: Cloudflare's state is reported, not hidden
         assert data["remote_services"]["cloudflare"]["reason"] in (

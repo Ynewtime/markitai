@@ -1858,6 +1858,76 @@ def _job_archive_folder(job: Job) -> str:
     return _sanitize_upload_name(split_output_name(Path(output).name))
 
 
+#: The images an item's asset route serves, by suffix (contract v1.6 6.2):
+#: rasters only, never SVG or any other file a browser could run or render
+_ITEM_IMAGE_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+}
+
+
+def _item_result_files(
+    job: Job, item: JobItem
+) -> tuple[Path, str, Path, Path, str, Path] | None:
+    """Where a finished item's result lives, or None when it has none.
+
+    Returns the resolved out dir, the output base name, the ``.md`` and
+    ``.llm.md`` paths, the selected variant and its Markdown file. The
+    result and asset routes both read it, so an image is served exactly
+    when the result lists it.
+    """
+    if item.status != "done" or item.output is None:
+        return None
+    out_dir = job.out_dir.resolve()
+    output_path = (out_dir / item.output).resolve()
+    if not output_path.is_relative_to(out_dir):
+        return None
+    # The item's known base, not split_output_name(output): an upload
+    # named "notes.llm" writes notes.llm.md, which stripping would read
+    # as sibling "notes"'s enhanced output and serve notes.md instead.
+    base_name = item_base_name(item) or split_output_name(output_path.name)
+    base_path, llm_path = markdown_pair(output_path.parent, base_name)
+    # Honor the item's selected variant rather than probing llm-first: a
+    # non-LLM retry after an earlier enhance leaves a stale .llm.md on disk
+    # (pruned on success, but this stays correct even if it lingers).
+    if item.llm_enhanced and llm_path.is_file():
+        return out_dir, base_name, base_path, llm_path, "llm", llm_path
+    if base_path.is_file():
+        return out_dir, base_name, base_path, llm_path, "base", base_path
+    if llm_path.is_file():
+        return out_dir, base_name, base_path, llm_path, "llm", llm_path
+    return None
+
+
+def _item_assets(
+    item: JobItem, out_dir: Path, base_name: str, base_path: Path, llm_path: Path
+) -> list[Path]:
+    """The asset files a finished item's result lists.
+
+    Same ownership rule item deletion uses (serve.artifacts): the asset
+    prefix is the output base name, and references tie URL screenshots
+    (named after the URL) to their item.
+    """
+    return item_asset_files(
+        out_dir,
+        base_name,
+        (base_path, llm_path) if item.llm_enhanced else (base_path,),
+    )
+
+
+def _etag_matches(header: str | None, etag: str) -> bool:
+    """``If-None-Match`` against *etag* by weak comparison (lists, ``*``)."""
+    ours = etag.removeprefix("W/")
+    return any(
+        tag == "*" or tag.removeprefix("W/") == ours
+        for tag in (part.strip() for part in (header or "").split(","))
+    )
+
+
 def _item_claimed_files(out_dir: Path, item: JobItem) -> set[Path]:
     """Markdown outputs and asset files of *item* inside *out_dir*."""
     base_name = item_base_name(item)
@@ -2330,6 +2400,7 @@ def create_app(
                 "original": True,
                 "result_excerpt": True,
                 "job_labels": True,
+                "item_assets": True,
             },
             "remote_services": {
                 "cloudflare": _cloudflare_capability(
@@ -3713,30 +3784,10 @@ def create_app(
             limit = min(int(max_bytes), MAX_RESULT_BYTES)
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)
-        if item.status != "done" or item.output is None:
+        located = _item_result_files(job, item)
+        if located is None:
             raise ApiError(404, "result_unavailable", "item result not available")
-
-        out_dir = job.out_dir.resolve()
-        output_path = (out_dir / item.output).resolve()
-        if not output_path.is_relative_to(out_dir):
-            raise ApiError(404, "result_unavailable", "item result not available")
-
-        # The item's known base, not split_output_name(output): an upload
-        # named "notes.llm" writes notes.llm.md, which stripping would read
-        # as sibling "notes"'s enhanced output and serve notes.md instead.
-        base_name = item_base_name(item) or split_output_name(output_path.name)
-        base_path, llm_path = markdown_pair(output_path.parent, base_name)
-        # Honor the item's selected variant rather than probing llm-first: a
-        # non-LLM retry after an earlier enhance leaves a stale .llm.md on disk
-        # (pruned on success, but this stays correct even if it lingers).
-        if item.llm_enhanced and llm_path.is_file():
-            variant, markdown_path = "llm", llm_path
-        elif base_path.is_file():
-            variant, markdown_path = "base", base_path
-        elif llm_path.is_file():
-            variant, markdown_path = "llm", llm_path
-        else:
-            raise ApiError(404, "result_unavailable", "item result not available")
+        out_dir, base_name, base_path, llm_path, variant, markdown_path = located
 
         def collect() -> tuple[str, int, bool, list[dict[str, Any]]]:
             artifacts: list[dict[str, Any]] = []
@@ -3757,14 +3808,7 @@ def create_app(
             # stale sibling never makes the UI offer a spurious base↔llm diff.
             if item.llm_enhanced:
                 add_artifact(llm_path)
-            # Same ownership rule item deletion uses (serve.artifacts): the
-            # asset prefix is the output base name, and references tie URL
-            # screenshots (named after the URL) to their item.
-            for artifact in item_asset_files(
-                out_dir,
-                base_name,
-                (base_path, llm_path) if item.llm_enhanced else (base_path,),
-            ):
+            for artifact in _item_assets(item, out_dir, base_name, base_path, llm_path):
                 add_artifact(artifact)
             total = markdown_path.stat().st_size
             if limit is None and total > MAX_RESULT_BYTES:
@@ -3787,6 +3831,65 @@ def create_app(
             "truncated": truncated,
             "markdown_bytes": total,
         }
+
+    @app.get("/api/jobs/{job_id}/items/{item_id}/assets/{relpath:path}")
+    async def get_item_asset(
+        request: Request, job_id: str, item_id: str, relpath: str
+    ) -> Response:
+        """One of the item's own extracted images, inline, for the page.
+
+        Contract v1.6 section 6.2: only a raster image ``…/result`` lists
+        among this item's artifacts, inside the job's out dir and not
+        through a symlink; anything else is 404 ``file_not_found``.
+        """
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        missing = ApiError(404, "file_not_found", "file not found")
+        media_type = _ITEM_IMAGE_TYPES.get(Path(relpath).suffix.lower())
+        segments = relpath.split("/")
+        if (
+            media_type is None
+            or relpath.startswith("/")
+            or "\\" in relpath
+            or "\0" in relpath
+            or any(segment in ("", ".", "..") for segment in segments)
+        ):
+            raise missing
+        located = _item_result_files(job, item)
+        if located is None:
+            raise missing
+        out_dir, base_name, base_path, llm_path, _variant, _markdown = located
+
+        def read() -> tuple[bytes, str] | None:
+            owned = {
+                path.relative_to(out_dir).as_posix()
+                for path in _item_assets(item, out_dir, base_name, base_path, llm_path)
+            }
+            candidate = out_dir / relpath
+            if relpath not in owned or candidate.is_symlink():
+                return None
+            target = candidate.resolve()
+            if not target.is_relative_to(out_dir) or not target.is_file():
+                return None
+            stat = target.stat()
+            return target.read_bytes(), f'W/"{stat.st_size:x}-{stat.st_mtime_ns:x}"'
+
+        found = await asyncio.to_thread(read)
+        if found is None:
+            raise missing
+        data, etag = found
+        headers = {
+            "Content-Disposition": (
+                f"inline; filename*=UTF-8''{quote(segments[-1], safe='')}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, no-cache",
+            "ETag": etag,
+        }
+        if _etag_matches(request.headers.get("if-none-match"), etag):
+            return Response(status_code=304, headers=headers)
+        return Response(content=data, media_type=media_type, headers=headers)
 
     @app.get("/api/jobs/{job_id}/files/{relpath:path}")
     async def get_job_file(request: Request, job_id: str, relpath: str) -> FileResponse:
