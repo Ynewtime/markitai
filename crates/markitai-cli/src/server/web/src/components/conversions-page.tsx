@@ -14,7 +14,18 @@ import { Icon } from "./icons.tsx";
 import { ItemActions, ItemInspector, JobActions, JobInspector, Overview, type InspectorContext, type ItemActionsApi, type JobActionsApi } from "./inspector.tsx";
 import { PreviewPane } from "./preview-pane.tsx";
 import { Sheet } from "./sheet.tsx";
+import type { IconName } from "./icon-paths.ts";
 import { StateBlock, type StateAction } from "./state-block.tsx";
+
+/** A panel's content: why the list or the inspector has nothing to show, and the way on. */
+export interface PanelState {
+  icon: IconName;
+  title: string;
+  text: string;
+  primary?: StateAction;
+  secondary?: StateAction;
+  tone?: "error";
+}
 
 export interface ConversionsPageProps {
   t: Dict;
@@ -25,7 +36,9 @@ export interface ConversionsPageProps {
   loaded: boolean;
   /** Why the saved conversions cannot be shown (no token, no server, an
    * error), with the way out; null while they load or once they have. */
-  blocked: { text: string; action?: StateAction } | null;
+  blocked: PanelState | null;
+  /** The conversion a link named no longer exists. */
+  gone: PanelState | null;
   composer: ComponentChildren;
   notes: ComponentChildren;
   selected: string | null;
@@ -118,17 +131,19 @@ export function ConversionsPage(props: ConversionsPageProps) {
   const unloaded = !loaded && items.length === 0;
   const clearFilter = { label: t.clearFilter, run: () => (props.onQuery(""), props.onFilter("all")) };
   const noMatch = query.trim() ? t.filterNoMatchQuery(query.trim()) : filter === "failed" ? t.filterNoFailed : filter === "notices" ? t.filterNoNotices : t.filterNoMatch;
+  const gone = props.gone && selected === null ? <StateBlock {...props.gone} /> : null;
   const body = (
     <div class={`split${previewing && !phone ? " has-preview" : ""}${previewing && !phone && (wide || mode === "compare") ? " is-wide" : ""}${empty || unloaded ? " is-single" : ""}`}>
       <div class="list-col">
+        {phone && gone}
         {empty ? (
-          <StateBlock title={t.emptyTitle} text={ctx.retentionDays ? t.emptyTextKept(ctx.retentionDays) : t.emptyText} />
+          <StateBlock icon="Tray" title={t.emptyTitle} text={ctx.retentionDays ? t.emptyTextKept(ctx.retentionDays) : t.emptyText} />
         ) : unloaded && props.blocked ? (
-          <StateBlock title={t.listBlockedTitle} text={props.blocked.text} actions={props.blocked.action ? [props.blocked.action] : []} tone="error" />
+          <StateBlock {...props.blocked} />
         ) : unloaded ? (
           <p class="pane-note">{t.loading}</p>
         ) : list.length === 0 ? (
-          <StateBlock text={noMatch} actions={[clearFilter]} />
+          <StateBlock icon="MagnifyingGlass" title={t.filterNoneTitle} text={noMatch} secondary={clearFilter} />
         ) : (
           <ConversionList
             t={t}
@@ -147,7 +162,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
         )}
       </div>
       {/* With nothing to inspect, the list column says it once. */}
-      {!phone && !empty && !unloaded && <div class="side-col">{previewing ? preview : inspector}</div>}
+      {!phone && !empty && !unloaded && <div class="side-col">{previewing ? preview : (gone ?? inspector)}</div>}
     </div>
   );
 

@@ -36,6 +36,7 @@ import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker } from "./model-picker.tsx";
 import { manageable, providerLabel, ProviderPicker } from "./provider-picker.tsx";
+import { StateBlock } from "./state-block.tsx";
 
 type Described = { text: string; detail: string };
 
@@ -1026,15 +1027,7 @@ export function ModelsSettings({
           ) : (
             <>
               {settings.deployments.length === 0 ? (
-                <div class="state">
-                  <p class="state-title">{t.setStatusNone}</p>
-                  <p class="state-text">{t.modelsEmptyText}</p>
-                  <div class="state-actions">
-                    <button ref={addButton} type="button" class="btn btn-primary" onClick={() => setAdding(true)}>
-                      {t.addModels}
-                    </button>
-                  </div>
-                </div>
+                <StateBlock icon="Cpu" title={t.setStatusNone} text={t.modelsEmptyText} primary={{ label: t.addModels, run: () => setAdding(true), ref: addButton }} />
               ) : (
                 <>
                   <div class="settings-summary">

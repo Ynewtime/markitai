@@ -156,9 +156,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 20605,
-    "sha256": "a6f9349ac2f927d4cee0888943fcfa630ae2c4eef5343da37480a6a53c36435e",
-    "obtained": "generated: the SVG path strings of 55 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 22899,
+    "sha256": "578096dfd514634b3ca7f1f6af89271b3d25dbaf1f592c69767f33768fcf11e1",
+    "obtained": "generated: the SVG path strings of 60 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -424,6 +424,31 @@
         "member": "package/dist/defs/XCircle.es.js",
         "bytes": 2694,
         "sha256": "4f9dc9d4bf68de480b9978071e614a2a2ae4a0d030924aeec0b088553b07c9ce"
+      },
+      {
+        "member": "package/dist/defs/Tray.es.js",
+        "bytes": 3183,
+        "sha256": "c043cee31bf22310a8d3f3f81624f41dcb60f33c0f548dce934f62176f470984"
+      },
+      {
+        "member": "package/dist/defs/Compass.es.js",
+        "bytes": 2695,
+        "sha256": "b84c186ffa06230690fffe8876db19c0269a8312e10d42de48f762b9f393e3ca"
+      },
+      {
+        "member": "package/dist/defs/LinkBreak.es.js",
+        "bytes": 4521,
+        "sha256": "710e7dbc6315b6a37debda2aaed156c508a0dd4b0da1866568d71da53a34cc3c"
+      },
+      {
+        "member": "package/dist/defs/Plugs.es.js",
+        "bytes": 5431,
+        "sha256": "5fc3811f6a84eb17620ab1393daeefc4f564e63bc1a891ea744a082490a65aa0"
+      },
+      {
+        "member": "package/dist/defs/WarningCircle.es.js",
+        "bytes": 2089,
+        "sha256": "2203a4403e3e0cdd97d2388492225cdd96acdf400caa66788dc205a4afd8e393"
       }
     ]
   }

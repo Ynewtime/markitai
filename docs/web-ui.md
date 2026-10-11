@@ -102,17 +102,23 @@ views with previous and next; Compare places the original above the Markdown.
 
 **Notices about the page** (an upload in progress with Cancel, a refused
 request, an unreachable service, a session that could not be restored, a missing
-model with a link to Models, a link to a conversion that no longer exists) sit
+model with a link to Models) sit
 in the page under its title and push the content down; they never cover a
 button, and on a phone a notice's action sits under its text. Errors stay until
 dismissed; others clear themselves after six seconds, but not while the pointer
 or keyboard focus is on them. Errors are announced at once and the others
 politely, from live regions that are always in the page.
 
-**Empty and blocked states** say it once, with the way forward: no conversions
-yet (and how long they are kept), no models, a filter without matches (Clear
-filter), and conversions that cannot be shown (no token, no server, an error),
-with Enter token, Try now or Retry instead of an endless "Loading".
+**Empty and blocked states** are one framed panel: an icon, a title, one line
+and at most one primary and one secondary action, centred on one axis. It is a
+message, not a control (no hover, no pointer). The cases: no conversions yet
+(and how long they are kept), no models (Add models), a filter without matches
+(Clear filter), a link to a conversion that no longer exists (in the inspector's
+place, Show all conversions), conversions that cannot be shown (no token: Enter
+token; no server: Try now; an error: Retry, also in place of Recent on Convert),
+and an unknown address. Alone on a page the panel is 480 px wide; in a column
+(the list, the inspector's place, a settings page, a phone) it takes the
+column's width.
 
 **Settings** are pages. Models lists the configured models (Test, Edit, Delete),
 models detected for this session (Save to config) and the configuration source;

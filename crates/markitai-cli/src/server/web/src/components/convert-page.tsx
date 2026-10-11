@@ -6,6 +6,8 @@ import { counts, isGroup, jobKey, submissionLabel, type LabelWords, type Submiss
 import { fmtClock } from "../lib/format.ts";
 import { glyphOf, NameText, StatusGlyph, statusWord } from "./item-bits.tsx";
 import { Icon } from "./icons.tsx";
+import type { PanelState } from "./conversions-page.tsx";
+import { StateBlock } from "./state-block.tsx";
 
 export function ConvertPage({
   t,
@@ -13,6 +15,7 @@ export function ConvertPage({
   composer,
   notes,
   recent,
+  blocked,
   labelWords,
   onOpen,
   onAll,
@@ -22,6 +25,8 @@ export function ConvertPage({
   composer: ComponentChildren;
   notes: ComponentChildren;
   recent: Submission[];
+  /** Why the recent conversions cannot be shown (no token, no server). */
+  blocked: PanelState | null;
   labelWords: LabelWords;
   onOpen: (key: string) => void;
   onAll: () => void;
@@ -34,6 +39,11 @@ export function ConvertPage({
       </header>
       {notes}
       <div class="convert-composer">{composer}</div>
+      {blocked && recent.length === 0 && (
+        <div class="recent">
+          <StateBlock {...blocked} />
+        </div>
+      )}
       {recent.length > 0 && (
         <section class="recent" aria-labelledby="recent-title">
           <div class="recent-head">

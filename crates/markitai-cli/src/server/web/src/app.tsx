@@ -15,6 +15,7 @@ import { OptionsPanel } from "./components/options-panel.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
 import { ModelsSettings } from "./components/settings-models.tsx";
 import { Shell, useSidebar } from "./components/shell.tsx";
+import type { PanelState } from "./components/conversions-page.tsx";
 import { StateBlock } from "./components/state-block.tsx";
 import { TokenDialog } from "./components/token-dialog.tsx";
 import { UrlInput } from "./components/url-input.tsx";
@@ -572,17 +573,28 @@ export function App() {
   // notice says why the page shows something else.
   const selected = listState.selected;
   const linked = useRef(listState.selected);
+  const [gone, setGone] = useState(false);
   useEffect(() => {
+    if (selected !== null) setGone(false);
     if (selected === null || !conversions.loaded) return;
     const exists = selected.startsWith("job:") ? selected.slice(4) in conversions.jobs : conversions.items.some((item) => item.key === selected);
     if (exists || conversions.restoreFailed.size > 0) return;
     updateList({ selected: null, mode: "inspector" });
-    if (selected === linked.current) {
-      const days = caps?.limits.history_retention_days;
-      note({ id: "gone", tone: "warning", text: days ? t.linkGoneDays(days) : t.linkGone, ttl: 0 });
-    }
+    if (selected === linked.current) setGone(true);
     linked.current = null;
   }, [selected, conversions.items, conversions.jobs, conversions.loaded]);
+  const retentionDays = caps?.limits.history_retention_days;
+  const gonePanel: PanelState | null = gone
+    ? { icon: "LinkBreak", title: t.goneTitle, text: retentionDays ? t.goneTextDays(retentionDays) : t.goneText, secondary: { label: t.showAllConversions, run: () => setGone(false) } }
+    : null;
+  // The saved conversions cannot be listed: why, and the way on.
+  const blocked: PanelState | null = unauthorized
+    ? { icon: "Key", title: t.tokenNeededTitle, text: t.listNeedsToken, primary: { label: t.enterToken, run: () => setTokenOpen(true) } }
+    : offline
+      ? { icon: "Plugs", title: t.serverDownTitle, text: t.serverDownText, secondary: { label: t.tryNow, run: refreshCaps } }
+      : conversions.loadError
+        ? { icon: "WarningCircle", title: t.listBlockedTitle, text: t.listLoadFailed, secondary: { label: t.retryLoad, run: () => void conversions.refresh() }, tone: "error" }
+        : null;
 
   const recent = useMemo(() => submissions(conversions.jobs, conversions.items).slice(0, 3), [conversions.jobs, conversions.items]);
 
@@ -596,15 +608,8 @@ export function App() {
         jobs={conversions.jobs}
         items={conversions.items}
         loaded={conversions.loaded}
-        blocked={
-          unauthorized
-            ? { text: t.listNeedsToken, action: { label: t.enterToken, run: () => setTokenOpen(true) } }
-            : offline
-              ? { text: t.listNoServer, action: { label: t.tryNow, run: refreshCaps } }
-              : conversions.loadError
-                ? { text: t.listLoadFailed, action: { label: t.retryLoad, run: () => void conversions.refresh() } }
-                : null
-        }
+        blocked={blocked}
+        gone={gonePanel}
         composer={composerFor(true)}
         notes={noteArea}
         selected={selected}
@@ -664,12 +669,11 @@ export function App() {
         {noteArea}
         <StateBlock
           heading="h1"
+          icon="Compass"
           title={t.notFoundTitle}
           text={t.notFoundText(route.path)}
-          actions={[
-            { label: t.navConvert, run: () => navigate({ view: "convert" }), primary: true },
-            { label: t.conversions, run: () => navigate({ view: "jobs" }) },
-          ]}
+          primary={{ label: t.navConvert, run: () => navigate({ view: "convert" }) }}
+          secondary={{ label: t.conversions, run: () => navigate({ view: "jobs" }) }}
         />
       </div>
     );
@@ -710,6 +714,7 @@ export function App() {
         composer={composerFor(false)}
         notes={noteArea}
         recent={recent}
+        blocked={conversions.loaded ? null : blocked}
         labelWords={labelWords}
         onOpen={(key) => {
           setRoute({ view: "jobs" });
