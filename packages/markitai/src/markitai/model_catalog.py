@@ -1,71 +1,51 @@
 """Model entries markitai ships for models its pinned LiteLLM may not list.
 
-A default whose model is missing from LiteLLM's cost table is priced as
-unknown: its requests land in ``unpriced_requests``, the batch summary says
-"cost unknown", and ``max_cost_per_document_usd`` cannot count them. LiteLLM
-1.104.2 (the newest stable release on 2026-10-10) has no entry for
-``claude-haiku-5-5``, the Anthropic default since 1.2.1, nor for OpenRouter's
-``anthropic/claude-haiku-5.5``. Its entry for OpenRouter's moving alias
-``~anthropic/claude-haiku-latest``, the OpenRouter default, is kept as it is
-(Claude Haiku 4.5's limits and prices): on 2026-10-10 OpenRouter's catalog
-named Claude Haiku 5.5 as the alias's target, but requests to the alias were
-answered and billed as Claude Haiku 4.5, so the smaller limits are the safe
-ones, and OpenRouter requests are charged at the amount OpenRouter reports
+A model missing from LiteLLM's cost table is priced as unknown: its requests
+land in ``unpriced_requests``, the batch summary says "cost unknown", and
+``max_cost_per_document_usd`` cannot count them. LiteLLM 1.104.2 (the newest
+stable release on 2026-10-11) has no entry for ``claude-haiku-5-5`` (the
+Anthropic default since 1.2.1), ``claude-sonnet-5-5`` or ``gpt-6.1-sol``,
+nor for OpenRouter's ``anthropic/claude-haiku-5.5``.
+
+The three first-party entries are in ``litellm_rows.json``: their rows from
+LiteLLM 1.106.0.dev2's ``model_prices_and_context_window_backup.json``
+(a development release, never a dependency): the same keys and values
+markitai-rust prices from. Every rate, Batch and cache rates included,
+equals the provider's published price on 2026-10-11:
+
+- claude-haiku-5-5: https://platform.claude.com/docs/en/models/haiku-5-5/overview
+  ($0.10 / $0.50 per MTok up to 100k prompt tokens, $0.50 / $2.50 above)
+- claude-sonnet-5-5: https://platform.claude.com/docs/en/about-claude/pricing
+  ($2 / $10 over the whole 1M context, cache reads $0.10, writes $2.50 / 1 h $4)
+- gpt-6.1-sol: https://developers.openai.com/api/docs/pricing ($2 / $10, cached
+  input $0.10, writes $2.50; a prompt over 272K bills the request at $4 / $15)
+
+Batch is half of each. LiteLLM's licence (MIT, Berri AI) is in NOTICE.
+
+Its entry for OpenRouter's moving alias ``~anthropic/claude-haiku-latest``,
+the OpenRouter default, is kept as it is (Claude Haiku 4.5's limits and
+prices): on 2026-10-10 OpenRouter's catalog named Claude Haiku 5.5 as the
+alias's target, but requests to the alias were answered and billed as Claude
+Haiku 4.5, so the smaller limits are the safe ones, and OpenRouter requests
+are charged at the amount OpenRouter reports
 (``markitai.llm.models.get_response_cost``). The copy here only fills in for
 a LiteLLM that no longer lists the alias (upstream has dropped its OpenRouter
 entries).
 
-Each entry is checked against the provider's own pricing (the Anthropic
-entry is LiteLLM's upstream one) and registered only when the installed
-LiteLLM has no entry of that name, so a LiteLLM release that adds the model
-wins and the copy here goes dormant.
+Each entry is registered only when the installed LiteLLM has no entry of that
+name, so a LiteLLM release that adds the model wins and the copy here goes
+dormant.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
-# https://platform.claude.com/docs/en/models/haiku-5-5/overview (released
-# 2026-10-07): $0.10 / $0.50 per MTok for prompts up to 100k tokens, $0.50 /
-# $2.50 above; 1M context, 128k output; adaptive thinking; sampling
-# parameters (temperature, top_p, top_k) are rejected with a 400.
-_MISSING_FROM_LITELLM: dict[str, dict[str, Any]] = {
-    "claude-haiku-5-5": {
-        "litellm_provider": "anthropic",
-        "mode": "chat",
-        "max_input_tokens": 1000000,
-        "max_output_tokens": 128000,
-        "max_tokens": 128000,
-        "input_cost_per_token": 1e-07,  # nosec B105 - a price, not a credential
-        "output_cost_per_token": 5e-07,
-        "input_cost_per_token_above_100k_tokens": 5e-07,
-        "output_cost_per_token_above_100k_tokens": 2.5e-06,
-        "input_cost_per_token_batches": 5e-08,
-        "output_cost_per_token_batches": 2.5e-07,
-        "input_cost_per_token_above_100k_tokens_batches": 2.5e-07,
-        "output_cost_per_token_above_100k_tokens_batches": 1.25e-06,
-        "cache_creation_input_token_cost": 1.25e-07,
-        "cache_creation_input_token_cost_above_100k_tokens": 6.25e-07,
-        "cache_creation_input_token_cost_above_1hr": 2e-07,
-        "cache_creation_input_token_cost_above_1hr_above_100k_tokens": 1e-06,
-        "cache_read_input_token_cost": 1e-08,
-        "cache_read_input_token_cost_above_100k_tokens": 5e-08,
-        "prompt_cache_min_tokens": 512,
-        "supports_adaptive_thinking": True,
-        "supports_assistant_prefill": False,
-        "supports_forced_tool_use": True,
-        "supports_function_calling": True,
-        "supports_native_structured_output": True,
-        "supports_pdf_input": True,
-        "supports_prompt_caching": True,
-        "supports_reasoning": True,
-        "supports_response_schema": True,
-        "supports_sampling_params": False,
-        "supports_tool_choice": True,
-        "supports_vision": True,
-        "source": "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
-    },
-}
+_LITELLM_ROWS = Path(__file__).with_name("litellm_rows.json")
+
+_MISSING_FROM_LITELLM: dict[str, dict[str, Any]] = {}
 
 # https://openrouter.ai/api/v1/models on 2026-10-10: anthropic/claude-haiku-5.5
 # (the target the catalog names for ~anthropic/claude-haiku-latest) lists $0.10 / $0.50
@@ -138,12 +118,25 @@ def register_missing_models() -> list[str]:
         return []
     import litellm
 
+    shipped = {
+        **json.loads(_LITELLM_ROWS.read_text(encoding="utf-8")),
+        **_MISSING_FROM_LITELLM,
+    }
     missing = {
         name: dict(entry)
-        for name, entry in _MISSING_FROM_LITELLM.items()
+        for name, entry in shipped.items()
         if name not in litellm.model_cost
     }
     if missing:
-        litellm.register_model(missing)
+        # register_model looks each name up first, and for a name LiteLLM
+        # cannot place yet (gpt-6.1-sol) it prints "Provider List: ..." to
+        # stdout, into --json output. markitai turns that off for good in
+        # markitai.llm.processor, which may not be imported yet.
+        quiet = litellm.suppress_debug_info
+        litellm.suppress_debug_info = True
+        try:
+            litellm.register_model(missing)
+        finally:
+            litellm.suppress_debug_info = quiet
     _registered = True
     return sorted(missing)
