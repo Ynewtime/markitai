@@ -274,7 +274,8 @@ async def test_a_connection_left_on_the_default_stores_the_documented_address(
     assert added.json()["routable"] is True
     providers, models = _saved(config_path)
     assert models[0]["litellm_params"]["api_base"] == base
-    assert models[0]["litellm_params"].get("api_key") == api_key
+    # Keyless at that address: the placeholder, never the server's own key
+    assert models[0]["litellm_params"].get("api_key") == (api_key or "markitai-no-key")
     assert providers[0]["api_base"] == base
 
 
