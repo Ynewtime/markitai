@@ -27,7 +27,9 @@ def run_isolated(script: str, *args: str) -> None:
         [sys.executable, "-c", _WATCHDOG + script, *args],
         check=False,
         capture_output=True,
-        text=True,
+        # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+        encoding="utf-8",
+        errors="replace",
         timeout=_TIMEOUT_S,
         env={**os.environ, "MARKITAI_NO_REMOTE_FETCH": "1"},
     )

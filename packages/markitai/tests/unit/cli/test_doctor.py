@@ -1087,7 +1087,9 @@ class TestDoctorPerformance:
         proc = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
-            text=True,
+            # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+            encoding="utf-8",
+            errors="replace",
             env={**__import__("os").environ, "MARKITAI_CONFIG": str(config_file)},
             timeout=120,
         )

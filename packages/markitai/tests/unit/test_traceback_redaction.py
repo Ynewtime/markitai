@@ -95,7 +95,9 @@ def _run(script: Path, *args: str, cwd: Path) -> subprocess.CompletedProcess[str
     return subprocess.run(
         [sys.executable, str(script), *args],
         capture_output=True,
-        text=True,
+        # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+        encoding="utf-8",
+        errors="replace",
         env=_env(),
         cwd=cwd,
         timeout=180,

@@ -138,7 +138,9 @@ def _run(
     return subprocess.run(
         [sys.executable, "-m", "markitai", *args],
         capture_output=True,
-        text=True,
+        # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+        encoding="utf-8",
+        errors="replace",
         cwd=workspace,
         timeout=180,
         env={
