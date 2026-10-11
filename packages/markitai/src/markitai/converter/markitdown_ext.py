@@ -6,6 +6,7 @@ but markitai didn't previously handle (HTML, CSV, EPUB, MSG, IPYNB).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -159,6 +160,106 @@ class CsvConverter(BaseConverter):
         return convert_csv(Path(input_path))
 
 
+# A book's own pictures are read from the archive up to these sizes; the
+# rest keep their reference (a picture over 32 MiB is no illustration)
+_EPUB_IMAGE_MAX_BYTES = 32 * 1024 * 1024
+_EPUB_IMAGES_MAX_BYTES = 128 * 1024 * 1024
+_EPUB_IMAGE_TYPES = {
+    ".png": "png",
+    ".jpg": "jpeg",
+    ".jpeg": "jpeg",
+    ".gif": "gif",
+    ".webp": "webp",
+}
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+
+
+def _inline_epub_images(input_path: Path, markdown: str) -> str:
+    """Point a book's pictures at their bytes, as an Office document's are.
+
+    markitdown keeps each chapter's own reference (``../Images/cover.jpg``,
+    relative to a chapter file inside the archive), which resolves nowhere
+    beside the output. A reference to a raster picture the archive holds
+    becomes a ``data:`` URI, which the image pipeline saves as one of the
+    item's assets (``<name>.0001.png``) and links like a DOCX picture.
+    A reference matches the archive file whose path ends with it once its
+    ``../`` steps are dropped (else the one file of that name); an
+    ambiguous or missing one, a remote one and SVG keep their reference.
+    """
+    import base64
+    import posixpath
+    import zipfile
+    from urllib.parse import unquote, urlsplit
+
+    try:
+        archive = zipfile.ZipFile(input_path)
+    except (OSError, zipfile.BadZipFile):
+        return markdown
+    with archive:
+        images = {
+            info.filename: info
+            for info in archive.infolist()
+            if not info.is_dir()
+            and posixpath.splitext(info.filename)[1].lower() in _EPUB_IMAGE_TYPES
+        }
+        if not images:
+            return markdown
+        budget = _EPUB_IMAGES_MAX_BYTES
+        inlined: dict[str, str | None] = {}
+
+        def member(reference: str) -> zipfile.ZipInfo | None:
+            parts = urlsplit(reference)
+            if parts.scheme or parts.netloc or not parts.path:
+                return None
+            path = posixpath.normpath(unquote(parts.path)).lstrip("/")
+            while path.startswith("../"):
+                path = path[3:]
+            if not path or path.startswith(".."):
+                return None
+            found = [
+                info
+                for name, info in images.items()
+                if name == path or name.endswith("/" + path)
+            ]
+            if not found:
+                base = posixpath.basename(path)
+                found = [
+                    info
+                    for name, info in images.items()
+                    if posixpath.basename(name) == base
+                ]
+            return found[0] if len(found) == 1 else None
+
+        def data_uri(reference: str) -> str | None:
+            nonlocal budget
+            if reference in inlined:
+                return inlined[reference]
+            info = member(reference)
+            uri = None
+            if info is not None and info.file_size <= min(
+                _EPUB_IMAGE_MAX_BYTES, budget
+            ):
+                try:
+                    data = archive.read(info)
+                except (OSError, zipfile.BadZipFile, RuntimeError):
+                    data = b""
+                if data and len(data) <= _EPUB_IMAGE_MAX_BYTES:
+                    budget -= len(data)
+                    kind = _EPUB_IMAGE_TYPES[
+                        posixpath.splitext(info.filename)[1].lower()
+                    ]
+                    encoded = base64.b64encode(data).decode("ascii")
+                    uri = f"data:image/{kind};base64,{encoded}"
+            inlined[reference] = uri
+            return uri
+
+        def replace(match: re.Match[str]) -> str:
+            uri = data_uri(match.group(2))
+            return match.group(0) if uri is None else f"![{match.group(1)}]({uri})"
+
+        return _MARKDOWN_IMAGE_RE.sub(replace, markdown)
+
+
 @register_converter(FileFormat.EPUB)
 class EpubConverter(BaseConverter):
     """Converter for EPUB e-book files using markitdown."""
@@ -168,7 +269,9 @@ class EpubConverter(BaseConverter):
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        return _convert(input_path)
+        result = _convert(input_path)
+        result.markdown = _inline_epub_images(Path(input_path), result.markdown)
+        return result
 
 
 # MAPI property streams of an Outlook .msg (OLE compound file). markitdown
