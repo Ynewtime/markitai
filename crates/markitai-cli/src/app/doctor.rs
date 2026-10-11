@@ -379,9 +379,11 @@ fn verdict(
             text!(lang => "Repair failed: {names}", "修复失败：{names}"),
         )
     } else if !missing.is_empty() {
+        // Ready is a success, as in Python markitai: what is missing is
+        // optional and already listed with its remedy above.
         let names = missing.join(separator);
         (
-            Mark::Warning,
+            Mark::Success,
             text!(lang => "Ready. Not available (optional): {names}", "已就绪。以下可选功能不可用：{names}"),
         )
     } else {
@@ -1188,8 +1190,8 @@ mod tests {
             verdict_of(&all, &[], Lang::Zh),
             (Mark::Success, "已就绪，所有功能均可用。".into())
         );
-        // Optional checks that are not ready make the verdict a warning, not a
-        // green finish.
+        // Optional checks that are not ready leave the verdict a success
+        // that names them.
         let optional = [
             ("A", "ok", false),
             ("B", "warning", false),
@@ -1198,13 +1200,13 @@ mod tests {
         assert_eq!(
             verdict_of(&optional, &[], Lang::En),
             (
-                Mark::Warning,
+                Mark::Success,
                 "Ready. Not available (optional): B, C".into()
             )
         );
         assert_eq!(
             verdict_of(&optional, &[], Lang::Zh),
-            (Mark::Warning, "已就绪。以下可选功能不可用：B、C".into())
+            (Mark::Success, "已就绪。以下可选功能不可用：B、C".into())
         );
         let blocked = [("A", "missing", true), ("B", "error", true)];
         assert_eq!(
