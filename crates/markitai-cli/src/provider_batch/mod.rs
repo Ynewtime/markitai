@@ -1,4 +1,5 @@
 //! A cloud job remains separate from the local directory conversion checkpoint.
+mod python_import;
 mod resume;
 mod store;
 pub(super) use resume::resume;
@@ -165,6 +166,16 @@ pub(super) fn submit(
         .map_err(runtime)?;
     fs::create_dir_all(output).map_err(runtime)?;
     let output = crate::report_store::resolve_path(output).map_err(runtime)?;
+    for id in python_import::pending_states(&output, &cfg)? {
+        logging::shaped(
+            Shape::item(Mark::Warning),
+            &format!(
+                "Python markitai left batch {id} pending in this output directory; collect it with:"
+            ),
+            None,
+        );
+        logging::shaped(Shape::COMMAND, &collect_command(cli, &id, &output), None);
+    }
     let input_root = crate::report_store::resolve_path(Path::new(input)).map_err(runtime)?;
     let preparation =
         store::Store::lock_preparation(&output, config::enabled(&cfg, "/output/allow_symlinks"))
@@ -444,7 +455,18 @@ pub(super) fn collect(cli: &Cli, id: &str, cfg: Value) -> CliResult<i32> {
         Default::default(),
     ) {
         Ok(store) => store,
-        Err(store::Error::NotFound) => resume::bind_manual(output, id, &cfg)?,
+        Err(store::Error::NotFound) => match python_import::import(output, id, &cfg)? {
+            python_import::Outcome::Imported(store) => *store,
+            python_import::Outcome::Collected => {
+                logging::shaped(
+                    Shape::item(Mark::Info),
+                    &format!("Provider batch {id} was already collected by Python markitai."),
+                    None,
+                );
+                return Ok(0);
+            }
+            python_import::Outcome::Absent => resume::bind_manual(output, id, &cfg)?,
+        },
         Err(error) => return Err(runtime(error)),
     };
     if store.state().phase == store::Phase::Collected {
@@ -486,6 +508,23 @@ pub(super) fn collect(cli: &Cli, id: &str, cfg: Value) -> CliResult<i32> {
         None,
     );
     Ok(code)
+}
+
+/// The sum of two usage records, as the store totals them.
+fn merged(
+    left: &markitai_core::ConversionUsage,
+    right: &markitai_core::ConversionUsage,
+) -> markitai_core::ConversionUsage {
+    let mut total = left.clone();
+    total.cost_usd += right.cost_usd;
+    total.requests = total.requests.saturating_add(right.requests);
+    total.input_tokens = total.input_tokens.saturating_add(right.input_tokens);
+    total.output_tokens = total.output_tokens.saturating_add(right.output_tokens);
+    if crate::pricing::merge_models(&mut total.by_model, &right.by_model).is_err() {
+        // Records the store accepted always merge; keep the document's own.
+        total.by_model = left.by_model.clone();
+    }
+    total
 }
 
 fn raw_item(item: &provider::ResultItem) -> Value {
@@ -597,21 +636,22 @@ fn collect_ready_inner(
         .iter()
         .any(|item| item.finalized.is_none())
     {
-        let ids = store
-            .state()
-            .items
-            .iter()
-            .map(|item| item.custom_id.clone())
-            .collect::<Vec<_>>();
+        let ids = store.state().expected_ids();
         let downloaded = client.download_results(store.state().batch.as_ref().unwrap(), &ids);
         let (results, error) = match downloaded {
             Ok(results) => (results, None),
             Err(failure) => (failure.partial, Some(failure.error)),
         };
         for item in results.items {
-            let plan: provider::Plan =
-                serde_json::from_value(store.read_plan(&item.custom_id).map_err(runtime)?)
-                    .map_err(runtime)?;
+            // An attached request (a Python image analysis) is priced by the
+            // plan of the item whose output it belongs to.
+            let (index, _) = store
+                .state()
+                .owner_of(&item.custom_id)
+                .ok_or_else(|| runtime("Provider Batch result names an unknown request"))?;
+            let owner = store.state().items[index].custom_id.clone();
+            let plan = provider::FrozenPlan::from_value(store.read_plan(&owner).map_err(runtime)?)
+                .map_err(runtime)?;
             let observed = plan.observe(&item).map_err(runtime)?;
             let recorded = store
                 .record_result(
@@ -648,11 +688,18 @@ fn collect_ready_inner(
         let started = timestamp();
         let mut provider_failed = false;
         let mut result = {
-            let usage = item
+            let mut usage = item
                 .result
                 .as_ref()
                 .map(|result| result.usage.clone())
                 .unwrap_or_default();
+            for attached in item
+                .attached
+                .iter()
+                .filter_map(|attached| attached.result.as_ref())
+            {
+                usage = merged(&usage, &attached.usage);
+            }
             let process = (|| -> CliResult<ConversionOutput> {
                 if let Some(published) = &item.finalized {
                     return Ok(retained_output(
@@ -671,15 +718,34 @@ fn collect_ready_inner(
                         runtime("Provider Batch completed without a result for this item")
                     })?;
                 let response = saved_item(&raw)?;
-                let plan: provider::Plan =
-                    serde_json::from_value(store.read_plan(&item.custom_id).map_err(runtime)?)
-                        .map_err(runtime)?;
-                let decoded = plan
-                    .decode_recorded(&response, cfg, usage.clone())
-                    .map_err(|error| {
-                        provider_failed = true;
-                        runtime(error)
-                    })?;
+                let plan = provider::FrozenPlan::from_value(
+                    store.read_plan(&item.custom_id).map_err(runtime)?,
+                )
+                .map_err(runtime)?;
+                let mut descriptions = Vec::new();
+                let decoded = match plan {
+                    provider::FrozenPlan::Native(plan) => {
+                        plan.decode_recorded(&response, cfg, usage.clone())
+                    }
+                    provider::FrozenPlan::Python(plan) => {
+                        let images = store
+                            .read_attached(&item.custom_id)
+                            .map_err(runtime)?
+                            .into_iter()
+                            .map(|raw| raw.as_deref().map(saved_item).transpose())
+                            .collect::<CliResult<Vec<_>>>()?;
+                        plan.decode_recorded(&response, &images, usage.clone()).map(
+                            |(decoded, extras)| {
+                                descriptions = extras.descriptions;
+                                decoded
+                            },
+                        )
+                    }
+                }
+                .map_err(|error| {
+                    provider_failed = true;
+                    runtime(error)
+                })?;
                 let bytes = decoded.content().map_err(runtime)?.into_bytes();
                 let base = output.join(&item.base);
                 let enhanced = output.join(&item.enhanced);
@@ -714,6 +780,20 @@ fn collect_ready_inner(
                     claim.publish(&enhanced, &bytes).map_err(runtime)?;
                 }
                 let receipt = claim.evidence_digest().map_err(runtime)?;
+                for (directory, mut entry) in descriptions {
+                    entry["asset"] = json!(
+                        output
+                            .join(entry["asset"].as_str().unwrap_or_default())
+                            .to_string_lossy()
+                    );
+                    markitai_core::output::publish_image_descriptions(
+                        &output.join(directory),
+                        &[entry],
+                        &item.source,
+                        config::enabled(cfg, "/output/allow_symlinks"),
+                    )
+                    .map_err(runtime)?;
+                }
                 store
                     .mark_finalized(
                         &item.custom_id,
@@ -805,6 +885,15 @@ fn collect_ready_inner(
         let mut record = recorded(&task, index, clock, started, &result);
         if result.is_err() {
             record.output = Some(output.join(&item.base));
+        }
+        // Reports leave warnings out; collection is the moment to show them
+        // (a base kept after a failed answer, an image left unanalyzed).
+        for warning in &record.warnings {
+            logging::shaped(
+                Shape::item(Mark::Warning),
+                &format!("{}: {warning}", item.source),
+                None,
+            );
         }
         records.push(record);
     }

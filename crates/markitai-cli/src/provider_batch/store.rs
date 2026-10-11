@@ -124,6 +124,7 @@ pub(crate) struct NewJob {
     pub endpoint: Endpoint,
     pub items: Vec<NewItem>,
 }
+#[derive(Clone)]
 pub(crate) struct NewItem {
     pub custom_id: String,
     pub source: String,
@@ -182,6 +183,39 @@ pub(crate) struct Item {
     pub result: Option<RecordedResult>,
     pub finalized: Option<Published>,
     pub error: Option<String>,
+    /// Requests answered for this item's output (a Python image analysis).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attached: Vec<Attached>,
+}
+/// A request of the batch whose answer belongs to another item's output.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Attached {
+    pub custom_id: String,
+    pub result: Option<RecordedResult>,
+}
+/// A job converted from a pending Python markitai 1.2.x batch state.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Imported {
+    /// The Python state directory, relative to the output root; it is read
+    /// once and never modified.
+    pub python_state: PathBuf,
+    /// SHA-256 of the Python `state.json` that was read.
+    pub state_sha256: String,
+}
+pub(crate) struct ImportItem {
+    pub item: NewItem,
+    pub attached: Vec<String>,
+}
+pub(crate) struct ImportJob {
+    pub id: String,
+    pub endpoint: Endpoint,
+    pub items: Vec<ImportItem>,
+    pub requests: Vec<u8>,
+    pub uploaded: UploadedInput,
+    pub batch: Batch,
+    pub imported: Imported,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -196,6 +230,35 @@ pub(crate) struct Job {
     pub requests: Option<Blob>,
     pub uploaded: Option<UploadedInput>,
     pub batch: Option<Batch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported: Option<Imported>,
+}
+impl Job {
+    /// Every custom ID of the submission: each item, then its attachments.
+    pub(crate) fn expected_ids(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .flat_map(|item| {
+                std::iter::once(item.custom_id.clone()).chain(
+                    item.attached
+                        .iter()
+                        .map(|attached| attached.custom_id.clone()),
+                )
+            })
+            .collect()
+    }
+    /// The item whose output a custom ID belongs to, and the attachment it is.
+    pub(crate) fn owner_of(&self, id: &str) -> Option<(usize, Option<usize>)> {
+        self.items.iter().enumerate().find_map(|(index, item)| {
+            if item.custom_id == id {
+                return Some((index, None));
+            }
+            item.attached
+                .iter()
+                .position(|attached| attached.custom_id == id)
+                .map(|position| (index, Some(position)))
+        })
+    }
 }
 #[derive(Clone, Debug)]
 pub(crate) struct PendingSummary {
@@ -271,7 +334,8 @@ impl Preparation {
                 "Multiple unfinished provider batches require explicit collection",
             ));
         }
-        if input_scope.is_some_and(|input| input != job.input_root) {
+        // A Python state records no input; its job accepts any input scope.
+        if job.imported.is_none() && input_scope.is_some_and(|input| input != job.input_root) {
             return Err(Error::Conflict);
         }
         let id = job.id.clone();
@@ -375,6 +439,7 @@ impl Store {
                 result: None,
                 finalized: None,
                 error: None,
+                attached: Vec::new(),
             });
         }
         let state = Job {
@@ -388,6 +453,7 @@ impl Store {
             requests: None,
             uploaded: None,
             batch: None,
+            imported: None,
         };
         let mut store = Self {
             root,
@@ -405,6 +471,149 @@ impl Store {
         Ok(store)
     }
 
+    /// Record a Python markitai batch as an already submitted job: its plans,
+    /// its request rows (copied), the provider's input identity and the batch.
+    /// Nothing is sent; collection continues as for a native job.
+    pub(crate) fn import(
+        output: &Path,
+        job: ImportJob,
+        allow_symlinks: bool,
+        limits: Limits,
+    ) -> Result<Self> {
+        let limits = limits.check()?;
+        let root = Root::open(output, allow_symlinks, true)?;
+        let global = root.lock()?;
+        let new = NewJob {
+            id: job.id.clone(),
+            input_root: root.output.clone(),
+            endpoint: job.endpoint.clone(),
+            items: Vec::new(),
+        };
+        let items: Vec<NewItem> = job.items.iter().map(|item| item.item.clone()).collect();
+        validate_new(&NewJob { items, ..new }, &root.output, limits)?;
+        let existing = scan(&root, limits)?;
+        if existing.len() >= limits.jobs {
+            return Err(Error::Invalid("Provider batch job limit reached"));
+        }
+        if existing.iter().any(|state| {
+            state
+                .batch
+                .as_ref()
+                .is_some_and(|batch| batch.id == job.batch.id)
+                || state.imported.as_ref() == Some(&job.imported)
+        }) {
+            return Err(Error::Conflict);
+        }
+        let path = root.path.join(format!("attempt-{}", job.id));
+        new_directory(&path)?;
+        let directory = Directory::read(&path, true)?;
+        new_directory(&path.join("plans"))?;
+        new_directory(&path.join("results"))?;
+        let lock = HeldLock::open(&path.join("job.lock"))?;
+        let mut items = Vec::with_capacity(job.items.len());
+        let mut stored = 0u64;
+        for (index, entry) in job.items.into_iter().enumerate() {
+            let item = entry.item;
+            let relative = PathBuf::from(format!("plans/{index}.json"));
+            let allowance = usize::try_from(limits.total_bytes.saturating_sub(stored))
+                .unwrap_or(usize::MAX)
+                .min(limits.blob_bytes);
+            let blob = write_json_blob(&path, &relative, &item.plan, allowance)?;
+            stored = stored
+                .checked_add(blob.bytes)
+                .ok_or(Error::Invalid("Provider batch storage limit reached"))?;
+            items.push(Item {
+                custom_id: item.custom_id,
+                source: item.source,
+                key: item.key,
+                base: item.base,
+                enhanced: item.enhanced,
+                base_sha256: item.base_sha256,
+                owner: item.owner,
+                plan: blob,
+                result: None,
+                finalized: None,
+                error: None,
+                attached: entry
+                    .attached
+                    .into_iter()
+                    .map(|custom_id| Attached {
+                        custom_id,
+                        result: None,
+                    })
+                    .collect(),
+            });
+        }
+        let allowance = usize::try_from(limits.total_bytes.saturating_sub(stored))
+            .unwrap_or(usize::MAX)
+            .min(limits.request_bytes);
+        let requests = write_blob(
+            &path,
+            Path::new("requests.jsonl"),
+            &mut job.requests.as_slice(),
+            allowance,
+        )?;
+        let state = Job {
+            version: 1,
+            id: job.id,
+            input_root: root.output.clone(),
+            output_root: root.output.clone(),
+            endpoint: job.endpoint,
+            phase: Phase::Submitted,
+            items,
+            requests: Some(requests),
+            uploaded: Some(job.uploaded),
+            batch: Some(job.batch.clone()),
+            imported: Some(job.imported),
+        };
+        let mut store = Self {
+            root,
+            path,
+            directory,
+            lock,
+            state,
+            limits,
+            poisoned: false,
+            #[cfg(test)]
+            fault: None,
+        };
+        store.replace_state(store.state.clone())?;
+        let index_path = store
+            .root
+            .path
+            .join("by-id")
+            .join(format!("{}.json", job.batch.id));
+        write_new_json(
+            &index_path,
+            &Index {
+                version: 1,
+                batch_id: job.batch.id,
+                job_id: store.state.id.clone(),
+            },
+            limits.state_bytes,
+        )?;
+        global.validate()?;
+        Ok(store)
+    }
+
+    /// Python state directories already converted into jobs here, in any phase.
+    pub(crate) fn imported_states(
+        output: &Path,
+        allow_symlinks: bool,
+        limits: Limits,
+    ) -> Result<Vec<PathBuf>> {
+        let limits = limits.check()?;
+        let output = physical_output(output, allow_symlinks)?;
+        if !output.join(".markitai/provider-batches").try_exists()? {
+            return Ok(Vec::new());
+        }
+        let root = Root::open(&output, allow_symlinks, false)?;
+        Ok(scan(&root, limits)?
+            .into_iter()
+            .filter_map(|state| state.imported.map(|imported| imported.python_state))
+            .collect())
+    }
+
     pub(crate) fn open_by_batch(
         output: &Path,
         batch_id: &str,
@@ -414,6 +623,13 @@ impl Store {
         let limits = limits.check()?;
         if !markitai_core::provider_batch::batch_id(batch_id) {
             return Err(Error::Invalid("Provider batch ID is invalid"));
+        }
+        // No store yet: nothing here knows this batch (a Python state may).
+        if !physical_output(output, allow_symlinks)?
+            .join(".markitai/provider-batches")
+            .try_exists()?
+        {
+            return Err(Error::NotFound);
         }
         let root = Root::open(output, allow_symlinks, false)?;
         // Index is merely a locator. State below must independently match its job ID.
@@ -494,7 +710,11 @@ impl Store {
         // State/blob tampering must be detected before a caller can send another request.
         for item in &store.state.items {
             store.read_blob(&item.plan, limits.blob_bytes)?;
-            if let Some(result) = &item.result {
+            for result in item.result.iter().chain(
+                item.attached
+                    .iter()
+                    .filter_map(|attached| attached.result.as_ref()),
+            ) {
                 store.read_blob(&result.blob, limits.blob_bytes)?;
             }
         }
@@ -591,6 +811,21 @@ impl Store {
             .as_ref()
             .map(|record| self.read_blob(&record.blob, self.limits.blob_bytes))
             .transpose()
+    }
+
+    /// The saved results of an item's attachments, in order (`None`: none yet).
+    pub(crate) fn read_attached(&self, id: &str) -> Result<Vec<Option<Vec<u8>>>> {
+        self.item(id)?
+            .attached
+            .iter()
+            .map(|attached| {
+                attached
+                    .result
+                    .as_ref()
+                    .map(|record| self.read_blob(&record.blob, self.limits.blob_bytes))
+                    .transpose()
+            })
+            .collect()
     }
 
     pub(crate) fn save_requests(&mut self, reader: &mut impl Read) -> Result<Blob> {
@@ -747,9 +982,22 @@ impl Store {
         if value.get("custom_id").and_then(Value::as_str) != Some(id) {
             return Err(Error::Conflict);
         }
-        let index = self.index(id)?;
+        let (index, attachment) = self
+            .state
+            .owner_of(id)
+            .ok_or(Error::Invalid("Unknown provider batch item"))?;
         let hash = sha256_hex(raw);
-        if let Some(prior) = &self.state.items[index].result {
+        let (slot, path) = match attachment {
+            None => (
+                &self.state.items[index].result,
+                format!("results/{index}.json"),
+            ),
+            Some(position) => (
+                &self.state.items[index].attached[position].result,
+                format!("results/{index}-{position}.json"),
+            ),
+        };
+        if let Some(prior) = slot {
             if prior.blob.sha256 != hash || prior.blob.bytes != raw.len() as u64 {
                 return Err(Error::Conflict);
             }
@@ -760,16 +1008,16 @@ impl Store {
             });
         }
         let mut reader = raw;
-        let blob = self.write_blob(
-            Path::new(&format!("results/{index}.json")),
-            &mut reader,
-            self.limits.blob_bytes,
-        )?;
+        let blob = self.write_blob(Path::new(&path), &mut reader, self.limits.blob_bytes)?;
         let mut state = self.state.clone();
-        state.items[index].result = Some(RecordedResult {
+        let recorded = Some(RecordedResult {
             blob,
             usage: usage.clone(),
         });
+        match attachment {
+            None => state.items[index].result = recorded,
+            Some(position) => state.items[index].attached[position].result = recorded,
+        }
         self.replace_state(state)?;
         Ok(RecordResult {
             inserted: true,
@@ -837,12 +1085,13 @@ impl Store {
     /// Totals are derived from immutable per-request observations, never incremented on replay.
     pub(crate) fn usage(&self) -> Result<ConversionUsage> {
         let mut usage = ConversionUsage::default();
-        for record in self
-            .state
-            .items
-            .iter()
-            .filter_map(|item| item.result.as_ref())
-        {
+        for record in self.state.items.iter().flat_map(|item| {
+            item.result.iter().chain(
+                item.attached
+                    .iter()
+                    .filter_map(|attached| attached.result.as_ref()),
+            )
+        }) {
             merge_usage(&mut usage, &record.usage)?;
         }
         Ok(usage)
@@ -1588,10 +1837,33 @@ fn validate_job(job: &Job, output: &Path, limits: Limits) -> Result<()> {
             return Err(Error::Conflict);
         }
         total = total.checked_add(item.plan.bytes).ok_or(Error::Conflict)?;
-        if let Some(result) = &item.result {
+        if !item.attached.is_empty() && job.imported.is_none() {
+            return Err(Error::Conflict);
+        }
+        let results = item
+            .result
+            .iter()
+            .map(|result| (result, format!("results/{index}.json")))
+            .chain(
+                item.attached
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(position, attached)| {
+                        attached
+                            .result
+                            .as_ref()
+                            .map(|result| (result, format!("results/{index}-{position}.json")))
+                    }),
+            );
+        for attached in &item.attached {
+            if !custom_id(&attached.custom_id) || !ids.insert(&attached.custom_id) {
+                return Err(Error::Invalid("Provider batch state items are invalid"));
+            }
+        }
+        for (result, path) in results {
             validate_blob(&result.blob, limits.blob_bytes)?;
             validate_usage(&result.usage)?;
-            if result.blob.path != Path::new(&format!("results/{index}.json")) {
+            if result.blob.path != Path::new(&path) {
                 return Err(Error::Conflict);
             }
             total = total
@@ -1628,12 +1900,16 @@ fn validate_job(job: &Job, output: &Path, limits: Limits) -> Result<()> {
             || uploaded.bytes != request.bytes
             || uploaded.sha256 != request.sha256
             || uploaded.model != job.endpoint.model
-            || uploaded.custom_ids
-                != job
-                    .items
-                    .iter()
-                    .map(|item| item.custom_id.clone())
-                    .collect::<Vec<_>>()
+            || uploaded.custom_ids != job.expected_ids()
+        {
+            return Err(Error::Conflict);
+        }
+    }
+    if let Some(imported) = &job.imported {
+        relative_path(&imported.python_state)?;
+        if !imported.python_state.starts_with(".markitai")
+            || !hash(&imported.state_sha256)
+            || job.phase == Phase::Prepared
         {
             return Err(Error::Conflict);
         }
@@ -1670,10 +1946,15 @@ fn validate_job(job: &Job, output: &Path, limits: Limits) -> Result<()> {
         _ => return Err(Error::Conflict),
     }
     if !matches!(job.phase, Phase::Submitted | Phase::Collected)
-        && job
-            .items
-            .iter()
-            .any(|item| item.result.is_some() || item.finalized.is_some() || item.error.is_some())
+        && job.items.iter().any(|item| {
+            item.result.is_some()
+                || item.finalized.is_some()
+                || item.error.is_some()
+                || item
+                    .attached
+                    .iter()
+                    .any(|attached| attached.result.is_some())
+        })
     {
         return Err(Error::Conflict);
     }

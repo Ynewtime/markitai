@@ -24,6 +24,8 @@
 - 新增多种 OpenAI 兼容提供商、模型发现及连接探测；可通过受支持的官方运行时使用 Copilot、Claude 和 ChatGPT 订阅转换，并查询认证状态、委托官方登录。
 - OpenAI 文本 Batch 提交、收集和重启续接，附私有请求记录、状态核对及输出归属检查；区分已观测用量、未知定价和失败尝试成本。
 - `--llm-batch` 对 `anthropic/<model>` 部署也会提交到 Anthropic Message Batches，与 Python markitai 相同：提交、等待、`--llm-batch-collect`、`--resume` 与 `llm.on_failure` 的处理都一样，请求沿用实时请求的结构化模式，成本按批处理价计算。请求在唯一一次创建调用中随附发送，发送前与已保存的摘要核对；每个 custom ID 都带有本次提交的 nonce，因此创建结果不确定时，通过打开同等规模、已结束批次的结果来核对，绝不重新创建。errored、canceled、expired 的请求是没有用量的条目失败，Anthropic 不对它们计费。
+- 升级后可以收回 Python markitai 1.2.x 提交后未收回的批处理：`--llm-batch-collect ID -o DIR`（目录里只有一个时也可用 `--llm-batch --resume -o DIR`）只读取 Python 的 `.markitai/batch-<ID>/` 状态、不做改动，将其转为同一 OpenAI 或 Anthropic 模型的原生任务，并用 Python 已付费的回答发布 `.llm.md`。Python 的图片与页码/幻灯片占位符按其自身规则重新计算（并与其保存的请求核对），每个都必须原样返回一次；该次运行的 `--alt` 标题与 `--desc` 描述按 Python 的方式应用。向这样的目录做普通 `--llm-batch` 运行时，会提示待收回的批处理及其收回命令。
+- 收回供应商批处理时会逐条打印文档的警告（回答失败后保留基础 Markdown、图片分析失败），与 Python 一致；运行报告仍不记录警告。
 - CLI 报告、可选历史、目录/URL 列表批量续跑、受控中断、输出锁及恢复凭据；共享资源和标准输出引用的图片保存在隔离的 Markitai 状态目录中。
 - 中英文 CLI 帮助和引导式转换、配置初始化/编辑/验证、能力诊断及私有轮转日志。Windows 支持原生控制台处理、订阅命令包装器、恢复和进程树清理。
 

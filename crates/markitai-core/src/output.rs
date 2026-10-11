@@ -189,6 +189,20 @@ pub(crate) fn check_paths(paths: &[&Path], allow_symlinks: bool) -> Result<()> {
     Ok(())
 }
 
+/// Merge image-analysis entries (`asset`, `alt`, `desc`, `text`, …) into the
+/// `images.json` index of `directory`, as a conversion with `--desc` does.
+pub fn publish_image_descriptions(
+    directory: &Path,
+    entries: &[Value],
+    source: &str,
+    allow_symlinks: bool,
+) -> Result<()> {
+    let _guard = OUTPUT_LOCK
+        .lock()
+        .map_err(|_| Error::Conversion("Output lock poisoned".into()))?;
+    image_metadata::publish(directory, entries, source, allow_symlinks)
+}
+
 pub fn split_frontmatter(text: &str) -> (Map<String, Value>, &str) {
     if let Some(rest) = text.strip_prefix("---\n") {
         let mut offset = 0;

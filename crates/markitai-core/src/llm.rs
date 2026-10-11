@@ -10,6 +10,7 @@ mod diagnosis;
 mod document;
 pub(crate) mod flight;
 pub(crate) mod providers;
+pub(crate) mod python_batch;
 pub(crate) mod routing;
 mod service_probe;
 mod structured;

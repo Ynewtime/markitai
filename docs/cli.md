@@ -178,7 +178,7 @@ MARKITAI_LANG=zh markitai doctor
 LibreOffice，缺少时通常保留正文并警告，`--screenshot-only` 则失败。
 Numbers 支持表格及目录包，完整画布、截图与 OCR 仍未支持。
 
-尚未提供旧 Python Batch 状态导入、终端内联图片。
+尚未提供终端内联图片。
 `image.stdout_fetch_external` 因此无运行效果；其他兼容配置的状态见
 [配置说明](configuration.md#配置键的运行状态)。OpenAI 与 Anthropic Batch、官方订阅运行时与
 远程 URL/Cloudflare 后端已有实现，外部账户与网络可用性需另行满足。
