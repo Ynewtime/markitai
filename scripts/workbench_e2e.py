@@ -37,6 +37,7 @@ import re
 import shutil
 import signal
 import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
@@ -320,8 +321,20 @@ class _Pages(BaseHTTPRequestHandler):
         self.wfile.write(html)
 
 
+class _LocalServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer that binds without a host name lookup.
+
+    ``HTTPServer.server_bind`` calls ``socket.getfqdn`` on the address,
+    which took over 25 s on macOS CI runners.
+    """
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, int]:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = _LocalServer(("127.0.0.1", 0), handler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, server.server_address[1]

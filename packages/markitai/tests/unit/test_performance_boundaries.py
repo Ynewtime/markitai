@@ -87,17 +87,24 @@ def test_url_without_llm_does_not_load_the_llm_stack(tmp_path):
     )
     run_isolated(
         """
-import functools, sys, threading
+import functools, socketserver, sys, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from click.testing import CliRunner
 from markitai.cli.main import app
+
+class Server(ThreadingHTTPServer):
+    # As tests.local_http.LocalHTTPServer: HTTPServer's bind looks up the
+    # address's host name, which took over 25 s on macOS runners
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 def step(name):
     print(name, file=sys.stderr, flush=True)
 
 step("imported")
 handler = functools.partial(SimpleHTTPRequestHandler, directory=sys.argv[1])
-server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+server = Server(("127.0.0.1", 0), handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 url = f"http://127.0.0.1:{server.server_address[1]}/page.html"
 step("serving")

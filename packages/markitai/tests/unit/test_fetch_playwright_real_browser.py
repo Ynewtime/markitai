@@ -144,9 +144,10 @@ async def test_content_from_a_late_request_is_still_waited_for() -> None:
     """
     _skip_if_no_playwright_browser()
     import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
 
     from markitai.fetch_playwright import PlaywrightRenderer
+    from tests.local_http import LocalHTTPServer
 
     article = "Late paragraph delivered by a slow API call. " * 30
     page = (
@@ -172,7 +173,7 @@ async def test_content_from_a_late_request_is_still_waited_for() -> None:
         def log_message(self, *_args: object) -> None:
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LocalHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(
         target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
     ).start()

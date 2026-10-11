@@ -11,6 +11,7 @@ import functools
 import http.server
 import json
 import os
+import socketserver
 import subprocess
 import sys
 import threading
@@ -18,6 +19,18 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+class _LocalServer(http.server.ThreadingHTTPServer):
+    """ThreadingHTTPServer that binds without a host name lookup.
+
+    ``HTTPServer.server_bind`` calls ``socket.getfqdn`` on the address,
+    which took over 25 s on macOS CI runners.
+    """
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -51,7 +64,7 @@ def main() -> None:
     rows = []
     for engine, command in commands.items():
         handler = functools.partial(QuietHandler, directory=str(pages.resolve()))
-        with http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+        with _LocalServer(("127.0.0.1", 0), handler) as server:
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:

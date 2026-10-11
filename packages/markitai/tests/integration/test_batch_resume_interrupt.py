@@ -18,11 +18,13 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from tests.local_http import LocalHTTPServer
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32",
@@ -62,7 +64,7 @@ def _instance(schema: dict[str, Any], defs: dict[str, Any], name: str) -> Any:
     return "A stub description of the document."
 
 
-class _Stub(ThreadingHTTPServer):
+class _Stub(LocalHTTPServer):
     answered = 0
     hold_after = 1 << 30  # requests beyond this many wait for `release`
     release: threading.Event
