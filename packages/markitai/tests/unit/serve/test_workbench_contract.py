@@ -1902,7 +1902,12 @@ class TestReviewFixes:
             with pytest.raises(RenderError):
                 workers.run(time.sleep, 30)
             assert time.monotonic() - started < 10
-            assert workers.run(abs, -3) == 3  # a fresh pool
+            # The next call starts a fresh pool, whose worker is spawned and
+            # imports markitai first: on runner-win (x64 Python emulated on
+            # Arm) that alone took longer than the 0.5 s that bounds the
+            # runaway. Serve's own budget is 20 s.
+            workers.timeout = 60
+            assert workers.run(abs, -3) == 3
         finally:
             workers.close()
 
