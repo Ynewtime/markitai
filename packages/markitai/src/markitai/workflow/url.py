@@ -378,7 +378,7 @@ async def convert_url_cascade(
     if llm_error is not None:
         from markitai.workflow.llm_failure import (
             llm_failure_fails_item,
-            llm_fallback_warning,
+            llm_fallback_warnings,
         )
 
         # The base .md above is the item's output: a same-named .llm.md
@@ -394,7 +394,8 @@ async def convert_url_cascade(
             raise ConversionError(f"LLM processing failed: {llm_error}")
         from markitai.utils.url_redaction import redact_url
 
-        warnings.append(llm_fallback_warning(redact_url(url), llm_error))
+        # Images are analysed only after an enhancement succeeded
+        warnings.extend(llm_fallback_warnings(redact_url(url), llm_error))
 
     return UrlCascadeResult(
         markdown=markdown,

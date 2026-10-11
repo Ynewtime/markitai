@@ -26,6 +26,7 @@ from markitai.llm.engine import (
     LLMCall,
     find_budget_exceeded_error,
     find_non_retryable_provider_error,
+    reject_unfinished_answer,
     run_structured_ladder,
 )
 from markitai.llm.models import context_display_name, get_response_cost
@@ -266,6 +267,36 @@ def _merge_llm_usage(
     return merged
 
 
+# How a model opens when it declines instead of describing the picture. A
+# caption is the model's own words, never transcribed image text, so one that
+# opens like this is no alt text (same list as markitai-rust's
+# llm::declined; contract v1.6, section 6.6)
+_DECLINING_OPENERS = (
+    "i'm sorry",
+    "i am sorry",
+    "sorry, i ",
+    "i cannot ",
+    "i can't ",
+    "i can not ",
+    "i'm unable",
+    "i am unable",
+    "i'm not able to",
+    "i am not able to",
+    "as an ai",
+    "抱歉",
+    "对不起",
+    "我无法",
+    "我不能",
+    "申し訳",
+)
+
+
+def declined_caption(caption: str) -> bool:
+    """Whether an image caption is the model declining the request."""
+    text = caption.lstrip().replace("\u2019", "'").lower()
+    return text.startswith(_DECLINING_OPENERS)
+
+
 def _guard_degenerate_extracted_text(analysis: ImageAnalysis, context: str) -> bool:
     """Truncate a degenerate repetition tail in extracted_text in place.
 
@@ -432,6 +463,9 @@ class VisionAnalyzer:
             context=context,
             model=self._vision_cache_model_scope,
         )
+        # A declining answer cached by an earlier version is no answer
+        if cached is not None and declined_caption(str(cached.get("caption", ""))):
+            cached = None
         if cached is not None:
             logger.debug(f"[{image_path.name}] Persistent cache hit for analyze_image")
             return ImagePlan(
@@ -496,12 +530,21 @@ class VisionAnalyzer:
         A batch hands over the raw parsed ``ImageAnalysisResult``; it is
         normalized here, so every caller gets the same ``ImageAnalysis``
         (with ``llm_usage``) the live path returns.
+
+        Raises:
+            EmptyLLMResponseError: The caption declines the request.
         """
         if isinstance(result, ImageAnalysisResult):
             result = ImageAnalysis(
                 caption=result.caption.strip(),
                 description=result.description,
                 extracted_text=result.extracted_text,
+            )
+        if declined_caption(result.caption):
+            # Only the batch path gets here with one (the live path asked
+            # again); its caller keeps the image's original alt text
+            raise EmptyLLMResponseError(
+                "image analysis answer declined to describe the image"
             )
         if result.caption.strip() and not _guard_degenerate_extracted_text(
             result, plan.image_path.name
@@ -778,6 +821,8 @@ class VisionAnalyzer:
                 context=context,
                 model=self._vision_cache_model_scope,
             )
+            if cached is not None and declined_caption(str(cached.get("caption", ""))):
+                cached = None
             if cached is not None:
                 logger.debug(f"[{image_path.name}] Cache hit in batch analysis")
                 self._engine.record_cache_hit()
@@ -885,14 +930,10 @@ class VisionAnalyzer:
                     )
                     cost = get_response_cost(raw_response)
 
-                # Check for truncation (after accounting; the truncated
-                # results are never cached because this aborts the batch)
-                if hasattr(raw_response, "choices") and raw_response.choices:
-                    finish_reason = getattr(
-                        raw_response.choices[0], "finish_reason", None
-                    )
-                    if finish_reason == "length":
-                        raise ValueError("Output truncated due to max_tokens limit")
+                # Check for truncation or a filtered answer (after
+                # accounting; such results are never cached because this
+                # aborts the batch)
+                reject_unfinished_answer(raw_response)
 
                 # Calculate per-image usage (divide batch usage by number of images)
                 num_images = max(len(response.images), 1)
@@ -924,7 +965,11 @@ class VisionAnalyzer:
             new_results: list[ImageAnalysis] = []
             for pos in range(len(uncached_paths)):
                 img_result = aligned[pos]
-                if img_result is None or not img_result.caption.strip():
+                if (
+                    img_result is None
+                    or not img_result.caption.strip()
+                    or declined_caption(img_result.caption)
+                ):
                     new_results.append(
                         ImageAnalysis(
                             caption="Image",
@@ -1096,6 +1141,10 @@ class VisionAnalyzer:
         if not response.caption.strip():
             # Never let an empty answer through: the fallback asks again
             raise EmptyLLMResponseError("image analysis returned an empty caption")
+        if declined_caption(response.caption):
+            raise EmptyLLMResponseError(
+                "image analysis answer declined to describe the image"
+            )
 
         # Build llm_usage dict for this analysis from the raw response
         # (aggregate usage accounting itself is handled by the engine)
@@ -1163,9 +1212,14 @@ class VisionAnalyzer:
             context=context,
         )
 
-        # An empty answer is a failed analysis, never a result to cache
+        # An empty or declining answer is a failed analysis, never a result
+        # to cache
         if not caption_response.content.strip():
             raise EmptyLLMResponseError("image caption call returned no content")
+        if declined_caption(caption_response.content):
+            raise EmptyLLMResponseError(
+                "image caption answer declined to describe the image"
+            )
 
         # Generate description using system/user prompts
         desc_system = self._prompt_manager.get_prompt(

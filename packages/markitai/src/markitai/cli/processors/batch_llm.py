@@ -799,14 +799,14 @@ def _fail_or_fall_back(
     """
     from markitai.workflow.llm_failure import (
         llm_failure_fails_item,
-        llm_fallback_warning,
+        llm_fallback_warnings,
     )
 
     if llm_failure_fails_item(cfg):
         item.status = "failed"
         item.error = error
     else:
-        item.warnings.append(llm_fallback_warning(source, reason or error))
+        item.warnings.extend(llm_fallback_warnings(source, reason or error))
 
 
 async def _run_batch_llm_enhancement(

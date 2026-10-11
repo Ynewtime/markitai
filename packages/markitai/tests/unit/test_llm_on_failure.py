@@ -73,9 +73,14 @@ class TestFilePipeline:
         assert processed.llm_enhanced is False
         assert base.is_file()
         assert not base.with_suffix(".llm.md").exists()
-        (warning,) = processed.warnings
+        # The failure, then the fixed sentence the workbench shows as one
+        # notice (contract v1.6, 6.6): no model answered any part
+        warning, no_model = processed.warnings
         assert "invalid api key" in warning
         assert "kept the unenhanced output" in warning
+        assert no_model == (
+            "No model succeeded for this document; only the base Markdown was kept."
+        )
 
     @pytest.mark.asyncio
     async def test_fail_fails_the_item_and_still_writes_the_base(

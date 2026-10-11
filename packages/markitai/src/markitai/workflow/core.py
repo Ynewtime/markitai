@@ -727,6 +727,10 @@ def apply_output_profile(ctx: ConversionContext) -> None:
             apply_profile_to_file(candidate, ctx.output_dir, ctx.config)
 
 
+class LLMAnswerNotKeptError(RuntimeError):
+    """Stabilization restored the original text in place of a whole answer."""
+
+
 def stabilize_written_llm_output(
     ctx: ConversionContext,
     processor: Any,
@@ -737,17 +741,27 @@ def stabilize_written_llm_output(
 
     ``vision``: the file came from a call that saw the page images, so
     text on a page whose extraction was empty is its transcription.
+
+    Raises:
+        LLMAnswerNotKeptError: Stabilization put the original text back in
+            place of the whole answer; the ``.llm.md`` is removed (the
+            caller falls back to the base output).
     """
     if ctx.output_file is None or ctx.conversion_result is None:
         return False
     if ctx.paged_stabilized:
+        return False
+    if ctx.config.screenshot.screenshot_only:
+        # The answer is the model's reading of the screenshots, page by
+        # page: the text layer is no baseline for it (a PPTX's "Slide"
+        # markers never match the reading's "Page" ones)
         return False
 
     llm_output = ctx.output_file.with_suffix(".llm.md")
     if not llm_output.exists():
         return False
 
-    from markitai.workflow.helpers import maybe_stabilize_markdown
+    from markitai.workflow.helpers import stabilize_markdown_checked
     from markitai.workflow.single import _read_markdown_body
 
     # Only a base written by this run is a baseline: under
@@ -760,9 +774,17 @@ def stabilize_written_llm_output(
     )
     llm_content = llm_output.read_text(encoding="utf-8")
     frontmatter, llm_body = split_frontmatter(llm_content)
-    stabilized = maybe_stabilize_markdown(
+    stabilized, kept = stabilize_markdown_checked(
         processor, baseline_markdown, llm_body, ctx.input_path.name, vision=vision
     )
+    if not kept:
+        # The original text in place of the whole answer is no enhanced
+        # output (contract v1.6, section 6.6)
+        llm_output.unlink(missing_ok=True)
+        ctx.llm_output_file = None
+        raise LLMAnswerNotKeptError(
+            "the answer lost the document's page structure, so none of it was kept"
+        )
     if stabilized == llm_body:
         return False
 
@@ -946,6 +968,7 @@ async def process_with_vision_llm(
             source=ctx.input_path.name,
             original_title=document_title,
         )
+        ctx.warnings.extend(workflow.warnings)
     else:
         # Standard mode: use extracted text + screenshots for enhancement
         # Get extracted text (use markdown which has base64 replaced)
@@ -1346,7 +1369,13 @@ async def _run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
                     image_analysis_error_warning(format_error_message(e))
                 )
 
-            stabilize_written_llm_output(ctx, ctx.shared_processor, vision=True)
+            try:
+                stabilize_written_llm_output(ctx, ctx.shared_processor, vision=True)
+            except LLMAnswerNotKeptError as e:
+                _write_base_md_fallback(ctx)
+                return ConversionStepResult(
+                    success=False, error=f"Vision LLM failed: {e}"
+                )
             ctx.paged_stabilized = True
 
             # Apply alt text updates AFTER stabilization — stabilize may rewrite
@@ -1472,17 +1501,25 @@ async def convert_document_core(
         if not result.success:
             from markitai.workflow.llm_failure import (
                 llm_failure_fails_item,
-                llm_fallback_warning,
+                llm_fallback_warnings,
             )
 
             if llm_failure_fails_item(ctx.config):
                 return result
             # llm.on_failure = "fallback": the base .md the failure wrote
-            # (profile applied) is the output; the item succeeds, warned
+            # (profile applied) is the output; the item succeeds, warned.
+            # Image answers belong to the enhanced output the failure
+            # discarded: they are dropped with it (no images.json)
+            answered = ctx.image_analysis is not None and bool(
+                ctx.image_analysis.assets
+            )
+            ctx.image_analysis = None
             ctx.llm_fell_back = True
-            ctx.warnings.append(
-                llm_fallback_warning(
-                    ctx.input_path.name, result.error or "unknown error"
+            ctx.warnings.extend(
+                llm_fallback_warnings(
+                    ctx.input_path.name,
+                    result.error or "unknown error",
+                    model_answered=answered,
                 )
             )
             return ConversionStepResult(success=True)

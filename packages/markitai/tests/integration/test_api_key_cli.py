@@ -22,6 +22,7 @@ import pytest
 
 from markitai.constants import PROVIDER_API_KEY_ENV_NAMES
 from markitai.providers.api_keys import env_set_command
+from markitai.workflow.llm_failure import NO_MODEL_SUCCEEDED
 from tests.local_http import LocalHTTPServer
 
 AUTH_FAILS = "Authentication Fails (governor)"
@@ -258,8 +259,10 @@ class TestRefusedKey:
         assert FAKE_KEY not in stderr
         [item] = json.loads(result.stdout)["items"]
         assert item["status"] == "completed"
-        [warning] = item["warnings"]
+        # The failure, then the fixed "no model succeeded" sentence
+        warning, no_model = item["warnings"]
         assert "rejected the API key in DEEPSEEK_API_KEY" in warning
+        assert no_model == NO_MODEL_SUCCEEDED
         assert paths == ["/chat/completions"]
 
     def test_batch_report_carries_the_warning(
@@ -277,7 +280,8 @@ class TestRefusedKey:
         documents = json.loads(report.read_text(encoding="utf-8"))["documents"]
         for entry in documents.values():
             assert entry["status"] == "completed"
-            [warning] = entry["warnings"]
+            warning, no_model = entry["warnings"]
             assert "rejected the API key in DEEPSEEK_API_KEY" in warning
+            assert no_model == NO_MODEL_SUCCEEDED
         # A refused key is not sent again once every model has refused it
         assert 1 <= len(paths) <= 2

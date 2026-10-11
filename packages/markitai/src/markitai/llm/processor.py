@@ -462,6 +462,19 @@ class LLMProcessor:
             original_markdown, cleaned_markdown, source, vision=vision
         )
 
+    def stabilize_paged_answer(
+        self,
+        original_markdown: str,
+        cleaned_markdown: str,
+        source: str,
+        *,
+        vision: bool = False,
+    ) -> tuple[str, bool]:
+        """``_stabilize_paged_markdown`` and whether any of the answer is kept."""
+        return self.documents.stabilize_paged_answer(
+            original_markdown, cleaned_markdown, source, vision=vision
+        )
+
     # =========================================================================
     # Vision facade — thin delegates to VisionAnalyzer
     # (signatures preserved verbatim for callers and tests)
