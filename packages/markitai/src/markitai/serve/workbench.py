@@ -235,7 +235,9 @@ def static_headers() -> dict[str, str]:
     }
 
 
-def serve_asset(asset: Asset, request: Request) -> Response:
+def serve_asset(
+    asset: Asset, request: Request, *, conditional: bool = True
+) -> Response:
     """Answer one asset request (200 or 304, gzip when accepted)."""
     from fastapi.responses import Response
 
@@ -243,7 +245,7 @@ def serve_asset(asset: Asset, request: Request) -> Response:
     headers["ETag"] = asset.etag
     if asset.compressed is not None:
         headers["Vary"] = "Accept-Encoding"
-    if _not_modified(request.headers.get("if-none-match"), asset.etag):
+    if conditional and _not_modified(request.headers.get("if-none-match"), asset.etag):
         return Response(status_code=304, headers=headers)
     body = asset.plain
     if asset.compressed is not None and _accepts_gzip(
@@ -252,6 +254,28 @@ def serve_asset(asset: Asset, request: Request) -> Response:
         body = asset.compressed
         headers["Content-Encoding"] = "gzip"
     return Response(content=body, media_type=asset.content_type, headers=headers)
+
+
+def missing_page(workbench: Workbench, request: Request) -> Response | None:
+    """The workbench with status 404 for a browser asking for an unknown page.
+
+    The UI then says the page does not exist and offers the way back
+    (contract §1, v1.4); an API client, a ``/ui/`` file or another method
+    keeps the JSON 404.
+    """
+    path = request.url.path
+    page = (
+        request.method in ("GET", "HEAD")
+        and path != "/api"
+        and not path.startswith(("/api/", "/ui/"))
+        and any("text/html" in value for value in request.headers.getlist("accept"))
+    )
+    if not page:
+        return None
+    # Always the page itself, never "not modified"
+    response = serve_asset(workbench.index, request, conditional=False)
+    response.status_code = 404
+    return response
 
 
 def mount_workbench(app: FastAPI, workbench: Workbench) -> None:
