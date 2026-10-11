@@ -9,11 +9,13 @@ Tests cover:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from markitai.llm.models import (
+    GEMINI_INTRODUCTORY_UNTIL,
     _model_info_cache,
     context_display_name,
     get_model_info_cached,
@@ -373,6 +375,52 @@ class TestGetResponseCost:
             result = get_response_cost(response)
 
             assert result == pytest.approx(0.01)
+
+
+class TestGeminiIntroductoryPrices:
+    """Google doubles Gemini 3.8 Flash, 3.6 Flash and gemini-flash-latest on
+    2027-01-01; LiteLLM knows only their introductory prices."""
+
+    NEW_YEAR = datetime(2027, 1, 1, tzinfo=UTC).timestamp()
+    LISTED = 1000 * 7.5e-07 + 100 * 3.75e-06
+
+    @staticmethod
+    def _answer(model: str, **hidden: str) -> object:
+        import litellm
+
+        response = litellm.ModelResponse(
+            model=model,
+            usage=litellm.Usage(
+                prompt_tokens=1000, completion_tokens=100, total_tokens=1100
+            ),
+        )
+        response._hidden_params = {"custom_llm_provider": "gemini", **hidden}
+        return response
+
+    def test_the_cut_off_is_the_new_year(self):
+        assert self.NEW_YEAR == GEMINI_INTRODUCTORY_UNTIL
+
+    @pytest.mark.parametrize(
+        "model", ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-flash-latest"]
+    )
+    def test_answers_from_2027_on_are_unpriced(self, model):
+        with patch("time.time", return_value=self.NEW_YEAR - 1):
+            assert get_response_cost(self._answer(model)) == pytest.approx(self.LISTED)
+        with patch("time.time", return_value=self.NEW_YEAR):
+            assert get_response_cost(self._answer(model)) is None
+
+    def test_a_stream_is_judged_by_the_model_that_served_it(self):
+        answer = self._answer(
+            "gemini/gemini-flash-latest", provider_response_model="gemini-3.8-flash"
+        )
+        with patch("time.time", return_value=self.NEW_YEAR):
+            assert get_response_cost(answer) is None
+
+    def test_other_gemini_models_keep_their_prices(self):
+        with patch("time.time", return_value=self.NEW_YEAR):
+            assert get_response_cost(
+                self._answer("gemini-3.5-flash-lite")
+            ) == pytest.approx(1000 * 3e-07 + 100 * 2.5e-06)
 
 
 class TestContextDisplayName:
