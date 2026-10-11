@@ -63,6 +63,22 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ["COLUMNS"] = "80"
 
 
+# pytest puts the running test's id in PYTEST_CURRENT_TEST; Windows refuses
+# an environment variable over 32,767 characters, and a 1 MiB id there failed
+# setup and teardown, then took 50 minutes to report. Parametrize long values
+# with ``ids=``.
+MAX_TEST_ID = 255
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    long_ids = [item.nodeid for item in items if len(item.nodeid) > MAX_TEST_ID]
+    if long_ids:
+        shown = "\n".join(f"  {nodeid[:120]}... ({len(nodeid)})" for nodeid in long_ids)
+        raise pytest.UsageError(
+            f"test ids over {MAX_TEST_ID} characters (give them short ids=):\n{shown}"
+        )
+
+
 @pytest.fixture(autouse=True)
 def _isolate_global_cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Keep the default PersistentCache out of the real ``~/.markitai``.

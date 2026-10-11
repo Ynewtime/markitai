@@ -33,6 +33,7 @@ NOTE = (
         "도구마다 잘하는 일이 다르기 때문에 목적에 맞게 선택하는 것이 중요합니다. "
         "작업 중에 발견한 내용을 기록해 두면 다른 환경에서도 이전에 하던 일을 이어갈 수 있습니다.",
     ],
+    ids=["zh-note", "zh", "ja", "ko"],
 )
 def test_cjk_prose_is_not_a_js_placeholder(content):
     assert not detect_js_required(content)
@@ -48,6 +49,7 @@ def test_cjk_prose_is_not_a_js_placeholder(content):
         NOTE + "\nPlease enable JavaScript to continue.",
         NOTE + "\nChecking your browser before accessing this page.",
     ],
+    ids=["zh", "ja", "ko", "en", "enable-js", "browser-check"],
 )
 def test_loading_and_challenge_pages_still_require_js(content):
     assert detect_js_required(content)

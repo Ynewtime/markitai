@@ -811,6 +811,8 @@ class TestUrlLists:
             (b"https://e.x/a  ../escape\n", 422, "invalid_output_name"),
             (b"https://e.x/" + b"a" * (1024 * 1024), 413, "url_list_too_large"),
         ],
+        # A 1 MiB URL as the id breaks Windows (PYTEST_CURRENT_TEST)
+        ids=["not-json", "not-utf8", "no-urls", "escaping-name", "over-1mib"],
     )
     async def test_refusals(
         self, tmp_path: Path, body: bytes, status: int, reason: str

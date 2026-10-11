@@ -353,6 +353,7 @@ class TestSpaLearningSignals:
             "<html><body><p>智能验证检测中</p><p>由极验提供技术支持</p>"
             "<p>Please enable JavaScript</p></body></html>",
         ],
+        ids=["cloudflare", "verifying-human", "geetest"],
     )
     async def test_challenge_and_short_pages_do_not_teach(self, html: str) -> None:
         spa_cache = await self._fetch_static_only(html)

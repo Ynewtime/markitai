@@ -90,6 +90,7 @@ class TestBatchCustomId:
     @pytest.mark.parametrize(
         "source",
         ["note1.md", "A Report (final).pdf", "报告.docx", "x" * 200, "a::b::c"],
+        ids=["plain", "spaces", "cjk", "200-chars", "colons"],
     )
     def test_is_accepted_by_the_stricter_provider(self, source: str) -> None:
         assert re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", _batch_custom_id(0, source))
