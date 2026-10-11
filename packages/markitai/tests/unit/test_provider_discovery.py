@@ -622,3 +622,270 @@ class TestDiscoveryCache:
         assert result["stale"] is True
         assert "sk-never-return-this" not in str(result)
         assert "Authorization" not in str(result)
+
+
+class TestConnectableProviderDiscovery:
+    """The providers beyond markitai's first eight list models the
+    OpenAI-compatible way, Cohere its own; the others take IDs by hand."""
+
+    async def test_a_provider_lists_its_models_at_its_default_address(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, Any] = {}
+        install_http_response(
+            monkeypatch,
+            {
+                "data": [
+                    {"id": "llama-3.3-70b-versatile"},
+                    {"id": "whisper", "name": "W"},
+                ]
+            },
+            captured,
+        )
+        result = await discovery._http_models("groq", "gsk-secret", None)
+        assert captured["url"] == "https://api.groq.com/openai/v1/models"
+        assert captured["headers"] == {"Authorization": "Bearer gsk-secret"}
+        assert result["status"] == "ok" and result["authoritative"] is True
+        assert result["models"] == [
+            {
+                "model": "groq/llama-3.3-70b-versatile",
+                "label": "llama-3.3-70b-versatile",
+                "supports_vision": False,
+            },
+            {"model": "groq/whisper", "label": "W", "supports_vision": False},
+        ]
+
+    @pytest.mark.parametrize(
+        ("provider", "api_base", "expected_url"),
+        [
+            (
+                "groq",
+                "https://proxy.example/openai/v1/",
+                "https://proxy.example/openai/v1/models",
+            ),
+            # LiteLLM takes these hosts and adds /v1 itself
+            ("oobabooga", None, "http://127.0.0.1:5000/v1/models"),
+            (
+                "heroku",
+                "https://us.inference.heroku.com",
+                "https://us.inference.heroku.com/v1/models",
+            ),
+            # The documented address, not LiteLLM's older default
+            ("lm_studio", None, "http://localhost:1234/v1/models"),
+            ("nebius", None, "https://api.tokenfactory.nebius.com/v1/models"),
+            (
+                "databricks",
+                "https://adb-1.azuredatabricks.net/serving-endpoints",
+                "https://adb-1.azuredatabricks.net/serving-endpoints/models",
+            ),
+        ],
+    )
+    async def test_the_list_sits_where_the_provider_serves_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        provider: str,
+        api_base: str | None,
+        expected_url: str,
+    ) -> None:
+        captured: dict[str, Any] = {}
+        install_http_response(monkeypatch, {"data": [{"id": "m"}]}, captured)
+        result = await discovery._http_models(provider, None, api_base)
+        assert captured["url"] == expected_url
+        assert captured["headers"] == {}
+        assert [m["model"] for m in result["models"]] == [f"{provider}/m"]
+
+    async def test_together_answers_with_a_bare_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, Any] = {}
+        install_http_response(
+            monkeypatch,
+            [
+                {
+                    "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                    "display_name": "Llama",
+                }
+            ],  # type: ignore[arg-type]
+            captured,
+        )
+        result = await discovery._http_models("together_ai", "key", None)
+        assert captured["url"] == "https://api.together.ai/v1/models"
+        assert result["models"] == [
+            {
+                "model": "together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "label": "Llama",
+                "supports_vision": False,
+            }
+        ]
+
+    async def test_cohere_lists_its_chat_models_from_its_own_api(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, Any] = {}
+        install_http_response(
+            monkeypatch,
+            {
+                "models": [{"name": "command-a-03-2025"}, {"name": "command-r7b"}],
+                "next_page_token": "page-2",
+            },
+            captured,
+        )
+        result = await discovery._http_models("cohere", "co-secret", None)
+        assert captured["url"] == "https://api.cohere.com/v1/models"
+        assert captured["params"] == {"endpoint": "chat", "page_size": "1000"}
+        assert captured["headers"] == {"Authorization": "Bearer co-secret"}
+        assert [m["model"] for m in result["models"]] == [
+            "cohere/command-a-03-2025",
+            "cohere/command-r7b",
+        ]
+        # A further page exists: the list is shown, but not as complete
+        assert (result["status"], result["authoritative"]) == ("partial", False)
+        assert "first page" in result["detail"]
+
+    @pytest.mark.parametrize(
+        "provider", ["perplexity", "zai", "fireworks_ai", "bedrock"]
+    )
+    async def test_a_provider_without_a_model_list_sends_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, provider: str
+    ) -> None:
+        captured: dict[str, Any] = {}
+        install_http_response(monkeypatch, {"data": []}, captured)
+        result = await discovery.discover_models(provider, api_key="key")
+        assert captured == {}
+        assert result["status"] == "unavailable"
+        assert "by hand" in result["detail"]
+
+    @pytest.mark.parametrize("provider", ["databricks", "azure_ai", "hosted_vllm"])
+    async def test_a_server_of_ones_own_needs_its_address(
+        self, monkeypatch: pytest.MonkeyPatch, provider: str
+    ) -> None:
+        captured: dict[str, Any] = {}
+        install_http_response(monkeypatch, {"data": []}, captured)
+        result = await discovery.discover_models(provider, api_key="key")
+        assert captured == {}
+        assert (result["status"], result["detail"]) == (
+            "unavailable",
+            "API base is required",
+        )
+
+    async def test_a_failed_list_leaves_model_ids_by_hand_without_the_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class Refusing:
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
+
+            async def __aenter__(self) -> Refusing:
+                return self
+
+            async def __aexit__(self, *_args: Any) -> None:
+                return None
+
+            async def get(self, url: str, **_kwargs: Any) -> Any:
+                request = discovery.httpx.Request("GET", url)
+                raise discovery.httpx.HTTPStatusError(
+                    "401 for key gsk-never-shown",
+                    request=request,
+                    response=discovery.httpx.Response(401, request=request),
+                )
+
+        monkeypatch.setattr(discovery.httpx, "AsyncClient", Refusing)
+        result = await discovery.discover_models("groq", api_key="gsk-never-shown")
+        assert result["status"] == "unavailable"
+        assert result["models"] == []
+        assert result["detail"] == "model discovery failed (HTTPStatusError)"
+        assert "gsk-never-shown" not in str(result)
+
+    @pytest.mark.parametrize(
+        "api_base", [None, "https://api.anthropic.com", "https://api.anthropic.com/v1/"]
+    )
+    async def test_anthropic_lists_models_whether_or_not_its_address_has_v1(
+        self, monkeypatch: pytest.MonkeyPatch, api_base: str | None
+    ) -> None:
+        captured: dict[str, Any] = {}
+        install_http_response(monkeypatch, {"data": [{"id": "claude-x"}]}, captured)
+        await discovery._http_models("anthropic", "sk-ant", api_base)
+        assert captured["url"] == "https://api.anthropic.com/v1/models"
+
+
+class TestConnectableProviderCards:
+    async def test_every_connectable_provider_gets_a_built_in_card(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.providers.auth import AuthManager
+        from markitai.providers.connectable import CONNECTABLE
+
+        monkeypatch.setattr(discovery.shutil, "which", lambda _binary: None)
+        monkeypatch.setattr(discovery, "_local_runtime_available", lambda _p: False)
+        monkeypatch.setattr(
+            discovery, "installed", lambda row: row.provider != "vertex_ai"
+        )
+
+        class Status:
+            authenticated = False
+
+        async def fake_auth(
+            _self: AuthManager, _provider: str, **_kwargs: Any
+        ) -> Status:
+            return Status()
+
+        monkeypatch.setattr(AuthManager, "check_auth", fake_auth)
+        for row in CONNECTABLE:
+            if row.key_variable:
+                monkeypatch.delenv(row.key_variable, raising=False)
+        cards = {
+            card["provider"]: card
+            for card in await discovery.detect_provider_connections(refresh=True)
+            if card["kind"] == "common"
+        }
+        assert set(cards) == {row.provider for row in CONNECTABLE} - {"vertex_ai"}
+        assert {card["id"] for card in cards.values()} == {
+            f"common:{provider}" for provider in cards
+        }
+        status = {p: (c["status"], c["supports_discovery"]) for p, c in cards.items()}
+        # A local server at its default address or a cloud's own credentials
+        # may already work; keyed APIs need a key; some list no models
+        assert status["lm_studio"] == ("unknown", True)
+        assert status["ollama"] == ("unknown", True)
+        assert status["bedrock"] == ("unknown", False)
+        assert status["groq"] == ("needs_credentials", True)
+        assert status["hosted_vllm"] == ("needs_credentials", True)
+        assert status["perplexity"] == ("needs_credentials", False)
+        assert cards["azure"]["label"] == "Azure OpenAI"
+
+    async def test_an_installed_subscription_runtime_is_offered_before_sign_in(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.providers.auth import AuthManager
+
+        monkeypatch.setattr(discovery.shutil, "which", lambda _binary: None)
+        monkeypatch.setattr(
+            discovery, "_local_runtime_available", lambda p: p == "claude-agent"
+        )
+
+        class Status:
+            authenticated = False
+
+        async def fake_auth(
+            _self: AuthManager, _provider: str, **_kwargs: Any
+        ) -> Status:
+            return Status()
+
+        monkeypatch.setattr(AuthManager, "check_auth", fake_auth)
+        cards = await discovery.detect_provider_connections(refresh=True)
+        subscriptions = {
+            card["provider"]: card
+            for card in cards
+            if card["provider"] in {"claude-agent", "copilot", "chatgpt"}
+        }
+        # Copilot's runtime is not installed; ChatGPT signs in with a device
+        # code only the CLI can show, so it waits for `markitai auth login`
+        assert set(subscriptions) == {"claude-agent"}
+        claude = subscriptions["claude-agent"]
+        assert (claude["kind"], claude["status"], claude["key_optional"]) == (
+            "common",
+            "unknown",
+            True,
+        )
+        # Never a startup default: nothing says it works yet
+        assert discovery.startup_model_candidates([claude]) == []

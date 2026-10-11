@@ -1307,17 +1307,23 @@ def _is_deployment_routable(model: ModelConfig) -> bool:
         is_local_provider_available,
         is_local_provider_model,
     )
+    from markitai.providers.connectable import connectable
 
     model_id = model.litellm_params.model
     if is_local_provider_model(model_id):
         return is_local_provider_available(model_id)
     provider = model_id.split("/", 1)[0].lower()
-    if provider in {"ollama", "lm_studio", "vllm"}:
+    row = connectable(provider)
+    # Local servers take no key; Bedrock and Vertex AI sign with the
+    # server's own cloud credentials
+    if provider in {"ollama", "vllm"} or (row is not None and row.key_optional):
         return True
     if model.litellm_params.get_resolved_api_key(strict=False):
         return True
-    env_key = PROVIDER_API_KEY_ENV.get(provider)
-    return env_key is not None and bool(os.environ.get(env_key))
+    env_keys = {PROVIDER_API_KEY_ENV.get(provider)}
+    if row is not None:
+        env_keys.add(row.key_variable)
+    return any(name and os.environ.get(name) for name in env_keys)
 
 
 def _llm_settings_payload(state: ServeState) -> dict[str, Any]:
@@ -2352,17 +2358,32 @@ def create_app(
         request: Request, refresh: bool = False
     ) -> dict[str, Any]:
         from markitai.providers import is_local_provider_model
+        from markitai.providers.connectable import BUILT_IN, routable_providers
         from markitai.providers.discovery import (
             detect_provider_connections,
             provider_label,
         )
-        from markitai.serve.provider_catalog import annotate_card
+        from markitai.serve.provider_catalog import annotate_card, card_facts
 
         state = _state(request)
         detected = await detect_provider_connections(
             state.configured_models, refresh=refresh
         )
-        detected = [card for card in detected if card.get("kind") != "configured"]
+        # A built-in card beyond those markitai always offered is shown when
+        # this LiteLLM routes its prefix (LiteLLM loads on a worker thread,
+        # as for a job); subscription runtimes are routed by markitai itself
+        routable = await asyncio.to_thread(routable_providers)
+        detected = [
+            card
+            for card in detected
+            if card.get("kind") != "configured"
+            and (
+                card.get("kind") != "common"
+                or card.get("provider") in BUILT_IN
+                or is_local_provider_model(f"{card.get('provider')}/")
+                or card.get("provider") in routable
+            )
+        ]
         explicit_by_id = {
             provider.id: provider for provider in state.configured_providers
         }
@@ -2466,7 +2487,9 @@ def create_app(
                     "supports_discovery": True,
                 }
             )
-        return {"providers": [annotate_card(dict(card)) for card in providers]}
+        return {
+            "providers": [card_facts(annotate_card(dict(card))) for card in providers]
+        }
 
     @app.get(
         "/api/settings/llm/providers/{provider_id}/credentials",
@@ -2730,6 +2753,13 @@ def create_app(
             _reject_rebound_credentials(fallback_key, fallback_base, body.api_base)
         api_key = body.api_key if body.api_key is not None else fallback_key
         api_base = body.api_base if body.api_base is not None else fallback_base
+        if credential_provider is None and credential_source is None:
+            # A new connection left on the provider's default: where
+            # LiteLLM's own default is another host (or api.openai.com), the
+            # documented address the card showed is stored with it
+            from markitai.providers.connectable import pinned_base
+
+            api_base = api_base or pinned_base(provider_name)
         _check_credential_target(
             api_key,
             api_base,

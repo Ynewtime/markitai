@@ -463,6 +463,14 @@ class ProviderConnection(BaseModel):
     ) = None
     icon: str | None = None
     aliases: list[str] | None = None
+    # How the provider is connected (markitai.providers.connectable): the
+    # address used when none is entered (null: one must be entered, or the
+    # provider takes none), the variable LiteLLM reads its key from, and
+    # whether no key needs entering (local servers, subscription runtimes,
+    # cloud credentials)
+    default_base: str | None = None
+    key_variable: str | None = None
+    key_optional: bool | None = None
 
 
 class ProviderConnectionList(BaseModel):
