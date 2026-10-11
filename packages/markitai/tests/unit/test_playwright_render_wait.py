@@ -73,7 +73,10 @@ class TestWaitUntilSettled:
         settled, elapsed = await _timed(page, activity, limit_s=3.0)
 
         assert settled
-        assert elapsed >= 0.5  # finished at 0.4 s, then quiet for 0.1 s
+        # Finished at 0.4 s, then quiet for 0.1 s; asyncio timers may fire a
+        # clock tick early, and Windows' clock moves in 15.6 ms ticks
+        tick = time.get_clock_info("monotonic").resolution
+        assert elapsed >= 0.5 - 3 * tick
 
     async def test_a_failed_request_counts_as_finished(self) -> None:
         page = _FakePage()
