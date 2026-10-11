@@ -133,7 +133,7 @@ def screenshot_path_for(output_dir: Path, filename: str) -> Path:
     stem = filename[: len(filename) - len(suffix)]
     # A folder so deep that not even a few characters of the name fit: the
     # hash alone is the shortest name left
-    head = stem[:keep].rstrip("_.") if keep >= 8 else "screenshot"
+    head = stem[:keep].rstrip("_.-") if keep >= 8 else "screenshot"
     return output_dir / f"{head}_{digest}{suffix}"
 
 

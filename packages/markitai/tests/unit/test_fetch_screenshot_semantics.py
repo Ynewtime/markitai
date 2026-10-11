@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -774,18 +775,31 @@ class TestWindowsPathLength:
 
         from markitai.fetch_screenshot import screenshot_path_for
 
-        deep = tmp_path / ("d" * 120)
+        # A folder of a known length on every machine (the drive or root plus
+        # 150 characters): the temp folder's own depth varies (runner-win's
+        # left room for 26 characters of the name)
+        deep = Path(tmp_path.anchor) / ("d" * 150)
         other = self.LONG.replace("example.com", "example.org")
         with patch("sys.platform", "win32"):
             short = screenshot_path_for(tmp_path, "example.com_page.full.jpg")
             fitted = screenshot_path_for(deep, self.LONG)
             fitted_other = screenshot_path_for(deep, other)
         assert short.name == "example.com_page.full.jpg"
-        # Room for a tile's "--12" too
+        # Room for a tile's "--12" too; as much of the name as fits is kept
         assert len(os.path.abspath(fitted)) + 4 <= 259
-        assert fitted.name.startswith("example.com_a-long-article-slug")
+        assert len(os.path.abspath(fitted)) + 4 >= 257
+        assert fitted.name.startswith("example.com_a-long-article-slug_a-long-art")
         assert fitted.name.endswith(".full.jpg")
         assert fitted.name != fitted_other.name
+
+    def test_a_folder_too_deep_for_any_name_keeps_the_hash(self, tmp_path):
+        from markitai.fetch_screenshot import screenshot_path_for
+
+        deeper = Path(tmp_path.anchor) / ("d" * 230)
+        with patch("sys.platform", "win32"):
+            fitted = screenshot_path_for(deeper, self.LONG)
+        assert fitted.name.startswith("screenshot_")
+        assert fitted.name.endswith(".full.jpg")
 
     @pytest.mark.asyncio
     async def test_the_capture_is_saved_under_the_fitted_name(self, tmp_path):
