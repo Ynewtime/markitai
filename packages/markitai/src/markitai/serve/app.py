@@ -111,7 +111,11 @@ from markitai.serve.schemas import (
 from markitai.serve.tickets import LIFETIME_S as TICKET_LIFETIME_S
 from markitai.serve.tickets import DownloadTickets, downloadable
 from markitai.serve.workbench import BUNDLED_DIR, Workbench, mount_workbench
-from markitai.utils.url_redaction import redact_log_record
+from markitai.utils.url_redaction import (
+    mask_url_credentials,
+    redact_log_record,
+    url_credential_values,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
@@ -1101,6 +1105,29 @@ def _mask_api_key(api_key: str | None) -> str | None:
     return "…"
 
 
+def _masked_base(api_base: str | None) -> str | None:
+    return mask_url_credentials(api_base) if api_base is not None else None
+
+
+def _shown_base(sent: str | None, stored: Any) -> bool:
+    """Whether *sent* is the stored API base sent back as settings show it.
+
+    Settings mask a base's userinfo and secret parameters (see
+    ``mask_url_credentials``); that text sent back means "keep the stored
+    base". Any other masked base cannot be stored: 422.
+    """
+    if sent is None or "…" not in sent:
+        return False
+    if isinstance(stored, str) and sent == mask_url_credentials(stored):
+        return True
+    raise ApiError(
+        422,
+        "invalid_settings_request",
+        "api_base is masked; send the whole new address, or leave api_base out "
+        "to keep the saved one.",
+    )
+
+
 def _open_in_editor(path: Path) -> None:
     """Hand *path* to the host's default application for its file type.
 
@@ -1538,6 +1565,9 @@ def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
         )
         if value and not value.startswith("env:")
     ]
+    if body.api_base:
+        base = resolve_env_value(body.api_base, strict=False) or body.api_base
+        secrets += url_credential_values(base)
     for secret in secrets:
         detail = _scrub_secret(detail, secret)
     detail = re.sub(
@@ -2437,8 +2467,9 @@ def create_app(
 
         The stored key is never returned, only its masked form: the editor
         shows it and leaves ``api_key`` out of the update unless the user
-        types a new key, so the stored one stays. API bases are ordinary,
-        non-secret URL fields.
+        types a new key, so the stored one stays. The base comes without its
+        userinfo and secret parameters; sent back as shown, it keeps the
+        stored one (``_shown_base``).
         """
         state = _state(request)
         saved = next(
@@ -2450,15 +2481,15 @@ def create_app(
             None,
         )
         if saved is not None:
-            # Return the RAW saved base (None when the connection uses the
-            # provider default) so re-saving after only a key edit does not
-            # pin the default as an explicit override; the default is offered
+            # The saved base (None when the connection uses the provider
+            # default) so re-saving after only a key edit does not pin the
+            # default as an explicit override; the default is offered
             # separately for the editor's placeholder.
             masked = _mask_api_key(saved.api_key)
             return {
                 "api_key": masked,
                 "api_key_masked": masked,
-                "api_base": saved.api_base,
+                "api_base": _masked_base(saved.api_base),
                 "api_base_placeholder": provider_default_api_base(saved.provider),
             }
 
@@ -2478,7 +2509,7 @@ def create_app(
             return {
                 "api_key": masked,
                 "api_key_masked": masked,
-                "api_base": legacy.litellm_params.api_base,
+                "api_base": _masked_base(legacy.litellm_params.api_base),
                 "api_base_placeholder": provider_default_api_base(legacy_provider),
             }
 
@@ -2552,10 +2583,11 @@ def create_app(
             if stored is not None
             else None
         )
+        sent_base = None if _shown_base(body.api_base, fallback_base) else body.api_base
         if body.api_key is None:
-            _reject_rebound_credentials(fallback_key, fallback_base, body.api_base)
+            _reject_rebound_credentials(fallback_key, fallback_base, sent_base)
         raw_key = body.api_key if body.api_key is not None else fallback_key
-        raw_base = body.api_base if body.api_base is not None else fallback_base
+        raw_base = sent_base if sent_base is not None else fallback_base
         _check_credential_target(
             raw_key,
             raw_base,
@@ -2727,6 +2759,9 @@ def create_app(
         if not isinstance(params, dict):
             params = {}
         old_pair = (params.get("api_key"), params.get("api_base"))
+        base_set = "api_base" in body.model_fields_set and not _shown_base(
+            body.api_base, params.get("api_base")
+        )
         if "model_name" in body.model_fields_set and body.model_name is not None:
             entry["model_name"] = body.model_name
         if "model" in body.model_fields_set and body.model is not None:
@@ -2736,7 +2771,7 @@ def create_app(
                 params.pop("api_key", None)
             else:
                 params["api_key"] = body.api_key
-        if "api_base" in body.model_fields_set:
+        if base_set:
             if body.api_base is None:
                 params.pop("api_base", None)
             else:
@@ -2982,6 +3017,12 @@ def create_app(
                 if target is not None
                 else legacy_params.get("api_base")
             )
+            key_set = "api_key" in body.model_fields_set
+            base_set = "api_base" in body.model_fields_set and not _shown_base(
+                body.api_base, old_base
+            )
+            if not key_set and not base_set:
+                return entries  # only the base, sent back as shown
             if target is None:
                 target = {
                     "id": str(uuid.uuid4()),
@@ -2991,12 +3032,12 @@ def create_app(
                 }
                 providers.append(target)
 
-            if "api_key" in body.model_fields_set:
+            if key_set:
                 if body.api_key is None:
                     target.pop("api_key", None)
                 else:
                     target["api_key"] = body.api_key
-            if "api_base" in body.model_fields_set:
+            if base_set:
                 if body.api_base is None:
                     target.pop("api_base", None)
                 else:
@@ -3004,7 +3045,7 @@ def create_app(
             _check_credential_target(
                 target.get("api_key"),
                 target.get("api_base"),
-                client_key=body.api_key if "api_key" in body.model_fields_set else None,
+                client_key=body.api_key if key_set else None,
                 configured=configured | {(old_key, old_base)},
             )
 
@@ -3027,12 +3068,12 @@ def create_app(
                     and not matches_old_connection
                 ):
                     continue
-                if "api_key" in body.model_fields_set:
+                if key_set:
                     if body.api_key is None:
                         params.pop("api_key", None)
                     else:
                         params["api_key"] = body.api_key
-                if "api_base" in body.model_fields_set:
+                if base_set:
                     if body.api_base is None:
                         params.pop("api_base", None)
                     else:

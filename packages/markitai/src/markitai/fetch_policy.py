@@ -118,7 +118,7 @@ def is_private_or_local_domain(domain: str) -> bool:
     return _is_non_public_ip(address)
 
 
-def _is_sensitive_query_key(key: str) -> bool:
+def is_sensitive_query_key(key: str) -> bool:
     normalized = normalize_identifier_key(key)
     parts = set(normalized.split("_"))
     if normalized in {
@@ -254,7 +254,7 @@ def sensitive_path_segment_indexes(path: str) -> frozenset[int]:
 
         for separator in ("=", ":"):
             key, found, value = segment.partition(separator)
-            if found and value and _is_sensitive_query_key(key):
+            if found and value and is_sensitive_query_key(key):
                 sensitive.add(index)
                 break
 
@@ -263,7 +263,7 @@ def sensitive_path_segment_indexes(path: str) -> frozenset[int]:
         context = normalize_identifier_key(decoded_segments[index - 1])
         if (
             context in _SENSITIVE_PATH_CONTEXTS
-            or _is_sensitive_query_key(decoded_segments[index - 1])
+            or is_sensitive_query_key(decoded_segments[index - 1])
         ) and _looks_contextual_path_token(segment):
             sensitive.add(index)
 
@@ -282,7 +282,7 @@ def url_contains_credentials(url: str) -> bool:
         return True
 
     for component in (parsed.query, parsed.fragment if "=" in parsed.fragment else ""):
-        if any(_is_sensitive_query_key(key) for key, _ in parse_qsl(component)):
+        if any(is_sensitive_query_key(key) for key, _ in parse_qsl(component)):
             return True
     return False
 

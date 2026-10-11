@@ -681,8 +681,8 @@ class TestProviderCredentialLifecycle:
         assert credentials.status_code == 200
         assert credentials.headers["cache-control"] == "no-store"
         assert "sk-visible-on-request" not in credentials.text
-        # An explicitly-saved base is returned verbatim; the default is offered
-        # separately for the editor placeholder.
+        # A saved base without credentials comes back as written; the default
+        # is offered separately for the editor placeholder.
         assert credentials.json() == {
             # The shared workbench reads `api_key`; 1.2 clients `api_key_masked`
             "api_key": "sk…uest",
@@ -2149,3 +2149,190 @@ class TestOpenConfigFile:
             response = await client.post("/api/settings/llm/config/open")
         assert response.status_code == 500
         assert "no opener" in response.json()["detail"]
+
+
+_SECRET_BASE = (
+    "https://alice:pa55-word-base@proxy.example/v1"
+    "?api_key=base-key-0123456&api-version=2024-10-01"
+)
+_SHOWN_BASE = "https://…@proxy.example/v1?api_key=…&api-version=2024-10-01"
+_BASE_SECRETS = ("alice", "pa55-word-base", "base-key-0123456")
+
+
+class TestApiBaseCredentials:
+    """A saved base's userinfo and secret parameters never leave the server."""
+
+    async def _seed(self, client: httpx.AsyncClient) -> tuple[str, str]:
+        revision = (await client.get("/api/settings/llm")).json()["revision"]
+        added = await client.post(
+            "/api/settings/llm/deployments/batch",
+            json={
+                "expected_revision": revision,
+                "deployments": [
+                    {
+                        "model_name": "default",
+                        "model": "openai/gpt-4o-mini",
+                        "provider": "custom",
+                        "api_key": "sk-connection-key-0001",
+                        "api_base": _SECRET_BASE,
+                    }
+                ],
+            },
+        )
+        assert added.status_code == 200, added.text
+        assert not any(secret in added.text for secret in _BASE_SECRETS)
+        cards = (await client.get("/api/settings/llm/providers")).json()["providers"]
+        card = next(card for card in cards if card["kind"] == "configured")
+        return card["provider_id"], added.json()["revision"]
+
+    @staticmethod
+    def _saved_bases(config_path: Path) -> list[str]:
+        llm = json.loads(config_path.read_text(encoding="utf-8"))["llm"]
+        return [provider.get("api_base") for provider in llm.get("providers", [])] + [
+            entry["litellm_params"].get("api_base") for entry in llm["model_list"]
+        ]
+
+    async def test_no_settings_response_returns_them(self, tmp_path: Path) -> None:
+        async with _serve_client(_make_app(tmp_path)) as client:
+            provider_id, _ = await self._seed(client)
+            responses = [
+                await client.get("/api/settings/llm"),
+                await client.get("/api/settings/llm/providers"),
+                await client.get(
+                    f"/api/settings/llm/providers/{provider_id}/credentials"
+                ),
+            ]
+        for response in responses:
+            assert response.status_code == 200
+            assert not any(secret in response.text for secret in _BASE_SECRETS)
+        assert responses[2].json()["api_base"] == _SHOWN_BASE
+
+    async def test_a_base_sent_back_as_shown_keeps_the_stored_one(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            provider_id, revision = await self._seed(client)
+            only_base = await client.patch(
+                f"/api/settings/llm/providers/{provider_id}",
+                json={"expected_revision": revision, "api_base": _SHOWN_BASE},
+            )
+            assert only_base.status_code == 200, only_base.text
+            assert self._saved_bases(config_path) == [_SECRET_BASE, _SECRET_BASE]
+            with_key = await client.patch(
+                f"/api/settings/llm/providers/{provider_id}",
+                json={
+                    "expected_revision": only_base.json()["revision"],
+                    "api_key": "sk-connection-key-0002",
+                    "api_base": _SHOWN_BASE,
+                },
+            )
+        assert with_key.status_code == 200, with_key.text
+        assert self._saved_bases(config_path) == [_SECRET_BASE, _SECRET_BASE]
+        saved = json.loads(config_path.read_text(encoding="utf-8"))["llm"]
+        assert saved["providers"][0]["api_key"] == "sk-connection-key-0002"
+
+    async def test_an_edited_masked_base_is_refused(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            provider_id, revision = await self._seed(client)
+            before = config_path.read_text(encoding="utf-8")
+            edited = await client.patch(
+                f"/api/settings/llm/providers/{provider_id}",
+                json={
+                    "expected_revision": revision,
+                    "api_key": "sk-connection-key-0002",
+                    "api_base": _SHOWN_BASE.replace("/v1", "/v2"),
+                },
+            )
+        assert edited.status_code == 422
+        assert edited.json()["reason"] == "invalid_settings_request"
+        assert "api_base is masked" in edited.json()["detail"]
+        assert config_path.read_text(encoding="utf-8") == before
+
+    async def test_discovery_with_the_shown_base_uses_the_stored_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[str | None] = []
+
+        async def fake_discover(provider: str, **kwargs: Any) -> dict[str, Any]:
+            seen.append(kwargs.get("api_base"))
+            return {
+                "provider": provider,
+                "status": "ok",
+                "source": "live",
+                "authoritative": True,
+                "cached": False,
+                "stale": False,
+                "models": [],
+            }
+
+        monkeypatch.setattr(
+            "markitai.providers.discovery.discover_models", fake_discover
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            provider_id, _ = await self._seed(client)
+            found = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={
+                    "provider": "custom",
+                    "provider_id": provider_id,
+                    "api_base": _SHOWN_BASE,
+                },
+            )
+            masked_draft = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={"provider": "custom", "api_base": _SHOWN_BASE},
+            )
+        assert found.status_code == 200, found.text
+        assert seen == [_SECRET_BASE]
+        assert masked_draft.status_code == 422
+
+    async def test_probe_errors_leave_the_base_secrets_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def failing_probe(body: Any) -> str:
+            raise RuntimeError(
+                "401 for alice:pa55-word-base at proxy.example "
+                "(api_key=base-key-0123456)"
+            )
+
+        monkeypatch.setattr("markitai.serve.app._probe_llm", failing_probe)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            probe = await client.post(
+                "/api/settings/llm/test",
+                json={
+                    "model": "openai/gpt-4o-mini",
+                    "api_key": "sk-probe-key-000001",
+                    "api_base": _SECRET_BASE,
+                },
+            )
+        assert probe.status_code == 200
+        assert probe.json()["ok"] is False
+        assert not any(secret in probe.text for secret in _BASE_SECRETS)
+
+    async def test_a_deployment_update_with_the_shown_base_keeps_it(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            _, revision = await self._seed(client)
+            view = (await client.get("/api/settings/llm")).json()
+            deployment_id = view["deployments"][0]["deployment_id"]
+            updated = await client.patch(
+                f"/api/settings/llm/deployments/{deployment_id}",
+                json={
+                    "expected_revision": revision,
+                    "weight": 2,
+                    "api_base": _SHOWN_BASE,
+                },
+            )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["deployments"][0]["weight"] == 2
+        assert self._saved_bases(config_path)[-1] == _SECRET_BASE
