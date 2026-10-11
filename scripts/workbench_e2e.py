@@ -65,6 +65,8 @@ SLOW_PAGE_S = 2.5
 # it masked and never send these parts to the browser
 CONNECTION_ID = "00000000-0000-4000-8000-0000000000c1"
 BASE_SECRETS = ("e2e-user", "e2e-pass-0000", "e2e-base-secret-0000")
+# The server's own OpenAI key, behind the environment card
+ENV_KEY = ("OPENAI_API_KEY", "sk-e2e-env-0000")
 
 
 DRAWING = (
@@ -487,8 +489,12 @@ def run_server(
         MARKITAI_HOME=str(home / ".markitai"),
         MARKITAI_SERVE_TOKEN=TOKEN,
         NO_PROXY="127.0.0.1,localhost",
+        # Anything bound for the internet (the environment card's model list
+        # at api.openai.com) goes to a proxy that is not there: it fails here
+        HTTPS_PROXY="http://127.0.0.1:9",
         PYTHONUTF8="1",
     )
+    env[ENV_KEY[0]] = ENV_KEY[1]
     if bundle is None:
         command = [
             sys.executable,
@@ -1610,6 +1616,76 @@ def browse(
             return "Groq connected with a key and an address; its list loaded; one model saved"
 
         run.step(page, "settings-connect-provider", connect_provider)
+
+        # 13c. Add models from an environment card: the server's own
+        # OPENAI_API_KEY. Its list is OpenAI's (unavailable here, see the
+        # proxy above), a model typed by hand is saved with the variable's
+        # name, and the card becomes that saved connection
+        def environment_card() -> str:
+            variable, secret = ENV_KEY
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            _click_visible(page.get_by_role("button", name="Add models"))
+            panel = page.locator(".provider-picker")
+            panel.wait_for()
+            row = panel.locator(".provider-row").filter(has_text=f"Using {variable}")
+            before = len(run.api)
+            _click_visible(row.locator(".provider-pick"))
+            _wait(
+                page,
+                lambda: run.saw(
+                    "POST", r"^/api/settings/llm/model-discovery$", 200, since=before
+                ),
+                what="the environment card's model list",
+            )
+            page.get_by_label("Add a model by ID").fill("gpt-e2e-env")
+            page.get_by_role("button", name="Add", exact=True).click()
+            page.get_by_label("Routing group").fill("e2e-env")
+            run.shot(page, "provider-environment-card")
+            before = len(run.api)
+            page.locator(".form-actions").get_by_role("button", name="Save").click()
+            _wait(
+                page,
+                lambda: (
+                    run.saw(
+                        "POST",
+                        r"^/api/settings/llm/deployments/batch$",
+                        200,
+                        since=before,
+                    )
+                    and run.saw(
+                        "GET", r"^/api/settings/llm/providers", 200, since=before
+                    )
+                ),
+                what="the model saved from the environment card",
+            )
+            text = config.read_text(encoding="utf-8")
+            stored = json.loads(text)["llm"]
+            added = [
+                m
+                for m in stored["model_list"]
+                if m["litellm_params"]["model"] == "openai/gpt-e2e-env"
+            ]
+            if [(m["model_name"], m["litellm_params"]) for m in added] != [
+                (
+                    "e2e-env",
+                    {"model": "openai/gpt-e2e-env", "api_key": f"env:{variable}"},
+                )
+            ]:
+                raise AssertionError(f"saved models: {added}")
+            linked = [
+                p
+                for p in stored["providers"]
+                if p["id"] == added[0]["model_info"].get("provider_id")
+            ]
+            if [
+                (p["provider"], p.get("api_key"), p.get("api_base")) for p in linked
+            ] != [("openai", f"env:{variable}", None)]:
+                raise AssertionError(f"saved connection: {linked}")
+            if secret in text or secret in page.content():
+                raise AssertionError("the environment's key was copied")
+            return f"a model added from the {variable} card; saved as env:{variable}"
+
+        run.step(page, "settings-environment-card", environment_card)
 
         # 14. History survives a reload
         def history() -> str:

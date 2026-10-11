@@ -1732,6 +1732,46 @@ def _check_credential_target(
     raise ApiError(422, "invalid_settings_request", detail)
 
 
+def _environment_key(
+    reference: str, provider: str, *, api_key: str | None, api_base: str | None
+) -> str:
+    """The key reference behind an environment card's id (``env:openai``).
+
+    Cards exist only for the providers whose key variable the server reads
+    (``env:openai`` -> ``env:OPENAI_API_KEY``), never for any variable a
+    caller names, and that key goes only to its own provider's endpoint: an
+    address needs the caller's own key.
+    """
+    name = reference.removeprefix("env:")
+    variable = PROVIDER_API_KEY_ENV.get(name)
+    if variable is None:
+        raise ApiError(
+            422,
+            "invalid_settings_request",
+            (
+                f"unknown environment provider {reference!r}; environment "
+                "connections are "
+                f"{', '.join(f'env:{known}' for known in PROVIDER_API_KEY_ENV)}"
+            ),
+        )
+    if provider != name:
+        raise ApiError(
+            422,
+            "invalid_settings_request",
+            f"provider must match the environment connection ({name})",
+        )
+    if api_key is None and api_base is not None:
+        raise ApiError(
+            422,
+            "invalid_settings_request",
+            (
+                f"the {variable} environment key only goes to {name}'s own "
+                "endpoint; to use another address, enter the key itself"
+            ),
+        )
+    return f"env:{variable}"
+
+
 def _reject_rebound_credentials(
     stored_key: str | None, stored_base: str | None, api_base: str | None
 ) -> None:
@@ -2713,6 +2753,17 @@ def create_app(
         from markitai.providers.discovery import discover_models
 
         state = _state(request)
+        # An environment card's id names its provider (env:openai)
+        environment_key = (
+            _environment_key(
+                body.provider_id,
+                body.provider.strip().lower(),
+                api_key=body.api_key,
+                api_base=body.api_base,
+            )
+            if body.provider_id is not None and body.provider_id.startswith("env:")
+            else None
+        )
         stored_provider = next(
             (
                 provider
@@ -2729,7 +2780,12 @@ def create_app(
             if deployment_id is not None
             else None
         )
-        if body.provider_id is not None and stored_provider is None and stored is None:
+        if (
+            body.provider_id is not None
+            and environment_key is None
+            and stored_provider is None
+            and stored is None
+        ):
             raise ApiError(
                 404,
                 "settings_entry_missing",
@@ -2748,7 +2804,9 @@ def create_app(
                 ),
             )
         fallback_key = (
-            stored_provider.api_key
+            environment_key
+            if environment_key is not None
+            else stored_provider.api_key
             if stored_provider is not None
             else stored.litellm_params.api_key
             if stored is not None
@@ -2845,9 +2903,23 @@ def create_app(
             if body.credential_deployment_id is not None
             else None
         )
+        provider_name = (body.provider or body.model.split("/", 1)[0]).strip().lower()
+        # An environment card's id names its provider (env:openai): the model
+        # is saved with that provider's key variable and its own endpoint
+        environment_key = (
+            _environment_key(
+                body.credential_provider_id,
+                provider_name,
+                api_key=body.api_key,
+                api_base=body.api_base,
+            )
+            if body.credential_provider_id is not None
+            and body.credential_provider_id.startswith("env:")
+            else None
+        )
         credential_provider = (
             _raw_provider_by_id(providers, body.credential_provider_id)
-            if body.credential_provider_id is not None
+            if body.credential_provider_id is not None and environment_key is None
             else None
         )
         if body.credential_deployment_id is not None and credential_source is None:
@@ -2859,7 +2931,11 @@ def create_app(
                     "Refresh the provider list and choose it again."
                 ),
             )
-        if body.credential_provider_id is not None and credential_provider is None:
+        if (
+            body.credential_provider_id is not None
+            and environment_key is None
+            and credential_provider is None
+        ):
             raise ApiError(
                 404,
                 "settings_entry_missing",
@@ -2869,7 +2945,11 @@ def create_app(
                 ),
             )
 
-        provider_name = (body.provider or body.model.split("/", 1)[0]).strip().lower()
+        new_connection = (
+            credential_provider is None
+            and credential_source is None
+            and environment_key is None
+        )
         provider_id = (
             str(credential_provider["id"])
             if credential_provider is not None
@@ -2879,7 +2959,9 @@ def create_app(
             else None
         )
         fallback_key = (
-            credential_provider.get("api_key")
+            environment_key
+            if environment_key is not None
+            else credential_provider.get("api_key")
             if credential_provider is not None
             else credential_source.litellm_params.api_key
             if credential_source is not None
@@ -2896,16 +2978,14 @@ def create_app(
             _reject_rebound_credentials(fallback_key, fallback_base, body.api_base)
         api_key = body.api_key if body.api_key is not None else fallback_key
         api_base = body.api_base if body.api_base is not None else fallback_base
-        if credential_provider is None and credential_source is None:
+        if new_connection:
             # A new connection left on the provider's default: where
             # LiteLLM's own default is another host (or api.openai.com), the
             # documented address the card showed is stored with it
             from markitai.providers.connectable import pinned_base
 
             api_base = api_base or pinned_base(provider_name)
-        if body.api_base is not None or (
-            credential_provider is None and credential_source is None
-        ):
+        if body.api_base is not None or new_connection:
             # An address this request names (or the pinned default of a new
             # connection) never gets the server's own key: keyless, it is
             # stored with the placeholder. A saved connection's own pair
