@@ -363,6 +363,15 @@ def make_inputs(directory: Path, pages_port: int) -> dict[str, Path]:
     from PIL import Image, ImageDraw
 
     directory.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (900, 600), "white")
+    draw = ImageDraw.Draw(image)
+    for index, height in enumerate((180, 320, 260, 410)):
+        draw.rectangle(
+            (120 + index * 180, 520 - height, 220 + index * 180, 520),
+            fill=(37, 99, 235),
+        )
+    photo = directory / "bar-chart.png"
+    image.save(photo)
     pdf = pymupdf.open()
     for number in range(1, 4):
         page = pdf.new_page(width=612, height=792)
@@ -379,17 +388,12 @@ def make_inputs(directory: Path, pages_port: int) -> dict[str, Path]:
         ):
             page.insert_text((72, y), row, fontsize=11, fontname="cour")
             y += 18
+        if number == 1:
+            # An extracted picture the preview draws through the item's
+            # image route
+            page.insert_image(pymupdf.Rect(72, 260, 372, 460), filename=str(photo))
     report = directory / "quarterly-report.pdf"
     pdf.save(report)
-    image = Image.new("RGB", (900, 600), "white")
-    draw = ImageDraw.Draw(image)
-    for index, height in enumerate((180, 320, 260, 410)):
-        draw.rectangle(
-            (120 + index * 180, 520 - height, 220 + index * 180, 520),
-            fill=(37, 99, 235),
-        )
-    photo = directory / "bar-chart.png"
-    image.save(photo)
     notes = directory / "meeting-notes.md"
     # The drawing must render in the preview, its script never
     notes.write_text(
@@ -1064,7 +1068,25 @@ def browse(
             _click_visible(page.get_by_role("button", name="Preview", exact=True))
             page.get_by_role("tab", name=re.compile("Rendered|Source")).first.wait_for()
             page.get_by_text("Quarterly report, part 1").first.wait_for()
-            return "rendered Markdown in the preview"
+            # The PDF's picture, read through the item's own image route
+            # (contract v1.6) and drawn, not "[Image: preview unavailable]"
+            _wait(
+                page,
+                lambda: run.saw("GET", r"/items/i\d+/assets/.+\.(png|jpe?g)$", 200),
+                what="the extracted picture from the item's image route",
+            )
+            drawn = page.locator("[role=tabpanel]:not([hidden]) .doc-body img").first
+            _wait(
+                page,
+                lambda: (
+                    drawn.count() == 1
+                    and drawn.evaluate("img => img.complete && img.naturalWidth > 0")
+                ),
+                what="the picture drawn in the preview",
+            )
+            if page.get_by_text("preview unavailable").count():
+                raise AssertionError("a picture is shown as unavailable")
+            return "rendered Markdown in the preview, its extracted picture drawn"
 
         run.step(page, "preview", preview)
 
@@ -1520,20 +1542,22 @@ def browse(
             panel.wait_for()
             panel.get_by_role("searchbox").fill("groq")
             _click_visible(panel.locator(".provider-item").filter(has_text="Groq"))
+            # The key variable under the title; the default address is the
+            # optional address field's placeholder
             facts = page.locator(".provider-facts")
+            default_base = page.get_by_placeholder("https://api.groq.com/openai/v1")
             _wait(
                 page,
                 lambda: (
                     facts.count() == 1
-                    and "https://api.groq.com/openai/v1" in facts.inner_text()
                     and "GROQ_API_KEY" in facts.inner_text()
+                    and default_base.count() == 1
                 ),
                 timeout=10,
                 what="Groq's address and key variable",
             )
             page.get_by_placeholder("Paste the key").fill("gsk-e2e-0000-1111")
-            page.locator("summary").filter(has_text="Use a custom API base").click()
-            page.get_by_placeholder("https://api.groq.com/openai/v1").fill(address)
+            default_base.fill(address)
             before = len(run.api)
             page.get_by_role("button", name="Load models").click()
             _wait(
@@ -1547,7 +1571,6 @@ def browse(
             option.wait_for(timeout=10000)
             option.locator("input[type=checkbox]").check()
             # Its own routing group, so later steps' jobs keep their model
-            page.locator("summary").filter(has_text="Advanced").click()
             page.get_by_label("Routing group").fill("e2e-groq")
             run.shot(page, "provider-connect-groq")
             before = len(run.api)

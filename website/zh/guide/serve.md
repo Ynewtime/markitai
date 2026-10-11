@@ -107,6 +107,7 @@ key 和保存时的地址绑定在一起，所以设置页面不会把你没输�
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | 重试条目，或以 `operation: "enhance"` 做 LLM 增强 |
 | `DELETE /api/jobs/{job_id}/items/{item_id}` | 永久移除条目，连同其上传原件、输出、图片与截图 |
 | `GET /api/jobs/{job_id}/items/{item_id}/result` | 条目结果（`?max_bytes=` 只取开头）；配套资源经 `GET /api/jobs/{job_id}/files/{path}` 获取 |
+| `GET /api/jobs/{job_id}/items/{item_id}/assets/{path}` | 条目自身提取出的一张图片（PNG、JPEG、GIF、WebP、AVIF），以内联方式返回供显示 |
 | `GET /api/jobs/{job_id}/items/{item_id}/original` | 条目原件能显示什么；`/original/file`、`/original/pages/{n}?width=` 与 `/original/pages/{n}/text` 提供内容 |
 | `GET /api/jobs/{job_id}/archive` | 整个任务打包为 zip 下载 |
 | `POST /api/download-tickets` | 为一次下载换取一分钟内有效、只能用一次的 `?ticket=` 链接 |

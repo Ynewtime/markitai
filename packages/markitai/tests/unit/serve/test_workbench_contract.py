@@ -140,6 +140,7 @@ SHAPES: dict[str, dict[str, F]] = {
             "original",
             "result_excerpt",
             "job_labels",
+            "item_assets",
         )
     },
     "PresetFeatures": {

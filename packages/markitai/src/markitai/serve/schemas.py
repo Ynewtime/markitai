@@ -313,6 +313,7 @@ class CapabilitiesFeatures(BaseModel):
     original: bool
     result_excerpt: bool
     job_labels: bool
+    item_assets: bool  # contract v1.6: GET .../items/{item_id}/assets/{relpath}
 
 
 class CloudflareCapability(BaseModel):
