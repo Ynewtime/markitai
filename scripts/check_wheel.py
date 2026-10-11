@@ -19,6 +19,8 @@ REQUIRED_FILES = {
     "markitai/serve/workbench/ui/boot.js",
     "markitai/serve/workbench/ui/app.css",
     "markitai/serve/workbench/ui/logo.svg",
+    # Prices of models the pinned LiteLLM does not list (markitai.model_catalog)
+    "markitai/litellm_rows.json",
 }
 
 
@@ -45,7 +47,7 @@ def check_wheel(wheel_path: Path) -> None:
     if not any(name.startswith("markitai/serve/workbench/LICENSES/") for name in names):
         missing.append("markitai/serve/workbench/LICENSES/")
     if missing:
-        raise SystemExit(f"wheel is missing the web workbench files: {missing}")
+        raise SystemExit(f"wheel is missing required files: {missing}")
     # The retired React build must not ride along next to the workbench.
     stale = sorted(name for name in names if name.startswith("markitai/serve/static/"))
     if stale:

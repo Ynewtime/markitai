@@ -125,3 +125,103 @@ def test_an_openrouter_answer_is_charged_what_openrouter_reports() -> None:
     }
 
     assert get_response_cost(response) == pytest.approx(0.0123)
+
+
+# LiteLLM 1.104.2 lists neither: their requests were priced as unknown. The
+# rows are LiteLLM 1.106.0.dev2's, the ones markitai-rust prices from.
+@pytest.mark.parametrize(
+    ("model", "rates"),
+    [
+        (
+            "claude-sonnet-5-5",
+            {
+                "input_cost_per_token": 2e-06,
+                "output_cost_per_token": 1e-05,
+                "cache_read_input_token_cost": 1e-07,
+                "cache_creation_input_token_cost": 2.5e-06,
+                "cache_creation_input_token_cost_above_1hr": 4e-06,
+                "input_cost_per_token_batches": 1e-06,
+                "output_cost_per_token_batches": 5e-06,
+            },
+        ),
+        (
+            "gpt-6.1-sol",
+            {
+                "input_cost_per_token": 2e-06,
+                "output_cost_per_token": 1e-05,
+                "cache_read_input_token_cost": 1e-07,
+                "cache_creation_input_token_cost": 2.5e-06,
+                "input_cost_per_token_above_272k_tokens": 4e-06,
+                "output_cost_per_token_above_272k_tokens": 1.5e-05,
+                "input_cost_per_token_batches": 1e-06,
+                "output_cost_per_token_batches": 5e-06,
+            },
+        ),
+        (
+            "claude-haiku-5-5",
+            {
+                "input_cost_per_token": 1e-07,
+                "output_cost_per_token": 5e-07,
+                "input_cost_per_token_above_100k_tokens": 5e-07,
+                "cache_read_input_token_cost_batches": 5e-09,
+                "cache_creation_input_token_cost_batches": 6.25e-08,
+            },
+        ),
+    ],
+)
+def test_the_shipped_rows_carry_the_official_rates(
+    model: str, rates: dict[str, float]
+) -> None:
+    entry = litellm.model_cost[model]
+    for field, rate in rates.items():
+        assert entry[field] == pytest.approx(rate), field
+
+
+@pytest.mark.parametrize(
+    ("model", "prompt", "cost"),
+    [
+        ("claude-sonnet-5-5", 10_000, 10_000 * 2e-06 + 1_000 * 1e-05),
+        ("gpt-6.1-sol", 10_000, 10_000 * 2e-06 + 1_000 * 1e-05),
+        # Over 272K the whole request takes the long-context rates
+        ("gpt-6.1-sol", 300_000, 300_000 * 4e-06 + 1_000 * 1.5e-05),
+    ],
+)
+def test_their_answers_are_priced(model: str, prompt: int, cost: float) -> None:
+    from markitai.llm.models import get_response_cost
+
+    response = litellm.ModelResponse(
+        id="r",
+        model=model,
+        choices=[{"message": {"role": "assistant", "content": "ok"}, "index": 0}],
+        usage=litellm.Usage(
+            prompt_tokens=prompt, completion_tokens=1_000, total_tokens=prompt + 1_000
+        ),
+    )
+    assert get_response_cost(response) == pytest.approx(cost)
+
+
+def test_registering_prints_nothing() -> None:
+    """LiteLLM printed "Provider List: ..." to stdout while registering
+    gpt-6.1-sol, a name it cannot place yet, ahead of --json output. A fresh
+    interpreter: this one's LiteLLM already knows the name."""
+    import subprocess
+    import sys
+
+    script = (
+        "from markitai.utils.litellm_import import prepare_litellm_import\n"
+        "prepare_litellm_import()\n"
+        "import litellm\n"
+        "from markitai.model_catalog import register_missing_models\n"
+        "assert 'gpt-6.1-sol' in register_missing_models()\n"
+        "assert litellm.suppress_debug_info is False\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
