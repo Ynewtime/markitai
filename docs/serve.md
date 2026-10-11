@@ -555,9 +555,12 @@ shared job ZIP, so concurrent downloads do not invalidate each other. Internal
 image-description metadata paths from its staging directory to the final job output
 and merges sibling entries while holding the same stable lock as the core writer.
 
-The root URL serves the embedded [browser workbench](web-ui.md), and `/jobs`
-serves the same page for its workspace view, so a reload or Back stays there.
-Other paths keep JSON 404 errors; the workbench's own files live under fixed
+The root URL serves the embedded [browser workbench](web-ui.md), and `/jobs`,
+`/settings` and its pages serve the same page for their views, so a reload or
+Back stays there. A browser asking for any other page (a GET or HEAD that
+accepts `text/html`, outside `/api/` and `/ui/`) gets the workbench with status
+404, which says the page does not exist; API clients, other methods and unknown
+`/ui/` files keep JSON 404 errors. The workbench's own files live under fixed
 `/ui/` routes. The bundle and the vendored Markdown libraries are embedded gzip
 compressed and sent that way to clients that accept gzip (decompressed once for
 others); every workbench response revalidates against a content ETag

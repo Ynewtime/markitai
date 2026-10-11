@@ -17,7 +17,8 @@ keyboard focus, and the choice is remembered in this browser. On phones the
 sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
 Settings). Every view is an address (`/`, `/jobs`, `/settings/models`,
 `/settings/appearance`, `/settings/access`), so reloads, Back and new tabs keep
-it.
+it. Any other address opens the workbench (with status 404) on "Page not found",
+with the way to Convert and Conversions.
 
 **Convert** (`/`) is a headline, one sentence and the composer: the URL field
 (Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
@@ -43,7 +44,8 @@ inspector.
   middle, `blog-japanese-…ning.html`; a URL dims its host), a warning count, and
   the duration or the state in words. A submission of several items is a header
   (what was submitted: `report-materials`, `14 files`, `3 web pages`; the preset;
-  the time) with its items under it; a submission of one item is one row. It is
+  the time) with its items under it, indented, so a submission of one item is one
+  row at the outer edge. It is
   an ARIA tree with no controls inside rows: Up and Down move, Right and Left
   open and close a submission, Home and End jump, Enter opens the preview.
 - The **inspector** shows the selected item: its state in a sentence
@@ -100,9 +102,17 @@ views with previous and next; Compare places the original above the Markdown.
 
 **Notices about the page** (an upload in progress with Cancel, a refused
 request, an unreachable service, a session that could not be restored, a missing
-model with a link to Models) sit in the page under its title and push the
-content down; they never cover a button. Errors stay until dismissed; others
-clear themselves.
+model with a link to Models, a link to a conversion that no longer exists) sit
+in the page under its title and push the content down; they never cover a
+button, and on a phone a notice's action sits under its text. Errors stay until
+dismissed; others clear themselves after six seconds, but not while the pointer
+or keyboard focus is on them. Errors are announced at once and the others
+politely, from live regions that are always in the page.
+
+**Empty and blocked states** say it once, with the way forward: no conversions
+yet (and how long they are kept), no models, a filter without matches (Clear
+filter), and conversions that cannot be shown (no token, no server, an error),
+with Enter token, Try now or Retry instead of an endless "Loading".
 
 **Settings** are pages. Models lists the configured models (Test, Edit, Delete),
 models detected for this session (Save to config) and the configuration source;
@@ -133,8 +143,9 @@ theme (Auto, Light, Dark); Access token shows and changes this tab's token.
   missing OCR, size limits). The service's full wording stays behind Details.
   Provider probe and discovery phrases are translated the same way. A job whose
   history could not be saved (`persistence_error`) reports it in the page.
-- **Offline**: a request that cannot reach the service shows a notice; the page
-  asks again every five seconds and says when the service is back, then
+- **Offline**: a request that cannot reach the service shows a notice with Try
+  now; the page also asks again every five seconds and says when the service is
+  back, then
   refreshes capabilities, the list and the session. A broken event stream
   triggers the same check and, once closed, reconciles the job from its
   snapshot.
@@ -142,8 +153,12 @@ theme (Auto, Light, Dark); Access token shows and changes this tab's token.
   from. A `stale_revision` or `config_changed` refusal reloads the lists but keeps
   the draft and its revision; "Use current revision" adopts the new one and the
   next submit uses it. Other refusals (for example `settings_read_only`) stay
-  plain errors. A saved provider's key is never placed in an input; Replace,
-  Remove and the address form each send only the field they change. An
+  plain errors. A saved provider's key is never returned by the server, only
+  masked (`sk…7890`), and never placed in an input; its address comes back with
+  userinfo and secret query parameters masked (`https://…@host/v1?token=…`).
+  Replace, Remove and the address form each send only the field they change; an
+  address left as shown keeps the stored one, and an edited address that still
+  holds a mask is refused before anything is sent. An
   endpoint change with a retained server key is rejected, including when
   linked model deployments have their own credential overrides.
 - **Saved conversions** come from `GET /api/history?include=items`, refreshed
@@ -162,7 +177,15 @@ shown. The sanitized fragment never contains scripts, styles, forms, frames or
 embedded media. Images and attachment links must resolve to an exact entry of the
 result's own artifact list; only raster images are shown, and anything else (an
 external or SVG image) becomes a labelled placeholder. Other links keep only
-http(s)/mailto targets and open in a new tab without referrer. Highlighting
+http(s)/mailto targets and open in a new tab without referrer; a link left
+without a target is plain text. An inline SVG drawing (a chart or diagram a web
+page kept as markup) is drawn: its drawing properties from `style` become
+attributes, and every reference stays inside the drawing. `id`s get a prefix of
+their own drawing, `href`/`xlink:href` and `url()` resolve only to elements of the
+same drawing, and `image`, `foreignObject`, `style`, scripts, animations, filters'
+images and `use` of anything outside are removed, so a drawing loads, runs and
+reaches nothing; its links follow the link rule above. Unpainted parts take the
+text colour, so labels read in dark mode. Highlighting
 builds its spans from text and never reparses HTML. An HTML original in Compare
 is sanitized the same way and also loses its links and images, so it loads and
 navigates nowhere; the server sends originals as attachments with

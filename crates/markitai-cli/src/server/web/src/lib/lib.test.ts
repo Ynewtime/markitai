@@ -4,7 +4,7 @@ import { cliCommand, shellQuote } from "./cli.ts";
 import { compareLines } from "./diff.ts";
 import { isHiddenName, selectFolderFiles, stagedBatch, walkEntries } from "./files.ts";
 import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, splitName, timestampMs } from "./format.ts";
-import { artifactPath, loadArtifactImages, markdownPair, rewrite, splitFrontmatter } from "./markdown.ts";
+import { artifactPath, drawingReference, drawingValue, loadArtifactImages, markdownPair, presentationFromStyle, rewrite, splitFrontmatter } from "./markdown.ts";
 import { endpointFor, manualModelId, sameEndpoint } from "./models.ts";
 import {
   ADVANCED_DEFAULTS,
@@ -271,13 +271,16 @@ test("rendered images and file links carry no token; with one, images wait to be
     const image = fakeElement("img", { src: "assets/a.png", alt: "" });
     const external = fakeElement("img", { src: "https://example.com/x.png" });
     const link = fakeElement("a", { href: "assets/a.png" });
+    // A link the sanitizer emptied (it had a `javascript:` address).
+    const bare = fakeElement("a", {});
+    const blank = fakeElement("a", { href: " " });
     const fragment = {
       ownerDocument: { createElement: (tag: string) => fakeElement(tag) },
-      querySelectorAll: (selector: string) => (selector === "img" ? [image, external] : selector === "a" ? [link] : []),
+      querySelectorAll: (selector: string) => (selector === "img" ? [image, external] : selector === "a" ? [link, bare, blank] : []),
     };
     rewrite(fragment as never, {
       documentPath: "doc.md",
-      artifacts: [{ relpath: "assets/a.png", size: 1 }],
+      artifacts: [{ relpath: "assets/a.png", size: 1 }, { relpath: "doc.md", size: 1 }],
       imageURL,
       fileURL: (path) => `/api/jobs/j/files/${path}`,
       placeholder: (alt) => `[${alt}]`,
@@ -285,7 +288,7 @@ test("rendered images and file links carry no token; with one, images wait to be
       tableLabel: "table",
       codeLabel: "code",
     });
-    return { image, external, link };
+    return { image, external, link, bare, blank };
   };
   const plain = render((path) => `/api/jobs/j/files/${path}`);
   assert.equal(plain.image.getAttribute("src"), "/api/jobs/j/files/assets/a.png");
@@ -293,6 +296,10 @@ test("rendered images and file links carry no token; with one, images wait to be
   assert.ok(plain.external.replacedBy, "external images stay blocked");
   assert.equal(plain.link.getAttribute("href"), "/api/jobs/j/files/assets/a.png");
   assert.equal(plain.link.getAttribute("data-artifact"), "assets/a.png");
+  for (const empty of [plain.bare, plain.blank]) {
+    assert.equal(empty.getAttribute("href"), null, "an empty link never points at the document");
+    assert.equal(empty.getAttribute("download"), null);
+  }
   const held = render(() => null);
   assert.equal(held.image.getAttribute("src"), null);
   assert.equal(held.image.getAttribute("data-artifact-src"), "assets/a.png");
@@ -339,4 +346,36 @@ test("waiting images are fetched a few at a time, shown as object URLs and relea
   assert.equal(images[2]?.getAttribute("src"), null);
   loads.dispose();
   assert.deepEqual(revoked, created);
+});
+
+test("drawing values resolve only to elements of the same drawing and never load or run anything", () => {
+  const ids = new Map([["grad", "md-drawing-1-grad"], ["clip", "md-drawing-1-clip"]]);
+  assert.equal(drawingValue("url(#grad)", ids), "url(#md-drawing-1-grad)");
+  assert.equal(drawingValue("url( '#clip' )", ids), "url(#md-drawing-1-clip)");
+  assert.equal(drawingValue("#94a3b8", ids), "#94a3b8");
+  assert.equal(drawingValue("M 80 50 L 320 50", ids), "M 80 50 L 320 50");
+  for (const hostile of [
+    "url(#missing)", "url(https://evil.example/x.svg#grad)", "url(//evil.example/x)", "url(data:image/svg+xml,<svg/>)",
+    "url(#grad) url(https://evil.example/)", "URL(\"https://evil.example/a\")", "url (https://evil.example/)",
+    "image-set(\"https://evil.example/a.png\" 1x)", "-webkit-image-set(url(a.png) 1x)", "cross-fade(url(a), url(b))",
+    "element(#x)", "expression(alert(1))", "javascript:alert(1)", " JavaScript:alert(1)", "data:text/html,<b>",
+    "paint(worklet)", "attr(data-x url)", "env(safe-area-inset-top)",
+  ]) {
+    assert.equal(drawingValue(hostile, ids), null, hostile);
+  }
+  assert.equal(drawingReference("#grad", ids), "#md-drawing-1-grad");
+  for (const hostile of ["#missing", "other.svg#grad", "https://evil.example/s.svg#grad", "javascript:alert(1)", "data:image/svg+xml,x", ""]) {
+    assert.equal(drawingReference(hostile, ids), null, hostile);
+  }
+});
+
+test("a drawing's style becomes drawing attributes, never references or other properties", () => {
+  assert.deepEqual(presentationFromStyle("font-size:14px;font-weight:600"), [["font-size", "14px"], ["font-weight", "600"]]);
+  assert.deepEqual(presentationFromStyle(" FILL : #f59e0b !important ; stroke:currentColor"), [["fill", "#f59e0b"], ["stroke", "currentColor"]]);
+  assert.deepEqual(
+    presentationFromStyle("fill:url(#g);background:url(https://evil.example/a.png);behavior:url(x.htc);position:fixed;stroke:image-set('a.png' 1x);color:red"),
+    [["fill", "url(#g)"], ["color", "red"]],
+  );
+  assert.deepEqual(presentationFromStyle("fill:url(#g) url(https://evil.example/a);stroke:url(https://evil.example/s.svg#g)"), []);
+  assert.deepEqual(presentationFromStyle("no declaration; :empty; fill:"), []);
 });

@@ -711,16 +711,19 @@ main:focus {
 /* ------------------------------------------------------------ notes */
 
 .notes {
-  display: grid;
-  gap: 6px;
   margin-bottom: 14px;
+}
+/* the live regions stay in the page (and in the accessibility tree) with
+   nothing in them, so a later notice is announced */
+.notes.is-empty {
+  margin-bottom: 0;
+}
+.notes-region:not(:empty) ~ .notes-region > .notes-list {
+  margin-top: 6px;
 }
 .notes-list {
   display: grid;
   gap: 6px;
-}
-.notes-list:empty {
-  display: none;
 }
 .note {
   --tone: var(--text-3);
@@ -777,6 +780,49 @@ main:focus {
   width: 26px;
   height: 26px;
   color: var(--text-3);
+}
+/* on a phone the text keeps the full width: the action goes under it */
+@media screen and (max-width: 760px) {
+  .note.has-action {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 10px;
+  }
+  .note.has-action > .note-action {
+    grid-row: 2;
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 8px;
+  }
+}
+
+/* ------------------------------------------------------------ states */
+
+.state {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 40px 16px;
+  color: var(--text-2);
+  text-align: center;
+}
+.state-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.state.is-error .state-title {
+  color: var(--err);
+}
+.state-text {
+  max-width: 46ch;
+}
+.state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* ------------------------------------------------------ conversions */
@@ -864,6 +910,11 @@ main:focus {
   align-items: start;
   gap: 28px;
 }
+/* nothing to inspect (no conversions, or none loaded): the list column's
+   message takes the page's width */
+.split.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
 .split.has-preview {
   grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
   gap: 20px;
@@ -881,12 +932,6 @@ main:focus {
   position: sticky;
   top: 16px;
   min-width: 0;
-}
-.empty {
-  padding: 40px 16px;
-  border-top: 1px solid var(--accent);
-  color: var(--text-2);
-  text-align: center;
 }
 
 /* the list: one line per item, a header per submission of several */
@@ -912,6 +957,10 @@ main:focus {
 .row.is-selected {
   background: var(--sel);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+/* a group's members sit 16px in, so a one-item submission is at the outer edge */
+.row.is-child {
+  padding-left: 24px;
 }
 .row-name {
   display: flex;
@@ -3803,6 +3852,21 @@ kbd {
   margin: 16px 0;
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
+}
+/* an inline drawing (a chart or diagram kept as SVG): as wide as it was drawn,
+   never wider than the text column; axis labels that hang past its box stay
+   visible, and what it leaves unpainted (default black) takes the text colour,
+   so labels read in dark mode too */
+.doc-body svg.md-drawing {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 16px 0;
+  overflow: visible;
+  color: var(--text-1);
+}
+.doc-body svg.md-drawing:not([fill]) {
+  fill: currentColor;
 }
 .doc-body hr {
   margin: 24px 0;

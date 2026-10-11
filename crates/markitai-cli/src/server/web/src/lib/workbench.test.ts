@@ -178,7 +178,12 @@ test("views and the list selection are real addresses", () => {
   assert.deepEqual(parseRoute("/jobs/"), { view: "jobs" });
   assert.deepEqual(parseRoute("/settings/appearance"), { view: "settings", section: "appearance" });
   assert.deepEqual(parseRoute("/settings"), { view: "settings", section: null });
-  assert.deepEqual(parseRoute("/anything"), { view: "convert" });
+  assert.deepEqual(parseRoute("/"), { view: "convert" });
+  assert.deepEqual(parseRoute("/index.html"), { view: "convert" });
+  // Any other address is no page: the workbench says so instead of showing Convert.
+  assert.deepEqual(parseRoute("/anything"), { view: "missing", path: "/anything" });
+  assert.deepEqual(parseRoute("/settings/nope"), { view: "missing", path: "/settings/nope" });
+  assert.equal(routePath({ view: "missing", path: "/anything" }), "/anything");
   assert.equal(routePath({ view: "settings", section: "access" }), "/settings/access");
   assert.deepEqual(parseListState("?sel=0123456789ab/i3&view=compare"), { selected: "0123456789ab/i3", mode: "compare" });
   assert.deepEqual(parseListState("?sel=job:0123456789ab"), { selected: "job:0123456789ab", mode: "inspector" });

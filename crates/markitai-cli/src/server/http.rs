@@ -30,8 +30,14 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
-pub(super) async fn missing() -> ApiError {
-    ApiError::new(404, "route_not_found", "route not found")
+pub(super) async fn missing(
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    super::web::missing_page(&method, uri.path(), &headers)
+        .unwrap_or_else(|| ApiError::new(404, "route_not_found", "route not found").into_response())
 }
 pub(super) async fn method_not_allowed() -> ApiError {
     ApiError::new(405, "method_not_allowed", "method not allowed")

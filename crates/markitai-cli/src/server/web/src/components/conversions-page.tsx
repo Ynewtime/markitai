@@ -14,6 +14,7 @@ import { Icon } from "./icons.tsx";
 import { ItemActions, ItemInspector, JobActions, JobInspector, Overview, type InspectorContext, type ItemActionsApi, type JobActionsApi } from "./inspector.tsx";
 import { PreviewPane } from "./preview-pane.tsx";
 import { Sheet } from "./sheet.tsx";
+import { StateBlock, type StateAction } from "./state-block.tsx";
 
 export interface ConversionsPageProps {
   t: Dict;
@@ -22,6 +23,9 @@ export interface ConversionsPageProps {
   jobs: Record<string, ConvJob>;
   items: SessionItem[];
   loaded: boolean;
+  /** Why the saved conversions cannot be shown (no token, no server, an
+   * error), with the way out; null while they load or once they have. */
+  blocked: { text: string; action?: StateAction } | null;
   composer: ComponentChildren;
   notes: ComponentChildren;
   selected: string | null;
@@ -111,17 +115,20 @@ export function ConversionsPage(props: ConversionsPageProps) {
   );
 
   const empty = loaded && items.length === 0;
+  const unloaded = !loaded && items.length === 0;
+  const clearFilter = { label: t.clearFilter, run: () => (props.onQuery(""), props.onFilter("all")) };
+  const noMatch = query.trim() ? t.filterNoMatchQuery(query.trim()) : filter === "failed" ? t.filterNoFailed : filter === "notices" ? t.filterNoNotices : t.filterNoMatch;
   const body = (
-    <div class={`split${previewing && !phone ? " has-preview" : ""}${previewing && !phone && (wide || mode === "compare") ? " is-wide" : ""}`}>
+    <div class={`split${previewing && !phone ? " has-preview" : ""}${previewing && !phone && (wide || mode === "compare") ? " is-wide" : ""}${empty || unloaded ? " is-single" : ""}`}>
       <div class="list-col">
         {empty ? (
-          <div class="empty">
-            <p>{t.emptyConversions}</p>
-          </div>
-        ) : !loaded && items.length === 0 ? (
+          <StateBlock title={t.emptyTitle} text={ctx.retentionDays ? t.emptyTextKept(ctx.retentionDays) : t.emptyText} />
+        ) : unloaded && props.blocked ? (
+          <StateBlock title={t.listBlockedTitle} text={props.blocked.text} actions={props.blocked.action ? [props.blocked.action] : []} tone="error" />
+        ) : unloaded ? (
           <p class="pane-note">{t.loading}</p>
         ) : list.length === 0 ? (
-          <p class="pane-note">{t.filterNoMatch}</p>
+          <StateBlock text={noMatch} actions={[clearFilter]} />
         ) : (
           <ConversionList
             t={t}
@@ -139,7 +146,8 @@ export function ConversionsPage(props: ConversionsPageProps) {
           />
         )}
       </div>
-      {!phone && <div class="side-col">{previewing ? preview : inspector}</div>}
+      {/* With nothing to inspect, the list column says it once. */}
+      {!phone && !empty && !unloaded && <div class="side-col">{previewing ? preview : inspector}</div>}
     </div>
   );
 
@@ -149,7 +157,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
         <div class="conv-title">
           <h1>{t.conversions}</h1>
           <p class="conv-summary" aria-live="polite">
-            {summaryText(t, items)}
+            {unloaded || empty ? "" : summaryText(t, items)}
           </p>
         </div>
         <div class="head-actions">
@@ -165,10 +173,12 @@ export function ConversionsPage(props: ConversionsPageProps) {
               {t.retryFailedN(props.head.retryable)}
             </button>
           )}
-          <button type="button" class="btn" disabled={!props.head.canZip} title={props.head.canZip ? undefined : t.zipWhileRunning} onClick={props.head.onZip}>
-            <Icon name="DownloadSimple" size={14} />
-            {t.downloadAll}
-          </button>
+          {items.length > 0 && (
+            <button type="button" class="btn" disabled={!props.head.canZip} title={props.head.canZip ? undefined : t.zipWhileRunning} onClick={props.head.onZip}>
+              <Icon name="DownloadSimple" size={14} />
+              {t.downloadAll}
+            </button>
+          )}
         </div>
       </header>
       {props.notes}

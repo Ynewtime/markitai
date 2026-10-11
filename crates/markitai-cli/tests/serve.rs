@@ -412,6 +412,52 @@ fn a_urls_list_refuses_an_empty_result_and_a_json_list_keeps_its_names() {
 }
 
 #[test]
+fn an_unknown_page_is_the_workbench_with_404_and_an_unknown_resource_is_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let index = server.request("GET", "/", &[("Accept", "text/html")], b"");
+    for path in ["/does-not-exist", "/jobs/abc", "/settings/nope"] {
+        let page = server.request(
+            "GET",
+            path,
+            &[
+                ("Accept", "text/html,application/xhtml+xml"),
+                ("If-None-Match", "*"),
+            ],
+            b"",
+        );
+        assert_eq!(page.status, 404, "{path}");
+        assert!(
+            page.headers["content-type"].starts_with("text/html"),
+            "{path}"
+        );
+        assert!(
+            page.headers.contains_key("content-security-policy"),
+            "{path}"
+        );
+        assert_eq!(page.body, index.body, "{path}");
+    }
+    for (path, accept) in [
+        ("/does-not-exist", "application/json"),
+        ("/does-not-exist", "*/*"),
+        ("/ui/nope.js", "text/html"),
+        ("/api/nope", "text/html"),
+    ] {
+        let reply = server.request("GET", path, &[("Accept", accept)], b"");
+        assert_eq!(reply.status, 404, "{path} {accept}");
+        assert_eq!(reply.json()["reason"], "route_not_found", "{path} {accept}");
+    }
+    let post = server.request("POST", "/does-not-exist", &[("Accept", "text/html")], b"");
+    assert_ne!(post.status, 200);
+    assert!(
+        !post
+            .headers
+            .get("content-type")
+            .is_some_and(|value| value.starts_with("text/html"))
+    );
+}
+
+#[test]
 fn capabilities_report_the_browser_the_server_itself_finds() {
     // The server's own environment decides, not the caller's: a test process
     // with a Playwright cache in its home finds a browser that the server,

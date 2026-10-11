@@ -56,7 +56,18 @@ export interface RenderContext {
 
 interface Libraries {
   marked: { parse(markdown: string, options: { async: false; gfm: boolean }): string };
-  purify: { sanitize(html: string, options: Record<string, unknown>): DocumentFragment };
+  purify: Purify;
+}
+
+interface AttributeHook {
+  attrName: string;
+  keepAttr: boolean;
+}
+interface Purify {
+  sanitize(html: string, options: Record<string, unknown>): DocumentFragment;
+  addHook(entry: "beforeSanitizeAttributes", hook: (node: Element) => void): void;
+  addHook(entry: "uponSanitizeAttribute", hook: (node: Element, data: AttributeHook) => void): void;
+  removeHooks(entry: string): void;
 }
 
 let libraries: Promise<Libraries> | null = null;
@@ -73,29 +84,156 @@ export function loadLibraries(): Promise<Libraries> {
   return libraries;
 }
 
-const FORBID_TAGS = ["style", "script", "iframe", "object", "embed", "form", "input", "button", "textarea", "select", "video", "audio", "source", "picture", "link", "meta", "base"];
-const FORBID_ATTR = ["style", "srcset", "poster", "ping", "target", "id", "name"];
+const FORBID_TAGS = [
+  "style", "script", "iframe", "object", "embed", "form", "input", "button", "textarea", "select", "video", "audio", "source", "picture", "link", "meta", "base",
+  // In drawings: anything that loads, embeds a document or animates attributes.
+  "image", "feimage", "foreignobject", "animate", "animatecolor", "animatemotion", "animatetransform", "set", "mpath", "tref", "altglyph", "font-face-uri", "cursor",
+];
+// `id` is kept on drawing elements only (see `drawingIds`).
+const FORBID_ATTR = ["style", "srcset", "poster", "ping", "target", "name"];
+const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
 
 /** Parse, sanitize and rewrite. Raw HTML never reaches the live document. */
 export async function renderMarkdown(markdown: string, context: RenderContext): Promise<DocumentFragment> {
   const { marked, purify } = await loadLibraries();
   const html = marked.parse(markdown, { async: false, gfm: true });
-  const fragment = purify.sanitize(html, {
-    RETURN_DOM_FRAGMENT: true,
-    USE_PROFILES: { html: true },
-    FORBID_TAGS,
-    FORBID_ATTR,
-    ALLOW_DATA_ATTR: false,
-    ALLOW_ARIA_ATTR: false,
+  // A drawing's paint often sits in `style`, which the page's policy never
+  // applies: its drawing properties become attributes, then sanitized like
+  // any other. An `id` survives only inside a drawing, where gradients and
+  // clip paths need it; `pinDrawings` then gives it a prefix of its own.
+  purify.addHook("beforeSanitizeAttributes", (node) => {
+    if (node.namespaceURI !== SVG_NS) return;
+    const style = node.getAttribute("style");
+    if (!style) return;
+    for (const [name, value] of presentationFromStyle(style)) if (!node.hasAttribute(name)) node.setAttribute(name, value);
   });
+  purify.addHook("uponSanitizeAttribute", (node, data) => {
+    if (data.attrName === "id" && node.namespaceURI !== SVG_NS) data.keepAttr = false;
+  });
+  let fragment: DocumentFragment;
+  try {
+    fragment = purify.sanitize(html, {
+      RETURN_DOM_FRAGMENT: true,
+      USE_PROFILES: { html: true, svg: true },
+      ADD_TAGS: ["use"],
+      FORBID_TAGS,
+      FORBID_ATTR,
+      ALLOW_DATA_ATTR: false,
+      ALLOW_ARIA_ATTR: false,
+    });
+  } finally {
+    purify.removeHooks("beforeSanitizeAttributes");
+    purify.removeHooks("uponSanitizeAttribute");
+  }
   rewrite(fragment, context);
   return fragment;
+}
+
+/** Drawing properties a `style` may set that SVG also takes as attributes. */
+const PRESENTATION = new Set([
+  "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width", "stroke-opacity", "stroke-dasharray", "stroke-dashoffset",
+  "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "opacity", "color", "visibility", "display", "font-size",
+  "font-family", "font-weight", "font-style", "letter-spacing", "word-spacing", "text-anchor", "text-decoration",
+  "dominant-baseline", "stop-color", "stop-opacity", "clip-rule", "paint-order",
+]);
+
+/** A drawing element's `style` as attributes: drawing properties only, with
+ * values that load or run nothing; a `url(#id)` paint stays for `pinDrawings`
+ * to resolve within its drawing or drop. */
+export function presentationFromStyle(style: string): Array<[string, string]> {
+  const result: Array<[string, string]> = [];
+  for (const declaration of style.split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon < 0) continue;
+    const name = declaration.slice(0, colon).trim().toLowerCase();
+    const value = declaration.slice(colon + 1).replace(/!\s*important\s*$/i, "").trim();
+    const outside = value.replace(/url\(\s*(['"]?)#[\w.:-]+\1\s*\)/gi, "");
+    if (!PRESENTATION.has(name) || !value || /url\s*\(/i.test(outside) || drawingValue(outside, new Map()) === null) continue;
+    result.push([name, value]);
+  }
+  return result;
+}
+
+/** CSS functions that load, embed or run something. */
+const UNSAFE_FUNCTION = /(?:image-set|image|cross-fade|element|src|expression|paint|attr|env)\s*\(/i;
+
+/** An attribute value of a drawing with every `url(#id)` pointed at the
+ * drawing's renamed element, or null when the value loads or runs anything:
+ * a `url()` to anything but an element of the same drawing, an image or
+ * script function, or a `javascript:` value. */
+export function drawingValue(value: string, ids: ReadonlyMap<string, string>): string | null {
+  if (UNSAFE_FUNCTION.test(value) || /^\s*(?:javascript|vbscript|data):/i.test(value)) return null;
+  let safe = true;
+  const pinned = value.replace(/url\(\s*(['"]?)([^'")]*)\1\s*\)/gi, (_, _quote: string, target: string) => {
+    const id = target.trim().startsWith("#") ? ids.get(target.trim().slice(1)) : undefined;
+    if (id === undefined) safe = false;
+    return `url(#${id ?? ""})`;
+  });
+  return safe && !/url\s*\(/i.test(pinned.replace(/url\(#[^)]+\)/gi, "")) ? pinned : null;
+}
+
+/** A drawing reference (`href` of `use`, a gradient, a text path) pointed at
+ * the renamed element of the same drawing, or null for anything else. */
+export function drawingReference(value: string, ids: ReadonlyMap<string, string>): string | null {
+  const target = value.trim();
+  if (!target.startsWith("#")) return null;
+  const id = ids.get(target.slice(1));
+  return id === undefined ? null : `#${id}`;
+}
+
+let drawings = 0;
+
+/** Every inline drawing references only itself: ids get a prefix of their
+ * own drawing (two drawings cannot take each other's gradients, and no id can
+ * shadow a name the page uses), `href`/`xlink:href` and `url()` resolve only
+ * to elements of the same drawing, and a `use` that points elsewhere is
+ * removed. Links (`a`) are left to the link pass, as in the text. */
+function pinDrawings(fragment: DocumentFragment): void {
+  for (const svg of [...fragment.querySelectorAll("svg")]) {
+    if (svg.parentElement?.closest("svg")) continue;
+    const prefix = `md-drawing-${++drawings}-`;
+    const elements = [svg, ...svg.querySelectorAll("*")];
+    const ids = new Map<string, string>();
+    for (const element of elements) {
+      const id = element.getAttribute("id");
+      if (id === null) continue;
+      if (element.namespaceURI !== SVG_NS || ids.has(id)) element.removeAttribute("id");
+      else ids.set(id, `${prefix}${id}`);
+    }
+    for (const element of elements) {
+      const id = element.getAttribute("id");
+      if (id !== null) element.setAttribute("id", ids.get(id) ?? "");
+      const linked = element.getAttributeNS(XLINK_NS, "href");
+      element.removeAttributeNS(XLINK_NS, "href");
+      const href = element.getAttribute("href") ?? linked;
+      if (element.localName === "a") {
+        if (href !== null) element.setAttribute("href", href);
+      } else if (href !== null) {
+        const pinned = drawingReference(href, ids);
+        if (pinned === null) element.removeAttribute("href");
+        else element.setAttribute("href", pinned);
+      }
+      if (element.localName === "use" && !element.hasAttribute("href")) {
+        element.remove();
+        continue;
+      }
+      for (const attribute of [...element.attributes]) {
+        if (attribute.name === "href" || attribute.name === "id") continue;
+        const value = drawingValue(attribute.value, ids);
+        if (value === null) element.removeAttribute(attribute.name);
+        else if (value !== attribute.value) element.setAttribute(attribute.name, value);
+      }
+    }
+    svg.classList.add("md-drawing");
+  }
 }
 
 /** Pin every reference to the result's own files; everything else is inert. */
 export function rewrite(fragment: DocumentFragment, context: RenderContext): void {
   const doc = fragment.ownerDocument;
   const allowed = new Set(context.artifacts.map((artifact) => artifact.relpath));
+  pinDrawings(fragment);
   for (const image of [...fragment.querySelectorAll("img")]) {
     const path = artifactPath(image.getAttribute("src") ?? "", context.documentPath, allowed);
     const alt = image.getAttribute("alt") || "";
@@ -117,6 +255,12 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
   }
   for (const link of [...fragment.querySelectorAll("a")]) {
     const href = link.getAttribute("href") ?? "";
+    // No address (the sanitizer may have removed a `javascript:` one): plain
+    // text, never a link to the document itself.
+    if (!href.trim()) {
+      link.removeAttribute("href");
+      continue;
+    }
     if (href.startsWith("#")) continue;
     const path = artifactPath(href, context.documentPath, allowed);
     if (path) {

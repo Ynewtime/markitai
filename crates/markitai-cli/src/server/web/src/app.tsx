@@ -15,6 +15,7 @@ import { OptionsPanel } from "./components/options-panel.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
 import { ModelsSettings } from "./components/settings-models.tsx";
 import { Shell, useSidebar } from "./components/shell.tsx";
+import { StateBlock } from "./components/state-block.tsx";
 import { TokenDialog } from "./components/token-dialog.tsx";
 import { UrlInput } from "./components/url-input.tsx";
 import type { InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
@@ -150,8 +151,10 @@ export function App() {
     note({ tone: "success", text: dicts[localeRef.current].reconnected });
   });
   useEffect(() => {
-    if (offline) note({ id: "offline", tone: "error", text: dicts[localeRef.current].submitNetworkFailed });
-  }, [offline, note]);
+    // Checked again every few seconds by the connectivity hook; "Try now" asks at once.
+    if (offline) note({ id: "offline", tone: "error", text: dicts[localeRef.current].serverUnreachable, action: { label: dicts[localeRef.current].tryNow, run: refreshCaps } });
+    else dismiss("offline");
+  }, [offline, note, dismiss, refreshCaps]);
 
   // ---- routes
   const [route, setRoute] = useState<Route>(() => parseRoute(location.pathname));
@@ -202,7 +205,7 @@ export function App() {
       return next;
     });
 
-  const titles: Record<Route["view"], string> = { convert: t.titleHome, jobs: t.titleWorkspace, settings: t.titleSettings };
+  const titles: Record<Route["view"], string> = { convert: t.titleHome, jobs: t.titleWorkspace, settings: t.titleSettings, missing: t.titleNotFound };
   useEffect(() => {
     const base = titles[route.view];
     document.title = conversions.activeCount > 0 ? `${conversions.activeCount} · ${base}` : base;
@@ -494,7 +497,7 @@ export function App() {
     ...(unauthorized || (submitError instanceof ApiError && submitError.status === 401)
       ? [{ id: "token", tone: "error" as const, text: apiErrorText(locale, { reason: "token_required" })?.text ?? "", action: { label: t.enterToken, run: () => setTokenOpen(true) } }]
       : []),
-    ...(submitText ? [{ id: "submit", tone: "error" as const, text: submitText.text, detail: submitText.detail, action: { label: t.dismiss, run: () => conversions.clearSubmitError() } }] : []),
+    ...(submitText ? [{ id: "submit", tone: "error" as const, text: `${t.submitFailedPrefix} · ${submitText.text}`, detail: submitText.detail }] : []),
     ...(conversions.restoreFailed.size > 0 ? [{ id: "restore", tone: "warning" as const, text: t.restoreFailed, action: { label: t.restoreRetry, run: () => void conversions.retryRestore() } }] : []),
     ...persistence.map((job) => ({ id: `persist-${job.jobId}`, tone: "error" as const, ...persistenceText(locale, job.persistenceError ?? "") })),
     ...(conversions.loadError && !(conversions.loadError instanceof NetworkError) && !unauthorized
@@ -505,7 +508,8 @@ export function App() {
       : []),
     ...notes,
   ];
-  const noteArea = pageNotes.length > 0 && (
+  // Always in the page: its live regions must exist before a notice arrives.
+  const noteArea = (
     <Notes
       t={t}
       notes={pageNotes}
@@ -563,12 +567,21 @@ export function App() {
   const waiting = waitingJobs(conversions.items, conversions.jobs);
   const retryable = conversions.items.filter((item) => (isFailed(item) || item.skipReason === "user_stopped") && canRetry(item));
 
-  // A selection that no longer exists (deleted, expired) falls back to the overview.
+  // A selection that no longer exists (deleted, expired) falls back to the
+  // overview; when it came with the address (a bookmark, a shared link), a
+  // notice says why the page shows something else.
   const selected = listState.selected;
+  const linked = useRef(listState.selected);
   useEffect(() => {
     if (selected === null || !conversions.loaded) return;
     const exists = selected.startsWith("job:") ? selected.slice(4) in conversions.jobs : conversions.items.some((item) => item.key === selected);
-    if (!exists && conversions.restoreFailed.size === 0) updateList({ selected: null, mode: "inspector" });
+    if (exists || conversions.restoreFailed.size > 0) return;
+    updateList({ selected: null, mode: "inspector" });
+    if (selected === linked.current) {
+      const days = caps?.limits.history_retention_days;
+      note({ id: "gone", tone: "warning", text: days ? t.linkGoneDays(days) : t.linkGone, ttl: 0 });
+    }
+    linked.current = null;
   }, [selected, conversions.items, conversions.jobs, conversions.loaded]);
 
   const recent = useMemo(() => submissions(conversions.jobs, conversions.items).slice(0, 3), [conversions.jobs, conversions.items]);
@@ -583,6 +596,15 @@ export function App() {
         jobs={conversions.jobs}
         items={conversions.items}
         loaded={conversions.loaded}
+        blocked={
+          unauthorized
+            ? { text: t.listNeedsToken, action: { label: t.enterToken, run: () => setTokenOpen(true) } }
+            : offline
+              ? { text: t.listNoServer, action: { label: t.tryNow, run: refreshCaps } }
+              : conversions.loadError
+                ? { text: t.listLoadFailed, action: { label: t.retryLoad, run: () => void conversions.refresh() } }
+                : null
+        }
         composer={composerFor(true)}
         notes={noteArea}
         selected={selected}
@@ -635,6 +657,21 @@ export function App() {
         announce={announce}
         describe={describe}
       />
+    );
+  } else if (route.view === "missing") {
+    page = (
+      <div class="page page-missing">
+        {noteArea}
+        <StateBlock
+          heading="h1"
+          title={t.notFoundTitle}
+          text={t.notFoundText(route.path)}
+          actions={[
+            { label: t.navConvert, run: () => navigate({ view: "convert" }), primary: true },
+            { label: t.conversions, run: () => navigate({ view: "jobs" }) },
+          ]}
+        />
+      </div>
     );
   } else if (route.view === "settings") {
     const section = route.section ?? (phone ? null : "models");

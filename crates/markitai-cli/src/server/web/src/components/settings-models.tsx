@@ -158,7 +158,7 @@ export function ModelsSettings({
   };
 
   const credentialText = (error: CredentialInputError) =>
-    ({ environment_reference: t.literalCredentialsOnly, endpoint_key_required: t.endpointKeyRequired, key_required: t.keyRequired })[error.reason];
+    ({ environment_reference: t.literalCredentialsOnly, endpoint_key_required: t.endpointKeyRequired, key_required: t.keyRequired, masked_address: t.maskedAddress })[error.reason];
 
   /** A failed write. A revision conflict reloads the lists but keeps the draft and its revision. */
   const fail = async (error: unknown) => {
@@ -796,6 +796,7 @@ export function ModelsSettings({
                   onInput={setConnKey}
                 />
               </div>
+              {conn.baseMasked && <p class="conn-note">{t.maskedAddressNote}</p>}
               <p class="conn-note">{conn.configured ? t.addressKeyNote : t.addressNoKeyNote}</p>
               <div class="form-actions">
                 <button
@@ -1024,16 +1025,26 @@ export function ModelsSettings({
             )
           ) : (
             <>
-              <div class="settings-summary">
-                <span>{t.modelsConfigured(settings.deployments.length)}</span>
-                <button ref={addButton} type="button" class="btn btn-primary" onClick={() => setAdding(true)}>
-                  {t.addModels}
-                </button>
-              </div>
               {settings.deployments.length === 0 ? (
-                <p class="dialog-dim">{t.setStatusNone}</p>
+                <div class="state">
+                  <p class="state-title">{t.setStatusNone}</p>
+                  <p class="state-text">{t.modelsEmptyText}</p>
+                  <div class="state-actions">
+                    <button ref={addButton} type="button" class="btn btn-primary" onClick={() => setAdding(true)}>
+                      {t.addModels}
+                    </button>
+                  </div>
+                </div>
               ) : (
-                <div class="model-rows">{settings.deployments.map((deployment) => modelRow(deployment))}</div>
+                <>
+                  <div class="settings-summary">
+                    <span>{t.modelsConfigured(settings.deployments.length)}</span>
+                    <button ref={addButton} type="button" class="btn btn-primary" onClick={() => setAdding(true)}>
+                      {t.addModels}
+                    </button>
+                  </div>
+                  <div class="model-rows">{settings.deployments.map((deployment) => modelRow(deployment))}</div>
+                </>
               )}
               {settings.detected.length > 0 && (
                 <section class="detected">

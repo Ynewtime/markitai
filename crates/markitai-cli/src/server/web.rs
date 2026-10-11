@@ -178,6 +178,33 @@ fn route(asset: &'static Asset) -> axum::routing::MethodRouter<Arc<State>> {
     get(move |headers: HeaderMap| async move { serve(asset, &headers) })
 }
 
+/// A browser asking for a page that does not exist gets the workbench with
+/// status 404, so it can say so and offer the way back; anything else (an API
+/// client, an asset) gets the JSON error.
+pub(super) fn missing_page(
+    method: &axum::http::Method,
+    path: &str,
+    headers: &HeaderMap,
+) -> Option<Response> {
+    let page = (method == axum::http::Method::GET || method == axum::http::Method::HEAD)
+        && path != "/api"
+        && !path.starts_with("/api/")
+        && !path.starts_with("/ui/")
+        && headers
+            .get_all(header::ACCEPT)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .any(|value| value.contains("text/html"));
+    page.then(|| {
+        let mut headers = headers.clone();
+        // Always the page itself, never "not modified".
+        headers.remove(header::IF_NONE_MATCH);
+        let mut response = serve(&INDEX, &headers);
+        *response.status_mut() = StatusCode::NOT_FOUND;
+        response
+    })
+}
+
 pub(super) fn routes() -> Router<Arc<State>> {
     Router::new()
         // Every view is a real address so reloads and Back keep it.
