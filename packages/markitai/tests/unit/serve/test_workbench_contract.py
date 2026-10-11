@@ -528,9 +528,9 @@ def _converter(
         if gate is not None:
             await gate.wait()
         out = out_dir / f"{file_path.name}.md"
-        out.write_text(
-            markdown if markdown is not None else f"# {file_path.name}\n",
-            encoding="utf-8",
+        # Bytes, not text: Windows would write "\r\n"
+        out.write_bytes(
+            (markdown if markdown is not None else f"# {file_path.name}\n").encode()
         )
         if screenshots:
             from PIL import Image

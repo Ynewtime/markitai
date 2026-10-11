@@ -1514,7 +1514,8 @@ class TestRetry:
             if gate is not None:
                 await gate.wait()
             out = out_dir / f"{file_path.name}.md"
-            out.write_text(f"# converted {file_path.name}\n", encoding="utf-8")
+            # Bytes, not text: Windows would write "\r\n"
+            out.write_bytes(f"# converted {file_path.name}\n".encode())
             return ProcessResult(success=True, output_path=str(out))
 
         return convert
