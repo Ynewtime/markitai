@@ -445,20 +445,26 @@ class TestGlyphsFollowTheMarks:
 @pytest.mark.parametrize(("dumb", "corner"), [(False, "╭"), (True, "+")])
 def test_help_panels_follow_the_marks(dumb: bool, corner: str) -> None:
     """rich-click's help renders into its own buffer: its boxes are set."""
-    import os
     import subprocess
 
-    env = {k: v for k, v in os.environ.items() if k != "TERM"}
+    from click import unstyle
+
+    from tests.terminal_env import plain_env
+
+    # Without the variables that force colour (GITHUB_ACTIONS on CI), and
+    # read without styles: only the drawing characters are compared
+    env = plain_env(COLUMNS="100", NO_COLOR="1")
+    env.pop("TERM", None)
     if dumb:
         env["TERM"] = "dumb"
     result = subprocess.run(
         [sys.executable, "-m", "markitai", "--help"],
         capture_output=True,
-        env={**env, "COLUMNS": "100", "NO_COLOR": "1"},
+        env=env,
         timeout=120,
         check=False,
     )
-    out = result.stdout.decode("utf-8", errors="replace")
+    out = unstyle(result.stdout.decode("utf-8", errors="replace"))
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
     panel_lines = [
         line for line in out.splitlines() if "Output & Configuration" in line

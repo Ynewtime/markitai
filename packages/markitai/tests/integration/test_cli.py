@@ -808,15 +808,20 @@ class TestCLIWithSubprocess:
     )
     def test_help_command(self):
         """Test help command via subprocess (non-Windows)."""
+        from click import unstyle
+
+        from tests.terminal_env import plain_env
+
         result = subprocess.run(
             [sys.executable, "-m", "markitai", "--help"],
             capture_output=True,
             # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
             encoding="utf-8",
             errors="replace",
+            env=plain_env(),
         )
         assert result.returncode == 0
-        combined = (result.stdout or "") + (result.stderr or "")
+        combined = unstyle((result.stdout or "") + (result.stderr or ""))
         assert "Opinionated Markdown converter" in combined
 
     def test_version_command(self):
