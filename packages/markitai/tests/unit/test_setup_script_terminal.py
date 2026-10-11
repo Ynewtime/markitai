@@ -1303,10 +1303,12 @@ def test_ci_runs_the_guards_when_only_a_setup_script_changes() -> None:
 @pytest.mark.parametrize(
     ("redirected", "code_page", "modern", "vt", "term", "unicode"),
     [
-        # Windows pipes and files: UTF-8 once the script switched the console
-        # encoding, whatever the shell's own code page was
+        # Windows pipes and files follow the console's output code page from
+        # before the script's own switch to UTF-8 (0: no console attached)
         pytest.param("$true", 65001, "$false", "$false", "", True, id="file-utf8"),
-        pytest.param("$true", 437, "$true", "$true", "", False, id="file-not-utf8"),
+        pytest.param("$true", 437, "$true", "$true", "", False, id="file-cp437"),
+        pytest.param("$true", 936, "$true", "$true", "", False, id="file-cp936"),
+        pytest.param("$true", 0, "$false", "$false", "", True, id="no-console"),
         # Consoles: escape sequences on (Windows 10 1511+), or a modern terminal
         pytest.param("$false", 437, "$false", "$true", "", True, id="console-vt"),
         pytest.param("$false", 437, "$true", "$false", "", True, id="windows-terminal"),
@@ -1323,10 +1325,10 @@ def test_setup_ps1_marks_follow_markitais_rule(
     term: str,
     unicode: bool,
 ) -> None:
-    """Marks mean the same as in markitai (Python and Rust): ASCII only for
-    TERM=dumb, a console without escape sequences, or output that is not
-    UTF-8. A redirect used to get ASCII unless the shell's own code page was
-    65001, although the bytes were UTF-8."""
+    """Marks mean the same as in markitai (Python and Rust, owner rule
+    2026-10-11): ASCII for TERM=dumb, a console without escape sequences, and
+    a redirect while the console's code page is not UTF-8 (Windows
+    PowerShell decodes piped output with it); no console keeps Unicode."""
     body = (
         "$script:OnWindows = $true\n"
         f"$script:ModernTerminal = {modern}\n"
@@ -1340,6 +1342,20 @@ def test_setup_ps1_marks_follow_markitais_rule(
     assert result.stdout.rstrip().endswith(f"unicode={unicode}"), (
         result.stdout + result.stderr
     )
+
+
+@_needs_pwsh
+def test_setup_ps1_reads_a_code_page_without_failing(tmp_path: Path) -> None:
+    """GetConsoleOutputCP through Add-Type; where that cannot run (pwsh off
+    Windows, a locked-down host) the console encoding's code page instead."""
+    body = (
+        f"{_powershell_function('Get-ConsoleOutputCodePage')}"
+        '"page=$(Get-ConsoleOutputCodePage)"\n'
+    )
+    result = _run_ps(tmp_path, body, runtime=False)
+    last = result.stdout.rstrip().splitlines()[-1]
+    assert last.startswith("page="), result.stdout + result.stderr
+    assert last.removeprefix("page=").isdigit(), last
 
 
 @_needs_pwsh
