@@ -40,7 +40,6 @@ export interface ConversionsPageProps {
   /** The conversion a link named no longer exists. */
   gone: PanelState | null;
   composer: ComponentChildren;
-  notes: ComponentChildren;
   selected: string | null;
   mode: PaneMode;
   wide: boolean;
@@ -198,7 +197,6 @@ export function ConversionsPage(props: ConversionsPageProps) {
           )}
         </div>
       </header>
-      {props.notes}
       <div class="conv-composer">{props.composer}</div>
       {items.length > 0 && (
         <div class="toolbar">

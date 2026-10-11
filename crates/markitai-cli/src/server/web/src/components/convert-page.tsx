@@ -13,7 +13,6 @@ export function ConvertPage({
   t,
   locale,
   composer,
-  notes,
   recent,
   blocked,
   labelWords,
@@ -23,7 +22,6 @@ export function ConvertPage({
   t: Dict;
   locale: Locale;
   composer: ComponentChildren;
-  notes: ComponentChildren;
   recent: Submission[];
   /** Why the recent conversions cannot be shown (no token, no server). */
   blocked: PanelState | null;
@@ -37,7 +35,6 @@ export function ConvertPage({
         <h1>{t.heroTitle}</h1>
         <p>{t.heroSub}</p>
       </header>
-      {notes}
       <div class="convert-composer">{composer}</div>
       {blocked && recent.length === 0 && (
         <div class="recent">

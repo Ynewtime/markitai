@@ -38,6 +38,28 @@ export function Sheet({
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  // Notices sit directly above the action bar while the sheet is open.
+  useEffect(() => {
+    const root = document.documentElement;
+    // From the bar's top edge to the bottom of the window (the sheet may end above the tab bar).
+    const place = () => {
+      const top = bar.current?.getBoundingClientRect().top;
+      if (top !== undefined) root.style.setProperty("--strips-bottom", `${Math.max(0, window.innerHeight - top)}px`);
+    };
+    place();
+    const observer = typeof ResizeObserver === "undefined" || !bar.current ? null : new ResizeObserver(place);
+    if (observer && bar.current) observer.observe(bar.current);
+    window.addEventListener("resize", place);
+    // The sheet slides in: measure again once it has arrived.
+    const settled = setTimeout(place, 200);
+    return () => {
+      clearTimeout(settled);
+      window.removeEventListener("resize", place);
+      observer?.disconnect();
+      root.style.removeProperty("--strips-bottom");
+    };
+  }, []);
   const [leaving, setLeaving] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [drag, setDrag] = useState(0);
@@ -157,7 +179,11 @@ export function Sheet({
         <div ref={body} class="sheet-body" onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 4)}>
           {children}
         </div>
-        {actions && <div class="sheet-bar">{actions}</div>}
+        {actions && (
+          <div ref={bar} class="sheet-bar">
+            {actions}
+          </div>
+        )}
       </div>
     </div>,
     document.body,

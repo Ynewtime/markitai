@@ -100,14 +100,18 @@ indicator. Swiping it down (on the header, or on the body scrolled to its top),
 tapping the dimmed page and Escape close it. Preview and Compare are full-screen
 views with previous and next; Compare places the original above the Markdown.
 
-**Notices about the page** (an upload in progress with Cancel, a refused
-request, an unreachable service, a session that could not be restored, a missing
-model with a link to Models) sit
-in the page under its title and push the content down; they never cover a
-button, and on a phone a notice's action sits under its text. Errors stay until
-dismissed; others clear themselves after six seconds, but not while the pointer
-or keyboard focus is on them. Errors are announced at once and the others
-politely, from live regions that are always in the page.
+**Notices** are transient: minimal strips at the bottom, on a phone full width
+directly above the tab bar (or an open sheet's action bar), on a wide screen a
+380 px stack 24 px from the bottom-right corner. Newest at the bottom, at most
+three (a fourth removes the oldest). Each is one sentence on one line with a mark
+(✕ error, ! warning, ✓ done) and at most one text action (Retry, View, Cancel,
+Enter token); square, on the surface colour with hairlines, no close button. Done
+and warning strips leave after 4 s, errors after 6 s, never while pressed, hovered
+or focused; a swipe down dismisses one. An upload in progress is a strip with
+Cancel until it ends. Screen readers hear every notice (errors at once, others
+politely). Lasting conditions are not notices: a conversion that ran without a
+model or whose history could not be saved says so in its inspector, and a list
+that cannot load shows a panel (below).
 
 **Empty and blocked states** are one framed panel: an icon, a title, one line
 and at most one primary and one secondary action, centred on one axis. It is a
@@ -155,10 +159,11 @@ theme (Auto, Light, Dark); Access token shows and changes this tab's token.
   failure reason: a red ✕, one sentence, Full details. It stays until the action
   is tried again or another conversion is chosen, the polite live region reads
   it, and no page notice is shown for it.
-- **Offline**: a request that cannot reach the service shows a notice with Try
-  now; the page also asks again every five seconds and says when the service is
-  back, then
-  refreshes capabilities, the list and the session. A broken event stream
+- **Offline**: no banner. A list that cannot be loaded shows the Can't reach the
+  server panel with Try now, and an action that cannot reach the service says so
+  in its conversion's inspector. The page asks again every five seconds and,
+  when the service is back, shows a ✓ strip and refreshes capabilities, the list
+  and the session. A broken event stream
   triggers the same check and, once closed, reconciles the job from its
   snapshot.
 - **Settings conflicts**: every write carries the revision its draft started
@@ -246,8 +251,9 @@ URL the page requests or shows carries it:
   that archive within a minute (see [serve](serve.md#network-and-file-boundaries)),
   so what stays in the download list is a spent ticket.
 
-A 401 shows "Not authorized" with Enter token in the page notices; it opens a
-small dialog that stores a typed token for the tab. Settings → Access token shows
+A 401 shows the Access token needed panel in place of the conversions (and a
+refused submission a strip), both with Enter token; it opens a small dialog that
+stores a typed token for the tab. Settings → Access token shows
 whether the tab holds a token, and replaces or forgets it.
 After a server restart that generates a new token, reopen its new launch link
 or use Enter token. `--no-auth` explicitly disables API token enforcement; only

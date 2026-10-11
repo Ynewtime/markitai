@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { filePath } from "../api/client.ts";
 import type { ItemResult } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { itemErrorText } from "../i18n/errors.ts";
+import { itemErrorText, persistenceText } from "../i18n/errors.ts";
 import { counts, isFailed, isStopped, presetOf, submissionLabel, type ConvJob, type LabelWords } from "../lib/conversions.ts";
 import { costState, fmtUsd, itemCost, totalCost, type CostState } from "../lib/cost.ts";
 import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, timestampMs } from "../lib/format.ts";
@@ -70,6 +70,34 @@ export function ActionError({ t, failure }: { t: Dict; failure: ActionFailure | 
         </details>
       )}
     </div>
+  );
+}
+
+/** A lasting condition of this conversion (it ran without a model; its history
+ * could not be saved): one line in the style of the failure reason, with at
+ * most one link. */
+function ConditionLine({ tone, text, action }: { tone: "info" | "error"; text: string; action?: { label: string; run: () => void } }) {
+  return (
+    <p class={`condition-line is-${tone}`}>
+      {tone === "error" ? (
+        <StatusGlyph glyph="failed" />
+      ) : (
+        <span class="condition-mark" aria-hidden="true">
+          <Icon name="Info" size={14} />
+        </span>
+      )}
+      <span>
+        {text}
+        {action && (
+          <>
+            {" "}
+            <button type="button" class="inline-action" onClick={action.run}>
+              {action.label}
+            </button>
+          </>
+        )}
+      </span>
+    </p>
   );
 }
 
@@ -244,7 +272,8 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
   return (
     <div class="excerpt">
       {front && (front.title || front.description || front.tags.length > 0) && <FrontCard front={front} compact />}
-      <div ref={body} class="doc-body excerpt-body" aria-hidden="true" />
+      {/* A picture of the result's start: nothing in it is read or reached by the keyboard. */}
+      <div ref={body} class="doc-body excerpt-body" aria-hidden="true" inert />
       <button type="button" class="excerpt-open" onClick={onOpen}>
         {t.openPreview}
         <Icon name="ArrowRight" size={13} />
@@ -411,6 +440,10 @@ export function ItemInspector({
         </p>
       </header>
       {!sheet && <ItemActions ctx={ctx} item={item} actions={actions} />}
+      {job?.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
+      {!ctx.llmReady && item.status === "done" && !item.llmEnhanced && !item.skipped && (
+        <ConditionLine tone="info" text={t.noModelLine} action={{ label: t.configureModels, run: actions.openModels }} />
+      )}
       {problem && (
         <div class={failed ? "problem is-error" : "problem is-retained"}>
           {item.rerunFailure && !failed && <p class="problem-title">{t.rerunRetained(item.rerunFailure.operation)}</p>}
@@ -577,6 +610,7 @@ export function JobInspector({
       </header>
       <ProgressStrip t={t} items={items} />
       {!sheet && <JobActions ctx={ctx} job={job} items={items} actions={actions} />}
+      {job.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
       <dl class="facts">
         <dt>{t.factCost}</dt>
         <dd class={cost.kind === "unknown" ? "is-unknown" : undefined}>
