@@ -10,7 +10,8 @@ screenshots every state:
     convert page, staged files + URLs, live progress, finished list,
     inspector, preview, compare (original page beside the Markdown),
     retry of a failed item, stop remaining (cancel), download all (ticket),
-    settings model test (fake LLM), history after a reload, token prompt
+    settings model test (fake LLM), a saved address shown without its
+    credentials, history after a reload, token prompt
 
 It fails on a page error, a 5xx answer or a step whose check does not hold.
 
@@ -51,6 +52,22 @@ from typing import Any
 TOKEN = "e2e-token-0000000000000000"
 LLM_DELAY_S = 0.8
 SLOW_PAGE_S = 2.5
+# A saved connection whose address carries credentials: settings must show
+# it masked and never send these parts to the browser
+CONNECTION_ID = "00000000-0000-4000-8000-0000000000c1"
+BASE_SECRETS = ("e2e-user", "e2e-pass-0000", "e2e-base-secret-0000")
+
+
+def saved_base(llm_port: int) -> str:
+    return (
+        f"http://e2e-user:e2e-pass-0000@127.0.0.1:{llm_port}/v1"
+        "?api_key=e2e-base-secret-0000&v=1"
+    )
+
+
+def shown_base(llm_port: int) -> str:
+    return f"http://\u2026@127.0.0.1:{llm_port}/v1?api_key=\u2026&v=1"
+
 
 # ---------------------------------------------------------------------------
 # Offline helpers: a fake OpenAI-compatible LLM and a page server
@@ -395,7 +412,15 @@ def run_server(
                     },
                     "model_info": {"id": "00000000-0000-4000-8000-0000000000e2"},
                 }
-            ]
+            ],
+            "providers": [
+                {
+                    "id": CONNECTION_ID,
+                    "provider": "custom",
+                    "api_key": "sk-e2e-conn-0000",
+                    "api_base": saved_base(llm_port),
+                }
+            ],
         },
         "cache": {"enabled": False},
         "batch": {"url_concurrency": 1},
@@ -789,6 +814,9 @@ def browse(
     inputs: dict[str, Path],
     pages_port: int,
     engine: str = "chromium",
+    *,
+    llm_port: int,
+    config: Path,
 ) -> Run:
     from playwright.sync_api import sync_playwright
 
@@ -1100,7 +1128,72 @@ def browse(
 
         run.step(page, "settings-test", settings)
 
-        # 12. History survives a reload
+        # 12. Settings: a saved address shows no credentials, and saving a
+        # new key with the address left as shown keeps the stored address
+        def masked_address() -> str:
+            shown = shown_base(llm_port)
+            credentials = f"/api/settings/llm/providers/{CONNECTION_ID}/credentials"
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            _click_visible(page.get_by_role("button", name="Add models"))
+            _click_visible(
+                page.locator(".provider-pick").filter(
+                    has_text="OpenAI-compatible endpoint"
+                )
+            )
+            _wait(
+                page,
+                lambda: run.saw("GET", f"^{re.escape(credentials)}$", 200),
+                what="the saved connection",
+            )
+            row = page.locator(".conn-row").filter(has_text="API base")
+            _wait(
+                page,
+                lambda: row.locator(".conn-value").inner_text().strip() == shown,
+                timeout=10,
+                what=f"the address shown as {shown}",
+            )
+            leaks = [secret for secret in BASE_SECRETS if secret in page.content()]
+            for path in (
+                "/api/settings/llm",
+                "/api/settings/llm/providers",
+                credentials,
+            ):
+                body = _api(page, base, "GET", path).text()
+                leaks += [
+                    f"{path}: {secret}" for secret in BASE_SECRETS if secret in body
+                ]
+            if leaks:
+                raise AssertionError(f"credentials reached the browser: {leaks}")
+            row.get_by_role("button", name="Edit").click()
+            field = page.locator("#conn-base")
+            if field.input_value() != shown:
+                raise AssertionError(f"address field holds {field.input_value()!r}")
+            noted = (
+                _visible(page.get_by_text("Parts shown as … are hidden")) is not None
+            )
+            page.locator("#conn-base-key").fill("sk-e2e-conn-0001")
+            page.locator("#conn-base-form").get_by_role("button", name="Save").click()
+            _wait(
+                page,
+                lambda: run.saw(
+                    "PATCH", f"^/api/settings/llm/providers/{CONNECTION_ID}$", 200
+                ),
+                what="the saved key",
+            )
+            stored = json.loads(config.read_text(encoding="utf-8"))["llm"]["providers"]
+            if stored[0].get("api_base") != saved_base(llm_port):
+                raise AssertionError("saving changed the stored address")
+            if stored[0].get("api_key") != "sk-e2e-conn-0001":
+                raise AssertionError("the new key was not saved")
+            return (
+                f"address shown as {shown}"
+                + (" with the hidden-parts note" if noted else "")
+                + "; a new key saved with it kept the stored address"
+            )
+
+        run.step(page, "settings-masked-address", masked_address)
+
+        # 13. History survives a reload
         def history() -> str:
             _open(page, lambda: page.goto(f"{base}/jobs"))
             _open(page, page.reload)
@@ -1114,7 +1207,7 @@ def browse(
 
         run.step(page, "history", history)
 
-        # 13. A new tab without the token: settings ask for it
+        # 14. A new tab without the token: settings ask for it
         def token_prompt() -> str:
             fresh = browser.new_context(
                 viewport={"width": width, "height": 844 if phone else 900},
@@ -1209,7 +1302,14 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     results["version"] = caps.get("version")
                     run = browse(
-                        base, width, args.out, inputs, pages_port, args.browser
+                        base,
+                        width,
+                        args.out,
+                        inputs,
+                        pages_port,
+                        args.browser,
+                        llm_port=llm_port,
+                        config=scratch / f"home-{width}" / ".markitai" / "config.json",
                     )
                     entry.update(
                         steps=run.steps,
