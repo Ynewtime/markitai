@@ -651,15 +651,16 @@ attempt budget. Response model identifiers are used when present. Anthropic
 cache-read and cache-creation input tokens remain part of public input totals.
 
 The [bounded offline pricing catalog](pricing.md) estimates reviewed first-party
-token charges. Numeric `cost_usd` is the known priced subtotal; additive
-`priced_requests`, `unpriced_requests`, `cost_status` and snapshot provenance
-make incomplete coverage explicit. Unknown is not free. Standard and Batch
+token charges for current OpenAI, Anthropic, Gemini and DeepSeek models, and an
+OpenRouter request costs the charge OpenRouter reports. Numeric `cost_usd` is
+the known priced subtotal; additive `priced_requests`, `unpriced_requests`,
+`cost_status` and snapshot provenance make incomplete coverage explicit. Unknown is not free. Standard and Batch
 classes apply per observed attempt before semantic validation. No live pricing
 lookup or new custom-rate configuration is introduced.
 
 `llm.max_cost_per_document_usd` is a shared conversion continuation limit. Zero
-disables it. Positive limits require a verified selected tariff before network
-admission. Exact fixed-point observed spend greater than the cap, or incomplete
+disables it. Positive limits require a verified selected tariff (or OpenRouter,
+which reports its charge) before network admission. Exact fixed-point observed spend greater than the cap, or incomplete
 pricing after an observed response, stops subsequent admissions. The crossing
 response and already admitted concurrent work are retained. The cap does not
 reserve speculative dollars or promise a hard invoice ceiling. See the pricing

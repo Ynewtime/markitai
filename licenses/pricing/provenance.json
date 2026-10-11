@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "snapshot": "litellm-1.106.0.dev2-selected-2026-10-09",
-  "captured_date": "2026-10-09",
+  "snapshot": "litellm-1.106.0.dev2-selected-2026-10-11",
+  "captured_date": "2026-10-11",
   "effective_price_date": null,
   "distribution": "litellm",
   "version": "1.106.0.dev2",
@@ -15,13 +15,17 @@
   ],
   "license_file": "LiteLLM-LICENSE",
   "license_sha256": "b170d6bf8e8835dd357e011681db028f4d51e2fb0ea892058f56e01fb39b8273",
-  "source_rows_sha256": "58caf99f2964a950f64ee9024aabae1b8fb4a5ba21eba1b5fa9fa1c1f349c7a1",
+  "source_rows_sha256": "280ded208b085f16f591fcc1a46ad6f2c044a5fac97b52910861f9eeb1510fc2",
   "rows": [
     {
       "model": "gpt-4.1",
       "source_byte_start": 1246267,
       "source_byte_end": 1247775,
       "source_object_sha256": "90cd600e782adaef0cb71d8d95b1b41efd9109edaf4649d77ff63a115ae0b92d",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-4.1"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "0.000002",
         "output_cost_per_token": "0.000008",
@@ -42,6 +46,10 @@
       "source_byte_start": 1247803,
       "source_byte_end": 1249311,
       "source_object_sha256": "9c66cdb2d5724d90e92c3aa64e8cd320f62d39a94396e0624efb23ff6fd52339",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-4.1"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "0.000002",
         "output_cost_per_token": "0.000008",
@@ -62,6 +70,10 @@
       "source_byte_start": 1249333,
       "source_byte_end": 1250841,
       "source_object_sha256": "267cf2beec534de35fccdecc1d288c20fa3531c9a51f9993c0014d2693dae25a",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-4.1-mini"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "4E-7",
         "output_cost_per_token": "0.0000016",
@@ -82,6 +94,10 @@
       "source_byte_start": 1250874,
       "source_byte_end": 1252382,
       "source_object_sha256": "4a379c24cd415dc18ebb5885d64acf2af293c1ad3138934cf30056b584805852",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-4.1-mini"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "4E-7",
         "output_cost_per_token": "0.0000016",
@@ -102,6 +118,10 @@
       "source_byte_start": 1252404,
       "source_byte_end": 1253717,
       "source_object_sha256": "0527b42ec9633e77f123a5d9275e3f91ec9f190218dd5d08d1e6bb6f8cff5bf2",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-4.1-nano"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "1E-7",
         "output_cost_per_token": "4E-7",
@@ -122,6 +142,10 @@
       "source_byte_start": 1253750,
       "source_byte_end": 1255063,
       "source_object_sha256": "9cf0e508edff9d8104f332ddcfdf5ee111195066b2d2e8bb53264653ab7eca83",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-4.1-nano"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "1E-7",
         "output_cost_per_token": "4E-7",
@@ -142,6 +166,10 @@
       "source_byte_start": 1319789,
       "source_byte_end": 1323277,
       "source_object_sha256": "4e551058b4c16eb164856f935eb67025ea3d069f48184bc540947294cec57e6a",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-6-luna"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "1E-7",
         "output_cost_per_token": "5E-7",
@@ -184,6 +212,10 @@
       "source_byte_start": 599501,
       "source_byte_end": 601541,
       "source_object_sha256": "7de84285e60eb358cecbc0999cde1ea81ec44d6afde4e53808fe6ee438bb98a9",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/sonnet-4-5/overview"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "0.000003",
         "output_cost_per_token": "0.000015",
@@ -212,6 +244,10 @@
       "source_byte_start": 595198,
       "source_byte_end": 596264,
       "source_object_sha256": "9e8d7127c3182018a090dacdf6ab8cfeb76ac953e9464154320ece98f42f8ff1",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/haiku-4-5/overview"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "0.000001",
         "output_cost_per_token": "0.000005",
@@ -240,6 +276,10 @@
       "source_byte_start": 3079189,
       "source_byte_end": 3081659,
       "source_object_sha256": "14044ac4b924ec2cdc44ce8e472c32107767be345581e15ff0c211e548289607",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/haiku-5-5/overview"
+      ],
       "usd_per_token_decimal": {
         "input_cost_per_token": "1E-7",
         "output_cost_per_token": "5E-7",
@@ -280,6 +320,883 @@
         "cache_read_input_token_cost_above_100k_tokens_batches": 25000,
         "cache_creation_input_token_cost_above_100k_tokens_batches": 312500
       }
+    },
+    {
+      "model": "gpt-6-astra",
+      "source_byte_start": 1312332,
+      "source_byte_end": 1316306,
+      "source_object_sha256": "6efec222cefc641dd838564b0d2b4e50ca501a975dbc7497e0426a90819ba189",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-6-astra"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.00001",
+        "output_cost_per_token": "0.00005",
+        "cache_read_input_token_cost": "0.000001",
+        "cache_creation_input_token_cost": "0.0000125",
+        "input_cost_per_token_above_272k_tokens": "0.00002",
+        "output_cost_per_token_above_272k_tokens": "0.000075",
+        "cache_read_input_token_cost_above_272k_tokens": "0.000002",
+        "cache_creation_input_token_cost_above_272k_tokens": "0.000025",
+        "input_cost_per_token_batches": "0.000005",
+        "output_cost_per_token_batches": "0.000025",
+        "cache_read_input_token_cost_batches": "5E-7",
+        "cache_creation_input_token_cost_batches": "0.00000625",
+        "input_cost_per_token_above_272k_tokens_batches": "0.00001",
+        "output_cost_per_token_above_272k_tokens_batches": "0.0000375",
+        "cache_read_input_token_cost_above_272k_tokens_batches": "0.000001",
+        "cache_creation_input_token_cost_above_272k_tokens_batches": "0.0000125"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 10000000,
+        "output_cost_per_token": 50000000,
+        "cache_read_input_token_cost": 1000000,
+        "cache_creation_input_token_cost": 12500000,
+        "input_cost_per_token_above_272k_tokens": 20000000,
+        "output_cost_per_token_above_272k_tokens": 75000000,
+        "cache_read_input_token_cost_above_272k_tokens": 2000000,
+        "cache_creation_input_token_cost_above_272k_tokens": 25000000,
+        "input_cost_per_token_batches": 5000000,
+        "output_cost_per_token_batches": 25000000,
+        "cache_read_input_token_cost_batches": 500000,
+        "cache_creation_input_token_cost_batches": 6250000,
+        "input_cost_per_token_above_272k_tokens_batches": 10000000,
+        "output_cost_per_token_above_272k_tokens_batches": 37500000,
+        "cache_read_input_token_cost_above_272k_tokens_batches": 1000000,
+        "cache_creation_input_token_cost_above_272k_tokens_batches": 12500000
+      }
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "source_byte_start": 3053147,
+      "source_byte_end": 3056592,
+      "source_object_sha256": "86123adbdd5cd6fdc38f4f0d6d1100775ec809af6d6d11441218a32810c22a3d",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000002",
+        "output_cost_per_token": "0.00001",
+        "cache_read_input_token_cost": "1E-7",
+        "cache_creation_input_token_cost": "0.0000025",
+        "input_cost_per_token_above_272k_tokens": "0.000004",
+        "output_cost_per_token_above_272k_tokens": "0.000015",
+        "cache_read_input_token_cost_above_272k_tokens": "2E-7",
+        "cache_creation_input_token_cost_above_272k_tokens": "0.000005",
+        "input_cost_per_token_batches": "0.000001",
+        "output_cost_per_token_batches": "0.000005",
+        "cache_read_input_token_cost_batches": "5E-8",
+        "cache_creation_input_token_cost_batches": "0.00000125",
+        "input_cost_per_token_above_272k_tokens_batches": "0.000002",
+        "output_cost_per_token_above_272k_tokens_batches": "0.0000075",
+        "cache_read_input_token_cost_above_272k_tokens_batches": "1E-7",
+        "cache_creation_input_token_cost_above_272k_tokens_batches": "0.0000025"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 2000000,
+        "output_cost_per_token": 10000000,
+        "cache_read_input_token_cost": 100000,
+        "cache_creation_input_token_cost": 2500000,
+        "input_cost_per_token_above_272k_tokens": 4000000,
+        "output_cost_per_token_above_272k_tokens": 15000000,
+        "cache_read_input_token_cost_above_272k_tokens": 200000,
+        "cache_creation_input_token_cost_above_272k_tokens": 5000000,
+        "input_cost_per_token_batches": 1000000,
+        "output_cost_per_token_batches": 5000000,
+        "cache_read_input_token_cost_batches": 50000,
+        "cache_creation_input_token_cost_batches": 1250000,
+        "input_cost_per_token_above_272k_tokens_batches": 2000000,
+        "output_cost_per_token_above_272k_tokens_batches": 7500000,
+        "cache_read_input_token_cost_above_272k_tokens_batches": 100000,
+        "cache_creation_input_token_cost_above_272k_tokens_batches": 2500000
+      }
+    },
+    {
+      "model": "gpt-6-sol",
+      "source_byte_start": 1316325,
+      "source_byte_end": 1319769,
+      "source_object_sha256": "d72c5acd1e871393add43aa212c34d05ef272e3a200b5bb26a616f3d975cb08f",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-6-sol"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000002",
+        "output_cost_per_token": "0.00001",
+        "cache_read_input_token_cost": "2E-7",
+        "cache_creation_input_token_cost": "0.0000025",
+        "input_cost_per_token_above_272k_tokens": "0.000004",
+        "output_cost_per_token_above_272k_tokens": "0.000015",
+        "cache_read_input_token_cost_above_272k_tokens": "4E-7",
+        "cache_creation_input_token_cost_above_272k_tokens": "0.000005",
+        "input_cost_per_token_batches": "0.000001",
+        "output_cost_per_token_batches": "0.000005",
+        "cache_read_input_token_cost_batches": "1E-7",
+        "cache_creation_input_token_cost_batches": "0.00000125",
+        "input_cost_per_token_above_272k_tokens_batches": "0.000002",
+        "output_cost_per_token_above_272k_tokens_batches": "0.0000075",
+        "cache_read_input_token_cost_above_272k_tokens_batches": "2E-7",
+        "cache_creation_input_token_cost_above_272k_tokens_batches": "0.0000025"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 2000000,
+        "output_cost_per_token": 10000000,
+        "cache_read_input_token_cost": 200000,
+        "cache_creation_input_token_cost": 2500000,
+        "input_cost_per_token_above_272k_tokens": 4000000,
+        "output_cost_per_token_above_272k_tokens": 15000000,
+        "cache_read_input_token_cost_above_272k_tokens": 400000,
+        "cache_creation_input_token_cost_above_272k_tokens": 5000000,
+        "input_cost_per_token_batches": 1000000,
+        "output_cost_per_token_batches": 5000000,
+        "cache_read_input_token_cost_batches": 100000,
+        "cache_creation_input_token_cost_batches": 1250000,
+        "input_cost_per_token_above_272k_tokens_batches": 2000000,
+        "output_cost_per_token_above_272k_tokens_batches": 7500000,
+        "cache_read_input_token_cost_above_272k_tokens_batches": 200000,
+        "cache_creation_input_token_cost_above_272k_tokens_batches": 2500000
+      }
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "source_byte_start": 1326599,
+      "source_byte_end": 1329990,
+      "source_object_sha256": "bb2ee593935f34270cace49a295f864cca719c49963d4998679dfaa60fe33247",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000004",
+        "output_cost_per_token": "0.00002",
+        "cache_read_input_token_cost": "4E-7",
+        "cache_creation_input_token_cost": "0.000005",
+        "input_cost_per_token_above_272k_tokens": "0.000008",
+        "output_cost_per_token_above_272k_tokens": "0.00003",
+        "cache_read_input_token_cost_above_272k_tokens": "8E-7",
+        "cache_creation_input_token_cost_above_272k_tokens": "0.00001",
+        "input_cost_per_token_batches": "0.000002",
+        "output_cost_per_token_batches": "0.00001",
+        "cache_read_input_token_cost_batches": "2E-7",
+        "cache_creation_input_token_cost_batches": "0.0000025",
+        "input_cost_per_token_above_272k_tokens_batches": "0.000004",
+        "output_cost_per_token_above_272k_tokens_batches": "0.000015",
+        "cache_read_input_token_cost_above_272k_tokens_batches": "4E-7",
+        "cache_creation_input_token_cost_above_272k_tokens_batches": "0.000005"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 4000000,
+        "output_cost_per_token": 20000000,
+        "cache_read_input_token_cost": 400000,
+        "cache_creation_input_token_cost": 5000000,
+        "input_cost_per_token_above_272k_tokens": 8000000,
+        "output_cost_per_token_above_272k_tokens": 30000000,
+        "cache_read_input_token_cost_above_272k_tokens": 800000,
+        "cache_creation_input_token_cost_above_272k_tokens": 10000000,
+        "input_cost_per_token_batches": 2000000,
+        "output_cost_per_token_batches": 10000000,
+        "cache_read_input_token_cost_batches": 200000,
+        "cache_creation_input_token_cost_batches": 2500000,
+        "input_cost_per_token_above_272k_tokens_batches": 4000000,
+        "output_cost_per_token_above_272k_tokens_batches": 15000000,
+        "cache_read_input_token_cost_above_272k_tokens_batches": 400000,
+        "cache_creation_input_token_cost_above_272k_tokens_batches": 5000000
+      }
+    },
+    {
+      "model": "gpt-5.6",
+      "source_byte_start": 1323294,
+      "source_byte_end": 1326578,
+      "source_object_sha256": "f21cb657d934ec7f9a0330d7994e78b5e3c2c932c1a418209697ba9048358399",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000004",
+        "output_cost_per_token": "0.00002",
+        "cache_read_input_token_cost": "4E-7",
+        "cache_creation_input_token_cost": "0.000005",
+        "input_cost_per_token_above_272k_tokens": "0.000008",
+        "output_cost_per_token_above_272k_tokens": "0.00003",
+        "cache_read_input_token_cost_above_272k_tokens": "8E-7",
+        "cache_creation_input_token_cost_above_272k_tokens": "0.00001",
+        "input_cost_per_token_batches": "0.000002",
+        "output_cost_per_token_batches": "0.00001",
+        "cache_read_input_token_cost_batches": "2E-7",
+        "cache_creation_input_token_cost_batches": "0.0000025",
+        "input_cost_per_token_above_272k_tokens_batches": "0.000004",
+        "output_cost_per_token_above_272k_tokens_batches": "0.000015",
+        "cache_read_input_token_cost_above_272k_tokens_batches": "4E-7",
+        "cache_creation_input_token_cost_above_272k_tokens_batches": "0.000005"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 4000000,
+        "output_cost_per_token": 20000000,
+        "cache_read_input_token_cost": 400000,
+        "cache_creation_input_token_cost": 5000000,
+        "input_cost_per_token_above_272k_tokens": 8000000,
+        "output_cost_per_token_above_272k_tokens": 30000000,
+        "cache_read_input_token_cost_above_272k_tokens": 800000,
+        "cache_creation_input_token_cost_above_272k_tokens": 10000000,
+        "input_cost_per_token_batches": 2000000,
+        "output_cost_per_token_batches": 10000000,
+        "cache_read_input_token_cost_batches": 200000,
+        "cache_creation_input_token_cost_batches": 2500000,
+        "input_cost_per_token_above_272k_tokens_batches": 4000000,
+        "output_cost_per_token_above_272k_tokens_batches": 15000000,
+        "cache_read_input_token_cost_above_272k_tokens_batches": 400000,
+        "cache_creation_input_token_cost_above_272k_tokens_batches": 5000000
+      }
+    },
+    {
+      "model": "gpt-5.6-terra",
+      "source_byte_start": 1330013,
+      "source_byte_end": 1333373,
+      "source_object_sha256": "d37b3819d8849f366150446e05c90c212488db9fa3b5b62509ba0653f914d5d1",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000002",
+        "output_cost_per_token": "0.000012",
+        "cache_read_input_token_cost": "2E-7",
+        "cache_creation_input_token_cost": "0.0000025",
+        "input_cost_per_token_above_272k_tokens": "0.000004",
+        "output_cost_per_token_above_272k_tokens": "0.000018",
+        "cache_read_input_token_cost_above_272k_tokens": "4E-7",
+        "cache_creation_input_token_cost_above_272k_tokens": "0.000005",
+        "input_cost_per_token_batches": "0.000001",
+        "output_cost_per_token_batches": "0.000006",
+        "cache_read_input_token_cost_batches": "1E-7",
+        "cache_creation_input_token_cost_batches": "0.00000125",
+        "input_cost_per_token_above_272k_tokens_batches": "0.000002",
+        "output_cost_per_token_above_272k_tokens_batches": "0.000009",
+        "cache_read_input_token_cost_above_272k_tokens_batches": "2E-7",
+        "cache_creation_input_token_cost_above_272k_tokens_batches": "0.0000025"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 2000000,
+        "output_cost_per_token": 12000000,
+        "cache_read_input_token_cost": 200000,
+        "cache_creation_input_token_cost": 2500000,
+        "input_cost_per_token_above_272k_tokens": 4000000,
+        "output_cost_per_token_above_272k_tokens": 18000000,
+        "cache_read_input_token_cost_above_272k_tokens": 400000,
+        "cache_creation_input_token_cost_above_272k_tokens": 5000000,
+        "input_cost_per_token_batches": 1000000,
+        "output_cost_per_token_batches": 6000000,
+        "cache_read_input_token_cost_batches": 100000,
+        "cache_creation_input_token_cost_batches": 1250000,
+        "input_cost_per_token_above_272k_tokens_batches": 2000000,
+        "output_cost_per_token_above_272k_tokens_batches": 9000000,
+        "cache_read_input_token_cost_above_272k_tokens_batches": 200000,
+        "cache_creation_input_token_cost_above_272k_tokens_batches": 2500000
+      }
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "source_byte_start": 1333395,
+      "source_byte_end": 1336755,
+      "source_object_sha256": "49cdd37b9cf6db907e872bd8e95ec2ef45a5bb7559f883a0b3ee89fb9a07c24f",
+      "official_sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "2E-7",
+        "output_cost_per_token": "0.0000012",
+        "cache_read_input_token_cost": "2E-8",
+        "cache_creation_input_token_cost": "2.5E-7",
+        "input_cost_per_token_above_272k_tokens": "4E-7",
+        "output_cost_per_token_above_272k_tokens": "0.0000018",
+        "cache_read_input_token_cost_above_272k_tokens": "4E-8",
+        "cache_creation_input_token_cost_above_272k_tokens": "5E-7",
+        "input_cost_per_token_batches": "1E-7",
+        "output_cost_per_token_batches": "6E-7",
+        "cache_read_input_token_cost_batches": "1E-8",
+        "cache_creation_input_token_cost_batches": "1.25E-7",
+        "input_cost_per_token_above_272k_tokens_batches": "2E-7",
+        "output_cost_per_token_above_272k_tokens_batches": "9E-7",
+        "cache_read_input_token_cost_above_272k_tokens_batches": "2E-8",
+        "cache_creation_input_token_cost_above_272k_tokens_batches": "2.5E-7"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 200000,
+        "output_cost_per_token": 1200000,
+        "cache_read_input_token_cost": 20000,
+        "cache_creation_input_token_cost": 250000,
+        "input_cost_per_token_above_272k_tokens": 400000,
+        "output_cost_per_token_above_272k_tokens": 1800000,
+        "cache_read_input_token_cost_above_272k_tokens": 40000,
+        "cache_creation_input_token_cost_above_272k_tokens": 500000,
+        "input_cost_per_token_batches": 100000,
+        "output_cost_per_token_batches": 600000,
+        "cache_read_input_token_cost_batches": 10000,
+        "cache_creation_input_token_cost_batches": 125000,
+        "input_cost_per_token_above_272k_tokens_batches": 200000,
+        "output_cost_per_token_above_272k_tokens_batches": 900000,
+        "cache_read_input_token_cost_above_272k_tokens_batches": 20000,
+        "cache_creation_input_token_cost_above_272k_tokens_batches": 250000
+      }
+    },
+    {
+      "model": "claude-fable-5-1",
+      "source_byte_start": 619927,
+      "source_byte_end": 621740,
+      "source_object_sha256": "5f4464fafeed50988b2260ca29a9cc26a51d70baf27fac152c7e5be0a55c2825",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/fable-5-1/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.00001",
+        "output_cost_per_token": "0.00005",
+        "cache_read_input_token_cost": "2.5E-7",
+        "cache_creation_input_token_cost": "0.0000125",
+        "cache_creation_input_token_cost_above_1hr": "0.00002",
+        "input_cost_per_token_batches": "0.000005",
+        "output_cost_per_token_batches": "0.000025",
+        "cache_read_input_token_cost_batches": "1.25E-7",
+        "cache_creation_input_token_cost_batches": "0.00000625"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 10000000,
+        "output_cost_per_token": 50000000,
+        "cache_read_input_token_cost": 250000,
+        "cache_creation_input_token_cost": 12500000,
+        "cache_creation_input_token_cost_above_1hr": 20000000,
+        "input_cost_per_token_batches": 5000000,
+        "output_cost_per_token_batches": 25000000,
+        "cache_read_input_token_cost_batches": 125000,
+        "cache_creation_input_token_cost_batches": 6250000
+      }
+    },
+    {
+      "model": "claude-fable-5",
+      "source_byte_start": 618136,
+      "source_byte_end": 619901,
+      "source_object_sha256": "438b6a8e1c9acd050de88724e51074f5c1fa6825eaa9195f60331121bc8b7063",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/fable-5/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.00001",
+        "output_cost_per_token": "0.00005",
+        "cache_read_input_token_cost": "0.000001",
+        "cache_creation_input_token_cost": "0.0000125",
+        "cache_creation_input_token_cost_above_1hr": "0.00002",
+        "input_cost_per_token_batches": "0.000005",
+        "output_cost_per_token_batches": "0.000025",
+        "cache_read_input_token_cost_batches": "5E-7",
+        "cache_creation_input_token_cost_batches": "0.00000625"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 10000000,
+        "output_cost_per_token": 50000000,
+        "cache_read_input_token_cost": 1000000,
+        "cache_creation_input_token_cost": 12500000,
+        "cache_creation_input_token_cost_above_1hr": 20000000,
+        "input_cost_per_token_batches": 5000000,
+        "output_cost_per_token_batches": 25000000,
+        "cache_read_input_token_cost_batches": 500000,
+        "cache_creation_input_token_cost_batches": 6250000
+      }
+    },
+    {
+      "model": "claude-opus-5-5",
+      "source_byte_start": 621765,
+      "source_byte_end": 623621,
+      "source_object_sha256": "feda2d38b0884a78772e6fa6254199d888c4e4a05bd55106ee1345e921506a7b",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/opus-5-5/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000004",
+        "output_cost_per_token": "0.00002",
+        "cache_read_input_token_cost": "2E-7",
+        "cache_creation_input_token_cost": "0.000005",
+        "cache_creation_input_token_cost_above_1hr": "0.000008",
+        "input_cost_per_token_batches": "0.000002",
+        "output_cost_per_token_batches": "0.00001",
+        "cache_read_input_token_cost_batches": "1E-7",
+        "cache_creation_input_token_cost_batches": "0.0000025"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 4000000,
+        "output_cost_per_token": 20000000,
+        "cache_read_input_token_cost": 200000,
+        "cache_creation_input_token_cost": 5000000,
+        "cache_creation_input_token_cost_above_1hr": 8000000,
+        "input_cost_per_token_batches": 2000000,
+        "output_cost_per_token_batches": 10000000,
+        "cache_read_input_token_cost_batches": 100000,
+        "cache_creation_input_token_cost_batches": 2500000
+      }
+    },
+    {
+      "model": "claude-opus-5",
+      "source_byte_start": 623644,
+      "source_byte_end": 625528,
+      "source_object_sha256": "3f2c9b5f2dd5285c79355880898f43583160cf7ec532f6a6b3fd1ef3d5556d34",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/opus-5/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000005",
+        "output_cost_per_token": "0.000025",
+        "cache_read_input_token_cost": "5E-7",
+        "cache_creation_input_token_cost": "0.00000625",
+        "cache_creation_input_token_cost_above_1hr": "0.00001",
+        "input_cost_per_token_batches": "0.0000025",
+        "output_cost_per_token_batches": "0.0000125",
+        "cache_read_input_token_cost_batches": "2.5E-7",
+        "cache_creation_input_token_cost_batches": "0.000003125"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 5000000,
+        "output_cost_per_token": 25000000,
+        "cache_read_input_token_cost": 500000,
+        "cache_creation_input_token_cost": 6250000,
+        "cache_creation_input_token_cost_above_1hr": 10000000,
+        "input_cost_per_token_batches": 2500000,
+        "output_cost_per_token_batches": 12500000,
+        "cache_read_input_token_cost_batches": 250000,
+        "cache_creation_input_token_cost_batches": 3125000
+      }
+    },
+    {
+      "model": "claude-opus-4-8",
+      "source_byte_start": 625553,
+      "source_byte_end": 627438,
+      "source_object_sha256": "17f835f05d7c038d025af468b7dc3c6e4caf916e1260d61876b9fc1379fb2298",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/opus-4-8/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000005",
+        "output_cost_per_token": "0.000025",
+        "cache_read_input_token_cost": "5E-7",
+        "cache_creation_input_token_cost": "0.00000625",
+        "cache_creation_input_token_cost_above_1hr": "0.00001",
+        "input_cost_per_token_batches": "0.0000025",
+        "output_cost_per_token_batches": "0.0000125",
+        "cache_read_input_token_cost_batches": "2.5E-7",
+        "cache_creation_input_token_cost_batches": "0.000003125"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 5000000,
+        "output_cost_per_token": 25000000,
+        "cache_read_input_token_cost": 500000,
+        "cache_creation_input_token_cost": 6250000,
+        "cache_creation_input_token_cost_above_1hr": 10000000,
+        "input_cost_per_token_batches": 2500000,
+        "output_cost_per_token_batches": 12500000,
+        "cache_read_input_token_cost_batches": 250000,
+        "cache_creation_input_token_cost_batches": 3125000
+      }
+    },
+    {
+      "model": "claude-opus-4-7",
+      "source_byte_start": 614608,
+      "source_byte_end": 616382,
+      "source_object_sha256": "98285c82f196280043e36384386caa70f3a3bfe736aeea35c174e84b82b44ace",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/opus-4-7/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000005",
+        "output_cost_per_token": "0.000025",
+        "cache_read_input_token_cost": "5E-7",
+        "cache_creation_input_token_cost": "0.00000625",
+        "cache_creation_input_token_cost_above_1hr": "0.00001",
+        "input_cost_per_token_batches": "0.0000025",
+        "output_cost_per_token_batches": "0.0000125",
+        "cache_read_input_token_cost_batches": "2.5E-7",
+        "cache_creation_input_token_cost_batches": "0.000003125"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 5000000,
+        "output_cost_per_token": 25000000,
+        "cache_read_input_token_cost": 500000,
+        "cache_creation_input_token_cost": 6250000,
+        "cache_creation_input_token_cost_above_1hr": 10000000,
+        "input_cost_per_token_batches": 2500000,
+        "output_cost_per_token_batches": 12500000,
+        "cache_read_input_token_cost_batches": 250000,
+        "cache_creation_input_token_cost_batches": 3125000
+      }
+    },
+    {
+      "model": "claude-opus-4-6",
+      "source_byte_start": 611179,
+      "source_byte_end": 612903,
+      "source_object_sha256": "93ba2e7f46e548b23f4260a6a157c7af1cc74baa0bf0eac5b78e31c066a67068",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/opus-4-6/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000005",
+        "output_cost_per_token": "0.000025",
+        "cache_read_input_token_cost": "5E-7",
+        "cache_creation_input_token_cost": "0.00000625",
+        "cache_creation_input_token_cost_above_1hr": "0.00001",
+        "input_cost_per_token_batches": "0.0000025",
+        "output_cost_per_token_batches": "0.0000125",
+        "cache_read_input_token_cost_batches": "2.5E-7",
+        "cache_creation_input_token_cost_batches": "0.000003125"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 5000000,
+        "output_cost_per_token": 25000000,
+        "cache_read_input_token_cost": 500000,
+        "cache_creation_input_token_cost": 6250000,
+        "cache_creation_input_token_cost_above_1hr": 10000000,
+        "input_cost_per_token_batches": 2500000,
+        "output_cost_per_token_batches": 12500000,
+        "cache_read_input_token_cost_batches": 250000,
+        "cache_creation_input_token_cost_batches": 3125000
+      }
+    },
+    {
+      "model": "claude-opus-4-5-20251101",
+      "source_byte_start": 608331,
+      "source_byte_end": 609691,
+      "source_object_sha256": "6ee1c6a46884c2bc079bd29a82e6c3a931e2669e2e146e8618fd1fb92b3e44e5",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/opus-4-5/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000005",
+        "output_cost_per_token": "0.000025",
+        "cache_read_input_token_cost": "5E-7",
+        "cache_creation_input_token_cost": "0.00000625",
+        "cache_creation_input_token_cost_above_1hr": "0.00001",
+        "input_cost_per_token_batches": "0.0000025",
+        "output_cost_per_token_batches": "0.0000125",
+        "cache_read_input_token_cost_batches": "2.5E-7",
+        "cache_creation_input_token_cost_batches": "0.000003125"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 5000000,
+        "output_cost_per_token": 25000000,
+        "cache_read_input_token_cost": 500000,
+        "cache_creation_input_token_cost": 6250000,
+        "cache_creation_input_token_cost_above_1hr": 10000000,
+        "input_cost_per_token_batches": 2500000,
+        "output_cost_per_token_batches": 12500000,
+        "cache_read_input_token_cost_batches": 250000,
+        "cache_creation_input_token_cost_batches": 3125000
+      }
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "source_byte_start": 603374,
+      "source_byte_end": 605216,
+      "source_object_sha256": "8d840349b462248d6d0a588bce3ce7b2abacbc2be622cded1a88b41fb9c89508",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/sonnet-5-5/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000002",
+        "output_cost_per_token": "0.00001",
+        "cache_read_input_token_cost": "1E-7",
+        "cache_creation_input_token_cost": "0.0000025",
+        "cache_creation_input_token_cost_above_1hr": "0.000004",
+        "input_cost_per_token_batches": "0.000001",
+        "output_cost_per_token_batches": "0.000005",
+        "cache_read_input_token_cost_batches": "5E-8",
+        "cache_creation_input_token_cost_batches": "0.00000125"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 2000000,
+        "output_cost_per_token": 10000000,
+        "cache_read_input_token_cost": 100000,
+        "cache_creation_input_token_cost": 2500000,
+        "cache_creation_input_token_cost_above_1hr": 4000000,
+        "input_cost_per_token_batches": 1000000,
+        "output_cost_per_token_batches": 5000000,
+        "cache_read_input_token_cost_batches": 50000,
+        "cache_creation_input_token_cost_batches": 1250000
+      }
+    },
+    {
+      "model": "claude-sonnet-5",
+      "source_byte_start": 601566,
+      "source_byte_end": 603347,
+      "source_object_sha256": "f4b8112b8fa98483ac94fd67621b5848f09f613238c1bf70c7c49bb35b7e42fc",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/sonnet-5/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000002",
+        "output_cost_per_token": "0.00001",
+        "cache_read_input_token_cost": "2E-7",
+        "cache_creation_input_token_cost": "0.0000025",
+        "cache_creation_input_token_cost_above_1hr": "0.000004",
+        "input_cost_per_token_batches": "0.000001",
+        "output_cost_per_token_batches": "0.000005",
+        "cache_read_input_token_cost_batches": "1E-7",
+        "cache_creation_input_token_cost_batches": "0.00000125"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 2000000,
+        "output_cost_per_token": 10000000,
+        "cache_read_input_token_cost": 200000,
+        "cache_creation_input_token_cost": 2500000,
+        "cache_creation_input_token_cost_above_1hr": 4000000,
+        "input_cost_per_token_batches": 1000000,
+        "output_cost_per_token_batches": 5000000,
+        "cache_read_input_token_cost_batches": 100000,
+        "cache_creation_input_token_cost_batches": 1250000
+      }
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "source_byte_start": 605243,
+      "source_byte_end": 606933,
+      "source_object_sha256": "82da6fddefdc4ebe8ea1143862597122524853f146f58819e39c4fd409ab02e0",
+      "official_sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/models/sonnet-4-6/overview"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.000003",
+        "output_cost_per_token": "0.000015",
+        "cache_read_input_token_cost": "3E-7",
+        "cache_creation_input_token_cost": "0.00000375",
+        "cache_creation_input_token_cost_above_1hr": "0.000006",
+        "input_cost_per_token_batches": "0.0000015",
+        "output_cost_per_token_batches": "0.0000075",
+        "cache_read_input_token_cost_batches": "1.5E-7",
+        "cache_creation_input_token_cost_batches": "0.000001875"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 3000000,
+        "output_cost_per_token": 15000000,
+        "cache_read_input_token_cost": 300000,
+        "cache_creation_input_token_cost": 3750000,
+        "cache_creation_input_token_cost_above_1hr": 6000000,
+        "input_cost_per_token_batches": 1500000,
+        "output_cost_per_token_batches": 7500000,
+        "cache_read_input_token_cost_batches": 150000,
+        "cache_creation_input_token_cost_batches": 1875000
+      }
+    },
+    {
+      "model": "gemini/gemini-3.5-flash-lite",
+      "source_byte_start": 1152885,
+      "source_byte_end": 1155026,
+      "source_object_sha256": "2193d1a943b13c045f677f99e788942327aa39811fbba6ba28152ea8a0f923d8",
+      "official_sources": [
+        "https://ai.google.dev/gemini-api/docs/pricing#gemini-3.5-flash-lite"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "3E-7",
+        "output_cost_per_token": "0.0000025",
+        "output_cost_per_reasoning_token": "0.0000025",
+        "cache_read_input_token_cost": "3E-8"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 300000,
+        "output_cost_per_token": 2500000,
+        "output_cost_per_reasoning_token": 2500000,
+        "cache_read_input_token_cost": 30000
+      }
+    },
+    {
+      "model": "gemini/gemini-flash-lite-latest",
+      "source_byte_start": 1144128,
+      "source_byte_end": 1146215,
+      "source_object_sha256": "17cea6306805805cbf08199ad648c790640501d8b58994121d7581e8923975e5",
+      "official_sources": [
+        "https://ai.google.dev/gemini-api/docs/pricing#gemini-3.5-flash-lite",
+        "https://ai.google.dev/gemini-api/docs/models"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "3E-7",
+        "output_cost_per_token": "0.0000025",
+        "output_cost_per_reasoning_token": "0.0000025",
+        "cache_read_input_token_cost": "3E-8"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 300000,
+        "output_cost_per_token": 2500000,
+        "output_cost_per_reasoning_token": 2500000,
+        "cache_read_input_token_cost": 30000
+      }
+    },
+    {
+      "model": "gemini/gemini-3.1-flash-lite",
+      "source_byte_start": 1150446,
+      "source_byte_end": 1152847,
+      "source_object_sha256": "31bb6c36ba6045b85d0fd5cb426b6c83c1c8a1be36ce9bc6eb45048525e1d87f",
+      "official_sources": [
+        "https://ai.google.dev/gemini-api/docs/pricing#gemini-3.1-flash-lite"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "2.5E-7",
+        "output_cost_per_token": "0.0000015",
+        "output_cost_per_reasoning_token": "0.0000015",
+        "cache_read_input_token_cost": "2.5E-8"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 250000,
+        "output_cost_per_token": 1500000,
+        "output_cost_per_reasoning_token": 1500000,
+        "cache_read_input_token_cost": 25000
+      }
+    },
+    {
+      "model": "gemini/gemini-3.8-flash",
+      "source_byte_start": 1164252,
+      "source_byte_end": 1166509,
+      "source_object_sha256": "9124c578c6facadaf81b0eaeba2109a9340c95769e4b6157b57c3806f9b96cfc",
+      "official_sources": [
+        "https://ai.google.dev/gemini-api/docs/pricing#gemini-3.8-flash"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "7.5E-7",
+        "output_cost_per_token": "0.00000375",
+        "output_cost_per_reasoning_token": "0.00000375",
+        "cache_read_input_token_cost": "7.5E-8"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 750000,
+        "output_cost_per_token": 3750000,
+        "output_cost_per_reasoning_token": 3750000,
+        "cache_read_input_token_cost": 75000
+      }
+    },
+    {
+      "model": "gemini/gemini-3.6-flash",
+      "source_byte_start": 1159724,
+      "source_byte_end": 1161929,
+      "source_object_sha256": "a209cd41c906624c52aae4bfabc9804840506460213feefcbd849758a8192037",
+      "official_sources": [
+        "https://ai.google.dev/gemini-api/docs/pricing#gemini-3.6-flash"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "7.5E-7",
+        "output_cost_per_token": "0.00000375",
+        "output_cost_per_reasoning_token": "0.00000375",
+        "cache_read_input_token_cost": "7.5E-8"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 750000,
+        "output_cost_per_token": 3750000,
+        "output_cost_per_reasoning_token": 3750000,
+        "cache_read_input_token_cost": 75000
+      }
+    },
+    {
+      "model": "gemini/gemini-flash-latest",
+      "source_byte_start": 1141941,
+      "source_byte_end": 1144087,
+      "source_object_sha256": "b3109e6edcb832e5370faf5bb94a16c1caf8862368fb081ac93cc4f7443d399f",
+      "official_sources": [
+        "https://ai.google.dev/gemini-api/docs/pricing#gemini-3.8-flash",
+        "https://ai.google.dev/gemini-api/docs/changelog"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "7.5E-7",
+        "output_cost_per_token": "0.00000375",
+        "output_cost_per_reasoning_token": "0.00000375",
+        "cache_read_input_token_cost": "7.5E-8"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 750000,
+        "output_cost_per_token": 3750000,
+        "output_cost_per_reasoning_token": 3750000,
+        "cache_read_input_token_cost": 75000
+      }
+    },
+    {
+      "model": "deepseek/deepseek-flash",
+      "source_byte_start": 2280842,
+      "source_byte_end": 2282617,
+      "source_object_sha256": "526414897259d4069cfa6fa7bc91f15e0455bfd017b038529cb1c65c0a46ca33",
+      "official_sources": [
+        "https://api-docs.deepseek.com/quick_start/pricing"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "3E-7",
+        "output_cost_per_token": "0.0000012",
+        "cache_read_input_token_cost": "6E-9",
+        "off_peak_pricing.input_cost_per_token": "1.5E-7",
+        "off_peak_pricing.output_cost_per_token": "6E-7",
+        "off_peak_pricing.cache_read_input_token_cost": "3E-9"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 300000,
+        "output_cost_per_token": 1200000,
+        "cache_read_input_token_cost": 6000,
+        "off_peak_pricing.input_cost_per_token": 150000,
+        "off_peak_pricing.output_cost_per_token": 600000,
+        "off_peak_pricing.cache_read_input_token_cost": 3000
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash",
+      "source_byte_start": 2282653,
+      "source_byte_end": 2284428,
+      "source_object_sha256": "526414897259d4069cfa6fa7bc91f15e0455bfd017b038529cb1c65c0a46ca33",
+      "official_sources": [
+        "https://api-docs.deepseek.com/quick_start/pricing"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "3E-7",
+        "output_cost_per_token": "0.0000012",
+        "cache_read_input_token_cost": "6E-9",
+        "off_peak_pricing.input_cost_per_token": "1.5E-7",
+        "off_peak_pricing.output_cost_per_token": "6E-7",
+        "off_peak_pricing.cache_read_input_token_cost": "3E-9"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 300000,
+        "output_cost_per_token": 1200000,
+        "cache_read_input_token_cost": 6000,
+        "off_peak_pricing.input_cost_per_token": 150000,
+        "off_peak_pricing.output_cost_per_token": 600000,
+        "off_peak_pricing.cache_read_input_token_cost": 3000
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro",
+      "source_byte_start": 2286284,
+      "source_byte_end": 2288073,
+      "source_object_sha256": "1c4dc8be11a9ed01acd5537e822d8b0def5deb26b67c82ec238985b017435a69",
+      "official_sources": [
+        "https://api-docs.deepseek.com/quick_start/pricing"
+      ],
+      "usd_per_token_decimal": {
+        "input_cost_per_token": "0.00000132",
+        "output_cost_per_token": "0.00000396",
+        "cache_read_input_token_cost": "4.4E-8",
+        "off_peak_pricing.input_cost_per_token": "6.6E-7",
+        "off_peak_pricing.output_cost_per_token": "0.00000198",
+        "off_peak_pricing.cache_read_input_token_cost": "2.2E-8"
+      },
+      "picodollars_per_token": {
+        "input_cost_per_token": 1320000,
+        "output_cost_per_token": 3960000,
+        "cache_read_input_token_cost": 44000,
+        "off_peak_pricing.input_cost_per_token": 660000,
+        "off_peak_pricing.output_cost_per_token": 1980000,
+        "off_peak_pricing.cache_read_input_token_cost": 22000
+      }
     }
   ],
   "official_verification": [
@@ -293,7 +1210,7 @@
     },
     {
       "url": "https://developers.openai.com/api/docs/pricing",
-      "checked_date": "2026-10-09"
+      "checked_date": "2026-10-11"
     },
     {
       "url": "https://developers.openai.com/api/docs/guides/batch",
@@ -317,11 +1234,11 @@
     },
     {
       "url": "https://developers.openai.com/api/docs/models/gpt-6-luna",
-      "checked_date": "2026-10-09"
+      "checked_date": "2026-10-11"
     },
     {
       "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-      "checked_date": "2026-10-09"
+      "checked_date": "2026-10-11"
     },
     {
       "url": "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
@@ -329,22 +1246,142 @@
     },
     {
       "url": "https://platform.claude.com/docs/en/api/messages/create",
-      "checked_date": "2026-10-09"
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/models/gpt-6-sol",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/fable-5-1/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/fable-5/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/opus-5-5/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/opus-5/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/opus-4-8/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/opus-4-7/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/opus-4-6/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/opus-4-5/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/sonnet-5-5/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/sonnet-5/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/sonnet-4-6/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/models",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/changelog",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/openai",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://api-docs.deepseek.com/quick_start/pricing",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://www.news.cn/politics/20251104/88bcffd88ae249e58c699b8772548e3d/c.html",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://openrouter.ai/docs/use-cases/usage-accounting",
+      "checked_date": "2026-10-11"
     }
   ],
   "policy": {
     "first_party_endpoints": [
       "https://api.openai.com/v1/chat/completions",
-      "https://api.anthropic.com/v1/messages"
+      "https://api.anthropic.com/v1/messages",
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      "https://api.deepseek.com/chat/completions",
+      "https://api.deepseek.com/v1/chat/completions",
+      "https://openrouter.ai/api/v1/chat/completions"
     ],
     "unknown": "Anything outside the exact catalog, endpoint, context/tier or token categories is unpriced. No fuzzy model matching.",
-    "anthropic_context": "Claude 4.5 rows: only total input at most 200000 tokens is priced; higher bands remain unknown. claude-haiku-5-5: a request whose total input (cache reads and writes included) is at most 100000 tokens uses the base rates, and one above it the higher rates for the whole request, across its full context window.",
-    "batch": "OpenAI row-specific batch rates are present in the source data. Anthropic source rows carry batch input, output, cache-read and 5-minute cache-write rates at exactly half of Standard; the 1-hour cache-write batch rates, which no source row carries, are derived as half, as the official pricing page states the Batch discount combines with prompt caching. Each attempt has its own billing class.",
+    "anthropic_context": "Claude 4.5 rows: only total input at most 200000 tokens is priced; higher bands remain unknown (Opus 4.5 has a 200K-token window). Claude 4.6 and later rows other than claude-haiku-5-5 use their listed rates across the whole 1M-token window, as the official long context pricing section states. claude-haiku-5-5: a request whose total input (cache reads and writes included) is at most 100000 tokens uses the base rates, and one above it the higher rates for the whole request, across its full context window.",
+    "batch": "OpenAI row-specific batch rates are present in the source data. Anthropic source rows carry batch input, output, cache-read and 5-minute cache-write rates at exactly half of Standard; the 1-hour cache-write batch rates, which no source row carries, are derived as half, as the official pricing page states the Batch discount combines with prompt caching. Gemini, DeepSeek and OpenRouter rows have no reviewed Batch class (markitai submits no batch to them; Gemini's batch cache rate is not half), so a Batch-class response from them is unpriced. Each attempt has its own billing class.",
     "license_scope": "Original distribution notice retained verbatim; no legal sufficiency or invoice verification claim.",
-    "aliases": "Only these two separately verified exact Claude aliases are added to the source keys. A different returned model outside the reviewed family remains unpriced; no prefix matching.",
-    "source_release": "LiteLLM 1.106.0.dev2 is a PEP 440 development pre-release. On 2026-10-09 it was the newest PyPI release carrying the claude-haiku-5-5 row (the latest final release, 1.104.2, does not). The backup file was taken from litellm-1.106.0.dev2-cp310-abi3-manylinux_2_28_x86_64.whl (sha256 b7624f691050a458102715d9c65e0abd006f275922c10a7ba42da6fc45dc610b); every compiled rate is also checked against the official links.",
-    "openai_context": "gpt-6-luna: a request whose prompt_tokens (cached reads and cache writes included) is at most 272000 uses the short-context rates; at least 278529 (above 272 x 1024) uses the long-context rates for the whole request; the unclear range between them is unpriced.",
-    "openai_cache_writes": "Chat Completions reports prompt-cache writes as usage.prompt_tokens_details.cache_write_tokens. The official prompt caching guide prices ordinary input as prompt tokens minus cached and cache-write tokens, plus cached tokens at the cached rate and cache-write tokens at the cache-write rate. A model without a reviewed cache-write rate leaves a positive write count unpriced."
+    "aliases": "Only the separately verified exact Claude aliases in verified_aliases are added to the source keys. A different returned model outside the reviewed family remains unpriced; no prefix matching.",
+    "source_release": "LiteLLM 1.106.0.dev2 is a PEP 440 development pre-release. On 2026-10-09 it was the newest PyPI release carrying the claude-haiku-5-5 row (the latest final release, 1.104.2, does not). The backup file was taken from litellm-1.106.0.dev2-cp310-abi3-manylinux_2_28_x86_64.whl (sha256 b7624f691050a458102715d9c65e0abd006f275922c10a7ba42da6fc45dc610b); every compiled rate is also checked against the official links. The 2026-10-11 selection keeps the same file: the newest final release, 1.104.2, still lacks claude-haiku-5-5 and claude-sonnet-5-5, and 1.106.0.dev3 changes none of the selected prices.",
+    "openai_context": "gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna and the gpt-5.6 rows: a request whose prompt_tokens (cached reads and cache writes included) is at most 272000 uses the short-context rates; at least 278529 (above 272 x 1024) uses the long-context rates for the whole request; the unclear range between them is unpriced.",
+    "openai_cache_writes": "Chat Completions reports prompt-cache writes as usage.prompt_tokens_details.cache_write_tokens. The official prompt caching guide prices ordinary input as prompt tokens minus cached and cache-write tokens, plus cached tokens at the cached rate and cache-write tokens at the cache-write rate. A model without a reviewed cache-write rate leaves a positive write count unpriced.",
+    "shared_families": "gpt-5.6 shares the gpt-5.6-sol tariff (its model page: the gpt-5.6 alias routes requests to GPT-5.6 Sol), and deepseek-v4-flash the deepseek-flash one (DeepSeek's pricing page: the legacy name is served by the Flash model and billed at the Flash price). gemini-flash-lite-latest and gemini-flash-latest are Google's moving aliases with their own LiteLLM rows; Google does not name their current targets, so each is its own family priced at its source row, which equals the published Gemini 3.5 Flash-Lite and Gemini 3.8 Flash prices. A hot-swapped alias answered under its alias name keeps that price until the catalog is reviewed again.",
+    "gemini": "Paid-tier Standard rates for text, image and video input through the OpenAI-compatible endpoint. Google bills thinking as output; that endpoint leaves thinking out of completion_tokens but counts it in total_tokens, so total_tokens is required and total minus prompt and completion tokens is charged as output (a reported reasoning_tokens must equal that difference or be part of completion_tokens). Audio input and cache storage are unpriced. Gemini 3.8 Flash, 3.6 Flash and gemini-flash-latest are listed at introductory prices through December 31, 2026; a request ending at or after 2027-01-01T00:00:00Z is unpriced.",
+    "deepseek": "Peak rates are the source rows' base rates and off-peak rates their off_peak_pricing block, matching the official page (off-peak is half of peak). Peak hours are Beijing time 09:00-12:00 and 14:00-18:00, Monday to Friday, excluding Chinese public holidays. A request is priced only when its send and completion times fall in the same period; a weekday peak hour is known only for Beijing dates 2026-10-08 to 2026-12-31, which the State Council's 2026 holiday schedule (published 2025-11-04) leaves without a public holiday. Usage must agree: prompt_cache_hit_tokens equals prompt_tokens_details.cached_tokens when both appear, and hits plus misses equal prompt_tokens.",
+    "openrouter": "No catalog tariff: usage.cost, documented as the total amount charged to the account in USD credits, is the price, rounded to the nearest picodollar, for any model. A bring-your-own-key response (is_byok true) is also billed by the upstream provider and stays unpriced; so does a response without usage.cost or a Batch-class one."
   },
   "verified_aliases": [
     {
@@ -353,6 +1390,13 @@
       "checked_date": "2026-10-09",
       "url": "https://platform.claude.com/docs/en/models/haiku-4-5/overview",
       "basis": "The official model page explicitly lists this convenience alias and its pinned snapshot."
+    },
+    {
+      "alias": "claude-opus-4-5",
+      "tariff_source_model": "claude-opus-4-5-20251101",
+      "checked_date": "2026-10-11",
+      "url": "https://platform.claude.com/docs/en/models/opus-4-5/overview",
+      "basis": "The official model page lists this API alias and its dated API model ID."
     },
     {
       "alias": "claude-sonnet-4-5",

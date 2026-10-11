@@ -245,7 +245,7 @@ is null until a conversion succeeds; a conversion without model requests reports
 
 ```json
 {"priced_requests": 1, "unpriced_requests": 1, "cost_status": "partial",
- "pricing_snapshots": ["litellm-1.106.0.dev2-selected-2026-10-09"]}
+ "pricing_snapshots": ["litellm-1.106.0.dev2-selected-2026-10-11"]}
 ```
 
 `cost_status` is `complete` when every recorded request was priced, `partial`

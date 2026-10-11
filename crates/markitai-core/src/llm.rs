@@ -1728,6 +1728,7 @@ fn request_with_mode(
         request.json(&body)
     };
     let started = observation.as_ref().map(|_| std::time::Instant::now());
+    let sent = std::time::SystemTime::now();
     let response = request.send().map_err(|error| {
         if error.is_timeout()
             && let Some(observation) = observation.as_deref_mut()
@@ -1806,7 +1807,7 @@ fn request_with_mode(
         if let Ok(data) = serde_json::from_slice::<Value>(&bytes)
             && data.get("usage").is_some_and(Value::is_object)
         {
-            record_usage(usage, entry, &data);
+            record_usage_since(usage, entry, &data, sent);
         }
         let body = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
         let fatal = quota_refused(status, &body);
@@ -1870,7 +1871,7 @@ fn request_with_mode(
         Some(cloud) => cloud::response(cloud, data, entry),
         None => data,
     };
-    record_usage(usage, entry, &data);
+    record_usage_since(usage, entry, &data, sent);
     let envelope = match entry.protocol {
         Protocol::Anthropic => data.get("content").is_some_and(Value::is_array),
         _ => data
@@ -2102,11 +2103,38 @@ fn record_usage(usage: &mut ConversionUsage, entry: &Deployment, data: &Value) {
     record_usage_class(usage, entry, data, BillingClass::Standard);
 }
 
+/// A live response to a request sent at `sent`: dated and peak-hour tariffs
+/// price it by when it ran.
+fn record_usage_since(
+    usage: &mut ConversionUsage,
+    entry: &Deployment,
+    data: &Value,
+    sent: std::time::SystemTime,
+) {
+    record(
+        usage,
+        entry,
+        data,
+        BillingClass::Standard,
+        pricing::Span::since(sent),
+    );
+}
+
 fn record_usage_class(
     usage: &mut ConversionUsage,
     entry: &Deployment,
     data: &Value,
     class: BillingClass,
+) {
+    record(usage, entry, data, class, None);
+}
+
+fn record(
+    usage: &mut ConversionUsage,
+    entry: &Deployment,
+    data: &Value,
+    class: BillingClass,
+    span: Option<pricing::Span>,
 ) {
     let mut input = data
         .pointer("/usage/prompt_tokens")
@@ -2133,7 +2161,7 @@ fn record_usage_class(
         .and_then(Value::as_str)
         .filter(|model| !model.is_empty())
         .unwrap_or(&entry.id);
-    let quote = pricing::quote(&price_identity(entry), data, class);
+    let quote = pricing::quote_at(&price_identity(entry), data, class, span);
     let mut delta = accounting::response(model, input, output, quote);
     let cached = if entry.protocol == Protocol::Anthropic {
         data.pointer("/usage/cache_read_input_tokens")
