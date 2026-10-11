@@ -1230,7 +1230,7 @@
     },
     {
       "url": "https://developers.openai.com/api/docs/guides/prompt-caching",
-      "checked_date": "2026-10-09"
+      "checked_date": "2026-10-11"
     },
     {
       "url": "https://developers.openai.com/api/docs/models/gpt-6-luna",
@@ -1359,6 +1359,22 @@
     {
       "url": "https://openrouter.ai/docs/use-cases/usage-accounting",
       "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/models/gpt-5",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/sonnet-4-5/overview",
+      "checked_date": "2026-10-11"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/api/beta-headers",
+      "checked_date": "2026-10-11"
     }
   ],
   "policy": {
@@ -1371,13 +1387,13 @@
       "https://openrouter.ai/api/v1/chat/completions"
     ],
     "unknown": "Anything outside the exact catalog, endpoint, context/tier or token categories is unpriced. No fuzzy model matching.",
-    "anthropic_context": "Claude 4.5 rows: only total input at most 200000 tokens is priced; higher bands remain unknown (Opus 4.5 has a 200K-token window). Claude 4.6 and later rows other than claude-haiku-5-5 use their listed rates across the whole 1M-token window, as the official long context pricing section states. claude-haiku-5-5: a request whose total input (cache reads and writes included) is at most 100000 tokens uses the base rates, and one above it the higher rates for the whole request, across its full context window.",
+    "anthropic_context": "Claude 4.5 rows (Sonnet 4.5, Haiku 4.5, Opus 4.5): only total input at most 200000 tokens is priced. That is their context window on the Claude API (models overview, model pages and the context windows page: '200k tokens for Claude Sonnet 4.5 (deprecated) and Claude Haiku 4.5'); Sonnet 4.5's former 1M-token beta and its above-200K rates are no longer offered (no context-1m beta header, no Sonnet 4.5 band in long context pricing), so larger input is not billable there and stays unpriced. Claude 4.6 and later rows other than claude-haiku-5-5 use their listed rates across the whole 1M-token window, as the official long context pricing section states. claude-haiku-5-5: a request whose total input (cache reads and writes included) is at most 100000 tokens uses the base rates, and one above it the higher rates for the whole request, across its full context window.",
     "batch": "OpenAI row-specific batch rates are present in the source data. Anthropic source rows carry batch input, output, cache-read and 5-minute cache-write rates at exactly half of Standard; the 1-hour cache-write batch rates, which no source row carries, are derived as half, as the official pricing page states the Batch discount combines with prompt caching. Gemini, DeepSeek and OpenRouter rows have no reviewed Batch class (markitai submits no batch to them; Gemini's batch cache rate is not half), so a Batch-class response from them is unpriced. Each attempt has its own billing class.",
     "license_scope": "Original distribution notice retained verbatim; no legal sufficiency or invoice verification claim.",
     "aliases": "Only the separately verified exact Claude aliases in verified_aliases are added to the source keys. A different returned model outside the reviewed family remains unpriced; no prefix matching.",
     "source_release": "LiteLLM 1.106.0.dev2 is a PEP 440 development pre-release. On 2026-10-09 it was the newest PyPI release carrying the claude-haiku-5-5 row (the latest final release, 1.104.2, does not). The backup file was taken from litellm-1.106.0.dev2-cp310-abi3-manylinux_2_28_x86_64.whl (sha256 b7624f691050a458102715d9c65e0abd006f275922c10a7ba42da6fc45dc610b); every compiled rate is also checked against the official links. The 2026-10-11 selection keeps the same file: the newest final release, 1.104.2, still lacks claude-haiku-5-5 and claude-sonnet-5-5, and 1.106.0.dev3 changes none of the selected prices.",
-    "openai_context": "gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna and the gpt-5.6 rows: a request whose prompt_tokens (cached reads and cache writes included) is at most 272000 uses the short-context rates; at least 278529 (above 272 x 1024) uses the long-context rates for the whole request; the unclear range between them is unpriced.",
-    "openai_cache_writes": "Chat Completions reports prompt-cache writes as usage.prompt_tokens_details.cache_write_tokens. The official prompt caching guide prices ordinary input as prompt tokens minus cached and cache-write tokens, plus cached tokens at the cached rate and cache-write tokens at the cache-write rate. A model without a reviewed cache-write rate leaves a positive write count unpriced.",
+    "openai_context": "gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna and the gpt-5.6 rows: a request whose prompt_tokens (cached reads and cache writes included) is at most 272000 uses the short-context rates, and one above it the long-context rates for the whole request. OpenAI's K is 1,000: the pricing page splits short (<=272K) from long (>272K) input tokens, the GPT-5 model page the figure comes from lists 'Maximum input tokens: 272,000', and the same model pages write a 1,050,000-token context window as '1.05M'. LiteLLM applies the same threshold (prompt_tokens > 272 x 1000).",
+    "openai_cache_writes": "Chat Completions reports prompt-cache writes as usage.prompt_tokens_details.cache_write_tokens. The official prompt caching guide prices ordinary input as prompt tokens minus cached and cache-write tokens, plus cached tokens at the cached rate and cache-write tokens at the cache-write rate (1.25x input for GPT-5.6 and later). Its model table gives GPT-5.5 and earlier models, GPT-4.1 included, 'No additional cache-write charge' and states that cache-write pricing is not an additive fee, so a GPT-4.1 cache write is priced at the uncached input rate (a derived rate no source row carries).",
     "shared_families": "gpt-5.6 shares the gpt-5.6-sol tariff (its model page: the gpt-5.6 alias routes requests to GPT-5.6 Sol), and deepseek-v4-flash the deepseek-flash one (DeepSeek's pricing page: the legacy name is served by the Flash model and billed at the Flash price). gemini-flash-lite-latest and gemini-flash-latest are Google's moving aliases with their own LiteLLM rows; Google does not name their current targets, so each is its own family priced at its source row, which equals the published Gemini 3.5 Flash-Lite and Gemini 3.8 Flash prices. A hot-swapped alias answered under its alias name keeps that price until the catalog is reviewed again.",
     "gemini": "Paid-tier Standard rates for text, image and video input through the OpenAI-compatible endpoint. Google bills thinking as output; that endpoint leaves thinking out of completion_tokens but counts it in total_tokens, so total_tokens is required and total minus prompt and completion tokens is charged as output (a reported reasoning_tokens must equal that difference or be part of completion_tokens). Audio input and cache storage are unpriced. Gemini 3.8 Flash, 3.6 Flash and gemini-flash-latest are listed at introductory prices through December 31, 2026; a request ending at or after 2027-01-01T00:00:00Z is unpriced.",
     "deepseek": "Peak rates are the source rows' base rates and off-peak rates their off_peak_pricing block, matching the official page (off-peak is half of peak). Peak hours are Beijing time 09:00-12:00 and 14:00-18:00, Monday to Friday, excluding Chinese public holidays. A request is priced only when its send and completion times fall in the same period; a weekday peak hour is known only for Beijing dates 2026-10-08 to 2026-12-31, which the State Council's 2026 holiday schedule (published 2025-11-04) leaves without a public holiday. Usage must agree: prompt_cache_hit_tokens equals prompt_tokens_details.cached_tokens when both appear, and hits plus misses equal prompt_tokens.",
