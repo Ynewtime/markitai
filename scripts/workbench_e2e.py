@@ -7,12 +7,17 @@ throwaway HOME and MARKITAI_HOME (your ~/.markitai is never read or written).
 For each viewport width it walks the main flows with Playwright/Chromium and
 screenshots every state:
 
-    convert page, staged files + URLs, live progress, finished list,
-    inspector, preview, compare (original page beside the Markdown),
-    retry of a failed item, stop remaining (cancel), download all (ticket),
-    an inline SVG drawing in the preview, settings model test (fake LLM), a
-    saved address shown without its credentials, history after a reload,
-    token prompt
+    convert page, a refused URL as a bottom notice strip, staged files +
+    URLs, live progress, finished list, inspector, preview, compare
+    (original page beside the Markdown), retry of a failed item, a failed
+    action reported in the inspector, stop remaining (cancel), download all
+    (ticket), an inline SVG drawing in the preview, settings model test
+    (fake LLM), the provider picker (groups, brand marks, search), a saved
+    address shown without its credentials, history after a reload, token
+    prompt
+
+Notices must be strips at the bottom (never the page-wide banners the UI
+had before) and leave by themselves.
 
 It fails on a page error, a 5xx answer or a step whose check does not hold.
 
@@ -816,6 +821,55 @@ def _heading(page: Any, name: str) -> Any:
     return page.get_by_role("heading", name=_spaced(name)).first
 
 
+#: The notices of the UI before the bundle of 2026-10-11 (rounded boxes with
+#: a bar and a close button, page-wide banners): none may be left
+OLD_NOTICES = ".notice, .notes-region, .note-close"
+
+
+def _no_banners(page: Any) -> None:
+    left = page.locator(OLD_NOTICES).count()
+    if left:
+        raise AssertionError(f"{left} page-wide notice(s) of the old UI on the page")
+
+
+def _strip(page: Any, tone: str, text: str | re.Pattern[str]) -> Any:
+    """The notice strip of *tone* saying *text*, once it is shown."""
+    strip = page.locator(f".note-strips .note-strip.is-{tone}").filter(has_text=text)
+    strip.first.wait_for(timeout=15000)
+    return strip.first
+
+
+def _at_the_bottom(page: Any, strip: Any) -> str:
+    """Where a strip sits: full width above the tab bar on a phone, a narrow
+    stack in the bottom-right corner on a wide screen; one line either way."""
+    box, settled = strip.bounding_box(), None
+    for _ in range(20):
+        page.wait_for_timeout(100)
+        settled, box = box, strip.bounding_box()
+        if box == settled:
+            break
+    view = page.viewport_size
+    if box is None or view is None:
+        raise AssertionError("the strip has no box")
+    width, height = view["width"], view["height"]
+    bottom, right = box["y"] + box["height"], box["x"] + box["width"]
+    if box["height"] > 60:
+        raise AssertionError(f"the strip is {box['height']:.0f} px high, not one line")
+    if bottom > height or box["y"] < height * 0.6:
+        raise AssertionError(f"the strip is not at the bottom: {box}")
+    if width < 600:
+        if box["width"] < width - 2:
+            raise AssertionError(f"the strip is not full width: {box}")
+        bar = _visible(page.get_by_role("navigation"))
+        top = bar.bounding_box() if bar is not None else None
+        if top is not None and top["y"] > height * 0.6 and bottom > top["y"] + 1:
+            raise AssertionError(f"the strip covers the tab bar: {box} / {top}")
+        return f"full width at y={box['y']:.0f}, above the tab bar"
+    if right < width - 48 or height - bottom > 48 or box["width"] > 420:
+        raise AssertionError(f"the strip is not in the bottom-right corner: {box}")
+    return f"{box['width']:.0f} px wide, {width - right:.0f} px from the right edge"
+
+
 def _api(page: Any, base: str, method: str, path: str, **kwargs: Any) -> Any:
     headers = {"Authorization": f"Bearer {TOKEN}"}
     return page.request.fetch(f"{base}{path}", method=method, headers=headers, **kwargs)
@@ -887,6 +941,26 @@ def browse(
             return "token taken from the fragment and removed"
 
         run.step(page, "convert", home)
+
+        # 1b. A refused URL: a notice strip at the bottom, gone by itself
+        def notice() -> str:
+            box = page.get_by_role("textbox", name=re.compile("Paste URLs"))
+            box.fill("ftp://example.com/report.pdf")
+            page.get_by_role("button", name="Convert", exact=True).click()
+            strip = _strip(page, "error", "ftp://example.com/report.pdf")
+            where = _at_the_bottom(page, strip)
+            run.shot(page, "notice-strip-shown")
+            _no_banners(page)
+            if run.saw("POST", r"^/api/jobs$"):
+                raise AssertionError("the refused URL was sent")
+            # A strip stays while the pointer is on it: move away, then it
+            # leaves after its 6 s
+            page.mouse.move(1, 1)
+            strip.wait_for(state="detached", timeout=12000)
+            box.fill("")
+            return f"ftp:// refused in a bottom strip ({where}) that left by itself"
+
+        run.step(page, "notice-strip", notice)
 
         # 2. Stage files, a URL list and a pasted URL
         def stage() -> str:
@@ -1041,6 +1115,65 @@ def browse(
 
         run.step(page, "retry", retry)
 
+        # 7b. A failed action on one conversion: reported in its inspector,
+        # not as a notice (another tab deleted it before Retry was pressed)
+        def action_error() -> str:
+            found = [
+                (job, item)
+                for job in run.jobs
+                for item in _api(page, base, "GET", f"/api/jobs/{job}").json()["items"]
+                if item["name"] == "damaged.pdf"
+            ]
+            if not found:
+                raise AssertionError("damaged.pdf not found through the API")
+            job, item = found[0]
+
+            def status() -> str:
+                items = _api(page, base, "GET", f"/api/jobs/{job}").json()["items"]
+                return next(
+                    i["status"] for i in items if i["item_id"] == item["item_id"]
+                )
+
+            _wait(
+                page,
+                lambda: status() in ("done", "error"),
+                timeout=60,
+                what="damaged.pdf's retry to end",
+            )
+            _dismiss(page)
+            _item(page, "damaged.pdf").click()
+            _heading(page, "damaged.pdf").wait_for()
+            reason = _visible(page.locator(".insp-line.is-error, .problem.is-error"))
+            if reason is None:
+                raise AssertionError("the inspector does not show why it failed")
+            gone = _api(
+                page, base, "DELETE", f"/api/jobs/{job}/items/{item['item_id']}"
+            )
+            if gone.status != 204:
+                raise AssertionError(f"delete: {gone.status} {gone.text()[:200]}")
+            before = len(run.api)
+            _click_visible(
+                page.get_by_role("button", name=re.compile(r"^(Retry|Run again)$"))
+            )
+            _wait(
+                page,
+                lambda: run.saw("POST", r"/items/i\d+/retry$", 404, since=before),
+                what="the refused retry",
+            )
+            line = page.locator(".action-error-line").filter(has_text="Retry failed")
+            line.first.wait_for(timeout=10000)
+            run.shot(page, "inspector-error-line")
+            if page.locator(".note-strip").filter(has_text="Retry failed").count():
+                raise AssertionError("the failed retry also raised a notice")
+            _no_banners(page)
+            text = " ".join(line.first.inner_text().split())
+            # The list still shows the deleted row until it is read again
+            _open(page, page.reload)
+            _items(page).first.wait_for()
+            return f"inspector says {text!r}; no notice raised"
+
+        run.step(page, "inspector-error", action_error)
+
         # 8. Stop remaining
         def stop() -> str:
             _dismiss(page)
@@ -1180,6 +1313,95 @@ def browse(
 
         run.step(page, "settings-test", settings)
 
+        # 12b. Add models: the provider picker groups Python's cards
+        def picker() -> str:
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            _click_visible(page.get_by_role("button", name="Add models"))
+            panel = page.locator(".provider-picker")
+            panel.wait_for()
+            tiles = panel.locator(".provider-tile")
+            # The brand marks load with the models settings: each tile's mark
+            # replaces its blank placeholder
+            _wait(
+                page,
+                lambda: (
+                    tiles.count() >= 7
+                    and panel.locator(".provider-tile svg.brand-icon").count()
+                    == tiles.count()
+                ),
+                timeout=20,
+                what="the common providers with their brand marks",
+            )
+            names = [" ".join(n.split()) for n in tiles.all_inner_texts()]
+            common = [
+                "OpenAI",
+                "Anthropic",
+                "Gemini",
+                "DeepSeek",
+                "OpenRouter",
+                "Azure OpenAI",
+                "Ollama",
+            ]
+            if names != common:
+                raise AssertionError(f"Common shows {names}")
+            chips = [
+                " ".join(c.split())
+                for c in panel.locator(".filter-chip").all_inner_texts()
+            ]
+            # Only cards with a group get filters: no chips means the server
+            # sent none and the picker fell back to All providers
+            if chips[:1] != ["All"] or "Local" not in chips:
+                raise AssertionError(f"filters: {chips}")
+            panel.locator(".filter-chip").filter(has_text="Local").click()
+            on = " ".join(panel.locator(".filter-chip.is-on").all_inner_texts()).strip()
+            items = panel.locator(".provider-item")
+            _wait(
+                page,
+                lambda: (
+                    "OpenAI-compatible endpoint"
+                    in [
+                        " ".join(items.nth(i).inner_text().split())
+                        for i in range(items.count())
+                        if items.nth(i).is_visible()
+                    ]
+                ),
+                timeout=5,
+                what="Local to list the OpenAI-compatible endpoint",
+            )
+            # On a phone the sticky action bar covers the list's end until the
+            # page scrolls: a trial click proves the row can be reached
+            items.filter(has_text="OpenAI-compatible endpoint").first.click(
+                trial=True, timeout=5000
+            )
+            run.shot(page, "provider-picker-local")
+            if on != "Local":
+                raise AssertionError(f"the filter shown as on is {on!r}")
+            search = panel.get_by_role("searchbox")
+            search.fill("ollama_chat")
+            _wait(
+                page,
+                lambda: (
+                    [" ".join(n.split()) for n in tiles.all_inner_texts()] == ["Ollama"]
+                ),
+                timeout=5,
+                what="ollama_chat to find Ollama",
+            )
+            search.fill("self-hosted")
+            _wait(
+                page,
+                lambda: (
+                    "OpenAI-compatible endpoint" in " ".join(panel.all_inner_texts())
+                ),
+                timeout=5,
+                what="self-hosted to find the OpenAI-compatible endpoint",
+            )
+            search.fill("")
+            _no_banners(page)
+            return f"Common: {len(names)} providers with marks; filters {' · '.join(chips)}; search by prefix and alias"
+
+        run.step(page, "provider-picker", picker)
+        _dismiss(page)
+
         # 13. Settings: a saved address shows no credentials, and saving a
         # new key with the address left as shown keeps the stored address
         def masked_address() -> str:
@@ -1318,6 +1540,8 @@ def browse(
                     timeout=15,
                     what="the token message",
                 )
+                # The token is asked for on the page, not in a banner
+                _no_banners(other)
             finally:
                 run.shot(other, "token-required")
                 fresh.close()
