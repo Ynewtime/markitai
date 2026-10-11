@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from markitai.utils.errors import extra_install_command
 from markitai.utils.guidance import (
     cloudflare_credentials_error,
@@ -186,6 +188,18 @@ class TestExtraInstallKeepsTheInstall:
     install (local checkout, extras browser/serve/ocr) dropped those extras
     and swapped the checkout for the PyPI release.
     """
+
+    @pytest.fixture(autouse=True)
+    def _an_x64_machine(self, monkeypatch) -> None:
+        """The hints below are a machine's whose x64 Python needs no pin.
+
+        Run on Windows on Arm with an x64 Python (runner-win) they rightly
+        gained --python cpython-3.13-windows-x86_64; the test that wants it
+        says ARM64 itself.
+        """
+        from markitai.utils import errors
+
+        monkeypatch.setattr(errors, "_windows_machine_arch", lambda: "AMD64")
 
     def _receipt(self, tmp_path, requirement: str):
         (tmp_path / "uv-receipt.toml").write_text(
