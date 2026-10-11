@@ -520,9 +520,12 @@ an archive download uses a ticket, so no URL the workbench requests carries the
 token. A saved connection's key is never returned: the connection-edit route
 (`GET /api/settings/llm/providers/{id}/credentials`) shows it masked, as the
 reference does (`sk…7890`: the first two and last four characters of a key of 12
-or more, the last two of a shorter one), and an `env:NAME` reference by name. An
-update without `api_key` keeps the saved key; a masked key sent back as the new
-key is refused. The browser workbench never stores credentials.
+or more, the last two of a shorter one), and an `env:NAME` reference by name. Its
+address keeps its text but not its userinfo or the value of a secret query or
+fragment parameter (`https://…@host/v1?token=…`); no settings route returns
+either. An update without `api_key` keeps the saved key, and an `api_base` sent
+back exactly as shown keeps the saved address; any other masked value is
+refused. The browser workbench never stores credentials.
 
 Host validation accepts localhost, IP literals, and explicit `--allowed-host`
 entries. A state-changing request with an Origin must match the request Host

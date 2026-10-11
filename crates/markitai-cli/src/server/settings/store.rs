@@ -113,10 +113,15 @@ impl Store {
             }
         }
         // A stored key is never returned, only its masked form; an update
-        // without `api_key` keeps it.
+        // without `api_key` keeps it. The address keeps its text but not its
+        // userinfo or secret parameters; sent back unchanged, it keeps the
+        // stored one.
         let masked = key.as_str().map(model::masked_key);
+        let base = connection["api_base"]
+            .as_str()
+            .map(markitai_core::output::masked_url);
         Ok(
-            json!({"api_key":masked,"api_key_masked":masked,"api_key_source":detected,"api_base":connection["api_base"],"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
+            json!({"api_key":masked,"api_key_masked":masked,"api_key_source":detected,"api_base":base,"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
         )
     }
     pub fn resolve_discovery(&self, body: &Value) -> ApiResult<Value> {
@@ -134,6 +139,21 @@ impl Store {
         let provider = model::string(body, "provider", true, true)?.unwrap();
         let provider_id = model::string(body, "provider_id", false, false)?;
         let deployment_id = model::string(body, "deployment_id", false, false)?;
+        let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = if provider_id.is_some() || deployment_id.is_some() {
+            connection(
+                &data,
+                provider_id.as_deref().unwrap_or(""),
+                deployment_id.as_deref(),
+            )
+            .ok()
+        } else {
+            None
+        };
+        let body = &model::unchanged_base(
+            body,
+            saved.as_ref().and_then(|saved| saved["api_base"].as_str()),
+        );
         let key = model::client_field(body, "api_key")?;
         let base = model::client_field(body, "api_base")?;
         let refresh = match body.get("refresh") {
@@ -142,7 +162,6 @@ impl Store {
                 .as_bool()
                 .ok_or_else(|| invalid("refresh must be boolean"))?,
         };
-        let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if provider_id.is_some() && deployment_id.is_some() {
             return Err(invalid("send one credential reference"));
         }

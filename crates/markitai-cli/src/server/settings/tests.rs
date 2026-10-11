@@ -1032,3 +1032,108 @@ fn a_masked_key_sent_back_is_refused_and_a_missing_one_keeps_the_saved_key() {
         "fi\u{2026}cret"
     );
 }
+
+#[test]
+fn a_saved_address_is_shown_masked_and_kept_when_sent_back_as_shown() {
+    // The fixture's address carries userinfo and a token parameter.
+    let (_dir, store) = setup(fixture());
+    let id = format!(
+        "legacy:{}",
+        store.view()["deployments"][0]["deployment_id"]
+            .as_str()
+            .unwrap()
+    );
+    let shown = ok(store.credentials(&id))["api_base"].clone();
+    assert_eq!(shown, "https://\u{2026}@example.test/custom?token=\u{2026}");
+    let stored = "https://user:pass@example.test/custom?token=hidden";
+    // Sent back as shown, alone: the address does not change.
+    ok(store.mutate(Mutation::Provider {
+        key: id.clone(),
+        revision: current(&store),
+        body: Some(json!({"expected_revision":current(&store),"api_base":shown})),
+    }));
+    assert_eq!(
+        saved(&store)["llm"]["model_list"][0]["litellm_params"]["api_base"],
+        stored
+    );
+    // Saving gives the legacy deployment a lasting id: address it again.
+    let id = format!(
+        "legacy:{}",
+        store.view()["deployments"][0]["deployment_id"]
+            .as_str()
+            .unwrap()
+    );
+    // Sent back as shown with a new key: the key changes, the address stays.
+    ok(store.mutate(Mutation::Provider {
+        key: id,
+        revision: current(&store),
+        body: Some(
+            json!({"expected_revision":current(&store),"api_base":shown,"api_key":"fixture-next-key"}),
+        ),
+    }));
+    let raw = saved(&store);
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_base"],
+        stored
+    );
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_key"],
+        "fixture-next-key"
+    );
+    let provider = raw["llm"]["providers"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Discovery with the shown address uses the stored one.
+    let discovery = ok(store
+        .resolve_discovery(&json!({"provider":"openai","provider_id":provider,"api_base":shown})));
+    assert_eq!(discovery["api_base"], stored);
+    // An edited address that still holds a mask is refused, and so is one
+    // for a new deployment or a probe.
+    let edited = "https://\u{2026}@example.test/other?token=\u{2026}";
+    let error = store
+        .mutate(Mutation::Provider {
+            key: provider.clone(),
+            revision: current(&store),
+            body: Some(
+                json!({"expected_revision":current(&store),"api_base":edited,"api_key":"k2"}),
+            ),
+        })
+        .err()
+        .unwrap();
+    assert_eq!(
+        (error.status.as_u16(), error.reason),
+        (422, "invalid_settings_request")
+    );
+    let add = json!({"expected_revision":current(&store),"model":"openai/new","api_base":edited,"api_key":"k","model_name":"masked"});
+    assert_eq!(
+        store
+            .mutate(Mutation::Add(add))
+            .err()
+            .unwrap()
+            .status
+            .as_u16(),
+        422
+    );
+    assert!(
+        store
+            .resolve_probe(&json!({"model":"openai/x","api_base":edited,"api_key":"k"}))
+            .is_err()
+    );
+    assert_eq!(
+        saved(&store)["llm"]["model_list"][0]["litellm_params"]["api_base"],
+        stored
+    );
+    // No settings response carries the stored address's secrets.
+    for response in [
+        store.view(),
+        store.providers(),
+        ok(store.credentials(&provider)),
+    ] {
+        let text = response.to_string();
+        assert!(
+            !text.contains("pass@") && !text.contains("hidden"),
+            "{text}"
+        );
+    }
+}

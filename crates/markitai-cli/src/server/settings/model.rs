@@ -44,13 +44,29 @@ pub(super) fn client_field(body: &Value, field: &str) -> ApiResult<Option<String
             "environment references must be configured on the server",
         ));
     }
-    // The masked form sent back would replace the key with its own mask.
-    if field == "api_key" && value.as_deref().is_some_and(|v| v.contains(MASK)) {
-        return Err(invalid(
-            "api_key is a masked key; send the whole new key, or leave api_key out to keep the saved one",
-        ));
+    // A masked value sent back would replace the secret with its own mask.
+    if value.as_deref().is_some_and(|v| v.contains(MASK)) {
+        return Err(invalid(&format!(
+            "{field} is masked; send the whole new value, or leave {field} out to keep the saved one"
+        )));
     }
     Ok(value)
+}
+
+/// `body` without its `api_base` when that is the masked form of the stored
+/// address, unchanged: saving a form with the address left as shown keeps
+/// the stored one.
+pub(super) fn unchanged_base(body: &Value, stored: Option<&str>) -> Value {
+    let mut body = body.clone();
+    let unchanged = stored.is_some_and(|stored| {
+        body.get("api_base")
+            .and_then(Value::as_str)
+            .is_some_and(|sent| sent != stored && sent == markitai_core::output::masked_url(stored))
+    });
+    if unchanged && let Some(fields) = body.as_object_mut() {
+        fields.remove("api_base");
+    }
+    body
 }
 
 const MASK: char = '\u{2026}';
@@ -384,6 +400,8 @@ pub(super) fn create(
     Ok(())
 }
 pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> ApiResult<()> {
+    let old = params(entry, providers);
+    let body = &unchanged_base(body, old["api_base"].as_str());
     object(
         body,
         &[
@@ -397,7 +415,6 @@ pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> Ap
     )?;
     client_field(body, "api_key")?;
     let client_base = client_field(body, "api_base")?;
-    let old = params(entry, providers);
     let old_provider = connection_provider(entry, providers);
     let next_provider = body["model"]
         .as_str()
@@ -528,6 +545,11 @@ pub(super) fn mutate_provider(
         object(body, &["api_key", "api_base", "expected_revision"])?;
         if body.get("api_key").is_none() && body.get("api_base").is_none() {
             return Err(invalid("api_key or api_base is required"));
+        }
+        let body = &unchanged_base(body, base.as_str());
+        // Only the address, sent back as shown: nothing changes.
+        if body.get("api_key").is_none() && body.get("api_base").is_none() {
+            return Ok(());
         }
         client_field(body, "api_key")?;
         let requested_base = client_field(body, "api_base")?;
