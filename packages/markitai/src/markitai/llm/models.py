@@ -204,6 +204,21 @@ def get_response_cost(response: Any) -> float | None:
             if isinstance(reported, int | float) and reported >= 0:
                 return float(reported)
 
+    # DeepSeek's off-peak hours include the Chinese public holidays, which
+    # LiteLLM does not know (markitai.llm.deepseek_hours)
+    deepseek = _deepseek_entry(response, hidden_params)
+    if deepseek is not None:
+        import time
+
+        from markitai.llm.deepseek_hours import deepseek_cost
+
+        return deepseek_cost(
+            deepseek,
+            getattr(response, "usage", None),
+            _sent_at(response, hidden_params),
+            time.time(),
+        )
+
     # Fall back to litellm's cost calculation
     try:
         cost = completion_cost(completion_response=response)
@@ -212,6 +227,41 @@ def get_response_cost(response: Any) -> float | None:
     if cost:
         return cost
     return 0.0 if _has_listed_price(response, hidden_params) else None
+
+
+#: Where the engine records, on a response, when its request was sent
+SENT_AT_PARAM = "markitai_sent_at"
+
+
+def stamp_sent_at(response: Any, sent_at: float) -> None:
+    """Record when *response*'s request was sent (Unix seconds)."""
+    hidden_params = getattr(response, "_hidden_params", None)
+    if isinstance(hidden_params, dict):
+        hidden_params[SENT_AT_PARAM] = sent_at
+
+
+def _sent_at(response: Any, hidden_params: Any) -> float | None:
+    """When the request was sent: the engine's stamp, else the provider's
+    ``created`` (DeepSeek's own clock, set when it received the request)."""
+    if isinstance(hidden_params, dict):
+        stamped = hidden_params.get(SENT_AT_PARAM)
+        if isinstance(stamped, int | float):
+            return float(stamped)
+    created = getattr(response, "created", None)
+    return float(created) if isinstance(created, int | float) and created > 0 else None
+
+
+def _deepseek_entry(response: Any, hidden_params: Any) -> dict[str, Any] | None:
+    """The cost entry of a DeepSeek model billed by peak and off-peak hours."""
+    if not isinstance(hidden_params, dict):
+        return None
+    if hidden_params.get("custom_llm_provider") != "deepseek":
+        return None
+    model = (getattr(response, "model", None) or "").removeprefix("deepseek/")
+    entry = litellm.model_cost.get(f"deepseek/{model}") or litellm.model_cost.get(model)
+    if isinstance(entry, dict) and isinstance(entry.get("off_peak_pricing"), dict):
+        return entry
+    return None
 
 
 def _has_listed_price(response: Any, hidden_params: Any) -> bool:
