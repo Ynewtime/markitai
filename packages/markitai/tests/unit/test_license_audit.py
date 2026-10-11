@@ -100,7 +100,9 @@ class TestNoFitzAlias:
                 "import markitai.cli.logging_config as c; c.setup_logging(verbose=0)",
             ],
             capture_output=True,
-            text=True,
+            # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+            encoding="utf-8",
+            errors="replace",
             check=False,
             cwd=_REPO_ROOT,
         )

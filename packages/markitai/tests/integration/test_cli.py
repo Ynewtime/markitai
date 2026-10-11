@@ -447,7 +447,9 @@ class TestStdoutPipePurity:
         result = subprocess.run(
             ["uv", "run", "markitai", str(sample_txt), "--alt", "--no-llm"],
             capture_output=True,
-            text=True,
+            # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+            encoding="utf-8",
+            errors="replace",
         )
         assert result.returncode == 0
         assert "Image analysis" not in result.stdout
@@ -809,7 +811,9 @@ class TestCLIWithSubprocess:
         result = subprocess.run(
             [sys.executable, "-m", "markitai", "--help"],
             capture_output=True,
-            text=True,
+            # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+            encoding="utf-8",
+            errors="replace",
         )
         assert result.returncode == 0
         combined = (result.stdout or "") + (result.stderr or "")
@@ -820,7 +824,9 @@ class TestCLIWithSubprocess:
         result = subprocess.run(
             ["uv", "run", "markitai", "--version"],
             capture_output=True,
-            text=True,
+            # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+            encoding="utf-8",
+            errors="replace",
         )
         assert result.returncode == 0
         assert "markitai" in result.stdout
@@ -863,7 +869,9 @@ class TestCLIWithSubprocess:
             [sys.executable, "-c", _SLOW_POOL_MANAGER_CLI, str(source)]
             + ["-o", str(tmp_path / "out")],
             capture_output=True,  # waits for the tracker, which writes last
-            text=True,
+            # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+            encoding="utf-8",
+            errors="replace",
             env=env,
             timeout=300,
         )

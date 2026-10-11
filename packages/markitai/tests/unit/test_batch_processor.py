@@ -404,7 +404,9 @@ class TestCreateProcessFile:
             result = subprocess.run(
                 [sys.executable, "-u", "-c", script],
                 capture_output=True,
-                text=True,
+                # UTF-8 as the CLI writes it; text=True decodes ANSI on Windows
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 check=False,
             )
