@@ -1295,6 +1295,63 @@ fn keyless_settings_writes_store_the_placeholder_and_never_the_environment() {
 }
 
 #[test]
+fn keyless_cloud_entries_use_the_server_credentials_only_at_the_cloud_endpoint() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false,"model_list":[]}}));
+    ok(store.mutate(Mutation::Batch(json!({"expected_revision":current(&store),"deployments":[
+        {"model_name":"default","model":"bedrock/anthropic.claude-x","provider":"bedrock"},
+        {"model_name":"default","model":"vertex_ai/gemini-2.5-flash","provider":"vertex_ai"},
+        {"model_name":"default","model":"bedrock/anthropic.claude-y","provider":"bedrock","api_key":"bedrock-test-key"},
+        {"model_name":"default","model":"vertex_ai/gemini-2.5-pro","provider":"vertex_ai","api_base":"http://127.0.0.1:9"}
+    ]}))));
+    let raw = saved(&store);
+    let models = raw["llm"]["model_list"].as_array().unwrap();
+    // Neither key nor address: the cloud's own endpoint with the server's
+    // credentials, as Python markitai's LiteLLM uses them.
+    for entry in &models[..2] {
+        assert!(entry["litellm_params"].get("api_key").is_none(), "{entry}");
+        assert!(entry["litellm_params"].get("api_base").is_none(), "{entry}");
+        assert_eq!(
+            entry["litellm_params"]["use_environment_credentials"], true,
+            "{entry}"
+        );
+    }
+    // A Bedrock API key is used alone; an address never gets them.
+    assert_eq!(
+        models[2]["litellm_params"]["use_environment_credentials"],
+        false
+    );
+    assert_eq!(models[3]["litellm_params"]["api_key"], model::NO_KEY);
+    assert_eq!(
+        models[3]["litellm_params"]["use_environment_credentials"],
+        false
+    );
+    // A draft test is the same entry as it would be saved.
+    let probe = ok(store.resolve_probe(&json!({"model":"vertex_ai/gemini-2.5-flash"})));
+    assert_eq!(probe["use_environment_credentials"], true);
+    // Clearing the Bedrock key goes back to the server's credentials.
+    let id = store.view()["deployments"][2]["deployment_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    ok(store.mutate(Mutation::Update {
+        key: id,
+        legacy: false,
+        body: json!({"expected_revision":current(&store),"api_key":null}),
+    }));
+    let raw = saved(&store);
+    let entry = &raw["llm"]["model_list"][2];
+    assert_eq!(
+        entry["litellm_params"]["model"],
+        "bedrock/anthropic.claude-y"
+    );
+    assert!(entry["litellm_params"].get("api_key").is_none(), "{entry}");
+    assert_eq!(
+        entry["litellm_params"]["use_environment_credentials"], true,
+        "{entry}"
+    );
+}
+
+#[test]
 fn a_keyed_connection_cannot_become_keyless_at_another_host() {
     let original = json!({"llm":{
         "providers":[{"id":"gateway","provider":"openai","api_key":"authored-gateway-key","api_base":"https://gateway.example.test/v1","use_environment_credentials":false}],

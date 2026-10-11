@@ -232,6 +232,16 @@ fn serves(provider: &str, prefix: &str) -> bool {
 pub(super) fn local(provider: &str) -> bool {
     matches!(provider, "claude-agent" | "copilot" | "chatgpt")
 }
+/// Whether an entry the settings API writes may use the server's own cloud
+/// credentials (the AWS chain for Bedrock, the Google login for Vertex AI): a
+/// Bedrock or Vertex AI entry with neither a key nor an address of its own,
+/// whose requests go to the cloud's own endpoint, as Python markitai's LiteLLM
+/// sends them (owner decision 2026-10-12). One with an address never does.
+pub(super) fn cloud_credentials(provider: &str, key: &Value, base: &Value) -> bool {
+    matches!(provider, "bedrock" | "vertex_ai")
+        && !real_key(key.as_str())
+        && base.as_str().is_none_or(str::is_empty)
+}
 pub(super) fn link(entry: &mut Value, id: &str) {
     if !entry["model_info"].is_object() {
         entry["model_info"] = json!({});
@@ -418,9 +428,10 @@ pub(super) fn create(
     if name == "custom" && base.as_str().is_none_or(str::is_empty) {
         return Err(invalid("an OpenAI-compatible endpoint needs its api_base"));
     }
-    let allow_environment = !supplied_key
+    let allow_environment = (!supplied_key
         && fallback["provider"].is_string()
-        && fallback["use_environment_credentials"].as_bool() != Some(false);
+        && fallback["use_environment_credentials"].as_bool() != Some(false))
+        || cloud_credentials(&name, &key, &base);
     // An address this request names, or a new connection's, never gets the
     // server's own key: without one it stores the placeholder. A saved
     // connection that may use the environment keeps its own pair.
@@ -557,9 +568,17 @@ pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> Ap
         params.remove("api_base");
     }
     if body.get("api_key").is_some() || body.get("api_base").is_some() {
-        let next = params(entry, providers);
+        let mut next = params(entry, providers);
         let connection = connection_provider(entry, providers);
         refuse_keyless_move(&old, &next, &connection)?;
+        // A cloud entry whose key is cleared and that has no address goes back
+        // to the server's credentials at the cloud's own endpoint.
+        if body.get("api_key").is_some()
+            && cloud_credentials(&connection, &next["api_key"], &next["api_base"])
+        {
+            entry["litellm_params"]["use_environment_credentials"] = json!(true);
+            next["use_environment_credentials"] = json!(true);
+        }
         let allow_environment = next["use_environment_credentials"].as_bool() != Some(false);
         let key = keyless(
             next["api_key"].clone(),
@@ -672,6 +691,11 @@ pub(super) fn mutate_provider(
                 replace(&mut next, field, value.map(Value::String).as_ref());
             }
         }
+        if body.get("api_key").is_some()
+            && cloud_credentials(name, &next["api_key"], &next["api_base"])
+        {
+            next["use_environment_credentials"] = json!(true);
+        }
         refuse_keyless_move(&old, &next, name)?;
         let placeholder = keyless(
             next["api_key"].clone(),
@@ -695,7 +719,8 @@ pub(super) fn mutate_provider(
                     }
                 }
                 if key_changed {
-                    entry["litellm_params"]["use_environment_credentials"] = json!(false);
+                    entry["litellm_params"]["use_environment_credentials"] =
+                        json!(next["use_environment_credentials"] == true);
                 }
                 link(entry, &id);
             }
