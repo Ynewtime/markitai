@@ -23,6 +23,31 @@
 
 $ErrorActionPreference = "Stop"
 
+# The output code page of the console this script runs in, read before the
+# switch to UTF-8 below. When this script's output is redirected, its reader
+# (Windows PowerShell) decodes it with that code page, so the marks follow it,
+# as markitai's do (Test-UnicodeMarks). 0: no console attached, as
+# GetConsoleOutputCP answers it (a service, a detached process).
+function Get-ConsoleOutputCodePage {
+    try {
+        if (-not ("MarkitaiSetup.Kernel32" -as [type])) {
+            Add-Type -Namespace MarkitaiSetup -Name Kernel32 -MemberDefinition (
+                '[System.Runtime.InteropServices.DllImport("kernel32.dll")] ' +
+                'public static extern uint GetConsoleOutputCP();')
+        }
+        return [int][MarkitaiSetup.Kernel32]::GetConsoleOutputCP()
+    } catch {
+        try { return [Console]::OutputEncoding.CodePage } catch { return 0 }
+    }
+}
+$script:ConsoleOutputCodePage = 0
+try {
+    if ([Console]::IsOutputRedirected -and
+        (($PSVersionTable.PSEdition -ne "Core") -or $IsWindows)) {
+        $script:ConsoleOutputCodePage = Get-ConsoleOutputCodePage
+    }
+} catch {}
+
 # Native tools (uv, markitai) print UTF-8. Remember the console's encoding so
 # it can be restored at the end: under irm | iex this is the user's own shell.
 $script:OriginalOutputEncoding = $null
@@ -59,10 +84,10 @@ function Test-OutputRedirected {
     try { return [Console]::IsOutputRedirected } catch { return $false }
 }
 
-# The code page this script's output is written in: UTF-8 (65001) once the
-# switch at the top worked.
+# The code page a reader of this script's redirected output decodes it with:
+# the console's, from before the switch at the top (0: no console).
 function Get-OutputCodePage {
-    try { return [Console]::OutputEncoding.CodePage } catch { return 0 }
+    return $script:ConsoleOutputCodePage
 }
 
 # Whether the console processes escape sequences. PowerShell switches them on
@@ -71,19 +96,21 @@ function Test-VirtualTerminalConsole {
     try { return [bool]$Host.UI.SupportsVirtualTerminal } catch { return $false }
 }
 
-# The same rule as markitai itself (Python and Rust): the Unicode marks
-# everywhere except TERM=dumb and a Windows console that cannot process
-# escape sequences (Windows before 10 version 1511, or the console host's
-# "Use legacy console"). Redirected output carries them like any other text
-# once it is UTF-8, which this script makes it for uv's output; only if that
-# switch failed are the bytes in a code page that has no marks. A reader
-# that decodes UTF-8 with another code page (Get-Content in Windows
-# PowerShell 5.1 without -Encoding UTF8) shows them wrongly, as it shows
-# every non-ASCII character.
+# The same rule as markitai itself (Python and Rust, owner rule 2026-10-11):
+# the Unicode marks everywhere except TERM=dumb, a Windows console that cannot
+# process escape sequences (Windows before 10 version 1511, or the console
+# host's "Use legacy console"), and redirected output while the console's
+# output code page is not UTF-8: Windows PowerShell decodes a program's piped
+# output with that code page, so at 437 a check mark reads as three other
+# characters. With no console attached there is no code page to follow, and
+# redirected output keeps the Unicode marks.
 function Test-UnicodeMarks {
     if ($env:TERM -eq "dumb") { return $false }
     if (-not $script:OnWindows) { return $true }
-    if (Test-OutputRedirected) { return ((Get-OutputCodePage) -eq 65001) }
+    if (Test-OutputRedirected) {
+        $page = Get-OutputCodePage
+        return (($page -eq 0) -or ($page -eq 65001))
+    }
     if ($script:ModernTerminal) { return $true }
     return (Test-VirtualTerminalConsole)
 }
