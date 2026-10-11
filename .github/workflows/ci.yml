@@ -115,6 +115,11 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # About 10-15 minutes on Windows, the slowest runner. Without a bound a
+    # stuck run used GitHub's default 6 hours (one was cancelled by hand
+    # after 62 minutes); a test over 5 minutes prints its stacks first
+    # (faulthandler_timeout in packages/markitai/pyproject.toml).
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:

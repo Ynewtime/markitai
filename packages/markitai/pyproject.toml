@@ -152,6 +152,10 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# A test still running after 5 minutes prints every thread's stack (pytest's
+# own faulthandler plugin, no extra dependency); CI's job timeout then ends
+# the run. Tests that start a process or a server keep their own timeouts.
+faulthandler_timeout = 300
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: marks tests that require network access (deselect with '-m \"not network\"')",
