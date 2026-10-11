@@ -84,6 +84,9 @@ class SingleFileWorkflow:
         self.processor = processor
         self._llm_cost = 0.0
         self._llm_usage: dict[str, dict[str, Any]] = {}
+        #: Problems that did not fail the file (pages read as empty); the
+        #: caller adds them to the item's warnings
+        self.warnings: list[str] = []
 
     def _merge_usage(self, usage: dict[str, dict[str, Any]]) -> None:
         """Merge usage statistics into workflow totals."""
@@ -506,6 +509,21 @@ class SingleFileWorkflow:
                 ]
             )
             all_content = [r for r in page_results if r]
+            # An empty page is no answer for that page (contract v1.6, 6.6):
+            # none at all is a failed extraction, some are named
+            empty_pages = [i for i, r in enumerate(page_results, 1) if not r]
+            if len(empty_pages) == len(page_results):
+                from markitai.llm.engine import EmptyLLMResponseError
+
+                raise EmptyLLMResponseError(
+                    "the model read no text from any page screenshot"
+                )
+            if empty_pages:
+                self.warnings.append(
+                    "Screenshot extraction returned no text for page "
+                    f"{', '.join(map(str, empty_pages))}; "
+                    "the enhanced output leaves it out"
+                )
 
             # Merge all page content
             merged_content = "\n\n".join(all_content)

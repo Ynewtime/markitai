@@ -174,6 +174,13 @@ SHAPES: dict[str, dict[str, F]] = {
         "options": opt("@JobOptions"),
         "models": opt(["str"]),
         "source_size": opt("int"),
+        "rerun_failure": opt("@RerunFailure"),
+    },
+    "RerunFailure": {
+        "operation": F(frozenset({"retry", "enhance"})),
+        "error_code": F("str"),
+        "error": F("str"),
+        "failed_at": F("str"),
     },
     "JobProgress": {
         "status": F(frozenset({"running", "done", "error"})),
@@ -547,8 +554,10 @@ def _converter(
     markdown: str | None = None,
     usage: dict[str, Any] | None = None,
     screenshots: int = 0,
+    enhanced: bool = False,
 ) -> Callable[..., Any]:
-    """A fake file conversion: writes ``<name>.md`` (and page screenshots)."""
+    """A fake file conversion: writes ``<name>.md`` (and page screenshots;
+    ``<name>.llm.md`` when *enhanced*)."""
 
     async def fake(file_path: Path, cfg: Any, out_dir: Path, shared: Any) -> Any:
         from markitai.batch import ProcessResult
@@ -570,12 +579,15 @@ def _converter(
                 Image.new("RGB", (300, 400), "white").save(
                     shots / f"{file_path.name}.page{page:04d}.jpg"
                 )
+        if enhanced:
+            out = out.with_suffix(".llm.md")
+            out.write_bytes(f"# {file_path.name}, enhanced\n".encode())
         return ProcessResult(
             success=True,
             output_path=str(out),
             cost_usd=0.0125 if usage else 0.0,
             llm_usage=usage or {},
-            llm_enhanced=False,
+            llm_enhanced=enhanced,
         )
 
     return fake
@@ -1075,7 +1087,8 @@ class TestPricing:
             "local-model": {"requests": 1, "unpriced_requests": 1, "cost_usd": 0.0},
         }
         monkeypatch.setattr(
-            "markitai.serve.jobs.process_file_item", _converter(usage=usage)
+            "markitai.serve.jobs.process_file_item",
+            _converter(usage=usage, enhanced=True),
         )
         async with _client(_make_app(tmp_path)) as client:
             _, data = await _job(client, files=[("a.txt", b"a")])
@@ -1089,6 +1102,23 @@ class TestPricing:
         }
         assert item["models"] == ["gpt-4o-mini", "local-model"]
         assert history[0]["pricing"] == item["pricing"]
+
+    async def test_a_base_only_result_names_no_models_but_keeps_its_cost(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Contract v1.6, 6.6: failed requests still cost, but no model's
+        answer is in the result."""
+        usage = {"gpt-4o-mini": {"requests": 2, "cost_usd": 0.0125}}
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", _converter(usage=usage)
+        )
+        async with _client(_make_app(tmp_path)) as client:
+            _, data = await _job(client, files=[("a.txt", b"a")])
+        item = data["items"][0]
+        assert item["llm_enhanced"] is False
+        assert item["models"] == []
+        assert item["pricing"]["priced_requests"] == 2
+        assert item["cost_usd"] == pytest.approx(0.0125)
 
     async def test_unpriced_requests_are_unknown_not_zero(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1116,7 +1146,8 @@ class TestPricing:
     ) -> None:
         usage = {"gpt-4o-mini": {"requests": 1, "cost_usd": 0.01}}
         monkeypatch.setattr(
-            "markitai.serve.jobs.process_file_item", _converter(usage=usage)
+            "markitai.serve.jobs.process_file_item",
+            _converter(usage=usage, enhanced=True),
         )
         async with _client(_make_app(tmp_path)) as client:
             job_id, _ = await _job(client, files=[("a.txt", b"a")], label="Kept")

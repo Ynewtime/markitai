@@ -554,6 +554,27 @@ def find_budget_exceeded_error(
     return None
 
 
+def reject_unfinished_answer(raw_response: Any) -> None:
+    """Refuse an answer the model did not finish.
+
+    Cut at the output limit (``finish_reason`` ``length``) or stopped by the
+    provider's content filter (``content_filter``, as LiteLLM maps Gemini's
+    SAFETY and similar stops): neither is an answer to keep, cache or write
+    as enhanced output (contract v1.6, section 6.6).
+
+    Raises:
+        ValueError: The answer was cut short or filtered.
+    """
+    choices = getattr(raw_response, "choices", None)
+    if not choices:
+        return
+    finish_reason = getattr(choices[0], "finish_reason", None)
+    if finish_reason == "length":
+        raise ValueError("Output truncated due to max_tokens limit")
+    if isinstance(finish_reason, str) and finish_reason.startswith("content_filter"):
+        raise ValueError("The provider's content filter stopped the answer")
+
+
 def extract_cached_tokens(raw_response: Any) -> int:
     """Cache-read input tokens from a litellm-normalized response usage.
 
@@ -984,12 +1005,9 @@ class LLMEngine:
                 f"time={elapsed_ms:.0f}ms"
             )
 
-            # Check for truncation (after accounting, before the cache write:
-            # a truncated result must never be persisted)
-            if hasattr(raw_response, "choices") and raw_response.choices:
-                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
-                if finish_reason == "length":
-                    raise ValueError("Output truncated due to max_tokens limit")
+            # Check for truncation or a filtered answer (after accounting,
+            # before the cache write: such a result must never be persisted)
+            reject_unfinished_answer(raw_response)
 
             # Validation hook: may correct the result; if it raises, nothing
             # is cached and the error propagates to the caller
@@ -1063,6 +1081,9 @@ class LLMEngine:
             output_tokens: int,
             cost: float | None,
         ) -> LLMResponse:
+            # Paid for and tracked already; a cut or filtered answer is still
+            # no answer
+            reject_unfinished_answer(response)
             # litellm returns Choices (not StreamingChoices) for non-streaming
             content = response.choices[0].message.content or ""
             return LLMResponse(

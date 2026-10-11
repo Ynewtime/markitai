@@ -156,6 +156,28 @@ def maybe_stabilize_markdown(
     return content
 
 
+def stabilize_markdown_checked(
+    processor: Any, baseline: str, content: str, source: str, *, vision: bool = False
+) -> tuple[str, bool]:
+    """:func:`maybe_stabilize_markdown`, and whether any of *content* is kept.
+
+    False when stabilization put the original text back in place of the
+    whole answer (see ``DocumentProcessor.stabilize_paged_answer``).
+    """
+    check = getattr(processor, "stabilize_paged_answer", None)
+    outcome = (
+        check(baseline, content, source, vision=vision) if callable(check) else None
+    )
+    if isinstance(outcome, tuple):
+        stabilized, kept = str(outcome[0]), bool(outcome[1])
+        if stabilized != content:
+            logger.warning(f"[{source}] Stabilized paged markdown output")
+        return stabilized, kept
+    return maybe_stabilize_markdown(
+        processor, baseline, content, source, vision=vision
+    ), True
+
+
 def normalize_frontmatter(frontmatter: str | dict[str, Any]) -> str:
     """Normalize frontmatter to ensure consistent field order.
 

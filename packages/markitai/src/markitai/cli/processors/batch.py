@@ -777,7 +777,7 @@ def create_url_processor(
                         remove_stale_llm_output(output_file, cfg.output.on_conflict)
                         from markitai.workflow.llm_failure import (
                             llm_failure_fails_item,
-                            llm_fallback_warning,
+                            llm_fallback_warnings,
                         )
 
                         if llm_failure_fails_item(cfg):
@@ -787,8 +787,8 @@ def create_url_processor(
                                 f"LLM processing failed: {format_error_message(e)}"
                             ) from e
                         llm_fell_back = True
-                        extra_info.setdefault("warnings", []).append(
-                            llm_fallback_warning(
+                        extra_info.setdefault("warnings", []).extend(
+                            llm_fallback_warnings(
                                 redact_url(url), format_error_message(e)
                             )
                         )

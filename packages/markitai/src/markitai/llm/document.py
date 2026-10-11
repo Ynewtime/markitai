@@ -663,11 +663,28 @@ class DocumentEnhancer:
         ``vision``: the answer comes from a call that saw the page images
         (see :meth:`_is_suspicious_page_expansion`).
         """
+        return self.stabilize_paged_answer(
+            original_markdown, cleaned_markdown, source, vision=vision
+        )[0]
+
+    def stabilize_paged_answer(
+        self,
+        original_markdown: str,
+        cleaned_markdown: str,
+        source: str,
+        *,
+        vision: bool = False,
+    ) -> tuple[str, bool]:
+        """:meth:`_stabilize_paged_markdown`, and whether any of the answer
+        is kept: False when the original layout was restored whole (marker
+        drift) or every page reverted to the original text. Such a result
+        is the input again, not an answer (contract v1.6, section 6.6).
+        """
         if (
             not PAGE_MARKER_RE.search(original_markdown)
             and "<!-- Slide number:" not in original_markdown
         ):
-            return _strip_leaked_markdown_boundaries(cleaned_markdown)
+            return _strip_leaked_markdown_boundaries(cleaned_markdown), True
 
         original_body, original_suffix = self._split_reference_suffix(original_markdown)
         cleaned_body, cleaned_suffix = self._split_reference_suffix(
@@ -680,7 +697,7 @@ class DocumentEnhancer:
         suffix = cleaned_suffix or original_suffix
 
         if not original_sections:
-            return cleaned_body if not suffix else f"{cleaned_body}\n\n{suffix}"
+            return (cleaned_body if not suffix else f"{cleaned_body}\n\n{suffix}"), True
 
         if len(cleaned_sections) != len(original_sections) or [
             section_id for section_id, _ in cleaned_sections
@@ -688,7 +705,9 @@ class DocumentEnhancer:
             logger.warning(
                 f"[{source}] Structured marker drift detected, restoring original layout"
             )
-            return original_body if not suffix else f"{original_body}\n\n{suffix}"
+            return (
+                original_body if not suffix else f"{original_body}\n\n{suffix}"
+            ), False
 
         stabilized_sections: list[str] = []
         reverted_sections: list[str] = []
@@ -717,7 +736,9 @@ class DocumentEnhancer:
                 f"[{source}] Reverted suspicious section drift: {', '.join(reverted_sections)}"
             )
 
-        return stabilized_body if not suffix else f"{stabilized_body}\n\n{suffix}"
+        return (
+            stabilized_body if not suffix else f"{stabilized_body}\n\n{suffix}"
+        ), len(reverted_sections) < len(original_sections)
 
     @staticmethod
     def _boundary_placeholders(mapping: dict[str, str]) -> list[str]:

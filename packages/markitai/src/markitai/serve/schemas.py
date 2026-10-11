@@ -575,6 +575,17 @@ class JobOptionsEcho(BaseModel):
     ocr: bool | None
 
 
+class RerunFailure(BaseModel):
+    """The last failed rerun of an item whose previous result was kept."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["retry", "enhance"]
+    error_code: str
+    error: str
+    failed_at: str
+
+
 class ItemPayload(BaseModel):
     """Payload of SSE ``event: item`` (and of items inside the snapshot).
 
@@ -609,6 +620,8 @@ class ItemPayload(BaseModel):
     models: list[str] = Field(default_factory=list)  # models that produced it
     source_size: int | None = None  # bytes of the uploaded original
     options: JobOptionsEcho | None = None  # this item's saved selections
+    # Contract v1.6, 6.6: a failed retry/enhance kept the previous result
+    rerun_failure: RerunFailure | None = None
 
 
 class JobPayload(BaseModel):

@@ -66,7 +66,7 @@ from markitai.workflow.helpers import (
 from markitai.workflow.llm_failure import (
     is_llm_fallback_warning,
     llm_failure_fails_item,
-    llm_fallback_warning,
+    llm_fallback_warnings,
 )
 from markitai.workflow.single import ImageAnalysisResult
 
@@ -756,9 +756,14 @@ async def process_url(
                     if llm_failure_fails_item(cfg):
                         raise
                     stages.fail("LLM enhancement failed; kept the unenhanced output")
-                    url_warnings.append(
-                        llm_fallback_warning(
-                            _safe_url_for_display(url), format_error_message(e)
+                    # Image answers belong to the discarded enhanced output
+                    answered = img_analysis is not None and bool(img_analysis.assets)
+                    img_analysis = None
+                    url_warnings.extend(
+                        llm_fallback_warnings(
+                            _safe_url_for_display(url),
+                            format_error_message(e),
+                            model_answered=answered,
                         )
                     )
                     llm_fell_back = True
@@ -1594,6 +1599,12 @@ async def process_url_screenshot_only(
                     cleaned_parts.append(f"<!-- Tile {i + 1} -->\n\n{cleaned}")
                 else:
                     cleaned_parts.append(cleaned)
+        if not cleaned_parts:
+            # No tile read as any text: no answer to write (contract v1.6,
+            # section 6.6)
+            from markitai.llm.engine import EmptyLLMResponseError
+
+            raise EmptyLLMResponseError("the model read no text from the screenshot")
         cleaned_content = "\n\n".join(cleaned_parts)
 
         # Format and write LLM output

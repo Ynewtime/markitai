@@ -211,6 +211,10 @@ class JobItem:
     models: list[str] = field(default_factory=list)
     # Bytes of the uploaded original; None for URLs.
     source_size: int | None = None
+    # The last rerun that failed and was rolled back (contract v1.6, 6.6):
+    # {"operation", "error_code", "error", "failed_at"}; cleared by a rerun
+    # that stands
+    rerun_failure: dict[str, str] | None = None
 
     def to_payload(self) -> dict[str, Any]:
         """Return the item event payload (contract: ``event: item``).
@@ -241,6 +245,9 @@ class JobItem:
             "warnings": list(self.warnings),
             "models": list(self.models),
             "source_size": self.source_size,
+            "rerun_failure": dict(self.rerun_failure)
+            if self.rerun_failure is not None
+            else None,
         }
 
 
@@ -721,7 +728,20 @@ def _item_from_payload(
         source_size=raw_size
         if isinstance(raw_size, int) and not isinstance(raw_size, bool)
         else None,
+        rerun_failure=_valid_rerun_failure(raw.get("rerun_failure")),
     )
+
+
+def _valid_rerun_failure(value: object) -> dict[str, str] | None:
+    """A persisted rerun failure record, or None when it is malformed."""
+    if not isinstance(value, dict):
+        return None
+    keys = ("operation", "error_code", "error", "failed_at")
+    if value.get("operation") not in ("retry", "enhance") or not all(
+        isinstance(value.get(key), str) for key in keys
+    ):
+        return None
+    return {key: value[key] for key in keys}
 
 
 def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
@@ -1063,7 +1083,9 @@ def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
     """Map a ProcessResult onto the item (skip strings are non-errors)."""
     item.cost_usd = result.cost_usd
     item.pricing = pricing_from_usage(result.llm_usage)
-    item.models = models_from_usage(result.llm_usage)
+    # Only models whose answers the kept result uses (contract v1.6, 6.6):
+    # a base-only result names none, though its failed requests still cost
+    item.models = models_from_usage(result.llm_usage) if result.llm_enhanced else []
     item.error_code = None
     if result.output_path:
         try:
@@ -1159,9 +1181,20 @@ async def _run_item(
     item.warnings = merge_item_warnings(item.warnings, result.warnings)
     if require_llm and result.success:
         if not (result.output_path and result.llm_enhanced):
+            from markitai.workflow.llm_failure import llm_fallback_reason
+
+            # The cause, as the fallback warning named it
+            reason = next(
+                (found for found in map(llm_fallback_reason, result.warnings) if found),
+                None,
+            )
             result.success = False
             result.output_path = None
-            result.error = "LLM enhancement did not produce an enhanced Markdown result"
+            result.error = (
+                f"LLM enhancement failed: {reason}"
+                if reason
+                else "LLM enhancement did not produce an enhanced Markdown result"
+            )
             result.error_code = "enhancement_failed"
     item.duration_ms = int((time.perf_counter() - start) * 1000)
     _apply_result(job, item, result)
@@ -1524,10 +1557,29 @@ def _roll_back_rerun(
     item: JobItem,
     work: RetryWork,
     snapshot: dict[Path, str | None],
+    *,
+    failed: bool = True,
 ) -> None:
-    """Undo a rerun that did not stand: previous files, then previous row."""
+    """Undo a rerun that did not stand: previous files, then previous row.
+
+    A rerun that *failed* (not one a shutdown interrupted) is recorded as
+    the item's ``rerun_failure``, which outlives the restored row and a
+    restart: the inspector says why the new result did not come.
+    """
+    failure = (
+        {
+            "operation": work.operation,
+            "error_code": item.error_code or "conversion_error",
+            "error": item.error or "the rerun failed",
+            "failed_at": now_iso(),
+        }
+        if failed
+        else None
+    )
     _restore_outputs(snapshot, _sibling_markdown(job, item))
     _restore_prior_result(job, item, work)
+    if failure is not None:
+        item.rerun_failure = failure
     registry.publish_item(job, item)
 
 
@@ -1573,13 +1625,14 @@ async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
                         _roll_back_rerun(registry, job, item, work, snapshot)
                     elif item.status == "done":
                         _prune_stale_variant(job, item)
+                        item.rerun_failure = None
             except asyncio.CancelledError:
                 cancelled = True
                 if item is not None and work.prior_output is not None:
                     # Shut down mid-rerun: the interrupted rerun never
                     # produced a result, so the done row and its files go
                     # back rather than being persisted as a cancelled error.
-                    _roll_back_rerun(registry, job, item, work, snapshot)
+                    _roll_back_rerun(registry, job, item, work, snapshot, failed=False)
                 raise
             finally:
                 job.retry_pending.discard(work.item_id)

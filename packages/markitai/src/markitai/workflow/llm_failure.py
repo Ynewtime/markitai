@@ -30,6 +30,13 @@ _ERROR_PREFIXES = (
 _FALLBACK_WARNING = "LLM enhancement failed ({}); kept the unenhanced output"
 _FALLBACK_HEAD, _FALLBACK_TAIL = _FALLBACK_WARNING.split("{}")
 
+#: The warning that follows the failure when no model request for the item
+#: produced an accepted answer (contract v1.6, section 6.6): markitai-rust
+#: words it the same, and the serve workbench shows it as one notice.
+NO_MODEL_SUCCEEDED = (
+    "No model succeeded for this document; only the base Markdown was kept."
+)
+
 _hinted = False
 
 
@@ -69,10 +76,34 @@ def llm_fallback_warning(source: str, error: str) -> str:
     return warning
 
 
+def llm_fallback_warnings(
+    source: str, error: str, *, model_answered: bool = False
+) -> list[str]:
+    """The warnings of an item that kept its unenhanced output.
+
+    :func:`llm_fallback_warning`, then :data:`NO_MODEL_SUCCEEDED` unless a
+    model answered for some part of the item (an image analysis whose
+    answer the failed document discarded).
+    """
+    warnings = [llm_fallback_warning(source, error)]
+    if not model_answered:
+        warnings.append(NO_MODEL_SUCCEEDED)
+    return warnings
+
+
+def llm_fallback_reason(warning: str) -> str | None:
+    """The failure a :func:`llm_fallback_warning` names, else None."""
+    if warning.startswith(_FALLBACK_HEAD) and warning.endswith(_FALLBACK_TAIL):
+        return warning[len(_FALLBACK_HEAD) : -len(_FALLBACK_TAIL)] or None
+    return None
+
+
 def is_llm_fallback_warning(warning: str) -> bool:
-    """Whether ``warning`` came from :func:`llm_fallback_warning`.
+    """Whether ``warning`` came from :func:`llm_fallback_warnings`.
 
     Such a warning already went out as a user notice, which a console run
     shows, so a caller printing the item's warnings skips it.
     """
-    return warning.startswith(_FALLBACK_HEAD) and warning.endswith(_FALLBACK_TAIL)
+    return warning == NO_MODEL_SUCCEEDED or (
+        warning.startswith(_FALLBACK_HEAD) and warning.endswith(_FALLBACK_TAIL)
+    )
