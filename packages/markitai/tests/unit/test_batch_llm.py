@@ -120,6 +120,34 @@ class TestBatchUsage:
         assert (tokens_in, tokens_out) == (1_000_000, 1_000_000)
         assert cost is not None and cost > 0
 
+    def test_anthropic_cache_reads_and_writes_are_priced(self) -> None:
+        """input_tokens excludes the cached part: pricing only it and
+        output_tokens left cache reads and writes out of a batch's cost."""
+        body = {
+            "model": "claude-sonnet-4-6",
+            "usage": {
+                "input_tokens": 6_000,
+                "output_tokens": 1_000,
+                "cache_read_input_tokens": 4_000,
+                "cache_creation_input_tokens": 2_000,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 2_000,
+                },
+            },
+        }
+
+        tokens_in, tokens_out, cost = _batch_usage(
+            body, "anthropic/claude-sonnet-4-6", "anthropic"
+        )
+
+        assert (tokens_in, tokens_out) == (12_000, 1_000)
+        # Standard list price: input $3, cache read $0.30, 1 h write $6,
+        # output $15 per MTok (the caller halves it for Batch)
+        assert cost == pytest.approx(
+            6_000 * 3e-6 + 4_000 * 3e-7 + 2_000 * 6e-6 + 1_000 * 15e-6
+        )
+
     def test_openai_usage_keys_are_read(self) -> None:
         body = {
             "id": "chatcmpl-1",
