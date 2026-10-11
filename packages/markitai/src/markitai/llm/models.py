@@ -10,6 +10,7 @@ This module provides utilities for:
 from __future__ import annotations
 
 import hashlib
+import time
 from typing import Any
 
 import litellm
@@ -208,8 +209,6 @@ def get_response_cost(response: Any) -> float | None:
     # LiteLLM does not know (markitai.llm.deepseek_hours)
     deepseek = _deepseek_entry(response, hidden_params)
     if deepseek is not None:
-        import time
-
         from markitai.llm.deepseek_hours import deepseek_cost
 
         return deepseek_cost(
@@ -218,6 +217,14 @@ def get_response_cost(response: Any) -> float | None:
             _sent_at(response, hidden_params),
             time.time(),
         )
+
+    # LiteLLM knows only the introductory prices of these Gemini models, which
+    # end with 2026: a later answer is left unpriced, not priced at half
+    if (
+        _introductory_gemini(response, hidden_params)
+        and time.time() >= GEMINI_INTRODUCTORY_UNTIL
+    ):
+        return None
 
     # Fall back to litellm's cost calculation
     try:
@@ -262,6 +269,36 @@ def _deepseek_entry(response: Any, hidden_params: Any) -> dict[str, Any] | None:
     if isinstance(entry, dict) and isinstance(entry.get("off_peak_pricing"), dict):
         return entry
     return None
+
+
+#: Google lists these Gemini API models at introductory prices "through
+#: December 31, 2026" and doubles them from January 1, 2027 (Unix time of
+#: 2027-01-01T00:00:00Z below); markitai-rust's catalog ends them there too
+GEMINI_INTRODUCTORY_MODELS = frozenset(
+    {"gemini-3.8-flash", "gemini-3.6-flash", "gemini-flash-latest"}
+)
+GEMINI_INTRODUCTORY_UNTIL = 1_798_761_600
+
+
+def _introductory_gemini(response: Any, hidden_params: Any) -> bool:
+    """Whether a Gemini API answer comes from a model at introductory prices.
+
+    LiteLLM prices an answer by the model that served it (``modelVersion``,
+    kept as ``provider_response_model`` for a stream), so both are checked.
+    """
+    if not isinstance(hidden_params, dict):
+        return False
+    if hidden_params.get("custom_llm_provider") != "gemini":
+        return False
+    served = (
+        getattr(response, "model", None),
+        hidden_params.get("provider_response_model"),
+    )
+    return any(
+        isinstance(name, str)
+        and name.removeprefix("gemini/") in GEMINI_INTRODUCTORY_MODELS
+        for name in served
+    )
 
 
 def _has_listed_price(response: Any, hidden_params: Any) -> bool:

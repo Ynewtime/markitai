@@ -38,6 +38,7 @@
 
 ### 修复
 
+- **2027 年起的 Gemini 3.8 Flash 和 3.6 Flash**：Google 在 Gemini API 上对 Gemini 3.8 Flash、3.6 Flash 和 `gemini-flash-latest` 的首发优惠价只到 2026 年 12 月 31 日，2027 年 1 月 1 日起价格翻倍。LiteLLM 1.104.2 只有优惠价，所以从 2027 年起 markitai 报出的费用只有实际的一半，`max_cost_per_document_usd` 也只计入一半。现在 2027-01-01（UTC）起的应答记为未定价，与 markitai Rust 实现一致。
 - **DeepSeek 与中国法定节假日**：DeepSeek 在工作日北京时间 09:00–12:00 和 14:00–18:00 按高峰价计费，其余时段（包括周末和法定节假日）按半价计费。markitai（经由 LiteLLM）原先把法定节假日的工作时段也按高峰价计算。现在采用与 markitai Rust 实现相同的规则：请求的发出和应答在同一时段内时，按该时段的价格计费；工作日高峰时段的请求，如果日期尚未对照国务院节假日安排核对过（已核对 2026-10-08 至 2026-12-31），则记为未定价，而不是可能多算；跨越两个时段的请求同样记为未定价。
 - **Claude Batch 费用计入提示缓存**：Anthropic 的 `--llm-batch` 结果原先只按输入和输出 token 计价，而 Anthropic 的输入数不含缓存部分，所以缓存读取和缓存写入都没算进批次的费用（使用缓存的典型提示低估 1%–3.5%，缓存用得多时更多）。现在与实时请求一样计价，包括 5 分钟和 1 小时缓存写入，按标价的一半计。
 - **Claude Sonnet 5.5 和 GPT-6.1 Sol 有了价格**：markitai 依赖的 LiteLLM 1.104.2 没有这两个模型，它们的请求都被计为未定价：摘要显示费用未知，`max_cost_per_document_usd` 也无法计入。现在 markitai 像 Claude Haiku 5.5 一样自带它们的价格行，直到某个 LiteLLM 正式版收录为止。这些行取自 LiteLLM 1.106.0.dev2，与服务商 2026-10-11 公布的价格一致（包括 Batch 和提示缓存价格），也是 markitai Rust 实现使用的价格。
