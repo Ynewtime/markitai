@@ -64,8 +64,27 @@ def _doctor_env(
     *,
     env: dict[str, str] | None = None,
     libreoffice_missing: bool = True,
+    platform: str = "linux",
 ) -> Iterator[None]:
-    """Doctor with fixed capability rows, the owner's machine in 1.2.1."""
+    """Doctor with fixed capability rows, the owner's machine in 1.2.1.
+
+    That machine runs Ubuntu: the install and key hints are Linux's whatever
+    OS runs the tests (macOS printed brew, Windows winget and $env:).
+    """
+    with (
+        patch.object(sys, "platform", platform),
+        _doctor_rows(cfg, env=env, libreoffice_missing=libreoffice_missing),
+    ):
+        yield
+
+
+@contextmanager
+def _doctor_rows(
+    cfg: MarkitaiConfig,
+    *,
+    env: dict[str, str] | None,
+    libreoffice_missing: bool,
+) -> Iterator[None]:
     playwright = _row(
         "Playwright",
         "warning",
@@ -246,6 +265,47 @@ class TestHints:
         j = lines.index("  • Playwright:")
         assert lines[j + 1].startswith("    ") and "playwright install" in lines[j + 1]
         assert "# Fedora" not in out and "dnf" not in out
+
+    @pytest.mark.parametrize(
+        ("platform", "libreoffice", "playwright", "key"),
+        [
+            (
+                "linux",
+                "sudo apt install libreoffice",
+                "-m playwright install --with-deps chromium",
+                "export DEEPSEEK_API_KEY=your_key",
+            ),
+            (
+                "darwin",
+                "brew install --cask libreoffice",
+                "-m playwright install chromium",
+                "export DEEPSEEK_API_KEY=your_key",
+            ),
+            (
+                "win32",
+                "winget install TheDocumentFoundation.LibreOffice",
+                "-m playwright install chromium",
+                '$env:DEEPSEEK_API_KEY="your_key"',
+            ),
+        ],
+    )
+    def test_each_platform_gets_its_own_commands(
+        self, platform: str, libreoffice: str, playwright: str, key: str
+    ) -> None:
+        keys = {k: v for k, v in OWNER_KEYS.items() if k != "DEEPSEEK_API_KEY"}
+        with _doctor_env(
+            _config(*OWNER_MODELS),
+            env={**keys, "PSModulePath": r"C:\Modules"},
+            platform=platform,
+        ):
+            out, _ = _run(None)
+
+        lines = out.splitlines()
+        i = lines.index("  • LibreOffice:")
+        assert lines[i + 1] == "    " + libreoffice
+        j = lines.index("  • Playwright:")
+        assert lines[j + 1].endswith(playwright)
+        assert "    " + key in lines
 
     def test_multiline_prose_hint_keeps_its_indentation(self) -> None:
         buf = io.StringIO()
@@ -478,6 +538,7 @@ class TestMissingExtras:
         )
         monkeypatch.setattr(sys, "prefix", str(tmp_path))
         with (
+            patch.object(sys, "platform", "linux"),
             patch("markitai.serve.is_serve_available", return_value=False),
             patch("markitai.ocr.is_ocr_available", return_value=False),
             patch(
