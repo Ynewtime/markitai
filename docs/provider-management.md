@@ -71,7 +71,9 @@ process variables, then `.env` in the current directory, then
 `MARKITAI_HOME/.env` (`~/.markitai/.env`), with existing values taking
 precedence. They resolve explicit `env:NAME` references and provider fallback
 variables from it, and do not load user configuration or auth files. A missing
-explicit reference is an error. The explicit variants read no environment. Endpoints must be
+explicit reference is an error. The explicit variants read no environment, nor
+the server's gcloud login. Discovery sends no key for the keyless placeholder
+`markitai-no-key`; a probe sends it as written. Endpoints must be
 HTTP(S), without URL user information or fragments. Trusted callers may choose
 loopback/private endpoints, supporting local providers; this is not a general
 untrusted URL-fetch service. Service guard checks and `Cache-Control: no-store`

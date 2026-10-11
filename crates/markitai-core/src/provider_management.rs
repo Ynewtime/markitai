@@ -15,6 +15,21 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 
 const MAX_FIELD: usize = 8192;
+
+/// The key a connection or deployment saved through the settings API stores
+/// when it has no key but names an address (the same word Python markitai
+/// 1.2.1 stores, so a configuration file means the same to both). It is no
+/// credential: it is sent as written, which a server that checks no key
+/// accepts, and an entry holding it never uses the environment's
+/// credentials, so the server's own key variable cannot reach an address a
+/// settings caller chose. Model discovery sends no key for it.
+pub const NO_KEY: &str = "markitai-no-key";
+
+/// Whether `key` is a credential: a nonempty value other than [`NO_KEY`].
+pub fn real_key(key: Option<&str>) -> bool {
+    key.is_some_and(|key| !key.is_empty() && key != NO_KEY)
+}
+
 /// Conventional labels, without credential or account information.
 pub fn provider_label(provider: &str) -> String {
     lookup(provider)
@@ -507,7 +522,8 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         })
         .or(entry.key_variables.first())
         .copied();
-    let key = resolve(field(request, "api_key")?, variable, &env)?;
+    // The keyless placeholder is no key to send, and never the environment's.
+    let key = resolve(field(request, "api_key")?, variable, &env)?.filter(|key| key != NO_KEY);
     // Built-in and additional providers share inference's endpoint variables.
     let base_variable = discovery_base_variable(&provider, &env);
     let base = resolve(field(request, "api_base")?, base_variable, &env)?

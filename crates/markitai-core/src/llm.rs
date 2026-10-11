@@ -937,16 +937,21 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                     .find(|provider| provider.get("id").and_then(Value::as_str) == Some(id))
             })
         });
+        let stored_key = nonempty(params.get("api_key"))
+            .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_key"))));
         // Browser-authored literal connections must not acquire server credentials
-        // later, including after a restart or a provider environment change.
-        let allow_environment = params
-            .get("use_environment_credentials")
-            .filter(|value| !value.is_null())
-            .or_else(|| {
-                saved_provider.and_then(|provider| provider.get("use_environment_credentials"))
-            })
-            .and_then(Value::as_bool)
-            != Some(false);
+        // later, including after a restart or a provider environment change; nor
+        // does an entry holding the settings API's keyless placeholder, whichever
+        // backend wrote it.
+        let allow_environment = stored_key != Some(crate::provider_management::NO_KEY)
+            && params
+                .get("use_environment_credentials")
+                .filter(|value| !value.is_null())
+                .or_else(|| {
+                    saved_provider.and_then(|provider| provider.get("use_environment_credentials"))
+                })
+                .and_then(Value::as_bool)
+                != Some(false);
         // The first key variable that holds a value; with none set, the
         // first name decides (it may be present but empty).
         let key_var = known
@@ -955,13 +960,8 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             .copied()
             .find(|name| env.get(*name).is_some_and(|value| !value.is_empty()))
             .unwrap_or(known.key_vars[0]);
-        let key = config::resolve_optional(
-            nonempty(params.get("api_key"))
-                .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_key")))),
-            allow_environment.then_some(key_var),
-            env,
-            true,
-        );
+        let key =
+            config::resolve_optional(stored_key, allow_environment.then_some(key_var), env, true);
         let endpoint_base = config::resolve_optional(
             nonempty(params.get("api_base"))
                 .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_base")))),

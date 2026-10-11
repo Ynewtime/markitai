@@ -127,6 +127,8 @@
   --text-xs: 11px;
   --text-sm: 12px;
   --text-base: 14px;
+  /* control labels (buttons, segments, tools, menu entries): the S28 scale */
+  --text-ui: 13px;
   --text-md: 16px;
   --text-lg: 18px;
   --text-xl: 20px;
@@ -157,7 +159,7 @@
   --note-mark-done: var(--success);
   --strip-h: 44px;
   --strip-w: 380px;
-  /* on a phone: above the tab bar; an open sheet sets its action bar's height */
+  /* on a phone: above the tab bar; the full-screen peek window sets the bottom edge */
   --strips-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   --err-wash: color-mix(in srgb, var(--err) 7%, var(--surface));
   --warn-wash: color-mix(in srgb, var(--warning) 8%, var(--surface));
@@ -393,9 +395,9 @@ textarea {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--r-sm);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-xs);
   color: var(--text-2);
   transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
 }
@@ -802,7 +804,7 @@ main:focus {
     transform: translateY(8px);
   }
 }
-/* on a phone: full width, directly above the tab bar or an open sheet's bar */
+/* on a phone: full width, directly above the tab bar (or the screen's edge under the peek window) */
 @media screen and (max-width: 760px) {
   .note-strips {
     right: 0;
@@ -917,9 +919,6 @@ main:focus {
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
-.conv-composer {
-  margin-bottom: 18px;
-}
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -931,8 +930,8 @@ main:focus {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 240px;
-  height: 32px;
+  width: 220px;
+  height: 28px;
   padding: 0 10px;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--r-sm);
@@ -952,29 +951,43 @@ main:focus {
 .search input:focus {
   outline: none;
 }
-.chips {
+/* One toggle design for every choice (status filters, provider groups, the
+   option segments, Base | LLM, language and theme, the option chips): a
+   segmented group, one outline with the outer corners rounded, square inner
+   edges, one hairline between segments, the chosen segment filled. */
+.chips,
+.seg,
+.choice {
   display: inline-flex;
   border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-xs);
+  background: var(--surface);
   overflow: hidden;
 }
-/* a segmented group: one outline with the outer corners rounded, square inner
-   edges, one hairline between segments, the chosen segment filled */
-.filter-chip {
+.filter-chip,
+.seg button,
+.choice button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
+  height: 26px;
+  padding: 0 10px;
   border-radius: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-ui);
   font-weight: 500;
   color: var(--text-2);
-  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
 }
-.filter-chip + .filter-chip {
+.filter-chip + .filter-chip,
+.seg > button + button,
+.choice button + button {
   border-left: 1px solid var(--hairline-strong);
 }
-.filter-chip.is-on {
+.filter-chip.is-on,
+.seg button.is-on,
+.choice button.is-on {
   background: var(--sel-strong);
   font-weight: 600;
   color: var(--text-1);
@@ -1000,15 +1013,13 @@ main:focus {
 .split.is-single {
   grid-template-columns: minmax(0, 1fr);
 }
-.split.has-preview {
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+/* the window docked beside the list: the page takes the main area's whole width */
+.split.has-peek {
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
   gap: 20px;
 }
-.split.is-wide {
-  grid-template-columns: minmax(0, 1fr);
-}
-.split.is-wide > .list-col {
-  display: none;
+.page.conversions.is-docked {
+  max-width: none;
 }
 .list-col {
   min-width: 0;
@@ -1180,7 +1191,7 @@ main:focus {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.insp.is-sheet {
+.insp.is-peek {
   max-height: none;
   padding: 0;
   border: 0;
@@ -1217,27 +1228,6 @@ main:focus {
 }
 .insp-line.is-error {
   color: var(--err);
-}
-.insp-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 20px;
-}
-/* The sheet's bar: at most two buttons sharing the width, then "⋯". */
-.insp-actions.is-sheet {
-  flex-wrap: nowrap;
-  margin: 0;
-}
-.insp-actions.is-sheet > .btn {
-  flex: 1 1 0;
-  min-width: 0;
-  height: 36px;
-}
-.insp-actions.is-sheet .btn-icon {
-  width: 36px;
-  height: 36px;
 }
 .problem {
   display: flex;
@@ -1486,16 +1476,6 @@ main:focus {
 .excerpt-body > :first-child {
   margin-top: 0;
 }
-.excerpt-open {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-weight: 600;
-  color: var(--text-1);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
 .front-card {
   margin-bottom: 20px;
   padding: 12px 14px;
@@ -1532,77 +1512,8 @@ main:focus {
   color: var(--text-2);
 }
 
-/* ------------------------------------------------------- bottom sheet */
+/* ------------------------------------------------- inspector, in lines */
 
-/* `.veil` centres its dialog; the sheet sits on the bottom edge, over the tab bar. */
-.veil.sheet-veil {
-  align-items: flex-end;
-  padding: 0;
-}
-/* One height whatever the content, so the sheet never jumps as its content arrives. */
-.sheet {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: min(86dvh, calc(100dvh - 40px));
-  border-radius: var(--r-panel) var(--r-panel) 0 0;
-  background: var(--surface);
-  box-shadow: var(--shadow-modal);
-  animation: sheet-in var(--dur-slow) var(--ease-out);
-  transition: transform var(--dur-base) var(--ease-out);
-}
-.sheet.is-dragging {
-  transition: none;
-}
-.sheet-veil.is-leaving .sheet {
-  animation: sheet-out var(--dur-slow) ease-in forwards;
-}
-.sheet:focus {
-  outline: none;
-}
-.sheet-head {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 4px 8px 16px;
-  border-bottom: 1px solid transparent;
-  border-radius: var(--r-panel) var(--r-panel) 0 0;
-  /* The header is a drag handle: selecting its text would turn a drag into a drag-and-drop. */
-  -webkit-user-select: none;
-  user-select: none;
-  touch-action: none;
-  transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
-}
-.sheet.is-scrolled .sheet-head {
-  border-bottom-color: var(--hairline);
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-}
-.sheet-handle {
-  position: absolute;
-  top: 6px;
-  left: 50%;
-  width: 36px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--hairline-strong);
-  transform: translateX(-50%);
-}
-.sheet-title {
-  flex: 1;
-  min-width: 0;
-}
-.sheet-heading {
-  overflow: hidden;
-  font-size: var(--text-md);
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* a failed action on this conversion: the same line as its own failure reason */
 .action-error {
   margin-bottom: 16px;
@@ -1642,73 +1553,64 @@ main:focus {
   height: 18px;
   color: var(--text-3);
 }
-.insp.is-sheet .condition-line {
+.insp.is-peek .condition-line {
   margin-top: 12px;
 }
-.preview .action-error {
-  margin: 12px 24px 0;
-}
-.preview.is-phone .action-error {
-  margin: 12px 16px 0;
-}
-.insp.is-sheet .insp-line {
+.insp.is-peek .insp-line {
   display: flex;
   align-items: flex-start;
   gap: 8px;
 }
-.insp.is-sheet .insp-line .glyph {
+.insp.is-peek .insp-line .glyph {
   margin-top: 2px;
 }
-.sheet-nav {
-  display: flex;
-  flex: none;
-}
-.sheet-nav .icon-btn {
-  width: 44px;
-  height: 44px;
-}
-.sheet-body {
-  flex: 1;
-  min-height: 0;
-  padding: 4px 16px 20px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.sheet-bar {
-  flex: none;
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--hairline);
-  background: var(--surface);
-}
 
-/* ------------------------------------------------------------ preview */
+/* ------------------------------------------------------- peek window */
 
-.preview {
+/* A conversion opens as one window over the dimmed list (Details, Preview and
+   Compare as tabs), or docked beside the list; on a phone it fills the screen.
+   One fixed height whatever the content, so switching tabs never moves it. */
+.peek-veil {
+  padding: 28px;
+}
+.peek {
   display: flex;
   flex-direction: column;
+  width: min(1080px, 100%);
+  height: min(88dvh, 940px);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-term);
+  background: var(--surface);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  outline: none;
+  animation: card-in var(--dur-slow) var(--ease-out);
+}
+.peek.is-docked {
+  width: 100%;
   height: calc(100dvh - 32px);
   min-height: 420px;
-  border: 1px solid var(--hairline);
   border-radius: var(--r-panel);
-  background: var(--surface);
-  overflow: hidden;
+  box-shadow: none;
+  animation: none;
 }
-.preview-head {
+.peek-head {
   display: flex;
   flex: none;
   align-items: center;
   gap: 8px;
-  min-height: 52px;
-  padding: 8px 10px;
+  min-height: 48px;
+  padding: 8px 10px 8px 12px;
   border-bottom: 1px solid var(--hairline);
 }
-.preview-nav {
-  display: flex;
+.peek-nav,
+.peek-tools {
+  display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
-.preview-pos {
+.peek-pos {
   min-width: 52px;
   padding: 0 4px;
   font-family: var(--font-mono);
@@ -1718,7 +1620,7 @@ main:focus {
   text-align: center;
   white-space: nowrap;
 }
-.preview-title {
+.peek-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1727,23 +1629,40 @@ main:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.preview-tools {
+.peek .action-error {
+  margin: 12px 20px 0;
+}
+.peek-tabs {
   display: flex;
   flex: none;
-  align-items: center;
-  gap: 6px;
+  gap: 20px;
+  height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--hairline);
 }
-.preview-body {
+.peek-body {
   display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
 }
-.preview-body > .viewer,
-.preview-body > .compare {
+.peek-details {
+  flex: 1;
+  min-height: 0;
+  padding: 18px 22px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.peek-details > .insp {
+  max-width: 760px;
+}
+.peek-body > .viewer,
+.peek-body > .compare {
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
-.preview-keys {
+.peek-keys {
   display: flex;
   flex: none;
   flex-wrap: wrap;
@@ -1753,6 +1672,47 @@ main:focus {
   font-size: var(--text-xs);
   color: var(--text-3);
 }
+/* phones and narrow tablets: the window fills the screen, over the tab bar */
+.peek-veil.is-phone {
+  align-items: stretch;
+  padding: 0;
+  background: var(--bg);
+}
+.peek.is-phone {
+  width: 100%;
+  height: 100dvh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: sheet-in var(--dur-slow) var(--ease-out);
+}
+.peek.is-phone .peek-head {
+  gap: 2px;
+  padding: 4px 4px 4px 2px;
+  padding-top: calc(4px + env(safe-area-inset-top));
+}
+.peek.is-phone .peek-head .icon-btn,
+.peek.is-phone .peek-head .btn-icon {
+  width: 40px;
+  height: 40px;
+}
+.peek.is-phone .peek-head .btn {
+  height: 36px;
+}
+.peek.is-phone .peek-tabs {
+  padding: 0 16px;
+}
+.peek.is-phone .peek-details {
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+}
+.peek.is-phone .peek-body > .viewer,
+.peek.is-phone .peek-body > .compare {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.peek.is-phone .action-error {
+  margin: 12px 16px 0;
+}
+
 kbd {
   display: inline-block;
   min-width: 18px;
@@ -1791,9 +1751,10 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
+  min-height: 30px;
   padding: 0 10px;
   border-radius: var(--r-xs);
+  font-size: var(--text-ui);
   text-align: left;
   color: var(--text-1);
 }
@@ -2144,8 +2105,10 @@ kbd {
 
 /* ------------------------------------------------------ settings pages */
 
+/* every settings page is one column, centred in the main area like the other pages */
 .settings-page {
   max-width: 760px;
+  margin-inline: auto;
 }
 .settings-head {
   margin-bottom: 12px;
@@ -2213,29 +2176,6 @@ kbd {
   font-size: var(--text-sm);
   color: var(--text-2);
 }
-.choice {
-  display: inline-flex;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-sm);
-  overflow: hidden;
-}
-.choice button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  font-weight: 500;
-  color: var(--text-2);
-  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
-}
-.choice button + button {
-  border-left: 1px solid var(--hairline-strong);
-}
-.choice button.is-on {
-  background: var(--sel-strong);
-  color: var(--text-1);
-}
 /* Access token: one column, the status line, then the field with Save attached and one hint. */
 .settings-body.access {
   max-width: 480px;
@@ -2273,7 +2213,7 @@ kbd {
 }
 .input-group > .btn {
   flex: none;
-  height: 36px;
+  height: 32px;
   margin-left: -1px;
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
 }
@@ -2283,7 +2223,7 @@ kbd {
 }
 .settings-page input:not([type="checkbox"]):not([type="search"]) {
   width: 100%;
-  height: 36px;
+  height: 32px;
   padding: 0 10px;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--r-sm);
@@ -2371,13 +2311,13 @@ kbd {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 36px;
-  height: 36px;
+  min-width: 30px;
+  height: 30px;
   padding: 0 10px;
   border-radius: var(--r-xs);
   background: transparent;
   font-family: var(--font-sans);
-  font-size: var(--text-sm);
+  font-size: var(--text-ui);
   font-weight: 500;
   color: var(--text-2);
   white-space: nowrap;
@@ -2385,19 +2325,17 @@ kbd {
 }
 /* inside the group the segments are square; the group's outline has the corners */
 .tool-group .tool {
-  height: 34px;
+  height: 28px;
   border-radius: 0;
 }
 .tool-group > :first-child,
 .tool-group > :first-child > .tool:first-child {
   border-radius: var(--r-xs) 0 0 var(--r-xs);
 }
-.tool-group > :last-child,
-.tool-group > :last-child > .upload-more {
+.tool-group > :last-child {
   border-radius: 0 var(--r-xs) var(--r-xs) 0;
 }
-.tool-group > * + *,
-.upload-split > .tool + .tool {
+.tool-group > * + * {
   border-left: 1px solid var(--hairline-strong);
 }
 .tool-group .tool.is-on {
@@ -2417,47 +2355,6 @@ kbd {
 .tool-picker {
   cursor: pointer;
 }
-.upload-split {
-  position: relative;
-  display: inline-flex;
-}
-.upload-split .upload-more {
-  min-width: 28px;
-  padding: 0 7px;
-}
-.upload-split.is-open .upload-more {
-  background: var(--sel-strong);
-  color: var(--text-1);
-}
-.upload-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 40;
-  display: grid;
-  gap: 2px;
-  min-width: 160px;
-  padding: 4px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  box-shadow: var(--shadow-pop);
-}
-.upload-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: var(--r-xs);
-  font-size: var(--text-sm);
-  color: var(--text-2);
-  white-space: nowrap;
-  transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
-}
-.upload-item svg {
-  color: var(--text-3);
-}
 .tool-picker.is-disabled,
 .tool:disabled {
   background: transparent;
@@ -2466,12 +2363,12 @@ kbd {
 }
 .tool-convert {
   flex: none;
-  height: 40px;
-  padding: 0 16px;
-  border-radius: var(--r-sm);
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--r-xs);
   background: var(--accent);
-  font-size: var(--text-sm);
-  font-weight: 700;
+  font-size: var(--text-ui);
+  font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--accent-contrast);
 }
@@ -2563,19 +2460,6 @@ kbd {
 
 /* Beside the list the composer is one line: the field, then its tools. */
 @media screen and (min-width: 761px) {
-  .url-row.is-compact {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    column-gap: 8px;
-  }
-  .url-row.is-compact > .staged-row {
-    grid-column: 1 / -1;
-  }
-  .url-row.is-compact .url-bar {
-    justify-content: flex-end;
-    padding-top: 2px;
-  }
 }
 
 /* the composer's bottom bar: tools at the start, Convert at the end */
@@ -2706,31 +2590,6 @@ kbd {
   min-width: 0;
 }
 
-.seg {
-  display: inline-flex;
-  height: 26px;
-  overflow: hidden;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-xs);
-  background: var(--surface);
-}
-.seg > button + button {
-  border-left: 1px solid var(--hairline);
-}
-.seg button {
-  position: relative;
-  padding: 0 10px;
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--text-2);
-  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
-}
-.seg button.is-on {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-  font-weight: 600;
-  color: var(--text-1);
-}
 .seg button:disabled {
   color: var(--text-4);
   opacity: 0.55;
@@ -2739,21 +2598,23 @@ kbd {
   transform: scale(0.97);
 }
 
+/* an option that is on or off: a one-segment group in the same design */
 .chip {
   display: inline-flex;
   align-items: center;
-  height: 26px;
+  height: 28px;
   padding: 0 10px;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--r-xs);
-  font-size: var(--text-sm);
+  background: var(--surface);
+  font-size: var(--text-ui);
+  font-weight: 500;
   color: var(--text-2);
   transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease,
     transform var(--dur-base) var(--ease-out);
 }
 .chip[aria-checked="true"] {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline-strong));
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background: var(--sel-strong);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -2978,14 +2839,14 @@ kbd {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 12px;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
   border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-xs);
   background: var(--surface);
-  font-size: var(--text-base);
-  font-weight: 600;
+  font-size: var(--text-ui);
+  font-weight: 500;
   color: var(--text-1);
   white-space: nowrap;
   transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
@@ -2994,12 +2855,13 @@ kbd {
   transform: scale(0.97);
 }
 .btn-sm {
-  height: 28px;
+  height: 24px;
+  padding: 0 8px;
   font-size: var(--text-sm);
 }
 /* a square button that holds one icon ("⋯") */
 .btn.btn-icon {
-  width: 32px;
+  width: 28px;
   padding: 0;
   color: var(--text-2);
 }
@@ -3012,6 +2874,7 @@ kbd {
 .btn-primary {
   border-color: var(--accent);
   background: var(--accent);
+  font-weight: 600;
   color: var(--accent-contrast);
 }
 .btn-primary:disabled {
@@ -3309,12 +3172,6 @@ kbd {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-2);
-}
-/* the Add-models action is lighter than the dialog's pinned form buttons */
-.settings-summary .btn {
-  min-height: 30px;
-  padding: 0 10px;
-  font-size: var(--text-sm);
 }
 .model-rows {
   display: flex;
@@ -3731,7 +3588,7 @@ kbd {
 .dialog input:not([type="checkbox"]) {
   width: 100%;
   min-width: 0;
-  height: 36px;
+  height: 32px;
   padding: 0 12px;
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
@@ -4552,9 +4409,6 @@ input[type="password"],
     background: var(--strip);
     color: var(--text-1);
   }
-  .upload-item:not(.is-disabled):hover svg {
-    color: var(--text-1);
-  }
   .tool-convert:not(:disabled):hover {
     background: var(--accent-hover);
     color: var(--accent-contrast);
@@ -4562,8 +4416,7 @@ input[type="password"],
   .opt-help:hover,
   .text-link:hover,
   .crumbs button:hover,
-  .tab:hover,
-  .excerpt-open:hover {
+  .tab:hover {
     color: var(--text-1);
   }
   .opt-fold-btn:hover,
@@ -4646,7 +4499,6 @@ input[type="password"],
 .help-anchor:focus-visible,
 .recent-row:focus-visible,
 .failure-link:focus-visible,
-.excerpt-open:focus-visible,
 .settings-index a:focus-visible,
 .menu > :focus-visible,
 .pane:focus-visible,
@@ -4687,50 +4539,11 @@ input[type="password"],
 
 /* `screen`: print jobs are laid out about 700px wide and must not take these rules */
 @media screen and (max-width: 960px) {
-  .split,
-  .split.has-preview {
+  .split {
     grid-template-columns: minmax(0, 1fr);
   }
   .page {
     padding-inline: clamp(16px, 4vw, 32px);
-  }
-  .preview.is-phone {
-    position: fixed;
-    inset: 0;
-    z-index: 70;
-    height: 100dvh;
-    min-height: 0;
-    border: 0;
-    border-radius: 0;
-  }
-  .preview.is-phone:focus {
-    outline: none;
-  }
-  .preview.is-phone .preview-head {
-    gap: 2px;
-    padding: 4px 4px 4px 2px;
-    padding-top: calc(4px + env(safe-area-inset-top));
-  }
-  .preview.is-phone .preview-head .icon-btn {
-    width: 44px;
-    height: 44px;
-  }
-  .preview-phone-tools {
-    display: flex;
-    flex: none;
-    gap: 8px;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--hairline);
-  }
-  .preview-phone-tools .btn {
-    min-height: 40px;
-  }
-  .preview.is-phone .preview-body {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  .preview-veil {
-    padding: 0;
-    background: var(--bg);
   }
 }
 
@@ -4814,19 +4627,40 @@ input[type="password"],
   .head-actions {
     width: 100%;
   }
-  .head-actions .btn {
-    min-height: 40px;
+  /* Conversions keeps New conversion and "⋯" beside its title */
+  .conv-head {
+    flex-wrap: nowrap;
+  }
+  .conv-head .conv-title {
+    min-width: 0;
+  }
+  .conv-head .head-actions {
+    flex: none;
+    flex-wrap: nowrap;
+    width: auto;
+    margin-left: auto;
   }
   .toolbar {
     align-items: stretch;
   }
   .search {
     width: 100%;
-    height: 40px;
+    height: 36px;
   }
-  .chip,
-  .filter-chip {
-    height: 38px;
+  /* S28 on a phone: 36 px controls, 34 px segments; small text actions get 44 px hit areas below */
+  .btn,
+  .chip {
+    height: 36px;
+  }
+  .icon-btn,
+  .btn.btn-icon {
+    width: 36px;
+    height: 36px;
+  }
+  .filter-chip,
+  .seg button,
+  .choice button {
+    height: 34px;
   }
   .row {
     min-height: 44px;
@@ -4843,13 +4677,9 @@ input[type="password"],
 
   .tool,
   .tool-group .tool {
-    min-width: 44px;
-    height: 42px;
+    min-width: 36px;
+    height: 36px;
     padding-inline: 8px;
-  }
-  .upload-item {
-    min-width: 44px;
-    height: 44px;
   }
   .source-row {
     padding: 6px;
@@ -4858,12 +4688,12 @@ input[type="password"],
     gap: 2px;
   }
   .url-box {
-    min-height: 44px;
-    padding: 12px 6px;
+    min-height: 40px;
+    padding: 9px 6px;
     font-size: var(--text-md);
   }
   .tool-convert {
-    height: 44px;
+    height: 36px;
   }
   .opts-grid {
     padding: 12px;
@@ -4873,16 +4703,16 @@ input[type="password"],
     gap: 6px;
   }
   .opt-fold .opt-fold-btn {
-    height: 44px;
+    height: 36px;
     margin: 0;
   }
   .opt-help {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 36px;
+    min-height: 36px;
   }
   .opt-controls .chip,
   .opt-controls .seg {
-    min-height: 44px;
+    min-height: 36px;
   }
   .opt-controls .seg {
     flex-wrap: wrap;
@@ -4896,23 +4726,19 @@ input[type="password"],
   .opt-controls .seg button {
     flex: 1 1 auto;
     min-width: 44px;
-    min-height: 42px;
+    min-height: 34px;
     background: var(--surface);
   }
   .opt-controls .seg button.is-on {
-    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    background: var(--sel-strong);
   }
   .cli-bar .pill-btn {
-    min-height: 44px;
+    min-height: 36px;
     margin-top: 0;
   }
 
   .veil {
     padding: 16px;
-  }
-  .veil.sheet-veil,
-  .veil.preview-veil {
-    padding: 0;
   }
   .dialog-head {
     padding: 12px 16px;
@@ -4940,11 +4766,9 @@ input[type="password"],
   .doc-body td {
     padding: 8px 8px 8px 0;
   }
-  .settings-page .btn {
-    min-height: 44px;
-  }
-  .settings-page .input-group > input:not([type="checkbox"]):not([type="search"]) {
-    height: 44px;
+  .settings-page input:not([type="checkbox"]):not([type="search"]),
+  .settings-page .input-group > .btn {
+    height: 36px;
   }
   .field-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -5011,14 +4835,33 @@ input[type="password"],
   }
   .text-btn::before,
   .inline-action::before,
-  .secret-toggle::before {
+  .secret-toggle::before,
+  .row-icon::before {
     content: "";
     position: absolute;
     inset: -8px;
   }
-  .inline-action {
+  /* the short text actions (Full details, Show items, How to add a price, the
+     breadcrumb, Forget, Summary) reach 44 px high without moving */
+  .text-link::before,
+  .notice-details summary::before,
+  .crumbs button::before {
+    content: "";
+    position: absolute;
+    inset: -13px -4px;
+  }
+  .seg button::before {
+    content: "";
+    position: absolute;
+    inset: -5px 0;
+  }
+  .inline-action,
+  .text-link,
+  .notice-details summary,
+  .crumbs button {
     position: relative;
   }
+
 }
 
 @media screen and (max-width: 400px) {

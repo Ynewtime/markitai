@@ -24,9 +24,10 @@ export const ja: Dict = {
   options: "オプション",
   cliAria: "CLI コマンド",
   browse: "アップロード",
-  uploadMore: "その他のアップロード方法",
+  newConversion: "新しい変換",
   uploadFiles: "ファイルをアップロード",
   folderAria: "フォルダーをアップロード",
+  folderShort: "フォルダー",
   sourceActions: "変換の操作",
   dropToConvert: "ドロップして変換",
   copy: "コピー",
@@ -163,7 +164,6 @@ export const ja: Dict = {
   itemsAria: "変換した項目",
   baseTag: "Base",
   llmTag: "LLM",
-  downloadMd: ".md をダウンロード",
   downloadFile: (name: string) => `${name} をダウンロード`,
   retryAria: (name: string) => `${name} を再試行`,
   retryFailed: "再試行に失敗しました",
@@ -444,7 +444,6 @@ export const ja: Dict = {
 
   // convert view
   recentTitle: "最近の変換",
-  allConversions: "すべての変換",
   failedCount: (n: number) => `${n} 件失敗`,
 
   // conversions view
@@ -500,6 +499,7 @@ export const ja: Dict = {
 
   // inspector
   overviewTitle: "すべての変換",
+  overviewLink: "概要",
   overviewEmpty: "変換したファイルやページがここに表示されます。",
   selectHint: "変換を選択すると、詳細が表示されます。",
   preview: "プレビュー",
@@ -567,7 +567,6 @@ export const ja: Dict = {
   showItem: "この項目を表示",
   showItems: "これらの項目を表示",
   resultStart: "結果の冒頭",
-  openPreview: "プレビューを開く",
   failedHeading: (n: number) => `${n} 件失敗`,
   stoppedCount: (n: number) => `${n} 件は変換前に停止しました。`,
   deleteSubmissionAria: (label: string) => `${label} を完全に削除`,
@@ -577,11 +576,12 @@ export const ja: Dict = {
   previousItem: "前の項目",
   nextItem: "次の項目",
   positionOf: (index: number, total: number) => `${index} / ${total}`,
-  closePreview: "プレビューを閉じる",
-  fullWidth: "全幅で表示",
-  dockPreview: "一覧の横に表示",
   moreActions: "その他の操作",
   openPage: "ページを開く",
+  peekDetails: "詳細",
+  peekViews: "表示",
+  peekDock: "一覧の横に表示",
+  peekUndock: "ウィンドウで開く",
   keysMove: "前 / 次の項目",
   keysClose: "閉じる",
   tableCapped: (shown: string, total: string) =>

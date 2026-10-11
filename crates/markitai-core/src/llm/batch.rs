@@ -114,7 +114,7 @@ impl Session {
                 "Provider Batch requires one effective model, endpoint and account".into(),
             ));
         }
-        if first.key.as_deref().is_none_or(str::is_empty) {
+        if !crate::provider_management::real_key(first.key.as_deref()) {
             return Err(Error::Config(
                 "Provider Batch requires an API key for the configured deployment".into(),
             ));
@@ -570,6 +570,19 @@ mod tests {
             ),
             error: None,
             request_id: Some("request-fixture".into()),
+        }
+    }
+    #[test]
+    fn a_keyless_deployment_cannot_submit_a_provider_batch() {
+        // The settings API's placeholder is no account to bill.
+        for key in [Value::Null, json!(crate::provider_management::NO_KEY)] {
+            let mut cfg = config();
+            cfg["llm"]["model_list"][0]["litellm_params"]["api_key"] = key.clone();
+            let env = HashMap::from([("OPENAI_API_KEY".to_owned(), String::new())]);
+            let Err(Error::Config(message)) = Session::configured(&cfg, &env) else {
+                panic!("{key}: a batch needs an API key");
+            };
+            assert!(message.contains("requires an API key"), "{message}");
         }
     }
     #[test]

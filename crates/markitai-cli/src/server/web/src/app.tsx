@@ -12,6 +12,7 @@ import { ConvertPage } from "./components/convert-page.tsx";
 import { DropOverlay } from "./components/drop-overlay.tsx";
 import { MAX_NOTES, NoticeStack, type Note } from "./components/notes.tsx";
 import { OptionsPanel } from "./components/options-panel.tsx";
+import { readDocked, storeDocked } from "./components/peek.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
 import { ModelsSettings } from "./components/settings-models.tsx";
 import { Shell, useSidebar } from "./components/shell.tsx";
@@ -192,7 +193,10 @@ export function App() {
   }, [route, phone]);
 
   const [collapsedSidebar, toggleSidebar] = useSidebar();
-  const [wide, setWide] = useState(false);
+  // A conversion opens as a window over the list, or docked beside it (remembered per browser).
+  const [docked, setDocked] = useState(readDocked);
+  const routeRef = useRef(route);
+  routeRef.current = route;
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
@@ -308,11 +312,13 @@ export function App() {
       const batch = stagedBatch(chosen, folder?.folder === true);
       if (batch) {
         setStaged(batch);
+        // The staged line and its Convert button live on the Convert page.
+        if (routeRef.current.view !== "convert") navigate({ view: "convert" });
         return;
       }
       void send(chosen, []);
     },
-    [maxItems, send, t, note, dismiss],
+    [maxItems, send, t, note, dismiss, navigate],
   );
   const submitFolder = useCallback((files: File[], hidden: number) => submitFiles(files, { hidden, unreadable: 0, truncated: false, folder: true }), [submitFiles]);
   const submitWalked = useCallback((walked: Walked) => submitFiles(walked.files, walked), [submitFiles]);
@@ -532,7 +538,7 @@ export function App() {
   // An upload in progress is the newest strip until it ends (Cancel stops it).
   const stack: Note[] = [...notes, ...(submitting ? [{ id: "upload", tone: "success" as const, text: uploadText, busy: true, action: { label: t.cancelSubmit, run: cancelSubmit } }] : [])].slice(-MAX_NOTES);
 
-  const composerFor = (compact: boolean) => (
+  const composerPanel = (
     <OptionsPanel
       t={t}
       state={composer}
@@ -552,7 +558,6 @@ export function App() {
           onText={setUrlText}
           onConvert={submitUrls}
           busy={submitting || cloudflare.pending !== null}
-          compact={compact}
           staged={staged}
           onClearStaged={() => setStaged(null)}
           tools={tools}
@@ -622,10 +627,9 @@ export function App() {
         loaded={conversions.loaded}
         blocked={blocked}
         gone={gonePanel}
-        composer={composerFor(true)}
         selected={selected}
         mode={listState.mode}
-        wide={wide}
+        docked={docked}
         filter={filter}
         query={query}
         collapsed={collapsedGroups}
@@ -644,15 +648,16 @@ export function App() {
           onRetry: () => void retryItems(conversions.items, "all:retry"),
           onZip: () => downloadArchive("/api/history/archive", "markitai-all.zip"),
         }}
-        onSelect={(key) => updateList({ selected: key, mode: key === null ? "inspector" : listState.mode === "inspector" ? "inspector" : listState.mode })}
-        onMode={(mode) => {
-          if (mode === "inspector") {
-            updateList({ selected, mode });
-            setWide(false);
-            requestAnimationFrame(() => (selected ? document.querySelector<HTMLElement>(`[data-key="${CSS.escape(selected)}"]`)?.focus() : null));
-          } else updateList({ selected, mode });
-        }}
-        onWide={() => setWide((value) => !value)}
+        onSelect={(key) => updateList({ selected: key, mode: key === null ? "inspector" : listState.mode })}
+        onMode={(mode) => updateList({ selected, mode })}
+        onDock={() =>
+          setDocked((value) => {
+            storeDocked(!value);
+            return !value;
+          })
+        }
+        onNewConversion={() => navigate({ view: "convert" })}
+        onCopied={() => note({ tone: "success", text: dicts[localeRef.current].copied })}
         onFilter={setFilter}
         onQuery={setQuery}
         onToggleGroup={(jobId, open) =>
@@ -722,7 +727,7 @@ export function App() {
       <ConvertPage
         t={t}
         locale={locale}
-        composer={composerFor(false)}
+        composer={composerPanel}
         recent={recent}
         blocked={conversions.loaded ? null : blocked}
         labelWords={labelWords}
@@ -730,7 +735,6 @@ export function App() {
           setRoute({ view: "jobs" });
           updateList({ selected: key, mode: "inspector" }, true);
         }}
-        onAll={() => navigate({ view: "jobs" })}
       />
     );
   }
@@ -780,7 +784,7 @@ export function App() {
       <NoticeStack label={t.notificationsLabel} notes={stack} onDismiss={dismiss} />
       <DropOverlay
         label={t.dropToConvert}
-        suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || listState.mode !== "inspector"}
+        suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || (route.view === "jobs" && listState.selected !== null && (phone || !docked))}
         limit={maxItems}
         onFiles={(files) => submitFiles(files)}
         onFolder={submitWalked}

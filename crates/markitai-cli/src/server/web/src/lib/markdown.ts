@@ -316,11 +316,13 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
     plain.append(...cell.childNodes);
     cell.replaceWith(plain);
   }
-  for (const table of [...fragment.querySelectorAll("table")]) {
+  // Each table is a scrollable region of its own name ("Table 2"), so a document with several reads them apart.
+  const tables = [...fragment.querySelectorAll("table")];
+  for (const [index, table] of tables.entries()) {
     const wrap = doc.createElement("div");
     wrap.className = "table-scroll";
     wrap.setAttribute("role", "region");
-    wrap.setAttribute("aria-label", context.tableLabel);
+    wrap.setAttribute("aria-label", tables.length > 1 ? `${context.tableLabel} ${index + 1}` : context.tableLabel);
     wrap.tabIndex = 0;
     table.replaceWith(wrap);
     wrap.append(table);

@@ -1,13 +1,13 @@
-// The narrow conversions list (A3): a status glyph, the name and the time per
-// row, nothing else. Actions live in the inspector, so rows hold no controls.
+// The conversions list (A3): a status glyph, the name and the time per row,
+// nothing else. Actions live in the peek window, so rows hold no controls.
 // It is an ARIA tree in its flat form: every row is a sibling, and a
 // submission of several items is a level-1 row (what was submitted, preset,
 // time) followed by its items at level 2; a one-item submission is a single
-// level-1 row. Each row is named by its own text. Focus and selection move
-// together: arrows walk the rows, Right/Left open and close a submission,
-// Enter opens the preview.
+// level-1 row. Each row is named by its own text. Arrows walk the rows and
+// Right/Left open and close a submission; a click, Enter or Space opens the
+// window. Docked beside the list, the window follows the arrows instead.
 import { memo } from "preact/compat";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { isGroup, jobKey, navigationOrder, presetOf, submissionLabel, type Submission } from "../lib/conversions.ts";
 import { fmtClock } from "../lib/format.ts";
@@ -84,6 +84,7 @@ export function ConversionList({
   onSelect,
   onToggle,
   onOpen,
+  followFocus = true,
 }: {
   t: Dict;
   locale: Locale;
@@ -94,10 +95,22 @@ export function ConversionList({
   onSelect: (key: string, from: "pointer" | "keyboard") => void;
   onToggle: (jobId: string, open?: boolean) => void;
   onOpen: (key: string) => void;
+  /** Selection follows the keyboard (a docked window beside the list). Off when
+   * selecting opens a window: the arrows then only move, Enter or Space opens. */
+  followFocus?: boolean;
 }) {
   const root = useRef<HTMLUListElement>(null);
   const order = navigationOrder(list, collapsed);
-  const focusKey = selected !== null && order.includes(selected) ? selected : (order[0] ?? null);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const focusKey =
+    !followFocus && cursor !== null && order.includes(cursor)
+      ? cursor
+      : selected !== null && order.includes(selected)
+        ? selected
+        : (order[0] ?? null);
+  useEffect(() => {
+    if (selected !== null) setCursor(selected);
+  }, [selected]);
 
   // A selection made elsewhere (the preview's previous/next) keeps its row in view.
   useEffect(() => {
@@ -107,7 +120,8 @@ export function ConversionList({
 
   const move = (key: string | undefined) => {
     if (key === undefined) return;
-    onSelect(key, "keyboard");
+    if (followFocus) onSelect(key, "keyboard");
+    else setCursor(key);
     requestAnimationFrame(() => document.getElementById(rowId(key))?.focus({ preventScroll: false }));
   };
 
@@ -143,7 +157,8 @@ export function ConversionList({
         break;
       case "Enter":
         if (group !== null) onToggle(group);
-        else onOpen(key);
+        else if (followFocus) onOpen(key);
+        else onSelect(key, "keyboard");
         break;
       case " ":
         onSelect(key, "keyboard");

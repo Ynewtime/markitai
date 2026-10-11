@@ -731,27 +731,33 @@ impl GoogleTokens {
     }
 
     pub(super) fn resolve(env: &HashMap<String, String>, allow_environment: bool) -> Result<Self> {
-        if allow_environment {
-            if let Some(path) = variable(env, &["GOOGLE_APPLICATION_CREDENTIALS"]) {
-                let text = read_small(Path::new(&path)).ok_or_else(|| {
-                    Error::Config(
-                        "GOOGLE_APPLICATION_CREDENTIALS names a file that cannot be read".into(),
-                    )
-                })?;
-                return Self::from_json(&text, "GOOGLE_APPLICATION_CREDENTIALS");
-            }
-            let adc = variable(env, &["CLOUDSDK_CONFIG"])
-                .map(PathBuf::from)
-                .or_else(|| {
-                    variable(env, &["APPDATA"])
-                        .filter(|_| cfg!(windows))
-                        .map(|data| PathBuf::from(data).join("gcloud"))
-                })
-                .or_else(|| home(env).map(|home| home.join(".config").join("gcloud")))
-                .map(|directory| directory.join("application_default_credentials.json"));
-            if let Some(text) = adc.as_deref().and_then(read_small) {
-                return Self::from_json(&text, "the gcloud application default credentials");
-            }
+        // Every Google credential this build reads is the server's own (its
+        // variables, its gcloud files or its gcloud login); a connection that
+        // may not use the environment's credentials has none to send.
+        if !allow_environment {
+            return Err(Error::Config(
+                "Vertex AI uses the server's Google credentials, which this connection may not use; configure it in the server's configuration file".into(),
+            ));
+        }
+        if let Some(path) = variable(env, &["GOOGLE_APPLICATION_CREDENTIALS"]) {
+            let text = read_small(Path::new(&path)).ok_or_else(|| {
+                Error::Config(
+                    "GOOGLE_APPLICATION_CREDENTIALS names a file that cannot be read".into(),
+                )
+            })?;
+            return Self::from_json(&text, "GOOGLE_APPLICATION_CREDENTIALS");
+        }
+        let adc = variable(env, &["CLOUDSDK_CONFIG"])
+            .map(PathBuf::from)
+            .or_else(|| {
+                variable(env, &["APPDATA"])
+                    .filter(|_| cfg!(windows))
+                    .map(|data| PathBuf::from(data).join("gcloud"))
+            })
+            .or_else(|| home(env).map(|home| home.join(".config").join("gcloud")))
+            .map(|directory| directory.join("application_default_credentials.json"));
+        if let Some(text) = adc.as_deref().and_then(read_small) {
+            return Self::from_json(&text, "the gcloud application default credentials");
         }
         Ok(Self {
             source: GoogleSource::Cli,
@@ -914,10 +920,14 @@ pub(super) fn deployment(
     grouped: bool,
 ) -> Result<Deployment> {
     let params = &entry["litellm_params"];
-    let allow_environment = params
-        .get("use_environment_credentials")
-        .and_then(Value::as_bool)
-        != Some(false);
+    // The settings API's keyless placeholder never takes the environment's
+    // AWS or Google credentials either.
+    let allow_environment = params.get("api_key").and_then(Value::as_str)
+        != Some(crate::provider_management::NO_KEY)
+        && params
+            .get("use_environment_credentials")
+            .and_then(Value::as_bool)
+            != Some(false);
     let empty = HashMap::new();
     let environment = if allow_environment { env } else { &empty };
     if params

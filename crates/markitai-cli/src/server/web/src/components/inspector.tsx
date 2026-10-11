@@ -1,9 +1,9 @@
-// The inspector (A3): what one conversion is, in plain words. For an item:
-// its state, actions, facts (source, output, models, cost, when), notices
-// grouped by kind, and the start of the result. For a submission: its
-// progress, batch actions, facts and the notices of all its items (A4). With
-// nothing selected: an overview of everything listed. The actions render as a
-// row here, or in the bottom sheet's pinned bar on phones.
+// The inspector (A3): what one conversion is, in plain words, as the Details
+// tab of the peek window. For an item: its state, facts (source, output,
+// models, cost, when), notices grouped by kind, and the start of the result.
+// For a submission: its progress, facts and the notices of all its items (A4).
+// The summary of everything listed is the Overview. The actions are an action
+// set the window's header draws: the one or two that matter, the rest in "⋯".
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fetchBlob, filePath, imagePath } from "../api/client.ts";
@@ -19,8 +19,7 @@ import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads }
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
-import { ActionMenu, type MenuDanger } from "./action-menu.tsx";
-import { ConfirmPopover } from "./confirm-popover.tsx";
+import type { MenuDanger } from "./action-menu.tsx";
 import { FileName } from "./file-name.tsx";
 import { Duration, glyphOf, StatusGlyph, statusWord, useElapsed } from "./item-bits.tsx";
 import type { IconName } from "./icon-paths.ts";
@@ -215,7 +214,7 @@ function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: No
 }
 
 /** The first blocks of a result, with the item's own pictures as small figures. */
-function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionItem; onOpen: () => void }) {
+function Excerpt({ ctx, item }: { ctx: InspectorContext; item: SessionItem }) {
   const { t } = ctx;
   const key = resultKey(item);
   const [result, setResult] = useState<ItemResult | null>(() => cachedExcerpt(key));
@@ -289,10 +288,6 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
       {front && (front.title || front.description || front.tags.length > 0) && <FrontCard front={front} compact />}
       {/* A picture of the result's start: nothing in it is read or reached by the keyboard. */}
       <div ref={body} class="doc-body excerpt-body" aria-hidden="true" inert />
-      <button type="button" class="excerpt-open" onClick={onOpen}>
-        {t.openPreview}
-        <Icon name="ArrowRight" size={13} />
-      </button>
     </div>
   );
 }
@@ -313,8 +308,8 @@ export function FrontCard({ front, compact = false }: { front: NonNullable<Retur
   );
 }
 
-/** One action of a conversion, as a button in the row or an entry of the "⋯" menu. */
-interface Act {
+/** One action of a conversion: a button in the window's header, or an entry of its "⋯" menu. */
+export interface Act {
   key: string;
   label: string;
   icon?: IconName;
@@ -324,90 +319,36 @@ interface Act {
   busy?: boolean;
 }
 
-/** In the phone sheet's bar, which secondary actions stay beside the primary one first. */
-const SHEET_ORDER = ["download", "plain", "retry-failed", "stop", "enhance", "compare", "again"];
-
-/** The actions as a row: every one as a button on a wide screen; in the phone
- * sheet's pinned bar at most two, the rest (and Delete) in a "⋯" menu. */
-function ActionRow({ t, acts, sheet, danger }: { t: Dict; acts: Act[]; sheet: boolean; danger: Danger | null }) {
-  const button = (act: Act) => (
-    <button
-      key={act.key}
-      type="button"
-      class={act.primary ? "btn btn-primary" : "btn"}
-      disabled={act.disabled}
-      aria-busy={act.busy || undefined}
-      onClick={act.run}
-    >
-      {act.icon && <Icon name={act.icon} size={14} />}
-      {act.label}
-    </button>
-  );
-  if (!sheet) {
-    return (
-      <div class="insp-actions">
-        {acts.map(button)}
-        {danger && (
-          <ConfirmPopover
-            triggerLabel={danger.aria}
-            title={danger.title}
-            description={danger.description}
-            confirmLabel={danger.confirmLabel}
-            cancelLabel={danger.cancelLabel}
-            busyLabel={danger.busyLabel}
-            onConfirm={danger.onConfirm}
-          />
-        )}
-      </div>
-    );
-  }
-  const rank = (act: Act) => (act.primary ? -1 : SHEET_ORDER.indexOf(act.key) < 0 ? SHEET_ORDER.length : SHEET_ORDER.indexOf(act.key));
-  const ordered = [...acts].sort((a, b) => rank(a) - rank(b));
-  const shown = ordered.slice(0, 2);
-  const rest = ordered.slice(2);
-  return (
-    <div class="insp-actions is-sheet">
-      {shown.map(button)}
-      <ActionMenu
-        label={t.moreActions}
-        up
-        actions={rest.map((act) => ({ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled }))}
-        danger={danger ?? undefined}
-      />
-    </div>
-  );
+/** What a conversion offers: shown as buttons, the rest in "⋯", and Delete (confirmed) last. */
+export interface ActSet {
+  shown: Act[];
+  more: Act[];
+  danger: MenuDanger | null;
 }
 
-type Danger = MenuDanger & { aria: string };
-
-/** The item's actions; `sheet` lays them out for the bottom sheet's pinned bar. */
-export function ItemActions({ ctx, item, actions, sheet = false }: { ctx: InspectorContext; item: SessionItem; actions: ItemActionsApi; sheet?: boolean }) {
+/** An item's actions. Preview and Compare are the window's tabs, not actions. */
+export function itemActs(ctx: InspectorContext, item: SessionItem, actions: ItemActionsApi): ActSet {
   const { t } = ctx;
   const busy = ctx.busy.has(item.key);
   const previewable = isPreviewable(item);
   const retryable = canRetry(item);
   const noModel = item.status === "error" && item.errorCode === "no_model_configured";
   const imageOnly = item.skipped && item.skipReason === "image_only";
-  const enhanceable = previewable && !item.llmEnhanced && item.retryable && ctx.llmReady;
-  const acts: Act[] = [];
-  if (previewable) acts.push({ key: "preview", label: t.preview, icon: "Eye", primary: true, run: () => actions.preview(item) });
+  const shown: Act[] = [];
+  const more: Act[] = [];
+  if (previewable && item.output) shown.push({ key: "download", label: t.downloadShort, icon: "DownloadSimple", run: () => actions.download(item, item.output as string) });
   else if (retryable && !noModel && !imageOnly)
-    acts.push({ key: "retry", label: t.retryPlainVerb, icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retry(item) });
+    shown.push({ key: "retry", label: t.retryPlainVerb, icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retry(item) });
   if (noModel && retryable) {
-    acts.push({ key: "models", label: t.addModelAction, primary: true, run: actions.openModels });
-    acts.push({ key: "plain", label: t.retryPlain, disabled: busy, run: () => actions.retryPlain(item) });
+    shown.push({ key: "models", label: t.addModelAction, primary: true, run: actions.openModels });
+    more.push({ key: "plain", label: t.retryPlain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retryPlain(item) });
   }
-  if (imageOnly && retryable) acts.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
-  if (previewable && ctx.compare) acts.push({ key: "compare", label: t.compare, icon: "Columns", run: () => actions.compare(item) });
-  if (previewable && item.output)
-    acts.push({ key: "download", label: sheet ? t.downloadShort : t.downloadMd, icon: "DownloadSimple", run: () => actions.download(item, item.output as string) });
-  if (previewable && retryable === false && item.retryable)
-    acts.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, busy, run: () => actions.retry(item) });
-  if (enhanceable) acts.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
-  const danger: Danger | null =
+  if (imageOnly && retryable) shown.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
+  if (previewable && !item.llmEnhanced && item.retryable && ctx.llmReady) more.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
+  if (previewable && retryable === false && item.retryable) more.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retry(item) });
+  const danger: MenuDanger | null =
     item.status !== "running" && item.status !== "queued"
       ? {
-          aria: t.histDeleteAria(item.name),
           label: t.deleteAction,
           title: t.deleteItemTitle(item.name),
           description: t.deleteItemDescription,
@@ -417,7 +358,7 @@ export function ItemActions({ ctx, item, actions, sheet = false }: { ctx: Inspec
           onConfirm: () => actions.remove(item),
         }
       : null;
-  return <ActionRow t={t} acts={acts} sheet={sheet} danger={danger} />;
+  return { shown, more, danger };
 }
 
 export function ItemInspector({
@@ -425,14 +366,15 @@ export function ItemInspector({
   item,
   job,
   actions,
-  sheet = false,
+  peek = false,
   headingId = "insp-title",
 }: {
   ctx: InspectorContext;
   item: SessionItem;
   job: ConvJob | undefined;
   actions: ItemActionsApi;
-  sheet?: boolean;
+  /** In the peek window: its header carries the name and the actions. */
+  peek?: boolean;
   headingId?: string;
 }) {
   const { t, locale } = ctx;
@@ -469,22 +411,21 @@ export function ItemInspector({
   ].filter(Boolean);
   const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
   return (
-    <section class={sheet ? "insp is-sheet" : "insp"} aria-labelledby={headingId}>
+    <section class={peek ? "insp is-peek" : "insp"} aria-labelledby={peek ? undefined : headingId}>
       <ActionError t={t} failure={ctx.failure?.key === item.key ? ctx.failure : null} />
       <header class="insp-head">
-        {/* In the sheet the name is the sheet's own heading. */}
-        {!sheet && (
+        {/* In the peek window the name is the window's own heading. */}
+        {!peek && (
           <h2 id={headingId} class="insp-title">
             <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />
             <span class="insp-name">{item.name}</span>
           </h2>
         )}
         <p class={failed ? "insp-line is-error" : "insp-line"}>
-          {sheet && <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />}
+          {peek && <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />}
           {itemLine(ctx, item, elapsed, images)}
         </p>
       </header>
-      {!sheet && <ItemActions ctx={ctx} item={item} actions={actions} />}
       {job?.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
       {!ctx.llmReady && item.status === "done" && !item.llmEnhanced && !item.skipped && (
         <ConditionLine tone="info" text={t.noModelLine} action={{ label: t.configureModels, run: actions.openModels }} />
@@ -571,7 +512,7 @@ export function ItemInspector({
       {isPreviewable(item) && (
         <section class="insp-section" aria-labelledby={`${headingId}-start`}>
           <h3 id={`${headingId}-start`}>{t.resultStart}</h3>
-          <Excerpt ctx={ctx} item={item} onOpen={() => actions.preview(item)} />
+          <Excerpt ctx={ctx} item={item} />
         </section>
       )}
     </section>
@@ -618,7 +559,7 @@ export function JobInspector({
   job,
   items,
   actions,
-  sheet = false,
+  peek = false,
   headingId = "insp-title",
   onShowItems,
 }: {
@@ -626,7 +567,7 @@ export function JobInspector({
   job: ConvJob;
   items: SessionItem[];
   actions: JobActionsApi;
-  sheet?: boolean;
+  peek?: boolean;
   headingId?: string;
   onShowItems: (keys: string[]) => void;
 }) {
@@ -639,10 +580,10 @@ export function JobInspector({
   const kept = keptUntil(ctx, job.finishedAt);
   const preset = presetOf(job.options);
   return (
-    <section class={sheet ? "insp is-sheet" : "insp"} aria-labelledby={headingId}>
+    <section class={peek ? "insp is-peek" : "insp"} aria-labelledby={peek ? undefined : headingId}>
       <ActionError t={t} failure={ctx.failure?.key === `job:${job.jobId}` ? ctx.failure : null} />
       <header class="insp-head">
-        {!sheet && (
+        {!peek && (
           <h2 id={headingId} class="insp-title">
             <span class="insp-name">{label}</span>
           </h2>
@@ -654,7 +595,6 @@ export function JobInspector({
         </p>
       </header>
       <ProgressStrip t={t} items={items} />
-      {!sheet && <JobActions ctx={ctx} job={job} items={items} actions={actions} />}
       {job.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
       <dl class="facts">
         <dt>{t.factCost}</dt>
@@ -721,22 +661,22 @@ export function JobInspector({
   );
 }
 
-export function JobActions({ ctx, job, items, actions, sheet = false }: { ctx: InspectorContext; job: ConvJob; items: SessionItem[]; actions: JobActionsApi; sheet?: boolean }) {
+/** A submission's actions: its archive, a retry of what failed, Stop while items wait, Delete. */
+export function jobActs(ctx: InspectorContext, job: ConvJob, items: SessionItem[], actions: JobActionsApi): ActSet {
   const { t } = ctx;
   const retryable = items.filter((item) => (isFailed(item) || isStopped(item)) && canRetry(item)).length;
   const waiting = items.some((item) => item.status === "queued" && item.operation === "convert");
   const running = job.status === "running";
   const busy = ctx.busy.has(`job:${job.jobId}`);
-  const acts: Act[] = [];
-  if (!running) acts.push({ key: "zip", label: t.downloadZip, icon: "DownloadSimple", primary: true, run: () => actions.zip(job.jobId) });
+  const shown: Act[] = [];
+  const more: Act[] = [];
   if (retryable > 0)
-    acts.push({ key: "retry-failed", label: t.retryFailedN(retryable), icon: "ArrowCounterClockwise", disabled: busy, busy, run: () => actions.retryFailed(job.jobId) });
-  if (waiting && ctx.cancel) acts.push({ key: "stop", label: t.stopRemaining, icon: "Stop", disabled: busy, run: () => actions.stop(job.jobId) });
-  const label = submissionLabel(job, items, ctx.labelWords);
-  const danger: Danger | null = running
+    shown.push({ key: "retry-failed", label: t.retryFailedN(retryable), icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retryFailed(job.jobId) });
+  if (!running) shown.push({ key: "zip", label: t.downloadZip, icon: "DownloadSimple", run: () => actions.zip(job.jobId) });
+  if (waiting && ctx.cancel) shown.push({ key: "stop", label: t.stopRemaining, icon: "Stop", disabled: busy, run: () => actions.stop(job.jobId) });
+  const danger: MenuDanger | null = running
     ? null
     : {
-        aria: t.deleteSubmissionAria(label),
         label: t.deleteAction,
         title: t.deleteSubmissionTitle(items.length),
         description: t.deleteItemDescription,
@@ -745,22 +685,24 @@ export function JobActions({ ctx, job, items, actions, sheet = false }: { ctx: I
         busyLabel: t.deleting,
         onConfirm: () => actions.remove(job.jobId),
       };
-  return <ActionRow t={t} acts={acts} sheet={sheet} danger={danger} />;
+  return { shown, more, danger };
 }
 
 /** Nothing selected: what the whole list adds up to, and what needs a look (A4). */
-export function Overview({ ctx, items, onShowItems }: { ctx: InspectorContext; items: SessionItem[]; onShowItems: (keys: string[]) => void }) {
+export function Overview({ ctx, items, peek = false, onShowItems }: { ctx: InspectorContext; items: SessionItem[]; peek?: boolean; onShowItems: (keys: string[]) => void }) {
   const { t } = ctx;
   const tally = counts(items);
   const notices = useMemo(() => groupNotices(items.flatMap((item) => item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))), [items]);
   const cost = totalCost(items);
   if (!items.length) return <div class="insp is-empty"><p>{t.overviewEmpty}</p></div>;
   return (
-    <section class="insp is-overview" aria-labelledby="overview-title">
+    <section class={peek ? "insp is-overview is-peek" : "insp is-overview"} aria-labelledby={peek ? undefined : "overview-title"}>
       <header class="insp-head">
-        <h2 id="overview-title" class="insp-title">
-          <span class="insp-name">{t.overviewTitle}</span>
-        </h2>
+        {!peek && (
+          <h2 id="overview-title" class="insp-title">
+            <span class="insp-name">{t.overviewTitle}</span>
+          </h2>
+        )}
         <p class="insp-line">{t.selectHint}</p>
       </header>
       <ProgressStrip t={t} items={items} />

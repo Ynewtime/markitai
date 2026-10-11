@@ -5,7 +5,7 @@
 // outlines its counterpart: PDF pages are matched through their text layer,
 // HTML by element. On phones the original sits above the Markdown.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { fetchBlob, fetchOriginal, fetchPageText, fetchText, originalPagePath } from "../api/client.ts";
+import { ApiError, fetchBlob, fetchOriginal, fetchPageText, fetchText, originalPagePath } from "../api/client.ts";
 import type { OriginalDescriptor } from "../api/types.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
@@ -29,6 +29,9 @@ interface Linked {
   /** 1-based ordinal among targets of its kind, for the label ("Table 2"). */
   ordinal: number;
 }
+
+/** Times a page refused as busy (429) is asked again before it reads as not drawn. */
+const RENDER_RETRIES = 4;
 
 export function CompareView({
   t,
@@ -246,8 +249,10 @@ function Pages({
       const css = root.clientWidth - 24;
       return Math.min(2400, Math.max(400, Math.ceil((css * (window.devicePixelRatio || 1)) / 200) * 200));
     };
-    const load = (page: number) => {
-      if (requested.has(page)) return;
+    // The server draws a few pages at a time and answers the rest 429 render_busy:
+    // those are asked again, a little later each time, four times at most.
+    const load = (page: number, attempt = 0) => {
+      if (attempt === 0 && requested.has(page)) return;
       requested.add(page);
       fetchBlob(originalPagePath(item.jobId, item.itemId, page, width())).then(
         ({ blob }) => {
@@ -256,7 +261,14 @@ function Pages({
           owned.current.push(url);
           setUrls((previous) => ({ ...previous, [page]: url }));
         },
-        () => !stale && setBroken((previous) => ({ ...previous, [page]: true })),
+        (error: unknown) => {
+          if (stale) return;
+          if (error instanceof ApiError && error.status === 429 && attempt < RENDER_RETRIES) {
+            setTimeout(() => !stale && load(page, attempt + 1), 400 * (attempt + 1));
+            return;
+          }
+          setBroken((previous) => ({ ...previous, [page]: true }));
+        },
       );
     };
     const observer = new IntersectionObserver(
@@ -288,15 +300,26 @@ function Pages({
     }
     const controller = new AbortController();
     const count = Math.min(descriptor.page_count, TEXT_PAGES);
-    Promise.all(
-      Array.from({ length: count }, (_, index) =>
-        fetchPageText(item.jobId, item.itemId, index + 1, controller.signal).then(
-          (text): PageLines => ({ page: text.page, lines: text.lines }),
-          (): PageLines => ({ page: index + 1, lines: [] }),
-        ),
-      ),
-    ).then((layers) => {
-      if (!controller.signal.aborted) setLocated(locate(layers, targets.map(({ target }) => target)));
+    // Two at a time, as the server reads pages (it answers more 429 render_busy);
+    // a busy answer is asked again a little later, a few times at most.
+    const read = async (page: number): Promise<PageLines> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const text = await fetchPageText(item.jobId, item.itemId, page, controller.signal);
+          return { page: text.page, lines: text.lines };
+        } catch (error) {
+          if (controller.signal.aborted || !(error instanceof ApiError && error.status === 429) || attempt >= RENDER_RETRIES) return { page, lines: [] };
+          await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+        }
+      }
+    };
+    const layers: PageLines[] = [];
+    let next = 1;
+    const worker = async () => {
+      while (next <= count && !controller.signal.aborted) layers.push(await read(next++));
+    };
+    void Promise.all([worker(), worker()]).then(() => {
+      if (!controller.signal.aborted) setLocated(locate(layers.sort((a, b) => a.page - b.page), targets.map(({ target }) => target)));
     });
     return () => controller.abort();
   }, [item.key, descriptor, targets]);

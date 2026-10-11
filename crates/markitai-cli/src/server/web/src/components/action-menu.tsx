@@ -13,6 +13,14 @@ export interface MenuAction {
   icon?: IconName;
   run: () => void;
   disabled?: boolean;
+  /** A setting that the entry turns on and off; the menu stays open. */
+  checked?: boolean;
+  /** One line under the entry, for what the setting means. */
+  note?: string;
+  /** An external page: the entry is a link that opens it in a new tab. */
+  href?: string;
+  /** Words read after the label by assistive technology (e.g. "opens in a new tab"). */
+  hint?: string;
 }
 
 /** The menu's destructive entry: its words for the confirmation it opens. */
@@ -44,7 +52,7 @@ export function ActionMenu({
   const [confirming, setConfirming] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const items = () => [...(root.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? [])];
+  const items = () => [...(root.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)') ?? [])];
   useEffect(() => {
     if (!open) return;
     requestAnimationFrame(() => items()[0]?.focus());
@@ -93,12 +101,30 @@ export function ActionMenu({
       </button>
       {open && (
         <div class={up ? "menu is-up" : "menu"} role="menu" aria-label={label}>
-          {actions.map((action) => (
-            <button key={action.key} type="button" role="menuitem" tabIndex={-1} disabled={action.disabled} onClick={() => choose(action.run)}>
-              {action.icon ? <Icon name={action.icon} size={15} /> : <span class="menu-gap" aria-hidden="true" />}
-              {action.label}
-            </button>
-          ))}
+          {actions.map((action) => {
+            const mark = action.icon ? <Icon name={action.icon} size={15} /> : <span class="menu-gap" aria-hidden="true" />;
+            const entry =
+              action.href !== undefined ? (
+                <a key={action.key} role="menuitem" tabIndex={-1} href={action.href} target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>
+                  {mark}
+                  {action.label}
+                  {action.hint && <span class="sr-only"> {action.hint}</span>}
+                </a>
+              ) : action.checked !== undefined ? (
+                <button key={action.key} type="button" role="menuitemcheckbox" aria-checked={action.checked} tabIndex={-1} disabled={action.disabled} onClick={action.run}>
+                  <span class="menu-check" aria-hidden="true">
+                    {action.checked && <Icon name="Check" size={13} />}
+                  </span>
+                  {action.label}
+                </button>
+              ) : (
+                <button key={action.key} type="button" role="menuitem" tabIndex={-1} disabled={action.disabled} onClick={() => choose(action.run)}>
+                  {mark}
+                  {action.label}
+                </button>
+              );
+            return action.note ? [entry, <p key={`${action.key}-note`} class="menu-note">{action.note}</p>] : entry;
+          })}
           {danger && (
             <button type="button" role="menuitem" tabIndex={-1} class="is-danger" onClick={() => choose(() => setConfirming(true))}>
               <Icon name="Trash" size={15} />

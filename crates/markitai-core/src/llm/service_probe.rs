@@ -88,7 +88,9 @@ pub(crate) fn probe(request: &Value, allow_environment: bool) -> Result<()> {
         .map(|_| ())
         .map_err(|failure| failure.error);
     }
-    let mut params = json!({"model":model,"max_tokens":16,"weight":1});
+    // An explicit probe reads no environment at all: no variables (`env` is
+    // empty) and no credential the server's own login holds (gcloud).
+    let mut params = json!({"model":model,"max_tokens":16,"weight":1,"use_environment_credentials":allow_environment});
     for name in ["api_key", "api_base"] {
         if let Some(value) = request.get(name) {
             params[name] = value.clone();

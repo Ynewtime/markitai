@@ -339,7 +339,7 @@ also exposes optional `rerun_failure`: `operation` (`retry` or `enhance`),
 `error_code`, `error` and RFC3339 `failed_at`. Its status, output, original finish
 time and price still describe the retained result; this field describes the
 latest failed operation. It is available even when no model usage was recorded.
-The workbench's inspector shows the failure above the retained result's facts
+The workbench's conversion window shows the failure above the retained result's facts
 and keeps preview, download and retry available, with the service's full wording
 behind Details.
 New admission or successful completion clears the operation failure.
@@ -532,7 +532,11 @@ address keeps its text but not its userinfo or the value of a secret query or
 fragment parameter (`https://…@host/v1?token=…`); no settings route returns
 either. An update without `api_key` keeps the saved key, and an `api_base` sent
 back exactly as shown keeps the saved address; any other masked value is
-refused. The browser workbench never stores credentials.
+refused. The browser workbench never stores credentials. The server's own keys
+never go to an address a settings caller names: a connection saved without a
+key stores the placeholder `markitai-no-key` and uses no environment
+credential, and a keyed connection cannot be made keyless at another host (see
+[service settings](service-settings.md#credentials-and-partial-updates)).
 
 Host validation accepts localhost, IP literals, and explicit `--allowed-host`
 entries. A state-changing request with an Origin must match the request Host

@@ -389,6 +389,9 @@ model `google/<model>` unless the name has its publisher), and Claude models
   `gcloud auth application-default print-access-token`. A service account
   signs a token request (RS256 JWT); user credentials use their refresh token.
   Access tokens are cached in the process until a minute before they expire.
+  All of these are the server's own, so a deployment that may not use the
+  environment's credentials (`use_environment_credentials: false`, or the
+  `markitai-no-key` placeholder) is refused rather than sent the gcloud login.
 - Project: `VERTEXAI_PROJECT`, `VERTEX_PROJECT`, `GOOGLE_CLOUD_PROJECT`, or the
   credentials' project. Location: `VERTEXAI_LOCATION`, `VERTEX_LOCATION`, else
   `us-central1`; `global` uses `aiplatform.googleapis.com`. `api_base` replaces
@@ -441,8 +444,14 @@ Deployment `api_key` and `api_base` take precedence. A saved provider selected
 by `model_info.provider_id` can supply missing deployment credentials and base
 URL. Provider-specific environment variables then supply missing values: the
 key variables above, and `<PREFIX>_API_BASE` for the built-in providers
-(`OPENAI_API_BASE`, then `OPENAI_BASE_URL`, for OpenAI). Explicit missing
-environment references do not fall through to other credentials. Azure requires `api_version` or
+(`OPENAI_API_BASE`, then `OPENAI_BASE_URL`, for OpenAI), so an entry you write
+without `api_key` sends that key variable to whatever `api_base` it names.
+Explicit missing environment references do not fall through to other
+credentials. An entry whose key is `markitai-no-key` (what the `serve` settings
+page saves for a connection without a key at an address, see
+[service settings](service-settings.md#credentials-and-partial-updates)) sends
+that word and never reads a key, endpoint or cloud credential from the
+environment; nor does one with `use_environment_credentials: false`. Azure requires `api_version` or
 `AZURE_API_VERSION`. Endpoint construction preserves query parameters and
 encodes the Azure deployment name as one URL segment.
 

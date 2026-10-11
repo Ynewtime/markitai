@@ -673,10 +673,18 @@ export function ModelsSettings({
         <button type="button" class="btn btn-ghost" onClick={backToProviders}>
           {t.cancel}
         </button>
-        {picking && (
+        {picking ? (
           <button type="button" class="btn btn-primary" disabled={addBusy || (!selected.size && !dropped.size)} onClick={() => void addSelected()}>
             {addBusy ? t.saving : t.save}
           </button>
+        ) : (
+          !manualOnly &&
+          discovery === null &&
+          !autoLoads && (
+            <button type="button" class="btn btn-primary" disabled={discovering || !canLoad} onClick={() => void load(false)}>
+              {discovering ? t.loading : t.loadModels}
+            </button>
+          )
         )}
       </div>
     );
@@ -947,12 +955,10 @@ export function ModelsSettings({
                         </p>
                       )}
                     </div>
+                    {/* Load models is the page's primary action, in the pinned bar with Save; once a
+                        catalogue is there, reloading it is this icon. */}
                     {!manualOnly &&
-                      (discovery === null && !autoLoads ? (
-                        <button type="button" class="btn btn-primary" disabled={discovering || !canLoad} onClick={() => void load(false)}>
-                          {discovering ? t.loading : t.loadModels}
-                        </button>
-                      ) : (
+                      (discovery !== null || autoLoads) && (
                         <button
                           type="button"
                           class="icon-btn"
@@ -964,7 +970,7 @@ export function ModelsSettings({
                         >
                           {discovering ? <span class="spinner" aria-hidden="true" /> : <Icon name="ArrowCounterClockwise" size={15} />}
                         </button>
-                      ))}
+                      )}
                   </div>
                   {(showsKey || baseOptional) && (
                     // The key and the address side by side, on the same grid as the model ID and routing below.

@@ -27,9 +27,10 @@ export const en = {
   options: "Options",
   cliAria: "CLI command",
   browse: "Upload",
-  uploadMore: "More upload choices",
+  newConversion: "New conversion",
   uploadFiles: "Upload files",
   folderAria: "Upload a folder",
+  folderShort: "Folder",
   sourceActions: "Conversion actions",
   dropToConvert: "Drop to convert",
   copy: "Copy",
@@ -167,7 +168,6 @@ export const en = {
   itemsAria: "Converted items",
   baseTag: "Base",
   llmTag: "LLM",
-  downloadMd: "Download .md",
   downloadFile: (name: string) => `Download ${name}`,
   retryAria: (name: string) => `Retry ${name}`,
   retryFailed: "Retry failed",
@@ -447,7 +447,6 @@ export const en = {
 
   // convert view
   recentTitle: "Recent",
-  allConversions: "All conversions",
   failedCount: (n: number) => `${n} failed`,
 
   // conversions view
@@ -503,6 +502,7 @@ export const en = {
 
   // inspector
   overviewTitle: "All conversions",
+  overviewLink: "Summary",
   overviewEmpty: "Converted files and pages appear here.",
   selectHint: "Select a conversion to see its details.",
   preview: "Preview",
@@ -569,7 +569,6 @@ export const en = {
   showItem: "Show item",
   showItems: "Show items",
   resultStart: "Start of the result",
-  openPreview: "Open the preview",
   failedHeading: (n: number) => (n === 1 ? "1 failed" : `${n} failed`),
   stoppedCount: (n: number) => (n === 1 ? "1 item was stopped before conversion." : `${n} items were stopped before conversion.`),
   deleteSubmissionAria: (label: string) => `Permanently delete ${label}`,
@@ -579,11 +578,12 @@ export const en = {
   previousItem: "Previous item",
   nextItem: "Next item",
   positionOf: (index: number, total: number) => `${index} of ${total}`,
-  closePreview: "Close preview",
-  fullWidth: "Full width",
-  dockPreview: "Beside the list",
   moreActions: "More actions",
   openPage: "Open the page",
+  peekDetails: "Details",
+  peekViews: "Views",
+  peekDock: "Dock beside the list",
+  peekUndock: "Open as a window",
   keysMove: "previous / next item",
   keysClose: "close",
   tableCapped: (shown: string, total: string) => `Showing the first ${shown} of ${total} rows so the preview stays fast. The download has every row.`,

@@ -93,16 +93,26 @@ fn keyed_deployment(data: &Data) -> bool {
                         .or_else(|| linked.and_then(|p| p.get(field).filter(|v| nonempty(v))))
                 };
                 let usable = |value: &Value| resolved(value).is_some_and(|value| !value.is_empty());
+                // As conversion resolves it: the deployment's own choice, else its
+                // connection's; a connection saved through this API without a key
+                // never takes the environment's.
+                let environment = entry["litellm_params"]
+                    .get("use_environment_credentials")
+                    .filter(|value| !value.is_null())
+                    .or_else(|| linked.and_then(|p| p.get("use_environment_credentials")))
+                    .and_then(Value::as_bool)
+                    != Some(false);
                 // A local server needs no key, only an address (vLLM has no default one).
                 if known.key_optional {
                     return known.default_base.is_some()
                         || explicit("api_base").is_some_and(usable)
-                        || known.base_variables.iter().any(|variable| set(variable));
+                        || environment
+                            && known.base_variables.iter().any(|variable| set(variable));
                 }
                 // An explicit key, even an unresolvable reference, is the only candidate.
                 match explicit("api_key") {
                     Some(value) => usable(value),
-                    None => known.key_variables.iter().any(|variable| set(variable)),
+                    None => environment && known.key_variables.iter().any(|variable| set(variable)),
                 }
             })
         })
@@ -110,7 +120,7 @@ fn keyed_deployment(data: &Data) -> bool {
 fn deployment(entry: &Value, index: usize, persisted: bool) -> Value {
     let params = &entry["litellm_params"];
     let local = model::local(&model::provider(entry));
-    json!({"deployment_id":identity::id(entry,index),"routing_group":entry["model_name"].as_str().unwrap_or("default"),"model":params["model"],"weight":params["weight"].as_u64().unwrap_or(1),"api_key_configured":!local&&nonempty(&params["api_key"]),"api_base_configured":!local&&nonempty(&params["api_base"]),"api_base":if local{None}else{origin(params["api_base"].as_str())},"persisted":persisted})
+    json!({"deployment_id":identity::id(entry,index),"routing_group":entry["model_name"].as_str().unwrap_or("default"),"model":params["model"],"weight":params["weight"].as_u64().unwrap_or(1),"api_key_configured":!local&&model::real_key(params["api_key"].as_str()),"api_base_configured":!local&&nonempty(&params["api_base"]),"api_base":if local{None}else{origin(params["api_base"].as_str())},"persisted":persisted})
 }
 pub(super) fn payload(data: &Data, source: &SettingsSource) -> Value {
     let path = std::env::var_os("HOME")
@@ -177,7 +187,7 @@ pub(super) fn providers(data: &Data) -> Value {
             .iter()
             .filter(|entry| model::linked(entry) == Some(id))
             .count();
-        result.push(json!({"id":format!("provider:{id}"),"provider_id":id,"provider":name,"label":provider_label(name),"kind":"configured","status":if !saved["api_key"].is_null()||!saved["api_base"].is_null(){"ready"}else{"needs_credentials"},"source":"config","api_key_configured":nonempty(&saved["api_key"]),"api_base_configured":nonempty(&saved["api_base"]),"api_base":origin(saved["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(name))),"model_count":count,"supports_discovery":!model::local(name)}));
+        result.push(json!({"id":format!("provider:{id}"),"provider_id":id,"provider":name,"label":provider_label(name),"kind":"configured","status":if !saved["api_key"].is_null()||!saved["api_base"].is_null(){"ready"}else{"needs_credentials"},"source":"config","api_key_configured":model::real_key(saved["api_key"].as_str()),"api_base_configured":nonempty(&saved["api_base"]),"api_base":origin(saved["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(name))),"model_count":count,"supports_discovery":!model::local(name)}));
     }
     let mut seen = HashSet::new();
     for (index, entry) in data.models.iter().enumerate() {
@@ -207,7 +217,7 @@ pub(super) fn providers(data: &Data) -> Value {
             })
             .count();
         let id = identity::id(entry, index);
-        result.push(json!({"id":format!("provider:legacy:{id}"),"provider_id":format!("legacy:{id}"),"deployment_id":id,"provider":name,"label":provider_label(&name),"kind":"configured","status":if params["weight"].as_u64()==Some(0){"disabled"}else{"ready"},"source":"config","api_key_configured":nonempty(&params["api_key"]),"api_base_configured":nonempty(&params["api_base"]),"api_base":origin(params["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(&name))),"model_count":count,"supports_discovery":true}));
+        result.push(json!({"id":format!("provider:legacy:{id}"),"provider_id":format!("legacy:{id}"),"deployment_id":id,"provider":name,"label":provider_label(&name),"kind":"configured","status":if params["weight"].as_u64()==Some(0){"disabled"}else{"ready"},"source":"config","api_key_configured":model::real_key(params["api_key"].as_str()),"api_base_configured":nonempty(&params["api_base"]),"api_base":origin(params["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(&name))),"model_count":count,"supports_discovery":true}));
     }
     for card in &mut result {
         let name = card["provider"].as_str().unwrap_or_default().to_owned();

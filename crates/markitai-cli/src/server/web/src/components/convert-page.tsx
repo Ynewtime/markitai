@@ -17,7 +17,6 @@ export function ConvertPage({
   blocked,
   labelWords,
   onOpen,
-  onAll,
 }: {
   t: Dict;
   locale: Locale;
@@ -27,7 +26,6 @@ export function ConvertPage({
   blocked: PanelState | null;
   labelWords: LabelWords;
   onOpen: (key: string) => void;
-  onAll: () => void;
 }) {
   return (
     <div class="page convert">
@@ -45,17 +43,6 @@ export function ConvertPage({
         <section class="recent" aria-labelledby="recent-title">
           <div class="recent-head">
             <h2 id="recent-title">{t.recentTitle}</h2>
-            <a
-              href="/jobs"
-              class="text-link"
-              onClick={(event) => {
-                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
-                event.preventDefault();
-                onAll();
-              }}
-            >
-              {t.allConversions}
-            </a>
           </div>
           <ul class="recent-list">
             {recent.map((submission) => {

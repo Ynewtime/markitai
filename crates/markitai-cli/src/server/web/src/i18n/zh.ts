@@ -22,9 +22,10 @@ export const zh: Dict = {
   options: "选项",
   cliAria: "CLI 命令",
   browse: "上传",
-  uploadMore: "更多上传方式",
+  newConversion: "新建转换",
   uploadFiles: "上传文件",
   folderAria: "上传文件夹",
+  folderShort: "文件夹",
   sourceActions: "转换操作",
   dropToConvert: "松手开始转换",
   copy: "复制",
@@ -154,7 +155,6 @@ export const zh: Dict = {
   itemsAria: "转换结果",
   baseTag: "Base",
   llmTag: "LLM",
-  downloadMd: "下载 .md",
   downloadFile: (name) => `下载 ${name}`,
   retryAria: (name) => `重试 ${name}`,
   retryFailed: "重试失败",
@@ -414,7 +414,6 @@ export const zh: Dict = {
 
   // convert view
   recentTitle: "最近",
-  allConversions: "全部转换",
   failedCount: (n: number) => `${n} 个失败`,
 
   // conversions view
@@ -470,6 +469,7 @@ export const zh: Dict = {
 
   // inspector
   overviewTitle: "全部转换",
+  overviewLink: "汇总",
   overviewEmpty: "转换的文件和网页会显示在这里。",
   selectHint: "选择一项转换以查看详情。",
   preview: "预览",
@@ -536,7 +536,6 @@ export const zh: Dict = {
   showItem: "查看该项",
   showItems: "查看这些项",
   resultStart: "结果开头",
-  openPreview: "打开预览",
   failedHeading: (n: number) => `${n} 个失败`,
   stoppedCount: (n: number) => `${n} 项在转换前已停止。`,
   deleteSubmissionAria: (label: string) => `永久删除 ${label}`,
@@ -546,11 +545,12 @@ export const zh: Dict = {
   previousItem: "上一项",
   nextItem: "下一项",
   positionOf: (index: number, total: number) => `${index}/${total}`,
-  closePreview: "关闭预览",
-  fullWidth: "全宽",
-  dockPreview: "停靠在列表旁",
   moreActions: "更多操作",
   openPage: "打开网页",
+  peekDetails: "详情",
+  peekViews: "视图",
+  peekDock: "停靠在列表旁",
+  peekUndock: "以窗口打开",
   keysMove: "上一项 / 下一项",
   keysClose: "关闭",
   tableCapped: (shown: string, total: string) => `为保持预览流畅，仅显示前 ${shown} 行（共 ${total} 行）。下载的文件包含全部行。`,

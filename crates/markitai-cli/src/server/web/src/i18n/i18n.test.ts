@@ -280,6 +280,8 @@ test("unsafe portable OCR paths require inspection, never blind automatic repair
 });
 
 test("API refusals are read by reason, then structured code, then status code", () => {
+  const keyless = "a connection with a key cannot become one without a key at another address; add a new connection for that server instead";
+  assert.deepEqual(apiErrorText("en", { detail: keyless, code: "invalid_request", reason: "invalid_settings_request" }), { text: MESSAGES_EN.errKeylessMove, detail: keyless });
   assert.deepEqual(apiErrorText("en", { detail: "file exceeds upload limit", code: "payload_too_large", reason: "file_too_large" }), {
     text: MESSAGES_EN.errFileTooLarge,
     detail: "file exceeds upload limit",

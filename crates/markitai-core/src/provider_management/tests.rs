@@ -650,3 +650,26 @@ fn discovery_environment_endpoints_follow_all_provider_catalog_entries() {
     assert_eq!(discovery_base_variable("openai", &HashMap::new()), None);
     assert_eq!(discovery_base_variable("unknown", &env), None);
 }
+
+#[test]
+fn discovery_sends_no_key_for_the_keyless_placeholder() {
+    assert!(real_key(Some("sk-real")) && real_key(Some("env:OPENAI_API_KEY")));
+    assert!(!real_key(Some(NO_KEY)) && !real_key(Some("")) && !real_key(None));
+    for provider in ["openai", "anthropic", "custom", "lm_studio"] {
+        let server = Mock::new(|_| reply(200, r#"{"data":[{"id":"listed"}]}"#));
+        // Both modes: the placeholder is an explicit value, so no variable is
+        // read in its place, and it is not sent either.
+        let request = json!({"provider":provider,"api_base":format!("{}/v1",server.base),"api_key":NO_KEY,"refresh":true});
+        discover(&request).unwrap();
+        discover_explicit(&request).unwrap();
+        let requests = server.requests();
+        assert_eq!(requests.len(), 2, "{provider}");
+        for request in requests {
+            let lower = request.to_ascii_lowercase();
+            assert!(
+                !lower.contains("authorization:") && !lower.contains("x-api-key:"),
+                "{provider}: {request}"
+            );
+        }
+    }
+}

@@ -88,6 +88,25 @@ later conversions and restarts preserve that boundary. This internal setting is
 not accepted in HTTP requests; old server configuration retains its environment
 fallback unless the flag is explicitly false.
 
+A deployment or connection saved here without a key while it names an address
+(a local server, a gateway, an OpenAI-compatible endpoint) stores
+`"api_key": "markitai-no-key"`, the placeholder Python markitai 1.2.1 stores too,
+so neither backend sends the server's own key variable (`OPENAI_API_KEY`,
+`LM_STUDIO_API_KEY`, ...) to an address a settings caller chose. It is no
+credential: conversions and connection tests send it as written, which a server
+that checks no key (LM Studio, vLLM, llama.cpp, Ollama) accepts, model discovery
+sends no key, and an entry holding it never uses the environment's credentials
+(Bedrock's and Vertex AI's included). Views show it as no key (`api_key_masked`
+null, `api_key_configured` false), and such an endpoint counts as routable. A
+draft connection test at an address the caller names uses it too. Changing a
+connection or deployment that has a key into one without a key at another host
+in one request is 422 `invalid_settings_request` with the detail `a connection
+with a key cannot become one without a key at another address; add a new
+connection for that server instead`; clearing the key in place, or together with
+the address (back to the provider's own endpoint), is allowed. Entries written by
+hand in the configuration file are never given the placeholder: without
+`api_key` they use the provider's key variable wherever their `api_base` points.
+
 The workbench leaves the key input blank when editing a saved connection. Blank
 means keep; the row's Remove action deletes it. Stored values and
 references are never copied into editable key inputs or echoed in updates.

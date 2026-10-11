@@ -629,3 +629,53 @@ fn browser_literal_provider_mode_survives_configuration_reload() {
     invalid["llm"]["providers"][0]["use_environment_credentials"] = json!("not-a-boolean");
     assert!(config::normalize(&invalid).is_err());
 }
+
+#[test]
+fn the_settings_keyless_placeholder_never_takes_the_environment() {
+    use crate::provider_management::NO_KEY;
+    let env = [
+        ("OPENAI_API_KEY", "authored-server-canary"),
+        ("OPENAI_BASE_URL", "http://127.0.0.1:9/stolen"),
+        ("LM_STUDIO_API_KEY", "authored-server-canary"),
+        ("GROQ_API_KEY", "authored-server-canary"),
+    ];
+    // Written by either backend's settings API: Python's has no flag, Rust's
+    // has one; the placeholder alone decides.
+    for params in [
+        json!({"model":"openai/x","api_key":NO_KEY,"api_base":"http://127.0.0.1:9911/v1"}),
+        json!({"model":"groq/x","api_key":NO_KEY,"api_base":"http://127.0.0.1:9911/v1","use_environment_credentials":true}),
+        json!({"model":"lm_studio/x","api_key":NO_KEY,"api_base":"http://127.0.0.1:9911/v1","use_environment_credentials":false}),
+    ] {
+        let entry = resolved(params.clone(), &env).unwrap();
+        // Sent as written: a server that checks no key takes it.
+        assert_eq!(entry.key.as_deref(), Some(NO_KEY), "{params}");
+        assert!(
+            entry.endpoint.starts_with("http://127.0.0.1:9911/"),
+            "{params}"
+        );
+    }
+    // Without an address it is not sent to the environment's endpoint either.
+    let entry = resolved(json!({"model":"openai/x","api_key":NO_KEY}), &env).unwrap();
+    assert!(
+        entry.endpoint.starts_with("https://api.openai.com/"),
+        "{}",
+        entry.endpoint
+    );
+    // On a saved connection, as on the deployment.
+    let cfg = config::normalize(&json!({"llm":{
+        "providers":[{"id":"c","provider":"openai","api_key":NO_KEY,"api_base":"http://127.0.0.1:9911/v1"}],
+        "model_list":[{"model_name":"default","litellm_params":{"model":"openai/x"},"model_info":{"provider_id":"c"}}]}}))
+    .unwrap();
+    let entries = deployments(&cfg, &vars(&env)).unwrap();
+    assert_eq!(entries[0].key.as_deref(), Some(NO_KEY));
+    // A keyless endpoint saved this way can be routed, as in Python.
+    assert!(capabilities(&cfg, &vars(&env)).routable);
+    // A hand-written entry without a key keeps the environment's, at its own
+    // address: the operator's choice.
+    let hand = resolved(
+        json!({"model":"openai/x","api_base":"http://127.0.0.1:9911/v1"}),
+        &env,
+    )
+    .unwrap();
+    assert_eq!(hand.key.as_deref(), Some("authored-server-canary"));
+}

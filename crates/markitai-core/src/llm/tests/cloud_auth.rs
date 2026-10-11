@@ -427,3 +427,53 @@ fn missing_cloud_settings_name_what_is_needed() {
     .unwrap();
     assert!(!format!("{entries:?}").contains("very-secret"));
 }
+
+#[test]
+fn cloud_connections_that_may_not_use_the_environment_take_none_of_its_credentials() {
+    use crate::provider_management::NO_KEY;
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("credentials.json");
+    std::fs::write(
+        &file,
+        json!({"type":"authorized_user","client_id":"c","client_secret":"s","refresh_token":"r"})
+            .to_string(),
+    )
+    .unwrap();
+    let path = file.to_str().unwrap().to_owned();
+    let env = vars(&[
+        ("AWS_ACCESS_KEY_ID", "AKIDSERVERCANARY"),
+        ("AWS_SECRET_ACCESS_KEY", "server-canary-secret"),
+        ("AWS_BEARER_TOKEN_BEDROCK", "server-canary-token"),
+        ("GOOGLE_APPLICATION_CREDENTIALS", &path),
+        ("VERTEXAI_PROJECT", "p"),
+    ]);
+    // Vertex AI has only the server's own credentials (variables, files, the
+    // gcloud login): none for a connection that may not use them.
+    for params in [
+        json!({"model":"vertex_ai/gemini-2.5-flash","api_base":"http://127.0.0.1:9/v","use_environment_credentials":false}),
+        json!({"model":"vertex_ai/gemini-2.5-flash","api_base":"http://127.0.0.1:9/v","api_key":NO_KEY}),
+    ] {
+        let Err(Error::Config(message)) = deployments(&config(params.clone()), &env) else {
+            panic!("{params}: the server's Google credentials must not be used");
+        };
+        assert!(message.contains("may not use"), "{message}");
+    }
+    // Bedrock sends the placeholder as written, never the server's AWS keys.
+    let (base, worker) = serve(1, |_| converse_answer("Hello"));
+    let cfg = config(
+        json!({"model":"bedrock/converse/us.amazon.nova-lite-v1:0","api_base":base,"api_key":NO_KEY}),
+    );
+    let (text, _) = run(&plain(), &cfg, &env, &mut |_| {}).unwrap();
+    assert_eq!(text, "Hello");
+    let seen = worker.join().unwrap();
+    assert_eq!(
+        seen[0].header("authorization").as_deref(),
+        Some("Bearer markitai-no-key")
+    );
+    assert!(seen[0].header("x-amz-date").is_none());
+    // Without a key and without the environment, Bedrock has nothing to send.
+    let cfg = config(
+        json!({"model":"bedrock/converse/us.amazon.nova-lite-v1:0","api_base":"http://127.0.0.1:9","use_environment_credentials":false}),
+    );
+    assert!(matches!(deployments(&cfg, &env), Err(Error::Config(_))));
+}
