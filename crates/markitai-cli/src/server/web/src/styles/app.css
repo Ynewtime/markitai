@@ -876,20 +876,23 @@ main:focus {
   border-radius: var(--r-sm);
   overflow: hidden;
 }
-.chip {
+/* a segmented group: one outline with the outer corners rounded, square inner
+   edges, one hairline between segments, the chosen segment filled */
+.filter-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 30px;
   padding: 0 12px;
+  border-radius: 0;
   font-weight: 500;
   color: var(--text-2);
   transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
 }
-.chip + .chip {
+.filter-chip + .filter-chip {
   border-left: 1px solid var(--hairline-strong);
 }
-.chip.is-on {
+.filter-chip.is-on {
   background: var(--sel-strong);
   font-weight: 600;
   color: var(--text-1);
@@ -900,7 +903,7 @@ main:focus {
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
-.chip.is-on .chip-count {
+.filter-chip.is-on .chip-count {
   color: var(--text-2);
 }
 .split {
@@ -2138,8 +2141,10 @@ kbd {
 .tool-group {
   display: flex;
   flex: none;
-  align-items: center;
-  gap: 6px;
+  align-items: stretch;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-xs);
+  background: var(--surface);
 }
 .tool {
   position: relative;
@@ -2152,19 +2157,32 @@ kbd {
   padding: 0 10px;
   border-radius: var(--r-xs);
   background: transparent;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-2);
   white-space: nowrap;
   transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
 }
+/* inside the group the segments are square; the group's outline has the corners */
 .tool-group .tool {
-  background: color-mix(in srgb, var(--strip) 55%, transparent);
+  height: 34px;
+  border-radius: 0;
+}
+.tool-group > :first-child,
+.tool-group > :first-child > .tool:first-child {
+  border-radius: var(--r-xs) 0 0 var(--r-xs);
+}
+.tool-group > :last-child,
+.tool-group > :last-child > .upload-more {
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+}
+.tool-group > * + *,
+.upload-split > .tool + .tool {
+  border-left: 1px solid var(--hairline-strong);
 }
 .tool-group .tool.is-on {
-  background: var(--hairline);
-  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  background: var(--sel-strong);
   color: var(--text-1);
 }
 .tool:not(:disabled):active {
@@ -2183,18 +2201,13 @@ kbd {
 .upload-split {
   position: relative;
   display: inline-flex;
-  gap: 1px;
-}
-.upload-split .upload-main {
-  border-radius: var(--r-xs) 0 0 var(--r-xs);
 }
 .upload-split .upload-more {
   min-width: 28px;
   padding: 0 7px;
-  border-radius: 0 var(--r-xs) var(--r-xs) 0;
 }
 .upload-split.is-open .upload-more {
-  background: var(--strip);
+  background: var(--sel-strong);
   color: var(--text-1);
 }
 .upload-menu {
@@ -2491,7 +2504,7 @@ kbd {
 .seg button {
   position: relative;
   padding: 0 10px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-2);
@@ -2632,9 +2645,9 @@ kbd {
   padding: 0 12px;
   border: 1px solid var(--t-badge);
   border-radius: 999px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--t-badge-text);
   transition: border-color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
 }
@@ -3049,7 +3062,7 @@ kbd {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--text-3);
 }
@@ -3128,7 +3141,7 @@ kbd {
   height: 24px;
   padding: 0 8px;
   border-radius: var(--r-sm);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
   color: var(--text-2);
   white-space: nowrap;
@@ -3165,7 +3178,7 @@ kbd {
   padding: 0 7px;
   border: 1px solid var(--hairline-strong);
   border-radius: 999px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -3440,7 +3453,7 @@ kbd {
   width: 100%;
 }
 .disclosure summary {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--text-2);
   cursor: pointer;
@@ -3506,7 +3519,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--text-2);
   white-space: nowrap;
@@ -4177,6 +4190,7 @@ kbd {
   }
   .seg button:not(:disabled):not(.is-on):hover,
   .chip:not(.is-on):hover,
+  .filter-chip:not(.is-on):hover,
   .choice button:not(.is-on):hover {
     background: var(--strip);
     color: var(--text-1);
@@ -4226,6 +4240,7 @@ kbd {
 .tab:focus-visible,
 .seg button:focus-visible,
 .chip:focus-visible,
+.filter-chip:focus-visible,
 .choice button:focus-visible,
 .switch:focus-visible,
 .icon-btn:focus-visible,
@@ -4422,7 +4437,8 @@ kbd {
     width: 100%;
     height: 40px;
   }
-  .chip {
+  .chip,
+  .filter-chip {
     height: 38px;
   }
   .row {
@@ -4438,12 +4454,10 @@ kbd {
     font-size: var(--text-lg);
   }
 
-  .tool-group {
-    gap: 2px;
-  }
-  .tool {
+  .tool,
+  .tool-group .tool {
     min-width: 44px;
-    height: 44px;
+    height: 42px;
     padding-inline: 8px;
   }
   .upload-item {

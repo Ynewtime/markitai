@@ -191,7 +191,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
           </label>
           <div class="chips" role="group" aria-label={t.filterStatusAria}>
             {FILTERS.map((value) => (
-              <button key={value} type="button" class={filter === value ? "chip is-on" : "chip"} aria-pressed={filter === value} onClick={() => props.onFilter(value)}>
+              <button key={value} type="button" class={filter === value ? "filter-chip is-on" : "filter-chip"} aria-pressed={filter === value} onClick={() => props.onFilter(value)}>
                 {filterLabels[value]}
                 <span class="chip-count">{counters[value]}</span>
               </button>
