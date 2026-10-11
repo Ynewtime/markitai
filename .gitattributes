@@ -1,0 +1,5 @@
+# The vendored web workbench is checked against its manifest's SHA-256
+# digests, so a checkout must keep its bytes: Windows' core.autocrlf turned
+# LF into CRLF in index.html, the scripts and the licences, and the bundle
+# failed its own check there.
+packages/markitai/src/markitai/serve/workbench/** -text
