@@ -144,8 +144,8 @@ redirected entries and run the installed aliases. Report complete archive size
 separately from a single executable.
 
 CLI, FFI and language packages carry project and upstream attribution,
-including `licenses/hayro/`, `licenses/paddleocr/`, pricing and Codex catalog
-notices. CLI archives also include `vendor/web/` attribution and the explicit
+including `licenses/hayro/`, `licenses/paddleocr/`, pricing, Codex catalog and
+Tailwind palette (`licenses/tailwind/`) notices. CLI archives also include `vendor/web/` attribution and the explicit
 public Markdown whitelist in `scripts/cli_documentation.py`. Models and browser
 runtimes are not included. The drivers verify source, archive and installed
 notice bytes rather than trusting a filename alone.

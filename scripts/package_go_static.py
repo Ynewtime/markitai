@@ -28,6 +28,7 @@ from typing import NamedTuple
 from license_overlay import stage_overlay
 from pricing_attribution import stage_pricing_files
 from codex_attribution import stage_codex_files
+from tailwind_attribution import stage_tailwind_files
 from portable_attribution import stage_portable_files
 
 MAX_NOTICE = 16 * 1024 * 1024
@@ -629,11 +630,14 @@ def main(argv=None):
         record["pricing_attribution"] = pricing_record
         codex_record = stage_codex_files(root, module)
         record["codex_attribution"] = codex_record
+        tailwind_record = stage_tailwind_files(root, module)
+        record["tailwind_attribution"] = tailwind_record
         portable_record = stage_portable_files(root, module)
         record["portable_attribution"] = portable_record
         license_record = bundle_licenses(json.loads(inputs["metadata"].read_text()), module / "licenses", root, sysroot)
         license_record["pricing_attribution"] = pricing_record
         license_record["codex_attribution"] = codex_record
+        license_record["tailwind_attribution"] = tailwind_record
         license_record["portable_attribution"] = portable_record
         json_file(module / "licenses.json", license_record)
         record["unresolved_licenses"] = license_record["unresolved"]

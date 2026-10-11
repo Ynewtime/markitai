@@ -9,9 +9,14 @@ content do not become code. It never evaluates scripts or renders a browser.
 Supported structural families include Chroma/Pygments/Rouge number columns and
 inline line numbers, CodeMirror content, React syntax highlighter numbers,
 Rehype/Shiki line spans, Mintlify containers, Expressive Code rows, Hexo `br`
-rows, and a `code` wrapper around a `pre`. Language information comes from code
+rows, a `code` wrapper around a `pre`, and GitHub's embedded file excerpt (a
+permalink to lines of a file in an issue or comment: a table with a
+`td.blob-code` cell per line, whose `td.blob-num` numbers are left out, as is
+the indent every line shares). Language information comes from code
 attributes, nearby dedicated highlighter containers, or a recognized language
-label in an editor header. The reader does not infer a programming language
+label in an editor header beside a copy button (common language names,
+`markdown`, `diff`, `dockerfile`, `powershell` and `graphql` among them, as X
+Articles label their blocks). The reader does not infer a programming language
 from code tokens.
 
 The attributes include `data-language`, `data-lang`, `language`, `lang`,
@@ -31,7 +36,10 @@ label naming another language is the page's text.
 
 Line containers insert a separator only when their structure requires one and
 neither their payload nor the intervening source already supplied it. Explicit
-newlines, indentation, tabs and blank rows are retained. CodeMirror's empty-line
+newlines, indentation, tabs and blank rows are retained. A line break that opens
+the code is the markup's, not a blank first line: the parser drops it right
+after `<pre>`, and one written after `<code>` or inside a highlighter's first
+span is dropped as well (a second one stays). CodeMirror's empty-line
 cursor placeholder is treated as an empty row. Numeric literals are not line
 numbers by themselves: a gutter requires an identified class, or a paired flex
 row with a distinct nonselectable/aligned number cell.

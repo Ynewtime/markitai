@@ -6,6 +6,7 @@ mod code;
 mod facts;
 mod fallbacks;
 mod furniture;
+mod github;
 mod hacker_news;
 mod mail;
 mod raw_math;
@@ -13,6 +14,7 @@ mod sites;
 mod social;
 mod srcset;
 mod stream;
+mod svg;
 
 pub(crate) use social::canonical_status_url;
 
@@ -142,6 +144,9 @@ struct Landmarks<'a> {
     /// Hacker News: whether there are a `#hnmain` and a `tr.athing, tr.comtr`.
     hn_main: bool,
     hn_rows: bool,
+    /// GitHub: the issue viewer's opening post,
+    /// `[data-testid="issue-viewer-issue-container"]`.
+    issue: Option<ElementRef<'a>>,
 }
 
 impl<'a> Landmarks<'a> {
@@ -161,6 +166,7 @@ impl<'a> Landmarks<'a> {
             media: Vec::new(),
             hn_main: false,
             hn_rows: false,
+            issue: None,
         };
         let classes = |element: ElementRef<'_>, wanted: &[&str]| {
             wanted
@@ -227,6 +233,11 @@ impl<'a> Landmarks<'a> {
                 found.permalink = Some(element);
             }
             found.hn_main |= value.attribute("id") == Some("hnmain");
+            if found.issue.is_none()
+                && value.attribute("data-testid") == Some("issue-viewer-issue-container")
+            {
+                found.issue = Some(element);
+            }
         }
         found
     }
@@ -536,6 +547,9 @@ fn escaped(value: &str, output: &mut String) {
 
 /// The element htmd turns into a soft line break.
 const SOFT_BREAK: &str = "markitai-soft-break";
+
+/// The element htmd turns into a kept drawing's sanitized SVG markup.
+const SVG: &str = "markitai-svg";
 
 /// Where the cleaner writes the sanitized page for htmd: start tags with their
 /// attributes, end tags and text, which stand for the markup `<name a="v">`,
@@ -2123,6 +2137,13 @@ impl<'a> Footnotes<'a> {
         prune_chrome: bool,
         facts: &'a Facts,
     ) -> Self {
+        // A saved page's own address stands for the missing one: links resolve
+        // against it, and it names the page's host.
+        let saved = if prune_chrome && base.is_none() {
+            saved_page_base(document)
+        } else {
+            None
+        };
         let mut notes = Self {
             facts,
             prune_chrome,
@@ -2140,8 +2161,20 @@ impl<'a> Footnotes<'a> {
                 HashSet::new()
             },
             furniture: if prune_chrome {
-                furniture::beside_body(facts, root)
+                let title = document
+                    .child_elements()
+                    .find(|child| child.value().name() == "head")
+                    .and_then(|head| {
+                        head.child_elements()
+                            .find(|child| child.value().name() == "title")
+                    })
+                    .map(plain);
+                furniture::beside_body(facts, root, title.as_deref())
                     .into_iter()
+                    .chain(furniture::trailing_picks(
+                        root,
+                        base.or(saved.as_ref().map(|(url, _)| url)),
+                    ))
                     .chain(mail::quoted_history(root))
                     .map(element_key)
                     .collect()
@@ -2152,9 +2185,7 @@ impl<'a> Footnotes<'a> {
             block_links: HashSet::new(),
             link_targets: HashMap::new(),
         };
-        if prune_chrome && base.is_none() {
-            notes.link_base = saved_page_base(document);
-        }
+        notes.link_base = saved;
         // Links around blocks, reference candidates and inline popovers, in
         // one walk over the region.
         let mut references = Vec::new();
@@ -2175,6 +2206,8 @@ impl<'a> Footnotes<'a> {
                     "footnote-container",
                     "sidenote-container",
                     "inline-footnote",
+                    // LaTeXML (arXiv): the note's text follows its mark.
+                    "ltx_note",
                 ],
             ) {
                 inline.push(element);
@@ -2213,6 +2246,32 @@ impl<'a> Footnotes<'a> {
         // position. Only the identified content root bypasses hidden styling.
         for container in inline {
             if in_literal(container) || !visible_reference(facts, container, prune_chrome) {
+                continue;
+            }
+            if has_class(container, "ltx_note") {
+                // A LaTeXML note's content, which a style sheet shows on
+                // hover, repeats its mark (`ltx_note_mark`), its kind
+                // ("footnotemark: ") and its number before its text. A
+                // footnote or a thanks note is a footnote; a footnote mark
+                // that refers to another note's text is its mark alone.
+                let Some(content) =
+                    inside(container).find(|node| has_class(*node, "ltx_note_content"))
+                else {
+                    continue;
+                };
+                let markers: Vec<_> = inside(content)
+                    .filter(|node| {
+                        has_any_class(*node, &["ltx_note_mark", "ltx_note_type", "ltx_tag_note"])
+                    })
+                    .collect();
+                if note_has_content(content, &markers, None, 0) {
+                    notes.add(vec![content], vec![], markers, vec![container]);
+                } else {
+                    let outer = inside(container)
+                        .find(|node| has_class(*node, "ltx_note_outer"))
+                        .unwrap_or(content);
+                    notes.removed.insert(element_key(outer));
+                }
                 continue;
             }
             if let Some(content) = inside(container)
@@ -2923,6 +2982,17 @@ fn serialize_clean(
     }
     let value = element.value();
     let name = value.name();
+    // Document metadata in the body (MediaWiki's TemplateStyles `link` beside
+    // every inline template, microdata `meta`) draws nothing, and htmd, which
+    // follows CommonMark's HTML blocks, would end the paragraph at it.
+    if matches!(name, "link" | "meta" | "base") {
+        return Ok(());
+    }
+    // A paragraph that shows nothing (a spacer, a template's leftover white
+    // space) would be a line of spaces.
+    if name == "p" && blank_paragraph(element) {
+        return Ok(());
+    }
     // A label that only repeats the language of the code block after it.
     if matches!(name, "div" | "span") && code::repeats_language(element) {
         return Ok(());
@@ -2984,7 +3054,19 @@ fn serialize_clean(
                 return Ok(());
             }
             "svg" => {
-                svg_text(element, output);
+                // A chart or diagram in a block of its own is kept as a
+                // drawing; an icon or a drawing inside a line, its text.
+                match (stands_alone(element) && svg::in_block_flow(element))
+                    .then(|| svg::markup(element))
+                    .flatten()
+                {
+                    Some(markup) => {
+                        output.start(SVG);
+                        output.attribute("data-markup", &markup);
+                        output.end(SVG);
+                    }
+                    None => svg_text(element, output),
+                }
                 return Ok(());
             }
             _ => {}
@@ -3142,6 +3224,36 @@ fn serialize_clean(
         label_gap(element, output);
     }
     Ok(())
+}
+
+/// Whether a paragraph has only white space (no-break spaces too) and no
+/// picture, drawing, media, formula, control or block of its own.
+fn blank_paragraph(element: ElementRef<'_>) -> bool {
+    element
+        .text()
+        .all(|text| text.chars().all(char::is_whitespace))
+        && !inside(element).any(|node| {
+            matches!(
+                node.value().name(),
+                "img"
+                    | "picture"
+                    | "svg"
+                    | "video"
+                    | "audio"
+                    | "iframe"
+                    | "object"
+                    | "embed"
+                    | "canvas"
+                    | "math"
+                    | "input"
+                    | "hr"
+                    | "table"
+                    | "ul"
+                    | "ol"
+                    | "pre"
+                    | "blockquote"
+            )
+        })
 }
 
 /// Whether an element is text drawn for screen readers only (`visually-hidden`,
@@ -4386,6 +4498,17 @@ fn sanitized_converter() -> htmd::HtmlToMarkdown {
             },
         )
         .add_handler(
+            vec![SVG],
+            |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                // Markup rebuilt by `svg::markup`, never the page's own. A line
+                // that starts with `<div>` is an HTML block to CommonMark even
+                // with more on the line (an `<svg>` start tag would have to
+                // stand alone), so the drawing's text is not read as Markdown.
+                let markup = element.attr("data-markup")?;
+                Some(format!("\n\n<div>{markup}</div>\n\n").into())
+            },
+        )
+        .add_handler(
             vec!["markitai-soft-break"],
             |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
                 Some(soft_break(element.node).into())
@@ -5276,6 +5399,9 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     } else if let Some(page) = hacker_news::page(&document, &landmarks, base.as_ref())? {
         metadata.extend(page.metadata);
         page.markdown
+    } else if let Some(issue) = github::issue(&landmarks, base.as_ref())? {
+        metadata.extend(issue.metadata);
+        issue.markdown
     } else {
         without_repeated_blocks(render_with_footnotes(
             root,
@@ -8384,11 +8510,75 @@ map(callbackFn, thisArg)
     fn inline_svg_text_is_set_apart_by_spaces() {
         assert_eq!(
             body(
-                r#"<article><p>Intro.</p><svg width="200" height="100" viewBox="0 0 200 100"><title>Flow diagram</title><defs><text>hidden</text></defs><rect/><text x="10">Start here</text><text x="115">Finish <tspan>there</tspan></text><text><tspan x="1">Line one</tspan><tspan x="1" dy="1">Line two</tspan></text><switch><foreignObject><div>Label</div></foreignObject><text>Label</text></switch></svg>
-                <p>An <svg><title>icon</title></svg> inline.</p></article>"#
+                r#"<article><p>Intro.</p><p>Figure: <svg width="200" height="100" viewBox="0 0 200 100"><title>Flow diagram</title><defs><text>hidden</text></defs><rect/><text x="10">Start here</text><text x="115">Finish <tspan>there</tspan></text><text><tspan x="1">Line one</tspan><tspan x="1" dy="1">Line two</tspan></text><switch><foreignObject><div>Label</div></foreignObject><text>Label</text></switch></svg></p>
+                <p>An <svg><title>icon</title></svg> inline.</p><svg width="200" height="100"><title>Logo</title><path d="M0 0h9"/></svg></article>"#
             ),
-            "Intro.\n\nFlow diagram\n\nStart here Finish there Line one Line two Label\n\nAn icon inline."
+            "Intro.\n\nFigure: Flow diagram Start here Finish there Line one Line two Label\n\nAn icon inline.\n\nLogo"
         );
+    }
+
+    #[test]
+    fn latexml_notes_are_footnotes_and_footnote_marks_their_mark() {
+        // arXiv's LaTeXML notes: the content, shown on hover, repeats the mark,
+        // the note's kind and its number before its text.
+        let note = |role: &str, mark: &str, kind: &str, text: &str| {
+            format!(
+                r#"<span class="ltx_note ltx_role_{role}"><sup class="ltx_note_mark">{mark}</sup><span class="ltx_note_outer"><span class="ltx_note_content"><sup class="ltx_note_mark">{mark}</sup><span class="ltx_note_type">{kind}</span>
+                <span class="ltx_tag ltx_tag_note">{mark}</span> {text}</span></span></span>"#
+            )
+        };
+        let markdown = body(&format!(
+            r#"<article class="ltx_document"><p class="ltx_p">Rafael Rafailov{}{}, Archit Sharma{}</p>
+            <p class="ltx_p">We use a model{} for the task.</p></article>"#,
+            note("footnotemark", "2", "footnotemark: ", ""),
+            note("thanks", "†", "thanks: ", "Equal contribution."),
+            note("footnotemark", "1", "footnotemark: ", ""),
+            note("footnote", "1", "", "Released at example.com."),
+        ));
+        assert_eq!(
+            markdown,
+            "Rafael Rafailov<sup>2</sup>[^1], Archit Sharma<sup>1</sup>\n\nWe use a model[^2] for the task.\n\n[^1]: Equal contribution.\n\n[^2]: Released at example.com."
+        );
+    }
+
+    #[test]
+    fn metadata_elements_in_a_paragraph_do_not_split_it() {
+        // MediaWiki writes a TemplateStyles `link` before every inline
+        // template; microdata writes `meta` among the text.
+        let markdown = body(
+            r#"<article><p>Allowed tags, for example <link rel="mw-deduplicated-inline-style" href="mw-data:TemplateStyles:r1"><code>&lt;code&gt;</code>, <a href="https://en.wikipedia.org/wiki/Div_and_span"><link rel="mw-deduplicated-inline-style" href="mw-data:TemplateStyles:r1"><code>&lt;div&gt;</code>, and <link rel="mw-deduplicated-inline-style" href="mw-data:TemplateStyles:r1"><code>&lt;span&gt;</code></a>. By <span itemprop="author">Ada<meta itemprop="url" content="https://a.example"></span>.</p>
+            <p><span> </span><link rel="mw:PageProp/Category" href="./Category:A"></p><p>&nbsp;</p><p><br></p><p>End.</p></article>"#,
+        );
+        assert_eq!(
+            markdown,
+            "Allowed tags, for example `<code>`, [`<div>`, and `<span>`](https://en.wikipedia.org/wiki/Div_and_span). By Ada.\n\nEnd."
+        );
+    }
+
+    #[test]
+    fn a_chart_in_a_block_of_its_own_is_kept_as_a_drawing() {
+        let markdown = body(
+            r#"<article><p>Prices rose.</p><figure><svg class="chart" viewBox="0 0 400 200" onload="alert(1)">
+            <path class="line" d="M0,10L40,2"/><text x="0" y="18">Jan.</text><text x="30" y="18">March</text></svg></figure>
+            <p>They fell.</p></article>"#,
+        );
+        // The drawing is an HTML block: its line starts with `<div>`.
+        assert_eq!(
+            markdown,
+            "Prices rose.\n\n<div><svg viewBox=\"0 0 400 200\"><path d=\"M0,10L40,2\" fill=\"none\" stroke=\"currentColor\"></path><text x=\"0\" y=\"18\">Jan.</text><text x=\"30\" y=\"18\">March</text></svg></div>\n\nThey fell."
+        );
+        // In a table cell, a link or a heading it is its text.
+        for (open, close) in [
+            ("<table><tr><td><div>", "</div></td><td>x</td></tr></table>"),
+            (r#"<a href="/chart"><div>"#, "</div></a>"),
+            ("<h2><div>", "</div></h2>"),
+        ] {
+            let markdown = body(&format!(
+                r#"<article><p>Prices rose.</p>{open}<svg viewBox="0 0 400 200"><text>Jan.</text><text>March</text></svg>{close}<p>They fell.</p></article>"#
+            ));
+            assert!(!markdown.contains("<svg"), "{markdown}");
+            assert!(markdown.contains("Jan. March"), "{markdown}");
+        }
     }
 
     #[test]

@@ -31,7 +31,7 @@ fn first<'a>(element: ElementRef<'a>, query: &str) -> Option<ElementRef<'a>> {
 }
 
 /// Markdown-escaped plain text.
-fn escaped(text: &str) -> String {
+pub(super) fn escaped(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     for character in text.chars() {
         if matches!(character, '\\' | '*' | '_' | '[' | ']' | '`') {

@@ -215,7 +215,9 @@ fn related_cards(facts: &Facts, element: ElementRef<'_>) -> bool {
 /// Whether a page's framework classes hide an element as defuddle reads them:
 /// `hidden` or `invisible`, also behind a variant (`md:hidden`, a site's own
 /// `not-machine:hidden`), Bulma's `is-hidden`, Bootstrap's `d-none` or a
-/// CSS-module `isHidden-…` name, unless a responsive class shows it again
+/// CSS-module `isHidden-…` name or a BEM `hidden` modifier
+/// (`feedback--response__hidden`, `menu--hidden`; not `visually--hidden` or
+/// `overflow--hidden`), unless a responsive class shows it again
 /// (`hidden md:block`, `d-none d-lg-flex`). Arbitrary variants
 /// (`[&_.x]:hidden`) target other elements. Fragments (books, email) come
 /// without the site's style sheet, so this is full-page chrome only.
@@ -255,9 +257,122 @@ fn hidden_class(element: ElementRef<'_>) -> bool {
                     .or_else(|| rest.strip_prefix("hidden"))
             })
             .is_some_and(|rest| rest.is_empty() || rest.starts_with(['-', '_']));
-        hidden |= matches!(bare, "hidden" | "invisible" | "d-none") || module;
+        let modifier = ["--hidden", "__hidden"].iter().any(|suffix| {
+            bare.strip_suffix(suffix).is_some_and(|block| {
+                let block = block.to_ascii_lowercase();
+                !block.is_empty()
+                    && !["visually", "overflow", "overflow-x", "overflow-y", "sr"]
+                        .iter()
+                        .any(|kind| block.ends_with(kind))
+            })
+        });
+        hidden |= matches!(bare, "hidden" | "invisible" | "d-none") || module || modifier;
     }
     hidden
+}
+
+/// Whether a link leads to a site's feed: an RSS or Atom document or the
+/// page that offers it (`/feed`, `/feed.xml`, `/rss`, `/atom.xml`,
+/// `/index.xml`, `/feed.html`, a `.rss` or `.atom` file, a `feeds.` host, or
+/// a `type` that names RSS or Atom).
+pub(super) fn feed_link(link: ElementRef<'_>) -> bool {
+    if link.value().attribute("type").is_some_and(|kind| {
+        let kind = kind.to_ascii_lowercase();
+        kind.contains("rss") || kind.contains("atom")
+    }) {
+        return true;
+    }
+    let Some(href) = link.value().attribute("href") else {
+        return false;
+    };
+    let href = href.trim().to_ascii_lowercase();
+    let without_scheme = href
+        .split_once("://")
+        .map_or(href.as_str(), |(_, rest)| rest);
+    let (host, path) = if href.contains("://") {
+        without_scheme
+            .split_once('/')
+            .map_or((without_scheme, ""), |(host, path)| (host, path))
+    } else {
+        ("", without_scheme)
+    };
+    let path = path.split(['?', '#']).next().unwrap_or("");
+    let last = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    let (stem, extension) = last.split_once('.').unwrap_or((last, ""));
+    host.starts_with("feeds.")
+        || matches!(extension, "rss" | "atom")
+        || (matches!(stem, "feed" | "feeds" | "rss" | "atom" | "index")
+            && matches!(extension, "" | "xml" | "html")
+            && (stem != "index" || extension == "xml"))
+}
+
+/// A link to the site's feed that shows only a picture (an RSS icon).
+fn feed_icon(element: ElementRef<'_>) -> bool {
+    element.value().name() == "a"
+        && feed_link(element)
+        && super::count_words(&super::plain(element)) == 0
+}
+
+/// The most words a poll's prompt has ("Was this page helpful?").
+const MAX_PROMPT: usize = 12;
+
+/// A poll: a block of two or more buttons (`Yes`, `No`, a row of stars) as
+/// children or grandchildren and only a short prompt and a heading besides,
+/// without a link, a picture or kept content. Its buttons are not written,
+/// and the question alone asks for nothing.
+fn poll(facts: &Facts, element: ElementRef<'_>) -> bool {
+    let button =
+        |node: ElementRef<'_>| node.value().name() == "button" || token(node, "role", "button");
+    let buttons = element
+        .child_elements()
+        .flat_map(|child| std::iter::once(child).chain(child.child_elements()))
+        .filter(|node| button(*node))
+        .count();
+    if buttons < 2 {
+        return false;
+    }
+    let mut words = 0;
+    let mut stack: Vec<_> = element.children().collect();
+    while let Some(node) = stack.pop() {
+        match node.value() {
+            Node::Text(text) => {
+                words += super::count_words(text);
+                if words > MAX_PROMPT {
+                    return false;
+                }
+            }
+            Node::Element(value) => {
+                let Some(child) = ElementRef::wrap(node) else {
+                    continue;
+                };
+                if button(child) || facts.hidden(child) || hidden_class(child) {
+                    continue;
+                }
+                if matches!(
+                    value.name(),
+                    "a" | "img"
+                        | "picture"
+                        | "svg"
+                        | "video"
+                        | "audio"
+                        | "iframe"
+                        | "pre"
+                        | "code"
+                        | "table"
+                        | "math"
+                        | "ul"
+                        | "ol"
+                        | "blockquote"
+                        | "figure"
+                ) {
+                    return false;
+                }
+                stack.extend(child.children());
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Math keeps its hidden accessible copies (MathML beside a rendering).
@@ -404,6 +519,9 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
     if element.value().name() == "header" {
         return banner(element);
     }
+    if feed_icon(element) {
+        return true;
+    }
     if note(facts, element)
         || !matches!(
             element.value().name(),
@@ -412,7 +530,7 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
     {
         return false;
     }
-    if any_token(element, "role", &["doc-toc", "navigation"]) {
+    if any_token(element, "role", &["doc-toc", "navigation"]) || poll(facts, element) {
         return true;
     }
     if named(
@@ -447,6 +565,13 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
             // notifications and sign-up prompts beside an issue.
             "Layout-sidebar",
             "discussion-sidebar",
+            // arXiv's abstract page, as the reference names it: the column of
+            // download, browse, citation-service and bookmark links, the
+            // arXivLabs tool tabs ("Bibliographic Explorer Toggle") and the
+            // endorser and MathJax switches below them.
+            "extra-services",
+            "labstabs",
+            "endorsers",
         ],
     ) {
         return true;
@@ -1028,6 +1153,93 @@ mod tests {
         );
         assert!(excluded(element(&document, ".Layout-sidebar")));
         assert!(!excluded(element(&document, ".Layout-main")));
+    }
+
+    #[test]
+    fn a_feedback_poll_and_its_hidden_answer_are_page_chrome() {
+        let page = |widget: &str| {
+            format!(
+                r#"<html><body><main><h1>Overview</h1><p>Kubernetes is a portable, extensible, open source platform for managing containerized workloads and services.</p>{widget}</main></body></html>"#
+            )
+        };
+        let markdown = |widget: &str| {
+            super::super::extract_html(&page(widget), Some("https://kubernetes.io/docs/a/"))
+                .unwrap()
+                .markdown
+        };
+        let body = "# Overview\n\nKubernetes is a portable, extensible, open source platform for managing containerized workloads and services.";
+        assert_eq!(
+            markdown(
+                r#"<div id="pre-footer"><h2>Feedback</h2><p class="feedback--prompt">Was this page helpful?</p><button class="feedback--yes">Yes</button><button class="feedback--no">No</button>
+                <p class="feedback--response feedback--response__hidden">Thanks for the feedback. Ask it on <a href="https://stackoverflow.com">Stack Overflow</a>.</p></div>"#
+            ),
+            body
+        );
+        // A BEM `hidden` modifier hides wherever it stands.
+        assert_eq!(
+            markdown(r#"<p class="notice notice--hidden">Saved.</p>"#),
+            body
+        );
+        // Screen-reader text and overflow utilities are not hidden; a block of
+        // buttons with a link, or with a sentence, is the article's.
+        for kept in [
+            r#"<p class="u-visually--hidden">Table of results</p>"#,
+            r#"<p class="text overflow--hidden">Clipped caption</p>"#,
+            r#"<div><p>Try the demo:</p><button>Run</button><button>Reset</button><a href="/demo">Open the demo</a></div>"#,
+            r#"<div><p>Pressing either button below restarts the whole cluster and drops every running workload on it.</p><button>Run</button><button>Reset</button></div>"#,
+        ] {
+            assert_ne!(markdown(kept), body, "{kept}");
+        }
+    }
+
+    #[test]
+    fn an_icon_linking_to_the_feed_is_page_chrome() {
+        let feed = |href: &str| {
+            let document = Html::parse_fragment(&format!(r#"<a href="{href}">x</a>"#));
+            feed_link(element(&document, "a"))
+        };
+        for href in [
+            "/feed.html?utm_source=",
+            "/feed/",
+            "https://example.com/rss.xml",
+            "/atom.xml",
+            "/index.xml",
+            "/posts.rss",
+            "https://feeds.feedburner.com/ruanyifeng",
+        ] {
+            assert!(feed(href), "{href}");
+        }
+        for href in [
+            "/feedback",
+            "/index.html",
+            "/news/rss-explained",
+            "/docs/atomics",
+        ] {
+            assert!(!feed(href), "{href}");
+        }
+        let document = Html::parse_fragment(
+            r#"<p><a id="icon" href="/feed.xml"><img src="/rss.png"></a> <a id="text" href="/feed.xml">Subscribe by RSS</a></p>"#,
+        );
+        assert!(excluded(element(&document, "#icon")));
+        assert!(!excluded(element(&document, "#text")));
+    }
+
+    #[test]
+    fn arxiv_abstract_services_and_lab_tools_are_page_chrome() {
+        let page = r#"<html><body><main><div id="abs-outer"><div class="leftcolumn"><h1 class="title">Attention Is All You Need</h1>
+            <blockquote class="abstract">The dominant sequence transduction models are based on complex recurrent networks.</blockquote></div>
+            <div class="extra-services"><div class="full-text"><h2>Access Paper:</h2><ul><li><a href="/pdf/1">View PDF</a></li></ul></div>
+            <div class="bookmarks"><a href="http://www.bibsonomy.org/x"><img src="/bibsonomy.png" alt="BibSonomy"></a></div></div>
+            <div id="labstabs"><div class="labstabs" role="tablist"><label>Bibliographic Tools</label><h1>Bibliographic and Citation Tools</h1>
+            <input type="checkbox"><span>Bibliographic Explorer Toggle</span></div></div>
+            <div class="endorsers"><a href="/auth/show-endorsers/1">Which authors of this paper are endorsers?</a></div></div></main></body></html>"#;
+        let markdown = super::super::extract_html(page, Some("https://arxiv.org/abs/1"))
+            .unwrap()
+            .markdown;
+        assert_eq!(
+            markdown,
+            "# Attention Is All You Need\n\n> The dominant sequence transduction models are based on complex recurrent networks."
+        );
     }
 
     #[test]
