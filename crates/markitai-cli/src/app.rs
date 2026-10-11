@@ -12,6 +12,37 @@ macro_rules! println {
 macro_rules! print {
     ($($argument:tt)*) => { $crate::app::stdout_write(format_args!($($argument)*)) };
 }
+// Standard error goes through the logging sink (redaction, file log, the
+// terminal style); declared before the modules so that they print the same way.
+macro_rules! eprintln {
+    ($($argument:tt)*) => { $crate::app::logging::diagnostic(format_args!($($argument)*)) };
+}
+// A stderr line in the terminal language. The file log keeps the English
+// line, so log entries read the same in every language. Both literals use the
+// same captured variables (or the same trailing arguments).
+macro_rules! say {
+    // In an explicit shape (`logging::Shape`): `say!(Shape::item(Mark::Success); …)`.
+    ($shape:expr; $en:literal, $zh:literal $(, $($argument:tt)+)? $(,)?) => {{
+        let english = format!($en $(, $($argument)+)?);
+        match $crate::app::i18n::lang() {
+            $crate::app::i18n::Lang::En => $crate::app::logging::shaped($shape, &english, None),
+            $crate::app::i18n::Lang::Zh => $crate::app::logging::shaped(
+                $shape,
+                &english,
+                Some(&format!($zh $(, $($argument)+)?)),
+            ),
+        }
+    }};
+    ($en:literal, $zh:literal $(, $($argument:tt)+)? $(,)?) => {
+        match $crate::app::i18n::lang() {
+            $crate::app::i18n::Lang::En => eprintln!($en $(, $($argument)+)?),
+            $crate::app::i18n::Lang::Zh => $crate::app::logging::diagnostic_as(
+                format_args!($en $(, $($argument)+)?),
+                format_args!($zh $(, $($argument)+)?),
+            ),
+        }
+    };
+}
 #[path = "app/auth.rs"]
 mod auth;
 mod build_info;
@@ -30,30 +61,13 @@ mod interactive;
 #[path = "app/json_output.rs"]
 mod json_output;
 #[path = "app/logging.rs"]
-mod logging;
+pub(crate) mod logging;
 #[path = "app/progress.rs"]
 mod progress;
 #[path = "app/remote_consent.rs"]
 mod remote_consent;
 #[path = "app/warnings.rs"]
 mod warnings;
-macro_rules! eprintln {
-    ($($argument:tt)*) => { $crate::app::logging::diagnostic(format_args!($($argument)*)) };
-}
-// A stderr line in the terminal language. The file log keeps the English
-// line, so log entries read the same in every language. Both literals use the
-// same captured variables (or the same trailing arguments).
-macro_rules! say {
-    ($en:literal, $zh:literal $(, $($argument:tt)+)? $(,)?) => {
-        match $crate::app::i18n::lang() {
-            $crate::app::i18n::Lang::En => eprintln!($en $(, $($argument)+)?),
-            $crate::app::i18n::Lang::Zh => $crate::app::logging::diagnostic_as(
-                format_args!($en $(, $($argument)+)?),
-                format_args!($zh $(, $($argument)+)?),
-            ),
-        }
-    };
-}
 // Every platform publishes batches with native ownership.
 #[path = "batch_run.rs"]
 mod batch_run;
@@ -62,6 +76,7 @@ mod provider_batch;
 use crate::report::{
     self, ItemKind, ItemStatus, ReportOptions, RunFinished, RunInfo, RunItem, RunMode,
 };
+use crate::term::{Mark, Stream, Style, Tone};
 use chrono::{Local, SecondsFormat};
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use markitai_core::{ConversionOutput, ConversionUsage, ConvertContext, ConvertOptions, config};
@@ -292,16 +307,21 @@ fn cli_command() -> clap::Command {
     // and when it was built. `-h` keeps its short form.
     let closing = command.get_after_help().map(|text| text.to_string());
     let command = command.after_long_help(build_info::append(i18n::lang(), closing));
-    if progress::initialize() {
-        command
-    } else {
-        command.color(clap::ColorChoice::Never)
-    }
+    for_stream(command, Stream::Stderr)
 }
 
-/// The command tree as the derive declares it, with English help.
+/// `command` coloured as `stream` takes it: usage errors go to stderr, help
+/// and the version to stdout.
+fn for_stream(command: clap::Command, stream: Stream) -> clap::Command {
+    command.color(Style::of(stream).clap_color())
+}
+
+/// The command tree as the derive declares it, with English help in the
+/// terminal style's colours.
 fn english_command() -> clap::Command {
-    Cli::command().mut_args(|arg| arg.next_line_help(true))
+    Cli::command()
+        .styles(Style::stderr().clap())
+        .mut_args(|arg| arg.next_line_help(true))
 }
 
 /// Keep clap's root usage tokens intact when its heading would overflow a
@@ -570,7 +590,6 @@ pub(crate) fn erase_status_line() {
 }
 
 pub fn run() -> i32 {
-    let _ = progress::initialize();
     let mut arguments: Vec<_> = std::env::args_os().collect();
     // A distribution may expose this executable through the existing MCP name.
     // Select the subcommand before the no-argument help path, so stdout remains
@@ -596,7 +615,14 @@ pub fn run() -> i32 {
     let cli = command
         .try_get_matches_from_mut(arguments)
         .and_then(|matches| Cli::from_arg_matches(&matches))
-        .unwrap_or_else(|error| error.format(&mut command).exit());
+        .unwrap_or_else(|error| {
+            let stream = if error.use_stderr() {
+                Stream::Stderr
+            } else {
+                Stream::Stdout
+            };
+            error.format(&mut for_stream(command, stream)).exit()
+        });
     // Serve and MCP drain active work on the signals their asynchronous
     // runtime owns; the remaining terminating signals kill external runtimes.
     crate::signals::install_fatal_cleanup(match cli.command {
@@ -607,7 +633,7 @@ pub fn run() -> i32 {
     let code = match execute(&cli) {
         Ok(code) => code,
         Err((code, message)) => {
-            eprintln!("Error: {message}");
+            logging::fatal(&message);
             if cli.json && code != 2 {
                 emit_json(&[], Some(&message));
             }
@@ -616,7 +642,7 @@ pub fn run() -> i32 {
     };
     let code = settle_stdout(code);
     if let Err(error) = logging::finish(code) {
-        eprintln!("Error: {error}");
+        logging::fatal(&error.to_string());
         return if code == 0 { 1 } else { code };
     }
     code
@@ -663,7 +689,7 @@ fn stdout_line(arguments: std::fmt::Arguments<'_>) {
 /// The root help on standard output, followed by an empty line.
 fn print_root_help() {
     with_stdout(|stdout| {
-        cli_command().print_help()?;
+        for_stream(cli_command(), Stream::Stdout).print_help()?;
         stdout.write_all(b"\n")
     });
 }
@@ -677,7 +703,7 @@ fn stdout_outcome(code: i32, failure: Option<&io::Error>) -> (i32, Option<String
     match failure {
         Some(error) if error.kind() != io::ErrorKind::BrokenPipe => (
             if code == 0 { 1 } else { code },
-            Some(format!("Error: Cannot write to standard output: {error}")),
+            Some(format!("Cannot write to standard output: {error}")),
         ),
         _ => (code, None),
     }
@@ -690,7 +716,7 @@ fn settle_stdout(code: i32) -> i32 {
         .take();
     let (code, message) = stdout_outcome(code, failure.as_ref());
     if let Some(message) = message {
-        eprintln!("{message}");
+        logging::fatal(&message);
     }
     code
 }
@@ -789,7 +815,7 @@ fn execute(cli: &Cli) -> CliResult<i32> {
     let cfg = conversion_config(cli, overrides)?;
     if cli.interactive {
         let Some(run) = guided::collect(cli, cfg)? else {
-            eprintln!("{}", text!("Cancelled.", "已取消。"));
+            say!(logging::Shape::verdict(Mark::Skip); "Cancelled.", "已取消。");
             return Ok(0);
         };
         let mut effective = cli.clone();
@@ -1128,7 +1154,10 @@ fn execute_conversion(
             println!("{} -> {}", task.display, preview.line());
         }
         if !cli.quiet {
-            say_with(|lang| dry_run_summary(&tasks, &previews, input_path, lang));
+            logging::blank();
+            say_shaped(logging::Shape::verdict(Mark::Info), |lang| {
+                dry_run_summary(&tasks, &previews, input_path, lang)
+            });
         }
         return Ok(0);
     }
@@ -1137,11 +1166,13 @@ fn execute_conversion(
             let input = input_path.display();
             if cli.globs.is_empty() {
                 say!(
+                    logging::Shape::verdict(Mark::Warning);
                     "No supported files or .urls lists found in {input}; nothing to convert.",
                     "在 {input} 中没有找到受支持的文件或 .urls 列表，无需转换。"
                 );
             } else {
                 say!(
+                    logging::Shape::verdict(Mark::Warning);
                     "No supported files or .urls lists match --glob in {input}; nothing to convert.",
                     "在 {input} 中没有与 --glob 匹配的受支持文件或 .urls 列表，无需转换。"
                 );
@@ -1296,19 +1327,28 @@ fn execute_conversion(
                         }
                         if let Some(reason) = result.skip_reason.as_deref() {
                             // The name as the report lists it, not the path as typed.
-                            say_with(|lang| skip_notice(&task.report_key, reason, lang));
+                            let mark = if reason == "exists" {
+                                Mark::Skip
+                            } else {
+                                Mark::Warning
+                            };
+                            say_shaped(logging::Shape::item(mark), |lang| {
+                                skip_notice(&task.report_key, reason, lang)
+                            });
                         } else if task.output.is_some()
                             && let Some(path) = &record.output
                         {
                             // The name can differ from the input's (rename on conflict).
                             let existing = renamed_because_of(path, &task.report_key);
                             let path = path.display();
+                            let wrote = logging::Shape::item(Mark::Success);
                             match existing {
                                 Some(existing) => say!(
+                                    wrote;
                                     "Wrote {path} ({existing} already exists)",
                                     "已写入 {path}（{existing} 已存在）"
                                 ),
-                                None => say!("Wrote {path}", "已写入 {path}"),
+                                None => say!(wrote; "Wrote {path}", "已写入 {path}"),
                             }
                         }
                     }
@@ -1319,13 +1359,13 @@ fn execute_conversion(
                         && let Some(command) = mistyped_subcommand(input)
                     {
                         say!(
-                            "Hint: did you mean 'markitai {command}'?",
+                            "Hint: Did you mean 'markitai {command}'?",
                             "Hint: 你是想运行 'markitai {command}' 吗？"
                         );
                     }
                     if matches!(failure.error, markitai_core::Error::NoModelConfigured) {
                         say!(
-                            "Hint: set a provider API key such as OPENAI_API_KEY or ANTHROPIC_API_KEY (optionally with MODEL), or configure llm.model_list; `markitai init` saves a detected model. Run without --llm (or an LLM preset) to convert without a model.",
+                            "Hint: Set a provider API key such as OPENAI_API_KEY or ANTHROPIC_API_KEY (optionally with MODEL), or configure llm.model_list; `markitai init` saves a detected model. Run without --llm (or an LLM preset) to convert without a model.",
                             "Hint: 请设置供应商的 API key，例如 OPENAI_API_KEY 或 ANTHROPIC_API_KEY（可同时设置 MODEL），或配置 llm.model_list；`markitai init` 可保存检测到的模型。不加 --llm（或 LLM 预设）即可在不使用模型的情况下转换。"
                         );
                     }
@@ -1805,13 +1845,14 @@ fn finish_report(
         crate::report_store::Publication::Written(path) => {
             if show_path {
                 let path = path.display();
-                say!("Report: {path}", "报告：{path}");
+                say!(logging::Shape::item(Mark::Info); "Report: {path}", "报告：{path}");
             }
         }
         crate::report_store::Publication::SkippedExisting(path) => {
             if show_path {
                 let path = path.display();
                 say!(
+                    logging::Shape::item(Mark::Info);
                     "Existing report preserved: {path}",
                     "已保留现有报告：{path}"
                 );
@@ -2034,6 +2075,15 @@ fn dry_run_summary(
     }
 }
 
+/// [`say_with`] in an explicit shape.
+fn say_shaped(shape: logging::Shape, build: impl Fn(i18n::Lang) -> String) {
+    let english = build(i18n::Lang::En);
+    match i18n::lang() {
+        i18n::Lang::En => logging::shaped(shape, &english, None),
+        i18n::Lang::Zh => logging::shaped(shape, &english, Some(&build(i18n::Lang::Zh))),
+    }
+}
+
 /// Prints one stderr line built per language. The file log keeps the English
 /// line, so log entries read the same in every language.
 fn say_with(build: impl Fn(i18n::Lang) -> String) {
@@ -2125,7 +2175,7 @@ fn print_batch_summary(
     output: &Path,
 ) {
     let summary = |lang| {
-        report::batch_summary(
+        report::batch_summary_lines(
             records,
             unprocessed,
             resumed,
@@ -2136,18 +2186,22 @@ fn print_batch_summary(
         )
     };
     let english = summary(i18n::Lang::En);
-    match i18n::lang() {
-        i18n::Lang::En => {
-            for line in &english {
-                eprintln!("{line}");
-            }
+    let chinese = (i18n::lang() == i18n::Lang::Zh).then(|| summary(i18n::Lang::Zh));
+    let count = english.len();
+    // The verdict at column 0 after one blank line, its details as items, then
+    // the output directory after another.
+    logging::blank();
+    for (index, (mark, text)) in english.iter().enumerate() {
+        let shape = match mark {
+            Some(mark) if index == 0 => logging::Shape::verdict(*mark),
+            Some(mark) => logging::Shape::item(*mark),
+            None => logging::Shape::under(2),
+        };
+        if index + 1 == count && count > 1 {
+            logging::blank();
         }
-        i18n::Lang::Zh => {
-            let chinese = summary(i18n::Lang::Zh);
-            for (english, chinese) in english.iter().zip(&chinese) {
-                logging::diagnostic_as(format_args!("{english}"), format_args!("{chinese}"));
-            }
-        }
+        let console = chinese.as_ref().map(|lines| lines[index].1.as_str());
+        logging::shaped(shape, text, console);
     }
 }
 
@@ -2421,7 +2475,7 @@ fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
         let (location, place) = Place::from(place).names();
         let path = path.display();
         say!(
-            "Warning: skipping {location} in {path}: expected a URL string or an object with \"url\"",
+            "Warning: Skipping {location} in {path}: expected a URL string or an object with \"url\"",
             "Warning: 跳过 {path} 的{place}：应为 URL 字符串，或带有 \"url\" 字段的对象"
         );
     }
@@ -2432,7 +2486,7 @@ fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
         let url = entry.url.trim();
         if !is_url(url) {
             say!(
-                "Warning: skipping {location} in {shown}: not an HTTP(S) URL",
+                "Warning: Skipping {location} in {shown}: not an HTTP(S) URL",
                 "Warning: 跳过 {shown} 的{place}：不是 HTTP(S) URL"
             );
             continue;
@@ -2487,11 +2541,15 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 if let Some(path) = selected_config(cli) {
                     println!("{}", path.display());
                 } else {
+                    let style = Style::stdout();
                     println!(
                         "{}",
-                        text!(
-                            "No configuration file found; using built-in defaults. Create one with `markitai init`.",
-                            "未找到配置文件，正在使用内建默认值。可运行 `markitai init` 创建。"
+                        style.summary(
+                            Mark::Info,
+                            &text!(
+                                "No configuration file found; using built-in defaults. Create one with `markitai init`.",
+                                "未找到配置文件，正在使用内建默认值。可运行 `markitai init` 创建。"
+                            )
                         )
                     );
                     // Where a file would be looked for, in the order it is used.
@@ -2499,9 +2557,14 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                     let home = home.display();
                     println!(
                         "{}",
-                        text!(
-                            "Searched in this order: -c FILE, the MARKITAI_CONFIG variable, ./markitai.json, {home}. `markitai config set KEY VALUE` creates {home}.",
-                            "查找顺序：-c FILE、环境变量 MARKITAI_CONFIG、./markitai.json、{home}。`markitai config set KEY VALUE` 会创建 {home}。"
+                        style.line(
+                            2,
+                            None,
+                            &text!(
+                                "Searched in this order: -c FILE, the MARKITAI_CONFIG variable, ./markitai.json, {home}. `markitai config set KEY VALUE` creates {home}.",
+                                "查找顺序：-c FILE、环境变量 MARKITAI_CONFIG、./markitai.json、{home}。`markitai config set KEY VALUE` 会创建 {home}。"
+                            ),
+                            Some(Tone::Secondary)
                         )
                     );
                 }
@@ -2535,7 +2598,11 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                     };
                     say!("Warning: {key} {reason}", "Warning: {key} {chinese}");
                 }
-                println!("{}", text!("Configuration is valid", "配置有效"));
+                println!(
+                    "{}",
+                    Style::stdout()
+                        .summary(Mark::Success, &text!("Configuration is valid", "配置有效"))
+                );
             }
             ConfigCommand::List {
                 format,
@@ -2616,7 +2683,11 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 println!("{key} = {visible}");
                 // stdout keeps the value for scripts; which file changed goes to stderr.
                 let saved = path.display();
-                say!("Saved to {saved}", "已保存到 {saved}");
+                say!(
+                    logging::Shape::verdict(Mark::Success);
+                    "Saved to {saved}",
+                    "已保存到 {saved}"
+                );
             }
             ConfigCommand::Edit => {
                 if overrides.is_some() {
@@ -2692,17 +2763,36 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
             if *as_json {
                 println!("{}", serde_json::to_string_pretty(&stats).map_err(runtime)?);
             } else {
+                let style = Style::stdout();
+                // A store that could not be read is an error; the rest are facts.
+                let mark = |stats: &Value| {
+                    if stats.get("error").is_some() {
+                        Mark::Error
+                    } else {
+                        Mark::Info
+                    }
+                };
                 let enabled = &stats["enabled"];
                 println!(
-                    "{}",
-                    match (i18n::lang(), enabled.as_bool()) {
-                        (i18n::Lang::Zh, Some(true)) => "缓存：已启用".to_owned(),
-                        (i18n::Lang::Zh, Some(false)) => "缓存：已禁用".to_owned(),
-                        _ => text!("Cache enabled: {enabled}", "缓存已启用：{enabled}"),
-                    }
+                    "{}\n\n{}",
+                    style.title(&text!("Cache Statistics", "缓存统计")),
+                    style.item(
+                        Mark::Info,
+                        &match (i18n::lang(), enabled.as_bool()) {
+                            (i18n::Lang::Zh, Some(true)) => "缓存：已启用".to_owned(),
+                            (i18n::Lang::Zh, Some(false)) => "缓存：已禁用".to_owned(),
+                            _ => text!("Cache enabled: {enabled}", "缓存已启用：{enabled}"),
+                        }
+                    )
                 );
                 let llm = cache_state(&stats["cache"]);
-                println!("{}", text!("LLM cache: {llm}", "LLM 缓存：{llm}"));
+                println!(
+                    "{}",
+                    style.item(
+                        mark(&stats["cache"]),
+                        &text!("LLM cache: {llm}", "LLM 缓存：{llm}")
+                    )
+                );
                 if *verbose && !stats["cache"].is_null() && stats["cache"].get("error").is_none() {
                     println!(
                         "{}",
@@ -2712,7 +2802,10 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                 let fetch = cache_state(&stats["fetch_cache"]);
                 println!(
                     "{}",
-                    text!("URL fetch cache: {fetch}", "URL 抓取缓存：{fetch}")
+                    style.item(
+                        mark(&stats["fetch_cache"]),
+                        &text!("URL fetch cache: {fetch}", "URL 抓取缓存：{fetch}")
+                    )
                 );
             }
             Ok(i32::from(failed))
@@ -2737,12 +2830,15 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                         "清理 LLM 与 URL 抓取缓存（{dir}）？[y/N]："
                     )
                 };
-                print!("{question}");
+                print!("{}", Style::stdout().prompt(0, &question));
                 io::stdout().flush().map_err(runtime)?;
                 let mut answer = String::new();
                 let read = io::stdin().read_line(&mut answer).map_err(runtime)?;
                 if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-                    println!("{}", text!("Aborted", "已取消"));
+                    println!(
+                        "{}",
+                        Style::stdout().summary(Mark::Skip, &text!("Aborted", "已取消"))
+                    );
                     // No answer at all (a script without --yes) is a failure, as
                     // in the reference; an explicit "no" is not.
                     return Ok(if read == 0 { 1 } else { 0 });
@@ -2774,10 +2870,16 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
             let noun = if cleared == 1 { "entry" } else { "entries" };
             println!(
                 "{}",
-                text!("Cleared {cleared} cache {noun}", "已清理 {cleared} 条缓存")
+                Style::stdout().summary(
+                    Mark::Success,
+                    &text!("Cleared {cleared} cache {noun}", "已清理 {cleared} 条缓存")
+                )
             );
             if let Some(count) = spa_count {
-                println!("{}", spa_cleared(count));
+                println!(
+                    "{}",
+                    Style::stdout().summary(Mark::Success, &spa_cleared(count))
+                );
             }
             Ok(0)
         }
@@ -2790,7 +2892,10 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                 if *as_json {
                     println!("{}", json!({"cleared":count}));
                 } else {
-                    println!("{}", spa_cleared(count));
+                    println!(
+                        "{}",
+                        Style::stdout().summary(Mark::Success, &spa_cleared(count))
+                    );
                 }
             } else {
                 let entries = markitai_core::spa_domains::list(cfg).map_err(runtime)?;
@@ -2802,7 +2907,10 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                 } else if entries.is_empty() {
                     println!(
                         "{}",
-                        text!("No learned SPA domains.", "没有已学习的 SPA 域名。")
+                        Style::stdout().summary(
+                            Mark::Info,
+                            &text!("No learned SPA domains.", "没有已学习的 SPA 域名。")
+                        )
                     );
                 } else {
                     println!(
@@ -3042,7 +3150,7 @@ mod tests {
         assert_eq!(code, 1);
         let message = message.unwrap();
         assert!(
-            message.starts_with("Error: Cannot write to standard output: "),
+            message.starts_with("Cannot write to standard output: "),
             "{message}"
         );
         assert!(message.contains(&full.to_string()), "{message}");

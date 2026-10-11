@@ -1,5 +1,6 @@
 //! Gather one conversion without changing configuration or re-entering the CLI.
 use super::{Cli, CliResult, interactive, runtime};
+use crate::term::{Mark, Style, Tone};
 use markitai_core::config;
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
@@ -14,7 +15,13 @@ pub(super) struct GuidedRun {
 pub(super) fn collect(cli: &Cli, cfg: Value) -> CliResult<Option<GuidedRun>> {
     interactive::terminal()?;
     let _cancel = interactive::CancelGuard::new().map_err(runtime)?;
-    collect_with(cli, cfg, &mut io::stdin().lock(), &mut io::stderr().lock())
+    collect_with(
+        cli,
+        cfg,
+        &mut io::stdin().lock(),
+        &mut io::stderr().lock(),
+        Style::stderr(),
+    )
 }
 
 fn collect_with(
@@ -22,13 +29,20 @@ fn collect_with(
     mut cfg: Value,
     input: &mut impl BufRead,
     out: &mut impl Write,
+    style: Style,
 ) -> CliResult<Option<GuidedRun>> {
     writeln!(
         out,
-        "{}",
-        text!(
-            "Markitai conversion wizard\nChoices affect this run only. Enter q to cancel.",
-            "Markitai 转换向导\n选择只对本次运行生效。输入 q 取消。"
+        "{}\n\n{}",
+        style.title(&text!("Markitai conversion wizard", "Markitai 转换向导")),
+        style.line(
+            2,
+            None,
+            &text!(
+                "Choices affect this run only. Enter q to cancel.",
+                "选择只对本次运行生效。输入 q 取消。"
+            ),
+            Some(Tone::Secondary)
         )
     )
     .map_err(runtime)?;
@@ -47,6 +61,7 @@ fn collect_with(
     let Some(kind) = interactive::choice(
         input,
         out,
+        style,
         &text!(
             "Input: 1 file, 2 directory, 3 URL [{default}]: ",
             "输入：1 文件，2 目录，3 URL [{default}]："
@@ -68,7 +83,7 @@ fn collect_with(
                 visible(current)
             )
         };
-        let Some(answer) = interactive::prompt(input, out, &label)? else {
+        let Some(answer) = interactive::prompt(input, out, &style.prompt(2, &label))? else {
             return Ok(None);
         };
         if cancelled(&answer) {
@@ -87,9 +102,12 @@ fn collect_with(
             writeln!(
                 out,
                 "{}",
-                text!(
-                    "Enter an absolute HTTP(S) URL without embedded credentials.",
-                    "请输入不含内嵌凭据的完整 HTTP(S) URL。"
+                style.item(
+                    Mark::Error,
+                    &text!(
+                        "Enter an absolute HTTP(S) URL without embedded credentials.",
+                        "请输入不含内嵌凭据的完整 HTTP(S) URL。"
+                    )
                 )
             )
             .map_err(runtime)?;
@@ -112,9 +130,12 @@ fn collect_with(
             writeln!(
                 out,
                 "{}",
-                text!(
-                    "The selected {kind_label} does not exist.",
-                    "所选{kind_label}不存在。"
+                style.item(
+                    Mark::Error,
+                    &text!(
+                        "The selected {kind_label} does not exist.",
+                        "所选{kind_label}不存在。"
+                    )
                 )
             )
             .map_err(runtime)?;
@@ -129,10 +150,13 @@ fn collect_with(
         let Some(answer) = interactive::prompt(
             input,
             out,
-            &format!(
-                "{} [{}]: ",
-                text!("Output directory", "输出目录"),
-                visible(&default_output.to_string_lossy())
+            &style.prompt(
+                2,
+                &format!(
+                    "{} [{}]: ",
+                    text!("Output directory", "输出目录"),
+                    visible(&default_output.to_string_lossy())
+                ),
             ),
         )?
         else {
@@ -155,9 +179,12 @@ fn collect_with(
             writeln!(
                 out,
                 "{}",
-                text!(
-                    "Choose an output directory, not a Markdown filename.",
-                    "请选择输出目录，不要指定 Markdown 文件名。"
+                style.item(
+                    Mark::Error,
+                    &text!(
+                        "Choose an output directory, not a Markdown filename.",
+                        "请选择输出目录，不要指定 Markdown 文件名。"
+                    )
                 )
             )
             .map_err(runtime)?;
@@ -168,6 +195,7 @@ fn collect_with(
     let Some(llm) = toggle(
         input,
         out,
+        style,
         &text!("LLM enhancement", "LLM 增强"),
         config::enabled(&cfg, "/llm/enabled"),
     )?
@@ -179,12 +207,13 @@ fn collect_with(
         writeln!(
             out,
             "{}",
-            text!("No usable API model is configured. Subscription/CLI providers are not supported here.", "尚未配置可用的 API 模型；此处不支持订阅或 CLI 提供商。")
+            style.item(Mark::Warning, &text!("No usable API model is configured. Subscription/CLI providers are not supported here.", "尚未配置可用的 API 模型；此处不支持订阅或 CLI 提供商。"))
         )
         .map_err(runtime)?;
         let Some(action) = interactive::choice(
             input,
             out,
+            style,
             &text!(
                 "1 configure a model for this run, 2 retry detection, 3 disable LLM, q cancel [3]: ",
                 "1 为本次运行配置模型，2 重新检测，3 关闭 LLM，q 取消 [3]："
@@ -196,7 +225,7 @@ fn collect_with(
             return Ok(None);
         };
         match action.as_str() {
-            "1" if !configure_model(&mut cfg, input, out)? => return Ok(None),
+            "1" if !configure_model(&mut cfg, input, out, style)? => return Ok(None),
             "3" => cfg["llm"]["enabled"] = json!(false),
             _ => {}
         }
@@ -228,7 +257,7 @@ fn collect_with(
             continue;
         }
         let current = cfg[section][field].as_bool().unwrap_or(false);
-        let Some(value) = toggle(input, out, &label, current)? else {
+        let Some(value) = toggle(input, out, style, &label, current)? else {
             return Ok(None);
         };
         cfg[section][field] = json!(value);
@@ -239,16 +268,15 @@ fn collect_with(
         cfg["screenshot"]["enabled"] = json!(true);
     }
     config::validate(&cfg).map_err(runtime)?;
-    writeln!(
-        out,
-        "{}\n{}: {}\n{}: {}",
-        text!("\nConfiguration summary", "\n配置摘要"),
-        text!("Input", "输入"),
-        visible(&source),
-        text!("Output", "输出"),
-        visible(&output.to_string_lossy())
-    )
-    .map_err(runtime)?;
+    // The run's settings as a section of facts, one per line.
+    let mut facts = vec![
+        format!("{}: {}", text!("Input", "输入"), visible(&source)),
+        format!(
+            "{}: {}",
+            text!("Output", "输出"),
+            visible(&output.to_string_lossy())
+        ),
+    ];
     for (label, pointer) in [
         (text!("LLM", "LLM"), "/llm/enabled"),
         (text!("Alt text", "alt 文本"), "/image/alt_enabled"),
@@ -263,8 +291,7 @@ fn collect_with(
     ] {
         let enabled = config::enabled(&cfg, pointer);
         let inactive = pointer.starts_with("/image/") && !config::enabled(&cfg, "/llm/enabled");
-        writeln!(
-            out,
+        facts.push(format!(
             "{label}: {}{}",
             if enabled {
                 text!("enabled", "开启")
@@ -276,13 +303,11 @@ fn collect_with(
             } else {
                 String::new()
             }
-        )
-        .map_err(runtime)?;
+        ));
     }
     if config::enabled(&cfg, "/llm/enabled") {
         let models = markitai_core::llm_capabilities(&cfg).models;
-        writeln!(
-            out,
+        facts.push(format!(
             "{}: {}",
             text!("Models", "模型"),
             models
@@ -290,21 +315,29 @@ fn collect_with(
                 .map(|name| visible(name))
                 .collect::<Vec<_>>()
                 .join(", ")
-        )
-        .map_err(runtime)?;
+        ));
     }
     if let Some(profile) = cfg["output"]["profile"].as_str() {
-        writeln!(
-            out,
+        facts.push(format!(
             "{}: {}",
             text!("Output profile", "输出配置"),
             visible(profile)
-        )
-        .map_err(runtime)?;
+        ));
     }
+    writeln!(
+        out,
+        "\n{}",
+        style.section(&text!("Configuration summary", "配置摘要"))
+    )
+    .map_err(runtime)?;
+    for fact in facts {
+        writeln!(out, "{}", style.item(Mark::Info, &fact)).map_err(runtime)?;
+    }
+    writeln!(out).map_err(runtime)?;
     let Some(answer) = interactive::choice(
         input,
         out,
+        style,
         &text!("Execute conversion? y/n [y]: ", "开始转换？y/n [y]："),
         &["y", "n"],
         "y",
@@ -326,6 +359,7 @@ fn cancelled(value: &str) -> bool {
 fn toggle(
     input: &mut impl BufRead,
     out: &mut impl Write,
+    style: Style,
     label: &str,
     current: bool,
 ) -> CliResult<Option<bool>> {
@@ -337,6 +371,7 @@ fn toggle(
     let Some(answer) = interactive::choice(
         input,
         out,
+        style,
         &text!(
             "{label}: y enable, n disable, Enter keep {state}: ",
             "{label}：y 开启，n 关闭，Enter 保持{state}："
@@ -354,14 +389,18 @@ fn configure_model(
     cfg: &mut Value,
     input: &mut impl BufRead,
     out: &mut impl Write,
+    style: Style,
 ) -> CliResult<bool> {
     let model = loop {
         let Some(model) = interactive::prompt(
             input,
             out,
-            &text!(
-                "Model (for example openai/gpt-6-luna or ollama/model): ",
-                "模型（例如 openai/gpt-6-luna 或 ollama/model）："
+            &style.prompt(
+                2,
+                &text!(
+                    "Model (for example openai/gpt-6-luna or ollama/model): ",
+                    "模型（例如 openai/gpt-6-luna 或 ollama/model）："
+                ),
             ),
         )?
         else {
@@ -383,9 +422,12 @@ fn configure_model(
         writeln!(
             out,
             "{}",
-            text!(
-                "Enter a model for a supported API provider.",
-                "请输入受支持 API 提供商的模型。"
+            style.item(
+                Mark::Error,
+                &text!(
+                    "Enter a model for a supported API provider.",
+                    "请输入受支持 API 提供商的模型。"
+                )
             )
         )
         .map_err(runtime)?;
@@ -393,9 +435,12 @@ fn configure_model(
     let Some(base) = interactive::prompt(
         input,
         out,
-        &text!(
-            "API base URL (Enter uses provider default): ",
-            "API 地址（Enter 使用提供商默认值）："
+        &style.prompt(
+            2,
+            &text!(
+                "API base URL (Enter uses provider default): ",
+                "API 地址（Enter 使用提供商默认值）："
+            ),
         ),
     )?
     else {
@@ -407,6 +452,7 @@ fn configure_model(
     let Some(key_kind) = interactive::choice(
         input,
         out,
+        style,
         &text!(
             "Credential: 1 environment variable, 2 secret for this run, 3 provider default [3]: ",
             "凭据：1 环境变量，2 本次运行的密钥，3 提供商默认值 [3]："
@@ -427,7 +473,7 @@ fn configure_model(
                 let Some(name) = interactive::prompt(
                     input,
                     out,
-                    &text!("Environment variable name: ", "环境变量名称："),
+                    &style.prompt(2, &text!("Environment variable name: ", "环境变量名称：")),
                 )?
                 else {
                     return Ok(false);
@@ -445,10 +491,10 @@ fn configure_model(
                 writeln!(
                     out,
                     "{}",
-                    text!(
+                    style.item(Mark::Error, &text!(
                         "Use a nonempty variable name containing letters, digits or underscores.",
                         "变量名不能为空，只能包含字母、数字或下划线。"
-                    )
+                    ))
                 )
                 .map_err(runtime)?;
             };
@@ -458,9 +504,12 @@ fn configure_model(
             let Some(key) = interactive::secret(
                 input,
                 out,
-                &text!(
-                    "API key (hidden; not saved): ",
-                    "API 密钥（隐藏输入，不保存）："
+                &style.prompt(
+                    2,
+                    &text!(
+                        "API key (hidden; not saved): ",
+                        "API 密钥（隐藏输入，不保存）："
+                    ),
                 ),
             )?
             else {

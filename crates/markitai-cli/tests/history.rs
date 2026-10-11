@@ -112,7 +112,7 @@ impl Running {
             String::from_utf8_lossy(&self.captured.lock().unwrap())
                 .lines()
                 .any(|line| {
-                    line == "Interrupted: stopping new work and waiting for active conversions."
+                    line == "  ! Interrupted: stopping new work and waiting for active conversions."
                 })
         });
     }

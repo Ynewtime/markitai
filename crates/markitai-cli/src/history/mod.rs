@@ -69,7 +69,11 @@ impl Plan {
     pub(crate) fn record(&self, records: &[RunItem]) {
         match self.publish(records) {
             Ok(Some(path)) if self.show_path => {
-                eprintln!("Recorded in history: {}", path.display());
+                crate::app::logging::shaped(
+                    crate::app::logging::Shape::item(crate::term::Mark::Info),
+                    &format!("Recorded in history: {}", path.display()),
+                    None,
+                );
             }
             Ok(_) => (),
             Err(error) => eprintln!("Warning: Could not record history: {error}"),

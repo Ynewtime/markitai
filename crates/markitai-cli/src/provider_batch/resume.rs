@@ -126,7 +126,7 @@ pub(super) fn advance_frozen(
                             store.mark_rejected().map_err(runtime)?;
                         }
                         eprintln!(
-                            "Submission evidence retained at {}. Use --llm-batch --resume -o to reconcile an uncertain submission.",
+                            "Hint: Submission evidence retained at {}. Use --llm-batch --resume -o to reconcile an uncertain submission.",
                             store.directory().display()
                         );
                         return Err(runtime(error));
@@ -170,7 +170,7 @@ pub(super) fn advance_frozen(
 
 pub(super) fn reconciliation_handoff(cli: &Cli, store: &store::Store, reason: &str) -> i32 {
     eprintln!(
-        "{reason}. No new batch was submitted. Resume later, or use --llm-batch-collect ID -o with this output directory."
+        "Warning: {reason}. No new batch was submitted. Resume later, or use --llm-batch-collect ID -o with this output directory."
     );
     if cli.json {
         let mut value = envelope(&[], Some(reason));

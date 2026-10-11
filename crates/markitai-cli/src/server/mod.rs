@@ -169,7 +169,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
     let address = listener.local_addr().map_err(|e| e.to_string())?;
     // Shown absolute: a relative MARKITAI_HOME would otherwise name nothing useful.
     let data = std::path::absolute(&state.root).unwrap_or_else(|_| state.root.clone());
-    for line in startup::lines(
+    for (kind, line) in startup::lines(
         lang,
         &startup::Startup {
             address,
@@ -182,12 +182,30 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
                 .flatten(),
         },
     ) {
-        eprintln!("{line}");
+        // As written: redaction would drop the token from the addresses.
+        use crate::app::logging::{Shape, console};
+        let shape = match kind {
+            startup::Kind::Scripted => Shape {
+                indent: 0,
+                tone: None,
+                ..Shape::COMMAND
+            },
+            startup::Kind::Plain => Shape::PLAIN,
+            startup::Kind::Warning => Shape::verdict(crate::term::Mark::Warning),
+            startup::Kind::More => Shape::under(2),
+            startup::Kind::Address => Shape {
+                indent: 4,
+                ..Shape::COMMAND
+            },
+        };
+        console(shape, &line);
     }
     if !options.no_open {
         let url = launch::browser_url(address, state.token.as_deref());
         if let Err(error) = launch::open_browser(&url) {
-            eprintln!("Could not open a browser: {error}; open the server address manually.");
+            eprintln!(
+                "Warning: Could not open a browser: {error}; open the address above manually."
+            );
         }
     }
     let shutdown_state = state.clone();
@@ -209,7 +227,11 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         }
         shutdown_state.closing.store(true, Ordering::SeqCst);
         shutdown_state.shutdown.send_replace(true);
-        eprintln!("Server stopping: draining active conversions and saving history.");
+        crate::app::logging::shaped(
+            crate::app::logging::Shape::item(crate::term::Mark::Action),
+            "Server stopping: draining active conversions and saving history.",
+            None,
+        );
     })
     .await;
     state.closing.store(true, Ordering::SeqCst);
@@ -217,7 +239,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
     let tasks = std::mem::take(&mut *state.tasks.lock().unwrap());
     for task in tasks {
         if let Err(error) = task.await {
-            eprintln!("Serve task failed: {error}");
+            eprintln!("Error: Serve task failed: {error}");
             state.persistence_failed.store(true, Ordering::SeqCst);
         }
     }

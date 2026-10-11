@@ -100,10 +100,10 @@ fn the_summary_counts_unstarted_items_and_suggests_resume() {
     assert_eq!(code, Some(130));
     let line = lines
         .iter()
-        .find(|line| line.starts_with("Not processed "))
+        .find(|line| line.starts_with("  ! Not processed "))
         .unwrap_or_else(|| panic!("no unprocessed line: {lines:#?}"));
     assert!(
-        line.starts_with("Not processed 2 items: http://127.0.0.1:"),
+        line.starts_with("  ! Not processed 2 items: http://127.0.0.1:"),
         "{line}"
     );
     assert!(line.contains("/page1"), "{line}");
@@ -121,10 +121,11 @@ fn the_summary_counts_unstarted_items_and_suggests_resume() {
         lines
             .iter()
             .position(|line| line.starts_with(prefix))
-            .unwrap()
+            .unwrap_or_else(|| panic!("{prefix}: {lines:#?}"))
     };
-    assert!(at("Done: ") < at("Not processed "), "{lines:#?}");
-    assert!(at("Not processed ") < at("Output: "), "{lines:#?}");
+    // Nothing converted and one failure: the verdict is an error.
+    assert!(at("✗ Done: ") < at("  ! Not processed "), "{lines:#?}");
+    assert!(at("  ! Not processed ") < at("  Output: "), "{lines:#?}");
 }
 
 #[test]
@@ -183,12 +184,15 @@ fn a_completed_batch_has_no_unprocessed_line_and_an_interrupted_one_has_it_in_ch
     assert_eq!(code, Some(130));
     let line = lines
         .iter()
-        .find(|line| line.starts_with("未处理 "))
+        .find(|line| line.starts_with("  ! 未处理 "))
         .unwrap_or_else(|| panic!("no unprocessed line: {lines:#?}"));
-    assert!(line.starts_with("未处理 2 项：http://127.0.0.1:"), "{line}");
+    assert!(
+        line.starts_with("  ! 未处理 2 项：http://127.0.0.1:"),
+        "{line}"
+    );
     assert!(
         line.ends_with("。使用相同命令并加上 --resume 可继续。"),
         "{line}"
     );
-    assert!(!lines.iter().any(|line| line.starts_with("Not processed")));
+    assert!(!lines.iter().any(|line| line.contains("Not processed")));
 }

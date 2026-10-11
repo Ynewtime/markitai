@@ -1,6 +1,7 @@
 //! Line-oriented navigation works without a terminal UI runtime or subprocess.
 use super::i18n::{Lang, lang};
 use super::{CliResult, runtime, write_config};
+use crate::term::{Mark, Style, Tone};
 use markitai_core::config;
 use serde_json::{Value, json};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
@@ -182,6 +183,7 @@ pub(super) fn edit(path: &Path) -> CliResult<()> {
         &mut io::stdin().lock(),
         &mut io::stderr().lock(),
         true,
+        Style::stderr(),
     )
 }
 
@@ -190,6 +192,7 @@ fn edit_with(
     input: &mut impl BufRead,
     output: &mut impl Write,
     terminal_input: bool,
+    style: Style,
 ) -> CliResult<()> {
     let (mut raw, mut original) = read_config(path)?;
     let mut query = String::new();
@@ -205,11 +208,14 @@ fn edit_with(
         page = page.min(pages - 1);
         writeln!(
             output,
-            "\nConfiguration: {}\nPage {}/{}; search: {}",
-            path.display(),
-            page + 1,
-            pages,
-            query
+            "\n{}\n{}",
+            style.section(&format!("Configuration: {}", path.display())),
+            style.line(
+                2,
+                None,
+                &format!("Page {}/{}; search: {}", page + 1, pages, query),
+                Some(Tone::Secondary)
+            )
         )
         .map_err(runtime)?;
         for (index, setting) in filtered.iter().skip(page * PAGE).take(PAGE).enumerate() {
@@ -225,7 +231,10 @@ fn edit_with(
         let Some(command) = prompt(
             input,
             output,
-            "Select number or full key; /search, n next, p previous, q quit: ",
+            &style.prompt(
+                2,
+                "Select number or full key; /search, n next, p previous, q quit: ",
+            ),
         )?
         else {
             break;
@@ -255,7 +264,12 @@ fn edit_with(
             .and_then(|i| filtered.get(page * PAGE + i - 1).copied())
             .or_else(|| all.iter().find(|setting| setting.key == command));
         let Some(setting) = selected else {
-            writeln!(output, "No editable setting selected.").map_err(runtime)?;
+            writeln!(
+                output,
+                "{}",
+                style.item(Mark::Warning, "No editable setting selected.")
+            )
+            .map_err(runtime)?;
             continue;
         };
         let shape = scalar_node(&setting.node);
@@ -274,10 +288,16 @@ fn edit_with(
             .unwrap_or_default();
         writeln!(
             output,
-            "{} ({}){hint}. Current: {}",
-            setting.key,
-            shape["type"].as_str().unwrap_or("value"),
-            shown(&setting.key, &setting.value)
+            "{}",
+            style.item(
+                Mark::Info,
+                &format!(
+                    "{} ({}){hint}. Current: {}",
+                    setting.key,
+                    shape["type"].as_str().unwrap_or("value"),
+                    shown(&setting.key, &setting.value)
+                )
+            )
         )
         .map_err(runtime)?;
         let secret =
@@ -291,7 +311,10 @@ fn edit_with(
             prompt(
                 input,
                 output,
-                "New value (empty keeps current, :empty sets an empty string, :cancel returns): ",
+                &style.prompt(
+                    2,
+                    "New value (empty keeps current, :empty sets an empty string, :cancel returns): ",
+                ),
             )
         };
         if secret && terminal_input {
@@ -318,14 +341,21 @@ fn edit_with(
                 original = bytes;
                 writeln!(
                     output,
-                    "Saved {} = {}",
-                    setting.key,
-                    shown(&setting.key, &value)
+                    "{}",
+                    style.item(
+                        Mark::Success,
+                        &format!("Saved {} = {}", setting.key, shown(&setting.key, &value))
+                    )
                 )
                 .map_err(runtime)?;
             }
             Err(error) => {
-                writeln!(output, "Invalid value: {error}").map_err(runtime)?;
+                writeln!(
+                    output,
+                    "{}",
+                    style.item(Mark::Error, &format!("Invalid value: {error}"))
+                )
+                .map_err(runtime)?;
             }
         }
     }
@@ -582,29 +612,43 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
     let runtimes = markitai_core::subscription::installed_runtimes(&config::environment());
     let mut input = io::stdin().lock();
     let mut console = io::stderr().lock();
+    let style = Style::stderr();
+    // Whether stderr already holds lines that the result follows.
+    let mut said = false;
+    if !yes {
+        writeln!(
+            console,
+            "{}\n\n{}",
+            style.title(&text!("Configuration Setup", "配置初始化")),
+            style.item(
+                Mark::Info,
+                &text!(
+                    "Native configuration setup; no provider requests are made.",
+                    "原生配置初始化；不会向任何供应商发出请求。"
+                )
+            )
+        )
+        .map_err(runtime)?;
+        said = true;
+    }
     for runtime in runtimes {
         let label = runtime.label;
         let provider = runtime.provider;
         writeln!(
             console,
             "{}",
-            text!(
-                "Installed runtime detected: {label}. Login and version were not checked. Run `markitai auth {provider} status`; see `markitai auth {provider} --help` and the subscription guide to configure a supported model.",
-                "检测到已安装的运行时：{label}。尚未检查登录状态和版本。请运行 `markitai auth {provider} status`，再查看 `markitai auth {provider} --help` 和订阅指南以配置受支持的模型。"
+            style.item(
+                Mark::Info,
+                &text!(
+                    "Installed runtime detected: {label}. Login and version were not checked. Run `markitai auth {provider} status`; see `markitai auth {provider} --help` and the subscription guide to configure a supported model.",
+                    "检测到已安装的运行时：{label}。尚未检查登录状态和版本。请运行 `markitai auth {provider} status`，再查看 `markitai auth {provider} --help` 和订阅指南以配置受支持的模型。"
+                )
             )
         )
         .map_err(super::runtime)?;
+        said = true;
     }
     if !yes {
-        writeln!(
-            console,
-            "{}",
-            text!(
-                "Native configuration setup; no provider requests are made.",
-                "原生配置初始化；不会向任何供应商发出请求。"
-            )
-        )
-        .map_err(runtime)?;
         if let Some(models) = fresh.pointer("/llm/model_list").and_then(Value::as_array) {
             for model in models {
                 let name = model["litellm_params"]["model"]
@@ -613,7 +657,10 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
                 writeln!(
                     console,
                     "{}",
-                    text!("Detected model: {name}", "检测到模型：{name}")
+                    style.item(
+                        Mark::Success,
+                        &text!("Detected model: {name}", "检测到模型：{name}")
+                    )
                 )
                 .map_err(runtime)?;
             }
@@ -621,9 +668,12 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
             writeln!(
                 console,
                 "{}",
-                text!(
-                    "No API model detected. LLM remains disabled.",
-                    "未检测到 API 模型，LLM 保持关闭。"
+                style.item(
+                    Mark::Warning,
+                    &text!(
+                        "No API model detected. LLM remains disabled.",
+                        "未检测到 API 模型，LLM 保持关闭。"
+                    )
                 )
             )
             .map_err(runtime)?;
@@ -633,6 +683,7 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
                 lang(),
                 &mut input,
                 &mut console,
+                style,
                 &text!(
                     "Save to: 1 user configuration, 2 ./markitai.json, q cancel [1]: ",
                     "保存到：1 用户配置，2 ./markitai.json，q 取消 [1]："
@@ -657,13 +708,17 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
             writeln!(
                 console,
                 "{}",
-                text!("Configuration exists: {shown}", "配置文件已存在：{shown}")
+                style.item(
+                    Mark::Info,
+                    &text!("Configuration exists: {shown}", "配置文件已存在：{shown}")
+                )
             )
             .map_err(runtime)?;
             let Some(choice) = choice_in(
                 lang(),
                 &mut input,
                 &mut console,
+                style,
                 &text!(
                     "1 update detected models, 2 overwrite, 3 keep [3]: ",
                     "1 追加检测到的模型，2 覆盖，3 保留 [3]："
@@ -685,65 +740,116 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
         "create".into()
     };
     let shown = path.display();
+    let result = Style::stdout();
     if action == "keep" {
-        writeln!(console, "{}", text!("Kept {shown}", "已保留 {shown}")).map_err(runtime)?;
+        writeln!(
+            console,
+            "\n{}",
+            style.summary(Mark::Skip, &text!("Kept {shown}", "已保留 {shown}"))
+        )
+        .map_err(runtime)?;
         return Ok(());
     }
     let mut existing;
+    let mut added;
     if action == "update" {
         existing = parse_config(original.as_deref())?;
+        let before = model_names(&existing);
         if merge_models(&mut existing, &fresh)? == 0 {
+            if said {
+                writeln!(console).map_err(runtime)?;
+            }
             println!(
                 "{}",
-                text!(
-                    "Configuration already up to date: {shown}",
-                    "配置已是最新：{shown}"
+                result.summary(
+                    Mark::Success,
+                    &text!(
+                        "Configuration already up to date: {shown}",
+                        "配置已是最新：{shown}"
+                    )
                 )
             );
             return Ok(());
         }
+        added = model_names(&existing);
+        added.retain(|name| !before.contains(name));
     } else {
         existing = fresh;
+        added = model_names(&existing);
     }
     config::validate(&existing).map_err(runtime)?;
     unchanged(&path, &original)?;
     write_config(&path, &existing)?;
+    if said {
+        writeln!(console).map_err(runtime)?;
+    }
+    // Stdout keeps the one-line result for scripts; guidance stays on stderr.
     println!(
         "{}",
-        if action == "update" {
-            text!("Configuration updated: {shown}", "配置已更新：{shown}")
-        } else {
-            text!("Configuration created: {shown}", "配置已创建：{shown}")
-        }
+        result.summary(
+            Mark::Success,
+            &if action == "update" {
+                text!("Configuration updated: {shown}", "配置已更新：{shown}")
+            } else {
+                text!("Configuration created: {shown}", "配置已创建：{shown}")
+            }
+        )
     );
+    for name in &added {
+        writeln!(console, "{}", style.item(Mark::Info, name)).map_err(runtime)?;
+    }
     if action != "update" {
-        // Guidance stays on stderr; stdout keeps the one-line result for scripts.
-        let models = existing
-            .pointer("/llm/model_list")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
-        let llm = if models > 0 {
-            text!(
-                "Detected models are saved, but LLM processing stays off: add --llm to a conversion or run `markitai config set llm.enabled true`.",
-                "已保存检测到的模型，但 LLM 处理仍处于关闭状态：转换时加上 --llm，或运行 `markitai config set llm.enabled true`。"
+        let (mark, llm, command) = if added.is_empty() {
+            (
+                Mark::Warning,
+                text!(
+                    "No API model was detected: set a provider API key such as OPENAI_API_KEY, then add it with:",
+                    "未检测到 API 模型：请设置供应商的 API key（如 OPENAI_API_KEY），然后这样添加："
+                ),
+                "markitai init -y",
             )
         } else {
-            text!(
-                "No API model was detected: set a provider API key such as OPENAI_API_KEY, then run `markitai init -y` again to add it.",
-                "未检测到 API 模型：请设置供应商的 API key（如 OPENAI_API_KEY），然后再次运行 `markitai init -y` 添加。"
+            (
+                Mark::Info,
+                text!(
+                    "Detected models are saved, but LLM processing stays off: add --llm to a conversion, or turn it on with:",
+                    "已保存检测到的模型，但 LLM 处理仍处于关闭状态：转换时加上 --llm，或这样开启："
+                ),
+                "markitai config set llm.enabled true",
             )
         };
         writeln!(
             console,
-            "{}",
-            text!(
-                "Next steps:\n  markitai FILE -o DIR    Convert a document\n  markitai doctor         Check models and optional backends\n{llm}",
-                "后续步骤：\n  markitai FILE -o DIR    转换文档\n  markitai doctor         检查模型和可选后端\n{llm}"
-            )
+            "\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            style.section(&text!("Next steps", "后续步骤")),
+            style.item(Mark::Info, &text!("Convert a document:", "转换文档：")),
+            style.command(4, "markitai FILE -o DIR"),
+            style.item(
+                Mark::Info,
+                &text!(
+                    "Check models and optional backends:",
+                    "检查模型和可选后端："
+                )
+            ),
+            style.command(4, "markitai doctor"),
+            style.item(mark, &llm),
+            style.command(4, command),
         )
         .map_err(runtime)?;
     }
     Ok(())
+}
+
+/// The model names of `llm.model_list`, in order.
+fn model_names(cfg: &Value) -> Vec<String> {
+    cfg.pointer("/llm/model_list")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|model| model["litellm_params"]["model"].as_str())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// A choice among `choices` (Enter takes `default`); the retry hint follows
@@ -751,24 +857,28 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
 pub(super) fn choice(
     input: &mut impl BufRead,
     output: &mut impl Write,
+    style: Style,
     label: &str,
     choices: &[&str],
     default: &str,
 ) -> CliResult<Option<String>> {
-    choice_in(lang(), input, output, label, choices, default)
+    choice_in(lang(), input, output, style, label, choices, default)
 }
 
-/// [`choice`] with the retry hint in the given language.
+/// [`choice`] with the retry hint in the given language. The label is shown
+/// as a prompt (`? label`).
 fn choice_in(
     lang: Lang,
     input: &mut impl BufRead,
     output: &mut impl Write,
+    style: Style,
     label: &str,
     choices: &[&str],
     default: &str,
 ) -> CliResult<Option<String>> {
+    let label = style.prompt(2, label);
     loop {
-        let Some(value) = prompt(input, output, label)? else {
+        let Some(value) = prompt(input, output, &label)? else {
             return Ok(None);
         };
         let value = value.trim();
@@ -785,7 +895,10 @@ fn choice_in(
         writeln!(
             output,
             "{}",
-            text!(lang => "Choose one of: {choices}", "请选择其中之一：{choices}")
+            style.item(
+                Mark::Warning,
+                &text!(lang => "Choose one of: {choices}", "请选择其中之一：{choices}")
+            )
         )
         .map_err(runtime)?;
     }
@@ -803,7 +916,7 @@ mod tests {
         write_config(&path, &raw).unwrap();
         let mut input = io::Cursor::new(b"/imgql\n1\n500\n1\n85\nq\n");
         let mut output = Vec::new();
-        edit_with(&path, &mut input, &mut output, false).unwrap();
+        edit_with(&path, &mut input, &mut output, false, Style::PLAIN).unwrap();
         let saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved["image"]["quality"], 85);
         assert_eq!(saved["custom"], raw["custom"]);
@@ -823,6 +936,7 @@ mod tests {
             &mut io::Cursor::new(b"output.dir\n:cancel\nq\n"),
             &mut output,
             false,
+            Style::PLAIN,
         )
         .unwrap();
         assert!(!path.exists());
@@ -831,6 +945,7 @@ mod tests {
             &mut io::Cursor::new(b"output.dir\n:empty\noutput.profile\nnull\nq\n"),
             &mut output,
             false,
+            Style::PLAIN,
         )
         .unwrap();
         let saved: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();

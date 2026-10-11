@@ -256,7 +256,7 @@ fn claude_status_and_login_delegate_to_official_runtime_with_private_auth_home()
         .unwrap();
     assert_eq!(text.status.code(), Some(1));
     assert!(
-        String::from_utf8_lossy(&text.stdout).contains("  Next: markitai auth claude login\n"),
+        String::from_utf8_lossy(&text.stdout).contains("\n  → markitai auth claude login\n"),
         "{}",
         String::from_utf8_lossy(&text.stdout)
     );

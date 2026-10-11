@@ -135,7 +135,7 @@ fn a_file_that_is_not_an_image_is_an_error_and_not_a_skip() {
         assert_eq!(output.status.code(), Some(1), "{name}");
         let message = String::from_utf8_lossy(&output.stderr);
         assert!(
-            message.starts_with(&format!("Error: {reason}")),
+            message.starts_with(&format!("  ✗ {reason}")),
             "{name}: {message}"
         );
         assert!(!message.contains("Skipped"), "{message}");
@@ -153,7 +153,7 @@ fn a_file_that_is_not_an_image_is_an_error_and_not_a_skip() {
     assert_eq!(output.status.code(), Some(10));
     let message = String::from_utf8_lossy(&output.stderr);
     assert!(
-        message.contains("Error: empty.png: File is empty (0 bytes)"),
+        message.contains("  ✗ empty.png: File is empty (0 bytes)"),
         "{message}"
     );
     assert!(

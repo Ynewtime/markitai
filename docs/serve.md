@@ -491,14 +491,15 @@ with `--no-open` it does not open anything.
 
 At startup the service prints, on stderr: `Markitai server listening on http://ADDRESS`
 and, unless `--no-auth`, `Remote access token: …` (these two lines are scripted
-against and stay English in every language); the address to open in a browser
-(with the token in its fragment for local and remote browsers alike, unless
+against, stay English in every language and are never wrapped); the address to
+open in a browser, on a line of its own under `Open in your browser:` so it copies
+whole (with the token in its fragment for local and remote browsers alike, unless
 `--no-auth` was explicitly selected); the directory
 that holds jobs and history (`MARKITAI_HOME/serve/jobs`, shown absolute); and a
 Ctrl-C hint. The other sentences follow the terminal language (`MARKITAI_LANG`,
 then `LANG`, then `LC_ALL`, Chinese for a `zh` prefix). When the listener is not
-loopback-only (`--host 0.0.0.0`, a network address) it first warns that the service
-is reachable from the network and that the token is the credential; with
+loopback-only (`--host 0.0.0.0`, a network address) it first warns
+(`! Binding to …`) that the service is reachable from the network and that the token is the credential; with
 `--no-auth` the warning says anyone who can reach the address can convert files and
 read, download or delete the whole history, and what to do instead. A port that is
 already taken stops the service with a message naming the address and suggesting

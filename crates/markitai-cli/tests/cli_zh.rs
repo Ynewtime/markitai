@@ -83,18 +83,21 @@ fn batch_summary_and_item_lines_are_chinese_with_the_converters_reasons_kept() {
     // The failure keeps the converter's English reason after a Chinese frame.
     assert!(
         lines[0].starts_with(
-            "Error: broken.docx: The file appears to be damaged or truncated (Native document conversion failed: "
+            "  ✗ broken.docx: The file appears to be damaged or truncated (Native document conversion failed: "
         ),
         "{lines:?}"
     );
-    // Two of the four items were converted: the line says out of how many.
-    assert!(lines[1].starts_with("完成：2/4 个文件（0:0"), "{lines:?}");
+    // Two of the four items were converted: the line says out of how many,
+    // with a warning mark because not all were.
+    assert_eq!(lines[1], "", "{lines:?}");
+    assert!(lines[2].starts_with("! 完成：2/4 个文件（0:0"), "{lines:?}");
     assert_eq!(
-        &lines[2..],
+        &lines[3..],
         [
-            "已跳过 1 项（图片，没有可提取的文字）：pic.png。请使用 --llm 或 --ocr 提取内容。",
-            "失败 1 项：broken.docx。详见上方的错误信息。",
-            "输出目录：out",
+            "  ! 已跳过 1 项（图片，没有可提取的文字）：pic.png。请使用 --llm 或 --ocr 提取内容。",
+            "  ✗ 失败 1 项：broken.docx。详见上方的错误信息。",
+            "",
+            "  输出目录：out",
         ]
     );
 
@@ -102,7 +105,7 @@ fn batch_summary_and_item_lines_are_chinese_with_the_converters_reasons_kept() {
     let quiet = run(root.path(), ZH, &["docs", "-o", "quiet", "-q"]);
     assert_eq!(quiet.status.code(), Some(10));
     let message = stderr(&quiet);
-    assert!(message.starts_with("Error: broken.docx: "), "{message}");
+    assert!(message.starts_with("  ✗ broken.docx: "), "{message}");
     assert_eq!(message.lines().count(), 1, "{message}");
 
     // Every item failing for want of a model gets one remedy line.
@@ -229,13 +232,13 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
     );
     assert_eq!(
         stderr(&preview),
-        "预览：将转换 3 个文件，将跳过 1 项；未写出任何内容。\n"
+        "\n• 预览：将转换 3 个文件，将跳过 1 项；未写出任何内容。\n"
     );
     assert!(!root.path().join("out").exists());
     let english = run(root.path(), EN, &["docs", "-o", "out", "--dry-run"]);
     assert_eq!(
         stderr(&english),
-        "Dry run: 3 files would be converted and 1 skipped; nothing was written.\n"
+        "\n• Dry run: 3 files would be converted and 1 skipped; nothing was written.\n"
     );
     assert_eq!(english.stdout, preview.stdout);
 
@@ -243,12 +246,12 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
     assert!(empty.status.success());
     assert_eq!(
         stderr(&empty),
-        "在 empty 中没有找到受支持的文件或 .urls 列表，无需转换。\n"
+        "! 在 empty 中没有找到受支持的文件或 .urls 列表，无需转换。\n"
     );
     let filtered = run(root.path(), ZH, &["docs", "-o", "out", "-g", "*.pdf"]);
     assert_eq!(
         stderr(&filtered),
-        "在 docs 中没有与 --glob 匹配的受支持文件或 .urls 列表，无需转换。\n"
+        "! 在 docs 中没有与 --glob 匹配的受支持文件或 .urls 列表，无需转换。\n"
     );
     assert!(
         run(root.path(), ZH, &["empty", "-o", "out", "-q"])
@@ -271,7 +274,7 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
     assert!(urls.status.success(), "{}", stderr(&urls));
     let message = stderr(&urls);
     assert!(
-        message.starts_with("Warning: 跳过 links.urls 的第 2 行：不是 HTTP(S) URL\n"),
+        message.starts_with("  ! 跳过 links.urls 的第 2 行：不是 HTTP(S) URL\n"),
         "{message}"
     );
     assert!(
@@ -282,7 +285,7 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
     let array = run(root.path(), ZH, &["list.urls", "-o", "out", "--dry-run"]);
     assert!(
         stderr(&array).starts_with(
-            "Warning: 跳过 list.urls 的第 1 项：应为 URL 字符串，或带有 \"url\" 字段的对象\n"
+            "  ! 跳过 list.urls 的第 1 项：应为 URL 字符串，或带有 \"url\" 字段的对象\n"
         ),
         "{}",
         stderr(&array)
@@ -292,7 +295,7 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
     let bad = run(root.path(), ZH, &["bad.urls", "-o", "out"]);
     assert_eq!(bad.status.code(), Some(1));
     assert!(
-        stderr(&bad).ends_with("Error: No valid URLs found in bad.urls.\n"),
+        stderr(&bad).ends_with("✗ No valid URLs found in bad.urls.\n"),
         "{}",
         stderr(&bad)
     );
@@ -306,18 +309,18 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     let first = run(root.path(), ZH, &["note.txt", "-o", "out"]);
     assert_eq!(
         stderr(&first),
-        format!("已写入 {}\n", native("out/note.txt.md"))
+        format!("  ✓ 已写入 {}\n", native("out/note.txt.md"))
     );
     assert_eq!(
         stderr(&run(root.path(), EN, &["note.txt", "-o", "out2"])),
-        format!("Wrote {}\n", native("out2/note.txt.md"))
+        format!("  ✓ Wrote {}\n", native("out2/note.txt.md"))
     );
     // The renamed file is the one named.
     let again = run(root.path(), ZH, &["note.txt", "-o", "out"]);
     assert_eq!(
         stderr(&again),
         format!(
-            "已写入 {}（note.txt.md 已存在）\n",
+            "  ✓ 已写入 {}（note.txt.md 已存在）\n",
             native("out/note.txt.v2.md")
         )
     );
@@ -325,11 +328,11 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     let image = run(root.path(), ZH, &["pic.png", "-o", "out"]);
     assert_eq!(
         stderr(&image),
-        "已跳过 pic.png：图片没有文字可提取，需要 --ocr 或 --llm。用 --ocr 做本地文字识别，或用 --llm 调用视觉模型。\n"
+        "  ! 已跳过 pic.png：图片没有文字可提取，需要 --ocr 或 --llm。用 --ocr 做本地文字识别，或用 --llm 调用视觉模型。\n"
     );
     assert_eq!(
         stderr(&run(root.path(), EN, &["pic.png", "-o", "out"])),
-        "Skipped pic.png: an image has no text to extract without --ocr or --llm. Use --ocr for local text recognition or --llm for a vision model.\n"
+        "  ! Skipped pic.png: an image has no text to extract without --ocr or --llm. Use --ocr for local text recognition or --llm for a vision model.\n"
     );
     let skip = run(
         root.path(),
@@ -344,18 +347,18 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     );
     assert_eq!(
         stderr(&skip),
-        "已跳过 note.txt：输出已存在，且 output.on_conflict 为 skip。设为 rename 或 overwrite 可重新转换。\n"
+        "  ○ 已跳过 note.txt：输出已存在，且 output.on_conflict 为 skip。设为 rename 或 overwrite 可重新转换。\n"
     );
 
     let model = run(root.path(), ZH, &["note.txt", "--llm"]);
     assert_eq!(model.status.code(), Some(1));
     let message = stderr(&model);
     assert!(
-        message.starts_with("Error: No model configured; "),
+        message.starts_with("  ✗ No model configured; "),
         "{message}"
     );
     assert!(
-        message.contains("\nHint: 请设置供应商的 API key，例如 OPENAI_API_KEY"),
+        message.contains("\n  → 请设置供应商的 API key，例如 OPENAI_API_KEY"),
         "{message}"
     );
 
@@ -367,7 +370,7 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     assert_eq!(
         stderr(&alt),
         format!(
-            "Warning: 未启用 --llm（或 standard/rich 预设）时，--alt 和 --desc 不起作用\n已写入 {}\n",
+            "  ! 未启用 --llm（或 standard/rich 预设）时，--alt 和 --desc 不起作用\n  ✓ 已写入 {}\n",
             native("alt/note.txt.md")
         )
     );
@@ -388,11 +391,11 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     assert!(verbose.status.success(), "{}", stderr(&verbose));
     let message = stderr(&verbose);
     assert!(
-        message.starts_with("报告：") && message.contains(&native(".markitai/reports/")),
+        message.starts_with("  • 报告：") && message.contains(&native(".markitai/reports/")),
         "{message}"
     );
     assert!(
-        message.ends_with(&format!("已写入 {}\n", native("rep/note.txt.md"))),
+        message.ends_with(&format!("  ✓ 已写入 {}\n", native("rep/note.txt.md"))),
         "{message}"
     );
     // Without the file the output location is as before.
@@ -412,11 +415,11 @@ fn resuming_without_state_and_the_report_of_a_batch_speak_chinese() {
     assert_eq!(fresh.status.code(), Some(10));
     let message = stderr(&fresh);
     assert!(
-        message.starts_with("没有与这些路径和选项匹配的恢复状态，将开始全新的批处理。\n"),
+        message.starts_with("  • 没有与这些路径和选项匹配的恢复状态，将开始全新的批处理。\n"),
         "{message}"
     );
     assert!(
-        message.contains("\n报告：") && message.ends_with("输出目录：out\n"),
+        message.contains("\n  • 报告：") && message.ends_with("\n\n  输出目录：out\n"),
         "{message}"
     );
     // A second report is kept as it is when the policy says skip.
@@ -433,7 +436,7 @@ fn resuming_without_state_and_the_report_of_a_batch_speak_chinese() {
         ],
     );
     assert!(
-        stderr(&again).starts_with("已保留现有报告："),
+        stderr(&again).starts_with("  • 已保留现有报告："),
         "{}",
         stderr(&again)
     );
@@ -450,16 +453,16 @@ fn init_without_prompts_says_what_it_did_in_chinese() {
     let root = tempfile::tempdir().unwrap();
     let created = run(root.path(), ZH, &["init", "-y", "--local"]);
     assert!(created.status.success(), "{}", stderr(&created));
-    assert_eq!(stdout(&created), "配置已创建：markitai.json\n");
+    assert_eq!(stdout(&created), "✓ 配置已创建：markitai.json\n");
     let message = stderr(&created);
     assert_eq!(
         message,
-        "后续步骤：\n  markitai FILE -o DIR    转换文档\n  markitai doctor         检查模型和可选后端\n未检测到 API 模型：请设置供应商的 API key（如 OPENAI_API_KEY），然后再次运行 `markitai init -y` 添加。\n"
+        "\n后续步骤\n  • 转换文档：\n    markitai FILE -o DIR\n  • 检查模型和可选后端：\n    markitai doctor\n  ! 未检测到 API 模型：请设置供应商的 API key（如 OPENAI_API_KEY），然后这样添加：\n    markitai init -y\n"
     );
     let file = std::fs::read(root.path().join("markitai.json")).unwrap();
 
     let same = run(root.path(), ZH, &["init", "-y", "--local"]);
-    assert_eq!(stdout(&same), "配置已是最新：markitai.json\n");
+    assert_eq!(stdout(&same), "✓ 配置已是最新：markitai.json\n");
     assert!(same.stderr.is_empty());
 
     let models = [
@@ -471,8 +474,9 @@ fn init_without_prompts_says_what_it_did_in_chinese() {
         &[ZH, &models].concat(),
         &["init", "-y", "--local"],
     );
-    assert_eq!(stdout(&updated), "配置已更新：markitai.json\n");
-    assert!(updated.stderr.is_empty());
+    assert_eq!(stdout(&updated), "✓ 配置已更新：markitai.json\n");
+    // The models it added are listed.
+    assert_eq!(stderr(&updated), "  • openai/chosen\n");
 
     // A new file with a detected model explains the next step in Chinese.
     let fresh = run(
@@ -480,10 +484,10 @@ fn init_without_prompts_says_what_it_did_in_chinese() {
         &[ZH, &models].concat(),
         &["init", "-y", "-o", "other.json"],
     );
-    assert_eq!(stdout(&fresh), "配置已创建：other.json\n");
+    assert_eq!(stdout(&fresh), "✓ 配置已创建：other.json\n");
     assert!(
         stderr(&fresh).ends_with(
-            "已保存检测到的模型，但 LLM 处理仍处于关闭状态：转换时加上 --llm，或运行 `markitai config set llm.enabled true`。\n"
+            "  • 已保存检测到的模型，但 LLM 处理仍处于关闭状态：转换时加上 --llm，或这样开启：\n    markitai config set llm.enabled true\n"
         ),
         "{}",
         stderr(&fresh)
@@ -492,7 +496,7 @@ fn init_without_prompts_says_what_it_did_in_chinese() {
     // The files are the same whichever language wrote them.
     let english_root = tempfile::tempdir().unwrap();
     let english = run(english_root.path(), EN, &["init", "-y", "--local"]);
-    assert_eq!(stdout(&english), "Configuration created: markitai.json\n");
+    assert_eq!(stdout(&english), "✓ Configuration created: markitai.json\n");
     assert_eq!(
         std::fs::read(english_root.path().join("markitai.json")).unwrap(),
         file
@@ -502,11 +506,9 @@ fn init_without_prompts_says_what_it_did_in_chinese() {
         &[EN, &models].concat(),
         &["init", "-y", "-o", "other.json"],
     );
-    assert!(
-        stderr(&english).ends_with(
-            "add --llm to a conversion or run `markitai config set llm.enabled true`.\n"
-        )
-    );
+    assert!(stderr(&english).ends_with(
+        "add --llm to a conversion, or turn it on with:\n    markitai config set llm.enabled true\n"
+    ));
     assert_eq!(
         std::fs::read(english_root.path().join("other.json")).unwrap(),
         std::fs::read(root.path().join("other.json")).unwrap()
@@ -517,7 +519,7 @@ fn init_without_prompts_says_what_it_did_in_chinese() {
     assert_eq!(refused.status.code(), Some(2));
     assert_eq!(
         stderr(&refused),
-        "Error: 交互式配置需要终端；自动化场景请使用 config set 或 init --yes\n"
+        "✗ 交互式配置需要终端；自动化场景请使用 config set 或 init --yes\n"
     );
     assert!(refused.stdout.is_empty());
     let edit = run(root.path(), ZH, &["config", "edit"]);
@@ -610,7 +612,15 @@ mod wizard {
             std::thread::sleep(std::time::Duration::from_millis(10));
         };
         drop(master);
-        let shown = String::from_utf8_lossy(&read.join().unwrap()).into_owned();
+        // What the terminal showed, without the colours of the terminal style.
+        let shown = String::from_utf8_lossy(&read.join().unwrap())
+            .split("\u{1b}[")
+            .enumerate()
+            .map(|(index, part)| match part.split_once('m') {
+                Some((_, rest)) if index > 0 => rest,
+                _ => part,
+            })
+            .collect::<String>();
         (status, shown, output.join().unwrap())
     }
 }
@@ -634,11 +644,11 @@ fn the_init_wizard_asks_and_answers_in_chinese() {
         "检测到模型：openai/chosen",
         "保存到：1 用户配置，2 ./markitai.json，q 取消 [1]：",
         "请选择其中之一：1, 2",
-        "后续步骤：",
+        "后续步骤",
     ] {
         assert!(shown.contains(line), "{line}\n{shown}");
     }
-    assert_eq!(printed, "配置已创建：markitai.json\n");
+    assert_eq!(printed, "✓ 配置已创建：markitai.json\n");
     assert!(root.path().join("markitai.json").is_file());
     assert!(!root.path().join("home").exists());
 
@@ -666,7 +676,7 @@ fn the_init_wizard_asks_and_answers_in_chinese() {
         shown.contains("未检测到 API 模型，LLM 保持关闭。"),
         "{shown}"
     );
-    assert_eq!(printed, "配置已创建：markitai.json\n");
+    assert_eq!(printed, "✓ 配置已创建：markitai.json\n");
 
     // English runs keep their prompts.
     let (status, shown, _) = terminal(
@@ -745,7 +755,7 @@ fn an_interrupted_batch_says_so_in_chinese_while_the_log_keeps_english() {
     assert_eq!(status.code(), Some(130));
     let lines = lines.join().unwrap();
     assert!(
-        lines.contains(&"Interrupted: 不再派发新任务，等待正在进行的转换完成。".to_owned()),
+        lines.contains(&"  ! Interrupted: 不再派发新任务，等待正在进行的转换完成。".to_owned()),
         "{lines:?}"
     );
     let file = std::fs::read_dir(&log)
