@@ -15,8 +15,14 @@
 //! tree also ends when this process ends for any other reason, even one that
 //! runs no cleanup at all.
 //!
+//! The private directories these runtimes read are registered too
+//! ([`Workspace`]), and [`terminate_all`] removes them after the trees.
+//!
 //! This module also finds runtime programs the way a command shell would
 //! ([`find_program`]), which on Windows means trying the PATHEXT extensions.
+
+mod workspaces;
+pub(crate) use workspaces::Workspace;
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -188,10 +194,11 @@ fn leader_exited(child: &Child) -> bool {
     }
 }
 
-/// Immediately kill every registered tree. Async-signal-safe on Unix. On
-/// Windows each job is taken from its entry before it is terminated, so a
-/// concurrent owner never closes a handle in use here; the host is about to
-/// end, which closes them.
+/// Immediately kill every registered tree, then remove the private
+/// workspaces of runtime requests. Async-signal-safe on Unix. On Windows each
+/// job is taken from its entry before it is terminated, so a concurrent owner
+/// never closes a handle in use here; the host is about to end, which closes
+/// them.
 pub fn terminate_all() {
     for slot in &TREES {
         let address = slot.load(Ordering::Acquire);
@@ -212,6 +219,7 @@ pub fn terminate_all() {
             windows::terminate(address);
         }
     }
+    workspaces::remove_all();
 }
 
 /// File extensions that process creation can start: programs directly, and
@@ -851,6 +859,16 @@ mod tests {
             !alive(grandchild),
             "grandchild {grandchild} still runs after its entry was dropped"
         );
+    }
+
+    #[test]
+    fn terminate_all_removes_registered_workspaces_in_an_isolated_process() {
+        if isolated(
+            "process_groups::tests::terminate_all_removes_registered_workspaces_in_an_isolated_process",
+        ) {
+            return;
+        }
+        super::workspaces::tests::terminate_all_removes_registered_workspaces();
     }
 
     #[test]

@@ -4,6 +4,7 @@ mod tests;
 
 use super::supervisor::{self, Admission, Messages, ProcessFailure, Runtime};
 use super::{AuthStatus, FailureKind, Model, ObservedCall, Request};
+use crate::process_groups::Workspace;
 use base64::Engine;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -267,19 +268,8 @@ pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure>
         details: json!({"source":"official_cli","cli_version":installed,"supported_from":CLI_VERSION,"native_adapter":true,"auth_method":method.filter(|m| matches!(*m, "claude.ai" | "apiKey")),"subscription":subscription}),
     })
 }
-fn private_file(workspace: &Path, file: &str, bytes: &[u8]) -> Result<PathBuf, Failure> {
-    use std::io::Write;
-    let path = workspace.join(file);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&path).map_err(|_| protocol())?;
-    file.write_all(bytes).map_err(|_| protocol())?;
-    Ok(path)
+fn private_file(workspace: &Workspace, file: &str, bytes: &[u8]) -> Result<PathBuf, Failure> {
+    workspace.file(file, bytes).map_err(|_| protocol())
 }
 fn start(
     config: &Config,
@@ -289,13 +279,13 @@ fn start(
     cancel: Option<&AtomicBool>,
 ) -> Result<supervisor::Process, Failure> {
     let workspace = RUNTIME.workspace()?;
-    let prompt = private_file(workspace.path(), "system.txt", system.as_bytes())?;
+    let prompt = private_file(&workspace, "system.txt", system.as_bytes())?;
     let settings = private_file(
-        workspace.path(),
+        &workspace,
         "settings.json",
         br#"{"disableAllHooks":true,"autoMemoryEnabled":false}"#,
     )?;
-    let mcp = private_file(workspace.path(), "mcp.json", br#"{"mcpServers":{}}"#)?;
+    let mcp = private_file(&workspace, "mcp.json", br#"{"mcpServers":{}}"#)?;
     let mut args: Vec<OsString> = [
         "--print",
         "--input-format",
