@@ -1070,6 +1070,7 @@ async def process_url_batch(
     from markitai.fetch import FetchStrategy
     from markitai.security import check_symlink_safety
     from markitai.utils.output import OutputNameReservations
+    from markitai.utils.term import SPINNER
 
     # Default to auto strategy if not specified
     if fetch_strategy is None:
@@ -1451,7 +1452,7 @@ async def process_url_batch(
         with (
             logging_ctx.suspend_console(),
             Progress(
-                SpinnerColumn(),
+                SpinnerColumn(SPINNER),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 MofNCompleteColumn(),

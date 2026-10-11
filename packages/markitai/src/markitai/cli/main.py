@@ -29,6 +29,14 @@ click.rich_click.STYLE_OPTIONS_PANEL_BORDER = "dim"
 # does (markitai.utils.term)
 _legacy_windows = _term._LEGACY_STDOUT or _term._LEGACY_STDERR
 click.rich_click.LEGACY_WINDOWS = _legacy_windows  # type: ignore[attr-defined]
+# Help panels are drawn with the status marks' choice: ASCII boxes where the
+# marks are ASCII (a legacy console, TERM=dumb, a Windows pipe at a non-UTF-8
+# code page). rich-click renders into its own buffer, whose encoding says
+# nothing about the reader.
+if not _term._UNICODE_MARKS:
+    click.rich_click.STYLE_OPTIONS_PANEL_BOX = "ASCII"
+    click.rich_click.STYLE_COMMANDS_PANEL_BOX = "ASCII"
+    click.rich_click.STYLE_ERRORS_PANEL_BOX = "ASCII"
 # Uniform helptext spacing: exactly one blank line between paragraphs.
 # rich-click's default ("\n") renders plain paragraphs with NO blank line
 # between them while \b blocks get TWO trailing blank lines, so section

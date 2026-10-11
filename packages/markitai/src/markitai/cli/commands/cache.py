@@ -387,7 +387,9 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
 
         learned_at = d.get("learned_at", "")[:10] if d.get("learned_at") else "-"
         hits = d.get("hits", 0)
-        console.print(f"    [dim]│ Hits: {hits}, Learned: {learned_at}[/dim]")
+        console.print(
+            f"    [dim]{ui.MARK_LINE} Hits: {hits}, Learned: {learned_at}[/dim]"
+        )
 
 
 __all__ = ["cache"]

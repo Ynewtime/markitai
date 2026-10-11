@@ -397,3 +397,74 @@ class TestWindowsCodePage:
             ),
         ):
             assert term._msys_terminal(term._STD_OUTPUT_HANDLE) is pty
+
+
+class TestGlyphsFollowTheMarks:
+    """Progress bars, rules, boxes and spinners use the marks' choice (owner
+    rule, 2026-10-11): a classic console showed `✓ •` beside ASCII bars, where
+    Rich's own guess and markitai's rule disagreed."""
+
+    @staticmethod
+    def _render(unicode: bool, renderable: Any) -> str:
+        buf = io.StringIO()
+        with patch.object(term, "_UNICODE_MARKS", unicode):
+            console = term._SoftWrapConsole(file=buf, width=30, legacy_windows=False)
+            console.print(renderable)
+        return buf.getvalue()
+
+    @pytest.mark.parametrize("unicode", [True, False])
+    def test_bars_rules_and_panels(self, unicode: bool) -> None:
+        from rich.panel import Panel
+        from rich.progress_bar import ProgressBar
+        from rich.rule import Rule
+
+        bar = self._render(unicode, ProgressBar(total=10, completed=5, width=10))
+        # A titled rule: Rich draws an untitled one with its own characters
+        # whatever the encoding (markitai draws no rules of its own)
+        rule = self._render(unicode, Rule("Files"))
+        panel = self._render(unicode, Panel("text"))
+        if unicode:
+            assert "━" in bar and "─" in rule and "╭" in panel
+        else:
+            assert "-" in bar and "━" not in bar
+            assert "-" in rule and "─" not in rule
+            assert "╭" not in panel and "+" in panel
+        assert all(text.isascii() for text in (bar, rule, panel)) is not unicode
+
+    def test_the_stream_stays_utf8(self) -> None:
+        """Only Rich's drawing choice changes: text is written as it is."""
+        assert "名前" in self._render(False, "名前 → name")
+
+    def test_spinner_and_ellipsis_follow_the_marks(self) -> None:
+        assert (("dots", "…") if term._UNICODE_MARKS else ("line", "...")) == (
+            term.SPINNER,
+            term.ELLIPSIS,
+        )
+
+
+@pytest.mark.parametrize(("dumb", "corner"), [(False, "╭"), (True, "+")])
+def test_help_panels_follow_the_marks(dumb: bool, corner: str) -> None:
+    """rich-click's help renders into its own buffer: its boxes are set."""
+    import os
+    import subprocess
+
+    env = {k: v for k, v in os.environ.items() if k != "TERM"}
+    if dumb:
+        env["TERM"] = "dumb"
+    result = subprocess.run(
+        [sys.executable, "-m", "markitai", "--help"],
+        capture_output=True,
+        env={**env, "COLUMNS": "100", "NO_COLOR": "1"},
+        timeout=120,
+        check=False,
+    )
+    out = result.stdout.decode("utf-8", errors="replace")
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    panel_lines = [
+        line for line in out.splitlines() if "Output & Configuration" in line
+    ]
+    assert panel_lines and panel_lines[0].lstrip().startswith(corner), panel_lines
+    if dumb:
+        # Option texts keep their own characters (an arrow, a dash): only
+        # the drawing follows the marks
+        assert not any("\u2500" <= char <= "\u257f" for char in out)

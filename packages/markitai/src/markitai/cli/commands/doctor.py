@@ -172,7 +172,9 @@ def _compact_runtime_error(detail: str, *, limit: int = 1200) -> str:
     selected = critical[-2:] or errors[-2:] or lines[-2:]
     compact = " | ".join(selected) or "unknown launch failure"
     if len(compact) > limit:
-        compact = f"…{compact[-limit:]}"
+        from markitai.utils.term import ELLIPSIS
+
+        compact = f"{ELLIPSIS}{compact[-limit:]}"
     return compact
 
 
