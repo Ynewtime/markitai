@@ -431,7 +431,7 @@ fn detect(stream: Stream) -> Style {
     });
     Style {
         color,
-        unicode: !dumb && platform::unicode(terminal),
+        unicode: !dumb && platform::unicode(stream),
         width,
         bright: color && terminal && platform::classic_powershell(stream),
     }
@@ -468,7 +468,7 @@ mod platform {
     /// `zh_CN`) gets the ASCII set; the C locale or none counts as UTF-8, as
     /// Python's runtime takes it (PEP 538/540), since scripts and containers
     /// set it on UTF-8 terminals.
-    pub(super) fn unicode(_terminal: bool) -> bool {
+    pub(super) fn unicode(_: Stream) -> bool {
         utf8_output()
     }
 
@@ -556,9 +556,9 @@ mod platform {
         *cell.get_or_init(|| enable_vt(stream))
     }
 
-    /// Windows Terminal, VS Code, ConEmu, mintty and SSH clients draw the
-    /// marks with font fallback; the legacy console host does not (Consolas
-    /// and NSimSun lack ✓ ✗ ◆), in Windows PowerShell 5.1 and 7 alike.
+    /// A terminal other than the legacy console host: Windows Terminal, VS
+    /// Code, ConEmu, mintty or an SSH client. They draw Chinese whatever the
+    /// code page and keep their own colour schemes.
     fn modern_terminal() -> bool {
         ["WT_SESSION", "TERM_PROGRAM", "SSH_CONNECTION", "SSH_CLIENT"]
             .into_iter()
@@ -567,27 +567,33 @@ mod platform {
             || super::variable("TERM").is_some_and(|term| term != "dumb")
     }
 
-    /// Whether redirected output is read as UTF-8: PowerShell and other
-    /// readers decode a program's output with the console's output code page,
-    /// so it must be 65001 (or there is no console).
-    fn decodes_utf8() -> bool {
-        // SAFETY: GetConsoleOutputCP takes no arguments; 0 means no console.
-        matches!(unsafe { GetConsoleOutputCP() }, 0 | 65001)
+    /// Whether `stream` is a Windows console, rather than a pipe, a file or
+    /// an msys terminal (a pipe that mintty reads).
+    fn console(stream: Stream) -> bool {
+        let Some(handle) = handle(stream) else {
+            return false;
+        };
+        let mut mode = 0;
+        // SAFETY: GetConsoleMode only fills initialized local storage for a
+        // process-owned handle.
+        unsafe { GetConsoleMode(handle, &mut mode) != 0 }
     }
 
-    /// Unicode marks in a modern terminal, and in redirected output that is
-    /// read as UTF-8.
-    pub(super) fn unicode(terminal: bool) -> bool {
-        if terminal {
-            modern_terminal()
-        } else {
-            decodes_utf8()
-        }
+    /// The Unicode marks, as on macOS and Linux, everywhere except a console
+    /// that cannot read escape sequences: Windows before 10 (version 1511) or
+    /// the console host's "Use legacy console" option, the consoles Python
+    /// markitai's Rich check also gives the ASCII set. Redirected output is
+    /// UTF-8 whatever the console's code page, as Python markitai writes it,
+    /// so it carries the marks like any other text; a reader that decodes it
+    /// with another code page shows every non-ASCII character wrongly, not
+    /// only the marks.
+    pub(super) fn unicode(stream: Stream) -> bool {
+        !console(stream) || ansi(stream)
     }
 
     /// Chinese on a console needs a font that has it: a modern terminal, or
-    /// a CJK or UTF-8 code page (the legacy console's font follows it); in
-    /// redirected output it needs a reader that decodes UTF-8.
+    /// a CJK or UTF-8 code page (the legacy console's font follows it).
+    /// Redirected output is UTF-8 and carries it, as it carries the marks.
     pub(super) fn cjk_capable() -> bool {
         use std::io::IsTerminal;
         // SAFETY: GetConsoleOutputCP takes no arguments; 0 means no console.
@@ -601,7 +607,7 @@ mod platform {
             std::io::stderr().is_terminal(),
         ]
         .into_iter()
-        .all(|terminal| if terminal { console } else { decodes_utf8() })
+        .all(|terminal| !terminal || console)
     }
 
     fn buffer(stream: Stream) -> Option<CONSOLE_SCREEN_BUFFER_INFO> {
@@ -634,7 +640,7 @@ mod platform {
     pub(super) fn ansi(_: Stream) -> bool {
         true
     }
-    pub(super) fn unicode(_: bool) -> bool {
+    pub(super) fn unicode(_: Stream) -> bool {
         true
     }
     pub(super) fn cjk_capable() -> bool {

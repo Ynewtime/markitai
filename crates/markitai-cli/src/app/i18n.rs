@@ -13,10 +13,10 @@
 //! and then from the same `.env` files that configuration selection reads.
 //!
 //! Chinese chosen by the locale or the system falls back to English where the
-//! output cannot draw it: a locale with another character set than UTF-8
-//! (`zh_CN.GBK`; a GBK terminal would print mojibake), or the legacy Windows
-//! console with a code page that is neither CJK nor UTF-8. `MARKITAI_LANG=zh`
-//! is taken as asked.
+//! output cannot draw it: on Unix a locale with another character set than
+//! UTF-8 (`zh_CN.GBK`; a GBK terminal would print mojibake), on Windows the
+//! legacy console with a code page that is neither CJK nor UTF-8 (pipes and
+//! files there are UTF-8). `MARKITAI_LANG=zh` is taken as asked.
 //!
 //! Only sentences meant for a person change. JSON, values shared with JSON
 //! (check names, messages and hints), usage errors from the argument parser,

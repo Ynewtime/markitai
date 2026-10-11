@@ -379,8 +379,8 @@ fn verdict(
             text!(lang => "Repair failed: {names}", "修复失败：{names}"),
         )
     } else if !missing.is_empty() {
-        // Ready is a success like Python's verdict; the missing optional items
-        // keep their own `!` rows above.
+        // Ready is a success, as in Python markitai: what is missing is
+        // optional and already listed with its remedy above.
         let names = missing.join(separator);
         (
             Mark::Success,
@@ -1190,8 +1190,8 @@ mod tests {
             verdict_of(&all, &[], Lang::Zh),
             (Mark::Success, "已就绪，所有功能均可用。".into())
         );
-        // Optional checks that are not ready still finish green (as Python's
-        // doctor does) and are named in the verdict.
+        // Optional checks that are not ready leave the verdict a success
+        // that names them.
         let optional = [
             ("A", "ok", false),
             ("B", "warning", false),

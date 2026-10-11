@@ -369,19 +369,23 @@ fn lc_all_precedes_lc_messages_and_lang_and_markitai_lang_wins() {
         "✓ 配置有效\n"
     );
     assert_eq!(valid(&[("LANG", "C")]), "✓ Configuration is valid\n");
-    // A terminal set to another character set cannot draw Chinese (or the
-    // marks): English and the ASCII marks, unless MARKITAI_LANG asks.
-    assert_eq!(
-        valid(&[("LANG", "zh_CN.GBK")]),
-        "+ Configuration is valid\n"
-    );
+    // On Unix a terminal set to another character set cannot draw Chinese (or
+    // the marks): English and the ASCII marks, unless MARKITAI_LANG asks.
+    // Windows writes UTF-8 whatever the locale names, so there the locale
+    // only chooses the language.
+    let (other_charset, asked) = if cfg!(windows) {
+        ("✓ 配置有效\n", "✓ 配置有效\n")
+    } else {
+        ("+ Configuration is valid\n", "+ 配置有效\n")
+    };
+    assert_eq!(valid(&[("LANG", "zh_CN.GBK")]), other_charset);
     assert_eq!(
         valid(&[("LC_ALL", "zh_TW.Big5"), ("LANG", "zh_TW.UTF-8")]),
-        "+ Configuration is valid\n"
+        other_charset
     );
     assert_eq!(
         valid(&[("MARKITAI_LANG", "zh"), ("LANG", "zh_CN.GBK")]),
-        "+ 配置有效\n"
+        asked
     );
 }
 
