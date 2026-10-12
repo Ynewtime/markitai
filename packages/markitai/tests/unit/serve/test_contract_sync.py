@@ -40,6 +40,7 @@ COMPONENTS: dict[str, str] = {
     "Artifact": "ItemArtifact",
     "ItemResult": "ItemResult",
     "DownloadTicket": "DownloadTicket",
+    "RegeneratedToken": "RegeneratedToken",
     "PageBox": "PageBox",
     "OriginalDescriptor": "OriginalDescriptor",
     "PageTextLine": "PageTextLine",

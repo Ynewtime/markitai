@@ -335,3 +335,378 @@ class TestDiscoveryFailureReasons:
         listed = await discovery.discover_models("deepseek", api_key="sk-x-123456")
         assert listed["reason"] == reason
         assert "Error" not in listed["detail"]
+
+
+class TestDiscoveryDetailsAsContractV111:
+    """The failure sentences both backends send (contract v1.11 section 8)."""
+
+    @pytest.mark.parametrize(
+        ("status", "body", "reason", "detail"),
+        [
+            (
+                401,
+                {"error": {"message": "Incorrect API key provided: sk-wrong-123456"}},
+                "key_rejected",
+                "Model discovery returned HTTP 401: Incorrect API key provided: …",
+            ),
+            (
+                403,
+                {"message": "first", "error": "second"},
+                "key_rejected",
+                "Model discovery returned HTTP 403: first",
+            ),
+            (
+                429,
+                {"error": "slow down"},
+                "rate_limited",
+                "Model discovery returned HTTP 429: slow down",
+            ),
+            (
+                404,
+                {"detail": "no such path"},
+                "provider_error",
+                "Model discovery returned HTTP 404: no such path",
+            ),
+            (500, {"other": 1}, "provider_error", "Model discovery returned HTTP 500"),
+            (
+                301,
+                {},
+                "network",
+                "Model discovery request failed: the address redirected (HTTP 301), "
+                "which discovery does not follow",
+            ),
+        ],
+        ids=["401", "403", "429", "404", "500", "301"],
+    )
+    async def test_a_refusal(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        status: int,
+        body: Any,
+        reason: str,
+        detail: str,
+    ) -> None:
+        _ModelsServer(status=status, body=body).install(monkeypatch)
+        listed = await discovery.discover_models("deepseek", api_key="sk-wrong-123456")
+        assert listed == {
+            "provider": "deepseek",
+            "status": "unavailable",
+            "source": "live_api",
+            "authoritative": False,
+            "cached": False,
+            "stale": False,
+            "models": [],
+            "detail": detail,
+            "reason": reason,
+        }
+
+    async def test_a_text_answer_is_read_without_markup_and_cut_at_300(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        page = "<html><body><h1>Bad\ngateway</h1><p>" + "x" * 400 + "</p></body></html>"
+
+        class Client:
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
+
+            async def __aenter__(self) -> Client:
+                return self
+
+            async def __aexit__(self, *_args: Any) -> None:
+                return None
+
+            async def get(self, url: str, **_kwargs: Any) -> httpx.Response:
+                return httpx.Response(502, text=page, request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(discovery.httpx, "AsyncClient", Client)
+        listed = await discovery.discover_models("deepseek", api_key="sk-x-123456")
+        words = listed["detail"].removeprefix("Model discovery returned HTTP 502: ")
+        assert words.startswith("Bad gateway x")
+        assert len(words) == 301 and words.endswith("…")
+        assert "<" not in words
+
+    @pytest.mark.parametrize(
+        ("body", "detail"),
+        [
+            ({"object": "list"}, "Model discovery response has no model list"),
+            ({"data": "none"}, "Model discovery response has no model list"),
+        ],
+        ids=["no-list", "not-a-list"],
+    )
+    async def test_an_answer_without_a_list(
+        self, monkeypatch: pytest.MonkeyPatch, body: Any, detail: str
+    ) -> None:
+        _ModelsServer(body=body).install(monkeypatch)
+        listed = await discovery.discover_models("deepseek", api_key="sk-x-123456")
+        assert (listed["status"], listed["reason"], listed["detail"]) == (
+            "unavailable",
+            "provider_error",
+            detail,
+        )
+
+    @pytest.mark.parametrize(
+        ("content", "detail"),
+        [
+            (b"not json", "Model discovery response is not JSON"),
+            (b" " * (2 * 1024 * 1024 + 1), "Model discovery response exceeds 2 MiB"),
+        ],
+        ids=["not-json", "oversized"],
+    )
+    async def test_an_unreadable_answer(
+        self, monkeypatch: pytest.MonkeyPatch, content: bytes, detail: str
+    ) -> None:
+        class Client:
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
+
+            async def __aenter__(self) -> Client:
+                return self
+
+            async def __aexit__(self, *_args: Any) -> None:
+                return None
+
+            async def get(self, url: str, **_kwargs: Any) -> httpx.Response:
+                return httpx.Response(
+                    200, content=content, request=httpx.Request("GET", url)
+                )
+
+        monkeypatch.setattr(discovery.httpx, "AsyncClient", Client)
+        listed = await discovery.discover_models("deepseek", api_key="sk-x-123456")
+        assert (listed["reason"], listed["detail"]) == ("provider_error", detail)
+
+    @pytest.mark.parametrize(
+        ("error", "reason", "detail"),
+        [
+            (httpx.ReadTimeout("slow"), "timeout", "Model discovery timed out"),
+            (TimeoutError(), "timeout", "Model discovery timed out"),
+            (
+                httpx.ConnectError("boom", request=httpx.Request("GET", "http://x")),
+                "network",
+                "Model discovery request failed: boom",
+            ),
+            (
+                RuntimeError("internal"),
+                "provider_error",
+                "Model discovery could not complete",
+            ),
+        ],
+        ids=["read-timeout", "overall-timeout", "connect", "internal"],
+    )
+    async def test_no_answer_in_rusts_words(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        error: Exception,
+        reason: str,
+        detail: str,
+    ) -> None:
+        async def fail(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            raise error
+
+        monkeypatch.setattr(discovery, "_http_models", fail)
+        listed = await discovery.discover_models("deepseek", api_key="sk-x-123456")
+        assert (listed["reason"], listed["detail"]) == (reason, detail)
+
+    async def test_a_refused_connection_names_its_cause(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fail(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            try:
+                raise ConnectionRefusedError(111, "Connection refused")
+            except ConnectionRefusedError as cause:
+                raise httpx.ConnectError("All connection attempts failed") from cause
+
+        monkeypatch.setattr(discovery, "_http_models", fail)
+        listed = await discovery.discover_models("deepseek", api_key="sk-x-123456")
+        assert listed["detail"] == "Model discovery request failed: connection refused"
+
+    async def test_a_keyless_refusal_keeps_the_http_sentence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _ModelsServer(status=401, body={"error": {"message": "no key"}}).install(
+            monkeypatch
+        )
+        listed = await discovery.discover_models(
+            "deepseek", key_variable="DEEPSEEK_API_KEY"
+        )
+        assert listed["reason"] == "no_key"
+        assert listed["key_variable"] == "DEEPSEEK_API_KEY"
+        assert listed["detail"] == "Model discovery returned HTTP 401: no key"
+
+    async def test_an_address_missing_is_a_provider_error(self) -> None:
+        listed = await discovery.discover_models("azure", api_key="k")
+        assert (listed["reason"], listed["detail"]) == (
+            "provider_error",
+            "An API endpoint is required",
+        )
+
+    async def test_a_stale_list_stays_partial(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _ModelsServer().install(monkeypatch)
+        await discovery.discover_models("deepseek", api_key="sk-x-123456")
+        _ModelsServer(status=429, body={"error": "slow"}).install(monkeypatch)
+        listed = await discovery.discover_models(
+            "deepseek", api_key="sk-x-123456", refresh=True
+        )
+        assert (listed["status"], listed["stale"], listed["reason"]) == (
+            "partial",
+            True,
+            "rate_limited",
+        )
+        assert listed["models"]
+
+
+class TestNoKeyBeforeAnyRequest:
+    async def test_an_unset_env_reference_names_its_variable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("MY_DEEPSEEK_KEY", raising=False)
+        server = _ModelsServer()
+        entry = _entry("deepseek/deepseek-flash", api_key="env:MY_DEEPSEEK_KEY")
+        async with _client(_app(tmp_path, entry)) as client:
+            card = await _legacy_card(client, "deepseek")
+            server.install(monkeypatch)
+            listed = (
+                await client.post(
+                    "/api/settings/llm/model-discovery",
+                    json={
+                        "provider": "deepseek",
+                        "deployment_id": card["deployment_id"],
+                    },
+                )
+            ).json()
+        assert server.requests == []
+        assert listed["reason"] == "no_key"
+        assert listed["key_variable"] == "MY_DEEPSEEK_KEY"
+        assert (
+            listed["detail"]
+            == "MY_DEEPSEEK_KEY is not set on the server, so nothing was sent"
+        )
+
+    async def test_no_key_anywhere_is_said_in_the_contracts_words(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        server = _ModelsServer()
+        async with _client(_app(tmp_path, _entry("deepseek/deepseek-flash"))) as client:
+            card = await _legacy_card(client, "deepseek")
+            server.install(monkeypatch)
+            listed = (
+                await client.post(
+                    "/api/settings/llm/model-discovery",
+                    json={"provider": "deepseek", "provider_id": card["provider_id"]},
+                )
+            ).json()
+        assert server.requests == []
+        assert listed["detail"] == (
+            "DEEPSEEK_API_KEY is not set on the server, so nothing was sent"
+        )
+
+    async def test_a_keyless_entry_and_a_local_server_are_exempt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        server = _ModelsServer(body={"models": []})
+        entry = _entry(
+            "deepseek/deepseek-flash",
+            api_key="markitai-no-key",
+            api_base="http://127.0.0.1:9/v1",
+        )
+        async with _client(_app(tmp_path, entry)) as client:
+            card = await _legacy_card(client, "deepseek")
+            server.install(monkeypatch)
+            keyless = (
+                await client.post(
+                    "/api/settings/llm/model-discovery",
+                    json={
+                        "provider": "deepseek",
+                        "deployment_id": card["deployment_id"],
+                    },
+                )
+            ).json()
+            local = (
+                await client.post(
+                    "/api/settings/llm/model-discovery", json={"provider": "ollama"}
+                )
+            ).json()
+        assert keyless.get("reason") != "no_key"
+        assert local.get("reason") != "no_key"
+        assert len(server.requests) == 2
+
+
+class TestOneProviderOneSavedRow:
+    """Cards carry ``credential``; the environment card folds into a
+    connection that already uses its variable (contract v1.11 section 8)."""
+
+    async def _cards(
+        self, tmp_path: Path, *entries: ModelConfig
+    ) -> list[dict[str, Any]]:
+        async with _client(_app(tmp_path, *entries)) as client:
+            return (await client.get("/api/settings/llm/providers")).json()["providers"]
+
+    async def test_every_provider_whose_key_variable_is_set_gets_a_card(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GROQ_API_KEY", "gsk-env-1234")
+        monkeypatch.setenv("MOONSHOT_API_KEY", "sk-moon-1234")
+        monkeypatch.setenv("MISTRAL_API_KEY", " ")
+        cards = await self._cards(tmp_path)
+        environment = {
+            card["provider"]: card for card in cards if card["kind"] == "environment"
+        }
+        assert environment["groq"]["credential"] == "env:GROQ_API_KEY"
+        assert environment["groq"]["source"] == "GROQ_API_KEY"
+        assert environment["groq"]["id"] == "env:groq"
+        assert environment["moonshot"]["credential"] == "env:MOONSHOT_API_KEY"
+        assert "mistral" not in environment
+        assert "gsk-env-1234" not in str(cards)
+
+    async def test_a_hand_written_entry_names_the_variable_that_serves_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DEEPSEEK_API_KEY", _KEY)
+        cards = await self._cards(tmp_path, _entry("deepseek/deepseek-flash"))
+        deepseek = [card for card in cards if card["provider"] == "deepseek"]
+        # One row: the environment card folds into the hand-written entry
+        assert [card["kind"] for card in deepseek] == ["configured"]
+        assert deepseek[0]["credential"] == "env:DEEPSEEK_API_KEY"
+
+    async def test_an_entry_at_another_address_keeps_the_environment_card(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DEEPSEEK_API_KEY", _KEY)
+        cards = await self._cards(
+            tmp_path,
+            _entry("deepseek/deepseek-flash", api_base="https://proxy.test/v1"),
+        )
+        deepseek = {
+            card["kind"]: card for card in cards if card["provider"] == "deepseek"
+        }
+        assert set(deepseek) == {"configured", "environment"}
+        assert deepseek["configured"]["credential"] == "env:DEEPSEEK_API_KEY"
+
+    async def test_a_reference_is_named_as_written_and_a_stored_key_not_at_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", _KEY)
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        cards = await self._cards(
+            tmp_path,
+            _entry("openai/gpt-x", api_key="env:OPENAI_API_KEY"),
+            _entry("deepseek/deepseek-flash", api_key="sk-stored-in-config-9876"),
+            _entry(
+                "groq/llama",
+                api_key="markitai-no-key",
+                api_base="http://127.0.0.1:9/v1",
+            ),
+        )
+        configured = {
+            card["provider"]: card for card in cards if card["kind"] == "configured"
+        }
+        assert configured["openai"]["credential"] == "env:OPENAI_API_KEY"
+        assert "credential" not in configured["deepseek"]
+        assert "credential" not in configured["groq"]
+        assert not any(
+            card["kind"] == "environment" and card["provider"] == "openai"
+            for card in cards
+        )

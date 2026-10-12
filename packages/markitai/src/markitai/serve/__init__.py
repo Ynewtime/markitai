@@ -7,11 +7,12 @@ level so that importing :mod:`markitai.serve` stays safe on base installs.
 
 from __future__ import annotations
 
+import secrets
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from fastapi import FastAPI
@@ -36,6 +37,11 @@ def is_serve_available() -> bool:
     )
 
 
+def new_access_token() -> str:
+    """A fresh random serve access token (256 bits)."""
+    return f"mk_{secrets.token_urlsafe(32)}"
+
+
 def create_app(
     static_dir: Path | None = None,
     jobs_root: Path | None = None,
@@ -44,6 +50,8 @@ def create_app(
     config_path: Path | None = None,
     allowed_hosts: Sequence[str] | None = None,
     token: str | None = None,
+    network_origin: Callable[[], str | None] | None = None,
+    token_variable: str | None = None,
 ) -> FastAPI:
     """Create the FastAPI app (guarded re-export of :func:`serve.app.create_app`).
 
@@ -60,6 +68,10 @@ def create_app(
             headers besides localhost and IP literals.
         token: Access token required from non-loopback peers on ``/api/``
             routes; None disables token auth.
+        network_origin: Returns ``http://<network address>:<port>`` when the
+            server listens on all interfaces, else None (the sign-in link of
+            a regenerated token).
+        token_variable: The environment variable that set *token*, if any.
 
     Raises:
         ImportError: When the serve extra is not installed.
@@ -76,4 +88,6 @@ def create_app(
         config_path=config_path,
         allowed_hosts=allowed_hosts,
         token=token,
+        network_origin=network_origin,
+        token_variable=token_variable,
     )
