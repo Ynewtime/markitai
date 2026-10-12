@@ -62,14 +62,16 @@ _NON_FATAL_CALLS = (
     "install_optional_playwright",
     "install_optional_claude_cli",
     "install_optional_copilot_cli",
-    "finalize_markitai_extras",
+    "wait_markitai_warmup",
     "install_precommit",
 )
 
+# The questions are asked before markitai installs (select_*); the installs
+# act on the answers
 _OPTIONAL_INSTALLERS = (
-    ("install_optional_playwright", "Install-OptionalPlaywright"),
-    ("install_optional_claude_cli", "Install-OptionalClaudeCLI"),
-    ("install_optional_copilot_cli", "Install-OptionalCopilotCLI"),
+    ("select_optional_playwright", "Select-OptionalPlaywright"),
+    ("select_optional_claude_cli", "Select-OptionalClaudeCLI"),
+    ("select_optional_copilot_cli", "Select-OptionalCopilotCLI"),
 )
 
 
@@ -180,6 +182,8 @@ def test_setup_migrates_retired_receipt_extras(
         f"install_markitai() {{\n{_shell_function('install_markitai')}}}\n"
         'markitai_tools_dir() { printf "%s\\n" "$TEST_TOOLS_DIR"; }\n'
         "i18n() { :; }\nclack_success() { :; }\ntrack_install() { :; }\n"
+        "clack_error() { :; }\nclack_warn() { :; }\nclack_detail_row() { :; }\n"
+        "setup_now() { echo 0; }\nsetup_since() { echo 0; }\nclack_took() { :; }\n"
         "use_uv_tool_bin_dir() { :; }\n"
         'clack_spinner() { shift; "$@"; }\n'
         'markitai() { printf "markitai %s\\n" "$TEST_INSTALLED_VERSION"; }\n'
@@ -212,6 +216,14 @@ def test_setup_migrates_retired_receipt_extras(
             "function i18n {}\nfunction Clack-Info {}\nfunction Clack-Step {}\n"
             "function Add-UvToolBinToPath {}\n"
             "function Clack-Success {}\nfunction Track-Install {}\n"
+            "function Clack-DetailRow {}\nfunction Clack-Warn {}\n"
+            "function Clack-Error {}\nfunction Clack-Detail {}\n"
+            "function Format-Took { return '' }\n"
+            "function Invoke-NativeWithProgress {\n"
+            "  param($Label, $FilePath, $ArgumentList, $Name)\n"
+            "  & $FilePath @ArgumentList\n"
+            "  return [PSCustomObject]@{ Success = $true; ExitCode = 0; Output = @(); Seconds = 0 }\n"
+            "}\n"
             'function markitai { return "markitai $env:TEST_INSTALLED_VERSION" }\n'
             "function uv {\n"
             "  $args | Add-Content -LiteralPath $env:TEST_UV_CALLS -Encoding UTF8\n"
@@ -265,11 +277,16 @@ def test_setup_migrates_retired_receipt_extras(
     spec = f"markitai[{expected}]" if expected else "markitai"
     if version:
         spec += f"=={version}"
-    assert calls.read_text(encoding="utf-8-sig").splitlines() == (
-        ["tool", "install", spec, "--python", "python-test", "--force"]
-        if needs_update or version
-        else ["tool", "upgrade", "markitai"]
-    )
+    # One install with the cleaned spec, in place (never --force, which
+    # rebuilt every package); an unpinned one takes the newest release
+    assert calls.read_text(encoding="utf-8-sig").splitlines() == [
+        "tool",
+        "install",
+        spec,
+        "--python",
+        "python-test",
+        *([] if version else ["--upgrade"]),
+    ]
     current = tomllib.loads(receipt.read_text(encoding="utf-8"))
     assert current["tool"]["requirements"][0]["extras"] == clean_extras
 
@@ -341,9 +358,25 @@ def test_local_provider_runtime_extras_are_applied_before_auto_config() -> None:
     assert any(req.startswith("github-copilot-sdk") for req in extras["copilot"])
 
     shell_flow = _shell_function("run_user_setup")
-    assert shell_flow.find("finalize_markitai_extras") < shell_flow.find("init_config")
+    assert (
+        0
+        <= shell_flow.find("select_optional_claude_cli")
+        < shell_flow.find("install_markitai ||")
+        < shell_flow.find("init_config")
+    )
+    assert 'install_markitai_extra "claude-agent"' in _shell_function(
+        "select_optional_claude_cli"
+    )
     ps_flow = _powershell_function("Run-UserSetup")
-    assert ps_flow.find("Finalize-MarkitaiExtras") < ps_flow.find("Initialize-Config")
+    assert (
+        0
+        <= ps_flow.find("Select-OptionalClaudeCLI")
+        < ps_flow.find("Install-Markitai))")
+        < ps_flow.find("Initialize-Config")
+    )
+    assert 'Install-MarkitaiExtra -ExtraName "claude-agent"' in _powershell_function(
+        "Select-OptionalClaudeCLI"
+    )
 
 
 def test_setup_scripts_only_select_supported_python_versions() -> None:
@@ -362,33 +395,31 @@ def test_setup_scripts_only_select_supported_python_versions() -> None:
 
 
 def test_setup_sh_honors_version_pin_for_existing_tool() -> None:
-    """A pinned repeat install must bypass the receipt-based generic upgrade."""
+    """Only an unpinned PyPI install takes the newest release (--upgrade)."""
     body = _shell_function("install_markitai")
     unpinned_guard = body.find(
-        '[ "$MARKITAI_SOURCE" != "local" ] && [ -z "$MARKITAI_VERSION" ]'
+        '[ "$MARKITAI_SOURCE" != "local" ] \\\n        && [ -z "$MARKITAI_VERSION" ]'
     )
-    generic_upgrade = body.find("uv tool upgrade markitai")
-    exact_reinstall = body.find(
-        'uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force'
-    )
+    upgrade = body.find('_mi_upgrade="--upgrade"')
     version_check = body.find('"$_mi_version" != "$MARKITAI_VERSION"')
 
-    assert 0 <= unpinned_guard < generic_upgrade < exact_reinstall < version_check
+    assert 0 <= unpinned_guard < upgrade < version_check
+    assert "uv tool upgrade markitai" not in body
     spec = _shell_function("markitai_pkg_spec")
     assert "==$MARKITAI_VERSION" in spec
 
 
 def test_setup_ps1_honors_version_pin_for_existing_tool() -> None:
-    """PowerShell must also bypass a generic upgrade for an explicit pin."""
+    """PowerShell: the same rule."""
     body = _powershell_function("Install-Markitai")
     unpinned_guard = body.find(
         '$script:MARKITAI_SOURCE -ne "local" -and -not $script:MarkitaiVersion'
     )
-    generic_upgrade = body.find("uv tool upgrade markitai")
-    exact_reinstall = body.find("uv tool install $pkg --python $pythonArg --force")
+    upgrade = body.find('$arguments += "--upgrade"')
     version_check = body.find("$version -ne $script:MarkitaiVersion")
 
-    assert 0 <= unpinned_guard < generic_upgrade < exact_reinstall < version_check
+    assert 0 <= unpinned_guard < upgrade < version_check
+    assert "uv tool upgrade markitai" not in body
     spec = _powershell_function("Get-MarkitaiPkgSpec")
     assert "==$($script:MarkitaiVersion)" in spec
 
@@ -471,21 +502,66 @@ def test_user_install_selects_serve_before_installing_markitai() -> None:
     assert "uv run markitai serve" in _powershell_function("Print-DevCompletion")
 
 
-def test_combined_extra_install_bypasses_receipt_upgrade_when_extras_changed() -> None:
-    """A newly selected extra must be applied by the combined package spec."""
-    shell_body = _shell_function("install_markitai")
-    changed_guard = shell_body.find("! markitai_extras_need_update")
-    generic_upgrade = shell_body.find("uv tool upgrade markitai")
-    combined_install = shell_body.find(
+def test_markitai_installs_once_with_every_chosen_extra() -> None:
+    """Owner report (2026-10-12): setup.ps1 took over ten minutes on runner-win.
+
+    It installed markitai, asked the new install which extras to add
+    (`markitai doctor --suggest-extras`, a first run of an uncompiled
+    install) and installed it again with --force, which rebuilt all 137
+    packages and compiled their 13,400 files a second time. Every question
+    is now asked first and markitai installs once, in place; --force is
+    only the retry for a command another installer left behind.
+    """
+    for flow, select, install, suggested in (
+        (
+            _shell_function("run_user_setup"),
+            (
+                "select_markitai_serve",
+                "select_markitai_ocr",
+                "select_optional_playwright",
+                "select_optional_claude_cli",
+                "select_optional_copilot_cli",
+                "add_suggested_markitai_extras",
+            ),
+            "install_markitai ||",
+            "markitai doctor --suggest-extras",
+        ),
+        (
+            _powershell_function("Run-UserSetup"),
+            (
+                "Select-MarkitaiServe",
+                "Select-MarkitaiOcr",
+                "Select-OptionalPlaywright",
+                "Select-OptionalClaudeCLI",
+                "Select-OptionalCopilotCLI",
+                "Add-SuggestedMarkitaiExtras",
+            ),
+            "Install-Markitai))",
+            "markitai doctor --suggest-extras",
+        ),
+    ):
+        positions = [flow.find(name) for name in select]
+        assert all(p >= 0 for p in positions), select
+        assert max(positions) < flow.find(install)
+        assert suggested not in flow
+    for text in (
+        _SETUP_SH.read_text(encoding="utf-8"),
+        _SETUP_PS1.read_text(encoding="utf-8"),
+    ):
+        assert "uv tool upgrade markitai" not in text
+        assert "suggest-extras 2>" not in text
+    sh_install = _shell_function("install_markitai")
+    first = sh_install.find(
+        'uv tool install "$_mi_pkg" --python "$PYTHON_CMD" $_mi_upgrade'
+    )
+    forced = sh_install.find(
         'uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force'
     )
-    assert 0 <= changed_guard < generic_upgrade < combined_install
-
-    ps_body = _powershell_function("Install-Markitai")
-    changed_guard = ps_body.find("-not (Test-MarkitaiExtrasNeedUpdate)")
-    generic_upgrade = ps_body.find("uv tool upgrade markitai")
-    combined_install = ps_body.find("uv tool install $pkg --python $pythonArg --force")
-    assert 0 <= changed_guard < generic_upgrade < combined_install
+    assert 0 <= first < forced
+    ps_install = _powershell_function("Install-Markitai")
+    first = ps_install.find('-ArgumentList $arguments -Name "install markitai"')
+    forced = ps_install.find('($arguments + "--force")')
+    assert 0 <= first < forced
 
 
 def test_extra_accumulators_treat_all_as_a_superset() -> None:
@@ -653,16 +729,20 @@ def test_setup_ps1_has_bounded_native_and_global_error_guards() -> None:
     assert '$ErrorActionPreference = "Continue"' in native_guard
     assert "$output = @(& $Command 2>&1)" in native_guard
 
+    progress_guard = _powershell_function("Invoke-NativeWithProgress")
+    assert '$ErrorActionPreference = "Continue"' in progress_guard
+    assert "& $Exe @Arguments 2>&1" in progress_guard
+
     installer_guard = _powershell_function("Invoke-PowerShellInstallerQuietly")
-    assert "-File $tempPath" in installer_guard
-    assert "Invoke-NativeQuietly" in installer_guard
+    assert '"-File", $tempPath' in installer_guard
+    assert "Invoke-NativeWithProgress" in installer_guard
     assert "Invoke-Expression" not in text
 
     for function in (
         "Install-OptionalClaudeCLI",
         "Install-OptionalCopilotCLI",
     ):
-        assert "Invoke-NativeQuietly" in _powershell_function(function)
+        assert "Invoke-NativeWithProgress" in _powershell_function(function)
 
     for flow in ("Run-UserSetup", "Run-DevSetup"):
         body = _powershell_function(flow)
@@ -793,18 +873,19 @@ def test_ocr_selection_joins_the_first_combined_install() -> None:
 
 
 def test_declined_ocr_is_not_re_added_by_suggest_extras() -> None:
-    """A declined extra must survive the doctor --suggest-extras merge.
+    """A declined extra must survive the batteries-included extras.
 
-    `markitai doctor --suggest-extras` always lists `ocr`. Merging it blindly
-    would reinstall what the user just declined, making the prompt a lie.
+    The suggested set (every declared extra) always has `ocr`. Adding it
+    blindly would install what the user just declined, making the prompt a
+    lie.
     """
-    shell_finalize = _shell_function("finalize_markitai_extras")
-    assert "markitai_extra_declined" in shell_finalize
+    shell_suggested = _shell_function("add_suggested_markitai_extras")
+    assert "markitai_extra_declined" in shell_suggested
     shell_select = _shell_function("select_markitai_ocr")
     assert "decline_markitai_extra" in shell_select
 
-    ps_finalize = _powershell_function("Finalize-MarkitaiExtras")
-    assert "Test-MarkitaiExtraDeclined" in ps_finalize
+    ps_suggested = _powershell_function("Add-SuggestedMarkitaiExtras")
+    assert "Test-MarkitaiExtraDeclined" in ps_suggested
     ps_select = _powershell_function("Select-MarkitaiOcr")
     assert "Deny-MarkitaiExtra" in ps_select
 
@@ -1036,17 +1117,82 @@ def test_powershell_probe_matches_the_shell_probe(
     assert actual == expected
 
 
-def test_setup_scripts_compile_bytecode_at_install() -> None:
+def test_setup_scripts_prepare_the_first_run_in_the_background() -> None:
     """The first run after an install compiled every module it imported: on
-    runner-win 44 s for the first URL conversion against 4.6 s for the next."""
+    runner-win 44 s for the first URL conversion against 4.6 s for the next.
+
+    UV_COMPILE_BYTECODE fixed that by compiling all 13,400 files of the
+    environment at install time, most of which markitai never imports, and
+    twice per setup. markitai.warmup now compiles what markitai imports, in
+    the background right after the install; setup waits for it at the end.
+    """
     shell_text = _SETUP_SH.read_text(encoding="utf-8")
     powershell_text = _SETUP_PS1.read_text(encoding="utf-8")
-    assert 'UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"' in shell_text
-    assert "export UV_COMPILE_BYTECODE" in shell_text
-    assert (
-        'if (-not $env:UV_COMPILE_BYTECODE) { $env:UV_COMPILE_BYTECODE = "1" }'
-        in powershell_text
+    assert "UV_COMPILE_BYTECODE=" not in shell_text
+    assert "export UV_COMPILE_BYTECODE" not in shell_text
+    assert "$env:UV_COMPILE_BYTECODE =" not in powershell_text
+    assert "-m markitai.warmup" in shell_text
+    assert '"markitai.warmup"' in powershell_text
+
+    for flow, start, install, wait, summary in (
+        (
+            _shell_function("run_user_setup"),
+            "start_markitai_warmup",
+            "install_markitai ||",
+            "wait_markitai_warmup",
+            "print_summary --no-header",
+        ),
+        (
+            _powershell_function("Run-UserSetup"),
+            "Start-MarkitaiWarmup",
+            "Install-Markitai))",
+            "Wait-MarkitaiWarmup",
+            "Print-Summary -NoHeader",
+        ),
+    ):
+        assert 0 <= flow.find(install) < flow.find(start)
+        assert flow.find(start) < flow.find(wait) < flow.find(summary)
+    # Below normal priority, out of the user's console
+    assert "nice -n 10" in _shell_function("start_markitai_warmup")
+    start = _powershell_function("Start-MarkitaiWarmup")
+    assert "BelowNormal" in start
+    assert "CreateNoWindow = $true" in start
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [(0.44, "0.4s"), (9.96, "10.0s"), (12.7, "12s"), (59.9, "59s"), (185.2, "3m 05s")],
+)
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        pytest.param("sh", marks=_needs_sh),
+        pytest.param(
+            "powershell",
+            marks=pytest.mark.skipif(_POWERSHELL is None, reason="no PowerShell"),
+        ),
+    ],
+)
+def test_step_durations_read_the_same_in_both_scripts(
+    tmp_path: Path, runtime: str, seconds: float, expected: str
+) -> None:
+    if runtime == "sh":
+        script = tmp_path / "duration.sh"
+        script.write_text(
+            f"format_duration() {{\n{_shell_function('format_duration')}}}\n"
+            f"format_duration {seconds}\n",
+            encoding="utf-8",
+        )
+        command = [str(_SH), str(script)]
+    else:
+        script = tmp_path / "duration.ps1"
+        script.write_text(
+            f"function Format-Duration {{\n{_powershell_function('Format-Duration')}}}\n"
+            f"Format-Duration {seconds}\n",
+            encoding="utf-8",
+        )
+        command = [str(_POWERSHELL), "-NoLogo", "-NoProfile", "-File", str(script)]
+    result = subprocess.run(
+        command, capture_output=True, encoding="utf-8", timeout=30, check=False
     )
-    # irm | iex runs in the user's own shell: the old value comes back
-    final = powershell_text[powershell_text.rindex("} finally {") :]
-    assert "$env:UV_COMPILE_BYTECODE = $script:OriginalCompileBytecode" in final
+    assert result.stdout.strip() == expected, result.stderr

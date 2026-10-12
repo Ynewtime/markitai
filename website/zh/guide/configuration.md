@@ -242,6 +242,7 @@ LiteLLM 也会从 `GOOGLE_API_KEY` 读取 Gemini 的 key（优先于 `GEMINI_API
 | `MARKITAI_TIMINGS` | 命令结束时在 stderr 列出时间花在哪里（启动、`doctor` 的每项检查）（`1`、`true`、`yes`、`on`） |
 | `MARKITAI_INSTALL_OPTIONAL` | 安装脚本：不询问直接装可选组件 |
 | `MARKITAI_USE_MIRROR` | 安装脚本：`1` 总是提供镜像，`0` 从不询问 |
+| `MARKITAI_SETUP_TIMINGS` | 安装脚本：结束时列出每一步的用时（`1`、`true`、`yes`、`on`）；每步自己的用时和总用时总会显示 |
 | `MARKITAI_VERSION` | 安装脚本：要安装的版本 |
 
 ### `.env` 文件加载

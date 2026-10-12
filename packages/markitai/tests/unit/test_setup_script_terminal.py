@@ -104,6 +104,14 @@ def _ps_runtime() -> str:
     return text[: text.index(_SECTION_END + "# Installation Status Tracking")]
 
 
+def _ps_progress() -> str:
+    """setup.ps1's step timing and progress helpers (Invoke-NativeWithProgress)."""
+    text = _text(_SETUP_PS1)
+    start = text.index(_SECTION_END + "# Step timing and progress")
+    end = text.index(_SECTION_END + "# First-run preparation")
+    return text[start:end]
+
+
 def _env(**overrides: str) -> dict[str, str]:
     """A clean environment: no colour or locale settings leak in from CI."""
     drop = {
@@ -986,18 +994,25 @@ def test_wsl_question_no_longer_asks_about_administrator() -> None:
 
 
 @pytest.mark.parametrize(
-    "installer", ["install_optional_claude_cli", "install_optional_copilot_cli"]
+    ("selector", "installer"),
+    [
+        ("select_optional_claude_cli", "install_optional_claude_cli"),
+        ("select_optional_copilot_cli", "install_optional_copilot_cli"),
+    ],
 )
 def test_setup_sh_third_party_clis_default_off_headless(
-    tmp_path: Path, installer: str
+    tmp_path: Path, selector: str, installer: str
 ) -> None:
     marker = tmp_path / "installed"
     body = (
         "has_interactive_tty() { return 1; }\n"
         f'run_remote_shell_installer() {{ echo remote >> "{marker}"; return 0; }}\n'
         f'clack_run_quiet() {{ echo quiet >> "{marker}"; return 0; }}\n'
-        "install_markitai_extra() { :; }\ntrack_install() { :; }\n"
+        f'install_markitai_extra() {{ echo "extra $1" >> "{marker}"; }}\n'
+        "track_install() { :; }\n"
+        f"{_shell_function(selector)}"
         f"{_shell_function(installer)}"
+        f"{selector}\n"
         f"if {installer}; then rc=0; else rc=$?; fi\n"
         'echo "rc=$rc"\n'
     )
@@ -1009,19 +1024,26 @@ def test_setup_sh_third_party_clis_default_off_headless(
 
 @_needs_pwsh
 @pytest.mark.parametrize(
-    "installer", ["Install-OptionalClaudeCLI", "Install-OptionalCopilotCLI"]
+    ("selector", "installer"),
+    [
+        ("Select-OptionalClaudeCLI", "Install-OptionalClaudeCLI"),
+        ("Select-OptionalCopilotCLI", "Install-OptionalCopilotCLI"),
+    ],
 )
 def test_setup_ps1_third_party_clis_default_off_headless(
-    tmp_path: Path, installer: str
+    tmp_path: Path, selector: str, installer: str
 ) -> None:
     marker = tmp_path / "installed"
     body = (
         "function Get-Command { [CmdletBinding()] param([string]$Name) return $null }\n"
         "function Test-InteractiveInput { return $false }\n"
         f"function Invoke-PowerShellInstallerQuietly {{ 'x' | Add-Content '{marker}' }}\n"
-        f"function Invoke-NativeQuietly {{ 'x' | Add-Content '{marker}' }}\n"
-        "function Install-MarkitaiExtra {}\nfunction Track-Install {}\n"
+        f"function Invoke-NativeWithProgress {{ 'x' | Add-Content '{marker}' }}\n"
+        f"function Install-MarkitaiExtra {{ 'extra' | Add-Content '{marker}' }}\n"
+        "function Track-Install {}\n"
+        f"{_powershell_function(selector)}"
         f"{_powershell_function(installer)}"
+        f"{selector}\n"
         f'"result=$({installer})"\n'
     )
     result = _run_ps(tmp_path, body)
@@ -1185,6 +1207,7 @@ def _run_install_python(
         f"function Test-WindowsOnArm {{ return ${str(on_arm).lower()} }}\n"
         "function Test-CommandExists { return $true }\n"
         f"{_powershell_function('Invoke-NativeQuietly')}"
+        f"{_ps_progress()}"
         f"{_powershell_function('Find-UvPython')}"
         f"{_powershell_function('Select-Python')}"
         f"{_powershell_function('Install-Python')}"
@@ -1359,12 +1382,59 @@ def test_setup_ps1_reads_a_code_page_without_failing(tmp_path: Path) -> None:
 
 
 @_needs_pwsh
-@pytest.mark.parametrize(("preset", "expected"), [(None, "1"), ("0", "0")])
-def test_setup_ps1_compiles_bytecode_unless_told_otherwise(
+@pytest.mark.parametrize(("preset", "expected"), [(None, ""), ("1", "1"), ("0", "0")])
+def test_setup_ps1_leaves_uv_compile_bytecode_as_found(
     tmp_path: Path, preset: str | None, expected: str
 ) -> None:
+    """markitai.warmup compiles what markitai imports; a user's own
+    UV_COMPILE_BYTECODE still applies to the install."""
     env = {} if preset is None else {"UV_COMPILE_BYTECODE": preset}
     result = _run_ps(tmp_path, '"compile=$env:UV_COMPILE_BYTECODE"', **env)
     assert result.stdout.rstrip().endswith(f"compile={expected}"), (
         result.stdout + result.stderr
     )
+
+
+def _fake_native(tmp_path: Path) -> Path:
+    """A command that prints uv's phase lines, a last line, and exits 3."""
+    script = tmp_path / "fake_native.py"
+    script.write_text(
+        "import sys, time\n"
+        "print('Resolved 137 packages in 3.16s', file=sys.stderr)\n"
+        "print('Prepared 136 packages in 26.44s', file=sys.stderr)\n"
+        "time.sleep(0.4)\n"
+        "print('last line')\n"
+        "sys.exit(int(sys.argv[1]))\n",
+        encoding="utf-8",
+    )
+    return script
+
+
+@_needs_pwsh
+@pytest.mark.parametrize("code", [0, 3])
+def test_setup_ps1_native_step_reports_code_output_and_time(
+    tmp_path: Path, code: int
+) -> None:
+    """Redirected output: one "->" row, then the caller's row with the time;
+    the timing table keeps uv's own phase lines."""
+    script = _fake_native(tmp_path)
+    body = (
+        f"{_ps_progress()}"
+        f"$r = Invoke-NativeWithProgress -Label 'Installing thing' -FilePath '{sys.executable}' "
+        f"-ArgumentList @('{script}', '{code}') -Name 'thing'\n"
+        '"success=$($r.Success) code=$($r.ExitCode)"\n'
+        "\"output=$($r.Output -join '|')\"\n"
+        '"timed=$($script:StepTimings[0].Name) $($r.Seconds -ge 0.3)"\n'
+        '"detail=$($script:StepTimings[0].Detail)"\n'
+        '"took=$(Format-Took)"\n'
+    )
+    result = _run_ps(tmp_path, body)
+    out = result.stdout
+    assert "> Installing thing..." in out or "\u2192 Installing thing..." in out, out
+    assert f"success={code == 0} code={code}" in out, out + result.stderr
+    assert "last line" in out
+    assert "timed=thing True" in out
+    assert (
+        "detail=Resolved 137 packages in 3.16s; Prepared 136 packages in 26.44s" in out
+    )
+    assert re.search(r"took= \(0\.\ds\)", out), out

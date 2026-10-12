@@ -56,14 +56,12 @@ try {
     [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 } catch {}
 
-# uv compiles the installed packages to bytecode. Left to the first run,
-# Python compiles and writes every module it imports, and on Windows (each new
-# file scanned) that took long: on runner-win the first URL conversion after an
-# install took 44 s against 4.6 s for the next one, and the first import of the
-# LLM libraries 85 s. Only for this script's own uv calls: under irm | iex this
-# is the user's shell, so the previous value comes back at the end.
-$script:OriginalCompileBytecode = $env:UV_COMPILE_BYTECODE
-if (-not $env:UV_COMPILE_BYTECODE) { $env:UV_COMPILE_BYTECODE = "1" }
+# Bytecode: setup no longer has uv compile every installed package
+# (UV_COMPILE_BYTECODE, about 13,400 files, twice per setup, most never
+# imported; minutes on Windows on Arm, where each new file is also scanned).
+# After the install, markitai.warmup compiles what markitai imports, in the
+# background (Start-MarkitaiWarmup). A UV_COMPILE_BYTECODE the user set is
+# left as it is.
 
 # ============================================================
 # Terminal capabilities
@@ -343,6 +341,11 @@ function i18n {
             "configure_env"             { '\u914d\u7f6e\u73af\u5883\u53d8\u91cf' }
             "convert_file"              { '\u8f6c\u6362\u6587\u4ef6' }
             "show_help"                 { '\u663e\u793a\u5e2e\u52a9' }
+            "preparing_first_run"       { '\u51c6\u5907\u9996\u6b21\u8fd0\u884c' }
+            "first_run_ready"           { '\u5df2\u4e3a\u9996\u6b21\u8fd0\u884c\u505a\u597d\u51c6\u5907' }
+            "first_run_partial"         { '\u90e8\u5206\u6a21\u5757\u672a\u80fd\u9884\u7f16\u8bd1\uff0c\u9996\u6b21\u4f7f\u7528\u65f6\u518d\u7f16\u8bd1' }
+            "setup_took"                { '\u5b89\u88c5\u7528\u65f6 {0}' }
+            "timings_title"             { '\u5404\u6b65\u9aa4\u7528\u65f6' }
             "short_alias"               { '\u63d0\u793a\uff1amkai \u662f markitai \u7684\u7b80\u5199\uff0c\u4e24\u4e2a\u547d\u4ee4\u7b49\u4ef7' }
             "mkai_conflict"             { '\u7cfb\u7edf\u5df2\u6709 mkai \u547d\u4ee4\uff0c\u4f1a\u906e\u853d markitai \u7684\u522b\u540d\uff1b\u8bf7\u4f7f\u7528\u5b8c\u6574\u547d\u4ee4 markitai' }
 
@@ -474,6 +477,11 @@ function i18n {
         "configure_env"             { return 'Configure environment' }
         "convert_file"              { return 'Convert a file' }
         "show_help"                 { return 'Show help' }
+        "preparing_first_run"       { return 'Preparing the first run' }
+        "first_run_ready"           { return 'Ready for the first run' }
+        "first_run_partial"         { return 'Some modules could not be compiled ahead; they compile on first use' }
+        "setup_took"                { return 'Setup took {0}' }
+        "timings_title"             { return 'Step timings' }
         "short_alias"               { return 'Tip: mkai is a short alias for markitai (both work)' }
         "mkai_conflict"             { return 'An existing ''mkai'' command shadows markitai''s alias; use the full ''markitai'' command' }
 
@@ -1013,6 +1021,305 @@ function Invoke-BestEffortStep {
 }
 
 # ============================================================
+# Step timing and progress
+# ============================================================
+
+# Every step's duration, for the line each step ends with, the total at the
+# end and the table MARKITAI_SETUP_TIMINGS=1 prints (to compare runs).
+$script:SetupWatch = [Diagnostics.Stopwatch]::StartNew()
+$script:StepTimings = New-Object System.Collections.ArrayList
+$script:LastStepSeconds = 0.0
+
+function Test-SetupTimings {
+    return $env:MARKITAI_SETUP_TIMINGS -match "^(1|true|yes|on)$"
+}
+
+# 0.4s, 12s, 3m 05s; the same in every culture (no decimal comma).
+function Format-Duration {
+    param([double]$Seconds)
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    if ($Seconds -lt 10) { return [string]::Format($culture, "{0:0.0}s", $Seconds) }
+    if ($Seconds -lt 60) { return [string]::Format($culture, "{0:0}s", [math]::Floor($Seconds)) }
+    $minutes = [math]::Floor($Seconds / 60)
+    $rest = [math]::Floor($Seconds - 60 * $minutes)
+    return [string]::Format($culture, "{0}m {1:00}s", $minutes, $rest)
+}
+
+# " (12s)" after a finished step's row
+function Format-Took {
+    param([double]$Seconds = $script:LastStepSeconds)
+    return " ($(Format-Duration $Seconds))"
+}
+
+function Add-StepTiming {
+    param([string]$Name, [double]$Seconds, [string]$Detail = "")
+    $script:LastStepSeconds = $Seconds
+    [void]$script:StepTimings.Add([PSCustomObject]@{
+        Name = $Name; Seconds = $Seconds; Detail = $Detail
+    })
+}
+
+# Run a step of this script and record how long it took; returns what the
+# step returns.
+function Measure-Step {
+    param([string]$Name, [scriptblock]$Action)
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        return (& $Action)
+    } finally {
+        Add-StepTiming -Name $Name -Seconds $watch.Elapsed.TotalSeconds
+    }
+}
+
+# uv's own phase lines ("Resolved 137 packages in 3.16s", "Prepared ...",
+# "Installed ...", "Bytecode compiled ..."): they say where an install's
+# time went, so the timing table keeps them.
+function Get-UvPhaseLines {
+    param([object[]]$Output)
+    return @($Output | ForEach-Object { "$_".Trim() } |
+        Where-Object { $_ -match '^(Resolved|Prepared|Installed|Uninstalled|Audited|Bytecode compiled) \d+ \S+ in ' })
+}
+
+$script:SpinFrames = if (Test-UnicodeMarks) {
+    @([string][char]0x25D2, [string][char]0x25D0, [string][char]0x25D3, [string][char]0x25D1)
+} else {
+    @("|", "/", "-", "\")
+}
+
+# Whether a step may draw a spinner: a console that is not redirected
+# (redirected output gets one "->" row per step instead of frames).
+function Test-SpinnerOutput {
+    if ($env:TERM -eq "dumb" -or $env:CI) { return $false }
+    if (Test-OutputRedirected) { return $false }
+    return ($script:WrapWidth -gt 0)
+}
+
+# One spinner frame on the guide: "<bar>  <frame> <label> 1m 05s . <last line>".
+function Write-SpinnerFrame {
+    param([string]$Frame, [string]$Label, [double]$Seconds, [string]$Last)
+    $elapsed = Format-Duration $Seconds
+    $room = $script:WrapWidth - 1
+    $text = "$Label $elapsed"
+    if ($Last) { $text += "  $Last" }
+    $line = "$S_BAR  $Frame $text"
+    if ((Get-DisplayWidth $line) -gt $room) {
+        $line = $line.Substring(0, [math]::Max(0, [math]::Min($line.Length, $room)))
+    }
+    Write-Host ("`r" + (" " * $room) + "`r") -NoNewline
+    Write-Styled $S_BAR $script:C_GUIDE
+    Write-Host "  " -NoNewline
+    Write-Styled $Frame $script:C_ACCENT
+    Write-Host " " -NoNewline
+    $rest = $line.Substring([math]::Min($line.Length, $S_BAR.Length + 3 + $Frame.Length))
+    $cut = $rest.IndexOf(" $elapsed")
+    if ($cut -ge 0) {
+        Write-Host $rest.Substring(0, $cut + 1) -NoNewline
+        Write-Styled $rest.Substring($cut + 1) $script:C_DIM
+    } else {
+        Write-Host $rest -NoNewline
+    }
+}
+
+function Clear-SpinnerLine {
+    $room = [math]::Max(1, $script:WrapWidth - 1)
+    Write-Host ("`r" + (" " * $room) + "`r") -NoNewline
+}
+
+# Run a native command (an executable, a .cmd or .ps1 shim) with a spinner,
+# the elapsed time and its latest output line on a console, or after one
+# "->" row when output is redirected. The command runs in its own runspace
+# so this one can draw; environment variables are the process's, so uv
+# sees the mirror and the bytecode settings. Returns Success, ExitCode,
+# Output and Seconds; the timing table gets Name's row (with uv's phases).
+function Invoke-NativeWithProgress {
+    param(
+        [string]$Label,
+        [string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [string]$Name = $Label,
+        [string]$WorkingDirectory = $PWD.ProviderPath
+    )
+
+    $dynamic = Test-SpinnerOutput
+    if (-not $dynamic) { Clack-Step "$Label..." }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $output = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
+    $inputData = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
+    $inputData.Complete()
+    $ps = [PowerShell]::Create()
+    $exitMarker = "::markitai-setup-exit::"
+    [void]$ps.AddScript({
+        param($Exe, $Arguments, $Directory, $Marker)
+        $ErrorActionPreference = "Continue"
+        try { Set-Location -LiteralPath $Directory } catch {}
+        $global:LASTEXITCODE = 0
+        & $Exe @Arguments 2>&1 | ForEach-Object { "$_" }
+        "$Marker$LASTEXITCODE"
+    }).AddArgument($FilePath).AddArgument([string[]]$ArgumentList).AddArgument($WorkingDirectory).AddArgument($exitMarker)
+    $exitCode = 1
+    $lines = @()
+    $handle = $null
+    try {
+        $handle = $ps.BeginInvoke($inputData, $output)
+        $frame = 0
+        while (-not $handle.IsCompleted) {
+            if ($dynamic) {
+                $last = ""
+                $count = $output.Count
+                if ($count -gt 0) {
+                    $last = ("" + $output[$count - 1]).Trim()
+                    if ($last.StartsWith($exitMarker)) { $last = "" }
+                }
+                Write-SpinnerFrame -Frame $script:SpinFrames[$frame % $script:SpinFrames.Count] `
+                    -Label $Label -Seconds $watch.Elapsed.TotalSeconds -Last $last
+                $frame++
+            }
+            Start-Sleep -Milliseconds 125
+        }
+        try { $ps.EndInvoke($handle) | Out-Null } catch {
+            $output.Add($_.Exception.Message)
+        }
+        foreach ($item in $output) {
+            $text = "" + $item
+            if ($text.StartsWith($exitMarker)) {
+                $code = $text.Substring($exitMarker.Length)
+                $exitCode = if ($code -match '^-?\d+$') { [int]$code } else { 0 }
+            } else {
+                $lines += $text
+            }
+        }
+    } catch {
+        $lines += $_.Exception.Message
+        $exitCode = 1
+    } finally {
+        if ($handle -and -not $handle.IsCompleted) {
+            try { [void]$ps.BeginStop($null, $null) } catch {}
+        }
+        if ($dynamic) { Clear-SpinnerLine }
+        $ps.Dispose()
+    }
+    $seconds = $watch.Elapsed.TotalSeconds
+    Add-StepTiming -Name $Name -Seconds $seconds -Detail ((Get-UvPhaseLines $lines) -join "; ")
+    return [PSCustomObject]@{
+        Success = ($exitCode -eq 0)
+        ExitCode = $exitCode
+        Output = $lines
+        Seconds = $seconds
+    }
+}
+
+# The time setup took, and with MARKITAI_SETUP_TIMINGS=1 every step's.
+function Write-SetupTimings {
+    $total = $script:SetupWatch.Elapsed.TotalSeconds
+    Clack-Info ((i18n "setup_took") -f (Format-Duration $total))
+    if (-not (Test-SetupTimings)) { return }
+    Clack-Info (i18n "timings_title")
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    foreach ($step in $script:StepTimings) {
+        Clack-DetailRow ([string]::Format($culture, "{0:0.0}s  {1}", $step.Seconds, $step.Name))
+        if ($step.Detail) { Clack-DetailRow "($($step.Detail))" }
+    }
+    Clack-DetailRow ([string]::Format($culture, "{0:0.0}s  total", $total))
+}
+
+# ============================================================
+# First-run preparation (python -m markitai.warmup)
+# ============================================================
+
+# markitai is installed without compiling every package (UV_COMPILE_BYTECODE
+# compiled about 13,400 files, twice per setup, most of which markitai never
+# imports). Right after the install, markitai.warmup imports what markitai's
+# code imports, in the background and below normal priority, while setup
+# goes on; setup waits for it at the end, so the first command after setup
+# is not the one that compiles.
+$script:WarmupProcesses = @()
+
+function Get-MarkitaiToolPython {
+    $toolsDir = Get-MarkitaiToolsDir
+    foreach ($relative in @("markitai\Scripts\python.exe", "markitai/bin/python")) {
+        $candidate = Join-Path $toolsDir $relative
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $null
+}
+
+function Start-MarkitaiWarmup {
+    param([string]$Python, [string]$Name = "first-run preparation", [string[]]$Extra = @())
+    if (-not $Python -or -not (Test-Path $Python)) { return }
+    $report = Join-Path ([IO.Path]::GetTempPath()) "markitai-warmup-$([Guid]::NewGuid()).json"
+    try {
+        # Its own hidden console: nothing it prints reaches this one, and it
+        # keeps running if this window closes
+        $info = New-Object Diagnostics.ProcessStartInfo
+        $info.FileName = $Python
+        $info.Arguments = (@("-m", "markitai.warmup", "--report", "`"$report`"") + $Extra) -join " "
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $process = [Diagnostics.Process]::Start($info)
+        try { $process.PriorityClass = [Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
+        $script:WarmupProcesses += [PSCustomObject]@{
+            Process = $process; Report = $report; Name = $Name
+            Watch = [Diagnostics.Stopwatch]::StartNew()
+        }
+    } catch {
+        Write-SetupDiagnostic -Text $_.Exception.Message -Context $Name
+    }
+}
+
+# Wait for the background preparation, with a spinner on a console.
+function Wait-MarkitaiWarmup {
+    if ($script:WarmupProcesses.Count -eq 0) { return }
+    $label = i18n "preparing_first_run"
+    $dynamic = Test-SpinnerOutput
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $pending = @($script:WarmupProcesses | Where-Object { -not $_.Process.HasExited })
+    if ($pending.Count -gt 0 -and -not $dynamic) { Clack-Step "$label..." }
+    $frame = 0
+    while (@($script:WarmupProcesses | Where-Object { -not $_.Process.HasExited }).Count -gt 0) {
+        if ($dynamic) {
+            Write-SpinnerFrame -Frame $script:SpinFrames[$frame % $script:SpinFrames.Count] `
+                -Label $label -Seconds $watch.Elapsed.TotalSeconds -Last ""
+            $frame++
+        }
+        Start-Sleep -Milliseconds 125
+    }
+    if ($dynamic) { Clear-SpinnerLine }
+    $failed = @()
+    $longest = 0.0
+    foreach ($warmup in $script:WarmupProcesses) {
+        $detail = ""
+        try {
+            $data = Get-Content -LiteralPath $warmup.Report -Raw -ErrorAction Stop | ConvertFrom-Json
+            # A process that died before its report: its share compiles on use
+            if ($data.crashed) { $failed += "$($warmup.Name): $($data.crashed) process(es) ended early" }
+            if ($data.modules) {
+                $detail = "$($data.modules) modules in $($data.processes) processes"
+                $unavailable = @($data.unavailable).Count
+                if ($unavailable) { $detail += ", $unavailable unavailable" }
+            }
+            if ($data.browser) { $detail = (@($detail, "Chromium $($data.browser)") | Where-Object { $_ }) -join "; " }
+            $seconds = [double]$data.seconds
+        } catch {
+            $seconds = $warmup.Watch.Elapsed.TotalSeconds
+            $failed += "$($warmup.Name): no report"
+        }
+        Remove-Item -LiteralPath $warmup.Report -Force -ErrorAction SilentlyContinue
+        Add-StepTiming -Name "$($warmup.Name) (background)" -Seconds $seconds -Detail $detail
+        if ($seconds -gt $longest) { $longest = $seconds }
+    }
+    Add-StepTiming -Name "wait for first-run preparation" -Seconds $watch.Elapsed.TotalSeconds
+    $script:WarmupProcesses = @()
+    $failed = @($failed | Where-Object { $_ })
+    if ($failed.Count -gt 0) {
+        Write-SetupDiagnostic -Text ($failed -join "`n") -Context (i18n "preparing_first_run")
+        Clack-Info (i18n "first_run_partial")
+    } else {
+        # The work's own time; most of it ran while setup did other things
+        Clack-Success "$(i18n 'first_run_ready')$(Format-Took $longest)"
+    }
+}
+
+# ============================================================
 # Version Variables (can be overridden via environment)
 # ============================================================
 $script:MarkitaiVersion = $env:MARKITAI_VERSION
@@ -1065,7 +1372,11 @@ function Invoke-NativeQuietly {
 # in a child process. An installer calling `exit` can then never terminate this
 # parent script before its tree is closed.
 function Invoke-PowerShellInstallerQuietly {
-    param([string]$Uri)
+    param(
+        [string]$Uri,
+        [string]$Label = "",
+        [string]$Name = $Uri
+    )
 
     $tempPath = Join-Path ([IO.Path]::GetTempPath()) "markitai-installer-$([Guid]::NewGuid()).ps1"
     try {
@@ -1073,14 +1384,15 @@ function Invoke-PowerShellInstallerQuietly {
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [IO.File]::WriteAllText($tempPath, [string]$content, $utf8NoBom)
         $engine = (Get-Process -Id $PID -ErrorAction Stop).Path
-        return Invoke-NativeQuietly {
-            & $engine -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tempPath
-        }
+        return Invoke-NativeWithProgress -Label $Label -FilePath $engine `
+            -ArgumentList @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $tempPath) `
+            -Name $Name
     } catch {
         return [PSCustomObject]@{
             Success = $false
             ExitCode = 1
             Output = @($_.Exception.Message)
+            Seconds = 0.0
         }
     } finally {
         Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
@@ -1511,8 +1823,6 @@ function Install-UV {
         return $false
     }
 
-    Clack-Step "$(i18n 'installing') $(i18n 'uv')..."
-
     # Build install URL (with optional version)
     if ($script:UvVersion) {
         $uvUrl = "https://astral.sh/uv/$($script:UvVersion)/install.ps1"
@@ -1520,7 +1830,8 @@ function Install-UV {
         $uvUrl = "https://astral.sh/uv/install.ps1"
     }
 
-    $installResult = Invoke-PowerShellInstallerQuietly -Uri $uvUrl
+    $installResult = Invoke-PowerShellInstallerQuietly -Uri $uvUrl `
+        -Label "$(i18n 'installing') $(i18n 'uv')" -Name "uv download"
     if (-not $installResult.Success) {
         Clack-Error "$(i18n 'uv') $(i18n 'failed')"
         Clack-Detail -Detail $installResult.Output -MaxLines 4
@@ -1541,7 +1852,7 @@ function Install-UV {
         }
 
         $version = (& uv --version 2>$null).Split(' ')[1]
-        Clack-Success "uv $version ($(i18n 'installed'))"
+        Clack-Success "uv $version ($(i18n 'installed'))$(Format-Took $installResult.Seconds)"
         Track-Install -Component "uv" -Status "installed"
         return $true
     } catch {
@@ -1631,10 +1942,10 @@ function Install-Python {
     }
 
     # Not found, auto-install (3.13 as default)
-    Clack-Step "$(i18n 'installing') $(i18n 'python') 3.13$note..."
-    $installResult = Invoke-NativeQuietly { & uv python install $request }
+    $installResult = Invoke-NativeWithProgress -Label "$(i18n 'installing') $(i18n 'python') 3.13$note" `
+        -FilePath "uv" -ArgumentList @("python", "install", $request) -Name "Python download"
     if ($installResult.Success) {
-        if (Select-Python (Find-UvPython $request) "$note $(i18n 'installed')") { return $true }
+        if (Select-Python (Find-UvPython $request) "$note $(i18n 'installed')$(Format-Took $installResult.Seconds)") { return $true }
     }
 
     Clack-Error (i18n "error_python_required")
@@ -1684,13 +1995,7 @@ function Show-UvToolBinPathWarning {
     Clack-Command "uv tool update-shell"
 }
 
-# Install markitai (User mode)
 function Install-Markitai {
-    $uvToolsDir = Get-MarkitaiToolsDir
-
-    # Build package spec with all tracked extras
-    $pkg = Get-MarkitaiPkgSpec -Extras $script:MARKITAI_EXTRAS
-
     # Build Python command for --python argument
     $pythonArg = $script:PYTHON_CMD
 
@@ -1701,53 +2006,62 @@ function Install-Markitai {
         return $false
     }
 
-    $markitaiToolDir = Join-Path $uvToolsDir "markitai"
-    $oldErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $exitCode = 1
-    $lastOutput = @()
+    # One install with every extra chosen: uv resolves and downloads once.
+    # An existing tool is updated in place (uv adds and removes only what
+    # changed; --force rebuilt all 137 packages), and an unpinned PyPI
+    # install takes the newest release, as `uv tool upgrade` did.
+    $toolExists = Test-Path (Join-Path (Get-MarkitaiToolsDir) "markitai")
+    $label = "$(i18n 'installing') $(i18n 'markitai')"
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $installed = $script:MARKITAI_EXTRAS
+    $arguments = @("tool", "install", (Get-MarkitaiPkgSpec -Extras $installed), "--python", $pythonArg)
+    if ($toolExists -and $script:MARKITAI_SOURCE -ne "local" -and -not $script:MarkitaiVersion) {
+        $arguments += "--upgrade"
+    }
+    $result = Invoke-NativeWithProgress -Label $label -FilePath "uv" -ArgumentList $arguments -Name "install markitai"
+    $details = @($result.Output)
 
-    if (Test-Path $markitaiToolDir) {
-        # Say something before a step that can take a minute: the sh script
-        # spins here, and this branch was the only silent one.
-        Clack-Step "$(i18n 'installing') $(i18n 'markitai')..."
-        # Only an unpinned PyPI install can use the receipt-based upgrade path.
-        # Explicit versions and local sources must apply the exact spec below.
-        if (
-            $script:MARKITAI_SOURCE -ne "local" -and -not $script:MarkitaiVersion -and
-            -not (Test-MarkitaiExtrasNeedUpdate)
-        ) {
-            try {
-                $lastOutput = @(& uv tool upgrade markitai 2>&1)
-                $exitCode = $LASTEXITCODE
-            } catch {}
-        }
-
-        # Upgrade failed (or local source), try force reinstall
-        if ($exitCode -ne 0) {
-            try {
-                $lastOutput = @(& uv tool install $pkg --python $pythonArg --force 2>&1)
-                $exitCode = $LASTEXITCODE
-            } catch {}
-        }
-    } else {
-        # Fresh install
-        Clack-Step "$(i18n 'installing') $(i18n 'markitai')..."
-        try {
-            $lastOutput = @(& uv tool install $pkg --python $pythonArg 2>&1)
-            $exitCode = $LASTEXITCODE
-        } catch {}
+    # A markitai command another installer left in uv's command folder
+    # blocks the install until --force replaces it
+    if (-not $result.Success) {
+        $result = Invoke-NativeWithProgress -Label $label -FilePath "uv" `
+            -ArgumentList ($arguments + "--force") -Name "install markitai (--force)"
+        $details += $result.Output
     }
 
-    $ErrorActionPreference = $oldErrorAction
+    # Then without the SDK-dependent extras, whose SDK may not install here
+    $skipped = @()
+    if (-not $result.Success) {
+        $sdkExtras = @("claude-agent", "copilot")
+        $safeExtras = @()
+        foreach ($e in ($script:MARKITAI_EXTRAS -split ",")) {
+            if ($e -eq "all") {
+                $safeExtras += ($script:MARKITAI_ALL_FALLBACK_EXTRAS -split ",")
+                $skipped += $sdkExtras
+            } elseif ($sdkExtras -contains $e) {
+                $skipped += $e
+            } elseif ($e) {
+                $safeExtras += $e
+            }
+        }
+        if ($skipped.Count -gt 0) {
+            $installed = $safeExtras -join ","
+            $arguments = @("tool", "install", (Get-MarkitaiPkgSpec -Extras $installed), "--python", $pythonArg, "--force")
+            $result = Invoke-NativeWithProgress -Label $label -FilePath "uv" `
+                -ArgumentList $arguments -Name "install markitai (without SDK extras)"
+            $details += $result.Output
+        }
+    }
+    $script:LastStepSeconds = $watch.Elapsed.TotalSeconds
 
-    if ($exitCode -eq 0) {
+    if ($result.Success) {
         # Refresh PATH
         if ($script:OnWindows) {
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
         }
         Add-UvToolBinToPath
 
+        # markitai answers --version without loading its CLI
         $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
         $version = if ($markitaiCmd) { (& markitai --version 2>&1 | Select-Object -First 1).Split(' ')[-1] } else { (i18n "installed") }
         if (-not $version) { $version = (i18n "installed") }
@@ -1760,13 +2074,20 @@ function Install-Markitai {
             Track-Install -Component "markitai" -Status "failed"
             return $false
         }
-        Clack-Success "$(i18n 'markitai') $version"
+        Clack-Success "$(i18n 'markitai') $version$(Format-Took $watch.Elapsed.TotalSeconds)"
+        if ($installed) {
+            Clack-DetailRow "extras: $($installed -replace ',', ', ')"
+        }
+        if ($skipped.Count -gt 0) {
+            $script:MARKITAI_EXTRAS = $installed
+            Clack-Warn "$(i18n 'skipped') extras: $($skipped -join ', ') (SDK $(i18n 'not_found'))"
+        }
         Track-Install -Component "markitai" -Status "installed"
         return $true
     }
 
-    Clack-Error "$(i18n 'markitai') $(i18n 'failed')"
-    Clack-Detail -Detail $lastOutput -MaxLines 6
+    Clack-Error "$(i18n 'markitai') $(i18n 'failed')$(Format-Took $watch.Elapsed.TotalSeconds)"
+    Clack-Detail -Detail $details -MaxLines 6
     Track-Install -Component "markitai" -Status "failed"
     return $false
 }
@@ -1926,78 +2247,20 @@ function Track-MarkitaiOcr {
     }
 }
 
-# Finalize markitai extras after all optional components are resolved.
-# Merges `markitai doctor --suggest-extras` output with manually tracked
-# MARKITAI_EXTRAS (from CLI install functions), so nothing is lost.
-function Finalize-MarkitaiExtras {
+# Interactive installs (and MARKITAI_INSTALL_OPTIONAL) are batteries-included:
+# every extra markitai declares except the ones the user declined, and the
+# SDK extras, which follow their CLIs. Chosen before the install, so markitai
+# installs once: setup used to install it, ask the new install
+# (`markitai doctor --suggest-extras`) and install it again with the rest.
+# The fallback list is markitai's declared extras minus the SDK ones (a test
+# keeps it equal to pyproject).
+function Add-SuggestedMarkitaiExtras {
     if (-not (Test-InteractiveInput) -and -not (Test-OptionalInstallRequested)) {
         return
     }
-
-    # Merge suggested extras INTO manually tracked set (not replace)
-    try {
-        $suggested = & markitai doctor --suggest-extras 2>$null
-        if ($suggested) {
-            foreach ($extra in ($suggested.Trim() -split ',')) {
-                if ($extra -and -not (Test-MarkitaiExtraDeclined -ExtraName $extra)) {
-                    Install-MarkitaiExtra -ExtraName $extra
-                }
-            }
-        }
-    } catch {}
-
-    # Refresh the receipt after the initial install, then compare exact extra
-    # names (with `all` treated as a superset).
-    Import-MarkitaiReceiptExtras
-    if (-not (Test-MarkitaiExtrasNeedUpdate)) { return }
-
-    # Reinstall with all extras (progressive fallback on failure)
-    $pkg = Get-MarkitaiPkgSpec -Extras $script:MARKITAI_EXTRAS
-
-    Clack-Step "$(i18n 'installing') $(i18n 'markitai') extras..."
-    $primaryResult = Invoke-NativeQuietly {
-        & uv tool install $pkg --python $script:PYTHON_CMD --force
-    }
-    $installOk = $primaryResult.Success
-    if ($installOk) {
-        Clack-Success "$(i18n 'markitai') extras: $($script:MARKITAI_EXTRAS -replace ',', ', ')"
-    }
-    $fallbackResult = $null
-
-    if (-not $installOk) {
-        # Full install failed: retry without SDK-dependent extras
-        $sdkExtras = @("claude-agent", "copilot")
-        $safeExtras = @()
-        $skipped = @()
-        foreach ($e in ($script:MARKITAI_EXTRAS -split ",")) {
-            if ($e -eq "all") {
-                $safeExtras += ($script:MARKITAI_ALL_FALLBACK_EXTRAS -split ",")
-                $skipped += $sdkExtras
-            } elseif ($sdkExtras -contains $e) {
-                $skipped += $e
-            } else {
-                $safeExtras += $e
-            }
-        }
-        if ($safeExtras.Count -gt 0) {
-            $safeList = $safeExtras -join ","
-            $pkg = Get-MarkitaiPkgSpec -Extras $safeList
-            $fallbackResult = Invoke-NativeQuietly {
-                & uv tool install $pkg --python $script:PYTHON_CMD --force
-            }
-            if ($fallbackResult.Success) {
-                Clack-Success "$(i18n 'markitai') extras: $($safeList -replace ',', ', ')"
-                if ($skipped.Count -gt 0) {
-                    Clack-Warn "$(i18n 'skipped') extras: $($skipped -join ', ') (SDK $(i18n 'not_found'))"
-                }
-                $installOk = $true
-            }
-        }
-        if (-not $installOk) {
-            Clack-Warn "$(i18n 'markitai') extras update $(i18n 'failed')"
-            $details = @($primaryResult.Output)
-            if ($fallbackResult) { $details += $fallbackResult.Output }
-            Clack-Detail -Detail $details -MaxLines 3 -Context "markitai extras"
+    foreach ($extra in ($script:MARKITAI_ALL_FALLBACK_EXTRAS -split ",")) {
+        if ($extra -and -not (Test-MarkitaiExtraDeclined -ExtraName $extra)) {
+            Install-MarkitaiExtra -ExtraName $extra
         }
     }
 }
@@ -2010,13 +2273,12 @@ function Sync-Dependencies {
     Push-Location $projectRoot
 
     try {
-        Clack-Step (i18n "info_syncing_deps")
-        $oldErrorAction = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $syncResult = & uv sync --all-groups --all-extras --python $script:PYTHON_CMD 2>&1
-        $ErrorActionPreference = $oldErrorAction
-        if ($LASTEXITCODE -eq 0) {
-            Clack-Success (i18n "info_deps_synced")
+        $sync = Invoke-NativeWithProgress -Label (i18n "info_syncing_deps") -FilePath "uv" `
+            -ArgumentList @("sync", "--all-groups", "--all-extras", "--python", $script:PYTHON_CMD) `
+            -Name "uv sync" -WorkingDirectory $projectRoot
+        $syncResult = $sync.Output
+        if ($sync.Success) {
+            Clack-Success "$(i18n 'info_deps_synced')$(Format-Took)"
             Track-Install -Component "python_deps" -Status "installed"
             return $true
         } else {
@@ -2062,49 +2324,56 @@ function Install-PreCommit {
     }
 }
 
-# Check if Playwright browser is installed
 function Test-PlaywrightBrowser {
-    $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
-    if ($uvCmd) {
-        try {
-            $uvToolDir = & uv tool dir 2>$null
-            if ($uvToolDir) {
-                $markitaiPlaywright = Join-Path $uvToolDir "markitai\Scripts\playwright.exe"
-                if (Test-Path $markitaiPlaywright) {
-                    $cacheDir = Join-Path $env:LOCALAPPDATA "ms-playwright"
-                    if (Test-Path $cacheDir) {
-                        $chromiumDirs = Get-ChildItem -Path $cacheDir -Directory -Filter "chromium-*" -ErrorAction SilentlyContinue
-                        if ($chromiumDirs) {
-                            return $true
-                        }
-                    }
-                }
-            }
-        } catch {}
+    # Playwright's own browser folder; any markitai install (or another
+    # Playwright tool) that downloaded Chromium put it there
+    $cacheDir = if ($env:PLAYWRIGHT_BROWSERS_PATH -and $env:PLAYWRIGHT_BROWSERS_PATH -ne "0") {
+        $env:PLAYWRIGHT_BROWSERS_PATH
+    } elseif ($script:OnWindows) {
+        Join-Path $env:LOCALAPPDATA "ms-playwright"
+    } elseif ($IsMacOS) {
+        Join-Path $HOME "Library/Caches/ms-playwright"
+    } else {
+        Join-Path $HOME ".cache/ms-playwright"
     }
-    return $false
+    if (-not (Test-Path $cacheDir)) { return $false }
+    $chromiumDirs = Get-ChildItem -Path $cacheDir -Directory -Filter "chromium-*" -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName "INSTALLATION_COMPLETE") }
+    return [bool]$chromiumDirs
+}
+
+# Asked with the other questions, before markitai installs; the download
+# itself waits for markitai's Playwright. Sets $script:WANT_PLAYWRIGHT:
+# present, yes or no.
+function Select-OptionalPlaywright {
+    if (Test-PlaywrightBrowser) {
+        $script:WANT_PLAYWRIGHT = "present"
+        return
+    }
+    Clack-Info (i18n "info_playwright_purpose")
+    if (Confirm-OptionalInstall (i18n "confirm_playwright") "y") {
+        $script:WANT_PLAYWRIGHT = "yes"
+    } else {
+        $script:WANT_PLAYWRIGHT = "no"
+    }
 }
 
 # Install Playwright browser (Optional)
 function Install-OptionalPlaywright {
-    if (Test-PlaywrightBrowser) {
+    if ($script:WANT_PLAYWRIGHT -eq "present" -or
+        (-not $script:WANT_PLAYWRIGHT -and (Test-PlaywrightBrowser))) {
         Clack-Success "$(i18n 'playwright') $(i18n 'already_installed')"
         Track-Install -Component "playwright" -Status "installed"
         return $true
     }
-
-    Clack-Info (i18n "info_playwright_purpose")
-
-    if (-not (Confirm-OptionalInstall (i18n "confirm_playwright") "y")) {
+    if (-not $script:WANT_PLAYWRIGHT) { Select-OptionalPlaywright }
+    if ($script:WANT_PLAYWRIGHT -ne "yes") {
         Clack-Skip "$(i18n 'playwright') $(i18n 'skipped')"
         Track-Install -Component "playwright" -Status "skipped"
         return $false
     }
 
-    Clack-Step "$(i18n 'installing') $(i18n 'playwright')..."
-
-    $oldErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
+    $label = "$(i18n 'installing') $(i18n 'playwright')"
     $lastOutput = @()
 
     # Method 1: Use playwright from markitai's uv tool environment
@@ -2123,104 +2392,93 @@ function Install-OptionalPlaywright {
     }
 
     if (Test-Path $markitaiPlaywright) {
-        try {
-            $lastOutput = @(& $markitaiPlaywright install chromium 2>&1)
-            if ($LASTEXITCODE -eq 0) {
-                $ErrorActionPreference = $oldErrorAction
-                Clack-Success "$(i18n 'playwright') $(i18n 'installed')"
-                Track-Install -Component "playwright" -Status "installed"
-                return $true
-            }
-        } catch {}
+        $result = Invoke-NativeWithProgress -Label $label -FilePath $markitaiPlaywright `
+            -ArgumentList @("install", "chromium") -Name "Playwright Chromium download"
+        $lastOutput = $result.Output
+        if ($result.Success) {
+            Clack-Success "$(i18n 'playwright') $(i18n 'installed')$(Format-Took)"
+            Track-Install -Component "playwright" -Status "installed"
+            return $true
+        }
     }
 
     # Method 2: Fallback to Python module
     if ($script:PYTHON_CMD) {
-        try {
-            $lastOutput = @(& $script:PYTHON_CMD -m playwright install chromium 2>&1)
-            if ($LASTEXITCODE -eq 0) {
-                $ErrorActionPreference = $oldErrorAction
-                Clack-Success "$(i18n 'playwright') $(i18n 'installed')"
-                Track-Install -Component "playwright" -Status "installed"
-                return $true
-            }
-        } catch {}
+        $result = Invoke-NativeWithProgress -Label $label -FilePath $script:PYTHON_CMD `
+            -ArgumentList @("-m", "playwright", "install", "chromium") -Name "Playwright Chromium download (python -m)"
+        if ($result.Success) {
+            Clack-Success "$(i18n 'playwright') $(i18n 'installed')$(Format-Took)"
+            Track-Install -Component "playwright" -Status "installed"
+            return $true
+        }
+        $lastOutput += $result.Output
     }
 
-    $ErrorActionPreference = $oldErrorAction
     Clack-Error "$(i18n 'playwright') $(i18n 'failed')"
     Clack-Detail -Detail $lastOutput -MaxLines 4
     Track-Install -Component "playwright" -Status "failed"
     return $false
 }
 
+# Asked before markitai installs, so the SDK extra joins the one install.
+# Sets $script:WANT_CLAUDE_CLI: present, yes or no.
+function Select-OptionalClaudeCLI {
+    if (Get-Command claude -ErrorAction SilentlyContinue) {
+        $script:WANT_CLAUDE_CLI = "present"
+        Install-MarkitaiExtra -ExtraName "claude-agent"
+        return
+    }
+    if (Confirm-OptionalInstall (i18n "confirm_claude_cli") "n") {
+        $script:WANT_CLAUDE_CLI = "yes"
+        Install-MarkitaiExtra -ExtraName "claude-agent"
+    } else {
+        $script:WANT_CLAUDE_CLI = "no"
+    }
+}
+
 # Install Claude Code CLI (Optional)
 function Install-OptionalClaudeCLI {
+    if (-not $script:WANT_CLAUDE_CLI) { Select-OptionalClaudeCLI }
     # Check if already installed
     $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
     if ($claudeCmd) {
         $version = & claude --version 2>&1 | Select-Object -First 1
         Clack-Success "$(i18n 'claude_cli'): $version $(i18n 'already_installed')"
-        Install-MarkitaiExtra -ExtraName "claude-agent"
         Track-Install -Component "claude_cli" -Status "installed"
         return $true
     }
 
-    if (-not (Confirm-OptionalInstall (i18n "confirm_claude_cli") "n")) {
+    if ($script:WANT_CLAUDE_CLI -ne "yes") {
         Clack-Skip "$(i18n 'claude_cli') $(i18n 'skipped')"
         Track-Install -Component "claude_cli" -Status "skipped"
         return $false
     }
 
-    Clack-Step "$(i18n 'installing') $(i18n 'claude_cli')..."
+    $label = "$(i18n 'installing') $(i18n 'claude_cli')"
 
     # Prefer official install script (PowerShell)
     $claudeUrl = "https://claude.ai/install.ps1"
-    $installResult = Invoke-PowerShellInstallerQuietly -Uri $claudeUrl
+    $installResult = Invoke-PowerShellInstallerQuietly -Uri $claudeUrl -Label $label -Name "Claude Code CLI"
     $lastDetail = $installResult.Output
     if ($installResult.Success) {
         # Child-process PATH changes do not flow back; reload persisted paths.
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
         $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
         if ($claudeCmd) {
-            Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')"
-            # Also install the SDK extra
-            Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
+            Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')$(Format-Took)"
             Track-Install -Component "claude_cli" -Status "installed"
             return $true
         }
     }
 
     # Fallback: bun/pnpm/npm
-    $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
-    $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
-    $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
-
-    if ($bunCmd) {
-        $lastResult = Invoke-NativeQuietly { & bun add -g @anthropic-ai/claude-code }
+    $manager = Get-JsPackageInstall -Package "@anthropic-ai/claude-code"
+    if ($manager) {
+        $lastResult = Invoke-NativeWithProgress -Label $label -FilePath $manager.FilePath `
+            -ArgumentList $manager.Arguments -Name "Claude Code CLI ($($manager.FilePath))"
         $lastDetail = $lastResult.Output
         if ($lastResult.Success) {
-            Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')"
-            Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
-            Track-Install -Component "claude_cli" -Status "installed"
-            return $true
-        }
-    }
-    elseif ($pnpmCmd) {
-        $lastResult = Invoke-NativeQuietly { & pnpm add -g @anthropic-ai/claude-code }
-        $lastDetail = $lastResult.Output
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')"
-            Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
-            Track-Install -Component "claude_cli" -Status "installed"
-            return $true
-        }
-    } elseif ($npmCmd) {
-        $lastResult = Invoke-NativeQuietly { & npm install -g @anthropic-ai/claude-code }
-        $lastDetail = $lastResult.Output
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')"
-            Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
+            Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')$(Format-Took)"
             Track-Install -Component "claude_cli" -Status "installed"
             return $true
         }
@@ -2232,68 +2490,79 @@ function Install-OptionalClaudeCLI {
     return $false
 }
 
+# The global install of a JavaScript package with bun, pnpm or npm (the
+# first found), or $null.
+function Get-JsPackageInstall {
+    param([string]$Package)
+    if (Get-Command bun -ErrorAction SilentlyContinue) {
+        return [PSCustomObject]@{ FilePath = "bun"; Arguments = @("add", "-g", $Package) }
+    }
+    if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+        return [PSCustomObject]@{ FilePath = "pnpm"; Arguments = @("add", "-g", $Package) }
+    }
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        return [PSCustomObject]@{ FilePath = "npm"; Arguments = @("install", "-g", $Package) }
+    }
+    return $null
+}
+
+# Asked before markitai installs, so the SDK extra joins the one install.
+# Sets $script:WANT_COPILOT_CLI: present, yes or no.
+function Select-OptionalCopilotCLI {
+    if (Get-Command copilot -ErrorAction SilentlyContinue) {
+        $script:WANT_COPILOT_CLI = "present"
+        Install-MarkitaiExtra -ExtraName "copilot"
+        return
+    }
+    if (Confirm-OptionalInstall (i18n "confirm_copilot_cli") "n") {
+        $script:WANT_COPILOT_CLI = "yes"
+        Install-MarkitaiExtra -ExtraName "copilot"
+    } else {
+        $script:WANT_COPILOT_CLI = "no"
+    }
+}
+
 # Install Copilot CLI (Optional)
 function Install-OptionalCopilotCLI {
+    if (-not $script:WANT_COPILOT_CLI) { Select-OptionalCopilotCLI }
     # Check if already installed
     $copilotCmd = Get-Command copilot -ErrorAction SilentlyContinue
     if ($copilotCmd) {
         $version = & copilot --version 2>&1 | Select-Object -First 1
         Clack-Success "$(i18n 'copilot_cli'): $version $(i18n 'already_installed')"
-        Install-MarkitaiExtra -ExtraName "copilot"
         Track-Install -Component "copilot_cli" -Status "installed"
         return $true
     }
 
-    if (-not (Confirm-OptionalInstall (i18n "confirm_copilot_cli") "n")) {
+    if ($script:WANT_COPILOT_CLI -ne "yes") {
         Clack-Skip "$(i18n 'copilot_cli') $(i18n 'skipped')"
         Track-Install -Component "copilot_cli" -Status "skipped"
         return $false
     }
 
-    Clack-Step "$(i18n 'installing') $(i18n 'copilot_cli')..."
+    $label = "$(i18n 'installing') $(i18n 'copilot_cli')"
 
     # Prefer WinGet on Windows
     $lastResult = $null
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        $lastResult = Invoke-NativeQuietly { & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements }
+        $lastResult = Invoke-NativeWithProgress -Label $label -FilePath "winget" `
+            -ArgumentList @("install", "GitHub.Copilot", "--accept-package-agreements", "--accept-source-agreements") `
+            -Name "Copilot CLI (winget)"
         if ($lastResult.Success) {
-            Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
-            # Also install the SDK extra
-            Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
+            Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')$(Format-Took)"
             Track-Install -Component "copilot_cli" -Status "installed"
             return $true
         }
     }
 
     # Fallback: bun/pnpm/npm
-    $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
-    $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
-    $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
-
-    if ($bunCmd) {
-        $lastResult = Invoke-NativeQuietly { & bun add -g @github/copilot }
-        $lastDetail = $lastResult.Output
+    $manager = Get-JsPackageInstall -Package "@github/copilot"
+    if ($manager) {
+        $lastResult = Invoke-NativeWithProgress -Label $label -FilePath $manager.FilePath `
+            -ArgumentList $manager.Arguments -Name "Copilot CLI ($($manager.FilePath))"
         if ($lastResult.Success) {
-            Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
-            Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
-            Track-Install -Component "copilot_cli" -Status "installed"
-            return $true
-        }
-    }
-    elseif ($pnpmCmd) {
-        $lastResult = Invoke-NativeQuietly { & pnpm add -g @github/copilot }
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
-            Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
-            Track-Install -Component "copilot_cli" -Status "installed"
-            return $true
-        }
-    } elseif ($npmCmd) {
-        $lastResult = Invoke-NativeQuietly { & npm install -g @github/copilot }
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
-            Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
+            Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')$(Format-Took)"
             Track-Install -Component "copilot_cli" -Status "installed"
             return $true
         }
@@ -2398,21 +2667,32 @@ function Initialize-Config {
 
 # User mode main flow
 function Run-UserSetup {
-    Configure-Mirrors
+    Measure-Step "mirror probe" { Configure-Mirrors }
     Select-InstallSource
 
     Clack-Section (i18n "section_core")
-    if (-not (Install-UV)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
-    if (-not (Install-Python)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
+    if (-not (Measure-Step "uv" { Install-UV })) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
+    if (-not (Measure-Step "Python" { Install-Python })) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
+    # Every question before the install, so markitai installs once with all
+    # the extras the answers add (the CLIs' SDKs included)
     Import-MarkitaiReceiptExtras
     Select-MarkitaiServe
     Select-MarkitaiOcr
+    Select-OptionalPlaywright
+    Select-OptionalClaudeCLI
+    Select-OptionalCopilotCLI
+    Add-SuggestedMarkitaiExtras
     if (-not (Install-Markitai)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
+    Start-MarkitaiWarmup -Python (Get-MarkitaiToolPython)
     Track-MarkitaiServe
     Track-MarkitaiOcr
 
     Clack-Section (i18n "section_optional")
     Invoke-OptionalStep -Component "playwright" -Action { Install-OptionalPlaywright }
+    if ($script:WANT_PLAYWRIGHT -eq "yes" -and (Test-PlaywrightBrowser)) {
+        # Chromium's first launch is the slow one on Windows (antivirus)
+        Start-MarkitaiWarmup -Python (Get-MarkitaiToolPython) -Name "first Chromium launch" -Extra @("--only-browser")
+    }
 
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
@@ -2421,15 +2701,14 @@ function Run-UserSetup {
     # without this line it looks absent rather than already satisfied.
     Clack-Info (i18n "info_chatgpt_route")
 
-    # The extras step reports in the summary, not under the last section.
     Clack-Section (i18n "section_summary")
+    Measure-Step "markitai init" { Initialize-Config 2>$null | Out-Null }
     Invoke-BestEffortStep `
-        -FailureMessage "$(i18n 'markitai') extras update $(i18n 'failed')" `
-        -Action { Finalize-MarkitaiExtras }
-
-    Initialize-Config 2>$null | Out-Null
+        -FailureMessage "$(i18n 'preparing_first_run') $(i18n 'failed')" `
+        -Action { Wait-MarkitaiWarmup }
 
     Print-Summary -NoHeader
+    Write-SetupTimings
     Print-UserCompletion
     if ($script:FAILED_COMPONENTS.Count -gt 0) {
         Clack-OutroWarning (i18n "setup_complete_with_warnings")
@@ -2440,7 +2719,7 @@ function Run-UserSetup {
 
 # Dev mode main flow
 function Run-DevSetup {
-    Configure-Mirrors
+    Measure-Step "mirror probe" { Configure-Mirrors }
 
     Clack-Section (i18n "section_prerequisites")
     if (-not (Install-UV)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
@@ -2448,6 +2727,11 @@ function Run-DevSetup {
 
     Clack-Section (i18n "section_dev_env")
     if (-not (Sync-Dependencies)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
+    $devRoot = Get-ProjectRoot
+    foreach ($relative in @(".venv\Scripts\python.exe", ".venv/bin/python")) {
+        $devPython = Join-Path $devRoot $relative
+        if (Test-Path $devPython) { Start-MarkitaiWarmup -Python $devPython; break }
+    }
     Invoke-OptionalStep -Component "precommit" -Action { Install-PreCommit }
 
     Clack-Section (i18n "section_optional")
@@ -2460,7 +2744,11 @@ function Run-DevSetup {
     # without this line it looks absent rather than already satisfied.
     Clack-Info (i18n "info_chatgpt_route")
 
+    Invoke-BestEffortStep `
+        -FailureMessage "$(i18n 'preparing_first_run') $(i18n 'failed')" `
+        -Action { Wait-MarkitaiWarmup }
     Print-Summary
+    Write-SetupTimings
     Print-DevCompletion
     if ($script:FAILED_COMPONENTS.Count -gt 0) {
         Clack-OutroWarning (i18n "dev_setup_complete_with_warnings")
@@ -2503,5 +2791,4 @@ try {
     if ($script:OriginalOutputEncoding) {
         try { [Console]::OutputEncoding = $script:OriginalOutputEncoding } catch {}
     }
-    $env:UV_COMPILE_BYTECODE = $script:OriginalCompileBytecode
 }

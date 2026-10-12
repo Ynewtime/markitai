@@ -167,6 +167,11 @@ i18n() {
             configure_env)              echo "配置环境变量" ;;
             convert_file)               echo "转换文件" ;;
             show_help)                  echo "显示帮助" ;;
+            preparing_first_run)        echo "准备首次运行" ;;
+            first_run_ready)            echo "已为首次运行做好准备" ;;
+            first_run_partial)          echo "部分模块未能预编译，首次使用时再编译" ;;
+            setup_took)                 echo "安装用时 {0}" ;;
+            timings_title)              echo "各步骤用时" ;;
             short_alias)                echo "提示：mkai 是 markitai 的简写，两个命令等价" ;;
             mkai_conflict)              echo "系统已有 mkai 命令，会遮蔽 markitai 的别名；请使用完整命令 markitai" ;;
 
@@ -290,6 +295,11 @@ i18n() {
             configure_env)              echo "Configure environment" ;;
             convert_file)               echo "Convert a file" ;;
             show_help)                  echo "Show help" ;;
+            preparing_first_run)        echo "Preparing the first run" ;;
+            first_run_ready)            echo "Ready for the first run" ;;
+            first_run_partial)          echo "Some modules could not be compiled ahead; they compile on first use" ;;
+            setup_took)                 echo "Setup took {0}" ;;
+            timings_title)              echo "Step timings" ;;
             short_alias)                echo "Tip: mkai is a short alias for markitai (both work)" ;;
             mkai_conflict)              echo "An existing 'mkai' command shadows markitai's alias; use the full 'markitai' command" ;;
 
@@ -683,6 +693,87 @@ clack_flush_detail() {
 }
 
 # Spinner with guide line
+# ============================================================
+# Step timing
+# ============================================================
+# Every step's duration, for the row each step ends with, the total at the
+# end and the table MARKITAI_SETUP_TIMINGS=1 prints (to compare runs).
+
+# Now in seconds (fractions where date has %N, whole seconds elsewhere)
+setup_now() {
+    _sn=$(date +%s.%N 2>/dev/null) || _sn=""
+    case "$_sn" in
+        ''|*N*) date +%s ;;
+        *) printf '%s\n' "$_sn" ;;
+    esac
+}
+
+SETUP_STARTED=$(setup_now)
+SETUP_TIMINGS=""
+STEP_SECONDS=0
+
+# Seconds since $1 (a setup_now value)
+setup_since() {
+    awk -v s="$1" -v e="$(setup_now)" 'BEGIN { printf "%.3f", e - s }'
+}
+
+# 0.4s, 12s, 3m 05s
+format_duration() {
+    awk -v s="$1" 'BEGIN { s += 0; if (s < 10) printf "%.1fs", s;
+        else if (s < 60) printf "%ds", int(s);
+        else printf "%dm %02ds", int(s / 60), int(s % 60) }'
+}
+
+# " (12s)" after a finished step's row (default: the last step's time)
+clack_took() {
+    printf ' (%s)' "$(format_duration "${1:-$STEP_SECONDS}")"
+}
+
+# Usage: add_step_timing "name" seconds ["detail"]
+add_step_timing() {
+    STEP_SECONDS="$2"
+    SETUP_TIMINGS="${SETUP_TIMINGS}$2|$1|${3:-}
+"
+}
+
+setup_timings_requested() {
+    case "${MARKITAI_SETUP_TIMINGS:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    esac
+    return 1
+}
+
+# uv's own phase lines in a command's output ("Resolved 137 packages in
+# 3.16s", "Prepared ...", "Installed ..."): where an install's time went.
+uv_phase_lines() {
+    grep -E '^(Resolved|Prepared|Installed|Uninstalled|Audited|Bytecode compiled) [0-9]+ [^ ]+ in ' "$1" 2>/dev/null \
+        | awk 'NR > 1 { printf "; " } { printf "%s", $0 }' || true
+}
+
+# The time setup took, and with MARKITAI_SETUP_TIMINGS=1 every step's.
+print_setup_timings() {
+    _pst_total=$(setup_since "$SETUP_STARTED")
+    _pst_took=$(format_duration "$_pst_total")
+    clack_info "$(i18n setup_took | sed "s/{0}/$_pst_took/")"
+    setup_timings_requested || return 0
+    clack_info "$(i18n timings_title)"
+    _pst_rows=$(printf '%s' "$SETUP_TIMINGS")
+    _old_ifs="$IFS"
+    IFS='
+'
+    for _pst_row in $_pst_rows; do
+        IFS="$_old_ifs"
+        _pst_secs=${_pst_row%%|*}
+        _pst_rest=${_pst_row#*|}
+        _pst_name=${_pst_rest%%|*}
+        _pst_detail=${_pst_rest#*|}
+        clack_detail_row "$(awk -v s="$_pst_secs" -v n="$_pst_name" 'BEGIN { printf "%.1fs  %s", s, n }')"
+        [ -z "$_pst_detail" ] || clack_detail_row "($_pst_detail)"
+    done
+    IFS="$_old_ifs"
+    clack_detail_row "$(awk -v s="$_pst_total" 'BEGIN { printf "%.1fs  total", s }')"
+}
+
 # Usage: clack_spinner "message" command args...
 # Shows spinner while command runs, then shows result
 # On failure, displays last lines of stderr for debugging
@@ -692,6 +783,7 @@ clack_spinner() {
 
     _cs_pid=""
     _cs_dynamic=false
+    _cs_started=$(setup_now)
     CLACK_PENDING_DETAIL=""
     # No predictable /tmp fallback (avoids symlink attacks); discard stderr instead
     _cs_errfile=$(mktemp 2>/dev/null) || _cs_errfile="/dev/null"
@@ -701,10 +793,27 @@ clack_spinner() {
     # stable progress row instead of hundreds of carriage-return frames.
     if [ -t 1 ] && [ "${TERM:-}" != "dumb" ] && [ "${CI:-}" != "true" ]; then
         _cs_dynamic=true
+        # The elapsed time and the command's latest output line (uv says
+        # what it is downloading) follow the message, within the width
+        _cs_begin=$(date +%s)
+        _cs_cols=$SETUP_WRAP_WIDTH
+        [ "$_cs_cols" -gt 0 ] 2>/dev/null || _cs_cols=80
         (
+            _cs_n=0
+            _cs_info=""
             while true; do
                 for _cs_frame in $S_SPIN_FRAMES; do
-                    printf "\r${GRAY}%s${NC}  ${CYAN}%s${NC} %s" "$S_BAR" "$_cs_frame" "$_cs_message"
+                    if [ $((_cs_n % 4)) -eq 0 ]; then
+                        _cs_el=$(format_duration $(( $(date +%s) - _cs_begin )))
+                        _cs_room=$((_cs_cols - ${#_cs_message} - ${#_cs_el} - 10))
+                        _cs_last=""
+                        if [ "$_cs_room" -gt 12 ] && [ -f "$_cs_errfile" ]; then
+                            _cs_last=$(tail -n 1 "$_cs_errfile" 2>/dev/null | clack_strip_ansi | cut -c "1-$_cs_room")
+                        fi
+                        _cs_info="${GRAY}${_cs_el}${NC}${_cs_last:+  $_cs_last}"
+                    fi
+                    _cs_n=$((_cs_n + 1))
+                    printf "\r\033[K${GRAY}%s${NC}  ${CYAN}%s${NC} %s %b" "$S_BAR" "$_cs_frame" "$_cs_message" "$_cs_info"
                     sleep 0.1 2>/dev/null || sleep 1
                 done
             done
@@ -729,6 +838,8 @@ clack_spinner() {
     fi
     CLACK_SPINNER_PID=""
 
+    add_step_timing "${_cs_message%...}" "$(setup_since "$_cs_started")" "$(uv_phase_lines "$_cs_errfile")"
+
     # Preserve the complete stderr, then hold only its tail for terminal output.
     if [ "$_cs_status" -ne 0 ] && [ -s "$_cs_errfile" ]; then
         clack_record_file "$_cs_message" "$_cs_errfile"
@@ -748,6 +859,7 @@ clack_run_quiet() {
     _crq_context="$1"
     shift
     CLACK_PENDING_DETAIL=""
+    _crq_started=$(setup_now)
     _crq_file=$(mktemp 2>/dev/null) || _crq_file="/dev/null"
 
     if "$@" >"$_crq_file" 2>&1; then
@@ -759,6 +871,7 @@ clack_run_quiet() {
             CLACK_PENDING_DETAIL=$(tail -n 10 "$_crq_file" 2>/dev/null || true)
         fi
     fi
+    add_step_timing "$_crq_context" "$(setup_since "$_crq_started")" "$(uv_phase_lines "$_crq_file")"
 
     if [ "$_crq_file" != "/dev/null" ]; then
         rm -f "$_crq_file" 2>/dev/null || true
@@ -1296,11 +1409,11 @@ UV_VERSION="${UV_VERSION:-}"
 # Set to 1/true/yes/on to install optional extras and components when no TTY
 # is available. Interactive runs continue to prompt component by component.
 MARKITAI_INSTALL_OPTIONAL="${MARKITAI_INSTALL_OPTIONAL:-}"
-# uv compiles the installed packages to bytecode, so the first run does not
-# compile and write every module it imports (on Windows, where setup.ps1 does
-# the same, the first conversion took 44 s against 4.6 s for the next).
-UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
-export UV_COMPILE_BYTECODE
+# Bytecode: setup no longer has uv compile every installed package
+# (UV_COMPILE_BYTECODE, about 13,400 files, twice per setup, most never
+# imported). After the install, markitai.warmup compiles what markitai
+# imports, in the background (start_markitai_warmup). A UV_COMPILE_BYTECODE
+# the user set is left as it is.
 
 # Global variable for Python command path
 PYTHON_CMD=""
@@ -1378,7 +1491,7 @@ install_uv() {
         export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
         if command -v uv >/dev/null 2>&1; then
             _uv_version=$(uv --version 2>/dev/null | head -n1 | awk '{print $1" "$2}')
-            clack_success "$_uv_version ($(i18n installed))"
+            clack_success "$_uv_version ($(i18n installed))$(clack_took)"
             track_install "uv" "installed"
             return 0
         fi
@@ -1408,13 +1521,12 @@ detect_python() {
     fi
 
     # Not found, auto-install (3.13 as default)
-    clack_step "$(i18n installing) $(i18n python) 3.13..."
-    if clack_run_quiet "$(i18n installing) $(i18n python) 3.13" uv python install 3.13; then
+    if clack_spinner "$(i18n installing) $(i18n python) 3.13..." uv python install 3.13; then
         _py_path=$(uv python find 3.13 2>/dev/null) || _py_path=""
         if [ -n "$_py_path" ] && [ -x "$_py_path" ]; then
             PYTHON_CMD="$_py_path"
             _py_ver=$("$_py_path" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
-            clack_success "$(i18n python) $_py_ver $(i18n installed)"
+            clack_success "$(i18n python) $_py_ver $(i18n installed)$(clack_took)"
             return 0
         fi
     fi
@@ -1451,64 +1563,84 @@ warn_if_tool_bin_off_path() {
 # Requires: PYTHON_CMD to be set
 # Returns: 0 on success, 1 on failure
 install_markitai() {
-    _uv_tools_dir=$(markitai_tools_dir)
-
-    # Build package spec with all tracked extras
-    _mi_pkg=$(markitai_pkg_spec "$MARKITAI_EXTRAS")
-
     if ! command -v uv >/dev/null 2>&1; then
         clack_error "$(i18n markitai) $(i18n failed)"
         track_install "markitai" "failed"
         return 1
     fi
 
-    # Upgrade existing installation, or fresh install
-    if [ -d "$_uv_tools_dir/markitai" ]; then
-        # An unpinned PyPI install can use the receipt-based upgrade path.
-        # Explicit versions and local sources must replace the receipt with
-        # the exact package spec assembled above.
-        if [ "$MARKITAI_SOURCE" != "local" ] && [ -z "$MARKITAI_VERSION" ] \
-            && ! markitai_extras_need_update; then
-            if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool upgrade markitai; then
-                use_uv_tool_bin_dir
-                _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
-                clack_success "$(i18n markitai) $_mi_version"
-                track_install "markitai" "installed"
-                return 0
-            fi
-        fi
-        # Upgrade failed (or local source), try force reinstall
-        if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
-            use_uv_tool_bin_dir
-            _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
-            if [ "$MARKITAI_SOURCE" != "local" ] && [ -n "$MARKITAI_VERSION" ] \
-                && [ "$_mi_version" != "$MARKITAI_VERSION" ]; then
-                clack_error "$(i18n markitai) version mismatch: expected $MARKITAI_VERSION, got ${_mi_version:-unknown}"
-                track_install "markitai" "failed"
-                return 1
-            fi
-            clack_success "$(i18n markitai) $_mi_version"
-            track_install "markitai" "installed"
-            return 0
-        fi
+    # One install with every extra chosen: uv resolves and downloads once.
+    # An existing tool is updated in place (uv adds and removes only what
+    # changed; --force rebuilt all 137 packages), and an unpinned PyPI
+    # install takes the newest release, as `uv tool upgrade` did.
+    _mi_installed="$MARKITAI_EXTRAS"
+    _mi_pkg=$(markitai_pkg_spec "$_mi_installed")
+    _mi_started=$(setup_now)
+    _mi_upgrade=""
+    if [ -d "$(markitai_tools_dir)/markitai" ] && [ "$MARKITAI_SOURCE" != "local" ] \
+        && [ -z "$MARKITAI_VERSION" ]; then
+        _mi_upgrade="--upgrade"
+    fi
+    _mi_ok=false
+    _mi_skipped=""
+    # shellcheck disable=SC2086 # an empty $_mi_upgrade adds no argument
+    if clack_spinner "$(i18n installing) $(i18n markitai)..." \
+        uv tool install "$_mi_pkg" --python "$PYTHON_CMD" $_mi_upgrade; then
+        _mi_ok=true
+    # A markitai command another installer left in uv's command folder
+    # blocks the install until --force replaces it
+    elif clack_spinner "$(i18n installing) $(i18n markitai)..." \
+        uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
+        _mi_ok=true
     else
-        # Fresh install
-        if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD"; then
-            use_uv_tool_bin_dir
-            _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
-            if [ "$MARKITAI_SOURCE" != "local" ] && [ -n "$MARKITAI_VERSION" ] \
-                && [ "$_mi_version" != "$MARKITAI_VERSION" ]; then
-                clack_error "$(i18n markitai) version mismatch: expected $MARKITAI_VERSION, got ${_mi_version:-unknown}"
-                track_install "markitai" "failed"
-                return 1
+        # Then without the SDK-dependent extras, whose SDK may not install here
+        _mi_safe=""
+        _old_ifs="$IFS"; IFS=','
+        for _e in $MARKITAI_EXTRAS; do
+            case "$_e" in
+                all)
+                    _mi_safe="$MARKITAI_ALL_FALLBACK_EXTRAS"
+                    _mi_skipped="claude-agent, copilot"
+                    ;;
+                claude-agent|copilot) _mi_skipped="${_mi_skipped:+$_mi_skipped, }$_e" ;;
+                *) _mi_safe="${_mi_safe:+$_mi_safe,}$_e" ;;
+            esac
+        done
+        IFS="$_old_ifs"
+        if [ -n "$_mi_skipped" ]; then
+            _mi_installed="$_mi_safe"
+            if clack_spinner "$(i18n installing) $(i18n markitai)..." \
+                uv tool install "$(markitai_pkg_spec "$_mi_safe")" --python "$PYTHON_CMD" --force; then
+                _mi_ok=true
             fi
-            clack_success "$(i18n markitai) $_mi_version"
-            track_install "markitai" "installed"
-            return 0
         fi
     fi
+    STEP_SECONDS=$(setup_since "$_mi_started")
 
-    clack_error "$(i18n markitai) $(i18n failed)"
+    if [ "$_mi_ok" = true ]; then
+        use_uv_tool_bin_dir
+        # markitai answers --version without loading its CLI
+        _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
+        if [ "$MARKITAI_SOURCE" != "local" ] && [ -n "$MARKITAI_VERSION" ] \
+            && [ "$_mi_version" != "$MARKITAI_VERSION" ]; then
+            clack_error "$(i18n markitai) version mismatch: expected $MARKITAI_VERSION, got ${_mi_version:-unknown}"
+            track_install "markitai" "failed"
+            return 1
+        fi
+        clack_success "$(i18n markitai) $_mi_version$(clack_took "$STEP_SECONDS")"
+        if [ -n "$_mi_installed" ]; then
+            clack_detail_row "extras: $(printf '%s' "$_mi_installed" | sed 's/,/, /g')"
+        fi
+        if [ -n "$_mi_skipped" ]; then
+            MARKITAI_EXTRAS="$_mi_installed"
+            CLACK_PENDING_DETAIL=""
+            clack_warn "$(i18n skipped) extras: $_mi_skipped (SDK $(i18n not_found))"
+        fi
+        track_install "markitai" "installed"
+        return 0
+    fi
+
+    clack_error "$(i18n markitai) $(i18n failed)$(clack_took "$STEP_SECONDS")"
     track_install "markitai" "failed"
     return 1
 }
@@ -1685,73 +1817,23 @@ track_markitai_ocr() {
     fi
 }
 
-# Finalize markitai extras after all optional components are resolved.
-# Merges `markitai doctor --suggest-extras` output with manually tracked
-# MARKITAI_EXTRAS (from CLI install functions), so nothing is lost.
-finalize_markitai_extras() {
-    # Do not silently add optional Python extras during a headless core install.
+# Interactive installs (and MARKITAI_INSTALL_OPTIONAL) are batteries-included:
+# every extra markitai declares except the ones the user declined, and the
+# SDK extras, which follow their CLIs. Chosen before the install, so markitai
+# installs once: setup used to install it, ask the new install
+# (`markitai doctor --suggest-extras`) and install it again with the rest.
+# The fallback list is markitai's declared extras minus the SDK ones (a test
+# keeps it equal to pyproject).
+add_suggested_markitai_extras() {
     if ! has_interactive_tty && ! optional_install_requested; then
         return 0
     fi
-
-    # Merge suggested extras INTO manually tracked set (not replace)
-    _suggested=$(markitai doctor --suggest-extras 2>/dev/null || true)
-    if [ -n "$_suggested" ]; then
-        _old_ifs="$IFS"; IFS=','
-        for _e in $_suggested; do
-            markitai_extra_declined "$_e" && continue
-            install_markitai_extra "$_e"
-        done
-        IFS="$_old_ifs"
-    fi
-
-    # Refresh the receipt after the initial install, then compare exact extra
-    # names (with `all` treated as a superset).
-    load_existing_markitai_extras
-    if ! markitai_extras_need_update; then
-        return 0
-    fi
-
-    # Reinstall with all extras (progressive fallback on failure)
-    _mi_pkg=$(markitai_pkg_spec "$MARKITAI_EXTRAS")
-    if clack_spinner "$(i18n installing) $(i18n markitai) extras..." \
-        uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
-        clack_success "$(i18n markitai) extras: $(printf '%s' "$MARKITAI_EXTRAS" | sed 's/,/, /g')"
-        return 0
-    fi
-    # The spinner kept the full stderr in the setup log; reuse its tail.
-    _uv_err="$CLACK_PENDING_DETAIL"
-    CLACK_PENDING_DETAIL=""
-
-    # Full install failed: retry without SDK-dependent extras
-    _safe_extras=""
-    _skipped=""
     _old_ifs="$IFS"; IFS=','
-    for _e in $MARKITAI_EXTRAS; do
-        case "$_e" in
-            all)
-                _safe_extras="$MARKITAI_ALL_FALLBACK_EXTRAS"
-                _skipped="claude-agent, copilot"
-                ;;
-            claude-agent|copilot) _skipped="${_skipped:+$_skipped, }$_e" ;;
-            *) _safe_extras="${_safe_extras:+$_safe_extras,}$_e" ;;
-        esac
+    for _e in $MARKITAI_ALL_FALLBACK_EXTRAS; do
+        markitai_extra_declined "$_e" && continue
+        install_markitai_extra "$_e"
     done
     IFS="$_old_ifs"
-
-    if [ -n "$_safe_extras" ]; then
-        _mi_pkg=$(markitai_pkg_spec "$_safe_extras")
-        if clack_run_quiet "$(i18n markitai) extras fallback" \
-            uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
-            clack_success "$(i18n markitai) extras: $(printf '%s' "$_safe_extras" | sed 's/,/, /g')"
-            [ -n "$_skipped" ] && clack_warn "$(i18n skipped) extras: $_skipped (SDK $(i18n not_found))"
-        else
-            clack_warn "$(i18n markitai) extras update $(i18n failed)"
-        fi
-    else
-        clack_warn "$(i18n markitai) extras update $(i18n failed)"
-        clack_print_detail "$_uv_err" 3
-    fi
     return 0
 }
 
@@ -1769,7 +1851,7 @@ sync_dependencies() {
     cd "$_project_root" || return 1
 
     if clack_spinner "$(i18n info_syncing_deps)" uv sync --all-groups --all-extras --python "$PYTHON_CMD"; then
-        clack_success "$(i18n info_deps_synced)"
+        clack_success "$(i18n info_deps_synced)$(clack_took)"
         track_install "python_deps" "installed"
         return 0
     else
@@ -1808,14 +1890,18 @@ install_precommit() {
 # Returns: 0 if installed, 1 if not
 detect_playwright_browser() {
     _pw_cache=""
-    case "$OS_TYPE" in
-        Darwin)
-            _pw_cache="$HOME/Library/Caches/ms-playwright"
-            ;;
-        Linux)
-            _pw_cache="$HOME/.cache/ms-playwright"
-            ;;
-    esac
+    if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ] && [ "$PLAYWRIGHT_BROWSERS_PATH" != "0" ]; then
+        _pw_cache="$PLAYWRIGHT_BROWSERS_PATH"
+    else
+        case "$OS_TYPE" in
+            Darwin)
+                _pw_cache="$HOME/Library/Caches/ms-playwright"
+                ;;
+            Linux)
+                _pw_cache="$HOME/.cache/ms-playwright"
+                ;;
+        esac
+    fi
 
     if [ -n "$_pw_cache" ] && [ -d "$_pw_cache" ]; then
         if ls "$_pw_cache"/chromium-* >/dev/null 2>&1; then
@@ -1826,19 +1912,35 @@ detect_playwright_browser() {
     return 1
 }
 
+# Asked with the other questions, before markitai installs; the download
+# itself waits for markitai's Playwright. Sets WANT_PLAYWRIGHT: present,
+# yes or no.
+select_optional_playwright() {
+    if detect_playwright_browser; then
+        WANT_PLAYWRIGHT=present
+        return 0
+    fi
+    clack_info "$(i18n info_playwright_purpose)"
+    if clack_confirm_optional "$(i18n confirm_playwright)" "y"; then
+        WANT_PLAYWRIGHT=yes
+    else
+        WANT_PLAYWRIGHT=no
+    fi
+    return 0
+}
+
 # Install Playwright browser (Optional)
 # Returns: 0 on success, 1 on failure, 2 if skipped
 install_optional_playwright() {
+    [ -n "${WANT_PLAYWRIGHT:-}" ] || select_optional_playwright
     # Check if already installed
-    if detect_playwright_browser; then
+    if [ "$WANT_PLAYWRIGHT" = present ]; then
         clack_success "$(i18n playwright) $(i18n already_installed)"
         track_install "playwright" "installed"
         return 0
     fi
 
-    clack_info "$(i18n info_playwright_purpose)"
-
-    if ! clack_confirm_optional "$(i18n confirm_playwright)" "y"; then
+    if [ "$WANT_PLAYWRIGHT" != yes ]; then
         clack_skip "$(i18n playwright) $(i18n skipped)"
         track_install "playwright" "skipped"
         return 2
@@ -1894,24 +1996,39 @@ install_optional_playwright() {
         fi
     fi
 
-    clack_success "$(i18n playwright) $(i18n installed)"
+    clack_success "$(i18n playwright) $(i18n installed)$(clack_took)"
     track_install "playwright" "installed"
     return 0
 }
 
 # Install Claude Code CLI (Optional)
 # Returns: 0 on success, 1 on failure, 2 if skipped
+select_optional_claude_cli() {
+    if command -v claude >/dev/null 2>&1; then
+        WANT_CLAUDE_CLI=present
+        install_markitai_extra "claude-agent"
+        return 0
+    fi
+    if clack_confirm_optional "$(i18n confirm_claude_cli)" "n"; then
+        WANT_CLAUDE_CLI=yes
+        install_markitai_extra "claude-agent"
+    else
+        WANT_CLAUDE_CLI=no
+    fi
+    return 0
+}
+
 install_optional_claude_cli() {
+    [ -n "${WANT_CLAUDE_CLI:-}" ] || select_optional_claude_cli
     # Check if already installed
     if command -v claude >/dev/null 2>&1; then
         _cl_version=$(claude --version 2>/dev/null | head -n1)
         clack_success "$(i18n claude_cli): $_cl_version"
-        install_markitai_extra "claude-agent"
         track_install "claude_cli" "installed"
         return 0
     fi
 
-    if ! clack_confirm_optional "$(i18n confirm_claude_cli)" "n"; then
+    if [ "$WANT_CLAUDE_CLI" != yes ]; then
         clack_skip "$(i18n claude_cli) $(i18n skipped)"
         track_install "claude_cli" "skipped"
         return 2
@@ -1922,9 +2039,7 @@ install_optional_claude_cli() {
     # Try official install script in a child shell so its exit is contained.
     if run_remote_shell_installer "$(i18n installing) $(i18n claude_cli)" "https://claude.ai/install.sh"; then
         if command -v claude >/dev/null 2>&1; then
-            clack_success "$(i18n claude_cli) $(i18n installed)"
-            # Also install the SDK extra
-            install_markitai_extra "claude-agent" || true
+            clack_success "$(i18n claude_cli) $(i18n installed)$(clack_took)"
             track_install "claude_cli" "installed"
             return 0
         fi
@@ -1933,22 +2048,19 @@ install_optional_claude_cli() {
     # Fallback: bun/pnpm/npm
     if command -v bun >/dev/null 2>&1; then
         if clack_run_quiet "$(i18n installing) $(i18n claude_cli)" bun add -g @anthropic-ai/claude-code; then
-            clack_success "$(i18n claude_cli) $(i18n installed)"
-            install_markitai_extra "claude-agent" || true
+            clack_success "$(i18n claude_cli) $(i18n installed)$(clack_took)"
             track_install "claude_cli" "installed"
             return 0
         fi
     elif command -v pnpm >/dev/null 2>&1; then
         if clack_run_quiet "$(i18n installing) $(i18n claude_cli)" pnpm add -g @anthropic-ai/claude-code; then
-            clack_success "$(i18n claude_cli) $(i18n installed)"
-            install_markitai_extra "claude-agent" || true
+            clack_success "$(i18n claude_cli) $(i18n installed)$(clack_took)"
             track_install "claude_cli" "installed"
             return 0
         fi
     elif command -v npm >/dev/null 2>&1; then
         if clack_run_quiet "$(i18n installing) $(i18n claude_cli)" npm install -g @anthropic-ai/claude-code; then
-            clack_success "$(i18n claude_cli) $(i18n installed)"
-            install_markitai_extra "claude-agent" || true
+            clack_success "$(i18n claude_cli) $(i18n installed)$(clack_took)"
             track_install "claude_cli" "installed"
             return 0
         fi
@@ -1969,17 +2081,32 @@ note_chatgpt_route() {
 
 # Install Copilot CLI (Optional)
 # Returns: 0 on success, 1 on failure, 2 if skipped
+select_optional_copilot_cli() {
+    if command -v copilot >/dev/null 2>&1; then
+        WANT_COPILOT_CLI=present
+        install_markitai_extra "copilot"
+        return 0
+    fi
+    if clack_confirm_optional "$(i18n confirm_copilot_cli)" "n"; then
+        WANT_COPILOT_CLI=yes
+        install_markitai_extra "copilot"
+    else
+        WANT_COPILOT_CLI=no
+    fi
+    return 0
+}
+
 install_optional_copilot_cli() {
+    [ -n "${WANT_COPILOT_CLI:-}" ] || select_optional_copilot_cli
     # Check if already installed
     if command -v copilot >/dev/null 2>&1; then
         _cp_version=$(copilot --version 2>/dev/null | head -n1)
         clack_success "$(i18n copilot_cli): $_cp_version"
-        install_markitai_extra "copilot"
         track_install "copilot_cli" "installed"
         return 0
     fi
 
-    if ! clack_confirm_optional "$(i18n confirm_copilot_cli)" "n"; then
+    if [ "$WANT_COPILOT_CLI" != yes ]; then
         clack_skip "$(i18n copilot_cli) $(i18n skipped)"
         track_install "copilot_cli" "skipped"
         return 2
@@ -1990,9 +2117,7 @@ install_optional_copilot_cli() {
     # Try official install script in a child shell so its exit is contained.
     if run_remote_shell_installer "$(i18n installing) $(i18n copilot_cli)" "https://gh.io/copilot-install"; then
         if command -v copilot >/dev/null 2>&1; then
-            clack_success "$(i18n copilot_cli) $(i18n installed)"
-            # Also install the SDK extra
-            install_markitai_extra "copilot" || true
+            clack_success "$(i18n copilot_cli) $(i18n installed)$(clack_took)"
             track_install "copilot_cli" "installed"
             return 0
         fi
@@ -2001,22 +2126,19 @@ install_optional_copilot_cli() {
     # Fallback: bun/pnpm/npm
     if command -v bun >/dev/null 2>&1; then
         if clack_run_quiet "$(i18n installing) $(i18n copilot_cli)" bun add -g @github/copilot; then
-            clack_success "$(i18n copilot_cli) $(i18n installed)"
-            install_markitai_extra "copilot" || true
+            clack_success "$(i18n copilot_cli) $(i18n installed)$(clack_took)"
             track_install "copilot_cli" "installed"
             return 0
         fi
     elif command -v pnpm >/dev/null 2>&1; then
         if clack_run_quiet "$(i18n installing) $(i18n copilot_cli)" pnpm add -g @github/copilot; then
-            clack_success "$(i18n copilot_cli) $(i18n installed)"
-            install_markitai_extra "copilot" || true
+            clack_success "$(i18n copilot_cli) $(i18n installed)$(clack_took)"
             track_install "copilot_cli" "installed"
             return 0
         fi
     elif command -v npm >/dev/null 2>&1; then
         if clack_run_quiet "$(i18n installing) $(i18n copilot_cli)" npm install -g @github/copilot; then
-            clack_success "$(i18n copilot_cli) $(i18n installed)"
-            install_markitai_extra "copilot" || true
+            clack_success "$(i18n copilot_cli) $(i18n installed)$(clack_took)"
             track_install "copilot_cli" "installed"
             return 0
         fi
@@ -2133,6 +2255,99 @@ init_config() {
 }
 
 # ============================================================
+# First-run preparation (python -m markitai.warmup)
+# ============================================================
+# markitai is installed without compiling every package (UV_COMPILE_BYTECODE
+# compiled about 13,400 files, twice per setup, most of which markitai never
+# imports). Right after the install, markitai.warmup imports what markitai's
+# code imports, in the background and at a lower priority, while setup goes
+# on; setup waits for it at the end, so the first command after setup is
+# not the one that compiles.
+# Lines of "pid|report file|name"
+WARMUP_JOBS=""
+
+markitai_tool_python() {
+    _mtp="$(markitai_tools_dir)/markitai/bin/python"
+    if [ -x "$_mtp" ]; then
+        printf '%s\n' "$_mtp"
+    fi
+}
+
+# Usage: start_markitai_warmup PYTHON "name" [extra argument]
+start_markitai_warmup() {
+    if [ -z "${1:-}" ] || [ ! -x "$1" ]; then
+        return 0
+    fi
+    _smw_report=$(mktemp 2>/dev/null) || return 0
+    if command -v nice >/dev/null 2>&1; then
+        nice -n 10 "$1" -m markitai.warmup --report "$_smw_report" ${3:+"$3"} \
+            </dev/null >/dev/null 2>&1 &
+    else
+        "$1" -m markitai.warmup --report "$_smw_report" ${3:+"$3"} \
+            </dev/null >/dev/null 2>&1 &
+    fi
+    WARMUP_JOBS="${WARMUP_JOBS}$!|$_smw_report|$2
+"
+    return 0
+}
+
+wait_for_pids() {
+    for _wfp in "$@"; do
+        wait "$_wfp" 2>/dev/null || true
+    done
+}
+
+# A number from the warm-up's JSON report: report_number FILE key
+report_number() {
+    sed -n "s/.*\"$2\": *\([0-9.]*\).*/\1/p" "$1" 2>/dev/null | head -n 1
+}
+
+# Wait for the background preparation, with a spinner on a terminal.
+wait_markitai_warmup() {
+    [ -n "$WARMUP_JOBS" ] || return 0
+    _wmw_pids=$(printf '%s' "$WARMUP_JOBS" | cut -d'|' -f1 | tr '\n' ' ')
+    # shellcheck disable=SC2086 # one argument per process id
+    clack_spinner "$(i18n preparing_first_run)..." wait_for_pids $_wmw_pids || true
+    _wmw_longest=0
+    _wmw_failed=false
+    _old_ifs="$IFS"
+    IFS='
+'
+    for _wmw_job in $WARMUP_JOBS; do
+        IFS="$_old_ifs"
+        _wmw_rest=${_wmw_job#*|}
+        _wmw_report=${_wmw_rest%%|*}
+        _wmw_name=${_wmw_rest#*|}
+        _wmw_secs=$(report_number "$_wmw_report" seconds)
+        _wmw_crashed=$(report_number "$_wmw_report" crashed)
+        if [ -z "$_wmw_secs" ] || [ "${_wmw_crashed:-0}" != 0 ]; then
+            # No report, or a process died: what it had left compiles on use
+            _wmw_failed=true
+            _wmw_secs=${_wmw_secs:-0}
+            clack_record_file "$(i18n preparing_first_run)" "$_wmw_report"
+        fi
+        _wmw_modules=$(report_number "$_wmw_report" modules)
+        if [ -n "$_wmw_modules" ]; then
+            _wmw_detail="$_wmw_modules modules in $(report_number "$_wmw_report" processes) processes"
+        else
+            _wmw_detail=$(sed -n 's/.*"browser": *"\([^"]*\)".*/Chromium \1/p' "$_wmw_report" 2>/dev/null)
+        fi
+        add_step_timing "$_wmw_name (background)" "$_wmw_secs" "$_wmw_detail"
+        _wmw_longest=$(awk -v a="$_wmw_longest" -v b="$_wmw_secs" 'BEGIN { print (b > a ? b : a) }')
+        rm -f "$_wmw_report" 2>/dev/null || true
+    done
+    IFS="$_old_ifs"
+    WARMUP_JOBS=""
+    if [ "$_wmw_failed" = true ]; then
+        clack_info "$(i18n first_run_partial)"
+    else
+        # The work's own time; most of it ran while setup did other things
+        clack_success "$(i18n first_run_ready)$(clack_took "$_wmw_longest")"
+    fi
+    return 0
+}
+
+# ============================================================
 # Main Entry Point
 # ============================================================
 
@@ -2144,28 +2359,40 @@ run_user_setup() {
     clack_section "$(i18n section_core)"
     install_uv || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
     detect_python || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    # Every question before the install, so markitai installs once with all
+    # the extras the answers add (the CLIs' SDKs included)
     load_existing_markitai_extras
     select_markitai_serve
     select_markitai_ocr
+    select_optional_playwright
+    select_optional_claude_cli
+    select_optional_copilot_cli
+    add_suggested_markitai_extras
     install_markitai || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    start_markitai_warmup "$(markitai_tool_python)" "first-run preparation"
     track_markitai_serve
     track_markitai_ocr
 
     clack_section "$(i18n section_optional)"
     install_optional_playwright || true
+    if [ "$WANT_PLAYWRIGHT" = yes ] && detect_playwright_browser; then
+        # Chromium's first launch is the slow one (antivirus on Windows)
+        start_markitai_warmup "$(markitai_tool_python)" "first Chromium launch" --only-browser
+    fi
 
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true
     install_optional_copilot_cli || true
     note_chatgpt_route
 
-    # The extras step reports in the summary, not under the last section.
     clack_section "$(i18n section_summary)"
-    finalize_markitai_extras || true
-
+    _ic_started=$(setup_now)
     init_config >/dev/null 2>&1
+    add_step_timing "markitai init" "$(setup_since "$_ic_started")"
+    wait_markitai_warmup || true
 
     print_summary --no-header
+    print_setup_timings
     print_user_completion
     if [ -n "$FAILED_COMPONENTS" ]; then
         clack_outro_warn "$(i18n setup_complete_with_warnings)"
@@ -2184,6 +2411,7 @@ run_dev_setup() {
 
     clack_section "$(i18n section_dev_env)"
     sync_dependencies || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    start_markitai_warmup "$(get_project_root)/.venv/bin/python" "first-run preparation"
     install_precommit || true
 
     clack_section "$(i18n section_optional)"
@@ -2194,7 +2422,9 @@ run_dev_setup() {
     install_optional_copilot_cli || true
     note_chatgpt_route
 
+    wait_markitai_warmup || true
     print_summary
+    print_setup_timings
     print_dev_completion
     if [ -n "$FAILED_COMPONENTS" ]; then
         clack_outro_warn "$(i18n dev_setup_complete_with_warnings)"
