@@ -612,8 +612,7 @@ fn calculate(
         return Err(UnknownPrice::Period);
     }
     let rates = match (tariff.long, tariff.off_peak) {
-        (Some(long), _) if all_input >= long.long_from => long.rates,
-        (Some(long), _) if all_input > long.short_max => return Err(UnknownPrice::Context),
+        (Some(long), _) if all_input > long.above => long.rates,
         // Both ends of the request must fall in one known period.
         (_, Some(off_peak)) => {
             let span = span
@@ -742,23 +741,19 @@ mod tests {
             );
         }
 
-        // GPT-4.1 has no reviewed cache-write rate: a write is not guessed.
+        // GPT-4.1 has no cache-write charge: a written token is ordinary input.
         let older = json!({"usage":{"prompt_tokens":10,"completion_tokens":1,
-            "prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0}}});
-        assert_eq!(
-            amount(&openai(), &older, BillingClass::Standard),
-            10 * 2_000_000 + 8_000_000
-        );
+            "prompt_tokens_details":{"cached_tokens":2,"cache_write_tokens":0}}});
+        let listed = 8 * 2_000_000 + 2 * 500_000 + 8_000_000;
+        assert_eq!(amount(&openai(), &older, BillingClass::Standard), listed);
         let mut written = older;
         written["usage"]["prompt_tokens_details"]["cache_write_tokens"] = json!(4);
-        assert_eq!(
-            quote(&openai(), &written, BillingClass::Standard),
-            Quote::Unknown(UnknownPrice::CacheDetails)
-        );
+        assert_eq!(amount(&openai(), &written, BillingClass::Standard), listed);
+        assert_eq!(amount(&openai(), &written, BillingClass::Batch), listed / 2);
     }
 
     #[test]
-    fn openai_long_context_reprices_the_whole_request_once_certain() {
+    fn openai_long_context_reprices_a_whole_prompt_over_272_000_tokens() {
         let response = |prompt: u64| {
             json!({"usage":{"prompt_tokens":prompt,"completion_tokens":1000,
                 "prompt_tokens_details":{"cached_tokens":100_000,"cache_write_tokens":50_000}}})
@@ -768,20 +763,14 @@ mod tests {
             amount(&luna(), &response(272_000), BillingClass::Standard),
             short
         );
-        // Between 272,000 and 272 x 1,024 the published "272K" boundary is unclear.
-        for unclear in [272_001, 275_000, 278_528] {
-            assert_eq!(
-                quote(&luna(), &response(unclear), BillingClass::Standard),
-                Quote::Unknown(UnknownPrice::Context)
-            );
-        }
-        let long = 128_529 * 200_000 + 100_000 * 20_000 + 50_000 * 250_000 + 1000 * 750_000;
+        // OpenAI's "272K" is 272,000 tokens: one more takes the long rates.
+        let long = 122_001 * 200_000 + 100_000 * 20_000 + 50_000 * 250_000 + 1000 * 750_000;
         assert_eq!(
-            amount(&luna(), &response(278_529), BillingClass::Standard),
+            amount(&luna(), &response(272_001), BillingClass::Standard),
             long
         );
         assert_eq!(
-            amount(&luna(), &response(278_529), BillingClass::Batch),
+            amount(&luna(), &response(272_001), BillingClass::Batch),
             long / 2
         );
     }

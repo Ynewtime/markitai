@@ -21,7 +21,7 @@ exact byte ranges, decimal rates, wheel RECORD identity and verification links.
 date does not establish when every original price became effective.
 
 All prices below are USD per million tokens, Standard class. OpenAI rows with two
-lines take the second for a whole request whose prompt is over 278,528 tokens:
+values take the second for a whole request whose prompt is over 272,000 tokens:
 
 | Exact model family | Input | Cached read | Output | Cache write | Source |
 |---|---:|---:|---:|---:|---|
@@ -32,9 +32,9 @@ lines take the second for a whole request whose prompt is over 278,528 tokens:
 | OpenAI `gpt-5.6-sol`, `gpt-5.6` | 4 / 8 | 0.40 / 0.80 | 20 / 30 | 5 / 10 (30m) | [pricing](https://developers.openai.com/api/docs/pricing) |
 | OpenAI `gpt-5.6-terra` | 2 / 4 | 0.20 / 0.40 | 12 / 18 | 2.50 / 5 (30m) | [pricing](https://developers.openai.com/api/docs/pricing) |
 | OpenAI `gpt-5.6-luna` | 0.20 / 0.40 | 0.02 / 0.04 | 1.20 / 1.80 | 0.25 / 0.50 (30m) | [pricing](https://developers.openai.com/api/docs/pricing) |
-| OpenAI `gpt-4.1` | 2 | 0.50 | 8 | unsupported | [pricing](https://developers.openai.com/api/docs/pricing) |
-| OpenAI `gpt-4.1-mini` | 0.40 | 0.10 | 1.60 | unsupported | [pricing](https://developers.openai.com/api/docs/pricing) |
-| OpenAI `gpt-4.1-nano` | 0.10 | 0.025 | 0.40 | unsupported | [pricing](https://developers.openai.com/api/docs/pricing) |
+| OpenAI `gpt-4.1` | 2 | 0.50 | 8 | 2 (as input) | [pricing](https://developers.openai.com/api/docs/pricing) |
+| OpenAI `gpt-4.1-mini` | 0.40 | 0.10 | 1.60 | 0.40 (as input) | [pricing](https://developers.openai.com/api/docs/pricing) |
+| OpenAI `gpt-4.1-nano` | 0.10 | 0.025 | 0.40 | 0.10 (as input) | [pricing](https://developers.openai.com/api/docs/pricing) |
 | Anthropic `claude-fable-5-1` | 10 | 0.25 | 50 | 12.50 / 20 (5m / 1h) | [pricing](https://platform.claude.com/docs/en/about-claude/pricing) |
 | Anthropic `claude-fable-5` | 10 | 1 | 50 | 12.50 / 20 | [pricing](https://platform.claude.com/docs/en/about-claude/pricing) |
 | Anthropic `claude-opus-5-5` | 4 | 0.20 | 20 | 5 / 8 | [pricing](https://platform.claude.com/docs/en/about-claude/pricing) |
@@ -58,10 +58,13 @@ Each listed GPT-4.1 ID also accepts its exact `-2025-04-14` snapshot ID; the
 GPT-6 and GPT-5.6 IDs are their own snapshots, and OpenAI's
 [model page](https://developers.openai.com/api/docs/models/gpt-5.6-sol) routes
 the `gpt-5.6` alias to GPT-5.6 Sol. Their model pages and the pricing page price
-a prompt over "272K" input tokens at the long-context rates for the whole
-request. That boundary could also be read as 272 × 1,024, so a prompt between
-272,001 and 278,528 tokens, cached reads and writes included, stays unpriced
-rather than risk the cheaper band.
+a prompt over "272K" input tokens, cached reads and writes included, at the
+long-context rates for the whole request. OpenAI's K is 1,000 there: the pricing
+page splits short (≤272K) from long (>272K) input, the
+[GPT-5 page](https://developers.openai.com/api/docs/models/gpt-5) the figure
+comes from lists "Maximum input tokens: 272,000", and the same model pages write
+a 1,050,000-token window as "1.05M". The long rates therefore start at 272,001
+tokens, as LiteLLM applies them.
 
 `claude-sonnet-4-5`, `claude-haiku-4-5` and `claude-opus-4-5` are the only added
 Claude aliases, each listed with its dated snapshot on its official model page;
@@ -110,9 +113,12 @@ OpenAI's `us.`/`eu.` data-residency hosts, billed 10% higher), other providers
 `global`; US-only inference is billed at a premium and stays unpriced. An
 accepted model configuration is not proof of pricing coverage. Explicit service
 tiers other than Standard/default or the transport's Batch class are unpriced.
-The reviewed Claude 4.5 band is at most 200,000 total input tokens, including
-cache reads and writes. Larger contexts are unpriced. No user-supplied pricing
-fields are added to configuration.
+Claude 4.5 models are priced up to 200,000 total input tokens, cache reads and
+writes included: that is their context window on the Claude API
+([context windows](https://platform.claude.com/docs/en/build-with-claude/context-windows)).
+Sonnet 4.5's former 1M-token beta and its above-200K rates are no longer
+offered, so a larger prompt is not billable there and stays unpriced. No
+user-supplied pricing fields are added to configuration.
 
 ## Response accounting
 
@@ -129,8 +135,9 @@ OpenAI prompt totals include cached reads and cache writes
 (`prompt_tokens_details.cache_write_tokens`), so both subsets are subtracted
 once before applying the ordinary input rate, as OpenAI's
 [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
-computes input cost. Cache writes cost 1.25× ordinary input; a model without a
-reviewed write rate (GPT-4.1) leaves a positive write count unpriced. Text and
+computes input cost. Cache writes cost 1.25× ordinary input on GPT-5.6 and later;
+the guide gives earlier models, GPT-4.1 included, no additional cache-write
+charge, so their written tokens are priced as ordinary input. Text and
 image counts only split the prompt by modality. Reasoning, prediction and text
 output counts are already part of output and are not added again. Anthropic base input excludes
 cache reads and writes. Its cache creation totals and explicit 5m/1h breakdown

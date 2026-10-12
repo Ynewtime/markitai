@@ -49,13 +49,10 @@ impl Rates {
 }
 
 /// Rates that replace the base ones for a whole request whose total input,
-/// cache reads and writes included, reaches `long_from`. Totals above
-/// `short_max` but below `long_from` are unpriced: OpenAI writes its boundary
-/// as "272K", which would be 278,528 tokens if K meant 1,024.
+/// cache reads and writes included, is over `above` tokens.
 #[derive(Clone, Copy)]
 pub(super) struct LongContext {
-    pub short_max: u64,
-    pub long_from: u64,
+    pub above: u64,
     pub rates: Rates,
 }
 
@@ -64,6 +61,8 @@ pub(super) struct Tariff {
     pub family: &'static str,
     pub rates: Rates,
     pub long: Option<LongContext>,
+    /// The model's context window when it has no listed rates beyond it:
+    /// larger input is not something the API accepts, so it stays unpriced.
     pub max_priced_input: Option<u64>,
     /// A dated list price: requests that end at or after this Unix second are
     /// unpriced.
@@ -86,12 +85,14 @@ impl Tariff {
         }
     }
     /// OpenAI's current models: a prompt over "272K" tokens takes the long
-    /// rates for the whole request.
+    /// rates for the whole request. OpenAI's K is 1,000: its pricing page
+    /// splits short (≤272K) from long (>272K) input, the GPT-5 page that the
+    /// figure comes from lists "Maximum input tokens: 272,000", and the same
+    /// model pages write a 1,050,000-token window as "1.05M".
     const fn openai_272k(family: &'static str, short: Rates, long: Rates) -> Self {
         Self {
             long: Some(LongContext {
-                short_max: 272_000,
-                long_from: 272 * 1024 + 1,
+                above: 272_000,
                 rates: long,
             }),
             ..Self::flat(family, short)
@@ -151,17 +152,20 @@ pub(super) fn deepseek_peak(at: u64) -> Option<bool> {
 
 pub(super) fn lookup(provider: Provider, model: &str) -> Option<Tariff> {
     let tariff = match (provider, model) {
+        // OpenAI's prompt caching guide: models before GPT-5.6 have "no
+        // additional cache-write charge", and each input token takes the
+        // uncached, cached or cache-write rate, so a write costs ordinary input.
         (Provider::OpenAi, "gpt-4.1" | "gpt-4.1-2025-04-14") => Tariff::flat(
             "openai/gpt-4.1",
-            Rates::new(2_000_000, 8_000_000, 500_000, None, None),
+            Rates::new(2_000_000, 8_000_000, 500_000, Some(2_000_000), None),
         ),
         (Provider::OpenAi, "gpt-4.1-mini" | "gpt-4.1-mini-2025-04-14") => Tariff::flat(
             "openai/gpt-4.1-mini",
-            Rates::new(400_000, 1_600_000, 100_000, None, None),
+            Rates::new(400_000, 1_600_000, 100_000, Some(400_000), None),
         ),
         (Provider::OpenAi, "gpt-4.1-nano" | "gpt-4.1-nano-2025-04-14") => Tariff::flat(
             "openai/gpt-4.1-nano",
-            Rates::new(100_000, 400_000, 25_000, None, None),
+            Rates::new(100_000, 400_000, 25_000, Some(100_000), None),
         ),
         (Provider::OpenAi, "gpt-6-astra") => Tariff::openai_272k(
             "openai/gpt-6-astra",
@@ -257,7 +261,8 @@ pub(super) fn lookup(provider: Provider, model: &str) -> Option<Tariff> {
             6_250_000,
             10_000_000,
         ),
-        // A 200K-token context window.
+        // The Claude 4.5 models have a 200K-token context window on the Claude
+        // API (Sonnet 4.5's 1M beta and its long-context rates are withdrawn).
         (Provider::Anthropic, "claude-opus-4-5" | "claude-opus-4-5-20251101") => Tariff {
             max_priced_input: Some(200_000),
             ..Tariff::claude(
@@ -317,8 +322,7 @@ pub(super) fn lookup(provider: Provider, model: &str) -> Option<Tariff> {
         },
         (Provider::Anthropic, "claude-haiku-5-5") => Tariff {
             long: Some(LongContext {
-                short_max: 100_000,
-                long_from: 100_001,
+                above: 100_000,
                 rates: Rates::new(500_000, 2_500_000, 50_000, Some(625_000), Some(1_000_000)),
             }),
             ..Tariff::claude(
@@ -406,7 +410,7 @@ mod tests {
             Some((base, band)) if band.ends_with("k_tokens") => {
                 let long = tariff.long?;
                 let thousands: u64 = band.strip_suffix("k_tokens")?.parse().ok()?;
-                assert_eq!(long.short_max, thousands * 1000, "{field}");
+                assert_eq!(long.above, thousands * 1000, "{field}");
                 (long.rates, base)
             }
             _ => (tariff.rates, field),
