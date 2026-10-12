@@ -135,6 +135,7 @@
 ### 安全
 
 - **服务器自己的 API key 不再发往设置调用方选定的地址。** 通过 `markitai serve` 设置页面保存（或在那里测试）的模型或连接如果没有 key 却指定了地址，LiteLLM 会读取服务器上该提供商的 key 变量（`OPENAI_API_KEY`、`GROQ_API_KEY`、`LM_STUDIO_API_KEY` 等）并发往那个地址：持有访问令牌的人就能让服务器把它的 key 发到自己的主机，而禁止把 `env:` 引用指向调用方所选主机的规则正是为了防止这一点。现在这样的条目会保存占位 key `markitai-no-key`，任何服务器都不会把它当作凭据（不校验 key 的服务器，如 LM Studio、vLLM、llama.cpp，照常可用，无 key 的 OpenAI 兼容端点也终于能用了；界面上显示为没有 key），在调用方指定的地址上做连接测试时也用它。已有 key 的连接不能再改成指向另一个地址的无 key 连接（HTTP 422）。你在配置文件里手写的条目不变：没有 `api_key` 的条目无论 `api_base` 指向哪里，仍使用环境变量中的 key。
+- **服务器的 Google、watsonx 和 GigaChat 登录凭据不再发往设置调用方选定的地址。** 无论条目带什么 key，LiteLLM 都会用服务器自己的 Google 凭据（应用默认凭据、`gcloud` 登录或 `GOOGLE_APPLICATION_CREDENTIALS`）签署 Vertex AI 请求，用 `WATSONX_TOKEN` 签署 watsonx 请求，用 `GIGACHAT_ACCESS_TOKEN` 签署 GigaChat 请求，并发往条目的地址：通过 `markitai serve` 设置页面以调用方所选地址保存或测试的 Vertex AI 模型（包括 LiteLLM 会路由到 Vertex AI 的裸名称如 `gemini-2.5-pro`，以及保存在另一个连接地址下的模型），在测试和转换中都会把服务器的 Google 访问令牌带到那里。现在设置页面会拒绝带地址的此类模型（422 `invalid_settings_request`）；不带地址时仍在服务商自己的端点使用服务器的登录凭据，手动写在配置文件中的地址照常使用。Amazon Bedrock 不受影响：带地址而无 key 时，它把占位 key `markitai-no-key` 作为 key 发送，从不发送服务器的 AWS 凭据。
 
 ## [1.2.0] - 2026-09-28
 

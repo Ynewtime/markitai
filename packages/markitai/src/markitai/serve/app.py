@@ -1633,6 +1633,75 @@ def _keyless_placeholder(api_key: Any, api_base: Any, model: Any) -> Any:
     return NO_KEY
 
 
+#: LiteLLM routes that sign in with the server's own cloud login or token
+#: whatever key an entry carries (contract v1.9): Vertex AI with Google's
+#: application default credentials, watsonx with WATSONX_TOKEN, GigaChat with
+#: GIGACHAT_ACCESS_TOKEN. With an ``api_base`` that login goes to that
+#: address, and :data:`NO_KEY` does not stop it (LiteLLM 1.104.2, checked with
+#: fake credentials and a capture server). Bedrock is not here: given the
+#: placeholder it sends it as its bearer key and never signs with the AWS
+#: chain. Without an address these use the cloud's own endpoint, as
+#: configured by the owner.
+_AMBIENT_LOGIN: dict[str, tuple[str, str]] = {
+    "vertex_ai": ("Vertex AI", "Google credentials"),
+    "vertex_ai_beta": ("Vertex AI", "Google credentials"),
+    "watsonx": ("watsonx", "WATSONX_TOKEN"),
+    "watsonx_text": ("watsonx", "WATSONX_TOKEN"),
+    "gigachat": ("GigaChat", "GIGACHAT_ACCESS_TOKEN"),
+}
+#: Prefixes LiteLLM must never be asked about: resolving them starts a
+#: sign-in (chatgpt, github_copilot) or they are markitai's own runtimes.
+_RUNTIME_PREFIXES = frozenset({"chatgpt", "github_copilot", "claude-agent", "copilot"})
+
+
+def _ambient_login_provider(model: Any) -> str | None:
+    """The :data:`_AMBIENT_LOGIN` route LiteLLM sends *model* through, if any.
+
+    A bare name counts too: LiteLLM routes ``gemini-2.5-pro`` to Vertex AI.
+    """
+    if not isinstance(model, str) or not model.strip():
+        return None
+    prefix, slash, _rest = model.partition("/")
+    if slash:
+        prefix = prefix.strip().lower()
+        if prefix in _AMBIENT_LOGIN:
+            return prefix
+        if prefix in _RUNTIME_PREFIXES:
+            return None
+    try:
+        from markitai.utils.litellm_import import import_litellm
+
+        import_litellm()
+        from litellm.litellm_core_utils.get_llm_provider_logic import (
+            get_llm_provider,
+        )
+
+        provider = get_llm_provider(model)[1]
+    except Exception:  # a model LiteLLM cannot route sends nothing
+        return None
+    return provider if provider in _AMBIENT_LOGIN else None
+
+
+def _refuse_ambient_login_address(model: Any, api_base: Any) -> None:
+    """Refuse an entry the settings API writes or tests that would carry the
+    server's own cloud login to an address (owner decision, contract v1.9)."""
+    if not api_base:
+        return
+    provider = _ambient_login_provider(model)
+    if provider is None:
+        return
+    label, credential = _AMBIENT_LOGIN[provider]
+    raise ApiError(
+        422,
+        "invalid_settings_request",
+        (
+            f"api_base: {label} models send the server's own {credential} to any "
+            f"address, so here they can only use {label}'s own endpoint; set "
+            "another address in the config file"
+        ),
+    )
+
+
 def _endpoint_host(api_base: Any, provider: str) -> tuple[str, str] | None:
     """Scheme and host:port an entry's requests go to (its default when it
     names no address); None when unknown."""
@@ -2991,6 +3060,7 @@ def create_app(
             # stored with the placeholder. A saved connection's own pair
             # stays as it is.
             api_key = _keyless_placeholder(api_key, api_base, body.model)
+        _refuse_ambient_login_address(body.model, api_base)
         _check_credential_target(
             api_key,
             api_base,
@@ -3063,6 +3133,8 @@ def create_app(
             if placeholder is not None:
                 params["api_key"] = placeholder
         _strip_ignored_local_params(params)
+        if base_set or "model" in body.model_fields_set:
+            _refuse_ambient_login_address(params.get("model"), params.get("api_base"))
         _check_credential_target(
             params.get("api_key"),
             params.get("api_base"),
@@ -3331,6 +3403,10 @@ def create_app(
                 (target.get("api_key"), target.get("api_base")),
                 provider_name,
             )
+            if base_set:
+                _refuse_ambient_login_address(
+                    f"{provider_name}/", target.get("api_base")
+                )
             placeholder = _keyless_placeholder(
                 target.get("api_key"), target.get("api_base"), f"{provider_name}/"
             )
@@ -3374,6 +3450,7 @@ def create_app(
                         params.pop("api_base", None)
                     else:
                         params["api_base"] = body.api_base
+                    _refuse_ambient_login_address(model, params.get("api_base"))
                 _link_raw_model_to_provider(entry, saved_id)
             return entries
 
@@ -3503,6 +3580,8 @@ def create_app(
                 configured=_configured_credential_pairs(_state(request)),
             )
             asked_base = body.api_base
+            # An address the caller names; a stored one is the owner's
+            _refuse_ambient_login_address(body.model, asked_base)
             body = _fill_stored_credentials(_state(request), body)
             if asked_base is not None:
                 # An address the caller names is tested with the placeholder

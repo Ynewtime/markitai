@@ -89,6 +89,8 @@ key 和保存时的地址绑定在一起，所以设置页面不会把你没输�
 
 在这里保存的连接如果没有 key 却指定了地址（本地服务器、网关），会保存占位 key `markitai-no-key`，任何服务器都不会把它当作凭据：没有它，LiteLLM 会读取服务器自己的 key 变量（`OPENAI_API_KEY`、`GROQ_API_KEY` 等）并发往那个地址。不校验 key 的服务器（LM Studio、vLLM、llama.cpp）照常可用；设置页面把这样的连接显示为没有 key。已有 key 的连接不能改成指向另一个地址的无 key 连接（HTTP 422）：请为那台服务器新建一个连接。你在配置文件里自己写的条目不受影响：没有 `api_key` 的条目仍从环境变量读取该提供商的 key。
 
+Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不是 key 认证：Google 应用默认凭据（`gcloud auth application-default login`、`GOOGLE_APPLICATION_CREDENTIALS`）、`WATSONX_TOKEN`、`GIGACHAT_ACCESS_TOKEN`。LiteLLM 会把这些凭据发往条目指定的任何地址，所以设置页面只在不带地址时保存和测试这些模型，即使用服务商自己的端点（否则返回 HTTP 422）；私有端点请写在配置文件里。Amazon Bedrock 可以带地址：没有 key 时它发往那里的是占位 key，从不发送服务器的 AWS 凭据。
+
 ## 历史记录
 
 完成的任务在 `~/.markitai/serve/jobs/` 下保留到完成后 7 天（检查面板显示具体日期）；到期的任务立即从列表消失，其文件在一小时内删除。刷新页面或重启服务后，任务仍在**转换任务**里：可以重新打开、再次下载输出、重试或增强其中的条目、删除，或把全部内容打包下载。
