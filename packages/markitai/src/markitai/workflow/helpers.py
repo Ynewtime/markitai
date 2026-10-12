@@ -264,27 +264,10 @@ def normalize_frontmatter(frontmatter: str | dict[str, Any]) -> str:
 
 
 def _extract_heading_title(markdown: str) -> str:
-    """First workflow heading, preserving its existing permissive syntax."""
-    # The old scanner stripped the document before splitting it, so whitespace
-    # before the first nonempty line is ignored; indentation later is retained.
-    leading = re.match(r"\s*", markdown)
-    position = leading.end() if leading else 0
-    while position < len(markdown):
-        if markdown[position] != "#":
-            boundary = markdown.find("\n#", position)
-            if boundary < 0:
-                return ""
-            position = boundary + 1
-        end = markdown.find("\n", position)
-        if end < 0:
-            end = len(markdown)
-        line = markdown[position:end]
-        if len(line) > 1 and line[1] in "# ":
-            title = line.lstrip("#").strip().replace("**", "").strip()
-            if title:
-                return title
-        position = end + 1
-    return ""
+    """First heading that names the document (``utils.titles.heading_title``)."""
+    from markitai.utils.titles import heading_title
+
+    return heading_title(markdown)
 
 
 def add_basic_frontmatter(

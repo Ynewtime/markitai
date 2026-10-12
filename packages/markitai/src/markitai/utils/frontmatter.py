@@ -16,9 +16,6 @@ LOW_CONFIDENCE_TITLE_SUFFIXES = {".csv", ".tsv", ".xml"}
 #: A document's own facts a converter reports (``document_meta``: an EPUB's
 #: OPF), in front matter order after ``source``
 DOCUMENT_FIELDS = ("authors", "language", "publisher", "date", "description")
-_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
-_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
-_TITLE_HTML_TAG_RE = re.compile(r"</?(?:strong|em|b|i|code)>", re.IGNORECASE)
 
 # Robust frontmatter pattern: anchors closing --- to line start via negative lookahead.
 # Each line inside the block must NOT start with --- (the closing delimiter).
@@ -28,31 +25,10 @@ FRONTMATTER_PATTERN = re.compile(r"\A\s*---\s*\n(?:(?!---\s*\n).*\n)*---\s*\n?")
 
 
 def _normalize_title_text(title: str) -> str:
-    """Normalize lightweight markdown formatting from a title candidate."""
-    cleaned = " ".join(title.split())
-    if not cleaned:
-        return ""
+    """A title candidate as plain text (``utils.titles.clean_title``)."""
+    from markitai.utils.titles import clean_title
 
-    cleaned = re.sub(r"^#{1,6}\s+", "", cleaned)
-    cleaned = _MARKDOWN_IMAGE_RE.sub(r"\1", cleaned)
-    cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
-    cleaned = _TITLE_HTML_TAG_RE.sub("", cleaned)
-
-    wrappers = ("**", "__", "~~", "`", "*", "_")
-    changed = True
-    while changed and cleaned:
-        changed = False
-        for wrapper in wrappers:
-            if (
-                cleaned.startswith(wrapper)
-                and cleaned.endswith(wrapper)
-                and len(cleaned) > len(wrapper) * 2
-            ):
-                cleaned = cleaned[len(wrapper) : -len(wrapper)].strip()
-                changed = True
-                break
-
-    return " ".join(cleaned.split())
+    return clean_title(title)
 
 
 def extract_title_from_content(content: str, fallback: str = "") -> str:
@@ -146,15 +122,25 @@ def resolve_document_title(
     content: str = "",
     extractor: Any | None = None,
 ) -> str:
-    """Resolve a stable document title from explicit, content, or source fallback."""
-    if explicit_title:
-        return _normalize_title_text(explicit_title)
+    """The document's title: explicit, else from its content, else its name.
+
+    Every candidate is plain text and has to name the document
+    (``utils.titles``): an explicit title that is a number or markup-only
+    falls to the first heading that names it, then to the file name. The
+    content rule is the first such heading of any level
+    (``utils.titles.heading_title``), for the base output and the LLM
+    output alike, so both get the same title.
+    """
+    from markitai.utils.titles import heading_title, usable_title
+
+    title = usable_title(explicit_title)
+    if title:
+        return title
 
     if content and source_supports_content_title(source):
-        title_extractor = extractor or extract_title_from_content
-        extracted = title_extractor(content)
-        if extracted:
-            return extracted
+        title = usable_title((extractor or heading_title)(content))
+        if title:
+            return title
 
     return fallback_title_from_source(source)
 
