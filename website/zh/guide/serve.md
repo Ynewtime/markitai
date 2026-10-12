@@ -83,7 +83,7 @@ markitai serve --host 0.0.0.0
 
 服务器设置了某个服务商的 key 变量（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY` 或 `OPENROUTER_API_KEY`）时，选择器会把它和已保存的连接列在一起（“使用 OPENAI_API_KEY”）。它的模型用这个 key 从服务商自己的端点列出，从它添加的模型只保存引用 `env:OPENAI_API_KEY`，不保存 key 本身；之后由这个已保存的连接代替这张卡片。这个 key 只发往它所属服务商的端点：要用别的地址，请输入 key 来连接该服务商。
 
-测试模型失败时会说明原因：服务器上没有设置 key 变量（这时什么都不会发送；在运行 `markitai serve` 的地方设置并重启，或者给这个连接填入 key）、服务商拒绝了 key（HTTP 401/403）、服务商没有这个模型（404）、服务商在限流（429）、连不上服务商，或服务商返回了其他错误。服务商自己的原话作为细节附在后面；API 用 `reason` 给出同样的类别（`missing_key`、`auth_rejected`、`model_not_found`、`rate_limited`、`network`、`provider_error`）。
+测试模型失败时会说明原因：没有 API 密钥（服务器上没有设置 key 变量，这时什么都不会发送；在运行 `markitai serve` 的地方设置并重启，或者给这个连接填入 key）、key 被拒绝（HTTP 401/403）、服务商没有这个模型、服务商在限流或额度不足、连不上服务商、服务商没有及时响应，或服务商返回了其他错误。服务商自己的原话放在“服务商原文”下。API 用 `reason` 给出同样的类别（`no_key`、`key_rejected`、`model_not_found`、`rate_limited`、`network`、`timeout`、`provider_error`），缺少 key 时用 `key_variable` 给出变量名。
 
 提供商编辑器只显示已保存 key 的打码形式（`sk…7890`；`env:` 引用原样显示）。不动这个字段就保留已保存的 key，输入新 key 即替换，清空则删除 key。已保存的 API 基础地址显示时不含凭据（`https://…@proxy.example/v1?api_key=…`）：保持原样即沿用已保存的地址，要修改请输入完整地址。
 
