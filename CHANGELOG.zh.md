@@ -133,6 +133,10 @@
 - `markitai serve` 设置中 key 与非保存时地址配对被拒时，错误信息现在会说明可行的做法：直接输入 key 本身，或在配置文件里配置这一对。serve 和配置指南也解释了这条规则和两种做法。
 - 缩小到 512 px 后仍超过 5 MB 视觉输入上限的图片，现在按 512 px 的版本发送，不再发送原始的更大图片。缩放也会恰好停在 512 px，而不是停在高于它的上一档。
 - MCP 服务器遇到格式错误或取值无效的配置文件时，会返回具体信息（"Invalid JSON in …"、"Invalid configuration in …"），不再是含糊的 "Error executing tool" 错误。`ConfigFileError` 现在可从 `markitai.api` 导入，`markitai.config.ConfigFileError` 照常可用。
+- **EPUB 的元数据进入 front matter，不再写在正文开头。** 基础 Markdown 此前以 `**Title:** … **Authors:** … **Language:** … **Publisher:** … **Date:** … **Description:** …` 这样一段开头。现在书的信息写进 front matter，位于 `title` 和 `source` 之后：`authors`（列表）、`language`、`publisher`、`date`、`description`，均为纯文本（Calibre 简介里的 HTML 会去掉，Calibre 表示“无日期”的 0101-01-01 不写）。`.llm.md` 也保留这些字段；其中 `description` 仍是模型写的摘要，模型没给时用书自带的简介。
+- **PDF 的标题是文档的名字，为纯文本，两份输出一致。** 一份保单 PDF 的 `.md` 标题是恰好成为第一个标题的小号加粗说明文字（“币值单位：人民币元”），`.llm.md` 的标题是一个上标标题，带着 HTML 和两个不可见的字体符号，因为 LLM 输出用另一套规则重新取了标题。现在 PDF 的标题依次取：PDF 自带且确实是名字的标题（不是“Untitled”“Document1”“Microsoft Word - report.docx”、文件名或数字），前几页上字号最大的文字（“电子保险单”），第一个是名字的标题，最后是文件名。所有格式的标题都是纯文本（没有标签、强调标记或私用区字形），也不会是单纯的数字、编号或页码；`.llm.md` 与 `.md` 标题相同。
+- **front matter 中的网址变得可读。** URL 条目的 `source` 和 `canonical_url` 此前是百分号编码（`https://ynewtime.com/posts/20251223-ai-%E5%BA%94…`）。现在按字符写出（`…/20251223-ai-应用案例…`），仍是同一个地址：影响地址含义的转义（`%20`、`%2F`、`%3F`、`%25`）保持不变，再次编码即得到原地址。
+- **`markitai serve` 中密钥来自服务器环境变量的连接可以加载模型列表。** 在配置里手写的模型（`deepseek/deepseek-flash`）在服务器设置了 `DEEPSEEK_API_KEY` 时能通过模型测试，但“编辑”里显示“API key：未设置”，加载模型列表失败并显示 “model discovery failed (HTTPStatusError)”，因为加载列表时没有带上密钥。现在“编辑”显示“来自环境变量 DEEPSEEK_API_KEY”，模型列表用与转换和测试相同的密钥加载（不会发往浏览器指定的地址），加载失败时说明原因：使用与模型测试相同的原因（`no_key`、`key_rejected`、`rate_limited`、`network`、`timeout`、`provider_error`）和提供商自己的说法，而不是异常类名。完全没有密钥时不发送请求，并说明应设置哪个变量。
 
 ### 安全
 
