@@ -1302,7 +1302,8 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
             Block::heading(2, vec![Inline::plain(metadata.sheets[0].clone())]),
         );
     }
-    if extension == "epub" && metadata.title().is_some_and(|title| matches!(parsed.blocks.first(), Some(Block::Heading { content, .. }) if anydoc::model::inlines_to_plain_text(content) == title)) {
+    let title = metadata.title();
+    if extension == "epub" && title.as_deref().is_some_and(|title| matches!(parsed.blocks.first(), Some(Block::Heading { content, .. }) if anydoc::model::inlines_to_plain_text(content) == title)) {
         parsed.blocks.remove(0);
     }
     let names = parsed
@@ -1334,10 +1335,6 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
     } else {
         renderer.slides(&parsed.blocks, &parsed.slide_starts)
     };
-    let preamble = metadata.preamble();
-    if !preamble.is_empty() {
-        markdown = format!("{preamble}\n\n{markdown}");
-    }
     for note in &parsed.notes {
         let text = renderer.blocks(&note.blocks);
         let mut lines = text.lines();
@@ -1374,8 +1371,15 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
     document
         .metadata
         .insert("converter".into(), "anydoc".into());
-    if let Some(title) = metadata.title().filter(|s| !s.is_empty()) {
+    if let Some(title) = title {
         document.metadata.insert("title".into(), title.into());
+    }
+    // An EPUB's own facts go to the front matter, not into the body.
+    let facts = metadata.document_meta();
+    if !facts.is_empty() {
+        document
+            .metadata
+            .insert("document_meta".into(), facts.into());
     }
     for (asset, name) in parsed.assets.into_iter().zip(names) {
         if !used_assets.contains(&asset.id.0) {

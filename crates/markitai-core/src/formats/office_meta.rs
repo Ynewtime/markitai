@@ -15,37 +15,70 @@ pub(super) struct Metadata {
     pub warnings: Vec<String>,
 }
 
+/// OPF text as one plain line: a description may carry escaped HTML
+/// (Calibre writes `&lt;p&gt;…`), which is read as text, and an ideographic
+/// indent is whitespace like any other.
+fn plain(text: &str) -> String {
+    use std::sync::LazyLock;
+    static TAG: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"<[^<>]+>").expect("static tag pattern"));
+    let text = TAG.replace_all(text, " ");
+    crate::titles::unescape_html(&text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl Metadata {
-    pub fn title(&self) -> Option<&str> {
-        self.book.get("title")?.first().map(String::as_str)
+    pub fn title(&self) -> Option<String> {
+        self.book
+            .get("title")?
+            .iter()
+            .map(|title| plain(title))
+            .find(|title| !title.is_empty())
     }
 
-    pub fn preamble(&self) -> String {
-        [
-            "title",
-            "authors",
-            "language",
-            "publisher",
-            "date",
-            "description",
-            "identifier",
-        ]
-        .into_iter()
-        .filter_map(|key| {
-            let values = self.book.get(key)?;
-            let value = if key == "authors" {
-                values.join(", ")
-            } else {
-                values.first()?.clone()
+    /// The book's own facts for the front matter (`document_meta`, see
+    /// `output::DOCUMENT_FIELDS`), each only when the book names it:
+    /// `authors` (every `dc:creator`, a list), `language`, `publisher`,
+    /// `date` and `description` as plain text. Calibre's `0101-01-01` ("no
+    /// date") is left out and a timestamp at midnight is a date. The same
+    /// keys and values as Python markitai 1.2.1; the identifier (usually a
+    /// UUID) is not written.
+    pub fn document_meta(&self) -> serde_json::Map<String, serde_json::Value> {
+        use std::sync::LazyLock;
+        static UNDEFINED_DATE: LazyLock<regex::Regex> =
+            LazyLock::new(|| regex::Regex::new(r"^0\d{3}-").expect("static date pattern"));
+        static MIDNIGHT: LazyLock<regex::Regex> = LazyLock::new(|| {
+            regex::Regex::new(r"^(\d{4}-\d{2}-\d{2})T00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:?00)?$")
+                .expect("static date pattern")
+        });
+        let mut meta = serde_json::Map::new();
+        let values = |key: &str| {
+            self.book
+                .get(key)
+                .into_iter()
+                .flatten()
+                .map(|value| plain(value))
+                .filter(|value| !value.is_empty())
+        };
+        let authors: Vec<String> = values("authors").collect();
+        if !authors.is_empty() {
+            meta.insert("authors".into(), authors.into());
+        }
+        for key in ["language", "publisher", "date", "description"] {
+            let Some(mut value) = values(key).next() else {
+                continue;
             };
-            if value.is_empty() {
-                return None;
+            if key == "date" {
+                if UNDEFINED_DATE.is_match(&value) {
+                    continue;
+                }
+                value = MIDNIGHT.replace(&value, "$1").into_owned();
             }
-            let label = format!("{}{}", key[..1].to_ascii_uppercase(), &key[1..]);
-            Some(format!("**{label}:** {value}"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            meta.insert(key.into(), value.into());
+        }
+        meta
     }
 }
 
@@ -573,25 +606,72 @@ mod tests {
         assert!(metadata.warnings[0].contains("escapes package root"));
     }
 
-    #[test]
-    fn epub_preamble_retains_source_field_order_and_authors() {
+    fn epub(opf: &str) -> Metadata {
         let bytes = archive(&[
             (
                 "META-INF/container.xml",
                 "<container><rootfiles><rootfile full-path='book/package.opf'/></rootfiles></container>",
             ),
-            (
-                "book/package.opf",
-                "<package><metadata xmlns:dc='urn:dc'><dc:creator>A</dc:creator><dc:title>Book</dc:title><dc:creator>B</dc:creator><dc:language>zh</dc:language><dc:identifier>ID</dc:identifier></metadata></package>",
-            ),
+            ("book/package.opf", opf),
         ]);
-        let metadata = read(&bytes, "epub");
-        assert_eq!(metadata.title(), Some("Book"));
+        read(&bytes, "epub")
+    }
+
+    #[test]
+    fn epub_facts_keep_every_author_and_leave_out_the_identifier() {
+        let metadata = epub(
+            "<package><metadata xmlns:dc='urn:dc'><dc:creator>A</dc:creator><dc:title>Book</dc:title><dc:creator>B</dc:creator><dc:language>zh</dc:language><dc:identifier>ID</dc:identifier></metadata></package>",
+        );
+        assert_eq!(metadata.title().as_deref(), Some("Book"));
         assert_eq!(
-            metadata.preamble(),
-            "**Title:** Book\n**Authors:** A, B\n**Language:** zh\n**Identifier:** ID"
+            serde_json::Value::Object(metadata.document_meta()),
+            serde_json::json!({"authors":["A","B"],"language":"zh"})
         );
     }
+
+    #[test]
+    fn epub_facts_are_plain_text_and_dates_are_dates() {
+        // The owner's epubBuilder shape: EPUB 2, an empty ISBN, an
+        // ideographic indent in the description.
+        let metadata = epub(concat!(
+            "<package version='2.0'><metadata xmlns:dc='urn:dc' xmlns:opf='urn:opf'>",
+            "<dc:title>人月神话(二十周年纪念版)</dc:title>",
+            "<dc:creator opf:role='aut'>[美] 弗雷德里克·布鲁克斯</dc:creator>",
+            "<dc:publisher>epub掌上书苑</dc:publisher><dc:date>2011-03-03</dc:date>",
+            "<dc:language>zh_CN</dc:language><dc:identifier opf:scheme='ISBN'></dc:identifier>",
+            "<dc:description>\u{3000}\u{3000}本书的最大特点——紧跟时代。\n\u{3000}\u{3000}在写作风格上</dc:description>",
+            "</metadata></package>",
+        ));
+        assert_eq!(
+            serde_json::Value::Object(metadata.document_meta()),
+            serde_json::json!({
+                "authors": ["[美] 弗雷德里克·布鲁克斯"],
+                "language": "zh_CN",
+                "publisher": "epub掌上书苑",
+                "date": "2011-03-03",
+                "description": "本书的最大特点——紧跟时代。 在写作风格上",
+            })
+        );
+        // Calibre: escaped HTML in the description, a midnight timestamp.
+        let calibre = epub(concat!(
+            "<package><metadata xmlns:dc='urn:dc'><dc:title>T</dc:title>",
+            "<dc:date>2019-05-01T00:00:00+00:00</dc:date>",
+            "<dc:description>&lt;p&gt;A &amp;amp; B&lt;/p&gt;&lt;p&gt;Next&lt;/p&gt;</dc:description>",
+            "</metadata></package>",
+        ));
+        let facts = calibre.document_meta();
+        assert_eq!(facts["date"], "2019-05-01");
+        assert_eq!(facts["description"], "A & B Next");
+        // Calibre's "no date", and a book with no metadata at all.
+        let undated = epub(
+            "<package><metadata xmlns:dc='urn:dc'><dc:date>0101-01-01T00:00:00+00:00</dc:date><dc:date>2001-02-03T10:00:00Z</dc:date></metadata></package>",
+        );
+        assert!(undated.document_meta().is_empty());
+        let bare = epub("<package><metadata/></package>");
+        assert!(bare.document_meta().is_empty());
+        assert_eq!(bare.title(), None);
+    }
+
     #[test]
     fn package_entities_and_book_fields_are_preserved() {
         let values = elements("<metadata xmlns:dc='urn:dc'><dc:title>A &amp; B</dc:title><dc:creator>作者</dc:creator><dc:identifier id='a'>urn:one</dc:identifier></metadata>").unwrap();

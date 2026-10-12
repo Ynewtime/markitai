@@ -802,7 +802,7 @@ fn rewrite_css(
 
 /// Decode one HTML character reference in attribute context. The shared HTML
 /// table bounds named lookup; a malformed ampersand never scans the whole tail.
-fn html_entity(value: &str) -> Option<(usize, [char; 2])> {
+pub(crate) fn html_entity(value: &str) -> Option<(usize, [char; 2])> {
     let rest = value.strip_prefix('&')?;
     if let Some(numeric) = rest.strip_prefix('#') {
         let (digits, radix, prefix) = if let Some(hex) = numeric.strip_prefix(['x', 'X']) {

@@ -32,6 +32,9 @@ mod sanitize;
 #[cfg(test)]
 #[path = "pdf/sanitize_tests.rs"]
 mod sanitize_tests;
+#[cfg(test)]
+#[path = "pdf/title_tests.rs"]
+mod title_tests;
 
 const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
 /// Operators one decoded content stream may hold before inspection or
@@ -54,99 +57,8 @@ fn password_required() -> Error {
     )
 }
 
-/// Whether a document information `/Title` names no document: it is only the
-/// name of the file the PDF was made from, which a producer writes when the
-/// source has no title of its own (a browser printing a page without
-/// `<title>`: `multi.html`, `layout-table`; an Office print driver:
-/// `Microsoft Word - report.doc`), or the name an application gives a
-/// document nobody named (see [`default_name`]). Such a title is not taken,
-/// so the document's first heading names it. A name with a document or image
-/// extension, an Office driver's prefix, a single lowercase slug (`code`,
-/// `layout-table`) or a default name counts; another title with an
-/// upper-case letter or a space and no extension is kept.
-fn placeholder_title(title: &str) -> bool {
-    const EXTENSIONS: &[&str] = &[
-        "htm", "html", "xhtml", "mht", "mhtml", "pdf", "doc", "docx", "docm", "dot", "dotx", "odt",
-        "ott", "rtf", "txt", "md", "tex", "ppt", "pptx", "pps", "ppsx", "odp", "key", "xls",
-        "xlsx", "ods", "csv", "pages", "numbers", "indd", "ps", "eps", "dvi", "png", "jpg", "jpeg",
-        "gif", "tif", "tiff", "bmp", "svg",
-    ];
-    let lower = title.to_ascii_lowercase();
-    if [
-        "microsoft word - ",
-        "microsoft powerpoint - ",
-        "microsoft excel - ",
-    ]
-    .iter()
-    .any(|prefix| lower.starts_with(prefix))
-    {
-        return true;
-    }
-    if let Some((stem, extension)) = lower.rsplit_once('.')
-        && !stem.trim().is_empty()
-        && EXTENSIONS.contains(&extension)
-    {
-        return true;
-    }
-    default_name(title)
-        || title.chars().any(|c| c.is_ascii_lowercase())
-            && title
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
-}
-
-/// Whether `title` is a name an application gives a new document, in any
-/// case and with a number or separators after it: `Untitled`,
-/// `Untitled Document`, `Untitled-2`, `PowerPoint Presentation`, `Title`, and
-/// in a few languages (`Sans titre`, `无标题`); or, numbered only, Word's
-/// `Document1`, PowerPoint's `Presentation1`, Excel's `Book1` and their
-/// Chinese names (`文档1`, `演示文稿1`, `工作簿1`).
-fn default_name(title: &str) -> bool {
-    const NAMES: &[&str] = &[
-        "untitled",
-        "untitled document",
-        "untitled presentation",
-        "untitled spreadsheet",
-        "untitled form",
-        "untitled design",
-        "untitled drawing",
-        "title",
-        "document",
-        "presentation",
-        "new document",
-        "word document",
-        "microsoft word document",
-        "new microsoft word document",
-        "powerpoint presentation",
-        "microsoft powerpoint presentation",
-        "sans titre",
-        "unbenannt",
-        "sin título",
-        "sem título",
-        "senza titolo",
-        "无标题",
-        "未命名",
-        "無題",
-        "無標題",
-    ];
-    const NUMBERED: &[&str] = &[
-        "document",
-        "presentation",
-        "book",
-        "workbook",
-        "drawing",
-        "publication",
-        "doc",
-        "文档",
-        "演示文稿",
-        "工作簿",
-    ];
-    let lower = title.trim().to_lowercase();
-    let stem = lower
-        .trim_end_matches(|c: char| c.is_ascii_digit() || matches!(c, ' ' | '-' | '_' | '(' | ')'));
-    let numbered = lower[stem.len()..].chars().any(|c| c.is_ascii_digit());
-    NAMES.contains(&stem) || numbered && NUMBERED.contains(&stem)
-}
+#[cfg(test)]
+use crate::titles::placeholder_title;
 
 fn decoded(stream: &Stream) -> std::result::Result<Vec<u8>, String> {
     if !stream.dict.has(b"Filter") {
@@ -427,6 +339,94 @@ impl GraphicsState {
         } else {
             None
         }
+    }
+}
+
+/// Whether text a reader cannot see hides an item, as Python markitai's
+/// hidden-text rules decide (`converter/pdf.py` `_is_hidden_span`): smaller
+/// than 2 pt, outside the visible page, or near-white on what the page shows
+/// under it near-white too (a white title on a dark banner is visible). The
+/// page is rendered once, at 36 dpi, only when a near-white item asks.
+struct Background<'a> {
+    bytes: &'a [u8],
+    session: Option<Option<crate::pdf_raster::PdfRasterSession>>,
+    pages: BTreeMap<u32, Option<image::RgbImage>>,
+}
+
+/// Rec. 601 luminance of an sRGB colour, in [0, 1].
+fn luminance([r, g, b]: [u8; 3]) -> f32 {
+    (0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)) / 255.
+}
+
+impl<'a> Background<'a> {
+    const DPI: f64 = 36.;
+    /// Luminance above which text is near-white, and so is a page under it.
+    const WHITE: f32 = 0.95;
+
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            session: None,
+            pages: BTreeMap::new(),
+        }
+    }
+
+    fn hides(&mut self, item: &pdf_inspector::TextItem, frame: &geometry::Frame) -> bool {
+        if item.font_size < 2.
+            || item.x + item.width < 0.
+            || item.x > frame.width
+            || item.y + item.height < 0.
+            || item.y > frame.height
+        {
+            return true;
+        }
+        if !item
+            .fill_color
+            .is_some_and(|color| luminance(color) > Self::WHITE)
+        {
+            return false;
+        }
+        // Unknown: a white page, as Python assumes.
+        self.under(item, frame)
+            .is_none_or(|under| under > Self::WHITE)
+    }
+
+    /// The mean luminance of what the page shows under the item's box.
+    fn under(&mut self, item: &pdf_inspector::TextItem, frame: &geometry::Frame) -> Option<f32> {
+        let bytes = self.bytes;
+        let session = self
+            .session
+            .get_or_insert_with(|| crate::pdf_raster::PdfRasterSession::open(bytes).ok())
+            .as_ref()?;
+        let image = self
+            .pages
+            .entry(item.page)
+            .or_insert_with(|| {
+                // Item boxes are in the unrotated visible page box.
+                let (width, height) = session.page_size(item.page as usize).ok()?;
+                ((width as f32 - frame.width).abs() < 1.
+                    && (height as f32 - frame.height).abs() < 1.)
+                    .then(|| session.render(item.page as usize, Self::DPI).ok())
+                    .flatten()
+            })
+            .as_ref()?;
+        let scale = (Self::DPI / 72.) as f32;
+        let x0 = (item.x * scale).floor().max(0.) as u32;
+        let x1 = (((item.x + item.width) * scale).ceil() as u32).min(image.width());
+        let y0 = ((frame.height - item.y - item.height) * scale)
+            .floor()
+            .max(0.) as u32;
+        let y1 = (((frame.height - item.y) * scale).ceil() as u32).min(image.height());
+        if x0 >= x1 || y0 >= y1 {
+            return None;
+        }
+        let mut total = 0.;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                total += luminance(image.get_pixel(x, y).0);
+            }
+        }
+        Some(total / ((x1 - x0) * (y1 - y0)) as f32)
     }
 }
 
@@ -1460,6 +1460,35 @@ fn extract_pages_inner(
             .unwrap_or_default(),
         _ => BTreeMap::new(),
     };
+    // The most prominent text of the first pages, upright ones only (as the
+    // layout reader reads them), for the document's title.
+    let prominent_title = loaded.as_ref().ok().and_then(|loaded| {
+        let frames: BTreeMap<u32, geometry::Frame> = page_ids
+            .iter()
+            .take(layout::TITLE_PAGES)
+            .filter_map(|(&number, &id)| Some((number, geometry::frame(pdf, id)?)))
+            .collect();
+        let selected: HashSet<u32> = frames.keys().copied().collect();
+        if selected.is_empty() {
+            return None;
+        }
+        let (items, rotations) = loaded
+            .text_with_positions_and_rotations(
+                Some(&selected),
+                pdf_inspector::PositionOptions::new(),
+            )
+            .ok()?;
+        let items = items
+            .into_iter()
+            .filter(|item| !rotations.contains_key(&item.page))
+            .collect();
+        let mut background = Background::new(bytes);
+        layout::title(items, &mut |item| {
+            frames
+                .get(&item.page)
+                .is_some_and(|frame| !background.hides(item, frame))
+        })
+    });
     // The layout reader was the last to read the pages' text.
     if let Ok(loaded) = &loaded {
         loaded.forget_page_runs();
@@ -1666,18 +1695,21 @@ fn extract_pages_inner(
     document
         .metadata
         .insert("converter".into(), "pdf-inspector".into());
-    if let Ok(info) = pdf
+    // The document's title: its Info title when that names it (not a file
+    // name the producer copied, `Microsoft Word - x.doc`, `Untitled`,
+    // `Document1`, a number or an id), else the most prominent text of its
+    // first pages (`layout::Layout::title`). Without either, the output
+    // takes the first heading that names it, then the file name.
+    let info_title = pdf
         .trailer
         .get(b"Info")
         .and_then(Object::as_reference)
         .and_then(|id| pdf.get_dictionary(id))
-        && let Ok(title) = info.get(b"Title").and_then(lopdf::decode_text_string)
-        && !title.trim().is_empty()
-        && !placeholder_title(title.trim())
-    {
-        document
-            .metadata
-            .insert("title".into(), title.trim().into());
+        .ok()
+        .and_then(|info| info.get(b"Title").and_then(lopdf::decode_text_string).ok())
+        .and_then(|title| crate::titles::usable_title(&title, true));
+    if let Some(title) = info_title.or(prominent_title) {
+        document.metadata.insert("title".into(), title.into());
     }
     let ocr_layer_producer = extracted_pages
         .iter()

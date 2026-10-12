@@ -10,6 +10,7 @@ use std::sync::Mutex;
 static OUTPUT_LOCK: Mutex<()> = Mutex::new(());
 pub(crate) mod fence;
 mod image_metadata;
+mod iri;
 pub(crate) mod stdout_assets;
 
 /// Relocate complete asset destinations when archiving Markdown and its assets.
@@ -275,31 +276,40 @@ fn yaml_entry(key: &str, value: &Value) -> Result<String> {
     }
 }
 
+/// A document's own facts a converter reports under `document_meta` (an
+/// EPUB's OPF metadata), written after `source` as Python markitai writes
+/// them: `authors` a list, the others plain text.
+pub(crate) const DOCUMENT_FIELDS: [&str; 5] =
+    ["authors", "language", "publisher", "date", "description"];
+
+/// Front matter keys in the order they are written, the reference's order;
+/// other keys follow in name order.
+const FIELD_ORDER: [&str; 14] = [
+    "title",
+    "source",
+    "author",
+    "authors",
+    "language",
+    "publisher",
+    "date",
+    "site",
+    "published",
+    "canonical_url",
+    "description",
+    "tags",
+    "markitai_processed",
+    "fetch_strategy",
+];
+
 pub fn render(frontmatter: &Map<String, Value>, markdown: &str) -> Result<String> {
     let mut yaml = String::new();
-    for key in [
-        "title",
-        "source",
-        "description",
-        "tags",
-        "markitai_processed",
-        "fetch_strategy",
-    ] {
+    for key in FIELD_ORDER {
         if let Some(value) = frontmatter.get(key) {
             yaml.push_str(&yaml_entry(key, value)?);
         }
     }
     for (key, value) in frontmatter {
-        if ![
-            "title",
-            "source",
-            "description",
-            "tags",
-            "markitai_processed",
-            "fetch_strategy",
-        ]
-        .contains(&key.as_str())
-        {
+        if !FIELD_ORDER.contains(&key.as_str()) {
             yaml.push_str(&yaml_entry(key, value)?);
         }
     }
@@ -400,27 +410,21 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
             .extension()
             .and_then(|v| v.to_str())
             .is_some_and(|v| ["csv", "tsv", "xml"].contains(&v.to_ascii_lowercase().as_str()));
-        // Basic workflow titles use the first heading. This deliberately keeps
-        // its historical permissive syntax, including headings in code blocks.
-        let heading = (!low_confidence)
-            .then(|| {
-                markdown.trim_start().lines().find_map(|line| {
-                    if line.starts_with("# ") || line.starts_with("##") {
-                        let title = heading_title(&line.trim_start_matches('#').replace("**", ""));
-                        (!title.is_empty()).then_some(title)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .flatten();
+        // The converter's title when it names the document, else the first
+        // heading that does (any level, the historical permissive syntax,
+        // headings in code blocks included), else the file name; every
+        // candidate as plain text (`titles`). The enhanced output keeps
+        // this title.
         let title = doc
             .metadata
             .get("title")
             .and_then(Value::as_str)
-            .filter(|title| !title.is_empty())
-            .map(normalize_title)
-            .or(heading)
+            .and_then(|title| crate::titles::usable_title(title, false))
+            .or_else(|| {
+                (!low_confidence)
+                    .then(|| crate::titles::heading_title(&markdown))
+                    .flatten()
+            })
             .unwrap_or_else(|| {
                 if low_confidence {
                     name.to_owned()
@@ -437,11 +441,25 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
             json!(title.split_whitespace().collect::<Vec<_>>().join(" ")),
         );
         let source_value = if crate::is_url(source) {
-            redact_url(source)
+            iri::readable_url(&redact_url(source))
         } else {
             name.to_string()
         };
         meta.insert("source".into(), json!(source_value));
+        // A document's own facts its converter reports (an EPUB's authors,
+        // language, publisher, date and description), for any source.
+        if let Some(Value::Object(facts)) = doc.metadata.get("document_meta") {
+            for key in DOCUMENT_FIELDS {
+                match facts.get(key) {
+                    Some(Value::Null) | None => {}
+                    Some(Value::String(text)) if text.is_empty() => {}
+                    Some(Value::Array(items)) if items.is_empty() => {}
+                    Some(value) => {
+                        meta.insert(key.into(), value.clone());
+                    }
+                }
+            }
+        }
         meta.insert(
             "markitai_processed".into(),
             json!(Local::now().to_rfc3339_opts(SecondsFormat::Millis, false)),
@@ -458,11 +476,16 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
                     "format",
                     // Internal reader identity, not user-facing page metadata.
                     "converter",
+                    "document_meta",
                 ]
                 .contains(&key.as_str())
                     && !value.is_null()
                 {
-                    meta.insert(key.clone(), value.clone());
+                    let value = match (key.as_str(), value) {
+                        ("canonical_url", Value::String(url)) => json!(iri::readable_url(url)),
+                        _ => value.clone(),
+                    };
+                    meta.insert(key.clone(), value);
                 }
             }
         }
@@ -475,52 +498,6 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
         warnings: std::mem::take(&mut doc.warnings),
         ..Default::default()
     }
-}
-
-/// A Markdown heading's text as a plain title: links, inline tags and
-/// emphasis read as [`normalize_title`] reads them, and backslash escapes
-/// undone (`ZZZ\_Sheet\_1` is `ZZZ_Sheet_1`).
-fn heading_title(heading: &str) -> String {
-    let text = normalize_title(heading);
-    let mut title = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match chars.peek() {
-            Some(next) if ch == '\\' && next.is_ascii_punctuation() => {}
-            _ => title.push(ch),
-        }
-    }
-    title.trim().to_owned()
-}
-
-fn normalize_title(title: &str) -> String {
-    use std::sync::LazyLock;
-    static LINKS: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"!?\[([^\]]*)\]\([^)]+\)").unwrap());
-    static TAGS: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"(?i)</?(?:strong|em|b|i|code)>").unwrap());
-    static HEADING: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"^#{1,6}\s+").unwrap());
-    let text = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    let text = HEADING.replace(&text, "");
-    let text = LINKS.replace_all(&text, "$1");
-    let text = TAGS.replace_all(&text, "");
-    let mut text = text.trim();
-    loop {
-        let stripped = ["**", "__", "~~", "`", "*", "_"]
-            .into_iter()
-            .find_map(|wrapper| {
-                text.strip_prefix(wrapper)?
-                    .strip_suffix(wrapper)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-            });
-        match stripped {
-            Some(value) => text = value,
-            None => break,
-        }
-    }
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// A URL as output metadata keeps it: no userinfo, and no value of a query
@@ -1782,6 +1759,130 @@ mod tests {
         assert_eq!(output.frontmatter["domain"], "example.test");
         assert_eq!(output.frontmatter["word_count"], 3);
         assert!(!output.frontmatter.contains_key("converter"));
+    }
+
+    #[test]
+    fn a_page_address_reads_as_an_iri_in_source_and_canonical_url() {
+        const ENCODED: &str =
+            "https://ynewtime.com/posts/20251223-ai-%E5%BA%94%E7%94%A8%E6%A1%88%E4%BE%8B/";
+        const READABLE: &str = "https://ynewtime.com/posts/20251223-ai-应用案例/";
+        let mut document = Document {
+            markdown: "# Page\n\nBody.".into(),
+            ..Default::default()
+        };
+        document
+            .metadata
+            .insert("canonical_url".into(), json!(ENCODED));
+        document.metadata.insert("site".into(), json!("昨日书"));
+        let cfg = config::defaults();
+        let output = prepare(ENCODED, "page", &mut document, &cfg);
+        assert_eq!(output.frontmatter["source"], READABLE);
+        assert_eq!(output.frontmatter["canonical_url"], READABLE);
+        let rendered = render(&output.frontmatter, "Body\n").unwrap();
+        assert!(!rendered.contains("%E5"), "{rendered}");
+        // Valid YAML that reads back as the same address, keys in order.
+        let (read, _) = split_frontmatter(&rendered);
+        assert_eq!(read["source"], READABLE);
+        let keys: Vec<&str> = rendered
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split_once(':').map(|(key, _)| key))
+            .take(5)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "title",
+                "source",
+                "site",
+                "canonical_url",
+                "markitai_processed"
+            ]
+        );
+        // An address YAML would misread stays a string; ASCII escapes stay.
+        let tricky = "https://x.test/%E4%B8%AD%3A%20#not-a-comment";
+        let output = prepare(tricky, "page", &mut document, &cfg);
+        let rendered = render(&output.frontmatter, "").unwrap();
+        assert_eq!(
+            split_frontmatter(&rendered).0["source"],
+            "https://x.test/中%3A%20#not-a-comment"
+        );
+        // A file name is left alone.
+        let output = prepare(
+            "report%E4%B8%AD.pdf",
+            "report%E4%B8%AD.pdf",
+            &mut document,
+            &cfg,
+        );
+        assert_eq!(output.frontmatter["source"], "report%E4%B8%AD.pdf");
+    }
+
+    #[test]
+    fn a_title_is_plain_text_that_names_the_document() {
+        let cfg = config::defaults();
+        let title = |markdown: &str, explicit: Option<&str>| {
+            let mut doc = Document {
+                markdown: markdown.into(),
+                ..Default::default()
+            };
+            if let Some(explicit) = explicit {
+                doc.metadata.insert("title".into(), json!(explicit));
+            }
+            prepare(
+                "示例-好医保（2025版）.pdf",
+                "示例-好医保（2025版）.pdf",
+                &mut doc,
+                &cfg,
+            )
+            .frontmatter["title"]
+                .clone()
+        };
+        let policy = "电子登记单\n\n###### **面积单位：平方千米**\n\n#   \u{f043} \u{f020}<sup>申请人享有的主要权利</sup>\n";
+        assert_eq!(title(policy, Some("电子登记单")), "电子登记单");
+        assert_eq!(title(policy, None), "面积单位：平方千米");
+        // A junk explicit title falls to the first heading that names the
+        // document, then to the file name.
+        assert_eq!(
+            title("# 2025\n\n## Real Title", Some("<sup></sup>20260521")),
+            "Real Title"
+        );
+        assert_eq!(
+            title("no heading here", Some("Untitled")),
+            "示例-好医保（2025版）"
+        );
+        assert_eq!(
+            title("#   \u{f043}<sup>申请人享有的主要权利</sup>", None),
+            "申请人享有的主要权利"
+        );
+        assert_eq!(title("# Outlook<sup>1</sup>", None), "Outlook");
+    }
+
+    #[test]
+    fn a_documents_own_facts_follow_source() {
+        let mut document = Document {
+            markdown: "Body".into(),
+            ..Default::default()
+        };
+        document.metadata.insert("title".into(), json!("人月神话"));
+        document.metadata.insert(
+            "document_meta".into(),
+            json!({"description":"本书","date":"2011-03-03","authors":["[美] 弗雷德里克·布鲁克斯"],
+                   "publisher":"","language":"zh_CN"}),
+        );
+        let cfg = config::defaults();
+        let output = prepare("book.epub", "book.epub", &mut document, &cfg);
+        assert!(!output.frontmatter.contains_key("document_meta"));
+        assert!(!output.frontmatter.contains_key("publisher"));
+        let rendered = render(&output.frontmatter, "Body").unwrap();
+        let yaml: Vec<&str> = rendered
+            .lines()
+            .filter(|line| !line.starts_with("markitai_processed"))
+            .collect();
+        assert_eq!(
+            yaml.join("\n"),
+            "---\ntitle: 人月神话\nsource: book.epub\nauthors:\n- '[美] 弗雷德里克·布鲁克斯'\n\
+             language: zh_CN\ndate: '2011-03-03'\ndescription: 本书\n---\n\nBody"
+        );
     }
 
     #[test]

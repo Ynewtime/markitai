@@ -233,6 +233,143 @@ impl Layout {
     }
 }
 
+/// Pages read for a document's most prominent text ([`title`]).
+pub(super) const TITLE_PAGES: usize = 3;
+/// How much larger than the body text a title is, at least.
+const TITLE_RATIO: f32 = 1.2;
+/// A title's lines at most, and its characters: more is a paragraph.
+const TITLE_LINES: usize = 3;
+const TITLE_CHARS: usize = 200;
+
+/// A superscript digit or sign, as the extractor fuses a footnote mark
+/// into its word (`Outlook¹`).
+fn superscript(c: char) -> bool {
+    matches!(
+        c,
+        '\u{b9}' | '\u{b2}' | '\u{b3}' | '\u{2070}' | '\u{2074}'..='\u{207f}'
+    )
+}
+
+/// The lines of one title, with a space unless both sides are CJK.
+fn join_title(parts: &[&str]) -> String {
+    let wide = |c: Option<char>| c.is_some_and(|c| c as u32 >= 0x2E80);
+    let mut text = String::new();
+    for part in parts.iter().map(|part| part.trim()) {
+        if !text.is_empty() && !(wide(text.chars().last()) && wide(part.chars().next())) {
+            text.push(' ');
+        }
+        text.push_str(part);
+    }
+    text
+}
+
+/// The most prominent visible text of `items`, a document's first
+/// [`TITLE_PAGES`] pages, that names the document (`titles::usable_title`), the title a reader
+/// sees: the largest text at least [`TITLE_RATIO`] times the body size
+/// (the size most of those pages' characters have), on the earliest page
+/// that has such text, with the lines right under it at its size (a
+/// title over two or three lines). Raised footnote marks, text `visible`
+/// rejects (white on white, outside the page) and a candidate that is
+/// no name (`2025`, a page number, an id) are passed over for the next
+/// one. Text repeated atop every page is not: a policy prints its title
+/// atop each page. Python markitai 1.2.1 reads the same title
+/// (`converter/pdf_title.py`).
+pub(super) fn title(
+    items: Vec<TextItem>,
+    visible: &mut dyn FnMut(&TextItem) -> bool,
+) -> Option<String> {
+    let mut by_page = BTreeMap::<u32, Vec<TextItem>>::new();
+    for item in items {
+        if matches!(item.item_type, ItemType::Text) && valid(&item) {
+            by_page.entry(item.page).or_default().push(item);
+        }
+    }
+    // (size key in tenths of a point, size, baseline, text) of each line.
+    let mut pages = Vec::new();
+    for items in by_page.into_values() {
+        let mut found = Vec::new();
+        for line in lines(items) {
+            let kept: Vec<&TextItem> = line
+                .items
+                .iter()
+                .filter(|item| {
+                    !item.text.trim().is_empty() && item.baseline_shift <= 0. && visible(item)
+                })
+                .collect();
+            let Some(size) = kept.iter().map(|item| item.font_size).reduce(f32::max) else {
+                continue;
+            };
+            let mut text = String::new();
+            let mut previous: Option<&TextItem> = None;
+            for item in kept.into_iter().filter(|item| item.font_size >= size * 0.7) {
+                if previous.is_some_and(|p| {
+                    p.text.ends_with(char::is_whitespace)
+                        || item.text.starts_with(char::is_whitespace)
+                        || item.x - (p.x + p.width) > item.font_size.min(p.font_size) * 0.12
+                }) {
+                    text.push(' ');
+                }
+                // A footnote mark the extractor fused into its word.
+                text.extend(item.text.trim().chars().filter(|c| !superscript(*c)));
+                previous = Some(item);
+            }
+            found.push(((size * 10.).round() as i32, size, line.y, text));
+        }
+        pages.push(found);
+    }
+    let mut weight = BTreeMap::<i32, usize>::new();
+    for (key, _, _, text) in pages.iter().flatten() {
+        *weight.entry(*key).or_default() += text.chars().count();
+    }
+    // The smaller size of two that set as many characters.
+    let body = weight
+        .iter()
+        .rev()
+        .max_by_key(|(_, count)| **count)
+        .map(|(key, _)| *key as f32 / 10.)?;
+    for lines in &pages {
+        let mut keys: Vec<i32> = lines.iter().map(|line| line.0).collect();
+        keys.sort_unstable_by(|a, b| b.cmp(a));
+        keys.dedup();
+        for key in keys {
+            if (key as f32 / 10.) < body * TITLE_RATIO {
+                break;
+            }
+            for (index, (_, size, y, text)) in lines.iter().enumerate() {
+                if lines[index].0 != key {
+                    continue;
+                }
+                let (mut parts, mut last) = (vec![text.as_str()], *y);
+                for (next_key, next_size, next_y, next_text) in &lines[index + 1..] {
+                    if parts.len() == TITLE_LINES {
+                        break;
+                    }
+                    if *next_key != key {
+                        // Beside it, on the same band of the page.
+                        if next_y + next_size * 0.8 > last - size * 0.2 {
+                            continue;
+                        }
+                        break;
+                    }
+                    if last - next_y > size * NEW_BLOCK {
+                        break;
+                    }
+                    parts.push(next_text);
+                    last = *next_y;
+                }
+                let joined = join_title(&parts);
+                if joined.chars().count() > TITLE_CHARS {
+                    continue;
+                }
+                if let Some(title) = crate::titles::usable_title(&joined, false) {
+                    return Some(title);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn valid(item: &TextItem) -> bool {
     [
         item.x,

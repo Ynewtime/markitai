@@ -45,6 +45,8 @@ csv = "1"
 cssparser = "0.37"
 scraper = "0.27"
 markup5ever = "0.39"
+# General categories for titles (`titles.rs`) and readable addresses (`iri.rs`).
+unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
 htmd = { version = "0.5", default-features = false }
 quick-xml = "0.42"
 mail-parser = { version = "0.11", features = ["full_encoding"] }

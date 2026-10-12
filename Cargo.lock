@@ -2194,6 +2194,7 @@ dependencies = [
  "tract-linalg",
  "tract-onnx",
  "tungstenite",
+ "unicode-properties",
  "url",
  "windows-sys 0.61.2",
  "zip 8.6.0",

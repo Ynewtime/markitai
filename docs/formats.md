@@ -25,7 +25,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | XLS, XLSX, XLSM, XLSB; templates XLT, XLTX, XLTM | anydoc document model | Native sheet content with number formats, cell links, cell notes and the text of uncalculated formulas (see [spreadsheets](#spreadsheets)); XLS/XLSX/XLSM/XLSB single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
 | ODT, ODS, ODP, RTF; templates OTT, OTS, OTP | anydoc document model | Native structured documents through the same Markdown renderer (line breaks and escaping as for Word); ODP slides carry optional numbered slide markers |
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
-| EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble; ruby as base text then reading (`漢字(kanji)`), definition terms as bold paragraphs, and footnote marks the author wrote as Markdown (`[^5]`, `[^5]: …`) kept unescaped; `<br>` and text escaping as for Word (`[!tip]` stays as written) |
+| EPUB | anydoc + OPF metadata | Spine content; the book's title, authors, language, publisher, date and description go to the front matter (see [output](output.md#ordinary-and-pure-output)), not into the body; ruby as base text then reading (`漢字(kanji)`), definition terms as bold paragraphs, and footnote marks the author wrote as Markdown (`[^5]`, `[^5]: …`) kept unescaped; `<br>` and text escaping as for Word (`[!tip]` stays as written) |
 | PDF | pdf-inspector + lopdf; CoreGraphics/hayro page rendering and local OCR | Per-page text/layout, link targets, partial recovery, embedded images and conservative bar-chart crops; explicit local-file page OCR and screenshots through the shared media pipeline |
 
 ### Text encodings
@@ -537,8 +537,8 @@ for document-wide heading levels (including bold headings at the body size),
 paragraph gaps and short last lines, continuous styling, web and mail link
 targets and complete ruled tables. Empty cells/columns are preserved; ambiguous
 geometry retains the existing page reader. Running page headers repeated on most
-pages are removed, and a document information title that is only a file name is
-not the document title. See [PDF layout](pdf.md) for acceptance checks, resource
+pages are removed, and the document title is the information title when it
+names the document, else the most prominent text of the first pages. See [PDF layout](pdf.md) for acceptance checks, resource
 limits and the cost of the additional parsing pass.
 
 PDF inspection reports invisible rendering modes, transparent text, white text

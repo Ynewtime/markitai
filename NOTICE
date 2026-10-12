@@ -48,6 +48,11 @@ sourced regression documents are from numbers-parser (MIT), with the original
 license and exact source identities in
 crates/markitai-core/src/formats/numbers/fixtures/.
 
+Two EPUB regression books are in crates/markitai-core/tests/fixtures/epub/: a
+trimmed Project Gutenberg eBook (public domain in the USA) and markitdown's
+test.epub (MIT, Copyright (c) Microsoft Corporation), whose license is in
+LICENSE-markitdown there; provenance.json records their sources and hashes.
+
 The bounded offline token-pricing catalog derives selected rows from LiteLLM
 1.106.0.dev2's bundled model data. Its original BerriAI copyright/license notice,
 exact selected source objects and official tariff/alias provenance are retained

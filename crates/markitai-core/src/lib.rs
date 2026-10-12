@@ -33,6 +33,7 @@ mod process_groups;
 mod proxy;
 #[doc(hidden)]
 pub mod sort;
+mod titles;
 pub mod url_list;
 #[doc(hidden)]
 pub use preparation::{PreparedConversion, prepare_with_publication};
@@ -824,9 +825,15 @@ fn convert_inner(
                         (prefix_len > 0).then(|| markdown[..prefix_len].to_owned());
                     result.frontmatter = meta;
                 } else if let Some(metadata) = enhancement.metadata {
-                    result
-                        .frontmatter
-                        .insert("description".into(), json!(metadata.description));
+                    // The model's summary; a document's own description (an
+                    // EPUB's) stays when the model gives none.
+                    if !metadata.description.is_empty()
+                        || !result.frontmatter.contains_key("description")
+                    {
+                        result
+                            .frontmatter
+                            .insert("description".into(), json!(metadata.description));
+                    }
                     result
                         .frontmatter
                         .insert("tags".into(), json!(metadata.tags));

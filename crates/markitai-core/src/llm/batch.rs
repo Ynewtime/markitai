@@ -506,7 +506,11 @@ impl Plan {
             markdown = crate::output_profiles::remove_page_markers(&markdown);
         }
         let mut metadata = self.metadata.clone();
-        metadata.insert("description".into(), json!(answer.metadata.description));
+        // A document's own description (an EPUB's) stays when the model
+        // gives none.
+        if !answer.metadata.description.is_empty() || !metadata.contains_key("description") {
+            metadata.insert("description".into(), json!(answer.metadata.description));
+        }
         metadata.insert("tags".into(), json!(answer.metadata.tags));
         crate::output_profiles::apply(
             &mut markdown,

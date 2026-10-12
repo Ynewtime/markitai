@@ -559,16 +559,31 @@ is read again only for a document with such a candidate. A paragraph that
 opens every page at the body size is kept; footers other than page numbers
 are not removed.
 
-A document information `/Title` that names no document is not taken as the
-document title, so the first heading names it: the name of the source file (a
-name with a document or image extension, `multi.html`, `report.docx`; an
-Office print driver's `Microsoft Word - …`; a single lower-case slug, `code`,
-`layout-table`, as a browser writes for a page without `<title>`), or the name
-an application gives a document nobody named, in any case and with a number
-or separators after it: `Untitled`, `Untitled Document`, `Untitled-2`,
+A PDF's title is its document information `/Title` when that names the
+document. It does not when it is the name of the source file (a name with a
+document or image extension, `multi.html`, `report.docx`; an Office print
+driver's `Microsoft Word - …`; a single lower-case slug, `code`,
+`layout-table`, as a browser writes for a page without `<title>`), the name an
+application gives a document nobody named, in any case and with a number or
+separators after it (`Untitled`, `Untitled Document`, `Untitled-2`,
 `PowerPoint Presentation`, `Title`, `Sans titre`, `无标题`, and, numbered,
-`Document1`, `Presentation1`, `Book1`, `文档1`. `Untitled Love Song`,
-`Document Management Policy` and a bare `Book` are kept.
+`Document1`, `Presentation1`, `Book1`, `文档1`), or a number or an id
+(`20240315000127`). `Untitled Love Song`, `Document Management Policy` and a bare
+`Book` are kept.
+
+Otherwise the title is the most prominent text of the first three upright
+pages: the largest text at least 1.2 times the body size (the size most of
+their characters have), on the earliest page that has such text, joined with
+the lines right under it at the same size (a title over two or three lines,
+without a space between CJK lines). Raised footnote marks are left out. Text a
+reader cannot see is passed over: smaller than 2 pt, outside the page, or
+near-white on a near-white background (the page is drawn at 36 dpi to check
+only when such text is a candidate, so a white title on a dark banner counts).
+A candidate that is no name (`2025` on a cover, a page number) gives way to the
+next one. A large company name repeated in every page header still wins over a
+smaller title. Without either, the first heading that names the document, then
+the file name, titles it (see [output](output.md#ordinary-and-pure-output)).
+Python markitai 1.2.1 uses the same rules.
 
 Clearly bounded vertical bar charts are preserved as PNG crops in their body
 position, including axes and legends, without `--screenshot`, OCR or an LLM.

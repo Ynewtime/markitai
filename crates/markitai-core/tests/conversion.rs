@@ -66,6 +66,9 @@ mod html_text;
 #[path = "conversion/document_breaks.rs"]
 mod document_breaks;
 
+#[path = "conversion/epub_metadata.rs"]
+mod epub_metadata;
+
 fn options() -> ConvertOptions {
     ConvertOptions {
         config: Some(json!({})),

@@ -11,13 +11,34 @@ fields. Frontmatter strings that a YAML 1.1 loader such as the reference's PyYAM
 would read as a timestamp, boolean, number or null, including the processing
 time, are single-quoted exactly as the reference writer does, so they stay strings. Reader metadata does not automatically become local frontmatter. URL
 output can retain trusted fetch metadata; canonical fields and unreliable language
-metadata are excluded from that merge.
+metadata are excluded from that merge. An EPUB's own facts are the exception:
+`authors` (every creator, a list), `language`, `publisher`, `date` and
+`description`, as plain text, each only when the book names it (Calibre's
+`0101-01-01` "no date" is left out, a midnight timestamp is a date). The
+enhanced output keeps them, with the model's summary as `description`.
 
-Explicit reader titles take precedence. Otherwise the basic workflow uses its
-first heading, as plain text (link text without the address, no emphasis
-markers around it, backslash escapes undone: `# ZZZ\_Sheet\_1` gives
-`ZZZ_Sheet_1`), or the source stem. CSV, TSV and XML fall back to the complete source
-filename because a data row or element name is not a reliable document title.
+Keys are written in the reference's order: `title`, `source`, `author`,
+`authors`, `language`, `publisher`, `date`, `site`, `published`,
+`canonical_url`, `description`, `tags`, `markitai_processed`,
+`fetch_strategy`, then any other key by name. A web address in `source` and
+`canonical_url` reads as an IRI: escapes of non-ASCII characters are decoded
+(`/posts/ai-%E5%BA%94%E7%94%A8` reads `/posts/ai-应用`), while ASCII escapes
+(`%20`, `%2F`, `%25`), the host, bidirectional controls, separators such as
+U+3000, private-use characters and bytes that are not UTF-8 stay encoded, so
+turning it back into a URI gives the same address. A file name is left as it is.
+
+A title is plain text that names the document: the reader's title, else the
+first heading of any level, else the source stem. Each candidate loses its
+markup (every HTML tag, entities, link targets, footnote marks such as
+`<sup>1</sup>` and `[^1]`, emphasis, backslash escapes: `# ZZZ\_Sheet\_1` gives
+`ZZZ_Sheet_1`) and private-use or control characters (a PDF font's bullet
+glyphs), and is passed over for the next one when it is no name: fewer than two
+letters, digits over 70 % of its letters and digits (`20240315000127`; `2025年报`
+is a name), a page number (`Page 3`, `第 3 页`) or an application's default name
+(`Untitled`, `Document1`, `Microsoft Word - x.doc`). The enhanced output has the
+same title. CSV, TSV and XML fall back to the complete source filename because a
+data row or element name is not a reliable document title. See
+[PDF layout](pdf.md#links-escaping-and-block-structure) for how a PDF names itself.
 
 Ordinary Markdown receives heading spacing, trailing whitespace (a hard break's
 two spaces stay where the next line continues the paragraph) and blank-line

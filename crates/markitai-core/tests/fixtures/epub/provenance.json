@@ -1,0 +1,13 @@
+{
+  "zh-gutenberg-23825.epub": {
+    "bytes": 9919,
+    "sha256": "c04109832fb3862a78927b537b851ae4be998bce2615fcc2f9181d80938c741b",
+    "source": "Project Gutenberg eBook #23825, 施公案 (https://www.gutenberg.org/ebooks/23825), public domain in the USA; downloaded EPUB sha256 e153447c25580e7ccafb781ac126449a859641f3e08e0ae8d3c507b090552ad5",
+    "changes": "Trimmed for Python markitai 1.2.1's EPUB tests and byte-identical to its fixture of the same name: the OPF metadata as published (without the cover reference), a manifest and spine of one document, and the start of the first chapter (the Project Gutenberg header and the first paragraphs)."
+  },
+  "markitdown-test.epub": {
+    "bytes": 2677,
+    "sha256": "33e65f39f54bd24f74d5f333d24213a68c62ee2f2854d12f8c4c59b15a4031a7",
+    "source": "microsoft/markitdown packages/markitdown/tests/test_files/test.epub, unmodified; MIT License, Copyright (c) Microsoft Corporation (LICENSE-markitdown)"
+  }
+}
