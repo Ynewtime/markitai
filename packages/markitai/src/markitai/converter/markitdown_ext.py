@@ -11,7 +11,7 @@ import posixpath
 import re
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -27,6 +27,8 @@ from markitai.notices import user_notice
 from markitai.utils.charset import read_text_file
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from markitdown import MarkItDown
 
 _markitdown: MarkItDown | None = None
@@ -179,15 +181,40 @@ _EPUB_IMAGE_TYPES = {
 _EPUB_PICTURE_PREFIX = "markitai-epub-picture:"
 _EPUB_PICTURE_RE = re.compile(rf"\]\({_EPUB_PICTURE_PREFIX}(\d+)\)")
 _DC_NAMESPACE = "http://purl.org/dc/elements/1.1/"
-_EPUB_METADATA = (
-    "title",
-    "creator",
-    "language",
-    "publisher",
-    "date",
-    "description",
-    "identifier",
-)
+# Calibre's "no date" and a date written at midnight UTC
+_UNDEFINED_DATE = re.compile(r"0\d{3}-")
+_MIDNIGHT = re.compile(r"^(\d{4}-\d{2}-\d{2})T00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:?00)?$")
+_TAG = re.compile(r"<[^<>]+>")
+
+
+def _plain(text: str) -> str:
+    """OPF text as one plain line (a description may carry escaped HTML)."""
+    import html
+
+    return " ".join(html.unescape(_TAG.sub(" ", text)).split())
+
+
+def _epub_document_meta(texts: Callable[[str], list[str]]) -> dict[str, Any]:
+    """The book's own facts for the front matter, from its OPF.
+
+    ``authors`` (every ``dc:creator``, a list), ``language``, ``publisher``,
+    ``date`` and ``description`` (plain text), each only when the book
+    names it: the keys and order of Rust's EPUB metadata (``office_meta``),
+    which Rust writes as a bold block at the top of the body.
+    """
+    meta: dict[str, Any] = {}
+    authors = [_plain(author) for author in texts("creator")]
+    if authors := [author for author in authors if author]:
+        meta["authors"] = authors
+    for name in ("language", "publisher", "date", "description"):
+        value = next((v for v in map(_plain, texts(name)) if v), "")
+        if name == "date":
+            if _UNDEFINED_DATE.match(value):
+                continue
+            value = _MIDNIGHT.sub(r"\1", value)
+        if value:
+            meta[name] = value
+    return meta
 
 
 class _EpubPictures:
@@ -310,8 +337,10 @@ def _epub_chapter_markdown(data: bytes, path: str, pictures: _EpubPictures) -> s
 def _convert_epub(input_path: Path) -> ConvertResult:
     """Convert an EPUB the way markitdown does, keeping the book's pictures.
 
-    The same Markdown as markitdown's EPUB converter (a metadata block, then
-    each spine document through its HTML converter), plus: a spine entry
+    Each spine document through markitdown's HTML converter, as markitdown
+    does; the book's metadata goes to the front matter (``document_meta``,
+    see ``_epub_document_meta``), not into the body as markitdown's bold
+    ``**Title:** …`` block (owner report, 2026-10-12). Also: a spine entry
     the OPF percent-encodes (``Text/%E7%AC%AC1%E7%AB%A0.xhtml``) is found
     rather than skipped, each picture the book holds is kept (see
     ``_epub_chapter_markdown``), and a cover the OPF names but no page shows
@@ -340,14 +369,8 @@ def _convert_epub(input_path: Path) -> ConvertResult:
                 if node.firstChild is not None and node.firstChild.nodeValue
             ]
 
-        metadata_lines = []
-        for name in _EPUB_METADATA:
-            values = texts(name)
-            value = ", ".join(values) if name == "creator" else next(iter(values), "")
-            if value:
-                label = "Authors" if name == "creator" else name.capitalize()
-                metadata_lines.append(f"**{label}:** {value}")
-        title = next(iter(texts("title")), None)
+        title = next((t for t in map(_plain, texts("title")) if t), None)
+        document_meta = _epub_document_meta(texts)
 
         items = opf.getElementsByTagNameNS("*", "item")
         manifest = {
@@ -390,7 +413,6 @@ def _convert_epub(input_path: Path) -> ConvertResult:
                     chapters.insert(0, f"![Cover]({token})")
             break
 
-    chapters.insert(0, "\n".join(metadata_lines))
     # markitdown's own clean-up of every result
     markdown = "\n".join(
         line.rstrip() for line in re.split(r"\r?\n", "\n\n".join(chapters))
@@ -403,8 +425,10 @@ def _convert_epub(input_path: Path) -> ConvertResult:
     }
     if title:
         metadata["title"] = title
+    if document_meta:
+        metadata["document_meta"] = document_meta
     return ConvertResult(
-        markdown=pictures.inline(markdown),
+        markdown=pictures.inline(markdown.strip()),
         images=[],
         metadata=metadata,
     )

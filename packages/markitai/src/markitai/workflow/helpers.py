@@ -28,6 +28,11 @@ FRONTMATTER_FIELD_ORDER = [
     "title",
     "source",
     "author",
+    # A document's own facts (EPUB: markitai.utils.frontmatter.DOCUMENT_FIELDS)
+    "authors",
+    "language",
+    "publisher",
+    "date",
     "site",
     "published",
     "canonical_url",
@@ -292,6 +297,7 @@ def add_basic_frontmatter(
     dedupe: bool = False,
     title: str | None = None,
     extra_meta: dict[str, Any] | None = None,
+    document_meta: dict[str, Any] | None = None,
 ) -> str:
     """Add basic frontmatter (title, source, markitai_processed) to markdown content.
 
@@ -307,6 +313,9 @@ def add_basic_frontmatter(
         output_dir: Optional output directory (for relative screenshot path)
         dedupe: Whether to deduplicate paragraphs (default False)
         title: Optional title from fetch result (takes precedence over extraction)
+        document_meta: The document's own facts from its converter (an
+            EPUB's authors, language, publisher, date, description), kept
+            as they are
 
     Returns:
         Content with basic frontmatter prepended
@@ -367,6 +376,11 @@ def add_basic_frontmatter(
         for key, value in extra_meta.items():
             if key not in excluded_keys and value is not None:
                 frontmatter_dict[key] = value
+
+    from markitai.utils.frontmatter import document_fields
+
+    for key, value in document_fields(document_meta).items():
+        frontmatter_dict.setdefault(key, value)
 
     frontmatter_yaml = normalize_frontmatter(frontmatter_dict)
 

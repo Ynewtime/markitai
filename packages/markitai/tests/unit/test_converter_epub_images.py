@@ -294,7 +294,8 @@ def test_a_book_over_its_picture_budget_keeps_the_rest_as_references(
 
 
 def test_the_text_is_markitdowns(tmp_path: Path) -> None:
-    # Only the pictures differ from markitdown's own EPUB conversion
+    # Only the pictures differ from markitdown's own EPUB conversion, and
+    # markitdown's bold metadata block, which goes to the front matter
     import re
 
     from markitai.converter.markitdown_ext import _convert
@@ -315,8 +316,15 @@ def test_the_text_is_markitdowns(tmp_path: Path) -> None:
 
     ours = EpubConverter().convert(book)
     theirs = _convert(book)
-    assert masked(ours.markdown) == masked(theirs.markdown)
+    block = "**Title:** Charts\n**Authors:** Ada, Bob\n**Language:** en\n"
+    block += "**Identifier:** charts\n\n"
+    assert theirs.markdown.startswith(block)
+    assert masked(ours.markdown) == masked(theirs.markdown.removeprefix(block))
     assert ours.metadata["title"] == theirs.metadata["title"] == "Charts"
+    assert ours.metadata["document_meta"] == {
+        "authors": ["Ada", "Bob"],
+        "language": "en",
+    }
 
 
 async def test_a_calibre_books_cover_and_figures_are_the_items_assets(

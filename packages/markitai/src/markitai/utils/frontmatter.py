@@ -13,6 +13,9 @@ import yaml
 from loguru import logger
 
 LOW_CONFIDENCE_TITLE_SUFFIXES = {".csv", ".tsv", ".xml"}
+#: A document's own facts a converter reports (``document_meta``: an EPUB's
+#: OPF), in front matter order after ``source``
+DOCUMENT_FIELDS = ("authors", "language", "publisher", "date", "description")
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
 _TITLE_HTML_TAG_RE = re.compile(r"</?(?:strong|em|b|i|code)>", re.IGNORECASE)
@@ -340,6 +343,21 @@ def frontmatter_timestamp() -> str:
     return datetime.now(UTC).astimezone().isoformat(timespec="milliseconds")
 
 
+def document_fields(document_meta: Any) -> dict[str, Any]:
+    """The :data:`DOCUMENT_FIELDS` *document_meta* has, in their order.
+
+    Also reads them back from a base output's front matter (the Batch API
+    path rebuilds the LLM output's front matter from it).
+    """
+    if not isinstance(document_meta, dict):
+        return {}
+    return {
+        key: document_meta[key]
+        for key in DOCUMENT_FIELDS
+        if document_meta.get(key) not in (None, "", [])
+    }
+
+
 def build_frontmatter_dict(
     *,
     source: str,
@@ -349,6 +367,7 @@ def build_frontmatter_dict(
     content: str = "",
     fetch_strategy: str | None = None,
     extra_meta: dict[str, Any] | None = None,
+    document_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build complete frontmatter dict with programmatic fields.
 
@@ -361,6 +380,9 @@ def build_frontmatter_dict(
         fetch_strategy: Optional fetch strategy used (e.g., "defuddle")
         extra_meta: Optional extra metadata from external strategies
             (will not override canonical fields)
+        document_meta: The document's own facts from its converter (an
+            EPUB's authors, language, ...), after ``source``; its
+            ``description`` only when the LLM gave none
 
     Returns:
         Complete frontmatter dict
@@ -378,6 +400,10 @@ def build_frontmatter_dict(
         # Truncate to avoid YAML line-wrapping issues in parsers like Obsidian
         if len(final_title) > 200:
             final_title = final_title[:197] + "..."
+
+    own = document_fields(document_meta)
+    if not (description and description.strip()) and own.get("description"):
+        description = str(own["description"])
 
     # Normalize description: single line, limited length
     normalized_desc = ""
@@ -422,6 +448,9 @@ def build_frontmatter_dict(
     result: dict[str, Any] = OrderedDict()
     result["title"] = final_title
     result["source"] = source
+    for key, value in own.items():
+        if key != "description":
+            result[key] = value
     result["description"] = normalized_desc
 
     # Only include tags if non-empty

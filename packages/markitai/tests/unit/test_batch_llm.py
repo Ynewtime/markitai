@@ -1280,8 +1280,8 @@ class TestLongDocuments:
         processor = create_llm_processor(cfg)
         real_plan = processor.documents._prepare_document_plan
 
-        def chunked(markdown: str, source: str) -> Any:
-            plan = real_plan(markdown, source)
+        def chunked(markdown: str, source: str, **kwargs: Any) -> Any:
+            plan = real_plan(markdown, source, **kwargs)
             plan.chunk_calls = [plan.call, plan.call]
             return plan
 
@@ -1328,8 +1328,8 @@ class TestLongDocuments:
         processor = create_llm_processor(cfg)
         real_plan = processor.documents._prepare_document_plan
 
-        def plan_for(markdown: str, source: str) -> Any:
-            plan = real_plan(markdown, source)
+        def plan_for(markdown: str, source: str, **kwargs: Any) -> Any:
+            plan = real_plan(markdown, source, **kwargs)
             if source == "long.txt":
                 plan.chunk_calls = [plan.call, plan.call]
             return plan

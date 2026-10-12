@@ -102,6 +102,7 @@ class SingleFileWorkflow:
         page_images: list[dict[str, Any]] | None = None,
         reference_images: list[dict[str, Any]] | None = None,
         title: str | None = None,
+        document_meta: dict[str, Any] | None = None,
     ) -> tuple[str, float, dict[str, dict[str, Any]]]:
         """Process markdown with LLM (clean + frontmatter).
 
@@ -112,15 +113,14 @@ class SingleFileWorkflow:
             page_images: Optional list of page image info dicts
             reference_images: Optional list of reference-only image info dicts
             title: Optional explicit title from converter metadata
+            document_meta: The document's own facts from its converter
 
         Returns:
             Tuple of (markdown, cost_usd, llm_usage)
         """
         try:
             cleaned, frontmatter = await self.processor.process_document(
-                markdown,
-                source,
-                title=title,
+                markdown, source, title=title, document_meta=document_meta
             )
 
             # Write LLM version

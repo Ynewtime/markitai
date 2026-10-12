@@ -1677,12 +1677,11 @@ class TestProcessWithStandardLLM:
         ctx.output_file = output_dir / "sample.epub.md"
         ctx.output_file.touch()
         ctx.conversion_result = ConvertResult(
-            markdown=(
-                "**Title:** Test EPUB Document\n\n"
-                "## Test EPUB Document\n\n"
-                "# Chapter 1: Test Content"
-            ),
-            metadata={"title": "Test EPUB Document"},
+            markdown="## Test EPUB Document\n\n# Chapter 1: Test Content",
+            metadata={
+                "title": "Test EPUB Document",
+                "document_meta": {"authors": ["Ada"], "language": "en"},
+            },
         )
 
         # The real document step writes .llm.md; the mock below does not
@@ -1706,6 +1705,7 @@ class TestProcessWithStandardLLM:
             ctx.output_file,
             reference_images=None,
             title="Test EPUB Document",
+            document_meta={"authors": ["Ada"], "language": "en"},
         )
 
     @pytest.mark.asyncio
