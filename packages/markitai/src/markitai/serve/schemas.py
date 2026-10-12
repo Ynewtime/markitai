@@ -529,6 +529,11 @@ class LLMTestResult(BaseModel):
 
     ok: bool
     detail: str
+    # Why a failed test failed (serve.model_test.REASONS): missing_key,
+    # auth_rejected, model_not_found, rate_limited, network, provider_error
+    reason: str | None = None
+    # The provider's own words, sanitized, kept as a secondary detail
+    provider_detail: str | None = None
 
 
 class CreatedItem(BaseModel):

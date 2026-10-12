@@ -36,6 +36,7 @@ from markitai import __version__
 from markitai.constants import PROVIDER_API_KEY_ENV
 from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, PENDING_BATCH_SKIP_REASON
+from markitai.serve import model_test
 from markitai.serve.artifacts import (
     item_asset_files,
     markdown_pair,
@@ -1595,6 +1596,61 @@ def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
     )
     detail = re.sub(r"\bsk-[A-Za-z0-9._-]{4,}\b", "sk-…", detail)
     return detail[:300]
+
+
+def _probe_key_source(body: LLMSettingsUpdate) -> tuple[str | None, str | None]:
+    """Where a test's key comes from, and the provider's key variable.
+
+    Returns a phrase for the sentence ("the key saved with this connection",
+    "the key in DEEPSEEK_API_KEY"), None when the request carries no key,
+    and the variable LiteLLM reads the provider's key from.
+    """
+    from markitai.constants import PROVIDER_API_KEY_ENV_NAMES
+    from markitai.providers.connectable import CONNECTABLE
+
+    model = body.model or ""
+    prefix = model.partition("/")[0].lower() if "/" in model else ""
+    names = PROVIDER_API_KEY_ENV_NAMES.get(prefix) or tuple(
+        row.key_variable
+        for row in CONNECTABLE
+        if row.provider == prefix and row.key_variable
+    )
+    variable = names[0] if names else None
+    key = body.api_key
+    if key == NO_KEY:
+        return None, variable
+    if key and key.startswith("env:"):
+        return f"the key in {key[4:]}", variable
+    if key:
+        return "the key saved with this connection", variable
+    found = next((name for name in names if os.environ.get(name)), None)
+    return (f"the key in {found}" if found else None), variable
+
+
+def _probe_failure(exc: BaseException, body: LLMSettingsUpdate) -> dict[str, Any]:
+    """The answer for a failed test: category, sentence, provider wording."""
+    from markitai.llm.error_redaction import _LITELLM_HEAD
+
+    raw = _sanitize_probe_error(exc, body)
+    words = re.sub(r"\s+", " ", _LITELLM_HEAD.sub("", raw)).strip()
+    key_source, variable = _probe_key_source(body)
+    failure = model_test.classify(
+        exc,
+        model=body.model or "",
+        provider_words=words,
+        key_source=key_source,
+        key_variable=variable,
+    )
+    logger.info(
+        "[Serve] Model test of {} failed: {} ({})", body.model, failure.reason, raw
+    )
+    return {
+        "ok": False,
+        # An error with no status and no category keeps its own first line
+        "detail": failure.detail if failure.categorized else raw,
+        "reason": failure.reason,
+        "provider_detail": failure.provider_detail,
+    }
 
 
 CredentialPair = tuple[str | None, str | None]
@@ -3593,12 +3649,19 @@ def create_app(
                         )
                     }
                 )
+        if body.model is not None:
+            lacking = model_test.missing_key(body.model, body.api_key, body.api_base)
+            if lacking is not None:
+                # Nothing is sent: LiteLLM would send the request without a
+                # key, and the provider's 401 reads like a wrong key
+                failure = model_test.missing_key_failure(lacking)
+                return {"ok": False, "detail": failure.detail, "reason": failure.reason}
         try:
             detail = await asyncio.wait_for(
                 _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S
             )
         except Exception as e:  # must never 500: ok flags the result
-            return {"ok": False, "detail": _sanitize_probe_error(e, body)}
+            return _probe_failure(e, body)
         return {"ok": True, "detail": detail}
 
     @app.post("/api/jobs", status_code=201, response_model=CreateJobResponse)

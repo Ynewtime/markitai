@@ -83,6 +83,8 @@ markitai serve --host 0.0.0.0
 
 服务器设置了某个服务商的 key 变量（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY` 或 `OPENROUTER_API_KEY`）时，选择器会把它和已保存的连接列在一起（“使用 OPENAI_API_KEY”）。它的模型用这个 key 从服务商自己的端点列出，从它添加的模型只保存引用 `env:OPENAI_API_KEY`，不保存 key 本身；之后由这个已保存的连接代替这张卡片。这个 key 只发往它所属服务商的端点：要用别的地址，请输入 key 来连接该服务商。
 
+测试模型失败时会说明原因：服务器上没有设置 key 变量（这时什么都不会发送；在运行 `markitai serve` 的地方设置并重启，或者给这个连接填入 key）、服务商拒绝了 key（HTTP 401/403）、服务商没有这个模型（404）、服务商在限流（429）、连不上服务商，或服务商返回了其他错误。服务商自己的原话作为细节附在后面；API 用 `reason` 给出同样的类别（`missing_key`、`auth_rejected`、`model_not_found`、`rate_limited`、`network`、`provider_error`）。
+
 提供商编辑器只显示已保存 key 的打码形式（`sk…7890`；`env:` 引用原样显示）。不动这个字段就保留已保存的 key，输入新 key 即替换，清空则删除 key。已保存的 API 基础地址显示时不含凭据（`https://…@proxy.example/v1?api_key=…`）：保持原样即沿用已保存的地址，要修改请输入完整地址。
 
 key 和保存时的地址绑定在一起，所以设置页面不会把你没输入过的 key 发到你指定的服务器。以下操作会被拒绝（HTTP 422）：把 `env:` 引用和自定义地址配在一起；使用提供商 key 变量（`OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 等）以外的 `env:` 变量；修改某个连接的地址却不重新输入它的 key。需要这样配置时，要么连同新地址直接输入 key 本身，要么在配置文件里写好这一对（用 `markitai config edit` 或手动编辑，见[自定义 API 端点](/zh/guide/configuration#自定义-api-端点)）。配置文件里已有的组合在设置页面照常可用。

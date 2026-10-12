@@ -1157,7 +1157,8 @@ class TestLLMSettingsProbe:
         data = resp.json()
         assert resp.status_code == 200
         assert data["ok"] is False
-        assert "Environment variable not found" in data["detail"]
+        assert data["reason"] == "missing_key"
+        assert data["detail"].startswith("OPENAI_API_KEY is not set on the server")
         assert calls == []
 
     async def test_probe_local_provider_without_sdk(
@@ -1264,6 +1265,10 @@ class TestLLMSettingsProbe:
             return {"id": "ok"}
 
         monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+        # The server's own key variable: LiteLLM reads it, the probe passes
+        # no key (without one the test is refused before sending, as
+        # missing_key)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-env-123456789")
         cfg = MarkitaiConfig()
         cfg.llm.model_list = [_model_entry("openai/other-model", api_key="sk-other-1")]
         async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
