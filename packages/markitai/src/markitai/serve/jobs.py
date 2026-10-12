@@ -466,6 +466,16 @@ class JobRegistry:
         for job in self.jobs.values():
             self.publish(job, SHUTDOWN_EVENT, {})
 
+    def end_streams(self) -> None:
+        """End every open SSE stream now (the access token changed).
+
+        Unlike :meth:`begin_shutdown`, new streams may open afterwards; a
+        client reconnects with the new token or is refused. Must run on the
+        event loop thread.
+        """
+        for job in self.jobs.values():
+            self.publish(job, SHUTDOWN_EVENT, {})
+
     async def shutdown(self) -> None:
         """Cancel all still-running job tasks (server shutdown).
 
@@ -1071,6 +1081,7 @@ async def process_url_item(
         llm_usage=result.llm_usage,
         llm_enhanced=result.llm_output_path is not None,
         warnings=list(result.warnings),
+        page_html=result.html,
     )
 
 
@@ -1196,6 +1207,12 @@ async def _run_item(
                 else "LLM enhancement did not produce an enhanced Markdown result"
             )
             result.error_code = "enhancement_failed"
+    if result.success and result.page_html is not None and item.kind == "url":
+        from markitai.serve.originals import keep_page_snapshot
+
+        # Only a result that stands replaces the kept page: a failed rerun
+        # (an enhance without an enhanced result included) keeps the old one
+        await asyncio.to_thread(keep_page_snapshot, job, item, result.page_html)
     item.duration_ms = int((time.perf_counter() - start) * 1000)
     _apply_result(job, item, result)
     item.finished_at = now_iso()

@@ -36,7 +36,7 @@ from markitai import __version__
 from markitai.constants import PROVIDER_API_KEY_ENV
 from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, PENDING_BATCH_SKIP_REASON
-from markitai.serve import model_test
+from markitai.serve import model_test, new_access_token
 from markitai.serve.artifacts import (
     item_asset_files,
     markdown_pair,
@@ -69,12 +69,17 @@ from markitai.serve.jobs import (
     write_job_meta,
 )
 from markitai.serve.originals import (
+    MAX_SNAPSHOT_BYTES,
+    VIEW_POLICY,
     ByteCache,
     Original,
     PdfWorkers,
     RenderError,
     clamp_width,
+    framed_page,
+    kept_original,
     kept_upload,
+    page_snapshot_path,
     pdf_page_text,
     pdf_pages,
     render_image,
@@ -107,6 +112,7 @@ from markitai.serve.schemas import (
     OriginalDescriptor,
     PageText,
     ProviderConnectionList,
+    RegeneratedToken,
     RootInfo,
 )
 from markitai.serve.tickets import LIFETIME_S as TICKET_LIFETIME_S
@@ -157,6 +163,8 @@ MAX_LABEL_CHARS = 120
 MAX_URL_LIST_BYTES = 1024 * 1024
 # A download ticket request names one path.
 _TICKET_BODY_LIMIT = 8 * 1024
+_TOKEN_REGENERATE_PATH = "/api/access-token/regenerate"  # nosec B105 - a route
+_TOKEN_REGENERATE_BODY_LIMIT = 1024
 # Pages drawn for the Compare view at the same time at most.
 _PAGE_RENDER_SLOTS = 2
 
@@ -504,10 +512,15 @@ def _scope_presents_token(scope: Any, token: str) -> bool:
     return False
 
 
+def _token_digest(token: str) -> bytes:
+    return hashlib.sha256(token.encode("utf-8", "surrogatepass")).digest()
+
+
 class _TokenAuthMiddleware:
     """Reject non-loopback API requests that do not present the serve token.
 
-    Loopback peers stay trusted without a token (the CLI, tests and
+    A token regenerated away is refused from every peer. Loopback peers
+    stay trusted without a token (the CLI, tests and
     ``--record-history`` tooling on the operator's machine keep working
     unchanged), except on the LLM settings routes, which
     ``protect_local_settings`` gates on the token for every peer. The static
@@ -520,19 +533,35 @@ class _TokenAuthMiddleware:
     A ``?ticket=`` (see :mod:`markitai.serve.tickets`) stands in for the
     token on exactly one GET of the path it was issued for; presenting it
     spends it, and a wrong, spent or expired one is refused for every peer.
+
+    The token is read through *token_source* on every request: the
+    workbench can regenerate it (``POST /api/access-token/regenerate``).
     """
 
-    def __init__(self, app: Any, token: str | None, tickets: DownloadTickets) -> None:
+    def __init__(
+        self,
+        app: Any,
+        token_source: Callable[[], str | None],
+        tickets: DownloadTickets,
+        revoked: set[bytes],
+    ) -> None:
         self.app = app
-        self.token = token
+        self.token_source = token_source
         self.tickets = tickets
+        self.revoked = revoked
+
+    def _presents_revoked(self, scope: Any) -> bool:
+        return any(
+            presented is not None and _token_digest(presented) in self.revoked
+            for presented in (_scope_bearer_token(scope), _scope_query_token(scope))
+        )
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        token = self.token_source() if scope["type"] == "http" else None
         if (
-            scope["type"] == "http"
-            and self.token is not None
+            token is not None
             and scope.get("path", "").startswith("/api/")
-            and not _scope_presents_token(scope, self.token)
+            and not _scope_presents_token(scope, token)
         ):
             ticket = _scope_query_param(scope, "ticket")
             if ticket is not None:
@@ -548,7 +577,10 @@ class _TokenAuthMiddleware:
                     )
                     await response(scope, receive, send)
                     return
-            elif not _is_loopback_scope(scope):
+            elif not _is_loopback_scope(scope) or self._presents_revoked(scope):
+                # Loopback may come without a token (or with a stale one from
+                # an earlier run), but never with one regenerated away: the
+                # other tabs and devices must sign in again
                 response = error_response(401, "token_required", _AUTH_REQUIRED_DETAIL)
                 await response(scope, receive, send)
                 return
@@ -1322,10 +1354,7 @@ def _is_deployment_routable(model: ModelConfig) -> bool:
         return True
     if model.litellm_params.get_resolved_api_key(strict=False):
         return True
-    env_keys = {PROVIDER_API_KEY_ENV.get(provider)}
-    if row is not None:
-        env_keys.add(row.key_variable)
-    return any(name and os.environ.get(name) for name in env_keys)
+    return _environment_key_variable(provider) is not None
 
 
 def _llm_settings_payload(state: ServeState) -> dict[str, Any]:
@@ -1605,16 +1634,9 @@ def _key_variables(provider: str) -> tuple[tuple[str, ...], str | None]:
     the main one is the variable markitai names when none is set. None for a
     cloud signed in with the server's own credentials.
     """
-    from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_API_KEY_ENV_NAMES
-    from markitai.providers.connectable import CONNECTABLE
+    from markitai.providers.discovery import provider_key_variables
 
-    row = next((row for row in CONNECTABLE if row.provider == provider), None)
-    if row is not None and row.cloud:
-        return (), None
-    names = PROVIDER_API_KEY_ENV_NAMES.get(provider) or (
-        (row.key_variable,) if row is not None and row.key_variable else ()
-    )
-    return names, PROVIDER_API_KEY_ENV.get(provider) or (names[0] if names else None)
+    return provider_key_variables(provider)
 
 
 def _environment_key_variable(provider: str) -> str | None:
@@ -1865,13 +1887,14 @@ def _check_credential_target(
     if not api_key or api_key == NO_KEY:
         return
     if api_key.startswith("env:"):
-        if api_base is None and api_key[4:] in PROVIDER_API_KEY_ENV.values():
+        if api_base is None and api_key[4:] in _provider_key_variable_names():
             return
         detail = (
-            "api_key: env: references from the web API are limited to "
-            f"{', '.join(PROVIDER_API_KEY_ENV.values())} with the provider's "
-            "default api_base; to use another variable or endpoint, enter the "
-            "key itself or set the pair up in the config file"
+            "api_key: env: references from the web API are limited to the "
+            "providers' own key variables (OPENAI_API_KEY, DEEPSEEK_API_KEY, "
+            "...) with the provider's default api_base; to use another "
+            "variable or endpoint, enter the key itself or set the pair up in "
+            "the config file"
         )
     elif api_key == client_key:
         return
@@ -1884,26 +1907,62 @@ def _check_credential_target(
     raise ApiError(422, "invalid_settings_request", detail)
 
 
+def _provider_key_variable_names() -> frozenset[str]:
+    """Every variable a provider's key is read from (environment cards')."""
+    from markitai.providers.connectable import CONNECTABLE
+
+    return frozenset(
+        name for row in CONNECTABLE for name in _key_variables(row.provider)[0]
+    ) | frozenset(PROVIDER_API_KEY_ENV.values())
+
+
+def _card_credential(provider: str, api_key: Any) -> dict[str, str]:
+    """A configured card's ``credential``: how it authenticates from the
+    environment, when it does (contract v1.11 section 8).
+
+    ``env:VAR`` for a key that is an ``env:VAR`` reference (set or not), or,
+    for a connection with no key at all (hand-written; never the keyless
+    placeholder), the provider's key variable that holds a value, which
+    LiteLLM sends for it. Nothing for a stored key.
+    """
+    if isinstance(api_key, str) and api_key:
+        if api_key.startswith("env:") and len(api_key) > 4:
+            return {"credential": api_key}
+        return {}
+    variable = _environment_key_variable(provider)
+    return {"credential": f"env:{variable}"} if variable else {}
+
+
+def _own_endpoint(provider: str, api_base: Any) -> bool:
+    """Whether a connection's address is its provider's own endpoint."""
+    if not isinstance(api_base, str) or not api_base:
+        return True
+    default = provider_default_api_base(provider)
+    return default is not None and api_base.rstrip("/") == default.rstrip("/")
+
+
 def _environment_key(
     reference: str, provider: str, *, api_key: str | None, api_base: str | None
 ) -> str:
     """The key reference behind an environment card's id (``env:openai``).
 
-    Cards exist only for the providers whose key variable the server reads
-    (``env:openai`` -> ``env:OPENAI_API_KEY``), never for any variable a
-    caller names, and that key goes only to its own provider's endpoint: an
-    address needs the caller's own key.
+    Cards exist for the providers whose key variable the server reads
+    (``env:openai`` -> ``env:OPENAI_API_KEY``; the first of its variables
+    that is set, else its main one), never for any variable a caller names,
+    and that key goes only to its own provider's endpoint: an address needs
+    the caller's own key.
     """
     name = reference.removeprefix("env:")
-    variable = PROVIDER_API_KEY_ENV.get(name)
+    names, main = _key_variables(name)
+    variable = _environment_key_variable(name) or (main if names else None)
     if variable is None:
         raise ApiError(
             422,
             "invalid_settings_request",
             (
-                f"unknown environment provider {reference!r}; environment "
-                "connections are "
-                f"{', '.join(f'env:{known}' for known in PROVIDER_API_KEY_ENV)}"
+                f"unknown environment provider {reference!r}; an environment "
+                "connection names a provider whose API key the server reads "
+                "from its environment"
             ),
         )
     if provider != name:
@@ -2212,6 +2271,24 @@ def _item_assets(
     )
 
 
+def _item_artifacts(
+    item: JobItem, out_dir: Path, base_name: str, base_path: Path, llm_path: Path
+) -> list[Path]:
+    """Every file a finished item's result lists in ``artifacts``, in order.
+
+    The ``.md``, the ``.llm.md`` only when the item is enhanced (a stale
+    sibling never makes the UI offer a spurious base/LLM diff), then its
+    assets. The result and the item archive both list exactly these.
+    """
+    files: list[Path] = []
+    candidates = [base_path, *([llm_path] if item.llm_enhanced else [])]
+    candidates += _item_assets(item, out_dir, base_name, base_path, llm_path)
+    for path in candidates:
+        if path.is_file() and path not in files:
+            files.append(path)
+    return files
+
+
 def _etag_matches(header: str | None, etag: str) -> bool:
     """``If-None-Match`` against *etag* by weak comparison (lists, ``*``)."""
     ours = etag.removeprefix("W/")
@@ -2251,6 +2328,9 @@ def _item_owned_files(job: Job, item: JobItem) -> list[Path]:
         upload = (uploads_dir / item.name).resolve()
         if upload.is_relative_to(uploads_dir) and upload != uploads_dir:
             owned.append(upload)
+    snapshot = page_snapshot_path(job, item)
+    if snapshot is not None:
+        owned.append(snapshot)
     return sorted(owned)
 
 
@@ -2368,6 +2448,8 @@ def create_app(
     config_path: Path | None = None,
     allowed_hosts: Sequence[str] | None = None,
     token: str | None = None,
+    network_origin: Callable[[], str | None] | None = None,
+    token_variable: str | None = None,
 ) -> FastAPI:
     """Create the markitai serve FastAPI application.
 
@@ -2393,6 +2475,11 @@ def create_app(
             token-bearing remote peer is trusted like a loopback one. None
             disables token auth: remote peers may then only submit public
             URLs, and only loopback peers reach the settings routes.
+        network_origin: Returns ``http://<network address>:<port>`` when
+            the server listens on all interfaces and has such an address,
+            else None; a regenerated token's sign-in link is built on it.
+        token_variable: The environment variable that set *token* at
+            startup (``MARKITAI_SERVE_TOKEN``), or None when it was generated.
     """
 
     @asynccontextmanager
@@ -2520,7 +2607,13 @@ def create_app(
                     logger.debug("[Serve] LiteLLM client cleanup failed: {}", e)
 
     app = FastAPI(title="markitai serve", version=__version__, lifespan=lifespan)
+    # Mutable: POST /api/access-token/regenerate replaces it, and every
+    # guard reads it per request. Event streams opened under an older
+    # generation end when it changes.
     app.state.serve_token = token
+    app.state.token_generation = 0
+    # Digests of the tokens regenerated away: refused even from loopback
+    app.state.revoked_tokens = set()
     app.add_middleware(_BodyLimitMiddleware)
     app.add_middleware(
         _HostGuardMiddleware,
@@ -2610,7 +2703,8 @@ def create_app(
 
     @app.middleware("http")
     async def protect_local_settings(request: Request, call_next: Any) -> Response:
-        if request.url.path.startswith("/api/settings/llm"):
+        path = request.url.path
+        if path.startswith("/api/settings/llm") or path == _TOKEN_REGENERATE_PATH:
             # These routes read and write provider keys, so with token auth
             # on they need the token from every peer: any local process, or a
             # page on another localhost origin, is a loopback peer too.
@@ -2628,7 +2722,9 @@ def create_app(
                 return error_response(
                     403,
                     "settings_forbidden",
-                    "LLM settings are available on loopback only",
+                    "LLM settings are available on loopback only"
+                    if path != _TOKEN_REGENERATE_PATH
+                    else "the access token can be regenerated on loopback only",
                     headers={"Cache-Control": "no-store"},
                 )
             response = await call_next(request)
@@ -2645,7 +2741,12 @@ def create_app(
     app.state.pdf_workers = PdfWorkers(workers=_PAGE_RENDER_SLOTS)
     app.state.page_cache = ByteCache()
     app.state.original_cache = {}
-    app.add_middleware(_TokenAuthMiddleware, token=token, tickets=tickets)
+    app.add_middleware(
+        _TokenAuthMiddleware,
+        token_source=lambda: app.state.serve_token,
+        tickets=tickets,
+        revoked=app.state.revoked_tokens,
+    )
     # Outermost: compresses whatever the inner layers answer
     app.add_middleware(_CompressionMiddleware)
 
@@ -2694,6 +2795,8 @@ def create_app(
                 "result_excerpt": True,
                 "job_labels": True,
                 "item_assets": True,
+                "item_archive": True,
+                "token_regenerate": request.app.state.serve_token is not None,
             },
             "remote_services": {
                 "cloudflare": _cloudflare_capability(
@@ -2742,7 +2845,7 @@ def create_app(
             for card in detected
             if card.get("kind") != "configured"
             and (
-                card.get("kind") != "common"
+                card.get("kind") not in ("common", "environment")
                 or card.get("provider") in BUILT_IN
                 or is_local_provider_model(f"{card.get('provider')}/")
                 or card.get("provider") in routable
@@ -2754,20 +2857,12 @@ def create_app(
         explicit_provider_names = {
             provider.provider for provider in explicit_by_id.values()
         }
-        # A persisted env reference and its auto-detected environment card are
-        # one connection, not two provider cards.
         providers = [
             card
             for card in detected
             if not (
                 card.get("kind") == "common"
                 and card.get("provider") in explicit_provider_names
-            )
-            and not any(
-                card.get("kind") == "environment"
-                and card.get("provider") == saved.provider
-                and saved.api_key == f"env:{card.get('source')}"
-                for saved in explicit_by_id.values()
             )
         ]
         local_connections = {
@@ -2776,6 +2871,10 @@ def create_app(
             if card.get("kind") in {"local_cli", "oauth"}
         }
 
+        # Each configured card and whether it is aimed at its provider's own
+        # endpoint, in order (one provider, one saved row: the page folds an
+        # environment card into such a card)
+        own_endpoints: list[tuple[str, bool]] = []
         for saved in state.configured_providers:
             model_count = sum(
                 model.model_info is not None
@@ -2800,7 +2899,11 @@ def create_app(
                     ),
                     "model_count": model_count,
                     "supports_discovery": True,
+                    **_card_credential(saved.provider, saved.api_key),
                 }
+            )
+            own_endpoints.append(
+                (saved.provider, _own_endpoint(saved.provider, saved.api_base))
             )
 
         seen_configured_connections: set[tuple[str, str | None, str | None]] = set()
@@ -2849,8 +2952,34 @@ def create_app(
                     ),
                     "model_count": model_count,
                     "supports_discovery": True,
+                    **_card_credential(provider, params.api_key),
                 }
             )
+            own_endpoints.append((provider, _own_endpoint(provider, params.api_base)))
+        # A connection that already authenticates with a variable stands
+        # for its environment card: one at the provider's own endpoint
+        # naming it in `credential`, or a saved connection storing it as its
+        # key reference (contract v1.11 section 8)
+        configured_cards = [
+            card for card in providers if card.get("kind") == "configured"
+        ]
+        served = {
+            (card["provider"], card["credential"])
+            for card, (_provider, own) in zip(
+                configured_cards, own_endpoints, strict=True
+            )
+            if own and card.get("credential")
+        } | {
+            (saved.provider, saved.api_key)
+            for saved in state.configured_providers
+            if isinstance(saved.api_key, str) and saved.api_key.startswith("env:")
+        }
+        providers = [
+            card
+            for card in providers
+            if card.get("kind") != "environment"
+            or (card.get("provider"), card.get("credential")) not in served
+        ]
         return {
             "providers": [card_facts(annotate_card(dict(card))) for card in providers]
         }
@@ -3034,12 +3163,18 @@ def create_app(
             found = _environment_key_variable(provider)
             if found is not None:
                 api_key, key_variable = os.environ[found].strip(), found
-        if api_key is None and key_variable is not None:
-            lacking = model_test.missing_key(f"{provider}/", None, api_base)
+        keyless_entry = body.api_key is None and fallback_key == NO_KEY
+        if api_key is None and not keyless_entry:
+            # A key the provider needs and nothing supplies (an unset env:
+            # reference, or no key and the key variable unset): said before
+            # anything is sent, as a model test does; the provider's 401
+            # would read like a wrong key. Local servers, subscriptions and
+            # clouds with their own credentials need none.
+            lacking = model_test.missing_key(
+                f"{provider}/", raw_key if isinstance(raw_key, str) else None, api_base
+            )
             if lacking is not None:
-                # Nothing is sent: the provider's 401 would read like a
-                # wrong key, as for a model test
-                failure = model_test.missing_key_failure(lacking)
+                variable = model_test.missing_key_failure(lacking).key_variable
                 answer = {
                     "provider": provider,
                     "status": "unavailable",
@@ -3048,11 +3183,14 @@ def create_app(
                     "cached": False,
                     "stale": False,
                     "models": [],
-                    "detail": failure.detail,
-                    "reason": failure.reason,
+                    "detail": f"{variable} is not set on the server, so nothing was sent"
+                    if variable
+                    else "Model discovery needs an API key, and none is set, so "
+                    "nothing was sent",
+                    "reason": "no_key",
                 }
-                if failure.key_variable:
-                    answer["key_variable"] = failure.key_variable
+                if variable:
+                    answer["key_variable"] = variable
                 return answer
         return await discover_models(
             body.provider,
@@ -4155,10 +4293,17 @@ def create_app(
     async def get_job_events(request: Request, job_id: str) -> StreamingResponse:
         job = _get_job(request, job_id)
         registry = _state(request).registry
+        # A stream lives only as long as the token it was opened with
+        generation = request.app.state.token_generation
+
+        def revoked() -> bool:
+            return request.app.state.token_generation != generation
 
         async def stream() -> AsyncIterator[str]:
             queue = registry.subscribe(job)
             try:
+                if revoked():
+                    return
                 yield _sse_frame("snapshot", job.snapshot())
                 if registry.closing:
                     # Shutting down: a stream opened now would hold the
@@ -4181,9 +4326,11 @@ def create_app(
                             queue.get(), timeout=_SSE_PING_INTERVAL
                         )
                     except TimeoutError:
+                        if revoked():
+                            return
                         yield ": ping\n\n"
                         continue
-                    if event == SHUTDOWN_EVENT:
+                    if event == SHUTDOWN_EVENT or revoked():
                         return
                     yield _sse_frame(event, data)
                     if event == "job" and data.get("status") != "running":
@@ -4228,26 +4375,15 @@ def create_app(
         out_dir, base_name, base_path, llm_path, variant, markdown_path = located
 
         def collect() -> tuple[str, int, bool, list[dict[str, Any]]]:
-            artifacts: list[dict[str, Any]] = []
-            seen: set[Path] = set()
-
-            def add_artifact(path: Path) -> None:
-                if path.is_file() and path not in seen:
-                    seen.add(path)
-                    artifacts.append(
-                        {
-                            "relpath": path.relative_to(out_dir).as_posix(),
-                            "size": path.stat().st_size,
-                        }
-                    )
-
-            add_artifact(base_path)
-            # Only expose the .llm.md when the item is actually enhanced, so a
-            # stale sibling never makes the UI offer a spurious base↔llm diff.
-            if item.llm_enhanced:
-                add_artifact(llm_path)
-            for artifact in _item_assets(item, out_dir, base_name, base_path, llm_path):
-                add_artifact(artifact)
+            artifacts = [
+                {
+                    "relpath": path.relative_to(out_dir).as_posix(),
+                    "size": path.stat().st_size,
+                }
+                for path in _item_artifacts(
+                    item, out_dir, base_name, base_path, llm_path
+                )
+            ]
             total = markdown_path.stat().st_size
             if limit is None and total > MAX_RESULT_BYTES:
                 raise ApiError(
@@ -4376,10 +4512,65 @@ def create_app(
             headers={"X-Content-Type-Options": "nosniff"},
         )
 
+    @app.get("/api/jobs/{job_id}/items/{item_id}/archive")
+    async def get_item_archive(
+        request: Request, job_id: str, item_id: str
+    ) -> FileResponse:
+        """A ZIP of one item: its result's files and its kept original.
+
+        Every file ``…/result`` lists in ``artifacts``, at those relpaths,
+        plus the original ``…/original/file`` sends, at
+        ``original/<its file name>`` (contract v1.11 section 6.7).
+        """
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        if item.status in ("queued", "running") or item_id in job.retry_pending:
+            raise ApiError(
+                409, "item_busy", "the item is being converted; retry when done"
+            )
+        located = _item_result_files(job, item)
+        if located is None:
+            raise ApiError(404, "result_unavailable", "item result not available")
+        out_dir, base_name, base_path, llm_path, _variant, _markdown = located
+        archive_path = job.job_dir / f".item-archive.{uuid.uuid4().hex}.zip"
+
+        def build() -> None:
+            files = _item_artifacts(item, out_dir, base_name, base_path, llm_path)
+            original = kept_original(job, item)
+            tmp_path = job.job_dir / f".archive.{uuid.uuid4().hex}.tmp"
+            try:
+                with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for path in files:
+                        with suppress(OSError):  # removed by a concurrent rerun
+                            zf.write(path, path.relative_to(out_dir).as_posix())
+                    if original is not None:
+                        path, name = original
+                        with suppress(OSError):
+                            zf.write(path, f"original/{name}")
+                os.replace(tmp_path, archive_path)
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+        async with job.archive_lock:
+            await asyncio.to_thread(build)
+        return FileResponse(
+            archive_path,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": "attachment; filename*=UTF-8''"
+                + quote(f"{base_name}.zip", safe=""),
+                "X-Content-Type-Options": "nosniff",
+            },
+            background=BackgroundTask(archive_path.unlink, missing_ok=True),
+        )
+
     # ------------------------------------------------------------- originals
 
     def _original_paths(job: Job, item: JobItem) -> str:
         return f"/api/jobs/{job.job_id}/items/{item.item_id}/original/file"
+
+    def _original_view_path(job: Job, item: JobItem) -> str:
+        return f"/api/jobs/{job.job_id}/items/{item.item_id}/original/view"
 
     async def _describe(
         request: Request, job: Job, item: JobItem, *, boxes: bool
@@ -4414,7 +4605,9 @@ def create_app(
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)
         original = await _describe(request, job, item, boxes=True)
-        return original.descriptor(_original_paths(job, item))
+        return original.descriptor(
+            _original_paths(job, item), _original_view_path(job, item)
+        )
 
     @app.get("/api/jobs/{job_id}/items/{item_id}/original/file")
     async def get_item_original_file(
@@ -4423,20 +4616,73 @@ def create_app(
         """The stored original bytes, never rendered by a direct visit."""
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)
-        upload = kept_upload(job, item)
-        if upload is None:
+        kept = kept_original(job, item)
+        if kept is None:
             raise ApiError(404, "original_unavailable", "no original is kept")
-        media_type = original_media_type(upload)
+        path, name = kept
+        media_type = original_media_type(path)
         if media_type in ("text/html", "application/xhtml+xml", "image/svg+xml"):
             media_type = "text/plain; charset=utf-8"
         return FileResponse(
-            upload,
+            path,
             media_type=media_type,
             headers={
                 "Content-Disposition": "attachment; filename*=UTF-8''"
-                + quote(item.name, safe=""),
+                + quote(name, safe=""),
                 "X-Content-Type-Options": "nosniff",
                 "Content-Security-Policy": "sandbox; default-src 'none'",
+            },
+        )
+
+    @app.get("/api/jobs/{job_id}/items/{item_id}/original/view")
+    async def get_item_original_view(
+        request: Request, job_id: str, item_id: str
+    ) -> Response:
+        """The kept HTML original for the workbench's sandboxed frame.
+
+        One insertion (no DNS prefetching, a base that opens links outside
+        the frame) and a policy under which the page runs no script, sends
+        no form and loads nothing (contract v1.11 section 7).
+        """
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        original = await _describe(request, job, item, boxes=False)
+        unavailable = ApiError(404, "original_unavailable", "no HTML original is kept")
+        if original.kind != "html" or original.path is None:
+            raise unavailable
+        too_large = ApiError(
+            413,
+            "result_too_large",
+            "the page is too large to show; download the original instead",
+        )
+        if (original.size or 0) > MAX_SNAPSHOT_BYTES:
+            raise too_large
+        path = original.path
+
+        def read() -> bytes:
+            with path.open("rb") as fh:
+                return fh.read(MAX_SNAPSHOT_BYTES + 1)
+
+        try:
+            data = await asyncio.to_thread(read)
+        except OSError:
+            raise unavailable from None
+        if len(data) > MAX_SNAPSHOT_BYTES:
+            raise too_large
+        page = framed_page(
+            data.decode("utf-8", "replace"),
+            str(item.source) if item.kind == "url" else None,
+        )
+        return Response(
+            content=page.encode("utf-8"),
+            headers={
+                "Content-Type": "text/html; charset=utf-8",
+                "Content-Security-Policy": VIEW_POLICY,
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+                "X-DNS-Prefetch-Control": "off",
+                "Cache-Control": "no-store",
+                "Content-Disposition": "inline",
             },
         )
 
@@ -4449,7 +4695,9 @@ def create_app(
         item = _get_item(job, item_id)
         original = await _describe(request, job, item, boxes=False)
         number = int(page)
-        if original.kind in ("none", "html", "text"):
+        if original.kind in ("none", "text") or (
+            original.kind == "html" and not original.screenshots
+        ):
             raise ApiError(
                 404, "original_unavailable", "this original has no page images"
             )
@@ -4468,7 +4716,7 @@ def create_app(
         original, number = await _page_request(request, job_id, item_id, page)
         source = (
             original.screenshots[number - 1]
-            if original.kind == "screenshots"
+            if original.kind in ("screenshots", "html")
             else original.path
         )
         assert source is not None
@@ -4590,6 +4838,70 @@ def create_app(
             "url": f"{body.path}?ticket={ticket}",
             "expires_in": TICKET_LIFETIME_S,
         }
+
+    # --------------------------------------------------------- access token
+
+    @app.post(_TOKEN_REGENERATE_PATH, response_model=RegeneratedToken)
+    async def regenerate_access_token(request: Request) -> JSONResponse:
+        """Replace the access token with a new random one.
+
+        Trusted as the settings routes are (``protect_local_settings``). The
+        old token stops working at once: requests presenting it are 401, the
+        event streams opened under it end, and outstanding download tickets
+        are revoked. The new token lives in memory, as the startup one did.
+        """
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > _TOKEN_REGENERATE_BODY_LIMIT:
+                raise ApiError(
+                    413,
+                    "request_too_large",
+                    "a token regeneration request exceeds 1 KiB",
+                )
+        if data.strip():
+            try:
+                body = json.loads(bytes(data))
+            except ValueError:
+                body = None
+            if body != {}:
+                raise ApiError(
+                    422,
+                    "invalid_json",
+                    "regenerating the token takes no body, or an empty JSON object",
+                )
+        if request.app.state.serve_token is None:
+            raise ApiError(
+                409,
+                "token_disabled",
+                "this server runs without an access token (--no-auth), so "
+                "there is none to regenerate",
+            )
+        token = new_access_token()
+        request.app.state.revoked_tokens.add(
+            _token_digest(request.app.state.serve_token)
+        )
+        request.app.state.serve_token = token
+        request.app.state.token_generation += 1
+        tickets: DownloadTickets = request.app.state.download_tickets
+        tickets.clear()
+        _state(request).registry.end_streams()
+        logger.info(
+            "[Serve] Access token regenerated from the web workbench; other tabs "
+            "and devices must sign in again."
+        )
+        origin = network_origin() if network_origin is not None else None
+        return JSONResponse(
+            {
+                "token": token,
+                "network_url": (
+                    f"{origin}/#token={quote(token, safe='')}" if origin else None
+                ),
+                "persistent": False,
+                "startup_variable": token_variable,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     # -------------------------------------------------------------- history
 

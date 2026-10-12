@@ -367,4 +367,4 @@ async def test_a_provider_without_a_list_leaves_model_ids_by_hand(
     body = response.json()
     assert captured == {}
     assert (body["status"], body["models"]) == ("unavailable", [])
-    assert "by hand" in body["detail"]
+    assert "enter model IDs manually" in body["detail"]

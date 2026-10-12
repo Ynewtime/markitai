@@ -9,7 +9,6 @@ import http.client
 import ipaddress
 import json
 import os
-import secrets
 import socket
 import threading
 import time
@@ -22,6 +21,7 @@ import rich_click as click
 from markitai.cli.console import get_stderr_console
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import FrameType
 
 _BROWSER_READY_TIMEOUT_S = 30.0
@@ -35,6 +35,7 @@ _EXPOSED_BIND_HELP = (
     "value publishes the API to every host that can reach it, which then "
     "needs the access token printed at startup (unless --no-auth)."
 )
+_TOKEN_VARIABLE = "MARKITAI_SERVE_TOKEN"  # nosec B105 - the variable's name, not a token
 _WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", "[::]", ""})  # nosec B104 - literal comparison for banner URLs, not a bind
 # Soft open-file limit the server asks for. macOS rejects a soft limit above
 # OPEN_MAX (10240) even when the hard limit is RLIM_INFINITY.
@@ -144,12 +145,34 @@ def _binds_beyond_loopback(host: str) -> bool:
         return True
 
 
+def _pinned_token() -> str | None:
+    """The token MARKITAI_SERVE_TOKEN pins, if it is set and not blank."""
+    return os.environ.get(_TOKEN_VARIABLE, "").strip() or None
+
+
 def _resolve_token(no_auth: bool) -> str | None:
     """Return the serve access token: disabled, pinned via env, or generated."""
     if no_auth:
         return None
-    pinned = os.environ.get("MARKITAI_SERVE_TOKEN", "").strip()
-    return pinned or f"mk_{secrets.token_urlsafe(32)}"
+    from markitai.serve import new_access_token
+
+    return _pinned_token() or new_access_token()
+
+
+def _network_origin(host: str, port: int) -> Callable[[], str | None] | None:
+    """How a regenerated token's sign-in link reaches this server.
+
+    Only a server listening on all interfaces has a network address to
+    hand out; it is looked up when the token is regenerated.
+    """
+    if host.strip() not in _WILDCARD_HOSTS:
+        return None
+
+    def origin() -> str | None:
+        lan = _lan_address()
+        return f"http://{lan}:{port}" if lan is not None else None
+
+    return origin
 
 
 def _token_url(url_host: str, port: int, token: str) -> str:
@@ -367,7 +390,16 @@ def serve(
         if token is not None
         else f"http://{url_host}:{port}"
     )
-    app = create_app(allowed_hosts=allowed_hosts, token=token)
+    app = create_app(
+        allowed_hosts=allowed_hosts,
+        token=token,
+        network_origin=_network_origin(host, port),
+        token_variable=(
+            _TOKEN_VARIABLE
+            if token is not None and _pinned_token() is not None
+            else None
+        ),
+    )
 
     browser_stop = threading.Event()
     browser_thread: threading.Thread | None = None

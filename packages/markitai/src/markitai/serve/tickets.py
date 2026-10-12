@@ -35,8 +35,8 @@ def _plain_segment(segment: str) -> bool:
 def downloadable(path: str) -> bool:
     """Whether *path* is a download route a ticket may name.
 
-    A job's file, a job's archive, an item's original, or the history
-    archive. Paths are compared as sent, so they must be the exact encoded
+    A job's file, a job's archive, an item's original (its bytes or its
+    framed page view), an item's archive, or the history archive. Paths are compared as sent, so they must be the exact encoded
     form the browser will request.
     """
     if (
@@ -59,14 +59,11 @@ def downloadable(path: str) -> bool:
     if rest.startswith("files/"):
         segments = rest.removeprefix("files/").split("/")
         return all(_plain_segment(segment) for segment in segments)
-    # items/{item_id}/original/file
+    # items/{item_id}/archive, items/{item_id}/original/file|view
     parts = rest.split("/")
-    return (
-        len(parts) == 4
-        and parts[0] == "items"
-        and _plain_segment(parts[1])
-        and parts[2:] == ["original", "file"]
-    )
+    if len(parts) < 3 or parts[0] != "items" or not _plain_segment(parts[1]):
+        return False
+    return parts[2:] in (["archive"], ["original", "file"], ["original", "view"])
 
 
 class DownloadTickets:
@@ -91,6 +88,11 @@ class DownloadTickets:
             ticket = secrets.token_hex(32)
             self._tickets[_digest(ticket)] = (path, now + LIFETIME_S)
         return ticket
+
+    def clear(self) -> None:
+        """Revoke every outstanding ticket (the access token changed)."""
+        with self._lock:
+            self._tickets.clear()
 
     def redeem(self, ticket: str, path: str) -> bool:
         """Spend *ticket* on a GET of *path*.

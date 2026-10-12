@@ -21,6 +21,8 @@ def install_http_response(
     captured: dict[str, Any],
 ) -> None:
     class Response:
+        content = b""  # the body's size is all discovery reads of it
+
         def raise_for_status(self) -> None:
             return None
 
@@ -55,7 +57,8 @@ class TestDiscoveryRequirements:
         result = await discovery.discover_models("custom")
         assert result["status"] == "unavailable"
         assert result["models"] == []
-        assert "API base" in result["detail"]
+        assert result["detail"] == "An API endpoint is required"
+        assert result["reason"] == "provider_error"
 
     async def test_azure_requires_its_endpoint(self) -> None:
         result = await discovery.discover_models("azure")
@@ -66,7 +69,9 @@ class TestDiscoveryRequirements:
     async def test_unknown_provider_never_falls_back_to_static_catalog(self) -> None:
         result = await discovery.discover_models("unknown")
         assert result["status"] == "unavailable"
-        assert result["source"] == "live_api"
+        # No list to load is no failure: model IDs are entered by hand
+        assert result["source"] == "manual"
+        assert "reason" not in result
         assert result["models"] == []
 
     @pytest.mark.parametrize(
@@ -142,6 +147,8 @@ class TestDiscoveryRequirements:
         )
 
         class Response:
+            content = b""  # the body's size is all discovery reads of it
+
             status_code = 200
 
             def raise_for_status(self) -> None:
@@ -205,6 +212,8 @@ class TestLiveDiscovery:
         captured: dict[str, Any] = {}
 
         class Response:
+            content = b""  # the body's size is all discovery reads of it
+
             def raise_for_status(self) -> None:
                 return None
 
@@ -252,6 +261,8 @@ class TestLiveDiscovery:
         captured: dict[str, Any] = {}
 
         class Response:
+            content = b""  # the body's size is all discovery reads of it
+
             def raise_for_status(self) -> None:
                 return None
 
@@ -753,7 +764,8 @@ class TestConnectableProviderDiscovery:
         result = await discovery.discover_models(provider, api_key="key")
         assert captured == {}
         assert result["status"] == "unavailable"
-        assert "by hand" in result["detail"]
+        assert result["source"] == "manual" and "reason" not in result
+        assert "enter model IDs manually" in result["detail"]
 
     @pytest.mark.parametrize("provider", ["databricks", "azure_ai", "hosted_vllm"])
     async def test_a_server_of_ones_own_needs_its_address(
@@ -765,7 +777,7 @@ class TestConnectableProviderDiscovery:
         assert captured == {}
         assert (result["status"], result["detail"]) == (
             "unavailable",
-            "API base is required",
+            "An API endpoint is required",
         )
 
     async def test_a_failed_list_leaves_model_ids_by_hand_without_the_key(
@@ -795,7 +807,7 @@ class TestConnectableProviderDiscovery:
         assert result["models"] == []
         # The model test's reason (contract v1.10), not an exception's name
         assert result["reason"] == "key_rejected"
-        assert result["detail"] == "The model list request returned HTTP 401"
+        assert result["detail"] == "Model discovery returned HTTP 401"
         assert "gsk-never-shown" not in str(result)
 
     @pytest.mark.parametrize(

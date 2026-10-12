@@ -314,6 +314,8 @@ class CapabilitiesFeatures(BaseModel):
     result_excerpt: bool
     job_labels: bool
     item_assets: bool  # contract v1.6: GET .../items/{item_id}/assets/{relpath}
+    item_archive: bool  # contract v1.11: GET .../items/{item_id}/archive
+    token_regenerate: bool  # v1.11: POST /api/access-token/regenerate (not --no-auth)
 
 
 class CloudflareCapability(BaseModel):
@@ -733,6 +735,17 @@ class DownloadTicketRequest(BaseModel):
     path: str
 
 
+class RegeneratedToken(BaseModel):
+    """Response of ``POST /api/access-token/regenerate``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str
+    network_url: str | None  # http://<network address>:<port>/#token=<token>
+    persistent: bool  # survives a restart (Python: never, it lives in memory)
+    startup_variable: str | None  # "MARKITAI_SERVE_TOKEN" when it set the token
+
+
 class DownloadTicket(BaseModel):
     """Response of ``POST /api/download-tickets``."""
 
@@ -762,6 +775,7 @@ class OriginalDescriptor(BaseModel):
     media_type: str | None
     size: int | None
     download: str | None  # API path of the stored original
+    view: str | None  # html only: API path of .../original/view (v1.11)
     pages: list[PageBox]
     page_count: int
     text_layer: bool

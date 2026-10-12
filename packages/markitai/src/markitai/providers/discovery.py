@@ -20,7 +20,11 @@ from urllib.parse import urljoin
 
 import httpx
 
-from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_DEFAULT_MODELS
+from markitai.constants import (
+    PROVIDER_API_KEY_ENV,
+    PROVIDER_API_KEY_ENV_NAMES,
+    PROVIDER_DEFAULT_MODELS,
+)
 from markitai.providers.connectable import (
     CONNECTABLE,
     Connectable,
@@ -140,8 +144,50 @@ def _result(
         "models": models,
     }
     if detail:
-        payload["detail"] = detail[:240]
+        payload["detail"] = detail[:400]
     return payload
+
+
+def provider_key_variables(provider: str) -> tuple[tuple[str, ...], str | None]:
+    """The variables LiteLLM reads *provider*'s key from, and the main one.
+
+    In LiteLLM's order (the first one set is the key a request carries);
+    the main one is the variable markitai names when none is set. None for a
+    cloud signed in with the server's own credentials.
+    """
+    row = connectable(provider)
+    if row is not None and row.cloud:
+        return (), None
+    names = PROVIDER_API_KEY_ENV_NAMES.get(provider) or (
+        (row.key_variable,) if row is not None and row.key_variable else ()
+    )
+    return names, PROVIDER_API_KEY_ENV.get(provider) or (names[0] if names else None)
+
+
+def environment_key_providers() -> dict[str, str]:
+    """Every provider a key variable set on this server serves, and that variable.
+
+    The first of the provider's variables that holds a value (the one
+    LiteLLM sends), for every provider of the table whose route is here;
+    local servers and clouds signed in with their own credentials have none.
+    """
+    from markitai.providers import is_local_provider_model
+
+    found: dict[str, str] = {}
+    for row in CONNECTABLE:
+        if (
+            row.cloud
+            or not installed(row)
+            or is_local_provider_model(f"{row.provider}/")
+        ):
+            continue
+        names, _main = provider_key_variables(row.provider)
+        variable = next(
+            (name for name in names if os.environ.get(name, "").strip()), None
+        )
+        if variable is not None:
+            found[row.provider] = variable
+    return found
 
 
 async def detect_provider_connections(
@@ -160,8 +206,10 @@ async def detect_provider_connections(
         )
         for model in configured or []
     ]
-    env_key = [name for name in PROVIDER_API_KEY_ENV.values() if os.environ.get(name)]
-    key = hashlib.sha256(repr((configured_key, env_key)).encode()).hexdigest()
+    environment = environment_key_providers()
+    key = hashlib.sha256(
+        repr((configured_key, sorted(environment.items()))).encode()
+    ).hexdigest()
     cached = _connection_cache.get(key)
     if (
         not refresh
@@ -240,20 +288,22 @@ async def detect_provider_connections(
     )
     cards.extend(card for card in detected_cards if card is not None)
 
-    for provider, env_var in PROVIDER_API_KEY_ENV.items():
-        if os.environ.get(env_var):
-            cards.append(
-                {
-                    "id": f"env:{provider}",
-                    "provider": provider,
-                    "label": provider_label(provider),
-                    "kind": "environment",
-                    "status": "ready",
-                    "source": env_var,
-                    "credential": f"env:{env_var}",
-                    "supports_discovery": True,
-                }
-            )
+    # Every provider whose key variable is set, not only markitai's first
+    # five: the workbench tells a user to set one and find it under Saved
+    for provider, env_var in environment.items():
+        row = connectable(provider)
+        cards.append(
+            {
+                "id": f"env:{provider}",
+                "provider": provider,
+                "label": provider_label(provider),
+                "kind": "environment",
+                "status": "ready",
+                "source": env_var,
+                "credential": f"env:{env_var}",
+                "supports_discovery": row is None or row.discovery != "manual",
+            }
+        )
 
     local_connections = {
         str(card["provider"])
@@ -495,6 +545,32 @@ async def _oauth_models(provider: str) -> dict[str, Any]:
     )
 
 
+def _manual_list(provider: str) -> dict[str, Any]:
+    """A provider that publishes no model list: no failure, no ``reason``."""
+    return _result(
+        provider,
+        status="unavailable",
+        source="manual",
+        authoritative=False,
+        models=[],
+        detail="This provider does not publish a model list; enter model IDs manually",
+    )
+
+
+def _no_endpoint(provider: str) -> dict[str, Any]:
+    """A list that needs an address the request does not have."""
+    result = _result(
+        provider,
+        status="unavailable",
+        source="live_api",
+        authoritative=False,
+        models=[],
+        detail="An API endpoint is required",
+    )
+    result["reason"] = "provider_error"
+    return result
+
+
 async def _http_models(
     provider: str,
     api_key: str | None,
@@ -545,14 +621,7 @@ async def _http_models(
         )
     elif provider == "azure":
         if not api_base:
-            return _result(
-                provider,
-                status="unavailable",
-                source="live_api",
-                authoritative=False,
-                models=[],
-                detail="Azure OpenAI endpoint is required",
-            )
+            return _no_endpoint(provider)
         base = api_base.rstrip("/")
         if base.endswith(("/openai/v1", "/v1")):
             url = urljoin(base + "/", "models")
@@ -563,39 +632,24 @@ async def _http_models(
             headers["api-key"] = api_key
     elif provider == "custom":
         if not api_base:
-            return _result(
-                provider,
-                status="unavailable",
-                source="live_api",
-                authoritative=False,
-                models=[],
-                detail="API base is required",
-            )
+            return _no_endpoint(provider)
         url = urljoin(api_base.rstrip("/") + "/", "models")
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
     elif (row := connectable(provider)) is not None and row.discovery != "builtin":
         return await _listed_models(row, api_key, api_base)
     else:
-        return _result(
-            provider,
-            status="unavailable",
-            source="live_api",
-            authoritative=False,
-            models=[],
-            detail="Provider does not expose a supported live model-list endpoint",
-        )
+        return _manual_list(provider)
 
     async with httpx.AsyncClient(
         timeout=_REMOTE_TIMEOUT, follow_redirects=False
     ) as client:
         response = await client.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        body = response.json()
+        body = _list_body(response)
 
     candidates: list[dict[str, Any]] = []
     if provider == "gemini":
-        records = body.get("models", []) if isinstance(body, dict) else []
+        records = _model_records(body, "models")
         for record in records:
             if not isinstance(record, dict):
                 continue
@@ -608,13 +662,13 @@ async def _http_models(
                     _candidate(f"gemini/{raw_id}", record.get("displayName"))
                 )
     elif provider == "ollama":
-        records = body.get("models", []) if isinstance(body, dict) else []
+        records = _model_records(body, "models")
         for record in records:
             raw_id = record.get("name") if isinstance(record, dict) else None
             if isinstance(raw_id, str) and raw_id:
                 candidates.append(_candidate(f"ollama/{raw_id}"))
     elif provider == "chatgpt":
-        records = body.get("models", []) if isinstance(body, dict) else []
+        records = _model_records(body, "models")
         for record in records:
             if not isinstance(record, dict) or record.get("visibility") != "list":
                 continue
@@ -624,7 +678,7 @@ async def _http_models(
                     _candidate(f"chatgpt/{raw_id}", record.get("display_name"))
                 )
     else:
-        records = body.get("data", []) if isinstance(body, dict) else []
+        records = _model_records(body, "data")
         prefix = {
             "custom": "openai",
             "claude-agent": "claude-agent",
@@ -668,24 +722,10 @@ async def _listed_models(
     ``GET <base>/models`` most of them serve, or Cohere's own list."""
     provider = row.provider
     if row.discovery == "manual":
-        return _result(
-            provider,
-            status="unavailable",
-            source="live_api",
-            authoritative=False,
-            models=[],
-            detail="The provider publishes no model list; enter model IDs by hand",
-        )
+        return _manual_list(provider)
     base = api_base or row.base
     if not base:
-        return _result(
-            provider,
-            status="unavailable",
-            source="live_api",
-            authoritative=False,
-            models=[],
-            detail="API base is required",
-        )
+        return _no_endpoint(provider)
     headers: dict[str, str] = {}
     params: dict[str, str] = {}
     if api_key:
@@ -702,16 +742,15 @@ async def _listed_models(
         timeout=_REMOTE_TIMEOUT, follow_redirects=False
     ) as client:
         response = await client.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        body = response.json()
+        body = _list_body(response)
 
     if row.discovery == "cohere":
-        records = body.get("models", []) if isinstance(body, dict) else []
+        records = _model_records(body, "models")
         key, label_keys = "name", ()
         more = isinstance(body, dict) and bool(body.get("next_page_token"))
     else:
         # Together AI answers with the bare list
-        records = body.get("data", []) if isinstance(body, dict) else body
+        records = body if isinstance(body, list) else _model_records(body, "data")
         key, label_keys = "id", ("display_name", "name")
         more = isinstance(body, dict) and body.get("has_more") is True
     candidates: list[dict[str, Any]] = []
@@ -738,31 +777,99 @@ async def _listed_models(
     )
 
 
+#: The provider's own message in a failure detail, in characters at most
+_MAX_MESSAGE = 300
+#: A model list answer larger than this is not read
+_MAX_LIST_BYTES = 2 * 1024 * 1024
+
+
+class UnreadableModelList(ValueError):
+    """An answer that is not a model list (not JSON, too large, no list)."""
+
+
+def _model_records(body: Any, key: str) -> list[Any]:
+    """The model records under *key*, or :class:`UnreadableModelList`."""
+    records = body.get(key) if isinstance(body, dict) else None
+    if not isinstance(records, list):
+        raise UnreadableModelList("Model discovery response has no model list")
+    return records
+
+
+def _list_body(response: httpx.Response) -> Any:
+    """A successful answer's JSON, bounded; non-2xx raises HTTPStatusError."""
+    response.raise_for_status()
+    if len(response.content) > _MAX_LIST_BYTES:
+        raise UnreadableModelList("Model discovery response exceeds 2 MiB")
+    try:
+        return response.json()
+    except ValueError:
+        raise UnreadableModelList("Model discovery response is not JSON") from None
+
+
+def _without_markup(text: str) -> str:
+    """Text with every ``<…>`` tag replaced by a space."""
+    plain: list[str] = []
+    markup = False
+    for character in text[: 64 * 1024]:
+        if character == "<":
+            markup = True
+        elif character == ">" and markup:
+            markup = False
+            plain.append(" ")
+        elif not markup:
+            plain.append(character)
+    return "".join(plain)
+
+
 def _provider_words(response: httpx.Response, secrets: tuple[str, ...]) -> str:
-    """The provider's own message in a refused answer, without credentials."""
-    words = ""
+    """The provider's own message in a refused answer, without credentials.
+
+    The JSON body's ``error.message``, ``message``, ``error`` or ``detail``,
+    else the text without markup; at most 300 characters, and the key that
+    was sent replaced by ``…`` (contract v1.11 section 8).
+    """
     try:
         body = response.json()
+        parsed = True
     except ValueError:
-        body = None
-    if isinstance(body, dict):
-        error = body.get("error")
+        body, parsed = None, False
+    words = ""
+    if parsed:
+        error = body.get("error") if isinstance(body, dict) else None
         for value in (
-            error.get("message") if isinstance(error, dict) else error,
-            body.get("message"),
-            body.get("detail"),
+            error.get("message") if isinstance(error, dict) else None,
+            body.get("message") if isinstance(body, dict) else None,
+            error,
+            body.get("detail") if isinstance(body, dict) else None,
         ):
-            if isinstance(value, str) and value.strip():
+            if isinstance(value, str):
                 words = value
                 break
-    elif not response.headers.get("content-type", "").startswith("text/html"):
-        words = response.text
+    else:
+        words = _without_markup(response.text)
+    words = " ".join(words.split())
     for secret in secrets:
-        if secret:
+        if len(secret) >= 4:
             words = words.replace(secret, "…")
     words = re.sub(r"(?i)\bBearer\s+\S+", "Bearer …", words)
     words = re.sub(r"\b(?:sk|gsk|xai|key)-[A-Za-z0-9._-]{4,}\b", "…", words)
-    return " ".join(words.split())[:160]
+    return words[:_MAX_MESSAGE] + ("…" if len(words) > _MAX_MESSAGE else "")
+
+
+def _transport_cause(error: BaseException, secrets: tuple[str, ...]) -> str:
+    """Why a request got no answer, in a few words (never a key)."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OSError) and current.strerror:
+            return current.strerror.lower()
+        current = current.__cause__ or current.__context__
+    cause = " ".join(str(error).split()) or type(error).__name__
+    for secret in secrets:
+        if len(secret) >= 4:
+            cause = cause.replace(secret, "…")
+    return cause[:_MAX_MESSAGE]
 
 
 def discovery_failure(
@@ -774,29 +881,29 @@ def discovery_failure(
 ) -> dict[str, str]:
     """Why a model list could not be loaded: ``reason`` and ``detail``.
 
-    The reasons are the model test's (API contract v1.10, ``no_key``,
-    ``key_rejected``, ``rate_limited``, ``network``, ``timeout``,
-    ``provider_error``), so the workbench says what to do the same way;
-    ``key_variable`` comes with ``no_key`` when known. A refusal of a request
-    that carried no key (*keyless*) means the key is missing, not wrong.
+    The reasons are the model test's (API contract v1.10), so the workbench
+    says what to do the same way, and the details are Rust's sentences
+    (contract v1.11): ``Model discovery returned HTTP 401: <the provider's
+    message>``, ``Model discovery timed out``, ``Model discovery request
+    failed: <cause>``. A 401/403 to a request that carried no key
+    (*keyless*) means the key is missing, not wrong: ``no_key``, with
+    ``key_variable`` when known. A redirect is not followed (``network``);
+    for a list, a 404 means the address has none (``provider_error``).
     """
-    failure: dict[str, str]
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
+        if 300 <= status < 400:
+            return {
+                "reason": "network",
+                "detail": "Model discovery request failed: the address "
+                f"redirected (HTTP {status}), which discovery does not follow",
+            }
         words = _provider_words(error.response, secrets)
-        detail = f"The model list request returned HTTP {status}" + (
+        detail = f"Model discovery returned HTTP {status}" + (
             f": {words}" if words else ""
         )
         if status in (401, 403) and keyless:
-            failure = {"reason": "no_key"}
-            failure["detail"] = (
-                f"{key_variable} is not set on the server, so the provider "
-                "refused the model list request: set it where markitai serve "
-                "runs and restart the server, or add a key to this connection"
-                if key_variable
-                else "No API key is available for this provider, so it refused "
-                "the model list request: add a key to this connection"
-            )
+            failure = {"reason": "no_key", "detail": detail}
             if key_variable:
                 failure["key_variable"] = key_variable
             return failure
@@ -805,29 +912,20 @@ def discovery_failure(
             if status in (401, 403)
             else "rate_limited"
             if status == 429
-            else "network"
-            if 300 <= status < 400  # a redirect is not followed: wrong address
             else "provider_error"
         )
         return {"reason": reason, "detail": detail}
     if isinstance(error, httpx.TimeoutException | asyncio.TimeoutError | TimeoutError):
-        return {"reason": "timeout", "detail": "The model list request timed out"}
+        return {"reason": "timeout", "detail": "Model discovery timed out"}
     if isinstance(error, httpx.TransportError | ConnectionError):
         return {
             "reason": "network",
-            "detail": "The model list request did not reach the provider: check "
-            "the address and the server's network",
+            "detail": "Model discovery request failed: "
+            + _transport_cause(error, secrets),
         }
-    if isinstance(error, ValueError):
-        # Not JSON, or not the shape of a model list
-        return {
-            "reason": "provider_error",
-            "detail": "The provider's answer is not a model list: check the address",
-        }
-    return {
-        "reason": "provider_error",
-        "detail": f"Model discovery failed ({type(error).__name__})",
-    }
+    if isinstance(error, UnreadableModelList):
+        return {"reason": "provider_error", "detail": str(error)}
+    return {"reason": "provider_error", "detail": "Model discovery could not complete"}
 
 
 async def discover_models(
@@ -878,12 +976,21 @@ async def discover_models(
             return result
         try:
             result = await asyncio.wait_for(loader(), timeout=20.0)
+            if (
+                result.get("status") == "unavailable"
+                and result.get("source") != "manual"
+            ):
+                # A list that could not be had (no runtime, no sign-in, no
+                # address) says why; one the provider does not publish is
+                # no failure
+                result.setdefault("reason", "provider_error")
             _cache[key] = _CacheEntry(value=result, fetched_at=time.monotonic())
             return result
         except Exception as error:
             failure = discovery_failure(
                 error,
-                keyless=not api_key,
+                # Ollama is sent no key even when one is configured
+                keyless=not api_key or provider == "ollama",
                 key_variable=key_variable,
                 secrets=(api_key or "",),
             )
@@ -897,7 +1004,7 @@ async def discover_models(
                         "status": "partial",
                         "detail": (
                             f"{failure['detail']}; showing the models loaded before"
-                        )[:240],
+                        )[:400],
                         "reason": failure["reason"],
                     }
                 )

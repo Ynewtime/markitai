@@ -6,15 +6,19 @@ conversion saved); page images and a PDF page's positioned text lines feed the
 view. The descriptor costs no rendering: page boxes come from the PDF's page
 tree or the image header.
 
-Originals are the uploads a job keeps under ``uploads/``. A URL item keeps no
-page snapshot here, so it shows its screenshots when the conversion saved any;
-a CLI-recorded job keeps no originals at all.
+Originals are the uploads a job keeps under ``uploads/`` and, for a URL item,
+the page the server fetched, kept under ``snapshots/<item_id>.html`` (contract
+v1.11 section 7) beside the page screenshots the conversion saved. A
+CLI-recorded job keeps no originals at all.
 """
 
 from __future__ import annotations
 
 import io
 import mimetypes
+import os
+import re
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -25,6 +29,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from markitai.serve.jobs import Job, JobItem
+
+#: A URL item's fetched page is kept up to this size, and framed up to it
+MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024
+SNAPSHOTS_DIR = "snapshots"
 
 PDF_EXTENSIONS = frozenset({".pdf"})
 #: Raster images the Compare view shows as one page.
@@ -123,13 +131,16 @@ class Original:
     reason: str | None = None
     screenshots: list[Path] = field(default_factory=list)
 
-    def descriptor(self, download: str | None) -> dict[str, Any]:
+    def descriptor(
+        self, download: str | None, view: str | None = None
+    ) -> dict[str, Any]:
         return {
             "kind": self.kind,
             "name": self.name,
             "media_type": self.media_type,
             "size": self.size,
             "download": download if self.path is not None else None,
+            "view": view if self.kind == "html" and self.path is not None else None,
             "pages": [
                 {"width": round(width, 2), "height": round(height, 2)}
                 for width, height in self.pages[:MAX_LISTED_PAGES]
@@ -158,6 +169,124 @@ def kept_upload(job: Job, item: JobItem) -> Path | None:
     if upload == uploads or not upload.is_relative_to(uploads) or not upload.is_file():
         return None
     return upload
+
+
+def page_snapshot_path(job: Job, item: JobItem) -> Path | None:
+    """Where a URL item's fetched page is kept (None for any other item)."""
+    item_id = item.item_id
+    if item.kind != "url" or not item_id.isalnum() or not item_id.isascii():
+        return None
+    return job.job_dir / SNAPSHOTS_DIR / f"{item_id}.html"
+
+
+def kept_snapshot(job: Job, item: JobItem) -> Path | None:
+    """The URL item's kept page, when there is one."""
+    path = page_snapshot_path(job, item)
+    if path is None or path.is_symlink() or not path.is_file():
+        return None
+    return path
+
+
+def keep_page_snapshot(job: Job, item: JobItem, html: str) -> bool:
+    """Keep *html* as the URL item's fetched page, replacing an older one.
+
+    UTF-8, at most ``MAX_SNAPSHOT_BYTES`` (a larger page is not kept), and
+    written beside its place then moved in, so a reader never sees half a
+    page. Returns whether it was kept.
+    """
+    path = page_snapshot_path(job, item)
+    data = html.encode("utf-8", "replace")
+    if path is None or len(data) > MAX_SNAPSHOT_BYTES:
+        return False
+    tmp = path.with_name(f".{path.stem}.{uuid.uuid4().hex}.tmp")
+    try:
+        path.parent.mkdir(exist_ok=True)
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+    except OSError:
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
+    return True
+
+
+def kept_original(job: Job, item: JobItem) -> tuple[Path, str] | None:
+    """The stored original bytes and the file name they download as.
+
+    An upload keeps its own name; a URL item's page is ``<output base>.html``.
+    """
+    upload = kept_upload(job, item)
+    if upload is not None:
+        return upload, item.name
+    snapshot = kept_snapshot(job, item)
+    if snapshot is None:
+        return None
+    from markitai.serve.jobs import item_base_name
+
+    return snapshot, f"{item_base_name(item) or 'page'}.html"
+
+
+#: The policy of a framed HTML original: no script, no request leaves the
+#: page (styles inline, pictures and fonts only as data), links open outside
+#: the frame, and only the workbench may frame it.
+VIEW_POLICY = (
+    "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; "
+    "style-src 'unsafe-inline'; img-src data:; font-src data:; "
+    "form-action 'none'; frame-ancestors 'self'"
+)
+_HTML_WHITESPACE = " \t\n\r\x0c"
+_ATTRIBUTE_ESCAPES = str.maketrans(
+    {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}
+)
+_START_TAGS = {
+    name: re.compile(f"<{name}", re.IGNORECASE | re.ASCII) for name in ("head", "html")
+}
+
+
+def _after_start_tag(page: str, name: str) -> int | None:
+    """Where the first ``<name…>`` start tag ends (just after its ``>``).
+
+    ``<name`` matches ASCII case-insensitively and must be followed by
+    white space, ``>`` or ``/`` (so ``<header>`` is not ``<head>``).
+    """
+    pattern = _START_TAGS[name]
+    start = 0
+    while (found := pattern.search(page, start)) is not None:
+        after = found.end()
+        if after >= len(page):
+            return None
+        if page[after] in _HTML_WHITESPACE or page[after] in ">/":
+            end = page.find(">", after)
+            return None if end < 0 else end + 1
+        start = after
+    return None
+
+
+def framed_page(page: str, url: str | None) -> str:
+    """The kept page with one insertion for the workbench's sandboxed frame.
+
+    No DNS prefetching, and a base that resolves relative links against the
+    page's address (a URL item) and opens them outside the frame. It goes
+    after the first ``<head>`` tag, else after the first ``<html>`` tag,
+    else at the start after a leading doctype (contract v1.11 section 7).
+    """
+    base = (
+        f'<base href="{url.translate(_ATTRIBUTE_ESCAPES)}" target="_blank">'
+        if url is not None
+        else '<base target="_blank">'
+    )
+    insertion = f'<meta http-equiv="x-dns-prefetch-control" content="off">{base}'
+    at = _after_start_tag(page, "head")
+    if at is None:
+        at = _after_start_tag(page, "html")
+    if at is None:
+        lead = len(page) - len(page.lstrip("\ufeff" + _HTML_WHITESPACE))
+        if page[lead : lead + 9].lower() == "<!doctype":
+            end = page.find(">", lead)
+            at = end + 1 if end >= 0 else lead
+        else:
+            at = len(page) - len(page.lstrip("\ufeff"))
+    return page[:at] + insertion + page[at:]
 
 
 def _screenshot_key(path: Path) -> tuple[str, int, str]:
@@ -280,6 +409,15 @@ def describe(
         base.reason = base.reason or "unsupported_format"
         return base
     screenshots = item_screenshots(job, item)
+    snapshot = kept_snapshot(job, item)
+    if snapshot is not None:
+        # The page as fetched, with its screenshots as its pages
+        page = _with_screenshots(
+            Original(kind="html", name=item.name), screenshots, boxes
+        )
+        page.kind, page.path = "html", snapshot
+        page.media_type, page.size = "text/html", snapshot.stat().st_size
+        return page
     original = Original(kind="none", name=item.name, reason="not_kept")
     if screenshots:
         return _with_screenshots(original, screenshots, boxes)

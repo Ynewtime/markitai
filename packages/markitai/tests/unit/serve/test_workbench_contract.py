@@ -141,6 +141,8 @@ SHAPES: dict[str, dict[str, F]] = {
             "result_excerpt",
             "job_labels",
             "item_assets",
+            "item_archive",
+            "token_regenerate",
         )
     },
     "PresetFeatures": {
@@ -236,6 +238,12 @@ SHAPES: dict[str, dict[str, F]] = {
         "markdown_bytes": opt("int"),
     },
     "DownloadTicket": {"ticket": F("str"), "url": F("str"), "expires_in": F("int")},
+    "RegeneratedToken": {
+        "token": F("str"),
+        "network_url": null("str"),
+        "persistent": F("bool"),
+        "startup_variable": null("str"),
+    },
     "PageBox": {"width": F("num"), "height": F("num")},
     "OriginalDescriptor": {
         "kind": F(frozenset({"pdf", "image", "html", "text", "screenshots", "none"})),
@@ -243,6 +251,7 @@ SHAPES: dict[str, dict[str, F]] = {
         "media_type": null("str"),
         "size": null("int"),
         "download": null("str"),
+        "view": opt("str"),
         "pages": F(["@PageBox"]),
         "page_count": F("int"),
         "text_layer": F("bool"),
@@ -659,10 +668,15 @@ class TestCapabilities:
         assert data["implementation"] == "python"
         assert data["docs_url"].startswith("https://")
         assert data["source_url"] == "https://github.com/Ynewtime/markitai"
+        # Without a token (--no-auth) there is none to regenerate
+        assert data["features"].pop("token_regenerate") is False
         assert all(data["features"].values())
         assert data["limits"]["history_retention_days"] == 7
         for preset in data["presets"]:
             check_shape("PresetFeatures", data["preset_options"][preset])
+        async with _client(_make_app(tmp_path, token="secret-token")) as client:
+            data = (await client.get("/api/capabilities")).json()
+        assert data["features"]["token_regenerate"] is True
 
     async def test_cloudflare_state_is_hidden_from_untrusted_callers(
         self, tmp_path: Path
