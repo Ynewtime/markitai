@@ -1598,59 +1598,56 @@ def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
     return detail[:300]
 
 
-def _probe_key_source(body: LLMSettingsUpdate) -> tuple[str | None, str | None]:
-    """Where a test's key comes from, and the provider's key variable.
+def _probe_keyless(body: LLMSettingsUpdate) -> tuple[bool, str | None]:
+    """Whether a test carries no real key, and the variable one would be in.
 
-    Returns a phrase for the sentence ("the key saved with this connection",
-    "the key in DEEPSEEK_API_KEY"), None when the request carries no key,
-    and the variable LiteLLM reads the provider's key from.
+    Keyless means no key of its own, none in the provider's key variables
+    and not a cloud signed in with the server's own credentials; the
+    keyless placeholder counts as none, but names no variable (its entry
+    reads none). The variable is the provider's main one, the one LiteLLM
+    reads, for a model without a key of its own.
     """
-    from markitai.constants import PROVIDER_API_KEY_ENV_NAMES
+    from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_API_KEY_ENV_NAMES
     from markitai.providers.connectable import CONNECTABLE
 
     model = body.model or ""
     prefix = model.partition("/")[0].lower() if "/" in model else ""
-    names = PROVIDER_API_KEY_ENV_NAMES.get(prefix) or tuple(
-        row.key_variable
-        for row in CONNECTABLE
-        if row.provider == prefix and row.key_variable
+    row = next((row for row in CONNECTABLE if row.provider == prefix), None)
+    if row is not None and row.cloud:
+        return False, None
+    names = PROVIDER_API_KEY_ENV_NAMES.get(prefix) or (
+        (row.key_variable,) if row is not None and row.key_variable else ()
     )
-    variable = names[0] if names else None
+    variable = PROVIDER_API_KEY_ENV.get(prefix) or (names[0] if names else None)
     key = body.api_key
     if key == NO_KEY:
-        return None, variable
+        return True, None
     if key and key.startswith("env:"):
-        return f"the key in {key[4:]}", variable
+        return not os.environ.get(key[4:]), key[4:]
     if key:
-        return "the key saved with this connection", variable
-    found = next((name for name in names if os.environ.get(name)), None)
-    return (f"the key in {found}" if found else None), variable
+        return False, None
+    return not any(os.environ.get(name) for name in names), variable
 
 
 def _probe_failure(exc: BaseException, body: LLMSettingsUpdate) -> dict[str, Any]:
-    """The answer for a failed test: category, sentence, provider wording."""
+    """The answer for a failed test: category and detail (contract v1.10)."""
     from markitai.llm.error_redaction import _LITELLM_HEAD
 
     raw = _sanitize_probe_error(exc, body)
     words = re.sub(r"\s+", " ", _LITELLM_HEAD.sub("", raw)).strip()
-    key_source, variable = _probe_key_source(body)
+    keyless, variable = _probe_keyless(body)
     failure = model_test.classify(
         exc,
         model=body.model or "",
         provider_words=words,
-        key_source=key_source,
+        keyless=keyless,
         key_variable=variable,
     )
     logger.info(
         "[Serve] Model test of {} failed: {} ({})", body.model, failure.reason, raw
     )
-    return {
-        "ok": False,
-        # An error with no status and no category keeps its own first line
-        "detail": failure.detail if failure.categorized else raw,
-        "reason": failure.reason,
-        "provider_detail": failure.provider_detail,
-    }
+    # An error with no status and no category keeps its own first line
+    return failure.answer(None if failure.categorized else raw)
 
 
 CredentialPair = tuple[str | None, str | None]
@@ -3618,7 +3615,12 @@ def create_app(
                 500, "settings_io_failed", f"could not open the config file: {e}"
             ) from e
 
-    @app.post("/api/settings/llm/test", response_model=LLMTestResult)
+    @app.post(
+        "/api/settings/llm/test",
+        response_model=LLMTestResult,
+        # Success is {ok, detail}; key_variable only when known
+        response_model_exclude_none=True,
+    )
     async def test_llm_settings(
         request: Request, body: LLMSettingsUpdate
     ) -> dict[str, Any]:
@@ -3654,8 +3656,7 @@ def create_app(
             if lacking is not None:
                 # Nothing is sent: LiteLLM would send the request without a
                 # key, and the provider's 401 reads like a wrong key
-                failure = model_test.missing_key_failure(lacking)
-                return {"ok": False, "detail": failure.detail, "reason": failure.reason}
+                return model_test.missing_key_failure(lacking).answer()
         try:
             detail = await asyncio.wait_for(
                 _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S
