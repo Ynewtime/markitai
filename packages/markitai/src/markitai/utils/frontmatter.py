@@ -445,6 +445,27 @@ def build_frontmatter_dict(
     return result
 
 
+#: Fields that hold a web address, written as a readable IRI
+URL_FIELDS = ("source", "canonical_url")
+
+
+def readable_urls(frontmatter: dict[str, Any]) -> dict[str, Any]:
+    """A copy of *frontmatter* with its web addresses as readable IRIs.
+
+    ``source`` and ``canonical_url`` show the characters a percent-encoded
+    address hides (``/posts/ai-%E5%BA%94`` -> ``/posts/ai-应``), the same
+    address (``markitai.utils.iri``); a file name is left as it is.
+    """
+    from markitai.utils.iri import readable_url
+
+    result = dict(frontmatter)
+    for field in URL_FIELDS:
+        value = result.get(field)
+        if isinstance(value, str):
+            result[field] = readable_url(value)
+    return result
+
+
 def frontmatter_to_yaml(frontmatter: dict[str, Any]) -> str:
     """Convert frontmatter dict to YAML string.
 
@@ -459,7 +480,7 @@ def frontmatter_to_yaml(frontmatter: dict[str, Any]) -> str:
 
     # Use safe_dump with options for clean output
     return yaml.safe_dump(
-        dict(frontmatter),  # Convert OrderedDict to regular dict for yaml
+        readable_urls(frontmatter),  # also a plain dict for yaml
         default_flow_style=False,
         allow_unicode=True,
         sort_keys=False,  # Preserve order
