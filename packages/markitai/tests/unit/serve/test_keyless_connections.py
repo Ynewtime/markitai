@@ -31,6 +31,10 @@ ENV_KEYS = {
     "LM_STUDIO_API_KEY": "lms-SERVER-STUDIO-0000",
 }
 CALLER = "caller.example"
+KEYLESS_MOVE_DETAIL = (
+    "a connection with a key cannot become one without a key at another "
+    "address; add a new connection for that server instead"
+)
 
 # (card provider, model, an address the caller picks)
 CASES = [
@@ -196,7 +200,9 @@ async def test_a_keyed_connection_cannot_turn_keyless_at_another_host(
         )
     assert refused.status_code == 422
     assert refused.json()["reason"] == "invalid_settings_request"
-    assert "another address" in refused.json()["detail"]
+    # Verbatim: the shared workbench translates this refusal by its wording
+    # (contract v1.8), so a reworded detail would reach users untranslated.
+    assert refused.json()["detail"] == KEYLESS_MOVE_DETAIL
 
 
 async def test_a_keyed_deployment_cannot_turn_keyless_at_another_host(
@@ -216,6 +222,7 @@ async def test_a_keyed_deployment_cannot_turn_keyless_at_another_host(
         )
     assert refused.status_code == 422
     assert refused.json()["reason"] == "invalid_settings_request"
+    assert refused.json()["detail"] == KEYLESS_MOVE_DETAIL
 
 
 async def test_clearing_a_key_at_the_same_address_stores_the_placeholder(
@@ -339,3 +346,19 @@ async def test_a_subscription_runtime_takes_no_placeholder(tmp_path: Path) -> No
     assert added.status_code == 200, added.text
     params = _saved(config_path)["model_list"][0]["litellm_params"]
     assert params == {"model": "claude-agent/haiku"}
+
+
+def test_the_workbench_translates_the_keyless_move_detail() -> None:
+    """The vendored bundle matches the refusal by the start of its wording."""
+    import re
+
+    import markitai.serve
+
+    app_js = (
+        Path(markitai.serve.__file__).parent / "workbench" / "ui" / "app.js"
+    ).read_text(encoding="utf-8")
+    patterns = re.findall(
+        r"\[/(\^a connection with a key[^/]*)/,\"errKeylessMove\"\]", app_js
+    )
+    assert patterns, "the bundle no longer translates the keyless-move refusal"
+    assert all(re.match(pattern, KEYLESS_MOVE_DETAIL) for pattern in patterns)
