@@ -5,7 +5,7 @@ import type { ProviderCard } from "../api/types.ts";
 import { en } from "../i18n/en.ts";
 import { ja } from "../i18n/ja.ts";
 import { zh } from "../i18n/zh.ts";
-import { arrangeProviders, iconKey, isSubscription, matches, monogram, ownEndpointLogin, usesCloudCredentials } from "./provider-catalog.ts";
+import { arrangeProviders, iconKey, isSubscription, listsModels, matches, monogram, ownEndpointLogin, usesCloudCredentials } from "./provider-catalog.ts";
 
 const card = (provider: string, label: string, extra: Partial<ProviderCard> = {}): ProviderCard => ({
   id: `common:${provider}`,
@@ -131,4 +131,22 @@ test("the add form sends no address for a provider that takes none", () => {
   assert.match(source, /deploymentCredentials\(provider, draftKey, login === null \? draftBase : ""\)/);
   assert.match(source, /discoveryRequest\(from, draftKey, login === null \? draftBase : "", refresh\)/);
   assert.match(source, /baseOptional = [^;]*login === null;/);
+});
+
+test("a provider without a model list takes model IDs by hand, even when a saved card claims a list", () => {
+  // Python 1.2.1 sends `supports_discovery: true` for every saved connection.
+  const saved = { kind: "configured" as const, provider_id: "p1", supports_discovery: true };
+  for (const provider of ["vertex_ai", "vertex_ai_beta", "bedrock", "perplexity", "zai", "fireworks_ai"]) {
+    assert.equal(listsModels(card(provider, provider, saved)), false, provider);
+  }
+  for (const provider of ["openai", "copilot", "groq", "ollama"]) assert.equal(listsModels(card(provider, provider, saved)), true, provider);
+  assert.equal(listsModels(card("cohere", "Cohere", { supports_discovery: false })), false);
+});
+
+test("a saved login or subscription connection offers no key and no address", () => {
+  const source = readFileSync(new URL("../components/settings-models.tsx", import.meta.url), "utf8");
+  assert.match(source, /const takesKey = login === null && !subscription;/);
+  assert.match(source, /\{takesKey && \(\s*<button/);
+  assert.match(source, /\{login === null && !subscription && \(\s*<span class="text-actions">/);
+  assert.match(source, /const manualOnly = provider !== null && !listsModels\(provider\);/);
 });

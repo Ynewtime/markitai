@@ -913,6 +913,11 @@ main:focus {
 
 .conv-head {
   align-items: center;
+  justify-content: flex-start;
+  column-gap: 8px;
+}
+.conv-head .conv-title {
+  margin-right: auto;
 }
 .conv-summary {
   margin-top: 2px;
@@ -1302,6 +1307,13 @@ main:focus {
 .file-name-tail {
   flex: none;
 }
+/* a web address's query or fragment gives way before its path */
+.file-name-rest {
+  flex: 0 1000 auto;
+  min-width: 1em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .file-name.is-full {
   display: inline;
   white-space: normal;
@@ -1629,6 +1641,12 @@ main:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.peek-title > .file-name {
+  display: flex;
+}
+.peek-title > .file-name.is-full {
+  display: block;
+}
 .peek .action-error {
   margin: 12px 20px 0;
 }
@@ -1686,10 +1704,21 @@ main:focus {
   box-shadow: none;
   animation: sheet-in var(--dur-slow) var(--ease-out);
 }
+/* the tools share the top row with Back; the title takes the whole row below */
 .peek.is-phone .peek-head {
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 0 2px;
   padding: 4px 4px 4px 2px;
   padding-top: calc(4px + env(safe-area-inset-top));
+}
+.peek.is-phone .peek-tools {
+  margin-left: auto;
+}
+.peek.is-phone .peek-title {
+  flex: 1 0 100%;
+  order: 1;
+  padding: 2px 12px 6px 14px;
+  white-space: nowrap;
 }
 .peek.is-phone .peek-head .icon-btn,
 .peek.is-phone .peek-head .btn-icon {
@@ -4627,18 +4656,31 @@ input[type="password"],
   .head-actions {
     width: 100%;
   }
-  /* Conversions keeps New conversion and "⋯" beside its title */
+  /* Conversions keeps New conversion and "⋯" beside its title (below it when
+     they do not fit); the status sentence takes the row below, and Stop
+     remaining a row of its own */
   .conv-head {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
   }
   .conv-head .conv-title {
-    min-width: 0;
+    display: contents;
   }
   .conv-head .head-actions {
     flex: none;
     flex-wrap: nowrap;
     width: auto;
     margin-left: auto;
+  }
+  .conv-head .conv-summary {
+    flex: 1 0 100%;
+    order: 1;
+    margin-top: -6px;
+  }
+  .conv-head .head-stop {
+    order: 2;
+    margin: 2px 0 0;
   }
   .toolbar {
     align-items: stretch;

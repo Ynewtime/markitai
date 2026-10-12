@@ -16,6 +16,7 @@ import { printDocument, type PrintJob } from "../lib/print.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { ActionMenu, type MenuAction } from "./action-menu.tsx";
 import { CompareView } from "./compare-view.tsx";
+import { FileName } from "./file-name.tsx";
 import { Icon } from "./icons.tsx";
 import { ActionError, type ActionFailure, type ActSet } from "./inspector.tsx";
 import { MarkdownView, type RenderedState, type Tab } from "./markdown-view.tsx";
@@ -164,8 +165,9 @@ export function Peek(props: PeekProps) {
           <span class="peek-pos">{t.positionOf(position.index + 1, position.total)}</span>
         </span>
       )}
-      <h2 id="peek-title" class="peek-title" title={title}>
-        {title}
+      {/* An item's name gives up its middle, as file names do; a phone puts it on its own row. */}
+      <h2 id="peek-title" class="peek-title" title={item ? undefined : title}>
+        {item ? <FileName name={title} url={url !== null} /> : title}
       </h2>
       <span class="peek-tools">
         {position && phone && (

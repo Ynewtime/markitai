@@ -22,7 +22,7 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { endpointFor, sameEndpoint } from "../lib/models.ts";
-import { isSubscription, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
+import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
   deploymentCredentials,
@@ -307,8 +307,8 @@ export function ModelsSettings({
   // Vertex AI (and watsonx, GigaChat) sign in with the server's own login at
   // their own endpoint: the server refuses them an address, so none is offered.
   const login = provider !== null ? ownEndpointLogin(provider) : null;
-  // The provider lists no models: IDs are entered by hand.
-  const manualOnly = provider !== null && provider.supports_discovery === false;
+  // The provider lists no models (a saved connection too): IDs are entered by hand.
+  const manualOnly = provider !== null && !listsModels(provider);
   const autoLoads = !manualOnly && (existing || subscription || (local && Boolean(provider?.default_base)));
   // Azure, a custom endpoint and servers without a default address (vLLM) need one.
   const needsBase =
@@ -317,7 +317,7 @@ export function ModelsSettings({
     !cloud &&
     login === null &&
     (provider.provider === "azure" || provider.provider === "custom" || (provider.default_base === null && !existing));
-  const showsKey = provider !== null && !existing && !ollama && !subscription && (!cloud || Boolean(provider.key_variable));
+  const showsKey = provider !== null && !existing && !ollama && !subscription && login === null && (!cloud || Boolean(provider.key_variable));
   // Every other new connection may move the address; its default shows as the placeholder.
   const baseOptional = provider !== null && !needsBase && !existing && !subscription && login === null;
   const keyRequired = provider !== null && provider.provider !== "custom" && !local;
@@ -339,6 +339,9 @@ export function ModelsSettings({
   const [connError, setConnError] = useState<string | null>(null);
   const connRequest = useRef(0);
   const saved = provider !== null && manageable(provider);
+  // A login provider or a subscription signs in without a key: its saved
+  // connection offers none (a key a config entry still holds can be removed).
+  const takesKey = login === null && !subscription;
 
   const closeConnEdit = () => {
     setConnMode(null);
@@ -404,7 +407,7 @@ export function ModelsSettings({
       const next = list?.find((item) => item.id === current.id) ?? current;
       setProvider(next);
       void loadConnection(next);
-      if (next.supports_discovery !== false) void load(discovery !== null, next);
+      if (listsModels(next)) void load(discovery !== null, next);
       return true;
     } catch (error) {
       if (isRevisionConflict(error)) await fail(error);
@@ -713,36 +716,40 @@ export function ModelsSettings({
         <p class={connFailed ? "line-error" : "dialog-dim"}>{connFailed ? t.providersLoadFailed : t.loading}</p>
       ) : (
         <div class="conn-rows">
-          <div class="conn-row">
-            <span class="conn-label">{t.setApiKey}</span>
-            <span class="conn-value">{keyText(conn)}</span>
-            <span class="text-actions">
-              <button
-                type="button"
-                class="text-btn"
-                aria-expanded={connMode === "key"}
-                aria-controls={connMode === "key" ? "conn-key-form" : undefined}
-                disabled={connBusy}
-                onClick={() => (connMode === "key" ? closeConnEdit() : openConnEdit("key"))}
-              >
-                {conn.key.state === "none" || (conn.key.state === "environment" && !conn.key.stored) ? t.addKey : t.replaceKey}
-              </button>
-              {(conn.key.state === "saved" || (conn.key.state === "environment" && conn.key.stored)) && (
-                <ConfirmPopover
-                  triggerLabel={t.removeKeyLabel(label)}
-                  triggerText={t.removeKey}
-                  title={t.removeKeyTitle}
-                  description={t.removeKeyDescription}
-                  confirmLabel={t.removeKey}
-                  cancelLabel={t.cancel}
-                  busyLabel={t.removing}
-                  disabled={connBusy}
-                  onConfirm={() => saveConnection({ kind: "removeKey" }, t.keyRemoved)}
-                />
-              )}
-            </span>
-          </div>
-          {connMode === "key" && (
+          {(takesKey || conn.key.state === "saved" || (conn.key.state === "environment" && conn.key.stored)) && (
+            <div class="conn-row">
+              <span class="conn-label">{t.setApiKey}</span>
+              <span class="conn-value">{keyText(conn)}</span>
+              <span class="text-actions">
+                {takesKey && (
+                  <button
+                    type="button"
+                    class="text-btn"
+                    aria-expanded={connMode === "key"}
+                    aria-controls={connMode === "key" ? "conn-key-form" : undefined}
+                    disabled={connBusy}
+                    onClick={() => (connMode === "key" ? closeConnEdit() : openConnEdit("key"))}
+                  >
+                    {conn.key.state === "none" || (conn.key.state === "environment" && !conn.key.stored) ? t.addKey : t.replaceKey}
+                  </button>
+                )}
+                {(conn.key.state === "saved" || (conn.key.state === "environment" && conn.key.stored)) && (
+                  <ConfirmPopover
+                    triggerLabel={t.removeKeyLabel(label)}
+                    triggerText={t.removeKey}
+                    title={t.removeKeyTitle}
+                    description={t.removeKeyDescription}
+                    confirmLabel={t.removeKey}
+                    cancelLabel={t.cancel}
+                    busyLabel={t.removing}
+                    disabled={connBusy}
+                    onConfirm={() => saveConnection({ kind: "removeKey" }, t.keyRemoved)}
+                  />
+                )}
+              </span>
+            </div>
+          )}
+          {connMode === "key" && takesKey && (
             <form
               id="conn-key-form"
               class="conn-edit is-row"
@@ -767,8 +774,8 @@ export function ModelsSettings({
           <div class="conn-row">
             <span class="conn-label">{t.setApiBase}</span>
             <span class="conn-value">{baseText(conn)}</span>
-            {/* A login provider takes no address here (the config file may set one). */}
-            {login === null && (
+            {/* A login provider or a subscription takes no address here (the config file may set one). */}
+            {login === null && !subscription && (
               <span class="text-actions">
                 <button
                   type="button"
@@ -788,7 +795,7 @@ export function ModelsSettings({
               </span>
             )}
           </div>
-          {connMode === "base" && login === null && (
+          {connMode === "base" && login === null && !subscription && (
             <form
               id="conn-base-form"
               class="conn-edit"
@@ -952,7 +959,8 @@ export function ModelsSettings({
                           needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom",
                           subscription,
                           // The login note below says how it connects.
-                          cloud: cloud && login === null,
+                          // A saved connection's key is in its rows above.
+                          cloud: cloud && login === null && !saved,
                         })}
                       </p>
                       {(provider.kind === "common" || provider.kind === "compatible") && ((provider.default_base && !baseOptional) || provider.key_variable) && (

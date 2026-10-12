@@ -3,7 +3,7 @@ import test from "node:test";
 import { cliCommand, shellQuote } from "./cli.ts";
 import { compareLines } from "./diff.ts";
 import { isHiddenName, selectFolderFiles, stagedBatch, walkEntries } from "./files.ts";
-import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, nameTail, splitName, timestampMs } from "./format.ts";
+import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, nameTail, splitName, timestampMs, urlParts } from "./format.ts";
 import { artifactPath, drawingReference, drawingValue, imageByName, loadArtifactImages, markdownPair, presentationFromStyle, rewrite, splitFrontmatter } from "./markdown.ts";
 import { endpointFor, manualModelId, sameEndpoint } from "./models.ts";
 import {
@@ -459,4 +459,17 @@ test("an empty header cell becomes a plain cell; a named one stays a header", ()
   assert.deepEqual(made[0], { ...made[0], tag: "td", attributes: { align: "right" } });
   assert.equal(named.replaced.length, 0);
   assert.equal(pictured.replaced.length, 0);
+});
+
+test("a web address keeps its host and the end of its path; a query gives way first", () => {
+  assert.deepEqual(urlParts("http://127.0.0.1:41819/slow/s5.html"), ["http://127.0.0.1:41819/slow", "/s5.html", ""]);
+  assert.deepEqual(urlParts("https://example.com"), ["https://example.com", "", ""]);
+  assert.deepEqual(urlParts("https://example.com/"), ["https://example.com", "/", ""]);
+  assert.deepEqual(urlParts("https://example.com/docs/guide/"), ["https://example.com/docs", "/guide/", ""]);
+  assert.deepEqual(urlParts("https://news.example.org/2026/10/12/a-very-long-article-title-here.html?utm_source=x#top"), [
+    "https://news.example.org/2026/10/12/a-very-long-article",
+    "-title-here.html",
+    "?utm_source=x#top",
+  ]);
+  for (const url of ["http://127.0.0.1:41819/slow/s5.html", "https://例子.中国/路径/文件.pdf?q=1", "not a url.pdf"]) assert.equal(urlParts(url).join(""), url);
 });

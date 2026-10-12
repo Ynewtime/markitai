@@ -1,13 +1,14 @@
 // A file name on one line that, when it is too long, gives up the middle and
 // keeps its end: "2025年度可持续发展…披露全文.pdf.llm.md". The whole name is in the
 // title (pointer hover) and in the text read aloud; a long press shows it in
-// full on a touch screen until the next tap.
+// full on a touch screen until the next tap. A web address (`url`) keeps its
+// host and the end of its path the same way: "http://127.0.0.1:41819/sl…/s5.html".
 import { useEffect, useRef, useState } from "preact/hooks";
-import { nameTail } from "../lib/format.ts";
+import { nameTail, urlParts } from "../lib/format.ts";
 
 const LONG_PRESS_MS = 450;
 
-export function FileName({ name, class: className }: { name: string; class?: string }) {
+export function FileName({ name, url = false, class: className }: { name: string; url?: boolean; class?: string }) {
   const [full, setFull] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const root = useRef<HTMLSpanElement>(null);
@@ -20,7 +21,7 @@ export function FileName({ name, class: className }: { name: string; class?: str
     return () => document.removeEventListener("pointerdown", away, true);
   }, [full]);
   useEffect(() => () => (timer.current ? clearTimeout(timer.current) : undefined), []);
-  const cut = nameTail(name);
+  const [head, tail, rest] = url ? urlParts(name) : [name.slice(0, nameTail(name)), name.slice(nameTail(name)), ""];
   const stop = () => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
@@ -47,8 +48,9 @@ export function FileName({ name, class: className }: { name: string; class?: str
         name
       ) : (
         <>
-          <span class="file-name-head">{name.slice(0, cut)}</span>
-          <span class="file-name-tail">{name.slice(cut)}</span>
+          <span class="file-name-head">{head}</span>
+          <span class="file-name-tail">{tail}</span>
+          {rest && <span class="file-name-rest">{rest}</span>}
         </>
       )}
     </span>

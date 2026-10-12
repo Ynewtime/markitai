@@ -39,6 +39,16 @@ const OWN_ENDPOINT_LOGIN: Record<string, string> = {
 /** The server login a provider always uses at its own endpoint, or null when it may take an address. */
 export const ownEndpointLogin = (card: Pick<ProviderCard, "provider">): string | null => OWN_ENDPOINT_LOGIN[card.provider] ?? null;
 
+/** Providers that publish no model list, by both backends' catalogues. A
+ * saved connection's card may still claim a list (Python 1.2.1 sends
+ * `supports_discovery: true` for every saved connection), so the page knows
+ * these by name and offers model IDs by hand instead of a failed load. */
+const NO_MODEL_LIST = new Set(["bedrock", "vertex_ai", "vertex_ai_beta", "perplexity", "zai", "fireworks_ai"]);
+
+/** Whether the page can load a provider's model list. */
+export const listsModels = (card: Pick<ProviderCard, "provider" | "supports_discovery">): boolean =>
+  card.supports_discovery !== false && !NO_MODEL_LIST.has(card.provider);
+
 /** The brand mark a card names; a server that names none (Python 1.2.1) gets
  * the mark whose key is the provider's prefix, when there is one. */
 export const iconKey = (card: Pick<ProviderCard, "provider" | "icon">): string | null =>

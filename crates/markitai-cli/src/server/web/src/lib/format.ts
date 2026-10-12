@@ -117,3 +117,25 @@ export function nameTail(name: string): number {
   const start = extensions ? extensions.index : name.length;
   return Math.max(0, start - 4);
 }
+
+/** A long web address cut like a file name: the head keeps the scheme and
+ * host and gives up the middle of the path first, the tail keeps the end of
+ * the path (from its last "/", at most 20 characters, from a word break when
+ * one is near), and a query or
+ * fragment after it gives way before either. The three parts join to `url`. */
+export function urlParts(url: string): [head: string, tail: string, rest: string] {
+  const match = /^([a-z][a-z\d+.-]*:\/\/[^/?#]*)([^?#]*)(.*)$/is.exec(url);
+  if (!match) {
+    const cut = nameTail(url);
+    return [url.slice(0, cut), url.slice(cut), ""];
+  }
+  const [, host, path, rest] = match;
+  const slash = path.lastIndexOf("/", path.length - 2);
+  let start = Math.max(slash, 0, path.length - 20);
+  // A long last segment is cut at a word break ("-to-markdown.html").
+  if (start > slash) {
+    const word = path.slice(start).search(/[-_ ]/);
+    if (word > 0 && word < 12) start += word;
+  }
+  return [host + path.slice(0, start), path.slice(start), rest];
+}

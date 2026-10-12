@@ -114,13 +114,18 @@ accent colour; PDF positions come from the page's text layer, HTML by matching
 elements. An original that cannot be shown (a DOCX, a page the server did not
 keep) says why and offers its download.
 
-**On phones** the window fills the screen, over the tab bar: back, the name,
-previous and next, and "⋯" (Download and every other action, Copy and Export
-PDF on Preview), then the same three tabs. While items wait, Stop remaining
+**On phones** the window fills the screen, over the tab bar: back, previous and
+next, and "⋯" (Download and every other action, Copy and Export PDF on
+Preview), the name on a row of its own below them, then the same three tabs. While items wait, Stop remaining
 stays a button in the header, since the window covers the list's own: a
 submission's window stops that submission, an item's window the submission it
 belongs to, and Summary everything listed; Compare places the original above the
-Markdown. A long press on a shortened file name shows it whole.
+Markdown. A long name gives up its middle: a file keeps its end and extension,
+a web address its host and the end of its path (a query goes first); a long
+press on a shortened name shows it whole. On a phone the Conversions header
+keeps its title, New conversion and "⋯" on one row (the two buttons go below
+the title when they do not fit), the status sentence below, and Stop remaining
+on a row of its own.
 
 **Notices** are transient: minimal strips at the bottom, on a phone full width
 directly above the tab bar (or at the screen's edge under the window), on a wide screen a
@@ -160,11 +165,14 @@ and, in plain sight under it, Model ID and routing (add a model by its ID, the
 routing group and weight), with a breadcrumb that Escape steps back through.
 Every settings page keeps its primary action in one place, the pinned bar at the
 bottom (Load models, then Save, beside Cancel); a subscription needs no key or
-address, and Bedrock and Vertex AI take model IDs by hand. Vertex AI (like
+address, and Bedrock and Vertex AI (also Perplexity, Z.ai and Fireworks AI) take
+model IDs by hand, saved connections included, whatever a backend's card says. Vertex AI (like
 watsonx and GigaChat, when a backend offers them) takes no address, here or on
 its saved connection: it signs in with the server's own login, which the page
-names in a muted line, at its own endpoint; Bedrock keeps its optional key and
-address. A backend that sends
+names in a muted line, at its own endpoint, and takes no key either (a saved
+connection offers no Add key; a key a config entry still holds can be removed).
+A saved subscription offers no key or address. Bedrock keeps its optional key
+and address. A backend that sends
 no provider `group` gets the common eight by name and everything else under All. Appearance and language chooses English, 中文 or 日本語 and the
 theme (Auto, Light, Dark); Access token says whether this tab holds a token
 (with Forget beside it) and takes a new one in one field with Save; it is kept in

@@ -208,13 +208,14 @@ export function ConversionsPage(props: ConversionsPageProps) {
             </p>
           )}
         </div>
+        {/* Beside New conversion; on a phone, a row of its own under the status. */}
+        {props.head.waiting && ctx.cancel && (
+          <button type="button" class="btn head-stop" title={t.stopTitle} disabled={props.head.stopping} aria-busy={props.head.stopping || undefined} onClick={props.head.onStop}>
+            <Icon name="Stop" size={14} />
+            {t.stopRemaining}
+          </button>
+        )}
         <div class="head-actions">
-          {props.head.waiting && ctx.cancel && (
-            <button type="button" class="btn" title={t.stopTitle} disabled={props.head.stopping} aria-busy={props.head.stopping || undefined} onClick={props.head.onStop}>
-              <Icon name="Stop" size={14} />
-              {t.stopRemaining}
-            </button>
-          )}
           <button type="button" class="btn" onClick={props.onNewConversion}>
             <Icon name="Plus" size={14} />
             {t.newConversion}
