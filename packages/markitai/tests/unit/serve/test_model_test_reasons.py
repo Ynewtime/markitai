@@ -130,7 +130,11 @@ async def test_the_owners_case_names_the_unset_variable_and_sends_nothing(
     assert data["detail"].startswith(
         "DEEPSEEK_API_KEY is not set on the server, so nothing was sent"
     )
-    assert "DEEPSEEK_API_KEY=your_key" in data["detail"]
+    # The hint is in the server shell's own syntax ($env:NAME= on Windows).
+    assert (
+        "DEEPSEEK_API_KEY=your_key" in data["detail"]
+        or "$env:DEEPSEEK_API_KEY=" in data["detail"]
+    )
     assert set(data) == {"ok", "detail", "reason", "key_variable"}
 
 

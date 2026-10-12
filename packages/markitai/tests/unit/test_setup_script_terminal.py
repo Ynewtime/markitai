@@ -1437,4 +1437,5 @@ def test_setup_ps1_native_step_reports_code_output_and_time(
     assert (
         "detail=Resolved 137 packages in 3.16s; Prepared 136 packages in 26.44s" in out
     )
-    assert re.search(r"took= \(0\.\ds\)", out), out
+    # A loaded CI runner can take over a second to start the fake step; only the format matters.
+    assert re.search(r"took= \(\d\.\ds\)", out), out
