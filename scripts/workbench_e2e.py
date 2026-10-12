@@ -85,6 +85,8 @@ REFUSALS = {
 BASE_SECRETS = ("e2e-user", "e2e-pass-0000", "e2e-base-secret-0000")
 # The server's own OpenAI key, behind the environment card
 ENV_KEY = ("OPENAI_API_KEY", "sk-e2e-env-0000")
+# A model entry without a key, as the owner wrote deepseek/deepseek-flash
+HAND_MODEL = "openai/fake-hand"
 # The settings API's refusal of a Vertex AI address (the UI translates it by
 # this wording)
 VERTEX_REFUSAL = (
@@ -238,6 +240,10 @@ def _answer(body: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]] | No
     return doc, None
 
 
+#: The Authorization header of each model list the fake LLM served
+MODEL_LIST_KEYS: list[str] = []
+
+
 class _FakeLLM(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -254,6 +260,7 @@ class _FakeLLM(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path.rstrip("/").endswith("/models"):
+            MODEL_LIST_KEYS.append(self.headers.get("authorization") or "")
             self._json(
                 200,
                 {"object": "list", "data": [{"id": "fake-model", "object": "model"}]},
@@ -480,7 +487,19 @@ def run_server(
                         "api_base": f"http://127.0.0.1:{llm_port}/v1",
                     },
                     "model_info": {"id": "00000000-0000-4000-8000-0000000000e2"},
-                }
+                },
+                # Written by hand: no key, the server's OPENAI_API_KEY serves
+                # it, as LiteLLM does for its conversions (owner, 2026-10-12).
+                # Its own address text: Edit opens the first connection of
+                # the model's provider at the model's address, and the others
+                # here are at 127.0.0.1
+                {
+                    "model_name": "e2e-hand",
+                    "litellm_params": {
+                        "model": HAND_MODEL,
+                        "api_base": f"http://localhost:{llm_port}/v1",
+                    },
+                },
             ],
             "providers": [
                 {
@@ -2269,6 +2288,54 @@ def browse(
             return f"a model added from the {variable} card; saved as env:{variable}"
 
         run.step(page, "settings-environment-card", environment_card)
+
+        # 13c'. A model written into the config without a key, served by the
+        # server's own OPENAI_API_KEY (the owner's deepseek/deepseek-flash
+        # with DEEPSEEK_API_KEY, 2026-10-12): its connection shows the
+        # variable, not "Not set", and its model list loads with that key
+        def environment_key() -> str:
+            variable, secret = ENV_KEY
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            before, served = len(run.api), len(MODEL_LIST_KEYS)
+            with page.expect_response(
+                lambda r: r.url.endswith("/api/settings/llm/model-discovery")
+            ) as listed:
+                _click_visible(
+                    page.get_by_role("button", name=f"Edit {HAND_MODEL}", exact=True)
+                )
+            answer = listed.value.json()
+            if answer.get("status") != "ok" or "openai/fake-model" not in [
+                m["model"] for m in answer.get("models", [])
+            ]:
+                raise AssertionError(f"the model list: {answer}")
+            if not run.saw(
+                "GET",
+                r"^/api/settings/llm/providers/[^/]+/credentials$",
+                200,
+                since=before,
+            ):
+                raise AssertionError("the connection was not loaded")
+            if MODEL_LIST_KEYS[served:] != [f"Bearer {secret}"]:
+                raise AssertionError(
+                    f"model list requests carried {MODEL_LIST_KEYS[served:]}, not "
+                    f"the environment's (the page sent {listed.value.request.post_data})"
+                )
+            key_row = page.locator(".conn-row").filter(has_text="API key")
+            key_row.get_by_text(f"From environment variable {variable}").wait_for(
+                timeout=10000
+            )
+            if _visible(page.get_by_text("Models could not be loaded")) is not None:
+                raise AssertionError("the editor says the models could not be loaded")
+            page.get_by_text("fake-model").first.wait_for(timeout=10000)
+            run.shot(page, "settings-environment-key")
+            if secret in page.content():
+                raise AssertionError("the environment's key reached the page")
+            return (
+                f"{HAND_MODEL} (no key in the config): API key 'From environment "
+                f"variable {variable}', its list loaded with that key"
+            )
+
+        run.step(page, "settings-environment-key", environment_key)
 
         # 13d. Vertex AI signs in with the server's Google login at its own
         # endpoint: Add models offers it no address (the settings API refuses
