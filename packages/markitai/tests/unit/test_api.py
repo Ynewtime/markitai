@@ -59,6 +59,7 @@ class FakeLLMProcessor:
         fetch_strategy: str | None = None,
         extra_meta: dict[str, Any] | None = None,
         title: str | None = None,
+        document_meta: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         self.document_calls.append(source)
         return f"# Enhanced\n\n{markdown.strip()}", "title: Enhanced\nsource: test"
