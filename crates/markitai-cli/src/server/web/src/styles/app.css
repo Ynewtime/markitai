@@ -1622,10 +1622,11 @@ main:focus {
   align-items: center;
   gap: 4px;
 }
+/* Inter, not the platform's monospace: its figures centre on the same line as the
+   arrows, the name and the buttons (a monospace box centres its figures higher) */
 .peek-pos {
   min-width: 52px;
   padding: 0 4px;
-  font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
@@ -3887,8 +3888,11 @@ input[type="password"],
 .pane.is-source {
   background: var(--t-bg);
 }
+/* The reading column (rendered, source, files, versions) is centred in its pane. */
 .source {
+  max-width: 820px;
   min-height: 100%;
+  margin: 0 auto;
   padding: 20px 24px;
   font-size: var(--text-sm);
   line-height: 1.65;
@@ -3905,6 +3909,10 @@ input[type="password"],
   font-size: var(--text-sm);
   color: var(--text-3);
 }
+.pane > .pane-note {
+  max-width: 820px;
+  margin-inline: auto;
+}
 .pane-note.line-error {
   margin-top: 0;
   color: var(--err);
@@ -3920,6 +3928,7 @@ input[type="password"],
 
 .doc {
   max-width: 820px;
+  margin: 0 auto;
   padding: 28px 32px 48px;
 }
 .viewer.is-compact .doc {
@@ -3932,6 +3941,7 @@ input[type="password"],
 }
 .skeleton-doc {
   max-width: 820px;
+  margin: 0 auto;
   padding: 28px 32px 48px;
   animation: fade-in var(--dur-slow) var(--ease-out) both;
   animation-delay: var(--dur-slow);
@@ -4201,6 +4211,8 @@ input[type="password"],
 }
 
 .diff {
+  max-width: 820px;
+  margin: 0 auto;
   padding: 16px 0 28px;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -4250,6 +4262,8 @@ input[type="password"],
 }
 
 .file-list {
+  max-width: 820px;
+  margin: 0 auto;
   padding: 12px 20px 20px;
 }
 .file-list li {

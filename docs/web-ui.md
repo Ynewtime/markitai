@@ -63,7 +63,7 @@ files wait on Convert); typing URLs is Convert's job.
   opens the conversion's window (docked beside the list, the window follows the
   arrows instead).
 - The **peek window** opens over the dimmed list: previous and next with the
-  position (`8 of 14`), the name, the actions that matter (Download; Retry, Add a
+  position (`8 of 14`), the name (all on one centre line with the buttons), the actions that matter (Download; Retry, Add a
   model or Enable OCR and retry when that is the fix) and "⋯" (Enhance with LLM,
   Run again, Retry without LLM, Delete), then Details, Preview and Compare as
   tabs. ◫ docks it beside the list instead, and ⤢ opens it as a window again;
@@ -94,7 +94,8 @@ files wait on Convert); typing URLs is Convert's job.
 **Preview** is the window's second tab; its "⋯" adds Copy, Export PDF and its
 header-and-footer choice, and Open the page for a URL. The window has one fixed
 height, so the tabs never move it: Rendered, Source, Diff (only for an exact base/LLM pair) and
-Files, with the Base | LLM switch beside them for a pair. Rendered starts with
+Files, with the Base | LLM switch beside them for a pair. Each keeps its reading
+column (820 px at most) centred in the window, docked or not. Rendered starts with
 the conversion's notices (collapsed to one line) and a front-matter card (title,
 description, tags). Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
