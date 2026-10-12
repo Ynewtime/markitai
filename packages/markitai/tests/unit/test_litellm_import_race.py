@@ -65,6 +65,55 @@ def test_access_records_during_the_prewarm_import_do_not_break_it(
     assert result.stdout.startswith("ok records="), result.stdout
 
 
+# A submodule import on another thread while the prewarm thread is inside
+# litellm/__init__: Python takes the submodule's lock before the package's,
+# and LiteLLM's __init__ needs that submodule, so one of the two imports
+# failed and LiteLLM stayed half imported (the provider picker listed no
+# provider, every model test and LLM conversion failed until a restart).
+_SUBMODULE_RACE = textwrap.dedent(
+    """
+    import sys, threading
+
+    from markitai.providers.auth import can_attempt_login
+    from markitai.providers.connectable import routable_providers
+    from markitai.utils import prewarm
+
+    prewarm.prewarm_litellm()
+    found = {}
+    workers = [
+        threading.Thread(target=lambda: found.setdefault("routable", routable_providers())),
+        threading.Thread(target=lambda: found.setdefault("chatgpt", can_attempt_login("chatgpt"))),
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(120)
+    prewarm._thread.join(120)
+    import litellm
+
+    assert callable(getattr(litellm, "completion", None)), "LiteLLM import failed"
+    assert litellm.utils is not None
+    assert found["chatgpt"] is True
+    print(f"ok routable={len(found['routable'])}")
+    """
+)
+
+
+@pytest.mark.parametrize("attempt", range(2))
+def test_litellm_submodules_imported_during_the_prewarm_do_not_break_it(
+    attempt: int,
+) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", _SUBMODULE_RACE],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-3000:]
+    assert result.stdout.startswith("ok routable="), result.stdout
+    assert int(result.stdout.split("=")[1]) > 50, result.stdout
+
+
 class _Raising(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         raise ImportError("partially initialized module (simulated)")

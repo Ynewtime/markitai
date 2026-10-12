@@ -15,6 +15,17 @@ server answers requests (every request writes an ``uvicorn.access`` record)
 and while conversions run, so ``serve``'s first requests could be dropped and
 LiteLLM left half imported.
 
+A second trap is Python's own import locks. Importing a submodule
+(``from litellm.x.y import z``) takes ``litellm.x.y``'s lock *before* it
+imports the ``litellm`` package, and ``litellm/__init__`` imports some of those
+submodules itself. With the prewarm thread inside ``litellm/__init__``,
+another thread that starts with a submodule holds the lock the prewarm thread
+needs next while it waits for the package: Python breaks the deadlock by
+failing one import, and LiteLLM stays half imported for the whole process
+(every model call then fails with "partially initialized module 'litellm'").
+:func:`import_litellm` imports the package first; call it before importing
+any LiteLLM submodule on a path that can run while the prewarm thread works.
+
 ``prepare_litellm_import`` puts a guard first on those loggers. While
 LiteLLM is being imported, the guard hands each record straight to the
 logger's handlers and ends the filter chain, so LiteLLM's filter never runs
@@ -25,9 +36,11 @@ token on the records it passes.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import sys
+from types import ModuleType
 
 # The loggers LiteLLM 1.104.2 attaches import-dependent filters to
 # (litellm/_logging.py: _REDACTED_THIRD_PARTY_LOGGERS, _REDACTED_ACCESS_LOGGERS).
@@ -74,3 +87,11 @@ def prepare_litellm_import() -> None:
         if not any(isinstance(f, _ImportGuard) for f in logger.filters):
             # First, so it runs before any filter LiteLLM appends
             logger.filters.insert(0, _ImportGuard(logger))
+
+
+def import_litellm() -> ModuleType:
+    """Import the ``litellm`` package (waiting for another thread that is
+    importing it), so that importing its submodules afterwards takes no lock
+    ``litellm/__init__`` needs. Raises what the import raises."""
+    prepare_litellm_import()
+    return importlib.import_module("litellm")

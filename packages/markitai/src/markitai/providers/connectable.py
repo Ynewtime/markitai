@@ -374,10 +374,12 @@ def routable_providers() -> frozenset[str]:
     LiteLLM older than the one the table was checked with may lack some
     prefixes; those cards are not offered.
     """
-    from markitai.utils.litellm_import import prepare_litellm_import
+    from markitai.utils.litellm_import import import_litellm
 
-    prepare_litellm_import()
     try:
+        # The package before its submodule: serve's prewarm thread may be
+        # importing it right now (see litellm_import)
+        import_litellm()
         from litellm.litellm_core_utils.get_llm_provider_logic import (
             get_llm_provider,
         )
