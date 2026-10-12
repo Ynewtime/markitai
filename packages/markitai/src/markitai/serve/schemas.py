@@ -415,6 +415,10 @@ class LLMProviderCredentials(BaseModel):
     # ``api_key`` is the same display value under the shared workbench's name.
     api_key: str | None
     api_key_masked: str | None
+    # "environment" when no key is stored and the server's own key variable
+    # serves the connection: ``api_key`` is then ``env:<VARIABLE>``, the
+    # variable conversions and model tests read (as Rust's ``credentials``)
+    api_key_source: Literal["environment"] | None = None
     # Saved base without userinfo or secret parameters (``…``); null when on
     # the provider default
     api_base: str | None
@@ -520,6 +524,12 @@ class ModelDiscoveryResult(BaseModel):
     stale: bool
     models: list[ModelCandidate]
     detail: str | None = None
+    # Why the list could not be loaded, with the model test's reasons
+    # (contract v1.10): no_key, key_rejected, rate_limited, network,
+    # timeout, provider_error; with no_key, when known, the variable the key
+    # would come from (a name, never a value)
+    reason: str | None = None
+    key_variable: str | None = None
 
 
 class LLMTestResult(BaseModel):

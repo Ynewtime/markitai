@@ -52,7 +52,6 @@ COMPONENTS: dict[str, str] = {
 #: Contract fields only the Rust server sends (the UI treats them as optional).
 RUST_ONLY: dict[str, set[str]] = {
     "JobSnapshot": {"persistence_error"},
-    "ProviderCredentials": {"api_key_source"},
 }
 
 #: Fields this server sends beyond the contract (the UI ignores them).
