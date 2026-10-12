@@ -197,6 +197,39 @@ class TestDiscoveryCarriesTheEnvironmentKey:
         assert server.requests[0]["headers"]["Authorization"] == f"Bearer {_KEY}"
         assert _KEY not in str(listed)
 
+    async def test_an_entry_with_its_own_address_lists_with_the_variables_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A hand-written entry naming an address: LiteLLM sends the server's
+        # OPENAI_API_KEY there for its conversions, so its list does too
+        monkeypatch.setenv("OPENAI_API_KEY", _KEY)
+        server = _ModelsServer(body={"data": [{"id": "fake-model"}]})
+        entry = _entry("openai/fake-hand", api_base="http://127.0.0.1:9/v1")
+        async with _client(_app(tmp_path, entry)) as client:
+            card = await _legacy_card(client, "openai")
+            shown = (
+                await client.get(
+                    f"/api/settings/llm/providers/{card['provider_id']}/credentials"
+                )
+            ).json()
+            server.install(monkeypatch)
+            listed = (
+                await client.post(
+                    "/api/settings/llm/model-discovery",
+                    json={
+                        "provider": "openai",
+                        "deployment_id": card["deployment_id"],
+                        "api_base": shown["api_base"],
+                        "refresh": True,
+                    },
+                )
+            ).json()
+        assert shown["api_key"] == "env:OPENAI_API_KEY"
+        assert listed["status"] == "ok", listed
+        assert [r["headers"].get("Authorization") for r in server.requests] == [
+            f"Bearer {_KEY}"
+        ]
+
     async def test_an_address_the_caller_names_never_gets_the_variables_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

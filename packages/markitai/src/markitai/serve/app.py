@@ -2994,6 +2994,16 @@ def create_app(
             else None
         )
         sent_base = None if _shown_base(body.api_base, fallback_base) else body.api_base
+        provider = body.provider.strip().lower()
+        if sent_base is not None and (
+            stored is not None or stored_provider is not None
+        ):
+            # The connection's own address sent back as it is (or, for one
+            # on the provider's default, that default): not one the caller
+            # names
+            own = fallback_base or provider_default_api_base(provider)
+            if own is not None and sent_base.rstrip("/") == own.rstrip("/"):
+                sent_base = None
         if body.api_key is None:
             _reject_rebound_credentials(fallback_key, fallback_base, sent_base)
         raw_key = body.api_key if body.api_key is not None else _real_key(fallback_key)
@@ -3006,7 +3016,6 @@ def create_app(
         )
         api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
         api_base = resolve_env_value(raw_base, strict=False) if raw_base else None
-        provider = body.provider.strip().lower()
         key_variable = (
             raw_key[4:]
             if isinstance(raw_key, str) and raw_key.startswith("env:")
