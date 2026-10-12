@@ -30,8 +30,14 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
-pub(super) async fn missing() -> ApiError {
-    ApiError::new(404, "route_not_found", "route not found")
+pub(super) async fn missing(
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    super::web::missing_page(&method, uri.path(), &headers)
+        .unwrap_or_else(|| ApiError::new(404, "route_not_found", "route not found").into_response())
 }
 pub(super) async fn method_not_allowed() -> ApiError {
     ApiError::new(405, "method_not_allowed", "method not allowed")
@@ -67,7 +73,7 @@ pub(super) async fn capabilities(
         "extras":{"browser":markitai_core::browser_available(),"svg":true},
         "limits":{"max_job_items":MAX_ITEMS,"history_retention_days":super::retention::DAYS},
         "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
-            "original":true,"result_excerpt":true,"job_labels":true},
+            "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true},
     }))
 }
 

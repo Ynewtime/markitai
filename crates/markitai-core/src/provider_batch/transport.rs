@@ -1,7 +1,8 @@
 use super::input;
+use super::types::nonce_prefix;
 use super::types::*;
-use reqwest::blocking::{Client as HttpClient, Response, multipart};
-use reqwest::header::{AUTHORIZATION, HeaderValue};
+use reqwest::blocking::{Client as HttpClient, RequestBuilder, Response, multipart};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderName, HeaderValue};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
@@ -9,11 +10,18 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use url::Url;
 
+/// Anthropic's documented API version for Message Batches.
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// Anthropic batches whose results are opened to prove an uncertain creation.
+const MAX_PROOFS: usize = 4;
+
 /// No environment/config loading, redirects, automatic retries or persisted auth.
 pub struct Client {
     http: HttpClient,
     base: Url,
-    authorization: HeaderValue,
+    api: Api,
+    /// `Authorization: Bearer …` for OpenAI, `x-api-key` for Anthropic.
+    credential: (HeaderName, HeaderValue),
     limits: Limits,
     timeout: Duration,
 }
@@ -26,7 +34,18 @@ impl std::fmt::Debug for Client {
 }
 
 impl Client {
+    /// An OpenAI Batch API client.
     pub fn new(
+        base: &str,
+        api_key: &str,
+        timeout: Duration,
+        limits: Limits,
+    ) -> Result<Self, Error> {
+        Self::for_api(Api::OpenAi, base, api_key, timeout, limits)
+    }
+
+    pub fn for_api(
+        api: Api,
         base: &str,
         api_key: &str,
         timeout: Duration,
@@ -62,9 +81,13 @@ impl Client {
             let path = format!("{}/", base.path());
             base.set_path(&path);
         }
-        let mut authorization = HeaderValue::from_str(&format!("Bearer {api_key}"))
+        let (name, value) = match api {
+            Api::OpenAi => (AUTHORIZATION, format!("Bearer {api_key}")),
+            Api::Anthropic => (HeaderName::from_static("x-api-key"), api_key.to_owned()),
+        };
+        let mut value = HeaderValue::from_str(&value)
             .map_err(|_| Error::Invalid("Batch credential is invalid"))?;
-        authorization.set_sensitive(true);
+        value.set_sensitive(true);
         let http = HttpClient::builder()
             .timeout(timeout)
             .connect_timeout(timeout.min(Duration::from_secs(15)))
@@ -79,10 +102,24 @@ impl Client {
         Ok(Self {
             http,
             base,
-            authorization,
+            api,
+            credential: (name, value),
             limits,
             timeout,
         })
+    }
+
+    pub fn api(&self) -> Api {
+        self.api
+    }
+
+    /// The credential and, for Anthropic, its API version on one request.
+    fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
+        let request = request.header(self.credential.0.clone(), self.credential.1.clone());
+        match self.api {
+            Api::OpenAi => request,
+            Api::Anthropic => request.header("anthropic-version", ANTHROPIC_VERSION),
+        }
     }
 
     fn endpoint(&self, relative: &str) -> Result<Url, Error> {
@@ -91,8 +128,20 @@ impl Client {
             .map_err(|_| Error::Invalid("Batch endpoint is invalid"))
     }
 
+    /// OpenAI: upload the validated snapshot. Anthropic: validate it only; its
+    /// requests travel in the create call, so nothing leaves the machine here.
     pub fn upload(&self, source: &Path) -> Result<UploadedInput, Error> {
-        self.upload_snapshot(input::snapshot(source, self.limits)?)
+        let input = input::snapshot(source, self.limits, self.api)?;
+        match self.api {
+            Api::OpenAi => self.upload_snapshot(input),
+            Api::Anthropic => Ok(UploadedInput {
+                file_id: INLINE_INPUT.into(),
+                model: input.model,
+                custom_ids: input.custom_ids,
+                bytes: input.bytes,
+                sha256: input.sha256,
+            }),
+        }
     }
 
     pub(super) fn upload_snapshot(&self, input: input::Input) -> Result<UploadedInput, Error> {
@@ -111,9 +160,7 @@ impl Client {
             .text("purpose", "batch")
             .part("file", part);
         let response = self
-            .http
-            .post(self.endpoint("files")?)
-            .header(AUTHORIZATION, self.authorization.clone())
+            .authorized(self.http.post(self.endpoint("files")?))
             .multipart(form)
             .send()
             .map_err(|_| Error::Transport)?;
@@ -143,7 +190,14 @@ impl Client {
 
     /// Exactly one create attempt. Network/5xx/malformed success cannot prove rejection.
     /// The caller must durably retain UploadedInput and nonce BEFORE this method.
-    pub fn create(&self, input: &UploadedInput, nonce: &str) -> Result<Batch, Error> {
+    /// `requests` is the saved JSONL: an Anthropic batch sends it inline, after
+    /// checking that it is still exactly the validated snapshot.
+    pub fn create(
+        &self,
+        input: &UploadedInput,
+        nonce: &str,
+        requests: &Path,
+    ) -> Result<Batch, Error> {
         if !identifier(&input.file_id, "file")
             || !custom_id(nonce)
             || input.bytes == 0
@@ -160,14 +214,23 @@ impl Client {
         {
             return Err(Error::Invalid("Batch submission identity is invalid"));
         }
-        let url = self.endpoint("batches")?;
-        let body = json!({"input_file_id":input.file_id,"endpoint":ENDPOINT,
-            "completion_window":"24h","metadata":{"markitai_submission":nonce}});
+        let (url, body) = match self.api {
+            Api::OpenAi => (
+                self.endpoint("batches")?,
+                json!({"input_file_id":input.file_id,"endpoint":ENDPOINT,
+                    "completion_window":"24h","metadata":{"markitai_submission":nonce}})
+                .to_string()
+                .into_bytes(),
+            ),
+            Api::Anthropic => (
+                self.endpoint("messages/batches")?,
+                self.inline_requests(input, nonce, requests)?,
+            ),
+        };
         let response = self
-            .http
-            .post(url)
-            .header(AUTHORIZATION, self.authorization.clone())
-            .json(&body)
+            .authorized(self.http.post(url))
+            .header(CONTENT_TYPE, "application/json")
+            .body(body)
             .send()
             .map_err(|_| Error::CreateUncertain)?;
         let status = response.status().as_u16();
@@ -178,24 +241,87 @@ impl Client {
             return Err(Error::CreateUncertain);
         }
         let value = self.control(response).map_err(|_| Error::CreateUncertain)?;
-        let batch = parse_batch(value).map_err(|_| Error::CreateUncertain)?;
+        let batch = self.parse(value).map_err(|_| Error::CreateUncertain)?;
         if batch.input_file_id != input.file_id {
             return Err(Error::CreateUncertain);
         }
         Ok(batch)
     }
 
+    /// The create body of a Message Batch: the saved request rows, re-read and
+    /// checked against the validated snapshot. Every custom ID carries the
+    /// submission nonce, which is what later proves an uncertain creation.
+    fn inline_requests(
+        &self,
+        input: &UploadedInput,
+        nonce: &str,
+        requests: &Path,
+    ) -> Result<Vec<u8>, Error> {
+        let prefix = nonce_prefix(nonce);
+        if input.file_id != INLINE_INPUT
+            || input.custom_ids.iter().any(|id| !id.starts_with(&prefix))
+        {
+            return Err(Error::Invalid("Batch submission identity is invalid"));
+        }
+        let staged = input::snapshot(requests, self.limits, Api::Anthropic)?;
+        if staged.sha256 != input.sha256
+            || staged.bytes != input.bytes
+            || staged.model != input.model
+            || staged.custom_ids != input.custom_ids
+        {
+            return Err(Error::Invalid(
+                "Batch requests changed after they were validated",
+            ));
+        }
+        let mut body = Vec::with_capacity(staged.bytes as usize + 16);
+        body.extend_from_slice(b"{\"requests\":[");
+        let mut reader = BufReader::new(staged.file);
+        let mut first = true;
+        loop {
+            let row = input::line(&mut reader, self.limits.line_bytes).map_err(|_| Error::Input)?;
+            if row.is_empty() {
+                break;
+            }
+            if !first {
+                body.push(b',');
+            }
+            first = false;
+            body.extend_from_slice(row.trim_ascii_end());
+        }
+        body.extend_from_slice(b"]}");
+        Ok(body)
+    }
+
+    fn valid_id(&self, batch_id: &str) -> bool {
+        match self.api {
+            Api::OpenAi => identifier(batch_id, "batch"),
+            Api::Anthropic => identifier(batch_id, "msgbatch"),
+        }
+    }
+
+    fn batch_path(&self, batch_id: &str) -> String {
+        match self.api {
+            Api::OpenAi => format!("batches/{batch_id}"),
+            Api::Anthropic => format!("messages/batches/{batch_id}"),
+        }
+    }
+
+    fn parse(&self, value: Value) -> Result<Batch, Error> {
+        match self.api {
+            Api::OpenAi => parse_batch(value),
+            Api::Anthropic => parse_message_batch(value),
+        }
+    }
+
     pub fn retrieve(&self, batch_id: &str) -> Result<Batch, Error> {
-        if !identifier(batch_id, "batch") {
+        if !self.valid_id(batch_id) {
             return Err(Error::Invalid("Batch ID is invalid"));
         }
         let response = self
-            .http
-            .get(self.endpoint(&format!("batches/{batch_id}"))?)
-            .header(AUTHORIZATION, self.authorization.clone())
+            .authorized(self.http.get(self.endpoint(&self.batch_path(batch_id))?))
             .send()
             .map_err(|_| Error::Transport)?;
-        let batch = parse_batch(self.control(response)?)?;
+        let batch = self.parse(self.control(response)?)?;
         if batch.id != batch_id {
             return Err(Error::Protocol);
         }
@@ -216,13 +342,52 @@ impl Client {
         nonce: &str,
     ) -> Result<RemoteIdentity, Error> {
         validate_recovery(uploaded, nonce)?;
-        let identity = self.inspect(batch_id)?;
+        let mut identity = self.inspect(batch_id)?;
+        if self.api == Api::Anthropic {
+            // A Message Batch keeps no submission metadata: only its results,
+            // whose custom IDs carry the nonce, can prove it, after it ends.
+            if !identity.batch.status.terminal() {
+                return Err(Error::Pending);
+            }
+            if self.proven(&identity.batch, uploaded, nonce)? {
+                identity.submission_nonce = Some(nonce.to_owned());
+            }
+        }
         if !identity.matches(uploaded, nonce) {
             return Err(Error::Invalid(
                 "Batch identity does not match the frozen submission",
             ));
         }
         Ok(identity)
+    }
+
+    /// Whether an ended Message Batch is the submission with this nonce: its
+    /// first result names one of the submission's custom IDs, which no other
+    /// submission can use. Reads one bounded result line.
+    fn proven(&self, batch: &Batch, uploaded: &UploadedInput, nonce: &str) -> Result<bool, Error> {
+        if !identifier(&batch.id, "msgbatch") {
+            return Err(Error::Protocol);
+        }
+        let response = self
+            .authorized(
+                self.http
+                    .get(self.endpoint(&format!("messages/batches/{}/results", batch.id))?),
+            )
+            .send()
+            .map_err(|_| Error::Transport)?;
+        if !response.status().is_success() {
+            return Err(Error::Http(response.status().as_u16()));
+        }
+        let row = input::line(&mut BufReader::new(response), self.limits.line_bytes)?;
+        if row.is_empty() {
+            return Ok(false);
+        }
+        let value: Value = serde_json::from_slice(&row).map_err(|_| Error::Protocol)?;
+        let id = value
+            .get("custom_id")
+            .and_then(Value::as_str)
+            .ok_or(Error::Protocol)?;
+        Ok(id.starts_with(&nonce_prefix(nonce)) && uploaded.custom_ids.iter().any(|own| own == id))
     }
 
     /// Only GET requests are possible here, including after empty or ambiguous searches.
@@ -234,6 +399,9 @@ impl Client {
     ) -> Result<Reconciliation, Error> {
         validate_recovery(uploaded, nonce)?;
         let limits = limits.validate()?;
+        if self.api == Api::Anthropic {
+            return self.reconcile_messages(uploaded, nonce, limits);
+        }
         let deadline = Instant::now() + limits.timeout;
         let mut remaining_bytes = limits.bytes;
         let mut cursor: Option<String> = None;
@@ -255,9 +423,7 @@ impl Client {
                 url.query_pairs_mut().append_pair("after", cursor);
             }
             let response = match self
-                .http
-                .get(url)
-                .header(AUTHORIZATION, self.authorization.clone())
+                .authorized(self.http.get(url))
                 .timeout(remaining_time.min(self.timeout))
                 .send()
             {
@@ -369,24 +535,174 @@ impl Client {
         Ok(Reconciliation::Incomplete)
     }
 
+    /// Message Batches carry no submission metadata, so a listed batch of the
+    /// same size only becomes evidence once it has ended and its first result
+    /// names one of this submission's nonce-bearing custom IDs. A same-size
+    /// batch still processing keeps the search incomplete; absence of every
+    /// candidate never authorizes another create.
+    fn reconcile_messages(
+        &self,
+        uploaded: &UploadedInput,
+        nonce: &str,
+        limits: ReconcileLimits,
+    ) -> Result<Reconciliation, Error> {
+        let deadline = Instant::now() + limits.timeout;
+        let mut remaining_bytes = limits.bytes;
+        let mut cursor: Option<String> = None;
+        let mut seen = HashSet::new();
+        let mut matching: Option<Batch> = None;
+        let mut unproven = false;
+        let mut proofs = 0;
+        let expected = uploaded.custom_ids.len() as u64;
+        let mut complete = false;
+        for _ in 0..limits.pages {
+            let Some(remaining_time) = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|time| !time.is_zero())
+            else {
+                return Ok(Reconciliation::Incomplete);
+            };
+            if remaining_bytes == 0 {
+                return Ok(Reconciliation::Incomplete);
+            }
+            let mut url = self.endpoint("messages/batches")?;
+            url.query_pairs_mut().append_pair("limit", "100");
+            if let Some(cursor) = &cursor {
+                url.query_pairs_mut().append_pair("after_id", cursor);
+            }
+            let response = match self
+                .authorized(self.http.get(url))
+                .timeout(remaining_time.min(self.timeout))
+                .send()
+            {
+                Ok(response) => response,
+                Err(_) if Instant::now() >= deadline => return Ok(Reconciliation::Incomplete),
+                Err(_) => return Err(Error::Transport),
+            };
+            let (value, consumed) = match self
+                .control_limited(response, remaining_bytes.min(self.limits.control_bytes))
+            {
+                Ok(value) => value,
+                Err(Error::Limit(_)) => return Ok(Reconciliation::Incomplete),
+                Err(_) if Instant::now() >= deadline => return Ok(Reconciliation::Incomplete),
+                Err(error) => return Err(error),
+            };
+            remaining_bytes = remaining_bytes
+                .checked_sub(consumed)
+                .ok_or(Error::Protocol)?;
+            let object = value.as_object().ok_or(Error::Protocol)?;
+            let data = object
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or(Error::Protocol)?;
+            let has_more = object
+                .get("has_more")
+                .and_then(Value::as_bool)
+                .ok_or(Error::Protocol)?;
+            if data.len() > 100 {
+                return Err(Error::Protocol);
+            }
+            let mut last_id = None;
+            for row in data {
+                let batch = parse_message_batch(row.clone())?;
+                if !seen.insert(batch.id.clone()) {
+                    return Ok(Reconciliation::Incomplete);
+                }
+                last_id = Some(batch.id.clone());
+                if batch.total != Some(expected) {
+                    continue;
+                }
+                if !batch.status.terminal() {
+                    unproven = true;
+                    continue;
+                }
+                if proofs == MAX_PROOFS || Instant::now() >= deadline {
+                    return Ok(Reconciliation::Incomplete);
+                }
+                proofs += 1;
+                if self.proven(&batch, uploaded, nonce)? {
+                    if let Some(prior) = &matching {
+                        return Ok(Reconciliation::Ambiguous(vec![prior.id.clone(), batch.id]));
+                    }
+                    matching = Some(batch);
+                }
+            }
+            if !has_more {
+                complete = true;
+                break;
+            }
+            let next = object
+                .get("last_id")
+                .and_then(Value::as_str)
+                .filter(|id| identifier(id, "msgbatch"))
+                .ok_or(Error::Protocol)?;
+            if last_id.as_deref() != Some(next) {
+                return Ok(Reconciliation::Incomplete);
+            }
+            cursor = Some(next.to_owned());
+        }
+        let Some(found) = matching else {
+            return Ok(if complete && !unproven {
+                Reconciliation::NotFound
+            } else {
+                Reconciliation::Incomplete
+            });
+        };
+        let Some(remaining_time) = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|time| !time.is_zero())
+        else {
+            return Ok(Reconciliation::Incomplete);
+        };
+        let (mut checked, _) = match self.inspect_with_budget(
+            &found.id,
+            remaining_time.min(self.timeout),
+            remaining_bytes.clamp(1, self.limits.control_bytes),
+        ) {
+            Ok(value) => value,
+            Err(Error::Limit(_)) => return Ok(Reconciliation::Incomplete),
+            Err(_) if Instant::now() >= deadline => return Ok(Reconciliation::Incomplete),
+            Err(error) => return Err(error),
+        };
+        if !checked.batch.status.terminal() {
+            return Err(Error::Invalid(
+                "Batch identity changed during reconciliation",
+            ));
+        }
+        checked.submission_nonce = Some(nonce.to_owned());
+        if !checked.matches(uploaded, nonce) {
+            return Err(Error::Invalid(
+                "Batch identity changed during reconciliation",
+            ));
+        }
+        Ok(Reconciliation::Found(Box::new(checked)))
+    }
+
     fn inspect_with_budget(
         &self,
         batch_id: &str,
         timeout: Duration,
         bytes: usize,
     ) -> Result<(RemoteIdentity, usize), Error> {
-        if !identifier(batch_id, "batch") {
+        if !self.valid_id(batch_id) {
             return Err(Error::Invalid("Batch ID is invalid"));
         }
         let response = self
-            .http
-            .get(self.endpoint(&format!("batches/{batch_id}"))?)
-            .header(AUTHORIZATION, self.authorization.clone())
+            .authorized(self.http.get(self.endpoint(&self.batch_path(batch_id))?))
             .timeout(timeout)
             .send()
             .map_err(|_| Error::Transport)?;
         let (value, bytes) = self.control_limited(response, bytes)?;
-        let identity = parse_remote(value, self.base.as_str().trim_end_matches('/'))?;
+        let api_base = self.base.as_str().trim_end_matches('/');
+        let identity = match self.api {
+            Api::OpenAi => parse_remote(value, api_base)?,
+            Api::Anthropic => RemoteIdentity {
+                batch: parse_message_batch(value)?,
+                endpoint: MESSAGES_ENDPOINT.into(),
+                api_base: api_base.into(),
+                submission_nonce: None,
+            },
+        };
         if identity.batch.id != batch_id {
             return Err(Error::Protocol);
         }
@@ -427,6 +743,9 @@ impl Client {
         if !batch.status.terminal() {
             return Err(Error::Pending);
         }
+        if self.api == Api::Anthropic {
+            return self.download_messages(batch, collection);
+        }
         if !identifier(&batch.id, "batch")
             || !identifier(&batch.input_file_id, "file")
             || batch
@@ -447,9 +766,10 @@ impl Client {
         {
             // Never accept/follow a provider-supplied results_url.
             let response = self
-                .http
-                .get(self.endpoint(&format!("files/{file}/content"))?)
-                .header(AUTHORIZATION, self.authorization.clone())
+                .authorized(
+                    self.http
+                        .get(self.endpoint(&format!("files/{file}/content"))?),
+                )
                 .send()
                 .map_err(|_| Error::Transport)?;
             if !response.status().is_success() {
@@ -479,6 +799,57 @@ impl Client {
         Ok(())
     }
 
+    /// Message Batch results stream from a path built from the validated ID,
+    /// never from the batch's `results_url`. Each row becomes the OpenAI
+    /// result shape the collector already reads.
+    fn download_messages(
+        &self,
+        batch: &Batch,
+        collection: &mut Collection<'_>,
+    ) -> Result<(), Error> {
+        if !identifier(&batch.id, "msgbatch")
+            || batch.input_file_id != INLINE_INPUT
+            || batch.output_file_id.is_some()
+            || batch.error_file_id.is_some()
+        {
+            return Err(Error::Protocol);
+        }
+        let response = self
+            .authorized(
+                self.http
+                    .get(self.endpoint(&format!("messages/batches/{}/results", batch.id))?),
+            )
+            .send()
+            .map_err(|_| Error::Transport)?;
+        if !response.status().is_success() {
+            return Err(Error::Http(response.status().as_u16()));
+        }
+        let remaining = self.limits.result_bytes - collection.bytes;
+        if response
+            .content_length()
+            .is_some_and(|length| length > remaining as u64)
+        {
+            return Err(Error::Limit(
+                "Batch result files exceed their combined byte limit",
+            ));
+        }
+        let mut response = BufReader::new(response);
+        loop {
+            let remaining = self.limits.result_bytes - collection.bytes;
+            let row = input::line(&mut response, self.limits.line_bytes.min(remaining))?;
+            if row.is_empty() {
+                break;
+            }
+            collection.bytes += row.len();
+            if row.trim_ascii().is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_slice(&row).map_err(|_| Error::Protocol)?;
+            collection.push(message_result(value)?)?;
+        }
+        Ok(())
+    }
+
     fn control(&self, response: Response) -> Result<Value, Error> {
         self.control_limited(response, self.limits.control_bytes)
             .map(|(value, _)| value)
@@ -504,6 +875,111 @@ impl Client {
         let value = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
         Ok((value, bytes.len()))
     }
+}
+
+/// One Message Batch result row in the OpenAI result shape: a succeeded
+/// message is a 200 response; errored, canceled and expired requests (which
+/// Anthropic does not bill) are errors without a body.
+fn message_result(value: Value) -> Result<Value, Error> {
+    let object = value.as_object().ok_or(Error::Protocol)?;
+    let id = object
+        .get("custom_id")
+        .and_then(Value::as_str)
+        .ok_or(Error::Protocol)?;
+    let result = object
+        .get("result")
+        .and_then(Value::as_object)
+        .ok_or(Error::Protocol)?;
+    match result.get("type").and_then(Value::as_str) {
+        Some("succeeded") => {
+            let message = result
+                .get("message")
+                .filter(|message| message.is_object())
+                .ok_or(Error::Protocol)?;
+            let mut response = json!({"status_code":200,"body":message});
+            if let Some(request) = message.get("id").and_then(Value::as_str) {
+                response["request_id"] = json!(request);
+            }
+            Ok(json!({"custom_id":id,"response":response}))
+        }
+        Some("errored") => {
+            let error = result
+                .get("error")
+                .filter(|error| error.is_object())
+                .ok_or(Error::Protocol)?;
+            Ok(json!({"custom_id":id,"error":error}))
+        }
+        Some(kind @ ("canceled" | "expired")) => Ok(json!({"custom_id":id,"error":{"type":kind}})),
+        _ => Err(Error::Protocol),
+    }
+}
+
+/// A Message Batch as the shared batch record. Its requests were inline, so
+/// its input is [`INLINE_INPUT`]; its results have no file IDs. An ended batch
+/// is completed (even with failed requests, as their results say), cancelled
+/// when cancellation began, or expired when nothing ran before the deadline.
+fn parse_message_batch(value: Value) -> Result<Batch, Error> {
+    let object = value.as_object().ok_or(Error::Protocol)?;
+    if object
+        .get("type")
+        .is_some_and(|kind| kind != "message_batch")
+    {
+        return Err(Error::Protocol);
+    }
+    let id = object
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| identifier(id, "msgbatch"))
+        .ok_or(Error::Protocol)?
+        .to_owned();
+    let counts = object
+        .get("request_counts")
+        .and_then(Value::as_object)
+        .ok_or(Error::Protocol)?;
+    let count = |name| -> Result<u64, Error> {
+        match counts.get(name) {
+            None | Some(Value::Null) => Ok(0),
+            Some(value) => value.as_u64().ok_or(Error::Protocol),
+        }
+    };
+    let (processing, succeeded, errored, canceled, expired) = (
+        count("processing")?,
+        count("succeeded")?,
+        count("errored")?,
+        count("canceled")?,
+        count("expired")?,
+    );
+    let failed = errored
+        .checked_add(canceled)
+        .and_then(|value| value.checked_add(expired))
+        .ok_or(Error::Protocol)?;
+    let total = processing
+        .checked_add(succeeded)
+        .and_then(|value| value.checked_add(failed))
+        .ok_or(Error::Protocol)?;
+    let cancelled = match object.get("cancel_initiated_at") {
+        None | Some(Value::Null) => false,
+        Some(Value::String(_)) => true,
+        _ => return Err(Error::Protocol),
+    };
+    let status = match object.get("processing_status").and_then(Value::as_str) {
+        Some("in_progress") => BatchStatus::InProgress,
+        Some("canceling") => BatchStatus::Cancelling,
+        Some("ended") if cancelled => BatchStatus::Cancelled,
+        Some("ended") if succeeded == 0 && errored == 0 && expired > 0 => BatchStatus::Expired,
+        Some("ended") => BatchStatus::Completed,
+        _ => return Err(Error::Protocol),
+    };
+    Ok(Batch {
+        id,
+        input_file_id: INLINE_INPUT.into(),
+        status,
+        output_file_id: None,
+        error_file_id: None,
+        total: Some(total),
+        completed: Some(succeeded),
+        failed: Some(failed),
+    })
 }
 
 fn validate_recovery(uploaded: &UploadedInput, nonce: &str) -> Result<(), Error> {
@@ -699,4 +1175,9 @@ impl<'a> Collection<'a> {
             bytes: self.bytes,
         }
     }
+}
+
+#[cfg(test)]
+pub(super) fn tests_parse(value: Value) -> Result<Batch, Error> {
+    parse_message_batch(value)
 }

@@ -413,53 +413,105 @@ fn requests_validate_types_urls_without_echoing_values() {
 }
 
 #[test]
-fn the_catalog_lists_the_popular_providers_then_every_compatible_prefix() {
+fn the_catalog_offers_every_routed_prefix_once_in_picker_groups() {
     let catalog = catalog();
     let names: Vec<_> = catalog.iter().map(|entry| entry.provider).collect();
-    assert_eq!(&names[..8], &POPULAR);
-    let compatible: Vec<_> = catalog
-        .iter()
-        .filter(|entry| entry.compatible)
-        .map(|entry| entry.provider)
-        .collect();
     assert_eq!(
-        compatible,
+        &names[..8],
         [
-            "groq",
-            "mistral",
-            "xai",
-            "together_ai",
-            "perplexity",
-            "cerebras",
-            "fireworks_ai",
-            "deepinfra",
-            "nebius",
-            "moonshot",
-            "sambanova",
-            "zai",
-            "nvidia_nim",
-            "novita",
-            "hosted_vllm",
-            "lm_studio",
+            "openai",
+            "anthropic",
+            "gemini",
+            "deepseek",
+            "openrouter",
+            "azure",
+            "ollama",
+            "mistral"
         ]
     );
+    assert!(catalog[..8].iter().all(|entry| entry.group == "common"));
+    assert!(catalog[8..].iter().all(|entry| entry.group != "common"));
+    // Every HTTP prefix, the clouds and the subscription runtimes appear once,
+    // as a provider or as an alias routed the same way.
+    let mut routed: Vec<_> = crate::llm::providers::listings()
+        .map(|listing| listing.prefix)
+        .chain([
+            "bedrock",
+            "vertex_ai",
+            "vertex_ai_beta",
+            "copilot",
+            "claude-agent",
+            "chatgpt",
+        ])
+        .collect();
+    routed.sort_unstable();
+    let mut offered: Vec<_> = catalog
+        .iter()
+        .flat_map(|entry| {
+            std::iter::once(entry.provider).chain(entry.aliases.iter().copied().filter(|alias| {
+                crate::llm::providers::supported(alias)
+                    && !catalog.iter().any(|other| other.provider == *alias)
+            }))
+        })
+        .filter(|name| *name != "custom")
+        .collect();
+    offered.sort_unstable();
+    let before = offered.len();
+    offered.dedup();
+    assert_eq!(offered.len(), before, "a prefix is offered twice");
+    assert_eq!(offered, routed);
+    let mut groups = PROVIDER_GROUPS.to_vec();
     for entry in &catalog {
-        assert_ne!(provider_label(entry.provider), "Unknown provider");
-        if entry.provider == "custom" {
+        assert!(PROVIDER_GROUPS.contains(&entry.group), "{entry:?}");
+        groups.retain(|group| *group != entry.group);
+        assert_eq!(provider_label(entry.provider), entry.label);
+        assert!(entry.icon.is_none_or(|icon| {
+            !icon.is_empty()
+                && icon
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        }));
+        if matches!(
+            entry.provider,
+            "custom" | "vertex_ai" | "copilot" | "claude-agent" | "chatgpt"
+        ) {
             assert!(entry.key_variables.is_empty() && entry.default_base.is_none());
             continue;
         }
-        assert!(
-            crate::llm::providers::supported(entry.provider),
-            "{entry:?}"
-        );
         assert!(!entry.key_variables.is_empty(), "{entry:?}");
         assert_eq!(
             entry.discovery,
-            !["perplexity", "zai", "fireworks_ai"].contains(&entry.provider),
+            !["perplexity", "zai", "fireworks_ai", "bedrock"].contains(&entry.provider),
             "{entry:?}"
         );
     }
+    assert!(groups.is_empty(), "{groups:?} hold no provider");
+    // Each group lists its providers by label after the common eight.
+    for group in &PROVIDER_GROUPS[1..] {
+        let labels: Vec<_> = catalog
+            .iter()
+            .filter(|entry| entry.group == *group)
+            .map(|entry| entry.label.to_lowercase())
+            .collect();
+        let mut sorted = labels.clone();
+        sorted.sort();
+        assert_eq!(labels, sorted, "{group}");
+    }
+    let compatible = |name: &str| {
+        catalog
+            .iter()
+            .any(|entry| entry.provider == name && entry.compatible)
+    };
+    assert!(compatible("mistral") && compatible("groq") && compatible("huggingface"));
+    assert!(
+        !compatible("openai")
+            && !compatible("custom")
+            && !compatible("bedrock")
+            && !compatible("chatgpt")
+    );
+    assert_eq!(provider_label("ollama_chat"), "Ollama");
+    assert_eq!(provider_label("cohere_chat"), "Cohere");
+    assert_eq!(provider_label("claude"), "Unknown provider");
     let find = |name: &str| catalog.iter().find(|entry| entry.provider == name).unwrap();
     assert_eq!(
         find("groq").default_base,
@@ -497,6 +549,12 @@ fn compatible_prefixes_discover_through_models_or_ask_for_manual_ids() {
             r#"{"data":[{"id":"local-test"}]}"#,
             "lm_studio/local-test",
         ),
+        // A prefix offered since the picker lists every routed provider.
+        (
+            "huggingface",
+            r#"{"object":"list","data":[{"id":"org/model-test"}]}"#,
+            "huggingface/org/model-test",
+        ),
     ] {
         let server = Mock::new(move |_| reply(200, body));
         let mut request = json!({"provider":provider,"api_base":format!("{}/v1",server.base)});
@@ -527,7 +585,7 @@ fn compatible_prefixes_discover_through_models_or_ask_for_manual_ids() {
     assert_eq!(refused["status"], "unavailable");
     assert!(refused["models"].as_array().unwrap().is_empty());
     // No model list is documented: no request, an explicit manual-entry answer.
-    for provider in ["perplexity", "zai", "fireworks_ai"] {
+    for provider in ["perplexity", "zai", "fireworks_ai", "bedrock", "vertex_ai"] {
         let result = discover(&json!({"provider":provider,"api_key":"private-test-key"})).unwrap();
         assert_eq!(result["status"], "unavailable");
         assert_eq!(result["source"], "manual");
@@ -591,4 +649,27 @@ fn discovery_environment_endpoints_follow_all_provider_catalog_entries() {
     // Explicit request mode passes an empty map and cannot inherit either base.
     assert_eq!(discovery_base_variable("openai", &HashMap::new()), None);
     assert_eq!(discovery_base_variable("unknown", &env), None);
+}
+
+#[test]
+fn discovery_sends_no_key_for_the_keyless_placeholder() {
+    assert!(real_key(Some("sk-real")) && real_key(Some("env:OPENAI_API_KEY")));
+    assert!(!real_key(Some(NO_KEY)) && !real_key(Some("")) && !real_key(None));
+    for provider in ["openai", "anthropic", "custom", "lm_studio"] {
+        let server = Mock::new(|_| reply(200, r#"{"data":[{"id":"listed"}]}"#));
+        // Both modes: the placeholder is an explicit value, so no variable is
+        // read in its place, and it is not sent either.
+        let request = json!({"provider":provider,"api_base":format!("{}/v1",server.base),"api_key":NO_KEY,"refresh":true});
+        discover(&request).unwrap();
+        discover_explicit(&request).unwrap();
+        let requests = server.requests();
+        assert_eq!(requests.len(), 2, "{provider}");
+        for request in requests {
+            let lower = request.to_ascii_lowercase();
+            assert!(
+                !lower.contains("authorization:") && !lower.contains("x-api-key:"),
+                "{provider}: {request}"
+            );
+        }
+    }
 }

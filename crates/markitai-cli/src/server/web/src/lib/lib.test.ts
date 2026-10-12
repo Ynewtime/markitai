@@ -3,8 +3,8 @@ import test from "node:test";
 import { cliCommand, shellQuote } from "./cli.ts";
 import { compareLines } from "./diff.ts";
 import { isHiddenName, selectFolderFiles, stagedBatch, walkEntries } from "./files.ts";
-import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, splitName, timestampMs } from "./format.ts";
-import { artifactPath, loadArtifactImages, markdownPair, rewrite, splitFrontmatter } from "./markdown.ts";
+import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, nameTail, splitName, timestampMs } from "./format.ts";
+import { artifactPath, drawingReference, drawingValue, imageByName, loadArtifactImages, markdownPair, presentationFromStyle, rewrite, splitFrontmatter } from "./markdown.ts";
 import { endpointFor, manualModelId, sameEndpoint } from "./models.ts";
 import {
   ADVANCED_DEFAULTS,
@@ -140,6 +140,45 @@ test("document references resolve only to listed artifacts", () => {
   }
 });
 
+test("a picture whose paragraph repeats its alt text is decorative", () => {
+  const paragraph = { textContent: " 图2 散点图 " };
+  const image = Object.assign(fakeElement("img", { src: "assets/a.png", alt: "图2 散点图" }), { closest: () => paragraph });
+  const other = Object.assign(fakeElement("img", { src: "assets/a.png", alt: "封面" }), { closest: () => ({ textContent: "第一章 图表的语法" }) });
+  const fragment = { ownerDocument: { createElement: (tag: string) => fakeElement(tag) }, querySelectorAll: (selector: string) => (selector === "img" ? [image, other] : []) };
+  rewrite(fragment as never, {
+    documentPath: "doc.md",
+    artifacts: [{ relpath: "assets/a.png", size: 1 }],
+    imageURL: (path) => `/x/${path}`,
+    fileURL: (path) => `/x/${path}`,
+    placeholder: (alt) => `[${alt}]`,
+    fallbackAlt: "figure",
+    tableLabel: "table",
+    codeLabel: "code",
+  });
+  assert.equal(image.getAttribute("alt"), "");
+  assert.equal(other.getAttribute("alt"), "封面");
+});
+
+test("a long file name keeps its extensions and four characters before them", () => {
+  const name = "2025年度可持续发展报告（中英文对照版）——环境、社会及治理信息披露全文.pdf.llm.md";
+  assert.equal(name.slice(nameTail(name)), "信息披露全文.pdf.llm.md".slice(2));
+  assert.equal("report.final.v2.docx.md".slice(nameTail("report.final.v2.docx.md")), "inal.v2.docx.md");
+  assert.equal(nameTail("abc"), 0);
+  assert.equal("README".slice(nameTail("README")), "ADME");
+});
+
+test("an image whose folder does not match resolves by its unique file name only", () => {
+  const images = [".markitai/assets/cover.jpg", ".markitai/assets/图2-散点图.png", ".markitai/assets/a.png", "other/a.png"];
+  assert.equal(imageByName("assets/cover.jpg", images), ".markitai/assets/cover.jpg");
+  assert.equal(imageByName("../Images/%E5%9B%BE2-%E6%95%A3%E7%82%B9%E5%9B%BE.png", images), ".markitai/assets/图2-散点图.png");
+  assert.equal(imageByName("cover.jpg?x=1", images), ".markitai/assets/cover.jpg");
+  // Two listed images share the name: neither is guessed.
+  assert.equal(imageByName("img/a.png", images), null);
+  for (const bad of ["https://evil.example/cover.jpg", "//evil.example/cover.jpg", "/abs/cover.jpg", "..\\cover.jpg", "data:image/png;base64,AA", "missing.png", "notes.md", "%E0%A4%A"]) {
+    assert.equal(imageByName(bad, images), null, bad);
+  }
+});
+
 test("line comparison numbers both sides and refuses oversized work", () => {
   const result = compareLines("a\nb\nc\n", "a\nB\nc\nd\n");
   assert.equal(result.kind, "rows");
@@ -271,13 +310,16 @@ test("rendered images and file links carry no token; with one, images wait to be
     const image = fakeElement("img", { src: "assets/a.png", alt: "" });
     const external = fakeElement("img", { src: "https://example.com/x.png" });
     const link = fakeElement("a", { href: "assets/a.png" });
+    // A link the sanitizer emptied (it had a `javascript:` address).
+    const bare = fakeElement("a", {});
+    const blank = fakeElement("a", { href: " " });
     const fragment = {
       ownerDocument: { createElement: (tag: string) => fakeElement(tag) },
-      querySelectorAll: (selector: string) => (selector === "img" ? [image, external] : selector === "a" ? [link] : []),
+      querySelectorAll: (selector: string) => (selector === "img" ? [image, external] : selector === "a" ? [link, bare, blank] : []),
     };
     rewrite(fragment as never, {
       documentPath: "doc.md",
-      artifacts: [{ relpath: "assets/a.png", size: 1 }],
+      artifacts: [{ relpath: "assets/a.png", size: 1 }, { relpath: "doc.md", size: 1 }],
       imageURL,
       fileURL: (path) => `/api/jobs/j/files/${path}`,
       placeholder: (alt) => `[${alt}]`,
@@ -285,7 +327,7 @@ test("rendered images and file links carry no token; with one, images wait to be
       tableLabel: "table",
       codeLabel: "code",
     });
-    return { image, external, link };
+    return { image, external, link, bare, blank };
   };
   const plain = render((path) => `/api/jobs/j/files/${path}`);
   assert.equal(plain.image.getAttribute("src"), "/api/jobs/j/files/assets/a.png");
@@ -293,6 +335,10 @@ test("rendered images and file links carry no token; with one, images wait to be
   assert.ok(plain.external.replacedBy, "external images stay blocked");
   assert.equal(plain.link.getAttribute("href"), "/api/jobs/j/files/assets/a.png");
   assert.equal(plain.link.getAttribute("data-artifact"), "assets/a.png");
+  for (const empty of [plain.bare, plain.blank]) {
+    assert.equal(empty.getAttribute("href"), null, "an empty link never points at the document");
+    assert.equal(empty.getAttribute("download"), null);
+  }
   const held = render(() => null);
   assert.equal(held.image.getAttribute("src"), null);
   assert.equal(held.image.getAttribute("data-artifact-src"), "assets/a.png");
@@ -339,4 +385,78 @@ test("waiting images are fetched a few at a time, shown as object URLs and relea
   assert.equal(images[2]?.getAttribute("src"), null);
   loads.dispose();
   assert.deepEqual(revoked, created);
+});
+
+test("drawing values resolve only to elements of the same drawing and never load or run anything", () => {
+  const ids = new Map([["grad", "md-drawing-1-grad"], ["clip", "md-drawing-1-clip"]]);
+  assert.equal(drawingValue("url(#grad)", ids), "url(#md-drawing-1-grad)");
+  assert.equal(drawingValue("url( '#clip' )", ids), "url(#md-drawing-1-clip)");
+  assert.equal(drawingValue("#94a3b8", ids), "#94a3b8");
+  assert.equal(drawingValue("M 80 50 L 320 50", ids), "M 80 50 L 320 50");
+  for (const hostile of [
+    "url(#missing)", "url(https://evil.example/x.svg#grad)", "url(//evil.example/x)", "url(data:image/svg+xml,<svg/>)",
+    "url(#grad) url(https://evil.example/)", "URL(\"https://evil.example/a\")", "url (https://evil.example/)",
+    "image-set(\"https://evil.example/a.png\" 1x)", "-webkit-image-set(url(a.png) 1x)", "cross-fade(url(a), url(b))",
+    "element(#x)", "expression(alert(1))", "javascript:alert(1)", " JavaScript:alert(1)", "data:text/html,<b>",
+    "paint(worklet)", "attr(data-x url)", "env(safe-area-inset-top)",
+  ]) {
+    assert.equal(drawingValue(hostile, ids), null, hostile);
+  }
+  assert.equal(drawingReference("#grad", ids), "#md-drawing-1-grad");
+  for (const hostile of ["#missing", "other.svg#grad", "https://evil.example/s.svg#grad", "javascript:alert(1)", "data:image/svg+xml,x", ""]) {
+    assert.equal(drawingReference(hostile, ids), null, hostile);
+  }
+});
+
+test("a drawing's style becomes drawing attributes, never references or other properties", () => {
+  assert.deepEqual(presentationFromStyle("font-size:14px;font-weight:600"), [["font-size", "14px"], ["font-weight", "600"]]);
+  assert.deepEqual(presentationFromStyle(" FILL : #f59e0b !important ; stroke:currentColor"), [["fill", "#f59e0b"], ["stroke", "currentColor"]]);
+  assert.deepEqual(
+    presentationFromStyle("fill:url(#g);background:url(https://evil.example/a.png);behavior:url(x.htc);position:fixed;stroke:image-set('a.png' 1x);color:red"),
+    [["fill", "url(#g)"], ["color", "red"]],
+  );
+  assert.deepEqual(presentationFromStyle("fill:url(#g) url(https://evil.example/a);stroke:url(https://evil.example/s.svg#g)"), []);
+  assert.deepEqual(presentationFromStyle("no declaration; :empty; fill:"), []);
+});
+
+test("an empty header cell becomes a plain cell; a named one stays a header", () => {
+  const made: Array<{ tag: string; attributes: Record<string, string>; children: unknown[] }> = [];
+  const cell = (text: string, image = false) => {
+    const replaced: unknown[] = [];
+    return {
+      textContent: text,
+      attributes: [{ name: "align", value: "right" }],
+      childNodes: text ? [text] : [],
+      querySelector: (selector: string) => (image && selector.includes("img") ? {} : null),
+      replaceWith: (node: unknown) => replaced.push(node),
+      replaced,
+    };
+  };
+  const empty = cell("  ");
+  const named = cell("Column B");
+  const pictured = cell("", true);
+  const fragment = {
+    ownerDocument: {
+      createElement: (tag: string) => {
+        const element = { tag, attributes: {} as Record<string, string>, children: [] as unknown[], setAttribute(name: string, value: string) { element.attributes[name] = value; }, append(...nodes: unknown[]) { element.children.push(...nodes); } };
+        made.push(element);
+        return element;
+      },
+    },
+    querySelectorAll: (selector: string) => (selector === "th" ? [empty, named, pictured] : []),
+  };
+  rewrite(fragment as never, {
+    documentPath: "doc.md",
+    artifacts: [],
+    imageURL: () => null,
+    fileURL: (path) => path,
+    placeholder: (alt) => alt,
+    fallbackAlt: "figure",
+    tableLabel: "table",
+    codeLabel: "code",
+  });
+  assert.equal(empty.replaced.length, 1);
+  assert.deepEqual(made[0], { ...made[0], tag: "td", attributes: { align: "right" } });
+  assert.equal(named.replaced.length, 0);
+  assert.equal(pictured.replaced.length, 0);
 });

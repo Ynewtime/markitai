@@ -128,15 +128,21 @@ opt-level = 3
 opt-level = 3
 
 # The portable OCR engine's kernels and tensor code (Windows, Linux, and macOS
-# with `portable-media`); its operators (tract-core) stay size-optimized.
-# Measured on the macOS portable build against all of tract at "z": these two
-# add 1.04 MB and convert OCR images 11-12% faster; tract-core at 3 as well
-# would add 5.8 MB in all for 30% (docs/ocr.md, portable engine).
+# with `portable-media`). Measured on the macOS portable build against all of
+# tract at "z": these two add 1.04 MB and convert OCR images 11-12% faster.
 [profile.release.package.tract-linalg]
 opt-level = 3
 
 [profile.release.package.tract-data]
 opt-level = 3
+
+# Its operators. Measured on Linux arm64 (2026-10-11, release CLI, 9 OCR
+# inputs, medians of 7 alternating runs, identical text) against "z": "s"
+# adds 4.71 MB and is 17.6% faster (geometric mean; 13.2% on 15 scans at
+# -j 4); 2 or 3 add 6.96 / 7.05 MB for 18.1%; 1 adds 8.0 MB for less; the
+# other tract crates at 3 add 1.9 MB more for nothing measurable.
+[profile.release.package.tract-core]
+opt-level = "s"
 
 # Unoptimized, tract takes minutes for one image in the model-backed tests.
 [profile.dev.package.tract-linalg]

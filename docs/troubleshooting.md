@@ -128,10 +128,11 @@ in advance. Choose `overwrite` or `skip` with
 `OPENAI_API_KEY` and run `markitai init --yes`, or configure `llm.model_list`;
 see [quick start](quickstart.md#7-enhance-with-a-language-model) and [LLM](llm.md).
 
-**`! LLM enhancement failed; base Markdown retained: Environment variable not found: …`.**
-A configured model refers to `env:NAME` and that variable is not set. The base
-Markdown is still written because `llm.on_failure` defaults to `fallback`; set
-it to `fail` to make this an error. Put the key in the environment, in `.env`
+**`! LLM enhancement failed: Environment variable not found: …`**, then
+**`! No model succeeded for this document; only the base Markdown was kept.`**
+A configured model refers to `env:NAME` and that variable is not set, so no model
+was asked. Only the base Markdown is written, no `.llm.md`, because
+`llm.on_failure` defaults to `fallback`; set it to `fail` to make this an error. Put the key in the environment, in `.env`
 in the current directory, or in `MARKITAI_HOME/.env` (`~/.markitai/.env`).
 
 **`LLM returned HTTP 403: the model is not available in this region`.** The

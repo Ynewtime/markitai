@@ -189,6 +189,20 @@ pub(crate) fn check_paths(paths: &[&Path], allow_symlinks: bool) -> Result<()> {
     Ok(())
 }
 
+/// Merge image-analysis entries (`asset`, `alt`, `desc`, `text`, …) into the
+/// `images.json` index of `directory`, as a conversion with `--desc` does.
+pub fn publish_image_descriptions(
+    directory: &Path,
+    entries: &[Value],
+    source: &str,
+    allow_symlinks: bool,
+) -> Result<()> {
+    let _guard = OUTPUT_LOCK
+        .lock()
+        .map_err(|_| Error::Conversion("Output lock poisoned".into()))?;
+    image_metadata::publish(directory, entries, source, allow_symlinks)
+}
+
 pub fn split_frontmatter(text: &str) -> (Map<String, Value>, &str) {
     if let Some(rest) = text.strip_prefix("---\n") {
         let mut offset = 0;
@@ -542,6 +556,67 @@ fn redacted_parameters(text: Option<&str>) -> Option<String> {
         serializer.append_pair(key, if secret(key) { "REDACTED" } else { value });
     }
     Some(serializer.finish())
+}
+
+/// A configured address as a settings screen may show it: the text as
+/// written, with userinfo and the value of every secret query or fragment
+/// parameter (the fetch policy's judgement of its name) replaced by `…`, so
+/// `https://user:pw@host/v1?token=x&v=2` reads `https://…@host/v1?token=…&v=2`.
+/// An `env:NAME` reference names a variable and is returned as it is.
+pub fn masked_url(source: &str) -> String {
+    const MASK: &str = "\u{2026}";
+    if source.trim_start().starts_with("env:") {
+        return source.to_owned();
+    }
+    let (rest, fragment) = match source.split_once('#') {
+        Some((rest, fragment)) => (rest, Some(fragment)),
+        None => (source, None),
+    };
+    let (rest, query) = match rest.split_once('?') {
+        Some((rest, query)) => (rest, Some(query)),
+        None => (rest, None),
+    };
+    let (scheme, after) = match rest.find("://") {
+        Some(at) => rest.split_at(at + 3),
+        None => ("", rest),
+    };
+    let authority_end = after.find('/').unwrap_or(after.len());
+    let (authority, path) = after.split_at(authority_end);
+    let mut masked = String::from(scheme);
+    match authority.rfind('@') {
+        Some(at) => {
+            masked.push_str(MASK);
+            masked.push_str(&authority[at..]);
+        }
+        None => masked.push_str(authority),
+    }
+    masked.push_str(path);
+    let parameters = |text: &str| {
+        text.split('&')
+            .map(|pair| {
+                let name = pair.split_once('=').map_or(pair, |(name, _)| name);
+                let decoded = url::form_urlencoded::parse(name.as_bytes())
+                    .next()
+                    .map(|(name, _)| name.into_owned())
+                    .unwrap_or_default();
+                if crate::fetch::secret_parameter(&decoded) {
+                    format!("{name}={MASK}")
+                } else {
+                    pair.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("&")
+    };
+    if let Some(query) = query {
+        masked.push('?');
+        masked.push_str(&parameters(query));
+    }
+    if let Some(fragment) = fragment {
+        masked.push('#');
+        masked.push_str(&parameters(fragment));
+    }
+    masked
 }
 
 pub fn url_name(source: &str) -> String {
@@ -1117,6 +1192,35 @@ fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn masked_urls_hide_userinfo_and_secret_parameters_and_keep_the_rest() {
+        for (source, shown) in [
+            (
+                "https://user:password@example.test/private?token=secret&v=2",
+                "https://\u{2026}@example.test/private?token=\u{2026}&v=2",
+            ),
+            (
+                "https://api.example.test/v1?api_key=k&sig=s&api-version=2024-10-21",
+                "https://api.example.test/v1?api_key=\u{2026}&sig=\u{2026}&api-version=2024-10-21",
+            ),
+            (
+                "http://u@127.0.0.1:9133/v1",
+                "http://\u{2026}@127.0.0.1:9133/v1",
+            ),
+            (
+                "https://host/v1#access_token=t&x=1",
+                "https://host/v1#access_token=\u{2026}&x=1",
+            ),
+            ("https://host/a@b/v1", "https://host/a@b/v1"),
+            ("localhost:8000/v1?key=k", "localhost:8000/v1?key=\u{2026}"),
+            ("user:pw@localhost:8000", "\u{2026}@localhost:8000"),
+            ("https://api.openai.com/v1", "https://api.openai.com/v1"),
+            ("env:OPENAI_API_BASE", "env:OPENAI_API_BASE"),
+            ("", ""),
+        ] {
+            assert_eq!(masked_url(source), shown, "{source}");
+        }
+    }
     use super::*;
     use std::path::PathBuf;
     use std::sync::Mutex;

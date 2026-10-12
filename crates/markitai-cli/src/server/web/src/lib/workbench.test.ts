@@ -9,6 +9,7 @@ import { counts, hasNotices, isGroup, itemOrder, jobKey, navigationOrder, placeh
 import { costState, fmtUsd, itemCost, totalCost } from "./cost.ts";
 import { parseFrontMatter } from "./frontmatter.ts";
 import { groupNotices, template } from "./notices.ts";
+import { en } from "../i18n/en.ts";
 import { listQuery, parseListState, parseRoute, routePath } from "./route.ts";
 import { itemFromPayload, type SessionItem } from "./session.ts";
 import { capTables, MARKER, NUMERIC, tableSlice } from "./tables.ts";
@@ -105,6 +106,16 @@ test("warnings group by kind and template, counted, with their names", () => {
   assert.equal(template("File 'a b.png' has 12 pages"), "File <q> has <n> pages");
 });
 
+test("a document no model answered reads as one notice beside its failure", () => {
+  const groups = groupNotices([
+    { itemKey: "j/a", itemName: "a.epub", text: "LLM enhancement failed: LLM request failed: connection refused (deployment openai/x at 127.0.0.1:9)" },
+    { itemKey: "j/a", itemName: "a.epub", text: "No model succeeded for this document; only the base Markdown was kept." },
+    { itemKey: "j/b", itemName: "b.pptx", text: "No model succeeded for this document; only the base Markdown was kept." },
+  ]);
+  assert.deepEqual(groups.map((group) => [group.kind, group.count, group.items.length]), [["no_model", 2, 2], ["other", 1, 1]]);
+  assert.equal(en.noticeTitle("no_model", 1, [], ""), "No model answered, so only the base Markdown was kept");
+});
+
 test("long tables are cut before parsing, with a marker and every row kept for Show all", () => {
   const rows = Array.from({ length: 1200 }, (_, n) => `| row ${n} | ${n} |`);
   const markdown = ["# Data", "", "| Name | Value |", "| --- | ---: |", ...rows, "", "after", "```", "| not | a |", "| --- | --- |", "```"].join("\n");
@@ -178,7 +189,12 @@ test("views and the list selection are real addresses", () => {
   assert.deepEqual(parseRoute("/jobs/"), { view: "jobs" });
   assert.deepEqual(parseRoute("/settings/appearance"), { view: "settings", section: "appearance" });
   assert.deepEqual(parseRoute("/settings"), { view: "settings", section: null });
-  assert.deepEqual(parseRoute("/anything"), { view: "convert" });
+  assert.deepEqual(parseRoute("/"), { view: "convert" });
+  assert.deepEqual(parseRoute("/index.html"), { view: "convert" });
+  // Any other address is no page: the workbench says so instead of showing Convert.
+  assert.deepEqual(parseRoute("/anything"), { view: "missing", path: "/anything" });
+  assert.deepEqual(parseRoute("/settings/nope"), { view: "missing", path: "/settings/nope" });
+  assert.equal(routePath({ view: "missing", path: "/anything" }), "/anything");
   assert.equal(routePath({ view: "settings", section: "access" }), "/settings/access");
   assert.deepEqual(parseListState("?sel=0123456789ab/i3&view=compare"), { selected: "0123456789ab/i3", mode: "compare" });
   assert.deepEqual(parseListState("?sel=job:0123456789ab"), { selected: "job:0123456789ab", mode: "inspector" });

@@ -1,26 +1,30 @@
-// The inspector (A3): what one conversion is, in plain words. For an item:
-// its state, actions, facts (source, output, models, cost, when), notices
-// grouped by kind, and the start of the result. For a submission: its
-// progress, batch actions, facts and the notices of all its items (A4). With
-// nothing selected: an overview of everything listed. The actions render as a
-// row here, or in the bottom sheet's pinned bar on phones.
+// The inspector (A3): what one conversion is, in plain words, as the Details
+// tab of the peek window. For an item: its state, facts (source, output,
+// models, cost, when), notices grouped by kind, and the start of the result.
+// For a submission: its progress, facts and the notices of all its items (A4).
+// The summary of everything listed is the Overview. The actions are an action
+// set the window's header draws: the one or two that matter, the rest in "⋯".
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { filePath } from "../api/client.ts";
+import { fetchBlob, filePath, imagePath } from "../api/client.ts";
+import { hasToken } from "../api/token.ts";
 import type { ItemResult } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { itemErrorText } from "../i18n/errors.ts";
+import { itemErrorText, persistenceText } from "../i18n/errors.ts";
 import { counts, isFailed, isStopped, presetOf, submissionLabel, type ConvJob, type LabelWords } from "../lib/conversions.ts";
 import { costState, fmtUsd, itemCost, totalCost, type CostState } from "../lib/cost.ts";
 import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, timestampMs } from "../lib/format.ts";
 import { parseFrontMatter } from "../lib/frontmatter.ts";
-import { renderMarkdown, splitFrontmatter } from "../lib/markdown.ts";
+import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
-import { ConfirmPopover } from "./confirm-popover.tsx";
+import type { MenuDanger } from "./action-menu.tsx";
+import { FileName } from "./file-name.tsx";
 import { Duration, glyphOf, StatusGlyph, statusWord, useElapsed } from "./item-bits.tsx";
+import type { IconName } from "./icon-paths.ts";
 import { Icon } from "./icons.tsx";
+import { Skeleton } from "./skeleton.tsx";
 
 type Described = { text: string; detail: string };
 
@@ -28,6 +32,7 @@ export interface ItemActionsApi {
   preview(item: SessionItem): void;
   compare(item: SessionItem): void;
   download(item: SessionItem, path: string): void;
+  copyFailed(item: SessionItem): void;
   retry(item: SessionItem): void;
   retryPlain(item: SessionItem): void;
   retryWithOcr(item: SessionItem): void;
@@ -44,6 +49,62 @@ export interface JobActionsApi {
   select(key: string): void;
 }
 
+/** An action on this conversion that failed (Retry, Delete, Download, Enhance,
+ * Copy): one sentence, and the service's full wording behind Full details. */
+export interface ActionFailure {
+  key: string;
+  text: string;
+  detail: string;
+}
+
+/** The failed action, in the style of the conversion's own failure reason: a
+ * red ✕, one sentence, Full details. No box: it reads as part of the inspector. */
+export function ActionError({ t, failure }: { t: Dict; failure: ActionFailure | null }) {
+  if (!failure) return null;
+  return (
+    <div class="action-error">
+      <p class="action-error-line">
+        <StatusGlyph glyph="failed" />
+        <span>{failure.text}</span>
+      </p>
+      {failure.detail && (
+        <details class="notice-details">
+          <summary>{t.notificationDetails}</summary>
+          <p class="raw">{failure.detail}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** A lasting condition of this conversion (it ran without a model; its history
+ * could not be saved): one line in the style of the failure reason, with at
+ * most one link. */
+function ConditionLine({ tone, text, action }: { tone: "info" | "error"; text: string; action?: { label: string; run: () => void } }) {
+  return (
+    <p class={`condition-line is-${tone}`}>
+      {tone === "error" ? (
+        <StatusGlyph glyph="failed" />
+      ) : (
+        <span class="condition-mark" aria-hidden="true">
+          <Icon name="Info" size={14} />
+        </span>
+      )}
+      <span>
+        {text}
+        {action && (
+          <>
+            {" "}
+            <button type="button" class="inline-action" onClick={action.run}>
+              {action.label}
+            </button>
+          </>
+        )}
+      </span>
+    </p>
+  );
+}
+
 export interface InspectorContext {
   t: Dict;
   locale: Locale;
@@ -56,6 +117,8 @@ export interface InspectorContext {
   busy: ReadonlySet<string>;
   labelWords: LabelWords;
   describe: (error: unknown) => Described;
+  /** The selected conversion's failed action, if any. */
+  failure: ActionFailure | null;
 }
 
 const docsPage = (docsUrl: string, page: string) => (/\/index\.md$/.test(docsUrl) ? docsUrl.replace(/index\.md$/, `${page}.md`) : docsUrl);
@@ -150,8 +213,8 @@ function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: No
   );
 }
 
-/** The first blocks of a result, rendered without loading images. */
-function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionItem; onOpen: () => void }) {
+/** The first blocks of a result, with the item's own pictures as small figures. */
+function Excerpt({ ctx, item }: { ctx: InspectorContext; item: SessionItem }) {
   const { t } = ctx;
   const key = resultKey(item);
   const [result, setResult] = useState<ItemResult | null>(() => cachedExcerpt(key));
@@ -177,47 +240,54 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
     const target = body.current;
     if (!target || !split || !result) return;
     let stale = false;
+    let loads: ImageLoads | null = null;
+    const placeholder = (alt: string) => t.imagePlaceholder(alt || t.imageUnavailable);
     // About a screenful: cut at a blank line near 1,800 characters.
     const text = split.body.trimStart();
     const cut = text.length > 1800 ? text.slice(0, Math.max(text.lastIndexOf("\n\n", 1800), 600)) : text;
     renderMarkdown(cut, {
       documentPath: item.output ?? "",
       artifacts: result.artifacts,
-      imageURL: () => null,
+      imageURL: (path) => (hasToken() ? null : imagePath(item.jobId, item.itemId, path)),
       fileURL: (path) => filePath(item.jobId, path),
-      placeholder: (alt) => t.imagePlaceholder(alt || t.imageUnavailable),
+      placeholder,
       fallbackAlt: t.figureFrom(item.name),
       tableLabel: t.tableAria,
       codeLabel: t.codeAria,
     }).then(
       (fragment) => {
         if (stale) return;
-        for (const image of [...fragment.querySelectorAll("img")]) {
-          const span = document.createElement("span");
-          span.className = "img-blocked";
-          span.textContent = t.imagePlaceholder(image.getAttribute("alt") || t.imageUnavailable);
-          image.replaceWith(span);
-        }
         // Links inside an excerpt would compete with the excerpt's own action.
         for (const link of [...fragment.querySelectorAll("a")]) link.replaceWith(...link.childNodes);
+        // The excerpt clips its own overflow: its few pictures load at once.
+        for (const image of fragment.querySelectorAll("img")) image.setAttribute("loading", "eager");
         target.replaceChildren(fragment);
+        loads = loadArtifactImages(
+          target,
+          (path) => fetchBlob(imagePath(item.jobId, item.itemId, path)).then((file) => file.blob),
+          (image) => {
+            const span = document.createElement("span");
+            span.className = "img-blocked";
+            span.textContent = placeholder(image.getAttribute("alt") ?? "");
+            image.replaceWith(span);
+          },
+          { limit: 2 },
+        );
       },
       () => undefined,
     );
     return () => {
       stale = true;
+      loads?.dispose();
     };
   }, [split, result, item.jobId, item.output, item.name, t]);
   if (error) return <p class="pane-note line-error">{ctx.describe(error).text}</p>;
-  if (!result || !split) return <p class="pane-note">{t.loading}</p>;
+  if (!result || !split) return <Skeleton label={t.loading} kind="list" />;
   return (
     <div class="excerpt">
       {front && (front.title || front.description || front.tags.length > 0) && <FrontCard front={front} compact />}
-      <div ref={body} class="doc-body excerpt-body" aria-hidden="true" />
-      <button type="button" class="excerpt-open" onClick={onOpen}>
-        {t.openPreview}
-        <Icon name="ArrowRight" size={13} />
-      </button>
+      {/* A picture of the result's start: nothing in it is read or reached by the keyboard. */}
+      <div ref={body} class="doc-body excerpt-body" aria-hidden="true" inert />
     </div>
   );
 }
@@ -238,81 +308,57 @@ export function FrontCard({ front, compact = false }: { front: NonNullable<Retur
   );
 }
 
-/** The item's actions; `sheet` lays them out for the bottom sheet's pinned bar. */
-export function ItemActions({ ctx, item, actions, sheet = false }: { ctx: InspectorContext; item: SessionItem; actions: ItemActionsApi; sheet?: boolean }) {
+/** One action of a conversion: a button in the window's header, or an entry of its "⋯" menu. */
+export interface Act {
+  key: string;
+  label: string;
+  icon?: IconName;
+  run: () => void;
+  primary?: boolean;
+  disabled?: boolean;
+  busy?: boolean;
+}
+
+/** What a conversion offers: shown as buttons, the rest in "⋯", and Delete (confirmed) last. */
+export interface ActSet {
+  shown: Act[];
+  more: Act[];
+  danger: MenuDanger | null;
+}
+
+/** An item's actions. Preview and Compare are the window's tabs, not actions. */
+export function itemActs(ctx: InspectorContext, item: SessionItem, actions: ItemActionsApi): ActSet {
   const { t } = ctx;
   const busy = ctx.busy.has(item.key);
   const previewable = isPreviewable(item);
   const retryable = canRetry(item);
   const noModel = item.status === "error" && item.errorCode === "no_model_configured";
   const imageOnly = item.skipped && item.skipReason === "image_only";
-  const enhanceable = previewable && !item.llmEnhanced && item.retryable && ctx.llmReady;
-  const primary = previewable ? (
-    <button type="button" class="btn btn-primary" onClick={() => actions.preview(item)}>
-      <Icon name="Eye" size={14} />
-      {t.preview}
-    </button>
-  ) : retryable && !noModel && !imageOnly ? (
-    <button type="button" class="btn btn-primary" disabled={busy} aria-busy={busy || undefined} onClick={() => actions.retry(item)}>
-      <Icon name="ArrowCounterClockwise" size={14} />
-      {t.retryPlainVerb}
-    </button>
-  ) : null;
-  return (
-    <div class={sheet ? "insp-actions is-sheet" : "insp-actions"}>
-      {primary}
-      {noModel && retryable && (
-        <>
-          <button type="button" class="btn btn-primary" onClick={actions.openModels}>
-            {t.addModelAction}
-          </button>
-          <button type="button" class="btn" disabled={busy} onClick={() => actions.retryPlain(item)}>
-            {t.retryPlain}
-          </button>
-        </>
-      )}
-      {imageOnly && retryable && (
-        <button type="button" class="btn btn-primary" disabled={busy} onClick={() => actions.retryWithOcr(item)}>
-          {t.enableOcr}
-        </button>
-      )}
-      {previewable && ctx.compare && !sheet && (
-        <button type="button" class="btn" onClick={() => actions.compare(item)}>
-          <Icon name="Columns" size={14} />
-          {t.compare}
-        </button>
-      )}
-      {previewable && item.output && (
-        <button type="button" class="btn" onClick={() => actions.download(item, item.output as string)}>
-          <Icon name="DownloadSimple" size={14} />
-          {sheet ? t.downloadShort : t.downloadMd}
-        </button>
-      )}
-      {previewable && retryable === false && item.retryable && !sheet && (
-        <button type="button" class="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => actions.retry(item)}>
-          <Icon name="ArrowCounterClockwise" size={14} />
-          {t.runAgain}
-        </button>
-      )}
-      {enhanceable && (
-        <button type="button" class="btn" disabled={busy} onClick={() => actions.enhance(item)}>
-          <Icon name="MagicWand" size={14} />
-          {t.enhance}
-        </button>
-      )}
-      {item.status !== "running" && item.status !== "queued" && (
-        <ConfirmPopover
-          triggerLabel={t.histDeleteAria(item.name)}
-          title={t.deleteItemTitle(item.name)}
-          description={t.deleteItemDescription}
-          confirmLabel={t.deletePermanently}
-          cancelLabel={t.cancel}
-          busyLabel={t.deleting}
-          onConfirm={() => actions.remove(item)}
-        />
-      )}
-    </div>
-  );
+  const shown: Act[] = [];
+  const more: Act[] = [];
+  if (previewable && item.output) shown.push({ key: "download", label: t.downloadShort, icon: "DownloadSimple", run: () => actions.download(item, item.output as string) });
+  else if (retryable && !noModel && !imageOnly)
+    shown.push({ key: "retry", label: t.retryPlainVerb, icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retry(item) });
+  if (noModel && retryable) {
+    shown.push({ key: "models", label: t.addModelAction, primary: true, run: actions.openModels });
+    more.push({ key: "plain", label: t.retryPlain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retryPlain(item) });
+  }
+  if (imageOnly && retryable) shown.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
+  if (previewable && !item.llmEnhanced && item.retryable && ctx.llmReady) more.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
+  if (previewable && retryable === false && item.retryable) more.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retry(item) });
+  const danger: MenuDanger | null =
+    item.status !== "running" && item.status !== "queued"
+      ? {
+          label: t.deleteAction,
+          title: t.deleteItemTitle(item.name),
+          description: t.deleteItemDescription,
+          confirmLabel: t.deletePermanently,
+          cancelLabel: t.cancel,
+          busyLabel: t.deleting,
+          onConfirm: () => actions.remove(item),
+        }
+      : null;
+  return { shown, more, danger };
 }
 
 export function ItemInspector({
@@ -320,14 +366,15 @@ export function ItemInspector({
   item,
   job,
   actions,
-  sheet = false,
+  peek = false,
   headingId = "insp-title",
 }: {
   ctx: InspectorContext;
   item: SessionItem;
   job: ConvJob | undefined;
   actions: ItemActionsApi;
-  sheet?: boolean;
+  /** In the peek window: its header carries the name and the actions. */
+  peek?: boolean;
   headingId?: string;
 }) {
   const { t, locale } = ctx;
@@ -364,21 +411,25 @@ export function ItemInspector({
   ].filter(Boolean);
   const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
   return (
-    <section class={sheet ? "insp is-sheet" : "insp"} aria-labelledby={headingId}>
+    <section class={peek ? "insp is-peek" : "insp"} aria-labelledby={peek ? undefined : headingId}>
+      <ActionError t={t} failure={ctx.failure?.key === item.key ? ctx.failure : null} />
       <header class="insp-head">
-        {/* In the sheet the name is the sheet's own heading. */}
-        {!sheet && (
+        {/* In the peek window the name is the window's own heading. */}
+        {!peek && (
           <h2 id={headingId} class="insp-title">
             <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />
             <span class="insp-name">{item.name}</span>
           </h2>
         )}
         <p class={failed ? "insp-line is-error" : "insp-line"}>
-          {sheet && <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />}
+          {peek && <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />}
           {itemLine(ctx, item, elapsed, images)}
         </p>
       </header>
-      {!sheet && <ItemActions ctx={ctx} item={item} actions={actions} />}
+      {job?.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
+      {!ctx.llmReady && item.status === "done" && !item.llmEnhanced && !item.skipped && (
+        <ConditionLine tone="info" text={t.noModelLine} action={{ label: t.configureModels, run: actions.openModels }} />
+      )}
       {problem && (
         <div class={failed ? "problem is-error" : "problem is-retained"}>
           {item.rerunFailure && !failed && <p class="problem-title">{t.rerunRetained(item.rerunFailure.operation)}</p>}
@@ -413,9 +464,9 @@ export function ItemInspector({
         {item.output && (
           <>
             <dt>{t.factOutput}</dt>
-            <dd class="mono">
-              {basename(item.output)}
-              {output && <span class="fact-dim"> · {fmtBytes(output.size)}</span>}
+            <dd class="mono fact-file">
+              <FileName name={basename(item.output)} />
+              {output && <span class="fact-dim fact-size">· {fmtBytes(output.size)}</span>}
             </dd>
           </>
         )}
@@ -425,7 +476,7 @@ export function ItemInspector({
             <dd>{also.join(", ")}</dd>
           </>
         )}
-        {(item.models.length > 0 || cost.kind !== "none") && (
+        {(item.models.length > 0 || (item.llmEnhanced && cost.kind !== "none")) && (
           <>
             <dt>{t.factModels}</dt>
             <dd>{item.models.length ? item.models.join(", ") : t.modelsNotReported}</dd>
@@ -461,7 +512,7 @@ export function ItemInspector({
       {isPreviewable(item) && (
         <section class="insp-section" aria-labelledby={`${headingId}-start`}>
           <h3 id={`${headingId}-start`}>{t.resultStart}</h3>
-          <Excerpt ctx={ctx} item={item} onOpen={() => actions.preview(item)} />
+          <Excerpt ctx={ctx} item={item} />
         </section>
       )}
     </section>
@@ -508,7 +559,7 @@ export function JobInspector({
   job,
   items,
   actions,
-  sheet = false,
+  peek = false,
   headingId = "insp-title",
   onShowItems,
 }: {
@@ -516,7 +567,7 @@ export function JobInspector({
   job: ConvJob;
   items: SessionItem[];
   actions: JobActionsApi;
-  sheet?: boolean;
+  peek?: boolean;
   headingId?: string;
   onShowItems: (keys: string[]) => void;
 }) {
@@ -529,9 +580,10 @@ export function JobInspector({
   const kept = keptUntil(ctx, job.finishedAt);
   const preset = presetOf(job.options);
   return (
-    <section class={sheet ? "insp is-sheet" : "insp"} aria-labelledby={headingId}>
+    <section class={peek ? "insp is-peek" : "insp"} aria-labelledby={peek ? undefined : headingId}>
+      <ActionError t={t} failure={ctx.failure?.key === `job:${job.jobId}` ? ctx.failure : null} />
       <header class="insp-head">
-        {!sheet && (
+        {!peek && (
           <h2 id={headingId} class="insp-title">
             <span class="insp-name">{label}</span>
           </h2>
@@ -543,7 +595,7 @@ export function JobInspector({
         </p>
       </header>
       <ProgressStrip t={t} items={items} />
-      {!sheet && <JobActions ctx={ctx} job={job} items={items} actions={actions} />}
+      {job.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
       <dl class="facts">
         <dt>{t.factCost}</dt>
         <dd class={cost.kind === "unknown" ? "is-unknown" : undefined}>
@@ -609,60 +661,48 @@ export function JobInspector({
   );
 }
 
-export function JobActions({ ctx, job, items, actions, sheet = false }: { ctx: InspectorContext; job: ConvJob; items: SessionItem[]; actions: JobActionsApi; sheet?: boolean }) {
+/** A submission's actions: its archive, a retry of what failed, Stop while items wait, Delete. */
+export function jobActs(ctx: InspectorContext, job: ConvJob, items: SessionItem[], actions: JobActionsApi): ActSet {
   const { t } = ctx;
   const retryable = items.filter((item) => (isFailed(item) || isStopped(item)) && canRetry(item)).length;
   const waiting = items.some((item) => item.status === "queued" && item.operation === "convert");
   const running = job.status === "running";
   const busy = ctx.busy.has(`job:${job.jobId}`);
-  return (
-    <div class={sheet ? "insp-actions is-sheet" : "insp-actions"}>
-      {!running && (
-        <button type="button" class="btn btn-primary" onClick={() => actions.zip(job.jobId)}>
-          <Icon name="DownloadSimple" size={14} />
-          {t.downloadZip}
-        </button>
-      )}
-      {retryable > 0 && (
-        <button type="button" class="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => actions.retryFailed(job.jobId)}>
-          <Icon name="ArrowCounterClockwise" size={14} />
-          {t.retryFailedN(retryable)}
-        </button>
-      )}
-      {waiting && ctx.cancel && (
-        <button type="button" class="btn" disabled={busy} title={t.stopTitle} onClick={() => actions.stop(job.jobId)}>
-          <Icon name="Stop" size={14} />
-          {t.stopRemaining}
-        </button>
-      )}
-      {!running && (
-        <ConfirmPopover
-          triggerLabel={t.deleteSubmissionAria(submissionLabel(job, items, ctx.labelWords))}
-          title={t.deleteSubmissionTitle(items.length)}
-          description={t.deleteItemDescription}
-          confirmLabel={t.deletePermanently}
-          cancelLabel={t.cancel}
-          busyLabel={t.deleting}
-          onConfirm={() => actions.remove(job.jobId)}
-        />
-      )}
-    </div>
-  );
+  const shown: Act[] = [];
+  const more: Act[] = [];
+  if (retryable > 0)
+    shown.push({ key: "retry-failed", label: t.retryFailedN(retryable), icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retryFailed(job.jobId) });
+  if (!running) shown.push({ key: "zip", label: t.downloadZip, icon: "DownloadSimple", run: () => actions.zip(job.jobId) });
+  if (waiting && ctx.cancel) shown.push({ key: "stop", label: t.stopRemaining, icon: "Stop", disabled: busy, run: () => actions.stop(job.jobId) });
+  const danger: MenuDanger | null = running
+    ? null
+    : {
+        label: t.deleteAction,
+        title: t.deleteSubmissionTitle(items.length),
+        description: t.deleteItemDescription,
+        confirmLabel: t.deletePermanently,
+        cancelLabel: t.cancel,
+        busyLabel: t.deleting,
+        onConfirm: () => actions.remove(job.jobId),
+      };
+  return { shown, more, danger };
 }
 
 /** Nothing selected: what the whole list adds up to, and what needs a look (A4). */
-export function Overview({ ctx, items, onShowItems }: { ctx: InspectorContext; items: SessionItem[]; onShowItems: (keys: string[]) => void }) {
+export function Overview({ ctx, items, peek = false, onShowItems }: { ctx: InspectorContext; items: SessionItem[]; peek?: boolean; onShowItems: (keys: string[]) => void }) {
   const { t } = ctx;
   const tally = counts(items);
   const notices = useMemo(() => groupNotices(items.flatMap((item) => item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))), [items]);
   const cost = totalCost(items);
   if (!items.length) return <div class="insp is-empty"><p>{t.overviewEmpty}</p></div>;
   return (
-    <section class="insp is-overview" aria-labelledby="overview-title">
+    <section class={peek ? "insp is-overview is-peek" : "insp is-overview"} aria-labelledby={peek ? undefined : "overview-title"}>
       <header class="insp-head">
-        <h2 id="overview-title" class="insp-title">
-          <span class="insp-name">{t.overviewTitle}</span>
-        </h2>
+        {!peek && (
+          <h2 id="overview-title" class="insp-title">
+            <span class="insp-name">{t.overviewTitle}</span>
+          </h2>
+        )}
         <p class="insp-line">{t.selectHint}</p>
       </header>
       <ProgressStrip t={t} items={items} />

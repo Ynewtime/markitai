@@ -404,14 +404,22 @@ fn clearing_provider_only_deployment_detaches_without_changing_siblings() {
     let saved = saved(&store);
     let entry = &saved["llm"]["model_list"][0];
     assert!(entry["model_info"].get("provider_id").is_none());
-    assert!(entry["litellm_params"].get("api_key").is_none());
+    // Keyless at its address: the placeholder, never the environment's key.
+    assert_eq!(entry["litellm_params"]["api_key"], model::NO_KEY);
+    assert_eq!(
+        entry["litellm_params"]["use_environment_credentials"],
+        false
+    );
     assert_eq!(
         entry["litellm_params"]["api_base"],
         "http://127.0.0.1:8123/v1"
     );
     assert_eq!(saved["llm"]["providers"], raw["llm"]["providers"]);
     assert_eq!(saved["llm"]["model_list"][1], raw["llm"]["model_list"][1]);
-    assert!(ok(store.resolve_probe(&json!({"deployment_id":"one-id"})))["api_key"].is_null());
+    assert_eq!(
+        ok(store.resolve_probe(&json!({"deployment_id":"one-id"})))["api_key"],
+        model::NO_KEY
+    );
     assert_eq!(
         ok(store.resolve_probe(&json!({"deployment_id":"two-id"})))["api_key"],
         "fixture-key"
@@ -419,7 +427,7 @@ fn clearing_provider_only_deployment_detaches_without_changing_siblings() {
 }
 
 #[test]
-fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery() {
+fn every_routed_provider_is_offered_with_its_group_mark_endpoint_key_and_discovery() {
     let (_dir, store) = setup(json!({"llm":{"enabled":false,"model_list":[]}}));
     let cards = store.providers()["providers"].as_array().unwrap().clone();
     let card = |name: &str| {
@@ -429,7 +437,32 @@ fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery
             .unwrap_or_else(|| panic!("no {name} card"))
             .clone()
     };
-    // The reference's eight stay first and "common"; the added ones follow.
+    // One card per catalog provider, from the environment or built in.
+    let catalog = markitai_core::provider_management::catalog();
+    assert_eq!(cards.len(), catalog.len());
+    for known in &catalog {
+        let offered = cards
+            .iter()
+            .find(|card| card["provider"] == known.provider)
+            .unwrap();
+        assert_eq!(offered["group"], known.group, "{}", known.provider);
+        assert_eq!(offered["icon"], json!(known.icon), "{}", known.provider);
+        assert_eq!(
+            offered["aliases"],
+            json!(known.aliases),
+            "{}",
+            known.provider
+        );
+    }
+    // Every mark the catalog names is one the workbench vendors.
+    let marks = include_str!("../web/src/components/brand-marks.ts");
+    for known in &catalog {
+        if let Some(icon) = known.icon {
+            assert!(marks.contains(&format!("\n  {icon}: {{ viewBox")), "{icon}");
+        }
+    }
+    // The reference's providers and those that are not OpenAI-compatible
+    // HTTP APIs are "common"; the added OpenAI-compatible ones "compatible".
     let common: Vec<_> = cards
         .iter()
         .filter(|card| card["kind"] == "common")
@@ -441,18 +474,50 @@ fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery
             "openai",
             "anthropic",
             "gemini",
-            "ollama",
             "deepseek",
             "openrouter",
             "azure",
+            "ollama",
+            "chatgpt",
+            "claude-agent",
+            "copilot",
+            "bedrock",
+            "vertex_ai",
             "custom"
         ]
     );
-    let compatible = cards
-        .iter()
-        .filter(|card| card["kind"] == "compatible")
-        .count();
-    assert_eq!(compatible, 16);
+    assert_eq!(card("mistral")["kind"], "compatible");
+    assert_eq!(card("mistral")["group"], "common");
+    assert_eq!(card("azure")["label"], "Azure OpenAI");
+    assert_eq!(card("custom")["label"], "OpenAI-compatible endpoint");
+    assert_eq!(card("databricks")["icon"], Value::Null);
+    assert!(
+        card("ollama")["aliases"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("ollama_chat"))
+    );
+    // A subscription runtime signs in by itself and lists its own models;
+    // the clouds read their own credentials and take model IDs by hand.
+    let copilot = card("copilot");
+    assert_eq!(
+        (
+            copilot["status"].clone(),
+            copilot["key_optional"].clone(),
+            copilot["supports_discovery"].clone(),
+            copilot["key_variable"].clone()
+        ),
+        (json!("unknown"), json!(true), json!(true), Value::Null)
+    );
+    let bedrock = card("bedrock");
+    assert_eq!(
+        (
+            bedrock["supports_discovery"].clone(),
+            bedrock["key_optional"].clone(),
+            bedrock["default_base"].clone()
+        ),
+        (json!(false), json!(true), Value::Null)
+    );
     let groq = card("groq");
     assert_eq!(groq["label"], "Groq");
     assert_eq!(groq["default_base"], "https://api.groq.com/openai/v1");
@@ -484,6 +549,24 @@ fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery
 }
 
 #[test]
+fn a_subscription_with_models_stays_offered_but_a_saved_provider_does_not() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false,"model_list":[
+        {"model_name":"default","litellm_params":{"model":"copilot/gpt-5"}},
+        {"model_name":"default","litellm_params":{"model":"groq/llama","api_key":"literal-test-key"}}
+    ]}}));
+    let cards = store.providers()["providers"].as_array().unwrap().clone();
+    let kinds = |name: &str| {
+        cards
+            .iter()
+            .filter(|card| card["provider"] == name)
+            .map(|card| card["kind"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds("copilot"), ["common"]);
+    assert_eq!(kinds("groq"), ["configured"]);
+}
+
+#[test]
 fn added_prefixes_count_as_routable_by_key_or_local_address() {
     for (model, extra, routable) in [
         ("groq/llama", json!({"api_key":"literal-test-key"}), true),
@@ -500,7 +583,9 @@ fn added_prefixes_count_as_routable_by_key_or_local_address() {
             true,
         ),
         ("ollama_chat/llama", json!({}), true),
-        ("bedrock/x", json!({"api_key":"literal-test-key"}), false),
+        // A Bedrock API key routes Bedrock; an unimplemented prefix never routes.
+        ("bedrock/x", json!({"api_key":"literal-test-key"}), true),
+        ("watsonx/x", json!({"api_key":"literal-test-key"}), false),
     ] {
         let mut params = json!({"model":model});
         for (key, value) in extra.as_object().unwrap() {
@@ -1031,4 +1116,346 @@ fn a_masked_key_sent_back_is_refused_and_a_missing_one_keeps_the_saved_key() {
         ok(store.credentials(&provider))["api_key_masked"],
         "fi\u{2026}cret"
     );
+}
+
+#[test]
+fn a_saved_address_is_shown_masked_and_kept_when_sent_back_as_shown() {
+    // The fixture's address carries userinfo and a token parameter.
+    let (_dir, store) = setup(fixture());
+    let id = format!(
+        "legacy:{}",
+        store.view()["deployments"][0]["deployment_id"]
+            .as_str()
+            .unwrap()
+    );
+    let shown = ok(store.credentials(&id))["api_base"].clone();
+    assert_eq!(shown, "https://\u{2026}@example.test/custom?token=\u{2026}");
+    let stored = "https://user:pass@example.test/custom?token=hidden";
+    // Sent back as shown, alone: the address does not change.
+    ok(store.mutate(Mutation::Provider {
+        key: id.clone(),
+        revision: current(&store),
+        body: Some(json!({"expected_revision":current(&store),"api_base":shown})),
+    }));
+    assert_eq!(
+        saved(&store)["llm"]["model_list"][0]["litellm_params"]["api_base"],
+        stored
+    );
+    // Saving gives the legacy deployment a lasting id: address it again.
+    let id = format!(
+        "legacy:{}",
+        store.view()["deployments"][0]["deployment_id"]
+            .as_str()
+            .unwrap()
+    );
+    // Sent back as shown with a new key: the key changes, the address stays.
+    ok(store.mutate(Mutation::Provider {
+        key: id,
+        revision: current(&store),
+        body: Some(
+            json!({"expected_revision":current(&store),"api_base":shown,"api_key":"fixture-next-key"}),
+        ),
+    }));
+    let raw = saved(&store);
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_base"],
+        stored
+    );
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_key"],
+        "fixture-next-key"
+    );
+    let provider = raw["llm"]["providers"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Discovery with the shown address uses the stored one.
+    let discovery = ok(store
+        .resolve_discovery(&json!({"provider":"openai","provider_id":provider,"api_base":shown})));
+    assert_eq!(discovery["api_base"], stored);
+    // An edited address that still holds a mask is refused, and so is one
+    // for a new deployment or a probe.
+    let edited = "https://\u{2026}@example.test/other?token=\u{2026}";
+    let error = store
+        .mutate(Mutation::Provider {
+            key: provider.clone(),
+            revision: current(&store),
+            body: Some(
+                json!({"expected_revision":current(&store),"api_base":edited,"api_key":"k2"}),
+            ),
+        })
+        .err()
+        .unwrap();
+    assert_eq!(
+        (error.status.as_u16(), error.reason),
+        (422, "invalid_settings_request")
+    );
+    let add = json!({"expected_revision":current(&store),"model":"openai/new","api_base":edited,"api_key":"k","model_name":"masked"});
+    assert_eq!(
+        store
+            .mutate(Mutation::Add(add))
+            .err()
+            .unwrap()
+            .status
+            .as_u16(),
+        422
+    );
+    assert!(
+        store
+            .resolve_probe(&json!({"model":"openai/x","api_base":edited,"api_key":"k"}))
+            .is_err()
+    );
+    assert_eq!(
+        saved(&store)["llm"]["model_list"][0]["litellm_params"]["api_base"],
+        stored
+    );
+    // No settings response carries the stored address's secrets.
+    for response in [
+        store.view(),
+        store.providers(),
+        ok(store.credentials(&provider)),
+    ] {
+        let text = response.to_string();
+        assert!(
+            !text.contains("pass@") && !text.contains("hidden"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn keyless_settings_writes_store_the_placeholder_and_never_the_environment() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false,"model_list":[]}}));
+    let base = "http://127.0.0.1:9/v1";
+    ok(store.mutate(Mutation::Batch(json!({"expected_revision":current(&store),"deployments":[
+        {"model_name":"default","model":"openai/a","provider":"openai","api_base":base},
+        {"model_name":"default","model":"openai/b","provider":"custom","api_base":base,"api_key":""},
+        {"model_name":"default","model":"openai/c","credential_provider_id":"env:openai"},
+        {"model_name":"default","model":"claude-agent/sonnet"}
+    ]}))));
+    let raw = saved(&store);
+    let models = raw["llm"]["model_list"].as_array().unwrap();
+    for entry in &models[..2] {
+        assert_eq!(entry["litellm_params"]["api_key"], model::NO_KEY, "{entry}");
+        assert_eq!(
+            entry["litellm_params"]["use_environment_credentials"],
+            false
+        );
+    }
+    // The environment card keeps its own reference at its own endpoint, and a
+    // subscription runtime takes no key.
+    assert!(models[2]["litellm_params"].get("api_key").is_none());
+    assert_eq!(
+        models[2]["litellm_params"]["use_environment_credentials"],
+        true
+    );
+    assert!(models[3]["litellm_params"].get("api_key").is_none());
+    for saved in raw["llm"]["providers"].as_array().unwrap() {
+        assert_eq!(saved["api_key"], model::NO_KEY, "{saved}");
+    }
+    // Shown as no key anywhere.
+    let view = store.view();
+    for entry in view["deployments"].as_array().unwrap() {
+        assert_eq!(entry["api_key_configured"], false, "{entry}");
+    }
+    let cards = store.providers()["providers"].as_array().unwrap().clone();
+    // The two saved connections (the environment card's model is listed on
+    // its own, as a deployment's connection).
+    let configured: Vec<_> = cards
+        .iter()
+        .filter(|card| card["kind"] == "configured" && card["deployment_id"].is_null())
+        .collect();
+    assert_eq!(configured.len(), 2);
+    for card in configured {
+        assert_eq!(card["api_key_configured"], false, "{card}");
+        let credentials = ok(store.credentials(card["provider_id"].as_str().unwrap()));
+        assert_eq!(credentials["api_key"], Value::Null, "{credentials}");
+        assert_eq!(credentials["api_key_masked"], Value::Null);
+        assert_eq!(credentials["api_key_source"], Value::Null);
+        // Discovery and tests of the saved connection never use the environment.
+        let id = card["provider_id"].as_str().unwrap();
+        let discovery =
+            ok(store.resolve_discovery(&json!({"provider":card["provider"],"provider_id":id})));
+        assert_eq!(discovery["use_environment_credentials"], false);
+    }
+    // A draft test at an address the caller names uses the placeholder too.
+    for key in [None, Some(json!(null)), Some(json!(""))] {
+        let mut body = json!({"model":"groq/x","api_base":base});
+        if let Some(key) = key {
+            body["api_key"] = key;
+        }
+        let probe = ok(store.resolve_probe(&body));
+        assert_eq!(probe["api_key"], model::NO_KEY, "{body}");
+        assert_eq!(probe["use_environment_credentials"], false);
+    }
+    // Without an address a draft is the environment's own provider endpoint.
+    let probe = ok(store.resolve_probe(&json!({"model":"groq/x"})));
+    assert_eq!(probe["api_key"], Value::Null);
+    assert_eq!(probe["use_environment_credentials"], true);
+}
+
+#[test]
+fn keyless_cloud_entries_use_the_server_credentials_only_at_the_cloud_endpoint() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false,"model_list":[]}}));
+    ok(store.mutate(Mutation::Batch(json!({"expected_revision":current(&store),"deployments":[
+        {"model_name":"default","model":"bedrock/anthropic.claude-x","provider":"bedrock"},
+        {"model_name":"default","model":"vertex_ai/gemini-2.5-flash","provider":"vertex_ai"},
+        {"model_name":"default","model":"bedrock/anthropic.claude-y","provider":"bedrock","api_key":"bedrock-test-key"},
+        {"model_name":"default","model":"vertex_ai/gemini-2.5-pro","provider":"vertex_ai","api_base":"http://127.0.0.1:9"}
+    ]}))));
+    let raw = saved(&store);
+    let models = raw["llm"]["model_list"].as_array().unwrap();
+    // Neither key nor address: the cloud's own endpoint with the server's
+    // credentials, as Python markitai's LiteLLM uses them.
+    for entry in &models[..2] {
+        assert!(entry["litellm_params"].get("api_key").is_none(), "{entry}");
+        assert!(entry["litellm_params"].get("api_base").is_none(), "{entry}");
+        assert_eq!(
+            entry["litellm_params"]["use_environment_credentials"], true,
+            "{entry}"
+        );
+    }
+    // A Bedrock API key is used alone; an address never gets them.
+    assert_eq!(
+        models[2]["litellm_params"]["use_environment_credentials"],
+        false
+    );
+    assert_eq!(models[3]["litellm_params"]["api_key"], model::NO_KEY);
+    assert_eq!(
+        models[3]["litellm_params"]["use_environment_credentials"],
+        false
+    );
+    // A draft test is the same entry as it would be saved.
+    let probe = ok(store.resolve_probe(&json!({"model":"vertex_ai/gemini-2.5-flash"})));
+    assert_eq!(probe["use_environment_credentials"], true);
+    // Clearing the Bedrock key goes back to the server's credentials.
+    let id = store.view()["deployments"][2]["deployment_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    ok(store.mutate(Mutation::Update {
+        key: id,
+        legacy: false,
+        body: json!({"expected_revision":current(&store),"api_key":null}),
+    }));
+    let raw = saved(&store);
+    let entry = &raw["llm"]["model_list"][2];
+    assert_eq!(
+        entry["litellm_params"]["model"],
+        "bedrock/anthropic.claude-y"
+    );
+    assert!(entry["litellm_params"].get("api_key").is_none(), "{entry}");
+    assert_eq!(
+        entry["litellm_params"]["use_environment_credentials"], true,
+        "{entry}"
+    );
+}
+
+#[test]
+fn a_keyed_connection_cannot_become_keyless_at_another_host() {
+    let original = json!({"llm":{
+        "providers":[{"id":"gateway","provider":"openai","api_key":"authored-gateway-key","api_base":"https://gateway.example.test/v1","use_environment_credentials":false}],
+        "model_list":[{"model_name":"default","litellm_params":{"model":"openai/a","api_key":"authored-gateway-key","api_base":"https://gateway.example.test/v1","use_environment_credentials":false},"model_info":{"id":"a","provider_id":"gateway"}}]}});
+    let (_dir, store) = setup(original);
+    let before = fs::read(&store.source.path).unwrap();
+    let refuse = |error: ApiError| {
+        assert_eq!(error.status.as_u16(), 422);
+        assert_eq!(error.reason, "invalid_settings_request");
+        assert_eq!(error.detail, model::KEYLESS_MOVE);
+    };
+    for other in [
+        "http://127.0.0.1:9/v1",
+        "https://gateway.example.test:8443/v1",
+    ] {
+        let change = json!({"api_key":null,"api_base":other});
+        let mut body = change.clone();
+        body["expected_revision"] = json!(current(&store));
+        refuse(
+            store
+                .mutate(Mutation::Provider {
+                    key: "gateway".into(),
+                    body: Some(body.clone()),
+                    revision: current(&store),
+                })
+                .err()
+                .unwrap(),
+        );
+        refuse(
+            store
+                .mutate(Mutation::Update {
+                    key: "a".into(),
+                    body,
+                    legacy: false,
+                })
+                .err()
+                .unwrap(),
+        );
+        assert_eq!(fs::read(&store.source.path).unwrap(), before);
+    }
+    // In place, the key may go: the placeholder takes its place.
+    let same = json!({"expected_revision":current(&store),"api_key":null,"api_base":"https://GATEWAY.example.test:443/other"});
+    ok(store.mutate(Mutation::Update {
+        key: "a".into(),
+        body: same,
+        legacy: false,
+    }));
+    let entry = &saved(&store)["llm"]["model_list"][0]["litellm_params"];
+    assert_eq!(entry["api_key"], model::NO_KEY);
+    assert_eq!(entry["use_environment_credentials"], false);
+    // Clearing a connection's key and address together returns it to the
+    // provider's own endpoint, still without the environment's key.
+    ok(store.mutate(Mutation::Provider {
+        key: "gateway".into(),
+        body: Some(json!({"api_key":null,"api_base":null})),
+        revision: current(&store),
+    }));
+    let raw = saved(&store);
+    assert!(raw["llm"]["providers"][0].get("api_key").is_none());
+    assert_eq!(
+        raw["llm"]["providers"][0]["use_environment_credentials"],
+        false
+    );
+    // A keyless connection may move, keeping the placeholder.
+    let (_dir, store) = setup(json!({"llm":{"model_list":[]}}));
+    ok(store.mutate(Mutation::Add(
+        json!({"model_name":"default","model":"lm_studio/x","api_base":"http://127.0.0.1:1234/v1"}),
+    )));
+    let id = saved(&store)["llm"]["providers"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    ok(store.mutate(Mutation::Provider {
+        key: id,
+        body: Some(json!({"api_key":null,"api_base":"http://192.0.2.7:1234/v1"})),
+        revision: current(&store),
+    }));
+    let raw = saved(&store);
+    assert_eq!(raw["llm"]["providers"][0]["api_key"], model::NO_KEY);
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_key"],
+        model::NO_KEY
+    );
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_base"],
+        "http://192.0.2.7:1234/v1"
+    );
+}
+
+#[test]
+fn a_python_keyless_placeholder_reads_as_no_key() {
+    let (_dir, store) = setup(json!({"llm":{"model_list":[
+        {"model_name":"default","litellm_params":{"model":"openai/x","api_key":"markitai-no-key","api_base":"http://127.0.0.1:9/v1"},"model_info":{"id":"python"}}
+    ]}}));
+    assert_eq!(store.view()["deployments"][0]["api_key_configured"], false);
+    let card = store.providers()["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|card| card["deployment_id"] == "python")
+        .unwrap()
+        .clone();
+    assert_eq!(card["api_key_configured"], false);
+    let credentials = ok(store.credentials(card["provider_id"].as_str().unwrap()));
+    assert_eq!(credentials["api_key_masked"], Value::Null);
+    assert_eq!(credentials["api_key_source"], Value::Null);
 }

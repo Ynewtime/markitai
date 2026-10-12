@@ -5,6 +5,7 @@ mod tests;
 
 use super::supervisor::{Admission, Messages, ProcessFailure, Runtime};
 use super::{AuthStatus, FailureKind, Model, Request};
+use crate::process_groups::Workspace;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -114,19 +115,8 @@ fn limit() -> Failure {
     )
 }
 
-fn private_file(workspace: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, Failure> {
-    use std::io::Write;
-    let path = workspace.join(name);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&path).map_err(|_| protocol())?;
-    file.write_all(bytes).map_err(|_| protocol())?;
-    Ok(path)
+fn private_file(workspace: &Workspace, name: &str, bytes: &[u8]) -> Result<PathBuf, Failure> {
+    workspace.file(name, bytes).map_err(|_| protocol())
 }
 fn config_arg(args: &mut Vec<OsString>, key: &str, value: &Value) {
     args.push("-c".into());
@@ -223,7 +213,7 @@ pub fn models(config: &Config, timeout: Duration) -> Result<Vec<Model>, Failure>
     }])
 }
 fn exec_args(
-    workspace: &Path,
+    workspace: &Workspace,
     system: &str,
     images: &[(&str, &[u8])],
 ) -> Result<Vec<OsString>, Failure> {
@@ -234,8 +224,8 @@ fn exec_args(
         ("model_catalog_json", json!(catalog)),
         ("model_instructions_file", json!(prompt)),
         ("model_provider", json!("openai")),
-        ("sqlite_home", json!(workspace.join("state"))),
-        ("log_dir", json!(workspace.join("log"))),
+        ("sqlite_home", json!(workspace.directory("state"))),
+        ("log_dir", json!(workspace.directory("log"))),
     ] {
         config_arg(&mut args, name, &value);
     }
@@ -364,7 +354,7 @@ pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Fai
         ));
     }
     let workspace = RUNTIME.workspace()?;
-    let args = exec_args(workspace.path(), request.system, request.images)?;
+    let args = exec_args(&workspace, request.system, request.images)?;
     let mut child = RUNTIME.spawn(
         &config.executable,
         &config.environment,

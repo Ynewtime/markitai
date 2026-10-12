@@ -27,7 +27,7 @@ pub(super) struct Process {
     outgoing: Option<SyncSender<Vec<u8>>>,
     workers: Vec<JoinHandle<()>>,
     stderr: Arc<Stderr>,
-    pub(super) workspace: tempfile::TempDir,
+    pub(super) workspace: crate::process_groups::Workspace,
     deadline: Instant,
     sequence: u64,
     events: usize,
@@ -67,14 +67,7 @@ impl Process {
             Ok(())
         })?;
         let group = crate::process_groups::Slot::reserve().ok_or_else(limit)?;
-        let mut directory = tempfile::Builder::new();
-        directory.prefix("markitai-copilot-");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            directory.permissions(std::fs::Permissions::from_mode(0o700));
-        }
-        let workspace = directory.tempdir().map_err(|_| {
+        let workspace = crate::process_groups::Workspace::create("copilot").map_err(|_| {
             Failure::new(
                 FailureKind::Transport,
                 "Cannot create private Copilot workspace",

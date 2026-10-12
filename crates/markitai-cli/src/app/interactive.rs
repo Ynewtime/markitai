@@ -526,12 +526,21 @@ impl Echo {
     }
 }
 
-/// A model prefix this build reaches over HTTP: the routing table's providers,
-/// including every OpenAI-compatible one; the subscription runtimes have
-/// their own sign-in and are not API providers.
+/// A model prefix this build reaches over HTTP with a key and a base URL:
+/// the routing table's providers, including every OpenAI-compatible one.
+/// The subscription runtimes have their own sign-in, and Bedrock and Vertex
+/// AI their cloud credentials, configured in the configuration file.
 pub(super) fn api_provider(prefix: &str) -> bool {
     config::llm_provider_supported(prefix)
-        && !["copilot", "claude-agent", "chatgpt"].contains(&prefix)
+        && ![
+            "copilot",
+            "claude-agent",
+            "chatgpt",
+            "bedrock",
+            "vertex_ai",
+            "vertex_ai_beta",
+        ]
+        .contains(&prefix)
 }
 
 fn detected() -> Value {

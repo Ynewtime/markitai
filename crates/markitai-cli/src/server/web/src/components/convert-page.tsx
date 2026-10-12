@@ -6,25 +6,26 @@ import { counts, isGroup, jobKey, submissionLabel, type LabelWords, type Submiss
 import { fmtClock } from "../lib/format.ts";
 import { glyphOf, NameText, StatusGlyph, statusWord } from "./item-bits.tsx";
 import { Icon } from "./icons.tsx";
+import type { PanelState } from "./conversions-page.tsx";
+import { StateBlock } from "./state-block.tsx";
 
 export function ConvertPage({
   t,
   locale,
   composer,
-  notes,
   recent,
+  blocked,
   labelWords,
   onOpen,
-  onAll,
 }: {
   t: Dict;
   locale: Locale;
   composer: ComponentChildren;
-  notes: ComponentChildren;
   recent: Submission[];
+  /** Why the recent conversions cannot be shown (no token, no server). */
+  blocked: PanelState | null;
   labelWords: LabelWords;
   onOpen: (key: string) => void;
-  onAll: () => void;
 }) {
   return (
     <div class="page convert">
@@ -32,23 +33,16 @@ export function ConvertPage({
         <h1>{t.heroTitle}</h1>
         <p>{t.heroSub}</p>
       </header>
-      {notes}
       <div class="convert-composer">{composer}</div>
+      {blocked && recent.length === 0 && (
+        <div class="recent">
+          <StateBlock {...blocked} />
+        </div>
+      )}
       {recent.length > 0 && (
         <section class="recent" aria-labelledby="recent-title">
           <div class="recent-head">
             <h2 id="recent-title">{t.recentTitle}</h2>
-            <a
-              href="/jobs"
-              class="text-link"
-              onClick={(event) => {
-                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
-                event.preventDefault();
-                onAll();
-              }}
-            >
-              {t.allConversions}
-            </a>
           </div>
           <ul class="recent-list">
             {recent.map((submission) => {

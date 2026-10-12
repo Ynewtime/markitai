@@ -27,9 +27,10 @@ export const en = {
   options: "Options",
   cliAria: "CLI command",
   browse: "Upload",
-  uploadMore: "More upload choices",
+  newConversion: "New conversion",
   uploadFiles: "Upload files",
   folderAria: "Upload a folder",
+  folderShort: "Folder",
   sourceActions: "Conversion actions",
   dropToConvert: "Drop to convert",
   copy: "Copy",
@@ -121,7 +122,6 @@ export const en = {
     "Without LLM: URLs capture screenshots (the web result adds a Markdown wrapper); files still use their normal converter.",
 
   // feedback under the composer
-  capHintLink: "Configure LLM",
   submitting: "Uploading and creating the task…",
   uploadProgress: (percent: number, sent: string, total: string) => `Uploading ${percent}% · ${sent} of ${total}`,
   uploadUnknown: (sent: string) => `Uploading · ${sent} sent`,
@@ -168,7 +168,6 @@ export const en = {
   itemsAria: "Converted items",
   baseTag: "Base",
   llmTag: "LLM",
-  downloadMd: "Download .md",
   downloadFile: (name: string) => `Download ${name}`,
   retryAria: (name: string) => `Retry ${name}`,
   retryFailed: "Retry failed",
@@ -183,6 +182,7 @@ export const en = {
   stagedCount: (n: number) => (n === 1 ? "1 file" : `${n} files`),
   stagedClear: (label: string) => `Remove ${label} from this submission`,
   histDeleteAria: (name: string) => `Permanently delete ${name}`,
+  deleteAction: "Delete",
   deleteItemTitle: (name: string) => `Delete ${name}?`,
   deleteItemDescription: "This removes the stored result and cannot be undone.",
   deletePermanently: "Delete permanently",
@@ -215,6 +215,8 @@ export const en = {
   filesTab: "Files",
   versionAria: "Markdown version",
   loading: "Loading…",
+  previewLoading: (size: string | null) => (size ? `Loading ${size}…` : "Loading…"),
+  previewRendering: "Rendering…",
   exportPdf: "Export PDF",
   pdfSettings: "PDF settings",
   pdfCustomHeaderFooter: "Custom header and footer",
@@ -275,8 +277,16 @@ export const en = {
     kind: string,
     provider: string,
     source: string,
-    { local = false, manualOnly = false, needsBase = false }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean } = {},
+    {
+      local = false,
+      manualOnly = false,
+      needsBase = false,
+      subscription = false,
+      cloud = false,
+    }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean; subscription?: boolean; cloud?: boolean } = {},
   ) => {
+    if (subscription) return "Uses the official app's sign-in on the server; its models load automatically.";
+    if (cloud) return "Uses the cloud credentials the server finds; a key below is optional. Add the model IDs you want to use below.";
     if (manualOnly) return "This provider does not list its models. Add the model IDs you want to use below.";
     if (kind === "configured") return "Available models load automatically from this saved connection.";
     if (kind === "environment") return `Using credentials from ${source}.`;
@@ -288,25 +298,39 @@ export const en = {
   optionalKeyVariable: (variable: string) => `${variable} (optional)`,
   manualModelsOnly: "No model list from this provider · add a model ID below",
   serverAddressRequired: "Server address required",
-  providerGroup: (kind: string) =>
+  searchProviders: (n: number) => `Search ${n} providers`,
+  providersFound: (n: number) => `${n} ${plural(n, "provider", "providers")} found`,
+  providersNoMatch: "No providers match",
+  providersSaved: "Saved",
+  providersCommon: "Common",
+  providersAll: (n: number) => `All providers (${n})`,
+  providerFilterAria: "Provider type",
+  providerFilter: (group: string) =>
     (
       ({
-        environment: "Configured environment credentials",
-        configured: "Saved providers",
-        common: "Common providers",
-        compatible: "More OpenAI-compatible providers",
+        all: "All",
+        clouds: "Clouds",
+        inference: "Inference",
+        gateways: "Gateways",
+        local: "Local",
+        subscriptions: "Subscriptions",
+        makers: "Model makers",
       }) as Record<string, string>
-    )[kind] ?? kind,
+    )[group] ?? group,
   providerCustom: "OpenAI-compatible endpoint",
   providerUnknown: "Unknown provider",
   customApiBase: "Use a custom API base",
   requiredField: "Required",
+  optionalField: "Optional",
   manualModelToggle: "Add a model ID manually",
+  manualAndRouting: "Model ID and routing",
+  manualModelLabel: "Add a model by ID",
   searchModels: "Search models",
   selectAll: "Select all",
   manualModelPh: "Full model ID",
   azureDeploymentPh: "Azure deployment name",
   addManual: "Add manually",
+  addModelId: "Add",
   modelsAvailable: "Available models",
   alreadyConfigured: "Configured",
   visionTag: "Vision",
@@ -324,6 +348,7 @@ export const en = {
   deleteModelTitle: (model: string) => `Delete ${model}?`,
   deleteModelDescription: "The provider credentials will be kept for adding models later.",
   setStatusNone: "No models configured",
+  modelsEmptyText: "Models clean up the Markdown, describe images and read scanned pages. Markitai converts files without them.",
   setSourceLbl: "Source",
   openConfigFile: "Open the config file in your editor",
   setApiKey: "API key",
@@ -348,6 +373,8 @@ export const en = {
   addressKeyLabel: "API key for this address",
   addressKeyNote: "The saved key is never sent to a new address.",
   addressNoKeyNote: "Leave the key blank to connect without one.",
+  maskedAddressNote: "Parts shown as … are hidden. Leave the address as it is to keep them, or type the whole new address.",
+  maskedAddress: "Type the whole address: its hidden parts (…) cannot be saved.",
   keyRequired: "Enter an API key.",
   endpointKeyRequired: "Enter an API key for the new address. The saved key is never sent to a new address.",
   literalCredentialsOnly: "Enter a literal API key and address. Environment references can only be set in the server configuration.",
@@ -420,7 +447,6 @@ export const en = {
 
   // convert view
   recentTitle: "Recent",
-  allConversions: "All conversions",
   failedCount: (n: number) => `${n} failed`,
 
   // conversions view
@@ -429,13 +455,40 @@ export const en = {
     [`${done} of ${total} converted`, ...(failed ? [`${failed} failed`] : []), ...(stopped ? [`${stopped} stopped`] : []), ...(skipped ? [`${skipped} skipped`] : [])].join(", ") + ".",
   summaryRunning: (done: number, total: number, running: number, queued: number) =>
     [`${done} of ${total} converted`, ...(running ? [`${running} converting`] : []), ...(queued ? [`${queued} waiting`] : [])].join(", ") + ".",
-  emptyConversions: "No conversions yet. Drop files here or paste URLs above.",
+  emptyTitle: "No conversions yet",
+  emptyText: "Paste URLs or drop files above to convert them.",
+  emptyTextKept: (days: number) => `Paste URLs or drop files above to convert them. Conversions are kept for ${days} days.`,
+  listBlockedTitle: "Conversions can't be shown",
+  goneTitle: "This conversion no longer exists",
+  goneText: "It was deleted, or removed with old history.",
+  goneTextDays: (days: number) => `It was deleted, or removed after ${days} days.`,
+  showAllConversions: "Show all conversions",
+  tokenNeededTitle: "Access token needed",
+  serverDownTitle: "Can't reach the server",
+  serverDownText: "Is markitai serve still running? This page tries again every few seconds.",
+  filterNoneTitle: "No matches",
+  listNeedsToken: "This browser needs the access token before it can show your conversions.",
+  listLoadFailed: "Your saved conversions could not be loaded.",
+  clearFilter: "Clear filter",
+  filterNoMatchQuery: (query: string) => `No conversions match “${query}”.`,
+  filterNoFailed: "No failed conversions.",
+  filterNoNotices: "No conversions with notices.",
+  tryNow: "Try now",
+  noteView: "View",
+  notificationsLabel: "Notifications",
+  stopFailed: "Stop failed",
+  noModelLine: "Converted without LLM: no model is configured.",
+  configureModels: "Configure",
+  submitFailedShort: "Could not start the conversion.",
+  submitNeedsToken: "Not authorized: enter the access token.",
+  submitNoServer: "Could not reach the server.",
+  notFoundTitle: "Page not found",
+  notFoundText: (path: string) => `There is no page at ${path}.`,
+  titleNotFound: "Page not found · Markitai",
   downloadAll: "Download all",
   retryFailedN: (n: number) => `Retry failed (${n})`,
   filterByName: "Filter by name",
   filterNotices: "Notices",
-  historyLoadFailed: "Could not load saved conversions",
-  capHintText: "No model is configured, so LLM enhancement is off.",
   dismiss: "Dismiss",
   downloadFailedFile: "Download failed",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
@@ -449,6 +502,7 @@ export const en = {
 
   // inspector
   overviewTitle: "All conversions",
+  overviewLink: "Summary",
   overviewEmpty: "Converted files and pages appear here.",
   selectHint: "Select a conversion to see its details.",
   preview: "Preview",
@@ -492,6 +546,8 @@ export const en = {
   noticeTitle: (kind: string, count: number, models: string[], sample: string) => {
     const list = (names: string[]) => (names.length <= 2 ? names.join(" and ") : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`);
     switch (kind) {
+      case "no_model":
+        return count === 1 ? "No model answered, so only the base Markdown was kept" : `${count} documents got no model answer and kept only their base Markdown`;
       case "alt_kept":
         return count === 1 ? "1 image kept its original alt text: its analysis failed" : `${count} images kept their original alt text: their analysis failed`;
       case "cost_incomplete":
@@ -513,7 +569,6 @@ export const en = {
   showItem: "Show item",
   showItems: "Show items",
   resultStart: "Start of the result",
-  openPreview: "Open the preview",
   failedHeading: (n: number) => (n === 1 ? "1 failed" : `${n} failed`),
   stoppedCount: (n: number) => (n === 1 ? "1 item was stopped before conversion." : `${n} items were stopped before conversion.`),
   deleteSubmissionAria: (label: string) => `Permanently delete ${label}`,
@@ -523,11 +578,12 @@ export const en = {
   previousItem: "Previous item",
   nextItem: "Next item",
   positionOf: (index: number, total: number) => `${index} of ${total}`,
-  closePreview: "Close preview",
-  fullWidth: "Full width",
-  dockPreview: "Beside the list",
   moreActions: "More actions",
   openPage: "Open the page",
+  peekDetails: "Details",
+  peekViews: "Views",
+  peekDock: "Dock beside the list",
+  peekUndock: "Open as a window",
   keysMove: "previous / next item",
   keysClose: "close",
   tableCapped: (shown: string, total: string) => `Showing the first ${shown} of ${total} rows so the preview stays fast. The download has every row.`,
@@ -562,17 +618,19 @@ export const en = {
   themeHint: "Follow the system, or always use light or dark.",
   accessHeld: "This tab has an access token.",
   accessNone: "This tab has no access token.",
-  accessRefused: "The service refused this tab's access token.",
-  accessExplain: "Open the link printed by markitai serve; it carries the token. Or paste the token here.",
-  replaceToken: "Replace the access token",
-  forgetToken: "Forget the token",
-  tokenSaved: "Token saved for this tab.",
+  accessRefused: "The server refused this tab's token.",
+  accessRefusedHint: "Paste a new token.",
+  accessExplain: "Paste the token from the link markitai serve printed.",
+  replaceToken: "Paste a token to replace it.",
+  forgetToken: "Forget",
+  tokenSaved: "Token saved.",
 
   // token dialog
   tokenTitle: "Service access",
   tokenText: "Enter the access token printed when markitai serve started.",
   tokenLabel: "Access token",
-  tokenNote: "Kept for this browser tab only.",
+  tokenField: "Token",
+  tokenNote: "Kept in this tab only.",
   connect: "Connect",
 
   // crash surface (also read before the dictionary is available)

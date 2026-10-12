@@ -1,6 +1,60 @@
 use super::{ApiError, ApiResult, identity, invalid, missing};
+pub(super) use markitai_core::provider_management::{NO_KEY, real_key};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
+
+/// The refusal of a change that would leave a keyed connection keyless at
+/// another host; the same words as Python markitai 1.2.1's.
+pub(super) const KEYLESS_MOVE: &str = "a connection with a key cannot become one without a key at another address; add a new connection for that server instead";
+
+/// The key to store for an entry the settings API writes: `key`, or
+/// [`NO_KEY`] when it has none while `base` names an address and the entry
+/// may not use the environment's credentials, so that no backend reading the
+/// configuration (Python markitai's LiteLLM included) sends the server's own
+/// key variable there. Subscription runtimes take neither key nor address.
+pub(super) fn keyless(key: Value, base: &Value, provider: &str, allow_environment: bool) -> Value {
+    if allow_environment
+        || local(provider)
+        || key.as_str().is_some_and(|key| !key.is_empty())
+        || base.as_str().is_none_or(str::is_empty)
+    {
+        return key;
+    }
+    json!(NO_KEY)
+}
+
+/// Scheme, host and port the requests of an entry go to: its address, else
+/// the provider's documented one; None when unknown (an `env:` reference).
+fn endpoint_host(base: Option<&str>, provider: &str) -> Option<(String, String, u16)> {
+    let base = base
+        .filter(|base| !base.is_empty())
+        .or_else(|| markitai_core::provider_management::provider_default_base(provider))?;
+    let url = url::Url::parse(base).ok()?;
+    Some((
+        url.scheme().to_owned(),
+        url.host_str()?.to_ascii_lowercase(),
+        url.port_or_known_default()?,
+    ))
+}
+
+/// Refuse one change that turns a connection or deployment with a key into
+/// one without a key aimed at another host it names: its requests would go
+/// to a server the owner never paired a key with. Clearing the key in place,
+/// or together with the address (back to the provider's own endpoint), is
+/// allowed.
+pub(super) fn refuse_keyless_move(old: &Value, next: &Value, provider: &str) -> ApiResult<()> {
+    if !real_key(old["api_key"].as_str()) || real_key(next["api_key"].as_str()) {
+        return Ok(());
+    }
+    let Some(base) = next["api_base"].as_str().filter(|base| !base.is_empty()) else {
+        return Ok(());
+    };
+    let host = endpoint_host(Some(base), provider);
+    if host.is_some() && host == endpoint_host(old["api_base"].as_str(), provider) {
+        return Ok(());
+    }
+    Err(invalid(KEYLESS_MOVE))
+}
 
 pub(super) fn object<'a>(body: &'a Value, allowed: &[&str]) -> ApiResult<&'a Map<String, Value>> {
     let map = body
@@ -44,13 +98,29 @@ pub(super) fn client_field(body: &Value, field: &str) -> ApiResult<Option<String
             "environment references must be configured on the server",
         ));
     }
-    // The masked form sent back would replace the key with its own mask.
-    if field == "api_key" && value.as_deref().is_some_and(|v| v.contains(MASK)) {
-        return Err(invalid(
-            "api_key is a masked key; send the whole new key, or leave api_key out to keep the saved one",
-        ));
+    // A masked value sent back would replace the secret with its own mask.
+    if value.as_deref().is_some_and(|v| v.contains(MASK)) {
+        return Err(invalid(&format!(
+            "{field} is masked; send the whole new value, or leave {field} out to keep the saved one"
+        )));
     }
     Ok(value)
+}
+
+/// `body` without its `api_base` when that is the masked form of the stored
+/// address, unchanged: saving a form with the address left as shown keeps
+/// the stored one.
+pub(super) fn unchanged_base(body: &Value, stored: Option<&str>) -> Value {
+    let mut body = body.clone();
+    let unchanged = stored.is_some_and(|stored| {
+        body.get("api_base")
+            .and_then(Value::as_str)
+            .is_some_and(|sent| sent != stored && sent == markitai_core::output::masked_url(stored))
+    });
+    if unchanged && let Some(fields) = body.as_object_mut() {
+        fields.remove("api_base");
+    }
+    body
 }
 
 const MASK: char = '\u{2026}';
@@ -161,6 +231,16 @@ fn serves(provider: &str, prefix: &str) -> bool {
 }
 pub(super) fn local(provider: &str) -> bool {
     matches!(provider, "claude-agent" | "copilot" | "chatgpt")
+}
+/// Whether an entry the settings API writes may use the server's own cloud
+/// credentials (the AWS chain for Bedrock, the Google login for Vertex AI): a
+/// Bedrock or Vertex AI entry with neither a key nor an address of its own,
+/// whose requests go to the cloud's own endpoint, as Python markitai's LiteLLM
+/// sends them (owner decision 2026-10-12). One with an address never does.
+pub(super) fn cloud_credentials(provider: &str, key: &Value, base: &Value) -> bool {
+    matches!(provider, "bedrock" | "vertex_ai")
+        && !real_key(key.as_str())
+        && base.as_str().is_none_or(str::is_empty)
 }
 pub(super) fn link(entry: &mut Value, id: &str) {
     if !entry["model_info"].is_object() {
@@ -348,9 +428,14 @@ pub(super) fn create(
     if name == "custom" && base.as_str().is_none_or(str::is_empty) {
         return Err(invalid("an OpenAI-compatible endpoint needs its api_base"));
     }
-    let allow_environment = !supplied_key
+    let allow_environment = (!supplied_key
         && fallback["provider"].is_string()
-        && fallback["use_environment_credentials"].as_bool() != Some(false);
+        && fallback["use_environment_credentials"].as_bool() != Some(false))
+        || cloud_credentials(&name, &key, &base);
+    // An address this request names, or a new connection's, never gets the
+    // server's own key: without one it stores the placeholder. A saved
+    // connection that may use the environment keeps its own pair.
+    let key = keyless(key, &base, &name, allow_environment);
     if supplied_key {
         provider_id = None;
     }
@@ -384,6 +469,8 @@ pub(super) fn create(
     Ok(())
 }
 pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> ApiResult<()> {
+    let old = params(entry, providers);
+    let body = &unchanged_base(body, old["api_base"].as_str());
     object(
         body,
         &[
@@ -397,7 +484,6 @@ pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> Ap
     )?;
     client_field(body, "api_key")?;
     let client_base = client_field(body, "api_base")?;
-    let old = params(entry, providers);
     let old_provider = connection_provider(entry, providers);
     let next_provider = body["model"]
         .as_str()
@@ -481,6 +567,29 @@ pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> Ap
         params.remove("api_key");
         params.remove("api_base");
     }
+    if body.get("api_key").is_some() || body.get("api_base").is_some() {
+        let mut next = params(entry, providers);
+        let connection = connection_provider(entry, providers);
+        refuse_keyless_move(&old, &next, &connection)?;
+        // A cloud entry whose key is cleared and that has no address goes back
+        // to the server's credentials at the cloud's own endpoint.
+        if body.get("api_key").is_some()
+            && cloud_credentials(&connection, &next["api_key"], &next["api_base"])
+        {
+            entry["litellm_params"]["use_environment_credentials"] = json!(true);
+            next["use_environment_credentials"] = json!(true);
+        }
+        let allow_environment = next["use_environment_credentials"].as_bool() != Some(false);
+        let key = keyless(
+            next["api_key"].clone(),
+            &next["api_base"],
+            &connection,
+            allow_environment,
+        );
+        if key != next["api_key"] {
+            entry["litellm_params"]["api_key"] = key;
+        }
+    }
     Ok(())
 }
 fn replace(target: &mut Value, key: &str, value: Option<&Value>) {
@@ -528,6 +637,11 @@ pub(super) fn mutate_provider(
         object(body, &["api_key", "api_base", "expected_revision"])?;
         if body.get("api_key").is_none() && body.get("api_base").is_none() {
             return Err(invalid("api_key or api_base is required"));
+        }
+        let body = &unchanged_base(body, base.as_str());
+        // Only the address, sent back as shown: nothing changes.
+        if body.get("api_key").is_none() && body.get("api_base").is_none() {
+            return Ok(());
         }
         client_field(body, "api_key")?;
         let requested_base = client_field(body, "api_base")?;
@@ -577,18 +691,36 @@ pub(super) fn mutate_provider(
                 replace(&mut next, field, value.map(Value::String).as_ref());
             }
         }
+        if body.get("api_key").is_some()
+            && cloud_credentials(name, &next["api_key"], &next["api_base"])
+        {
+            next["use_environment_credentials"] = json!(true);
+        }
+        refuse_keyless_move(&old, &next, name)?;
+        let placeholder = keyless(
+            next["api_key"].clone(),
+            &next["api_base"],
+            name,
+            next["use_environment_credentials"].as_bool() != Some(false),
+        );
+        // The placeholder is the connection's key now, for its models too.
+        let key_changed = body.get("api_key").is_some() || placeholder != next["api_key"];
+        if !placeholder.is_null() {
+            next["api_key"] = placeholder;
+        }
         let id = next["id"].as_str().unwrap().to_owned();
         for entry in models {
             if linked(entry) == Some(id.as_str())
                 || same_connection(entry, name, key, base, allow_environment)
             {
                 for field in ["api_key", "api_base"] {
-                    if body.get(field).is_some() {
+                    if body.get(field).is_some() || field == "api_key" && key_changed {
                         replace(&mut entry["litellm_params"], field, next.get(field));
                     }
                 }
-                if body.get("api_key").is_some() {
-                    entry["litellm_params"]["use_environment_credentials"] = json!(false);
+                if key_changed {
+                    entry["litellm_params"]["use_environment_credentials"] =
+                        json!(next["use_environment_credentials"] == true);
                 }
                 link(entry, &id);
             }

@@ -34,6 +34,12 @@ impl Pending {
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
+    /// Stops requests not yet sent, waits for those in flight like a drop,
+    /// and tells whether any image was answered; the answers are discarded.
+    fn abandon(self) -> bool {
+        self.stop.store(true, Ordering::Release);
+        self.finish().values().any(std::result::Result::is_ok)
+    }
 }
 impl Drop for Pending {
     fn drop(&mut self) {
@@ -182,6 +188,7 @@ pub(crate) fn prepare(
 /// Public `asset` paths still name owned assets; publication resolves them once.
 /// A document's images were analysed by `pending` beside its enhancement; an
 /// enhancement that failed discards them like the enhanced body.
+/// Returns whether a model answered for at least one image, discarded or not.
 pub(crate) fn analyze(
     doc: &Document,
     result: &mut ConversionOutput,
@@ -190,12 +197,12 @@ pub(crate) fn analyze(
     cfg: &Value,
     runtime: Option<&LlmRuntime>,
     pending: Option<Pending>,
-) -> Result<()> {
+) -> Result<bool> {
     if !enabled(source, cfg) {
-        return Ok(());
+        return Ok(false);
     }
     if !standalone && result.llm_markdown.is_none() {
-        return Ok(());
+        return Ok(pending.is_some_and(Pending::abandon));
     }
     let references = output_profiles::image_references(&doc.markdown);
     // An enhancement served from the cache never spent its reserved request.
@@ -258,6 +265,7 @@ pub(crate) fn analyze(
             Err(message) => result.warnings.push(format!("Image analysis failed for {}: {message}; existing alt text was retained and no analysis entry was produced.", asset.name)),
         }
     }
+    let answered = first_answer.is_some();
     if standalone {
         let Some(answer) = first_answer else {
             return Err(Error::Conversion(format!(
@@ -323,7 +331,7 @@ pub(crate) fn analyze(
     {
         *markdown = output_profiles::replace_image_alts(markdown, &captions);
     }
-    Ok(())
+    Ok(answered)
 }
 
 fn analyze_assets(

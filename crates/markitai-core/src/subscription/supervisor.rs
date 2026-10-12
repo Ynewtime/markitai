@@ -3,6 +3,7 @@
 //! Codex (ChatGPT) runtimes share.
 
 use super::FailureKind;
+use crate::process_groups::Workspace;
 use crate::subscription::line::read_line;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -157,23 +158,15 @@ impl Runtime {
             .checked_add(timeout)
             .ok_or_else(|| self.limit())
     }
-    pub(super) fn workspace(&self) -> Result<tempfile::TempDir, ProcessFailure> {
-        let prefix = format!("markitai-{}-", self.name);
-        let mut builder = tempfile::Builder::new();
-        builder.prefix(&prefix);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            builder.permissions(std::fs::Permissions::from_mode(0o700));
-        }
-        builder.tempdir().map_err(|_| self.transport())
+    pub(super) fn workspace(&self) -> Result<Workspace, ProcessFailure> {
+        Workspace::create(self.name).map_err(|_| self.transport())
     }
     pub(super) fn spawn(
         &'static self,
         executable: &Path,
         environment: &HashMap<String, String>,
         args: &[OsString],
-        workspace: tempfile::TempDir,
+        workspace: Workspace,
         deadline: Instant,
         cancel: Option<&AtomicBool>,
     ) -> Result<Process, ProcessFailure> {
@@ -275,7 +268,7 @@ pub(super) struct Process {
     stderr: Arc<Stderr>,
     deadline: Instant,
     events: usize,
-    _workspace: tempfile::TempDir,
+    _workspace: Workspace,
     _permit: Permit,
     group: crate::process_groups::Slot,
 }

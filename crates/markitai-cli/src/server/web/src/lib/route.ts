@@ -9,20 +9,24 @@ export type Route =
   | { view: "convert" }
   | { view: "jobs" }
   /** `section` null: the phone's settings index (wide screens show Models). */
-  | { view: "settings"; section: Section | null };
+  | { view: "settings"; section: Section | null }
+  /** An address that is no page of the workbench (the server answers it with 404). */
+  | { view: "missing"; path: string };
 
 export function parseRoute(pathname: string): Route {
   const path = pathname.replace(/\/+$/, "") || "/";
+  if (path === "/" || path === "/index.html") return { view: "convert" };
   if (path === "/jobs") return { view: "jobs" };
   if (path === "/settings") return { view: "settings", section: null };
   const section = /^\/settings\/(models|appearance|access)$/.exec(path)?.[1] as Section | undefined;
   if (section) return { view: "settings", section };
-  return { view: "convert" };
+  return { view: "missing", path };
 }
 
 export function routePath(route: Route): string {
   if (route.view === "jobs") return "/jobs";
   if (route.view === "settings") return route.section ? `/settings/${route.section}` : "/settings";
+  if (route.view === "missing") return route.path;
   return "/";
 }
 

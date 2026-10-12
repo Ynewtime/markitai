@@ -380,6 +380,7 @@ def cli_attribution(root, licenses):
         "DOMPurify-LICENSE",
         "preact-LICENSE",
         "phosphor-LICENSE",
+        "lobehub-icons-LICENSE",
         "Inter-OFL.txt",
         "provenance.json",
     ]:

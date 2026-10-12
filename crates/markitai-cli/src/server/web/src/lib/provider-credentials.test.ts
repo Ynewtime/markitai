@@ -137,3 +137,20 @@ test("saving detected subscription models keeps official CLI authentication inst
     assert.deepEqual(detectedDeployment(deployment), { model_name: "default", model: deployment.model, weight: 1 });
   }
 });
+
+test("a masked saved address is kept as shown and cannot be saved edited with its mask", () => {
+  const shown = "https://…@proxy.example.invalid/v1?token=…";
+  const draft = providerDraft({ api_key_masked: "sk…abcd", api_base: shown, api_base_placeholder: "https://api.openai.com/v1" });
+  assert.equal(draft.base, shown);
+  assert.equal(draft.baseMasked, true);
+  // Left as shown: no change, or only the new key; the stored address stays.
+  assert.equal(providerUpdate(draft, { kind: "base", base: shown, key: "" }, "rev1"), null);
+  assert.deepEqual(providerUpdate(draft, { kind: "base", base: shown, key: "fresh" }, "rev1"), { expected_revision: "rev1", api_key: "fresh" });
+  // Edited around the mask: refused before any request.
+  assert.throws(() => providerUpdate(draft, { kind: "base", base: shown.replace("/v1", "/v2"), key: "fresh" }, "rev1"), rejected("masked_address"));
+  // A whole new address is an ordinary move.
+  assert.deepEqual(providerUpdate(draft, { kind: "base", base: "https://other.invalid/v1", key: "fresh" }, "rev1"), {
+    expected_revision: "rev1", api_key: "fresh", api_base: "https://other.invalid/v1",
+  });
+  assert.equal(providerDraft({ api_key_masked: null, api_base: "https://api.example.invalid/v1", api_base_placeholder: null }).baseMasked, false);
+});

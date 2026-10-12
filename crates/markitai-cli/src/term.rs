@@ -767,7 +767,7 @@ mod tests {
                 style.item(Mark::Success, "Serve: ok"),
                 style.item(Mark::Info, "Config: defaults"),
                 style.summary(
-                    Mark::Warning,
+                    Mark::Success,
                     "Ready. Not available (optional): LibreOffice",
                 ),
                 style.command(4, "markitai doctor --fix"),
@@ -781,19 +781,19 @@ mod tests {
              \x1b[1mOptional Capabilities\x1b[0m\n  \
              \x1b[32m✓\x1b[0m Serve: ok\n  \
              \x1b[90m•\x1b[0m Config: defaults\n\
-             \x1b[33m!\x1b[0m Ready. Not available (optional): LibreOffice\n    \
+             \x1b[32m✓\x1b[0m Ready. Not available (optional): LibreOffice\n    \
              \x1b[36mmarkitai doctor --fix\x1b[0m\n    \
              \x1b[90mlog excerpt\x1b[0m"
         );
         assert_eq!(
             render(Style::PLAIN),
             "◆ System Check\nOptional Capabilities\n  ✓ Serve: ok\n  • Config: defaults\n\
-             ! Ready. Not available (optional): LibreOffice\n    markitai doctor --fix\n    log excerpt"
+             ✓ Ready. Not available (optional): LibreOffice\n    markitai doctor --fix\n    log excerpt"
         );
         assert_eq!(
             render(ASCII),
             "* System Check\nOptional Capabilities\n  + Serve: ok\n  - Config: defaults\n\
-             ! Ready. Not available (optional): LibreOffice\n    markitai doctor --fix\n    log excerpt"
+             + Ready. Not available (optional): LibreOffice\n    markitai doctor --fix\n    log excerpt"
         );
     }
 
@@ -810,12 +810,12 @@ mod tests {
         );
         // A summary hangs under its text at column 2; every row fits.
         let summary = at(40).summary(
-            Mark::Warning,
+            Mark::Success,
             "Ready. Not available (optional): Chromium, LibreOffice, LLM API",
         );
         assert_eq!(
             summary,
-            "! Ready. Not available (optional):\n  Chromium, LibreOffice, LLM API"
+            "✓ Ready. Not available (optional):\n  Chromium, LibreOffice, LLM API"
         );
         assert!(summary.lines().all(|row| width(row) <= 40), "{summary}");
         // Colour wraps the mark only; the rows stay as wide.

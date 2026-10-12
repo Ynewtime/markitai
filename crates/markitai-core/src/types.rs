@@ -314,6 +314,8 @@ pub struct ConversionOutput {
     pub(crate) fetch_cache_hit: bool,
     #[serde(skip)]
     pub(crate) fetch_strategy: Option<String>,
+    #[serde(skip)]
+    pub(crate) no_model_succeeded: bool,
 }
 
 impl ConversionOutput {
@@ -327,6 +329,13 @@ impl ConversionOutput {
     /// Host JSON remains compatible; the CLI has separate cache-status fields.
     pub fn llm_cache_hit(&self) -> bool {
         self.llm_cache_hit
+    }
+
+    /// Whether model processing was requested and no model answered for this
+    /// conversion: no fresh, shared or cached enhancement and no image
+    /// analysis. Only the base output was kept, never an enhanced file.
+    pub fn no_model_succeeded(&self) -> bool {
+        self.no_model_succeeded
     }
 
     /// Whether a fetched page was reused directly or after HTTP validation.

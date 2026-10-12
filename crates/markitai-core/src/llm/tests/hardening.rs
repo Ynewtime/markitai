@@ -174,11 +174,11 @@ fn local_servers_route_without_a_key_and_hosted_apis_need_one() {
 }
 
 #[test]
-fn bedrock_and_vertex_fail_with_the_openai_compatible_route() {
+fn unimplemented_providers_fail_with_the_openai_compatible_route() {
     for model in [
-        "bedrock/anthropic.claude-test",
-        "vertex_ai/gemini-test",
-        "cohere/command",
+        "sagemaker/endpoint-test",
+        "replicate/meta/llama-test",
+        "watsonx/ibm/granite-test",
     ] {
         let cfg = single(json!({"model":model,"api_key":"k"}));
         let Err(Error::Unsupported(message)) = deployments(&cfg, &HashMap::new()) else {
@@ -192,12 +192,12 @@ fn bedrock_and_vertex_fail_with_the_openai_compatible_route() {
     }
     // A supported sibling still serves the pool.
     let cfg = config::normalize(&json!({"llm":{"model_list":[
-        {"model_name":"default","litellm_params":{"model":"bedrock/x","api_key":"k"}},
+        {"model_name":"default","litellm_params":{"model":"watsonx/x","api_key":"k"}},
         {"model_name":"default","litellm_params":{"model":"mistral/m","api_key":"k"}}
     ]}}))
     .unwrap();
     assert_eq!(deployments(&cfg, &HashMap::new()).unwrap().len(), 1);
-    assert!(config::llm_provider_supported("groq") && !config::llm_provider_supported("bedrock"));
+    assert!(config::llm_provider_supported("groq") && !config::llm_provider_supported("watsonx"));
 }
 
 #[test]
@@ -222,6 +222,71 @@ fn a_groq_request_carries_the_key_from_its_variable() {
     assert_eq!(requests[0].1["model"], "test-model");
 }
 
+#[test]
+fn added_prefixes_send_their_key_and_model_naming() {
+    for (model, variable, sent) in [
+        (
+            "cohere/command-a-03-2025",
+            "COHERE_API_KEY",
+            "command-a-03-2025",
+        ),
+        (
+            "huggingface/together/deepseek-ai/DeepSeek-R1",
+            "HF_TOKEN",
+            "deepseek-ai/DeepSeek-R1:together",
+        ),
+        (
+            "bedrock_mantle/us-west-2/openai.gpt-oss-120b",
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "openai.gpt-oss-120b",
+        ),
+        (
+            "cloudflare/@cf/meta/llama-3.1-8b-instruct",
+            "CLOUDFLARE_API_KEY",
+            "@cf/meta/llama-3.1-8b-instruct",
+        ),
+        ("volcengine/ep-20260101", "ARK_API_KEY", "ep-20260101"),
+    ] {
+        let server = Mock::new(vec![(200, success("Answer from the mock"))]);
+        let cfg = config::normalize(&json!({"llm":{"model_list":[{"model_name":"default","litellm_params":{"model":model,"api_base":server.base}}],"router_settings":{"timeout":3,"num_retries":0}},"cache":{"enabled":false}})).unwrap();
+        let (text, _) = run(
+            &plain(),
+            &cfg,
+            &vars(&[(variable, "loopback-key")]),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(text, "Answer from the mock");
+        let requests = server.finish();
+        assert!(
+            requests[0]
+                .0
+                .to_ascii_lowercase()
+                .contains("authorization: bearer loopback-key"),
+            "{model}"
+        );
+        assert_eq!(requests[0].1["model"], sent, "{model}");
+    }
+    // Without api_base, Workers AI needs the account and Bedrock a region.
+    let cfg = single(json!({"model":"cloudflare/@cf/m","api_key":"k"}));
+    let Err(Error::Config(message)) = deployments(&cfg, &HashMap::new()) else {
+        panic!("an account is required");
+    };
+    assert!(message.contains("CLOUDFLARE_ACCOUNT_ID"), "{message}");
+    let cfg = single(json!({"model":"bedrock_mantle/eu-west-1/m","api_key":"k"}));
+    let entries = deployments(&cfg, &vars(&[("AWS_REGION", "us-west-2")])).unwrap();
+    assert_eq!(
+        entries[0].endpoint,
+        "https://bedrock-mantle.eu-west-1.api.aws/v1/chat/completions"
+    );
+    // A retired service is refused with its reason.
+    let cfg = single(json!({"model":"github/gpt-4o","api_key":"k"}));
+    let Err(Error::Unsupported(message)) = deployments(&cfg, &HashMap::new()) else {
+        panic!("GitHub Models is retired");
+    };
+    assert!(message.contains("retired"), "{message}");
+}
+
 fn entry(provider: &str, endpoint: &str) -> Deployment {
     Deployment {
         id: format!("{provider}/model"),
@@ -236,6 +301,7 @@ fn entry(provider: &str, endpoint: &str) -> Deployment {
         max_tokens: None,
         reasoning_effort: None,
         supports_vision: None,
+        cloud: None,
     }
 }
 
@@ -562,4 +628,54 @@ fn browser_literal_provider_mode_survives_configuration_reload() {
     );
     invalid["llm"]["providers"][0]["use_environment_credentials"] = json!("not-a-boolean");
     assert!(config::normalize(&invalid).is_err());
+}
+
+#[test]
+fn the_settings_keyless_placeholder_never_takes_the_environment() {
+    use crate::provider_management::NO_KEY;
+    let env = [
+        ("OPENAI_API_KEY", "authored-server-canary"),
+        ("OPENAI_BASE_URL", "http://127.0.0.1:9/stolen"),
+        ("LM_STUDIO_API_KEY", "authored-server-canary"),
+        ("GROQ_API_KEY", "authored-server-canary"),
+    ];
+    // Written by either backend's settings API: Python's has no flag, Rust's
+    // has one; the placeholder alone decides.
+    for params in [
+        json!({"model":"openai/x","api_key":NO_KEY,"api_base":"http://127.0.0.1:9911/v1"}),
+        json!({"model":"groq/x","api_key":NO_KEY,"api_base":"http://127.0.0.1:9911/v1","use_environment_credentials":true}),
+        json!({"model":"lm_studio/x","api_key":NO_KEY,"api_base":"http://127.0.0.1:9911/v1","use_environment_credentials":false}),
+    ] {
+        let entry = resolved(params.clone(), &env).unwrap();
+        // Sent as written: a server that checks no key takes it.
+        assert_eq!(entry.key.as_deref(), Some(NO_KEY), "{params}");
+        assert!(
+            entry.endpoint.starts_with("http://127.0.0.1:9911/"),
+            "{params}"
+        );
+    }
+    // Without an address it is not sent to the environment's endpoint either.
+    let entry = resolved(json!({"model":"openai/x","api_key":NO_KEY}), &env).unwrap();
+    assert!(
+        entry.endpoint.starts_with("https://api.openai.com/"),
+        "{}",
+        entry.endpoint
+    );
+    // On a saved connection, as on the deployment.
+    let cfg = config::normalize(&json!({"llm":{
+        "providers":[{"id":"c","provider":"openai","api_key":NO_KEY,"api_base":"http://127.0.0.1:9911/v1"}],
+        "model_list":[{"model_name":"default","litellm_params":{"model":"openai/x"},"model_info":{"provider_id":"c"}}]}}))
+    .unwrap();
+    let entries = deployments(&cfg, &vars(&env)).unwrap();
+    assert_eq!(entries[0].key.as_deref(), Some(NO_KEY));
+    // A keyless endpoint saved this way can be routed, as in Python.
+    assert!(capabilities(&cfg, &vars(&env)).routable);
+    // A hand-written entry without a key keeps the environment's, at its own
+    // address: the operator's choice.
+    let hand = resolved(
+        json!({"model":"openai/x","api_base":"http://127.0.0.1:9911/v1"}),
+        &env,
+    )
+    .unwrap();
+    assert_eq!(hand.key.as_deref(), Some("authored-server-canary"));
 }

@@ -17,11 +17,22 @@ keyboard focus, and the choice is remembered in this browser. On phones the
 sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
 Settings). Every view is an address (`/`, `/jobs`, `/settings/models`,
 `/settings/appearance`, `/settings/access`), so reloads, Back and new tabs keep
-it.
+it. Any other address opens the workbench (with status 404) on "Page not found",
+with the way to Convert and Conversions. On a wide window every page is one
+column centred between the sidebar and the window's edge (Convert 800 px, the
+Settings pages 760 px, Conversions 1280 px); Conversions with the window docked
+beside the list takes the whole width.
+
+Controls share one scale: buttons 28 px with 13 px labels (36 px on a phone),
+one filled button per area, secondary actions as outlined buttons and the rest
+in "⋯"; every choice (status filters, provider groups, the options' segments,
+Base | LLM, language and theme, the option toggles) is the same segmented group;
+on a phone the short text actions (Full details, Show items, breadcrumbs) answer
+taps across 44 px.
 
 **Convert** (`/`) is a headline, one sentence and the composer: the URL field
 (Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
-to six rows), Options and Upload (files or a folder) on the left, Convert on the
+to six rows), Options, Upload (files) and Folder on the left, Convert on the
 right, and the options drawer, which ends with the equivalent CLI command line.
 The latest three submissions follow, each one click from its details. One file
 starts a job at once; a folder, several files or a `.urls` list waits for
@@ -31,10 +42,12 @@ list. A `.urls` list becomes one URL item per entry (`#` lines and blank lines
 skipped, `https://example.com/report  Report` naming the output).
 
 **Conversions** (`/jobs`) states what the list adds up to ("18 of 21 converted,
-3 failed.") beside Stop remaining (while original items wait for a slot), Retry
-failed (N) and Download all, then the compact composer and the filters: a name
-filter and All / Failed / Notices with their counts. Below sit the list and the
-inspector.
+3 failed.", with Summary for the notices and failures of everything listed)
+beside Stop remaining (while original items wait for a slot), New conversion
+(to Convert) and "⋯" (Retry failed (N), Download all), then the filters: a name
+filter and All / Failed / Notices with their counts. Below sits the list at the
+page's width. Dropping files anywhere still converts them (a folder or several
+files wait on Convert); typing URLs is Convert's job.
 
 - The **list** shows every saved and running item, newest activity first,
   running first: a status glyph (one shape per state: ✓ done, × failed, a
@@ -43,20 +56,31 @@ inspector.
   middle, `blog-japanese-…ning.html`; a URL dims its host), a warning count, and
   the duration or the state in words. A submission of several items is a header
   (what was submitted: `report-materials`, `14 files`, `3 web pages`; the preset;
-  the time) with its items under it; a submission of one item is one row. It is
+  the time) with its items under it, indented, so a submission of one item is one
+  row at the outer edge. It is
   an ARIA tree with no controls inside rows: Up and Down move, Right and Left
-  open and close a submission, Home and End jump, Enter opens the preview.
-- The **inspector** shows the selected item: its state in a sentence
-  ("Converted with LLM in 14.6 s · 12 images", or the failure in plain words),
-  the actions (Preview, Compare, Download .md, Run again, Enhance with LLM,
-  Delete; Retry, Add a model or Enable OCR and retry when that is the fix), the
+  open and close a submission, Home and End jump, and a click, Enter or Space
+  opens the conversion's window (docked beside the list, the window follows the
+  arrows instead).
+- The **peek window** opens over the dimmed list: previous and next with the
+  position (`8 of 14`), the name, the actions that matter (Download; Retry, Add a
+  model or Enable OCR and retry when that is the fix) and "⋯" (Enhance with LLM,
+  Run again, Retry without LLM, Delete), then Details, Preview and Compare as
+  tabs. ◫ docks it beside the list instead, and ⤢ opens it as a window again;
+  the choice is remembered in this browser. Up and Down (outside the scrolling
+  document) move between items, C switches Compare, Escape, ✕ or a click on the
+  dimmed list closes it and returns to the row.
+- **Details** shows the item: its state in a sentence
+  ("Converted with LLM in 14.6 s · 12 images", or the failure in plain words), the
   facts (source and its size, output, what else was saved, models, cost,
-  options, finished, kept until), its notices grouped by kind, and the start of
-  the result with its front matter. A selected submission shows its progress as
-  one bar (done, failed, stopped, converting, waiting), Download .zip, Retry
-  failed, Stop remaining and Delete, the cost, its failures and the notices of
-  all its items. With nothing selected it shows the same overview for the whole
-  list.
+  options, finished, kept until; a long output name stays on one line and gives
+  up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
+  the start of the result with its front matter and its own pictures. A
+  submission's window shows its progress as one bar (done, failed, stopped,
+  converting, waiting) with Retry failed, Download .zip, Stop remaining and Delete,
+  the cost, its failures and the notices of all its items; Summary opens the same
+  overview for the whole list. Docked, a click on the page's empty space or
+  Escape in the list lets go of the selection.
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N
   requests without a price", a model that ran without pricing "Unknown". An item
@@ -67,12 +91,9 @@ inspector.
   price and links to how to add one, and other warnings group by their wording
   with a count. Each keeps its full original text behind Details.
 
-**Preview** docks beside the list, which stays usable: Up and Down (outside the
-scrolling document) move to the previous or next item, Escape closes it, F
-gives it the full width and C turns on Compare; the header shows the position
-(`8 of 14`), Copy, Download .md and "⋯" (Export PDF and its header-and-footer
-choice, and Open the page for a URL). The frame has one fixed height, so the
-tabs never move it: Rendered, Source, Diff (only for an exact base/LLM pair) and
+**Preview** is the window's second tab; its "⋯" adds Copy, Export PDF and its
+header-and-footer choice, and Open the page for a URL. The window has one fixed
+height, so the tabs never move it: Rendered, Source, Diff (only for an exact base/LLM pair) and
 Files, with the Base | LLM switch beside them for a pair. Rendered starts with
 the conversion's notices (collapsed to one line) and a front-matter card (title,
 description, tags). Tables over 500 rows show their first 500 rows under a
@@ -80,7 +101,9 @@ sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
 showing all of them adds the rest in steps of 1,000 so the page keeps answering,
 and the download and Source always hold every row. Numeric columns align right
 in tabular figures. Code blocks are highlighted by a 3 KB module loaded only when
-a preview contains code.
+a preview contains code. While a result loads, Rendered, Source and Files show
+its shape in grey lines inside the same frame (with the size of a large result),
+so nothing moves when it arrives.
 
 **Compare** puts the original beside the Markdown: a PDF's pages (drawn by the
 server, loaded as they scroll into view), an uploaded image, the HTML the server
@@ -91,26 +114,54 @@ accent colour; PDF positions come from the page's text layer, HTML by matching
 elements. An original that cannot be shown (a DOCX, a page the server did not
 keep) says why and offers its download.
 
-**On phones** the inspector is a bottom sheet: it slides up over the dimmed
-page to a fixed height with rounded top corners, a header with the name, previous, next and close,
-a body that scrolls inside the sheet, and a pinned action bar clear of the home
-indicator. Swiping it down (on the header, or on the body scrolled to its top),
-tapping the dimmed page and Escape close it. Preview and Compare are full-screen
-views with previous and next; Compare places the original above the Markdown.
+**On phones** the window fills the screen, over the tab bar: back, the name,
+previous and next, and "⋯" (Download and every other action, Copy and Export
+PDF on Preview), then the same three tabs; Compare places the original above the
+Markdown. A long press on a shortened file name shows it whole.
 
-**Notices about the page** (an upload in progress with Cancel, a refused
-request, an unreachable service, a session that could not be restored, a missing
-model with a link to Models) sit in the page under its title and push the
-content down; they never cover a button. Errors stay until dismissed; others
-clear themselves.
+**Notices** are transient: minimal strips at the bottom, on a phone full width
+directly above the tab bar (or at the screen's edge under the window), on a wide screen a
+380 px stack 24 px from the bottom-right corner. Newest at the bottom, at most
+three (a fourth removes the oldest). Each is one sentence on one line with a mark
+(✕ error, ! warning, ✓ done) and at most one text action (Retry, View, Cancel,
+Enter token); square, on the surface colour with hairlines, no close button. Done
+and warning strips leave after 4 s, errors after 6 s, never while pressed, hovered
+or focused; a swipe down dismisses one. An upload in progress is a strip with
+Cancel until it ends. Screen readers hear every notice (errors at once, others
+politely). Lasting conditions are not notices: a conversion that ran without a
+model or whose history could not be saved says so in its window's Details, and a list
+that cannot load shows a panel (below).
+
+**Empty and blocked states** are one framed panel: an icon, a title, one line
+and at most one primary and one secondary action, centred on one axis. It is a
+message, not a control (no hover, no pointer). The cases: no conversions yet
+(and how long they are kept), no models (Add models), a filter without matches
+(Clear filter), a link to a conversion that no longer exists (above the list,
+Show all conversions), conversions that cannot be shown (no token: Enter
+token; no server: Try now; an error: Retry, also in place of Recent on Convert),
+and an unknown address. Alone on a page the panel is 480 px wide; in a column
+(the list, a settings page, a phone) it takes the
+column's width.
 
 **Settings** are pages. Models lists the configured models (Test, Edit, Delete),
 models detected for this session (Save to config) and the configuration source;
-Add models leads through provider cards (environment credentials, saved
-providers, common providers, more OpenAI-compatible providers) to the
-provider's page and its model catalogue, with a breadcrumb that Escape steps
-back through. Appearance and language chooses English, 中文 or 日本語 and the
-theme (Auto, Light, Dark); Access token shows and changes this tab's token.
+Add models opens the provider picker: one search over every provider (name,
+model prefix and other names), saved connections and environment credentials as
+rows, the eight common providers as cards, then every other provider by name
+under a filter (All, Clouds, Inference, Gateways, Local, Subscriptions, Model
+makers) that scrolls sideways on a phone. Providers show their monochrome brand
+mark (vendored from lobehub icons, drawn in the text colour) or a monogram.
+Choosing one leads to the provider's page: the key and the address side by side
+(the address optional, its default as the placeholder), then the model catalogue
+and, in plain sight under it, Model ID and routing (add a model by its ID, the
+routing group and weight), with a breadcrumb that Escape steps back through.
+Every settings page keeps its primary action in one place, the pinned bar at the
+bottom (Load models, then Save, beside Cancel); a subscription needs no key or
+address, and Bedrock and Vertex AI take model IDs by hand. A backend that sends
+no provider `group` gets the common eight by name and everything else under All. Appearance and language chooses English, 中文 or 日本語 and the
+theme (Auto, Light, Dark); Access token says whether this tab holds a token
+(with Forget beside it) and takes a new one in one field with Save; it is kept in
+this tab only.
 
 ## Job controls
 
@@ -133,23 +184,35 @@ theme (Auto, Light, Dark); Access token shows and changes this tab's token.
   missing OCR, size limits). The service's full wording stays behind Details.
   Provider probe and discovery phrases are translated the same way. A job whose
   history could not be saved (`persistence_error`) reports it in the page.
-- **Offline**: a request that cannot reach the service shows a notice; the page
-  asks again every five seconds and says when the service is back, then
-  refreshes capabilities, the list and the session. A broken event stream
+- **A failed action on one conversion** (Retry, Delete, Download, Enhance, Copy;
+  for a submission Retry failed, Stop, ZIP and Delete) adds one line at the top of
+  its window (under the header, on every tab), in the style of the conversion's own
+  failure reason: a red ✕, one sentence, Full details. It stays until the action
+  is tried again or another conversion is chosen, the polite live region reads
+  it, and no page notice is shown for it.
+- **Offline**: no banner. A list that cannot be loaded shows the Can't reach the
+  server panel with Try now, and an action that cannot reach the service says so
+  in its conversion's window. The page asks again every five seconds and,
+  when the service is back, shows a ✓ strip and refreshes capabilities, the list
+  and the session. A broken event stream
   triggers the same check and, once closed, reconciles the job from its
   snapshot.
 - **Settings conflicts**: every write carries the revision its draft started
   from. A `stale_revision` or `config_changed` refusal reloads the lists but keeps
   the draft and its revision; "Use current revision" adopts the new one and the
   next submit uses it. Other refusals (for example `settings_read_only`) stay
-  plain errors. A saved provider's key is never placed in an input; Replace,
-  Remove and the address form each send only the field they change. An
+  plain errors. A saved provider's key is never returned by the server, only
+  masked (`sk…7890`), and never placed in an input; its address comes back with
+  userinfo and secret query parameters masked (`https://…@host/v1?token=…`).
+  Replace, Remove and the address form each send only the field they change; an
+  address left as shown keeps the stored one, and an edited address that still
+  holds a mask is refused before anything is sent. An
   endpoint change with a retained server key is rejected, including when
   linked model deployments have their own credential overrides.
 - **Saved conversions** come from `GET /api/history?include=items`, refreshed
   when a watched job ends and when the window regains focus (at most every 20
   seconds). The server keeps a job for `limits.history_retention_days` (7) after
-  it finished; the inspector shows the day it is kept until. Running jobs started
+  it finished; the conversion's Details show the day it is kept until. Running jobs started
   in this tab are kept in `sessionStorage` (`markitai.session`) so a reload
   watches them again.
 
@@ -160,9 +223,21 @@ and sanitized with [DOMPurify 3.4.16](https://github.com/cure53/DOMPurify/releas
 both loaded from `/ui/marked.js` and `/ui/purify.js` the first time a result is
 shown. The sanitized fragment never contains scripts, styles, forms, frames or
 embedded media. Images and attachment links must resolve to an exact entry of the
-result's own artifact list; only raster images are shown, and anything else (an
-external or SVG image) becomes a labelled placeholder. Other links keep only
-http(s)/mailto targets and open in a new tab without referrer. Highlighting
+result's own artifact list (an image whose folder does not match, such as an
+e-book's own `../Images/x.png`, resolves by file name to the one listed image of
+that name); only raster images are shown, and anything else (an external or SVG
+image) becomes a labelled placeholder. Images are read from the item's own asset
+route (`GET /api/jobs/{job}/items/{item}/assets/{relpath}`, inline, that item's
+raster images only) when the server offers it, otherwise from the file route. Other links keep only
+http(s)/mailto targets and open in a new tab without referrer; a link left
+without a target is plain text. An inline SVG drawing (a chart or diagram a web
+page kept as markup) is drawn: its drawing properties from `style` become
+attributes, and every reference stays inside the drawing. `id`s get a prefix of
+their own drawing, `href`/`xlink:href` and `url()` resolve only to elements of the
+same drawing, and `image`, `foreignObject`, `style`, scripts, animations, filters'
+images and `use` of anything outside are removed, so a drawing loads, runs and
+reaches nothing; its links follow the link rule above. Unpainted parts take the
+text colour, so labels read in dark mode. Highlighting
 builds its spans from text and never reparses HTML. An HTML original in Compare
 is sanitized the same way and also loses its links and images, so it loads and
 navigates nowhere; the server sends originals as attachments with
@@ -199,7 +274,7 @@ URL the page requests or shows carries it:
   (`img-src 'self' blob:`) and which are released when the view changes; Export
   PDF waits for them. An image that cannot be fetched becomes the labelled
   placeholder.
-- Download links (the inspector, Files, Download .md, file links inside the
+- Download links (the window's Download, Files, file links inside the
   rendered document) point at the plain `/api/` path. With a token, a click or a
   middle-click fetches the file with the header and saves it as a Blob, so a
   refusal is reported. Plain download links work without a token only when the
@@ -211,8 +286,9 @@ URL the page requests or shows carries it:
   that archive within a minute (see [serve](serve.md#network-and-file-boundaries)),
   so what stays in the download list is a spent ticket.
 
-A 401 shows "Not authorized" with Enter token in the page notices; it opens a
-small dialog that stores a typed token for the tab. Settings → Access token shows
+A 401 shows the Access token needed panel in place of the conversions (and a
+refused submission a strip), both with Enter token; it opens a small dialog that
+stores a typed token for the tab. Settings → Access token shows
 whether the tab holds a token, and replaces or forgets it.
 After a server restart that generates a new token, reopen its new launch link
 or use Enter token. `--no-auth` explicitly disables API token enforcement; only
@@ -234,6 +310,7 @@ downloads only their language. `boot.js` also applies the stored theme, the
 sidebar's collapsed state and the language before first paint (the Content
 Security Policy allows no inline script). Values kept in this browser's
 `localStorage`: `markitai.lang`, `markitai.theme`, `markitai.sidebar`,
+`markitai.peek` (`docked` or `window`: how a conversion opens),
 `markitai.options` (preset, LLM, OCR, output profile and the image overrides;
 fetch strategy, backend, cache and source choices are never remembered, so a
 revisit cannot silently re-enable a remote service),
@@ -291,9 +368,10 @@ routes, payloads, event stream, authentication and error `reason` codes it
 reads, described by the server's [OpenAPI document](serve.md#machine-readable-api-description).
 What a backend offers beyond the base job API is announced in
 `GET /api/capabilities` under `features` (`cancel`, `download_tickets`,
-`url_lists`, `history_items`, `original`, `result_excerpt`, `job_labels`); a
-missing feature hides its control instead of failing (no Stop remaining, no
-Compare, archives saved through the page, history read job by job).
+`url_lists`, `history_items`, `original`, `result_excerpt`, `job_labels`,
+`item_assets`); a missing feature hides its control instead of failing (no Stop
+remaining, no Compare, archives saved through the page, history read job by job,
+images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation.
 
 `node scripts/package.mjs OUTDIR` packages a build for the other backend: a

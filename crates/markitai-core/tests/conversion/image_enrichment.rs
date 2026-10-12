@@ -76,6 +76,9 @@ struct Reply {
     headers: Vec<(String, String)>,
     body: Vec<u8>,
     echo: bool,
+    /// Taken by a text request like an echo reply, but sent as it is only
+    /// after an image request has been answered.
+    after_image: bool,
 }
 impl Reply {
     fn data(mime: &str, body: &[u8]) -> Self {
@@ -84,7 +87,25 @@ impl Reply {
             headers: vec![("Content-Type".into(), mime.into())],
             body: body.to_vec(),
             echo: false,
+            after_image: false,
         }
+    }
+    fn failure(status: u16) -> Self {
+        Self::data(
+            "application/json",
+            br#"{"error":{"message":"mock failure"}}"#,
+        )
+        .status(status)
+    }
+    fn status(mut self, status: u16) -> Self {
+        self.status = status;
+        self
+    }
+    /// A text-request failure answered once an image request was answered.
+    fn text_failure_after_image(status: u16) -> Self {
+        let mut reply = Self::failure(status);
+        reply.after_image = true;
+        reply
     }
     fn model(text: &str) -> Self {
         Self::data("application/json", &json!({"model":"mock", "choices":[{"message":{"content":text},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":5}}).to_string().into_bytes())
@@ -94,6 +115,21 @@ impl Reply {
         reply.echo = true;
         reply
     }
+}
+
+fn send(mut stream: std::net::TcpStream, reply: Reply) {
+    write!(
+        stream,
+        "HTTP/1.1 {} Mock\r\nContent-Length: {}\r\nConnection: close\r\n",
+        reply.status,
+        reply.body.len()
+    )
+    .unwrap();
+    for (key, value) in reply.headers {
+        write!(stream, "{key}: {value}\r\n").unwrap();
+    }
+    stream.write_all(b"\r\n").unwrap();
+    stream.write_all(&reply.body).unwrap();
 }
 
 #[derive(Clone, Debug)]
@@ -118,8 +154,10 @@ impl Server {
         let stopping = Arc::clone(&stop);
         let worker = thread::spawn(move || {
             let mut replies = VecDeque::from(replies);
+            let mut held: Option<(std::net::TcpStream, Reply)> = None;
+            let mut image_answered = false;
             while !stopping.load(Ordering::Acquire) {
-                let (mut stream, _) = match listener.accept() {
+                let (stream, _) = match listener.accept() {
                     Ok(connection) => connection,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(2));
@@ -181,16 +219,22 @@ impl Server {
                 // Image analysis runs beside document enhancement: a text
                 // request takes the first echo reply, an image request the
                 // first other reply, whichever arrives first.
+                let text_request = echo.is_some();
                 let position = replies
                     .iter()
-                    .position(|reply| reply.echo == echo.is_some())
+                    .position(|reply| (reply.echo || reply.after_image) == text_request)
                     .unwrap_or(0);
                 let reply = replies.remove(position).unwrap_or(Reply {
                     status: 500,
                     headers: Vec::new(),
                     body: b"Unexpected duplicate request".to_vec(),
                     echo: false,
+                    after_image: false,
                 });
+                if reply.after_image && text_request && !image_answered {
+                    held = Some((stream, reply));
+                    continue;
+                }
                 let reply = if reply.echo {
                     let text = echo.expect("echo requires a text-model request");
                     Reply::model(&if structured {
@@ -201,18 +245,13 @@ impl Server {
                 } else {
                     reply
                 };
-                write!(
-                    stream,
-                    "HTTP/1.1 {} Mock\r\nContent-Length: {}\r\nConnection: close\r\n",
-                    reply.status,
-                    reply.body.len()
-                )
-                .unwrap();
-                for (key, value) in reply.headers {
-                    write!(stream, "{key}: {value}\r\n").unwrap();
+                send(stream, reply);
+                if !text_request {
+                    image_answered = true;
+                    if let Some((stream, reply)) = held.take() {
+                        send(stream, reply);
+                    }
                 }
-                stream.write_all(b"\r\n").unwrap();
-                stream.write_all(&reply.body).unwrap();
             }
         });
         Self {
@@ -572,7 +611,7 @@ fn url_images_resolve_redirects_and_complete_query_targets_including_pure() {
         let bytes = png();
         let source=Server::new(vec![
             Reply::data("text/html",b"<html><head><title>Images</title></head><body><article><h1>Images</h1><p>A sufficiently clear article with useful figures and author captions.</p><img alt='one' src='/figure?variant=one'><img alt='two' src='/figure?variant=two'></article></body></html>"),
-            Reply {status:302,headers:vec![("Location".into(),"/actual.png?raw=1".into())],body:Vec::new(),echo:false},
+            Reply {status:302,headers:vec![("Location".into(),"/actual.png?raw=1".into())],body:Vec::new(),echo:false,after_image:false},
             Reply::data("image/png",&bytes),Reply::data("image/png",&bytes),
         ]);
         let model = Server::new(vec![Reply::echo(), analysis()]);
@@ -1014,6 +1053,199 @@ fn unbound_eml_previews_reach_model_analysis_without_changing_download_bytes() {
         assert_eq!(index["images"][0]["path"], output.images[0]["asset"]);
         assert_eq!(index["images"][0]["source"], source.to_str().unwrap());
     }
+}
+
+const NO_MODEL: &str = "No model succeeded for this document; only the base Markdown was kept.";
+
+fn markdown_files(dir: &Path) -> Vec<String> {
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".md"))
+        .collect();
+    names.sort();
+    names
+}
+
+/// A document whose Markdown references one image.
+fn report_with_figure(dir: &Path) -> PathBuf {
+    std::fs::write(dir.join("figure.png"), png()).unwrap();
+    let source = dir.join("report.md");
+    std::fs::write(
+        &source,
+        "# Field report\n\nThe survey covered twelve sites.\n\n![Author figure](figure.png)\n",
+    )
+    .unwrap();
+    source
+}
+
+#[test]
+fn no_model_answer_keeps_only_the_base_markdown_and_says_so_once() {
+    if isolated("no_model_answer_keeps_only_the_base_markdown_and_says_so_once") {
+        return;
+    }
+    // Refused requests and paid empty answers both leave no model answer,
+    // for the document text or its image.
+    for (case, replies) in [
+        ("refused", Vec::new()),
+        ("empty", vec![Reply::model(""); 6]),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = report_with_figure(dir.path());
+        let server = Server::new(replies);
+        let out = dir.path().join("out");
+        let output = run(source.to_str().unwrap(), cfg(&server), Some(out.clone())).unwrap();
+        assert!(output.no_model_succeeded(), "{case}: {:?}", output.warnings);
+        assert!(output.llm_markdown.is_none(), "{case}");
+        assert!(output.llm_output_path.is_none(), "{case}");
+        assert!(output.images.is_empty(), "{case}");
+        assert_eq!(markdown_files(&out), ["report.md.md"], "{case}");
+        assert_eq!(
+            output.output_path.as_deref(),
+            Some(out.join("report.md.md").as_path())
+        );
+        assert_eq!(
+            output.warnings.iter().filter(|w| *w == NO_MODEL).count(),
+            1,
+            "{case}: {:?}",
+            output.warnings
+        );
+        // The specific failure stays, without repeating what was kept.
+        let failure = output
+            .warnings
+            .iter()
+            .position(|w| w.starts_with("LLM enhancement failed: "))
+            .unwrap_or_else(|| panic!("{case}: {:?}", output.warnings));
+        assert_eq!(output.warnings[failure + 1], NO_MODEL);
+        assert!(
+            !output
+                .warnings
+                .iter()
+                .any(|w| w.contains("base Markdown retained")),
+            "{case}: {:?}",
+            output.warnings
+        );
+        assert_eq!(output.usage.requests > 0, case == "empty", "{case}");
+        assert!(!requests(&server).is_empty());
+    }
+}
+
+#[test]
+fn standalone_image_without_a_model_answer_keeps_only_its_base_markdown() {
+    if isolated("standalone_image_without_a_model_answer_keeps_only_its_base_markdown") {
+        return;
+    }
+    // Refused requests, and answers that only decline: after two rejected
+    // structured answers, the separate caption request apologizes.
+    for (case, replies) in [
+        ("refused", Vec::new()),
+        (
+            "declined",
+            vec![
+                Reply::model("not JSON"),
+                Reply::model("still not JSON"),
+                Reply::model("I am sorry, I cannot help with that."),
+                Reply::model("I cannot describe this image."),
+            ],
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("chart.png");
+        std::fs::write(&source, png()).unwrap();
+        let server = Server::new(replies);
+        let out = dir.path().join("out");
+        let output = run(source.to_str().unwrap(), cfg(&server), Some(out.clone())).unwrap();
+        assert!(output.no_model_succeeded(), "{case}: {:?}", output.warnings);
+        assert!(output.llm_output_path.is_none(), "{case}");
+        assert!(output.images.is_empty(), "{case}");
+        assert_eq!(markdown_files(&out), ["chart.png.md"], "{case}");
+        let failure = output
+            .warnings
+            .iter()
+            .position(|w| w.starts_with("Image analysis failed: "))
+            .unwrap_or_else(|| panic!("{case}: {:?}", output.warnings));
+        assert_eq!(output.warnings[failure + 1], NO_MODEL);
+        assert_eq!(output.warnings.iter().filter(|w| *w == NO_MODEL).count(), 1);
+        assert!(
+            !output
+                .warnings
+                .iter()
+                .any(|w| w.contains("assets retained"))
+        );
+        let base = std::fs::read_to_string(out.join("chart.png.md")).unwrap();
+        assert!(!base.contains("sorry"), "{case}: {base}");
+    }
+}
+
+#[test]
+fn any_model_answer_is_not_reported_as_no_model_succeeding() {
+    if isolated("any_model_answer_is_not_reported_as_no_model_succeeding") {
+        return;
+    }
+    // The document was cleaned and its image analysis refused: a partial
+    // success still publishes the enhanced Markdown.
+    let dir = tempfile::tempdir().unwrap();
+    let source = report_with_figure(dir.path());
+    let server = Server::new(vec![Reply::echo(), Reply::failure(500)]);
+    let out = dir.path().join("out");
+    let output = run(source.to_str().unwrap(), cfg(&server), Some(out.clone())).unwrap();
+    assert!(!output.no_model_succeeded());
+    assert_eq!(markdown_files(&out), ["report.md.llm.md", "report.md.md"]);
+    assert!(
+        output
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("Image analysis failed for "))
+    );
+    assert!(!output.warnings.iter().any(|w| w == NO_MODEL));
+    // The image was answered and the document refused afterwards: the answer
+    // is discarded with the enhancement, yet a model did answer.
+    let dir = tempfile::tempdir().unwrap();
+    let source = report_with_figure(dir.path());
+    let server = Server::new(vec![Reply::text_failure_after_image(500), analysis()]);
+    let out = dir.path().join("out");
+    let output = run(source.to_str().unwrap(), cfg(&server), Some(out.clone())).unwrap();
+    assert!(!output.no_model_succeeded(), "{:?}", output.warnings);
+    assert_eq!(markdown_files(&out), ["report.md.md"]);
+    assert!(output.images.is_empty());
+    assert!(
+        output
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("LLM enhancement failed; base Markdown retained: ")),
+        "{:?}",
+        output.warnings
+    );
+    assert!(!output.warnings.iter().any(|w| w == NO_MODEL));
+    assert_eq!(requests(&server).len(), 2);
+}
+
+#[test]
+fn cached_enhancement_is_a_model_answer_when_every_live_request_fails() {
+    if isolated("cached_enhancement_is_a_model_answer_when_every_live_request_fails") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let source = report_with_figure(dir.path());
+    let first = Server::new(vec![Reply::echo(), analysis()]);
+    let mut config = cfg(&first);
+    config["cache"]["enabled"] = json!(true);
+    config["cache"]["global_dir"] = json!(dir.path().join("private-cache"));
+    run(
+        source.to_str().unwrap(),
+        config.clone(),
+        Some(dir.path().join("first")),
+    )
+    .unwrap();
+    // The document answer comes from the cache; the image request is refused.
+    let refusing = Server::new(Vec::new());
+    config["llm"]["model_list"][0]["litellm_params"]["api_base"] = json!(refusing.url("/v1"));
+    let out = dir.path().join("second");
+    let output = run(source.to_str().unwrap(), config, Some(out.clone())).unwrap();
+    assert!(!output.no_model_succeeded());
+    assert_eq!(markdown_files(&out), ["report.md.llm.md", "report.md.md"]);
+    assert!(!output.warnings.iter().any(|w| w == NO_MODEL));
+    assert_eq!(requests(&refusing).len(), 1);
 }
 
 #[cfg(test)]

@@ -15,7 +15,6 @@ export function UrlInput({
   onText,
   onConvert,
   busy = false,
-  compact = false,
   staged = null,
   onClearStaged,
   tools,
@@ -25,7 +24,6 @@ export function UrlInput({
   onText: (text: string) => void;
   onConvert: (text: string) => Promise<boolean>;
   busy?: boolean;
-  compact?: boolean;
   /** A batch that is waiting for Convert: a folder, several files or a URL list. */
   staged?: StagedSubmission | null;
   onClearStaged?: () => void;
@@ -49,7 +47,7 @@ export function UrlInput({
     }
   };
   return (
-    <div class={compact ? "url-row is-compact" : "url-row"}>
+    <div class="url-row">
       {staged && (
         <div class="staged-row">
           <Icon name={staged.kind === "urls" ? "Globe" : staged.kind === "folder" ? "FolderSimple" : "FileText"} size={14} />

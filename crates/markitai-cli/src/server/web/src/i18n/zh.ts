@@ -22,9 +22,10 @@ export const zh: Dict = {
   options: "选项",
   cliAria: "CLI 命令",
   browse: "上传",
-  uploadMore: "更多上传方式",
+  newConversion: "新建转换",
   uploadFiles: "上传文件",
   folderAria: "上传文件夹",
+  folderShort: "文件夹",
   sourceActions: "转换操作",
   dropToConvert: "松手开始转换",
   copy: "复制",
@@ -110,7 +111,6 @@ export const zh: Dict = {
   advScreenshotOnlyHint: "用支持视觉的模型读取页面截图，而非文本层。",
   advCaptureOnly: "不开启 LLM 时：URL 保存截图（网页结果另附引用截图的 Markdown）；文件仍通过常规转换器处理。",
 
-  capHintLink: "配置 LLM",
   submitting: "正在上传并创建任务…",
   uploadProgress: (percent, sent, total) => `正在上传 ${percent}% · ${sent} / ${total}`,
   uploadUnknown: (sent) => `正在上传 · 已发送 ${sent}`,
@@ -155,7 +155,6 @@ export const zh: Dict = {
   itemsAria: "转换结果",
   baseTag: "Base",
   llmTag: "LLM",
-  downloadMd: "下载 .md",
   downloadFile: (name) => `下载 ${name}`,
   retryAria: (name) => `重试 ${name}`,
   retryFailed: "重试失败",
@@ -170,6 +169,7 @@ export const zh: Dict = {
   stagedCount: (n) => `${n} 个文件`,
   stagedClear: (label) => `从本次提交中移除 ${label}`,
   histDeleteAria: (name) => `永久删除 ${name}`,
+  deleteAction: "删除",
   deleteItemTitle: (name) => `删除 ${name}？`,
   deleteItemDescription: "这会移除已保存的结果，且无法撤销。",
   deletePermanently: "永久删除",
@@ -197,6 +197,8 @@ export const zh: Dict = {
   filesTab: "文件",
   versionAria: "Markdown 版本",
   loading: "加载中…",
+  previewLoading: (size) => (size ? `正在加载 ${size}…` : "正在加载…"),
+  previewRendering: "正在排版…",
   exportPdf: "导出 PDF",
   pdfSettings: "PDF 设置",
   pdfCustomHeaderFooter: "自定义页眉页脚",
@@ -249,7 +251,9 @@ export const zh: Dict = {
     if (status === "ready") return "可用";
     return status.replaceAll("_", " ");
   },
-  providerDetailHint: (kind, provider, source, { local = false, manualOnly = false, needsBase = false } = {}) => {
+  providerDetailHint: (kind, provider, source, { local = false, manualOnly = false, needsBase = false, subscription = false, cloud = false } = {}) => {
+    if (subscription) return "使用服务器上官方应用的登录状态，模型会自动加载。";
+    if (cloud) return "使用服务器找到的云平台凭据，下方的 key 可不填。请在下方添加要使用的模型 ID。";
     if (manualOnly) return "这个服务商不提供模型列表，请在下方添加要使用的模型 ID。";
     if (kind === "configured") return "已从保存的连接自动加载可用模型。";
     if (kind === "environment") return `使用 ${source} 中的凭据。`;
@@ -261,25 +265,39 @@ export const zh: Dict = {
   optionalKeyVariable: (variable) => `${variable}（可选）`,
   manualModelsOnly: "这个服务商不提供模型列表，请在下方添加模型 ID",
   serverAddressRequired: "需要服务器地址",
-  providerGroup: (kind) =>
+  searchProviders: (n) => `搜索 ${n} 个服务商`,
+  providersFound: (n) => `找到 ${n} 个服务商`,
+  providersNoMatch: "没有匹配的服务商",
+  providersSaved: "已保存",
+  providersCommon: "常用",
+  providersAll: (n) => `全部服务商（${n}）`,
+  providerFilterAria: "服务商类型",
+  providerFilter: (group) =>
     (
       ({
-        environment: "已配置的环境变量凭据",
-        configured: "已保存的服务商",
-        common: "常用服务商",
-        compatible: "更多 OpenAI 兼容服务商",
+        all: "全部",
+        clouds: "云平台",
+        inference: "推理服务",
+        gateways: "网关",
+        local: "本地",
+        subscriptions: "订阅",
+        makers: "模型厂商",
       }) as Record<string, string>
-    )[kind] ?? kind,
+    )[group] ?? group,
   providerCustom: "OpenAI 兼容接口",
   providerUnknown: "未知服务商",
   customApiBase: "使用自定义 API 地址",
   requiredField: "必填",
+  optionalField: "可选",
   manualModelToggle: "手动添加模型 ID",
+  manualAndRouting: "模型 ID 与路由",
+  manualModelLabel: "按 ID 添加模型",
   searchModels: "搜索模型",
   selectAll: "全选",
   manualModelPh: "完整模型 ID",
   azureDeploymentPh: "Azure 部署名称",
   addManual: "手动添加",
+  addModelId: "添加",
   modelsAvailable: "可用模型",
   alreadyConfigured: "已配置",
   visionTag: "Vision",
@@ -297,6 +315,7 @@ export const zh: Dict = {
   deleteModelTitle: (model) => `删除 ${model}？`,
   deleteModelDescription: "服务商鉴权信息会保留，之后仍可添加模型。",
   setStatusNone: "未配置模型",
+  modelsEmptyText: "模型用于整理 Markdown、描述图片和识别扫描页。不配置模型，Markitai 也能转换文件。",
   setSourceLbl: "来源",
   openConfigFile: "在本地编辑器中打开配置文件",
   setApiKey: "API key",
@@ -321,6 +340,8 @@ export const zh: Dict = {
   addressKeyLabel: "此地址使用的 API key",
   addressKeyNote: "已存的 key 不会发送到新地址。",
   addressNoKeyNote: "key 留空则不带 key 连接。",
+  maskedAddressNote: "显示为 … 的部分已隐藏。保持地址不变即可保留这些部分，或输入完整的新地址。",
+  maskedAddress: "请输入完整地址：隐藏的部分（…）无法保存。",
   keyRequired: "请输入 API key。",
   endpointKeyRequired: "请为新地址输入 API key，已存的 key 不会发送到新地址。",
   literalCredentialsOnly: "请输入实际的 API key 和地址；环境变量引用只能在服务器配置文件中设置。",
@@ -393,7 +414,6 @@ export const zh: Dict = {
 
   // convert view
   recentTitle: "最近",
-  allConversions: "全部转换",
   failedCount: (n: number) => `${n} 个失败`,
 
   // conversions view
@@ -402,13 +422,40 @@ export const zh: Dict = {
     [`已转换 ${done}/${total}`, ...(failed ? [`${failed} 个失败`] : []), ...(stopped ? [`${stopped} 个已停止`] : []), ...(skipped ? [`${skipped} 个已跳过`] : [])].join("，") + "。",
   summaryRunning: (done: number, total: number, running: number, queued: number) =>
     [`已转换 ${done}/${total}`, ...(running ? [`${running} 个正在转换`] : []), ...(queued ? [`${queued} 个等待中`] : [])].join("，") + "。",
-  emptyConversions: "还没有转换。把文件拖到这里，或在上方粘贴网址。",
+  emptyTitle: "还没有转换",
+  emptyText: "在上方粘贴网址或拖入文件即可转换。",
+  emptyTextKept: (days: number) => `在上方粘贴网址或拖入文件即可转换。转换结果保留 ${days} 天。`,
+  listBlockedTitle: "无法显示转换",
+  goneTitle: "此转换已不存在",
+  goneText: "它已被删除，或随旧记录一起被清理。",
+  goneTextDays: (days: number) => `它已被删除，或在 ${days} 天后被清理。`,
+  showAllConversions: "显示全部转换",
+  tokenNeededTitle: "需要访问令牌",
+  serverDownTitle: "无法连接服务器",
+  serverDownText: "markitai serve 是否仍在运行？此页面每隔几秒会自动重试。",
+  filterNoneTitle: "没有匹配项",
+  listNeedsToken: "此浏览器需要访问令牌才能显示你的转换。",
+  listLoadFailed: "无法加载已保存的转换。",
+  clearFilter: "清除筛选",
+  filterNoMatchQuery: (query: string) => `没有与“${query}”匹配的转换。`,
+  filterNoFailed: "没有失败的转换。",
+  filterNoNotices: "没有带提示的转换。",
+  tryNow: "立即重试",
+  noteView: "查看",
+  notificationsLabel: "通知",
+  stopFailed: "停止失败",
+  noModelLine: "未使用 LLM 转换：尚未配置模型。",
+  configureModels: "去配置",
+  submitFailedShort: "无法开始转换。",
+  submitNeedsToken: "未授权：请输入访问令牌。",
+  submitNoServer: "无法连接服务器。",
+  notFoundTitle: "页面不存在",
+  notFoundText: (path: string) => `${path} 没有对应的页面。`,
+  titleNotFound: "页面不存在 · Markitai",
   downloadAll: "全部下载",
   retryFailedN: (n: number) => `重试失败项（${n}）`,
   filterByName: "按名称筛选",
   filterNotices: "有提示",
-  historyLoadFailed: "无法加载已保存的转换",
-  capHintText: "尚未配置模型，LLM 增强不可用。",
   dismiss: "关闭",
   downloadFailedFile: "下载失败",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
@@ -422,6 +469,7 @@ export const zh: Dict = {
 
   // inspector
   overviewTitle: "全部转换",
+  overviewLink: "汇总",
   overviewEmpty: "转换的文件和网页会显示在这里。",
   selectHint: "选择一项转换以查看详情。",
   preview: "预览",
@@ -465,6 +513,8 @@ export const zh: Dict = {
   noticeTitle: (kind: string, count: number, models: string[], sample: string) => {
     const list = (names: string[]) => (names.length <= 2 ? names.join("、") : `${names.slice(0, 2).join("、")} 等 ${names.length} 个`);
     switch (kind) {
+      case "no_model":
+        return count === 1 ? "没有模型给出可用回答，只保留了基础 Markdown" : `${count} 个文档没有得到模型的可用回答，只保留了基础 Markdown`;
       case "alt_kept":
         return `${count} 张图片分析失败，保留了原有的替代文本`;
       case "cost_incomplete":
@@ -486,7 +536,6 @@ export const zh: Dict = {
   showItem: "查看该项",
   showItems: "查看这些项",
   resultStart: "结果开头",
-  openPreview: "打开预览",
   failedHeading: (n: number) => `${n} 个失败`,
   stoppedCount: (n: number) => `${n} 项在转换前已停止。`,
   deleteSubmissionAria: (label: string) => `永久删除 ${label}`,
@@ -496,11 +545,12 @@ export const zh: Dict = {
   previousItem: "上一项",
   nextItem: "下一项",
   positionOf: (index: number, total: number) => `${index}/${total}`,
-  closePreview: "关闭预览",
-  fullWidth: "全宽",
-  dockPreview: "停靠在列表旁",
   moreActions: "更多操作",
   openPage: "打开网页",
+  peekDetails: "详情",
+  peekViews: "视图",
+  peekDock: "停靠在列表旁",
+  peekUndock: "以窗口打开",
   keysMove: "上一项 / 下一项",
   keysClose: "关闭",
   tableCapped: (shown: string, total: string) => `为保持预览流畅，仅显示前 ${shown} 行（共 ${total} 行）。下载的文件包含全部行。`,
@@ -535,16 +585,18 @@ export const zh: Dict = {
   themeHint: "跟随系统，或始终使用浅色或深色。",
   accessHeld: "此标签页已有访问令牌。",
   accessNone: "此标签页没有访问令牌。",
-  accessRefused: "服务拒绝了此标签页的访问令牌。",
-  accessExplain: "打开 markitai serve 打印的链接，其中带有令牌；或者把令牌粘贴到这里。",
-  replaceToken: "替换访问令牌",
-  forgetToken: "忘记令牌",
-  tokenSaved: "令牌已保存到此标签页。",
+  accessRefused: "服务器拒绝了此标签页的令牌。",
+  accessRefusedHint: "请粘贴新的令牌。",
+  accessExplain: "粘贴 markitai serve 打印的链接中的令牌。",
+  replaceToken: "粘贴新令牌即可替换。",
+  forgetToken: "忘记",
+  tokenSaved: "令牌已保存。",
 
   tokenTitle: "服务访问",
   tokenText: "输入 markitai serve 启动时打印的访问令牌。",
   tokenLabel: "访问令牌",
-  tokenNote: "仅在当前浏览器标签页中保留。",
+  tokenField: "令牌",
+  tokenNote: "仅保存在此标签页。",
   connect: "连接",
 
 };

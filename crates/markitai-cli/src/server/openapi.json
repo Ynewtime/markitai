@@ -201,6 +201,41 @@
         }
       }
     },
+    "/api/jobs/{job_id}/items/{item_id}/assets/{relpath}": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "getItemAsset",
+        "summary": "One of the item's own extracted images, inline",
+        "description": "For showing the images of the item's Markdown. Served only when `relpath` is one of this item's result `artifacts` (its asset index; for an older history without one, the assets its Markdown references), names a png, jpg/jpeg, gif, webp or avif file (by extension, case-insensitive; never SVG, Markdown or other files), and resolves to a regular file inside the job output without traversal, an absolute path, a backslash or a symbolic link. Anything else, including an item that is not done, is 404 `file_not_found` (`job_not_found` and `item_not_found` for those); nothing outside the job folder is read and nothing external is fetched. A download ticket cannot name this path. Responses carry the type by extension, `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-cache` and a weak ETag from the file's size and modification time (answered with 304).",
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" },
+          { "$ref": "#/components/parameters/ItemId" },
+          { "name": "relpath", "in": "path", "required": true, "description": "The artifact's `relpath` exactly as the item's result lists it, relative to the job output and percent-encoded one `/`-separated segment at a time (for example `.markitai/assets/%E5%9B%BE%201%20(a).png`).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "headers": {
+              "ETag": { "description": "Weak validator from the file's size and modification time", "schema": { "type": "string" } },
+              "Cache-Control": { "description": "`private, no-cache`", "schema": { "type": "string" } },
+              "Content-Disposition": { "description": "`inline; filename*=UTF-8''<name>`", "schema": { "type": "string" } },
+              "Content-Security-Policy": { "description": "`default-src 'none'; sandbox`", "schema": { "type": "string" } },
+              "X-Content-Type-Options": { "description": "`nosniff`", "schema": { "type": "string" } }
+            },
+            "content": {
+              "image/png": { "schema": { "type": "string", "contentMediaType": "image/png" } },
+              "image/jpeg": { "schema": { "type": "string", "contentMediaType": "image/jpeg" } },
+              "image/gif": { "schema": { "type": "string", "contentMediaType": "image/gif" } },
+              "image/webp": { "schema": { "type": "string", "contentMediaType": "image/webp" } },
+              "image/avif": { "schema": { "type": "string", "contentMediaType": "image/avif" } }
+            }
+          },
+          "304": { "description": "The client's copy (If-None-Match) is current" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/jobs/{job_id}/items/{item_id}/original": {
       "get": {
         "tags": ["jobs"],
@@ -576,7 +611,7 @@
       "Features": {
         "type": "object",
         "description": "What this service implements beyond the base job API, for a client shared with other backends",
-        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels"],
+        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets"],
         "properties": {
           "cancel": { "type": "boolean", "description": "POST /api/jobs/{job_id}/cancel" },
           "download_tickets": { "type": "boolean", "description": "POST /api/download-tickets" },
@@ -584,7 +619,8 @@
           "history_items": { "type": "boolean", "description": "GET /api/history?include=items" },
           "original": { "type": "boolean", "description": "The /original routes of an item" },
           "result_excerpt": { "type": "boolean", "description": "GET …/result?max_bytes=" },
-          "job_labels": { "type": "boolean", "description": "`label` on POST /api/jobs, echoed in snapshots and history" }
+          "job_labels": { "type": "boolean", "description": "`label` on POST /api/jobs, echoed in snapshots and history" },
+          "item_assets": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}" }
         }
       },
       "CloudflareCapabilities": {
@@ -873,7 +909,10 @@
           "deployment_id": { "type": "string" },
           "provider": { "type": "string", "description": "A model prefix (`openai`, `groq`, …) or `custom` for an OpenAI-compatible endpoint" },
           "label": { "type": "string" },
-          "kind": { "type": "string", "enum": ["environment", "configured", "common"] },
+          "kind": { "type": "string", "enum": ["environment", "configured", "common", "compatible"], "description": "`compatible`: a built-in OpenAI-compatible provider beyond the reference's popular list; `common`: any other built-in provider" },
+          "group": { "type": "string", "enum": ["common", "subscriptions", "makers", "clouds", "inference", "gateways", "local"], "description": "The provider picker's group; absent for a provider the catalog does not know" },
+          "icon": { "type": ["string", "null"], "description": "Key of the brand mark the workbench draws (its vendored lobehub marks); null for a monogram; absent for a provider the catalog does not know", "examples": ["openai", "groq"] },
+          "aliases": { "type": "array", "items": { "type": "string" }, "description": "Further model prefixes routed the same way, then other names the provider is searched by", "examples": [["ollama_chat"]] },
           "status": { "type": "string", "examples": ["ready", "needs_credentials", "unknown", "disabled"] },
           "source": { "type": "string", "description": "The environment variable, `config` or `built_in`" },
           "credential": { "type": "string" },
@@ -882,7 +921,7 @@
           "api_base": { "type": ["string", "null"] },
           "default_base": { "type": ["string", "null"], "description": "The provider's documented endpoint; null when every server has its own" },
           "key_variable": { "type": ["string", "null"], "description": "The environment variable read for the key" },
-          "key_optional": { "type": "boolean", "description": "A local server that works without a key" },
+          "key_optional": { "type": "boolean", "description": "No key needs to be entered: a local server, a subscription runtime, or a cloud that reads its own credentials" },
           "model_count": { "type": "integer" },
           "supports_discovery": { "type": "boolean", "description": "False when the provider has no model list endpoint: enter model IDs by hand" }
         }
@@ -899,7 +938,7 @@
           "api_key_masked": { "type": ["string", "null"], "description": "The saved key masked: the first two and last four characters of a key of 12 or more (`sk…7890`), the last two of a shorter one (`…90`), `…` under four characters; an `env:NAME` reference as it is. An update without `api_key` keeps the saved key; a masked key sent as `api_key` is refused (422).", "examples": ["sk…7890", "env:OPENAI_API_KEY"] },
           "api_key": { "type": ["string", "null"], "description": "The same value as `api_key_masked`" },
           "api_key_source": { "type": ["string", "null"], "enum": ["environment", null], "description": "`environment` when no key is saved and the server found one in its environment (a process variable or a dotenv file); `api_key_masked` then names the variable" },
-          "api_base": { "type": ["string", "null"] },
+          "api_base": { "type": ["string", "null"], "description": "The saved address with its userinfo and the values of secret query or fragment parameters replaced by `…` (`https://…@host/v1?token=…`); an `env:NAME` reference as it is. Sent back unchanged it keeps the saved address; any other value with `…` is refused (422).", "examples": ["https://…@proxy.example/v1?token=…&api-version=2024-10-21"] },
           "api_base_placeholder": { "type": ["string", "null"] }
         }
       },

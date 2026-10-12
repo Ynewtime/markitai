@@ -158,15 +158,23 @@ Platforms other than Unix and Windows refuse to start a runtime.
 
 Because each runtime has its own process tree, a terminal interrupt does not
 reach it. The Unix CLI therefore kills every runtime, Chromium and LibreOffice
-group it started before terminating on SIGINT, SIGTERM or SIGHUP; conversion
-keeps its default signal exit, and a batch's second interrupt does the same before
-exit 130. `markitai serve` keeps its SIGINT/SIGTERM drain and MCP its SIGINT
-drain; their remaining terminating signals clean up. SIGKILL and host processes
-embedding the bindings cannot run this cleanup. The core exposes
-`terminate_child_process_groups` (async-signal-safe on Unix) for Rust hosts.
+group it started, and removes the runtimes' private workspaces (the prompt,
+settings and image files Markitai wrote for them), before terminating on SIGINT,
+SIGTERM or SIGHUP; conversion keeps its default signal exit, and a batch's second
+interrupt does the same before exit 130. `markitai serve` keeps its SIGINT/SIGTERM
+drain and MCP its SIGINT drain; their remaining terminating signals clean up.
+SIGKILL and host processes embedding the bindings cannot run this cleanup. The
+core exposes `terminate_child_process_groups` (async-signal-safe on Unix) for
+Rust hosts.
 
-On Windows, Ctrl-C and Ctrl-Break are the interrupt: they kill the runtime trees
-and exit with 130 outside a controlled batch. A batch with recovery state stops
+A workspace is named `markitai-<runtime>-<pid>-<random>` after the process that
+owns it. One that cleanup could not remove (a killed runtime had written files of
+its own into it, or Markitai itself was killed) is removed by the next Markitai
+process that starts a runtime, once its owner has ended and it is two hours old,
+longer than any runtime request may run.
+
+On Windows, Ctrl-C and Ctrl-Break are the interrupt: they kill the runtime trees,
+remove their workspaces and exit with 130 outside a controlled batch. A batch with recovery state stops
 admission and drains active work on the first interrupt; a second kills its trees
 and exits immediately. Windows batches use the same native recovery protocol
 as Unix. Closing the console window, logging off or shutting down kills the

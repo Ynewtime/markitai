@@ -239,6 +239,18 @@ pub(super) fn safe_file(root: &Path, name: &str) -> ApiResult<PathBuf> {
     Ok(canonical)
 }
 
+/// A file's name inside `root` as the API spells it: segments joined with `/`
+/// on every platform (a Windows path's backslashes would never resolve through
+/// `safe_file`). `None` when `path` is not inside `root`.
+pub(super) fn relpath(path: &Path, root: &Path) -> Option<String> {
+    let inside = path.strip_prefix(root).ok()?;
+    let parts = inside
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>();
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
 pub(super) fn files(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     fn walk(
         root: &Path,
@@ -451,15 +463,20 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
                 item.finished_at = value["finished_at"].as_str().map(str::to_owned);
             }
             // Histories written before items named their models: the retained
-            // result's own successful attempt names them.
+            // result's own successful attempt names them. A base-only result
+            // has no models, whatever its failed requests cost.
             if raw.get("models").is_none()
                 && item.status == "done"
                 && !item.skipped
+                && item.llm_enhanced
                 && item.rerun_failure.is_none()
                 && let Some(diagnostics) = &item.diagnostics
                 && diagnostics.last_attempt.status == crate::diagnostics::Status::Done
             {
-                item.models = super::types::models(&diagnostics.last_attempt.usage);
+                item.models = super::types::models(true, &diagnostics.last_attempt.usage);
+            }
+            if !item.llm_enhanced {
+                item.models.clear();
             }
             if raw.get("source_size").is_none() && item.kind == "file" {
                 item.source_size = safe_file(&folder.join("uploads"), &item.name)
@@ -573,6 +590,24 @@ pub(super) fn finish(job: &Job) -> std::io::Result<()> {
     }
     let _ = job.events.send(("job", progress));
     result
+}
+
+#[cfg(test)]
+mod relpath_tests {
+    use super::*;
+
+    #[test]
+    fn a_relpath_joins_its_segments_with_slashes_and_stays_inside_its_root() {
+        let root = Path::new("jobs").join("j1").join("out");
+        let image = root.join(".markitai").join("assets").join("图 (1).png");
+        assert_eq!(
+            relpath(&image, &root).as_deref(),
+            Some(".markitai/assets/图 (1).png")
+        );
+        assert_eq!(relpath(&root.join("a.md"), &root).as_deref(), Some("a.md"));
+        assert_eq!(relpath(&root, &root), None);
+        assert_eq!(relpath(Path::new("elsewhere/a.md"), &root), None);
+    }
 }
 
 #[cfg(test)]

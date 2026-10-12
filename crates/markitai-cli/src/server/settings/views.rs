@@ -1,26 +1,23 @@
 use super::{SettingsSource, identity, model, store::Data};
 use markitai_core::provider_management::{
-    ProviderEntry, catalog, provider_default_base, provider_label,
+    catalog, provider_default_base, provider_entry as entry, provider_label,
 };
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-fn entry(name: &str) -> Option<ProviderEntry> {
-    let name = if name == "ollama_chat" {
-        "ollama"
-    } else {
-        name
-    };
-    catalog().into_iter().find(|entry| entry.provider == name)
-}
 fn set(variable: &str) -> bool {
     std::env::var(variable).is_ok_and(|value| !value.trim().is_empty())
 }
-/// What a card says about its provider beyond the connection: the documented
-/// endpoint, the key variable, whether a key is needed, whether models can be
-/// listed.
+/// What a card says about its provider beyond the connection: the picker
+/// group, brand mark and search names, the documented endpoint, the key
+/// variable, whether a key is needed, whether models can be listed.
 fn facts(name: &str, card: &mut Value) {
     let entry = entry(name);
+    if let Some(entry) = &entry {
+        card["group"] = json!(entry.group);
+        card["icon"] = json!(entry.icon);
+        card["aliases"] = json!(entry.aliases);
+    }
     let variable = entry.as_ref().and_then(|entry| {
         entry
             .key_variables
@@ -36,8 +33,7 @@ fn facts(name: &str, card: &mut Value) {
         .get("supports_discovery")
         .is_none_or(|value| value == true)
     {
-        card["supports_discovery"] =
-            json!(!model::local(name) && entry.as_ref().is_none_or(|entry| entry.discovery));
+        card["supports_discovery"] = json!(entry.as_ref().is_none_or(|entry| entry.discovery));
     }
 }
 fn nonempty(value: &Value) -> bool {
@@ -80,8 +76,12 @@ fn keyed_deployment(data: &Data) -> bool {
                     return false;
                 }
                 let name = model::provider(entry);
-                let Some(known) = self::entry(&name).filter(|known| known.provider != "custom")
-                else {
+                // Subscription runtimes and the clouds' own credentials are
+                // the conversion side's to report.
+                let Some(known) = self::entry(&name).filter(|known| {
+                    !matches!(known.provider, "custom" | "bedrock" | "vertex_ai")
+                        && !model::local(known.provider)
+                }) else {
                     return false;
                 };
                 let linked = model::linked(entry)
@@ -93,16 +93,26 @@ fn keyed_deployment(data: &Data) -> bool {
                         .or_else(|| linked.and_then(|p| p.get(field).filter(|v| nonempty(v))))
                 };
                 let usable = |value: &Value| resolved(value).is_some_and(|value| !value.is_empty());
+                // As conversion resolves it: the deployment's own choice, else its
+                // connection's; a connection saved through this API without a key
+                // never takes the environment's.
+                let environment = entry["litellm_params"]
+                    .get("use_environment_credentials")
+                    .filter(|value| !value.is_null())
+                    .or_else(|| linked.and_then(|p| p.get("use_environment_credentials")))
+                    .and_then(Value::as_bool)
+                    != Some(false);
                 // A local server needs no key, only an address (vLLM has no default one).
                 if known.key_optional {
                     return known.default_base.is_some()
                         || explicit("api_base").is_some_and(usable)
-                        || known.base_variables.iter().any(|variable| set(variable));
+                        || environment
+                            && known.base_variables.iter().any(|variable| set(variable));
                 }
                 // An explicit key, even an unresolvable reference, is the only candidate.
                 match explicit("api_key") {
                     Some(value) => usable(value),
-                    None => known.key_variables.iter().any(|variable| set(variable)),
+                    None => environment && known.key_variables.iter().any(|variable| set(variable)),
                 }
             })
         })
@@ -110,7 +120,7 @@ fn keyed_deployment(data: &Data) -> bool {
 fn deployment(entry: &Value, index: usize, persisted: bool) -> Value {
     let params = &entry["litellm_params"];
     let local = model::local(&model::provider(entry));
-    json!({"deployment_id":identity::id(entry,index),"routing_group":entry["model_name"].as_str().unwrap_or("default"),"model":params["model"],"weight":params["weight"].as_u64().unwrap_or(1),"api_key_configured":!local&&nonempty(&params["api_key"]),"api_base_configured":!local&&nonempty(&params["api_base"]),"api_base":if local{None}else{origin(params["api_base"].as_str())},"persisted":persisted})
+    json!({"deployment_id":identity::id(entry,index),"routing_group":entry["model_name"].as_str().unwrap_or("default"),"model":params["model"],"weight":params["weight"].as_u64().unwrap_or(1),"api_key_configured":!local&&model::real_key(params["api_key"].as_str()),"api_base_configured":!local&&nonempty(&params["api_base"]),"api_base":if local{None}else{origin(params["api_base"].as_str())},"persisted":persisted})
 }
 pub(super) fn payload(data: &Data, source: &SettingsSource) -> Value {
     let path = std::env::var_os("HOME")
@@ -146,8 +156,10 @@ pub(super) fn providers(data: &Data) -> Value {
     for known in &catalog {
         let name = known.provider;
         // A saved connection hides its provider's card, except that another
-        // OpenAI-compatible endpoint, or OpenAI itself, can always be added.
-        let repeatable = matches!(name, "openai" | "custom");
+        // OpenAI-compatible endpoint, or OpenAI itself, can always be added,
+        // and a subscription runtime, which keeps no saved connection, can
+        // always add more of its models.
+        let repeatable = matches!(name, "openai" | "custom") || model::local(name);
         if !repeatable
             && (data.providers.iter().any(|p| p["provider"] == name)
                 || data.models.iter().any(|p| model::provider(p) == name))
@@ -155,12 +167,12 @@ pub(super) fn providers(data: &Data) -> Value {
         {
             continue;
         }
-        let label = match name {
-            "azure" => "Azure OpenAI".to_owned(),
-            "custom" => "OpenAI-compatible endpoint".to_owned(),
-            _ => provider_label(name),
-        };
-        let status = if known.key_optional && known.default_base.is_some() {
+        let label = known.label;
+        // A local server at its default address, a subscription runtime or a
+        // cloud's own credentials may already work; only a check tells.
+        let status = if known.key_optional
+            && (known.default_base.is_some() || matches!(known.group, "subscriptions" | "clouds"))
+        {
             "unknown"
         } else {
             "needs_credentials"
@@ -175,7 +187,7 @@ pub(super) fn providers(data: &Data) -> Value {
             .iter()
             .filter(|entry| model::linked(entry) == Some(id))
             .count();
-        result.push(json!({"id":format!("provider:{id}"),"provider_id":id,"provider":name,"label":provider_label(name),"kind":"configured","status":if !saved["api_key"].is_null()||!saved["api_base"].is_null(){"ready"}else{"needs_credentials"},"source":"config","api_key_configured":nonempty(&saved["api_key"]),"api_base_configured":nonempty(&saved["api_base"]),"api_base":origin(saved["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(name))),"model_count":count,"supports_discovery":!model::local(name)}));
+        result.push(json!({"id":format!("provider:{id}"),"provider_id":id,"provider":name,"label":provider_label(name),"kind":"configured","status":if !saved["api_key"].is_null()||!saved["api_base"].is_null(){"ready"}else{"needs_credentials"},"source":"config","api_key_configured":model::real_key(saved["api_key"].as_str()),"api_base_configured":nonempty(&saved["api_base"]),"api_base":origin(saved["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(name))),"model_count":count,"supports_discovery":!model::local(name)}));
     }
     let mut seen = HashSet::new();
     for (index, entry) in data.models.iter().enumerate() {
@@ -205,7 +217,7 @@ pub(super) fn providers(data: &Data) -> Value {
             })
             .count();
         let id = identity::id(entry, index);
-        result.push(json!({"id":format!("provider:legacy:{id}"),"provider_id":format!("legacy:{id}"),"deployment_id":id,"provider":name,"label":provider_label(&name),"kind":"configured","status":if params["weight"].as_u64()==Some(0){"disabled"}else{"ready"},"source":"config","api_key_configured":nonempty(&params["api_key"]),"api_base_configured":nonempty(&params["api_base"]),"api_base":origin(params["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(&name))),"model_count":count,"supports_discovery":true}));
+        result.push(json!({"id":format!("provider:legacy:{id}"),"provider_id":format!("legacy:{id}"),"deployment_id":id,"provider":name,"label":provider_label(&name),"kind":"configured","status":if params["weight"].as_u64()==Some(0){"disabled"}else{"ready"},"source":"config","api_key_configured":model::real_key(params["api_key"].as_str()),"api_base_configured":nonempty(&params["api_base"]),"api_base":origin(params["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(&name))),"model_count":count,"supports_discovery":true}));
     }
     for card in &mut result {
         let name = card["provider"].as_str().unwrap_or_default().to_owned();

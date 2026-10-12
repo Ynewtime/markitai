@@ -1,6 +1,6 @@
 import type { Deployment, NewDeployment, ProviderCard, ProviderCredentials } from "../api/types.ts";
 
-export type CredentialInputReason = "environment_reference" | "endpoint_key_required" | "key_required";
+export type CredentialInputReason = "environment_reference" | "endpoint_key_required" | "key_required" | "masked_address";
 
 export class CredentialInputError extends Error {
   readonly reason: CredentialInputReason;
@@ -51,8 +51,11 @@ export type SavedKey =
 export interface ProviderDraft {
   configured: boolean;
   key: SavedKey;
-  /** The saved literal address; empty when it is the default or an environment reference. */
+  /** The saved literal address as the server shows it (userinfo and secret
+   * parameters masked); empty when it is the default or an environment reference. */
   base: string;
+  /** Whether `base` has masked parts, which only the server knows. */
+  baseMasked: boolean;
   baseRetained: boolean;
   /** The environment variable a retained address is read from. */
   baseVariable: string | null;
@@ -83,6 +86,7 @@ export function providerDraft(credentials: ProviderCredentials): ProviderDraft {
     configured: Boolean(credentials.api_key_masked ?? credentials.api_key),
     key: savedKey(credentials.api_key_masked ?? credentials.api_key ?? null, credentials.api_key_source === "environment"),
     base: baseRetained ? "" : credentials.api_base ?? "",
+    baseMasked: !baseRetained && (credentials.api_base ?? "").includes(MASK),
     baseRetained,
     baseVariable: baseRetained ? variableOf(credentials.api_base ?? "") : null,
     placeholder: credentials.api_base_placeholder ?? "",
@@ -123,7 +127,9 @@ export function providerUpdate(loaded: ProviderDraft, change: ProviderChange, re
   }
   const apiBase = literal(change.base);
   const moved = loaded.baseRetained || !sameEndpoint(apiBase, loaded.base);
+  // The address as shown keeps the stored one; an edited one cannot keep a mask.
   if (!moved) return apiKey ? { expected_revision: revision, api_key: apiKey } : null;
+  if (apiBase.includes(MASK)) throw new CredentialInputError("masked_address");
   if (loaded.configured && !apiKey) throw new CredentialInputError("endpoint_key_required");
   return { expected_revision: revision, api_key: apiKey || null, api_base: apiBase || null };
 }

@@ -138,6 +138,7 @@ mod tests {
             max_tokens: None,
             reasoning_effort: None,
             supports_vision: None,
+            cloud: None,
         }
     }
     fn counts(input: u64) -> TokenCounts {

@@ -208,6 +208,8 @@ export interface Features {
   original: boolean;
   result_excerpt: boolean;
   job_labels: boolean;
+  /** v1.6: GET /api/jobs/{id}/items/{item}/assets/{relpath} serves the item's own images inline. */
+  item_assets?: boolean;
 }
 
 /** One entry of `GET /api/history`, newest first. */
@@ -279,8 +281,17 @@ export interface ProviderCard {
   default_base?: string | null;
   /** The environment variable read for the key. */
   key_variable?: string | null;
-  /** A local server that works without a key. */
+  /** No key needs to be entered: a local server, a subscription runtime, or a
+   * cloud that reads its own credentials. */
   key_optional?: boolean;
+  /** The picker group (`common`, `subscriptions`, `makers`, `clouds`,
+   * `inference`, `gateways`, `local`); a server without one (Python 1.2.1)
+   * leaves it out and the picker infers Common from the provider names. */
+  group?: string;
+  /** Key of a vendored brand mark; null for a monogram. */
+  icon?: string | null;
+  /** Further model prefixes routed the same way and other searched names. */
+  aliases?: string[];
 }
 
 export interface ProviderCredentials {

@@ -98,11 +98,20 @@ impl Store {
         let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let connection = connection(&data, id, None)?;
         let mut key = connection["api_key"].clone();
+        // The keyless placeholder is no key, and its connection never uses
+        // the environment's.
+        let placeholder = key.as_str() == Some(model::NO_KEY);
+        if placeholder || key.as_str() == Some("") {
+            key = Value::Null;
+        }
         // A connection without a stored key may still be served by the
         // environment (a process variable or a dotenv file); say so instead of
         // reporting the key as missing.
         let mut detected = Value::Null;
-        if key.is_null() && connection["use_environment_credentials"].as_bool() != Some(false) {
+        if !placeholder
+            && key.is_null()
+            && connection["use_environment_credentials"].as_bool() != Some(false)
+        {
             let env = markitai_core::config::environment();
             if let Some(variable) = markitai_core::provider_management::environment_key_variable(
                 connection["provider"].as_str().unwrap_or_default(),
@@ -113,10 +122,15 @@ impl Store {
             }
         }
         // A stored key is never returned, only its masked form; an update
-        // without `api_key` keeps it.
+        // without `api_key` keeps it. The address keeps its text but not its
+        // userinfo or secret parameters; sent back unchanged, it keeps the
+        // stored one.
         let masked = key.as_str().map(model::masked_key);
+        let base = connection["api_base"]
+            .as_str()
+            .map(markitai_core::output::masked_url);
         Ok(
-            json!({"api_key":masked,"api_key_masked":masked,"api_key_source":detected,"api_base":connection["api_base"],"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
+            json!({"api_key":masked,"api_key_masked":masked,"api_key_source":detected,"api_base":base,"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
         )
     }
     pub fn resolve_discovery(&self, body: &Value) -> ApiResult<Value> {
@@ -134,6 +148,21 @@ impl Store {
         let provider = model::string(body, "provider", true, true)?.unwrap();
         let provider_id = model::string(body, "provider_id", false, false)?;
         let deployment_id = model::string(body, "deployment_id", false, false)?;
+        let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = if provider_id.is_some() || deployment_id.is_some() {
+            connection(
+                &data,
+                provider_id.as_deref().unwrap_or(""),
+                deployment_id.as_deref(),
+            )
+            .ok()
+        } else {
+            None
+        };
+        let body = &model::unchanged_base(
+            body,
+            saved.as_ref().and_then(|saved| saved["api_base"].as_str()),
+        );
         let key = model::client_field(body, "api_key")?;
         let base = model::client_field(body, "api_base")?;
         let refresh = match body.get("refresh") {
@@ -142,7 +171,6 @@ impl Store {
                 .as_bool()
                 .ok_or_else(|| invalid("refresh must be boolean"))?,
         };
-        let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if provider_id.is_some() && deployment_id.is_some() {
             return Err(invalid("send one credential reference"));
         }
@@ -271,7 +299,18 @@ impl Store {
                     params["use_environment_credentials"].clone();
                 // Send the original configured endpoint, never a request-controlled alias.
                 result["api_base"] = params["api_base"].clone();
+                return Ok(result);
             }
+        }
+        // A draft at an address the caller names is tested as it would be
+        // saved: without a key, with the placeholder (never the server's own).
+        if result["use_environment_credentials"] == false {
+            result["api_key"] = model::keyless(
+                result["api_key"].clone(),
+                &result["api_base"],
+                provider,
+                false,
+            );
         }
         Ok(result)
     }

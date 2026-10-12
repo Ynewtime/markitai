@@ -53,7 +53,7 @@ OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 | `-b/--backend native\|cloudflare` | 文件后端；Cloudflare 使用自己的账户并上传支持的文件 |
 | `--no-remote-fetch` | 禁止第三方抽取服务；不阻断源 URL 请求、浏览器访问或已启用的模型请求 |
 | `--screenshot-only` | 隐含截图；普通网页无 LLM 时只保存图像，PDF 保留 Markdown；URL pure 优先 |
-| `--llm-batch`、`--llm-batch-timeout`、`--llm-batch-collect` | OpenAI 目录批处理提交、等待、收集；见[供应商 Batch](provider-batch.md) |
+| `--llm-batch`、`--llm-batch-timeout`、`--llm-batch-collect` | OpenAI 与 Anthropic 目录批处理提交、等待、收集；见[供应商 Batch](provider-batch.md) |
 | `-j`、`--url-concurrency`、`--llm-concurrency` | 文件转换、URL 转换、模型在途请求三个独立上限 |
 | `-g/--glob`、`--max-depth` | 批处理筛选与扫描深度；glob 必须加引号，`!` 排除 |
 | `--resume` | 目录或 URL 列表断点续跑；单项输入不支持 |
@@ -185,9 +185,9 @@ MARKITAI_LANG=zh markitai doctor
 LibreOffice，缺少时通常保留正文并警告，`--screenshot-only` 则失败。
 Numbers 支持表格及目录包，完整画布、截图与 OCR 仍未支持。
 
-尚未提供 Anthropic Batch API、旧 Python Batch 状态导入、终端内联图片。
+尚未提供终端内联图片。
 `image.stdout_fetch_external` 因此无运行效果；其他兼容配置的状态见
-[配置说明](configuration.md#配置键的运行状态)。OpenAI Batch、官方订阅运行时与
+[配置说明](configuration.md#配置键的运行状态)。OpenAI 与 Anthropic Batch、官方订阅运行时与
 远程 URL/Cloudflare 后端已有实现，外部账户与网络可用性需另行满足。
 性能结论仅适用于对应测量样本，不能当作所有输入的统一加速倍数。
 

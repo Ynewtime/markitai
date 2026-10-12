@@ -129,7 +129,11 @@ class RepositoryPricingRowsTests(unittest.TestCase):
             source = json.loads(raw, parse_float=Decimal)
             self.assertEqual(set(row["usd_per_token_decimal"]), set(row["picodollars_per_token"]))
             for field, decimal in row["usd_per_token_decimal"].items():
-                self.assertEqual(str(source[field]), decimal, (row["model"], field))
+                # A dotted field is a rate inside a nested block (DeepSeek's off_peak_pricing).
+                value = source
+                for part in field.split("."):
+                    value = value[part]
+                self.assertEqual(str(value), decimal, (row["model"], field))
                 self.assertEqual(Decimal(decimal) * 10**12, row["picodollars_per_token"][field], (row["model"], field))
 
 

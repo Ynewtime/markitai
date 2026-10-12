@@ -39,7 +39,7 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    the seven-day history retention (`limits`), and, for clients shared with other
    backends, `implementation: "rust"`, `docs_url`, `source_url` and `features` (`cancel`,
    `download_tickets`, `url_lists`, `history_items`, `original`,
-   `result_excerpt`, `job_labels`, all true).
+   `result_excerpt`, `job_labels`, `item_assets`, all true).
 2. `POST /api/jobs` accepts form fields `urls` (a JSON array), `options` (a JSON
    object) and `label`, plus repeated multipart `files`. `label` names the
    submission in history (a folder or `.urls` file name): plain text without
@@ -80,6 +80,13 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    there is one and never inside a UTF-8 sequence; `artifacts` stays complete.
    Fetch an artifact through `GET /api/jobs/{job_id}/files/{relpath}`. Download
    all output files through `GET /api/jobs/{job_id}/archive` after completion.
+   `GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}` shows one of that
+   item's own extracted images in a page: only a PNG, JPEG, GIF, WebP or AVIF
+   that the item's result lists, sent inline with
+   `Content-Security-Policy: default-src 'none'; sandbox`, `nosniff`,
+   `Cache-Control: private, no-cache` and an `ETag` (a matching `If-None-Match`
+   is 304); anything else, another item's image or a path leaving the job is
+   404 `file_not_found`. No download ticket names it.
 6. `POST /api/jobs/{job_id}/cancel` stops the job's original items that are still
    waiting for a conversion slot. It returns HTTP 202 with `job_id` and `stopping`,
    the number of such items when the request arrived. Each becomes an `error` item
@@ -245,7 +252,7 @@ is null until a conversion succeeds; a conversion without model requests reports
 
 ```json
 {"priced_requests": 1, "unpriced_requests": 1, "cost_status": "partial",
- "pricing_snapshots": ["litellm-1.106.0.dev2-selected-2026-10-09"]}
+ "pricing_snapshots": ["litellm-1.106.0.dev2-selected-2026-10-11"]}
 ```
 
 `cost_status` is `complete` when every recorded request was priced, `partial`
@@ -332,7 +339,7 @@ also exposes optional `rerun_failure`: `operation` (`retry` or `enhance`),
 `error_code`, `error` and RFC3339 `failed_at`. Its status, output, original finish
 time and price still describe the retained result; this field describes the
 latest failed operation. It is available even when no model usage was recorded.
-The workbench's inspector shows the failure above the retained result's facts
+The workbench's conversion window shows the failure above the retained result's facts
 and keeps preview, download and retry available, with the service's full wording
 behind Details.
 New admission or successful completion clears the operation failure.
@@ -520,9 +527,16 @@ an archive download uses a ticket, so no URL the workbench requests carries the
 token. A saved connection's key is never returned: the connection-edit route
 (`GET /api/settings/llm/providers/{id}/credentials`) shows it masked, as the
 reference does (`sk…7890`: the first two and last four characters of a key of 12
-or more, the last two of a shorter one), and an `env:NAME` reference by name. An
-update without `api_key` keeps the saved key; a masked key sent back as the new
-key is refused. The browser workbench never stores credentials.
+or more, the last two of a shorter one), and an `env:NAME` reference by name. Its
+address keeps its text but not its userinfo or the value of a secret query or
+fragment parameter (`https://…@host/v1?token=…`); no settings route returns
+either. An update without `api_key` keeps the saved key, and an `api_base` sent
+back exactly as shown keeps the saved address; any other masked value is
+refused. The browser workbench never stores credentials. The server's own keys
+never go to an address a settings caller names: a connection saved without a
+key stores the placeholder `markitai-no-key` and uses no environment
+credential, and a keyed connection cannot be made keyless at another host (see
+[service settings](service-settings.md#credentials-and-partial-updates)).
 
 Host validation accepts localhost, IP literals, and explicit `--allowed-host`
 entries. A state-changing request with an Origin must match the request Host
@@ -552,9 +566,12 @@ shared job ZIP, so concurrent downloads do not invalidate each other. Internal
 image-description metadata paths from its staging directory to the final job output
 and merges sibling entries while holding the same stable lock as the core writer.
 
-The root URL serves the embedded [browser workbench](web-ui.md), and `/jobs`
-serves the same page for its workspace view, so a reload or Back stays there.
-Other paths keep JSON 404 errors; the workbench's own files live under fixed
+The root URL serves the embedded [browser workbench](web-ui.md), and `/jobs`,
+`/settings` and its pages serve the same page for their views, so a reload or
+Back stays there. A browser asking for any other page (a GET or HEAD that
+accepts `text/html`, outside `/api/` and `/ui/`) gets the workbench with status
+404, which says the page does not exist; API clients, other methods and unknown
+`/ui/` files keep JSON 404 errors. The workbench's own files live under fixed
 `/ui/` routes. The bundle and the vendored Markdown libraries are embedded gzip
 compressed and sent that way to clients that accept gzip (decompressed once for
 others); every workbench response revalidates against a content ETag

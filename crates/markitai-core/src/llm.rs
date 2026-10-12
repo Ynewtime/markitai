@@ -4,12 +4,14 @@ pub(crate) mod batch;
 mod chatgpt;
 mod chunks;
 mod claude;
+mod cloud;
 mod copilot;
 mod degeneration;
 mod diagnosis;
 mod document;
 pub(crate) mod flight;
 pub(crate) mod providers;
+pub(crate) mod python_batch;
 pub(crate) mod routing;
 mod service_probe;
 mod structured;
@@ -92,6 +94,9 @@ struct Deployment {
     /// `litellm_params.reasoning_effort`, or the provider's clean-up default.
     reasoning_effort: Option<String>,
     supports_vision: Option<bool>,
+    /// Bedrock or Vertex AI: request signing and wire format beyond `key`,
+    /// which then only identifies the credential.
+    cloud: Option<Arc<cloud::Cloud>>,
 }
 
 /// Debug output names whether a key is set, never the key, and shows the
@@ -112,6 +117,7 @@ impl std::fmt::Debug for Deployment {
             .field("max_tokens", &self.max_tokens)
             .field("reasoning_effort", &self.reasoning_effort)
             .field("supports_vision", &self.supports_vision)
+            .field("cloud", &self.cloud)
             .finish()
     }
 }
@@ -464,6 +470,11 @@ pub(crate) fn analyze_images_with_runtime(
             "Image analysis returned no usable content".into(),
         ));
     }
+    if declined(&caption) {
+        return Err(Error::Conversion(
+            "Image analysis answer declined to describe the image".into(),
+        ));
+    }
     let usage = match (before, document_usage()) {
         (Some(before), Some(after)) => usage_difference(&after, &before),
         _ => ConversionUsage::default(),
@@ -474,6 +485,32 @@ pub(crate) fn analyze_images_with_runtime(
         extracted_text,
         usage,
     })
+}
+/// Whether a caption is the model declining the request instead of alt text.
+/// A caption is the model's own words, never transcribed image text, so one
+/// that opens with an apology or a refusal does not describe the picture.
+fn declined(caption: &str) -> bool {
+    let caption = caption.trim_start().replace('\u{2019}', "'").to_lowercase();
+    [
+        "i'm sorry",
+        "i am sorry",
+        "sorry, i ",
+        "i cannot ",
+        "i can't ",
+        "i can not ",
+        "i'm unable",
+        "i am unable",
+        "i'm not able to",
+        "i am not able to",
+        "as an ai",
+        "抱歉",
+        "对不起",
+        "我无法",
+        "我不能",
+        "申し訳",
+    ]
+    .iter()
+    .any(|opener| caption.starts_with(opener))
 }
 // Substitute only tokens in the user-owned template, never tokens occurring in
 // inserted document data. This also leaves unrecognized template syntax intact.
@@ -862,6 +899,18 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             continue;
         };
         let (provider, model_name) = model.split_once('/').unwrap_or(("openai", model));
+        if providers::CLOUDS.contains(&provider) {
+            let provider = if provider == "bedrock" {
+                "bedrock"
+            } else {
+                "vertex_ai"
+            };
+            match cloud::deployment(entry, provider, model_name, env, grouped) {
+                Ok(deployment) => result.push(deployment),
+                Err(error) => last_error = Some(error),
+            }
+            continue;
+        }
         if matches!(provider, "copilot" | "claude-agent" | "chatgpt") {
             let deployment = if provider == "copilot" {
                 copilot::deployment(entry, env, grouped)
@@ -888,16 +937,21 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                     .find(|provider| provider.get("id").and_then(Value::as_str) == Some(id))
             })
         });
+        let stored_key = nonempty(params.get("api_key"))
+            .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_key"))));
         // Browser-authored literal connections must not acquire server credentials
-        // later, including after a restart or a provider environment change.
-        let allow_environment = params
-            .get("use_environment_credentials")
-            .filter(|value| !value.is_null())
-            .or_else(|| {
-                saved_provider.and_then(|provider| provider.get("use_environment_credentials"))
-            })
-            .and_then(Value::as_bool)
-            != Some(false);
+        // later, including after a restart or a provider environment change; nor
+        // does an entry holding the settings API's keyless placeholder, whichever
+        // backend wrote it.
+        let allow_environment = stored_key != Some(crate::provider_management::NO_KEY)
+            && params
+                .get("use_environment_credentials")
+                .filter(|value| !value.is_null())
+                .or_else(|| {
+                    saved_provider.and_then(|provider| provider.get("use_environment_credentials"))
+                })
+                .and_then(Value::as_bool)
+                != Some(false);
         // The first key variable that holds a value; with none set, the
         // first name decides (it may be present but empty).
         let key_var = known
@@ -906,13 +960,8 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             .copied()
             .find(|name| env.get(*name).is_some_and(|value| !value.is_empty()))
             .unwrap_or(known.key_vars[0]);
-        let key = config::resolve_optional(
-            nonempty(params.get("api_key"))
-                .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_key")))),
-            allow_environment.then_some(key_var),
-            env,
-            true,
-        );
+        let key =
+            config::resolve_optional(stored_key, allow_environment.then_some(key_var), env, true);
         let endpoint_base = config::resolve_optional(
             nonempty(params.get("api_base"))
                 .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_base")))),
@@ -927,18 +976,29 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                 continue;
             }
         };
-        let endpoint_base = endpoint_base
-            .or_else(|| {
-                known.base_vars.iter().find_map(|name| {
-                    allow_environment
-                        .then(|| env.get(*name))
-                        .flatten()
-                        .filter(|value| !value.is_empty())
-                        .cloned()
-                })
+        let endpoint_base = endpoint_base.or_else(|| {
+            known.base_vars.iter().find_map(|name| {
+                allow_environment
+                    .then(|| env.get(*name))
+                    .flatten()
+                    .filter(|value| !value.is_empty())
+                    .cloned()
             })
-            .or_else(|| known.base.map(str::to_owned));
-        let Some(endpoint_base) = endpoint_base else {
+        });
+        let endpoint_base = match endpoint_base {
+            Some(base) => Some(base),
+            None => match providers::default_base(known, model_name, env, allow_environment) {
+                Ok(base) => base,
+                Err(error) => {
+                    last_error = Some(error);
+                    continue;
+                }
+            },
+        };
+        let model_name = providers::wire_model(known, model_name);
+        let model_name = model_name.as_str();
+        let Some(endpoint_base) = endpoint_base.map(|base| providers::normalize_base(known, base))
+        else {
             last_error = Some(Error::Config(format!(
                 "LLM provider '{provider}' has no default endpoint; set api_base or {}",
                 known.base_vars.join(" or ")
@@ -1000,6 +1060,7 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             supports_vision: entry
                 .pointer("/model_info/supports_vision")
                 .and_then(Value::as_bool),
+            cloud: None,
         });
     }
     if result.is_empty() {
@@ -1664,22 +1725,41 @@ fn request_with_mode(
     timeout: u64,
     mut observation: Option<&mut routing::Observation>,
 ) -> std::result::Result<String, Failure> {
-    let mut request = client.post(&entry.endpoint);
-    if let Some(key) = &entry.key {
-        request = match entry.protocol {
-            Protocol::Anthropic => request.header("x-api-key", key),
-            Protocol::Azure => request.header("api-key", key),
-            Protocol::Chat => request.bearer_auth(key),
-        };
-    }
-    if entry.protocol == Protocol::Anthropic {
-        request = request.header("anthropic-version", "2023-06-01");
-    }
-    let request = request.json(&structured.map_or_else(
+    let body = structured.map_or_else(
         || payload(entry, prompts),
         |wire| wire.payload(entry, prompts),
-    ));
+    );
+    let mut request = client.post(&entry.endpoint);
+    let request = if let Some(cloud) = entry.cloud.as_deref() {
+        // Signing or a token exchange that fails is this deployment's
+        // credential problem, never a reason to resend the document.
+        cloud::prepare(cloud, client, request, entry, body).map_err(|error| {
+            Failure {
+                kind: FailureKind::Authentication,
+                error,
+                retryable: false,
+                fatal: false,
+                document_fatal: true,
+                retry_after: None,
+                deployment: None,
+            }
+            .at(entry)
+        })?
+    } else {
+        if let Some(key) = &entry.key {
+            request = match entry.protocol {
+                Protocol::Anthropic => request.header("x-api-key", key),
+                Protocol::Azure => request.header("api-key", key),
+                Protocol::Chat => request.bearer_auth(key),
+            };
+        }
+        if entry.protocol == Protocol::Anthropic {
+            request = request.header("anthropic-version", "2023-06-01");
+        }
+        request.json(&body)
+    };
     let started = observation.as_ref().map(|_| std::time::Instant::now());
+    let sent = std::time::SystemTime::now();
     let response = request.send().map_err(|error| {
         if error.is_timeout()
             && let Some(observation) = observation.as_deref_mut()
@@ -1758,7 +1838,7 @@ fn request_with_mode(
         if let Ok(data) = serde_json::from_slice::<Value>(&bytes)
             && data.get("usage").is_some_and(Value::is_object)
         {
-            record_usage(usage, entry, &data);
+            record_usage_since(usage, entry, &data, sent);
         }
         let body = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
         let fatal = quota_refused(status, &body);
@@ -1818,7 +1898,11 @@ fn request_with_mode(
         ))
         .at(entry)
     })?;
-    record_usage(usage, entry, &data);
+    let data = match entry.cloud.as_deref() {
+        Some(cloud) => cloud::response(cloud, data, entry),
+        None => data,
+    };
+    record_usage_since(usage, entry, &data, sent);
     let envelope = match entry.protocol {
         Protocol::Anthropic => data.get("content").is_some_and(Value::is_array),
         _ => data
@@ -2050,11 +2134,38 @@ fn record_usage(usage: &mut ConversionUsage, entry: &Deployment, data: &Value) {
     record_usage_class(usage, entry, data, BillingClass::Standard);
 }
 
+/// A live response to a request sent at `sent`: dated and peak-hour tariffs
+/// price it by when it ran.
+fn record_usage_since(
+    usage: &mut ConversionUsage,
+    entry: &Deployment,
+    data: &Value,
+    sent: std::time::SystemTime,
+) {
+    record(
+        usage,
+        entry,
+        data,
+        BillingClass::Standard,
+        pricing::Span::since(sent),
+    );
+}
+
 fn record_usage_class(
     usage: &mut ConversionUsage,
     entry: &Deployment,
     data: &Value,
     class: BillingClass,
+) {
+    record(usage, entry, data, class, None);
+}
+
+fn record(
+    usage: &mut ConversionUsage,
+    entry: &Deployment,
+    data: &Value,
+    class: BillingClass,
+    span: Option<pricing::Span>,
 ) {
     let mut input = data
         .pointer("/usage/prompt_tokens")
@@ -2081,7 +2192,7 @@ fn record_usage_class(
         .and_then(Value::as_str)
         .filter(|model| !model.is_empty())
         .unwrap_or(&entry.id);
-    let quote = pricing::quote(&price_identity(entry), data, class);
+    let quote = pricing::quote_at(&price_identity(entry), data, class, span);
     let mut delta = accounting::response(model, input, output, quote);
     let cached = if entry.protocol == Protocol::Anthropic {
         data.pointer("/usage/cache_read_input_tokens")
@@ -2106,6 +2217,7 @@ fn record_usage_class(
 #[cfg(test)]
 mod tests {
     mod auth_fallback;
+    mod cloud_auth;
     mod hardening;
     mod reasoning;
     mod resend;
@@ -2336,6 +2448,27 @@ mod tests {
         assert_eq!(usage.output_tokens, 13);
         assert_eq!(usage.by_model["paid-model"]["requests"], 1);
         assert_eq!(mock.finish().len(), 1);
+    }
+
+    #[test]
+    fn a_caption_that_declines_the_request_is_not_alt_text() {
+        for caption in [
+            "I am sorry, I cannot help with that.",
+            "I\u{2019}m sorry, but I can't describe this image.",
+            "I can't view images.",
+            "As an AI, I cannot see pictures",
+            "抱歉，我无法查看这张图片",
+        ] {
+            assert!(declined(caption), "{caption}");
+        }
+        for caption in [
+            "Sorry sign on a shop window",
+            "A chart of clarity by site",
+            "Icon reading \"I can't even\"",
+            "无法通行标志",
+        ] {
+            assert!(!declined(caption), "{caption}");
+        }
     }
 
     #[test]

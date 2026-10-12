@@ -116,8 +116,9 @@ pub(super) fn advance_frozen(
                     .as_ref()
                     .ok_or_else(|| runtime("Frozen upload identity is missing"))?
                     .clone();
+                let requests = store.request_path().map_err(runtime)?;
                 let nonce = store.mark_creating().map_err(runtime)?;
-                match client.create(&uploaded, &nonce) {
+                match client.create(&uploaded, &nonce, &requests) {
                     Ok(batch) => store.bind_batch(batch).map_err(runtime)?,
                     Err(error) => {
                         if matches!(error, provider::Error::CreateUncertain) {
@@ -201,12 +202,34 @@ pub(crate) fn resume(cli: &Cli, cfg: Value) -> CliResult<i32> {
     let preparation =
         store::Store::lock_preparation(output, config::enabled(&cfg, "/output/allow_symlinks"))
             .map_err(runtime)?;
-    let mut store = preparation
+    let frozen = preparation
         .open_frozen(input.as_deref(), Default::default())
-        .map_err(runtime)?
-        .ok_or_else(|| {
-            runtime("No unfinished frozen provider batch was found in this output directory")
-        })?;
+        .map_err(runtime)?;
+    let mut store = match frozen {
+        Some(store) => store,
+        // A batch Python markitai left pending in this output directory.
+        None => match python_import::pending_states(output, &cfg)?.as_slice() {
+            [] => {
+                return Err(runtime(
+                    "No unfinished frozen provider batch was found in this output directory",
+                ));
+            }
+            [id] => match python_import::import(output, id, &cfg)? {
+                python_import::Outcome::Imported(store) => *store,
+                _ => {
+                    return Err(runtime(
+                        "No unfinished frozen provider batch was found in this output directory",
+                    ));
+                }
+            },
+            ids => {
+                return Err(runtime(format!(
+                    "Several pending Python markitai batches are in this output directory ({}); collect each with --llm-batch-collect ID -o",
+                    ids.join(", ")
+                )));
+            }
+        },
+    };
     drop(preparation);
     let session = match store.resume_step().map_err(runtime)? {
         store::ResumeStep::PrepareRequests

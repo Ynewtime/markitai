@@ -257,7 +257,7 @@ fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
     assert_eq!(credentials["api_key"], credentials["api_key_masked"]);
     assert_eq!(
         credentials["api_base"],
-        "https://user:password@example.test/private?token=secret"
+        "https://\u{2026}@example.test/private?token=\u{2026}"
     );
     for path in [
         "/api/settings/llm".to_owned(),
@@ -267,7 +267,10 @@ fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
     ] {
         let (status, body) = server.request("GET", &path, None);
         assert_eq!(status, 200, "{path}");
-        assert!(!body.to_string().contains("authored-new-key"), "{path}");
+        let text = body.to_string();
+        for secret in ["authored-new-key", "password", "token=secret"] {
+            assert!(!text.contains(secret), "{path}: {secret}");
+        }
     }
     // Sending the mask back would store it as the key: refused, unchanged.
     let before = fs::read(dir.path().join("config.json")).unwrap();

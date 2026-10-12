@@ -260,7 +260,7 @@ struct Cli {
     /// Directory scan depth; 0 scans only the input directory.
     max_depth: Option<usize>,
     #[arg(long, help_heading = BATCH_HELP)]
-    /// Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work in -o.
+    /// Submit directory text enhancement to the OpenAI or Anthropic Batch API; --resume continues frozen work in -o.
     llm_batch: bool,
     #[arg(long, value_name = "SECONDS", value_parser=clap::value_parser!(u64).range(60..), help_heading = BATCH_HELP)]
     /// Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it.

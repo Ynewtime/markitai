@@ -58,6 +58,7 @@ const en = {
   errProviderUnavailable: "The provider request could not complete. Check the endpoint, API key and network.",
   errDiscoveryTimeout: "Model discovery timed out.",
   errSettingsInvalid: "The service did not accept this settings change.",
+  errKeylessMove: "A connection with a key cannot drop it while moving to another address. Add a new connection for that server instead.",
   errInvalidLabel: "The submission name is not valid. Use up to 120 characters on one line.",
   errOriginalUnavailable: "The server no longer keeps the original of this item.",
   errOriginalPageMissing: "This page of the original does not exist.",
@@ -254,6 +255,9 @@ const API_REASONS: Record<string, MessageKey> = {
   config_too_large: "errConfigTooLarge",
 };
 
+/** Refusals told apart by their exact English detail (contract v1.7). */
+const DETAIL_SHAPES: [RegExp, MessageKey][] = [[/^a connection with a key cannot become one without a key at another address/, "errKeylessMove"]];
+
 const API_CODES: Record<string, MessageKey> = {
   bad_request: "errBadRequest",
   unauthorized: "needToken",
@@ -434,7 +438,10 @@ export function apiErrorText(locale: Locale, body: unknown): Described | null {
   const structured =
     value.detail !== null && typeof value.detail === "object" ? String((value.detail as { code?: unknown }).code ?? "") : "";
   const original = typeof value.detail === "string" ? value.detail : structured;
+  // A refusal whose reason is generic but whose wording both backends share.
+  const shaped = DETAIL_SHAPES.find(([pattern]) => pattern.test(original))?.[1];
   const key =
+    shaped ??
     API_REASONS[typeof value.reason === "string" ? value.reason : ""] ??
     API_REASONS[structured] ??
     API_CODES[typeof value.code === "string" ? value.code : ""];

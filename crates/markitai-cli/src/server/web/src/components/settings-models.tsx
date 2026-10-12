@@ -22,6 +22,7 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { endpointFor, sameEndpoint } from "../lib/models.ts";
+import { isSubscription, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
   deploymentCredentials,
@@ -35,7 +36,9 @@ import {
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker } from "./model-picker.tsx";
+import { loadBrandMarks } from "./brand-icon.tsx";
 import { manageable, providerLabel, ProviderPicker } from "./provider-picker.tsx";
+import { StateBlock } from "./state-block.tsx";
 
 type Described = { text: string; detail: string };
 
@@ -142,6 +145,8 @@ export function ModelsSettings({
       (error: unknown) => !stale && setLoadError(error),
     );
     void refreshProviders();
+    // The provider marks load with this page, before Add models needs them.
+    void loadBrandMarks();
     return () => {
       stale = true;
     };
@@ -158,7 +163,7 @@ export function ModelsSettings({
   };
 
   const credentialText = (error: CredentialInputError) =>
-    ({ environment_reference: t.literalCredentialsOnly, endpoint_key_required: t.endpointKeyRequired, key_required: t.keyRequired })[error.reason];
+    ({ environment_reference: t.literalCredentialsOnly, endpoint_key_required: t.endpointKeyRequired, key_required: t.keyRequired, masked_address: t.maskedAddress })[error.reason];
 
   /** A failed write. A revision conflict reloads the lists but keeps the draft and its revision. */
   const fail = async (error: unknown) => {
@@ -295,13 +300,22 @@ export function ModelsSettings({
   const ollama = provider?.provider === "ollama";
   // A local server with a known address (Ollama, LM Studio) needs no key.
   const local = provider?.key_optional === true;
+  // A subscription runtime signs in by itself; Bedrock and Vertex AI read the
+  // server's cloud credentials (a Bedrock API key is optional).
+  const subscription = provider !== null && isSubscription(provider);
+  const cloud = provider !== null && usesCloudCredentials(provider);
   // The provider lists no models: IDs are entered by hand.
   const manualOnly = provider !== null && provider.supports_discovery === false;
-  const autoLoads = !manualOnly && (existing || (local && Boolean(provider?.default_base)));
+  const autoLoads = !manualOnly && (existing || subscription || (local && Boolean(provider?.default_base)));
   // Azure, a custom endpoint and servers without a default address (vLLM) need one.
   const needsBase =
-    provider !== null && (provider.provider === "azure" || provider.provider === "custom" || (provider.default_base === null && !existing));
-  const showsKey = provider !== null && !existing && !ollama;
+    provider !== null &&
+    !subscription &&
+    !cloud &&
+    (provider.provider === "azure" || provider.provider === "custom" || (provider.default_base === null && !existing));
+  const showsKey = provider !== null && !existing && !ollama && !subscription && (!cloud || Boolean(provider.key_variable));
+  // Every other new connection may move the address; its default shows as the placeholder.
+  const baseOptional = provider !== null && !needsBase && !existing && !subscription;
   const keyRequired = provider !== null && provider.provider !== "custom" && !local;
   const canLoad =
     provider !== null &&
@@ -659,10 +673,18 @@ export function ModelsSettings({
         <button type="button" class="btn btn-ghost" onClick={backToProviders}>
           {t.cancel}
         </button>
-        {picking && (
+        {picking ? (
           <button type="button" class="btn btn-primary" disabled={addBusy || (!selected.size && !dropped.size)} onClick={() => void addSelected()}>
             {addBusy ? t.saving : t.save}
           </button>
+        ) : (
+          !manualOnly &&
+          discovery === null &&
+          !autoLoads && (
+            <button type="button" class="btn btn-primary" disabled={discovering || !canLoad} onClick={() => void load(false)}>
+              {discovering ? t.loading : t.loadModels}
+            </button>
+          )
         )}
       </div>
     );
@@ -796,6 +818,7 @@ export function ModelsSettings({
                   onInput={setConnKey}
                 />
               </div>
+              {conn.baseMasked && <p class="conn-note">{t.maskedAddressNote}</p>}
               <p class="conn-note">{conn.configured ? t.addressKeyNote : t.addressNoKeyNote}</p>
               <div class="form-actions">
                 <button
@@ -915,20 +938,27 @@ export function ModelsSettings({
                   <div class="provider-detail-head">
                     <div class="provider-detail-copy">
                       <h2 class="group-title">{autoLoads ? t.modelCatalogTitle : t.connectProviderTitle(label)}</h2>
-                      <p>{t.providerDetailHint(provider.kind, provider.provider, provider.source, { local, manualOnly, needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom" })}</p>
-                      {(provider.kind === "common" || provider.kind === "compatible") && (provider.default_base || provider.key_variable) && (
+                      <p>
+                        {t.providerDetailHint(provider.kind, provider.provider, provider.source, {
+                          local,
+                          manualOnly,
+                          needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom",
+                          subscription,
+                          cloud,
+                        })}
+                      </p>
+                      {(provider.kind === "common" || provider.kind === "compatible") && ((provider.default_base && !baseOptional) || provider.key_variable) && (
                         <p class="provider-facts">
-                          {provider.default_base && <span class="provider-fact">{provider.default_base}</span>}
+                          {/* The address field shows the default itself. */}
+                          {provider.default_base && !baseOptional && <span class="provider-fact">{provider.default_base}</span>}
                           {provider.key_variable && <span class="provider-fact">{local ? t.optionalKeyVariable(provider.key_variable) : provider.key_variable}</span>}
                         </p>
                       )}
                     </div>
+                    {/* Load models is the page's primary action, in the pinned bar with Save; once a
+                        catalogue is there, reloading it is this icon. */}
                     {!manualOnly &&
-                      (discovery === null && !autoLoads ? (
-                        <button type="button" class="btn btn-primary" disabled={discovering || !canLoad} onClick={() => void load(false)}>
-                          {discovering ? t.loading : t.loadModels}
-                        </button>
-                      ) : (
+                      (discovery !== null || autoLoads) && (
                         <button
                           type="button"
                           class="icon-btn"
@@ -940,46 +970,43 @@ export function ModelsSettings({
                         >
                           {discovering ? <span class="spinner" aria-hidden="true" /> : <Icon name="ArrowCounterClockwise" size={15} />}
                         </button>
-                      ))}
+                      )}
                   </div>
-                  {showsKey && (
-                    <div class={needsBase ? "field-grid" : "field-grid is-single"}>
-                      <label class="field">
-                        <span class="field-label">
-                          {t.setApiKey}
-                          {keyRequired && <span class="field-required">{t.requiredField}</span>}
-                        </span>
-                        <input type="password" value={draftKey} placeholder={t.setKeyPh} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
-                      </label>
-                      {needsBase && (
+                  {(showsKey || baseOptional) && (
+                    // The key and the address side by side, on the same grid as the model ID and routing below.
+                    <div class={showsKey && (needsBase || baseOptional) ? "field-grid" : "field-grid is-single"}>
+                      {showsKey && (
+                        <label class="field">
+                          <span class="field-label">
+                            {t.setApiKey}
+                            <span class="field-required">{keyRequired ? t.requiredField : t.optionalField}</span>
+                          </span>
+                          <input type="password" value={draftKey} placeholder={t.setKeyPh} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
+                        </label>
+                      )}
+                      {((showsKey && needsBase) || baseOptional) && (
                         <label class="field">
                           <span class="field-label">
                             {t.setApiBase}
-                            <span class="field-required">{t.requiredField}</span>
+                            <span class="field-required">{needsBase ? t.requiredField : t.optionalField}</span>
                           </span>
                           <input
                             type="url"
                             value={draftBase}
-                            placeholder={provider.provider === "hosted_vllm" ? "http://127.0.0.1:8000/v1" : "https://example.com/v1"}
+                            placeholder={
+                              needsBase
+                                ? provider.provider === "hosted_vllm"
+                                  ? "http://127.0.0.1:8000/v1"
+                                  : "https://example.com/v1"
+                                : ollama
+                                  ? "http://127.0.0.1:11434"
+                                  : (provider.default_base ?? "https://example.com/v1")
+                            }
                             onInput={(event) => setDraftBase(event.currentTarget.value)}
                           />
                         </label>
                       )}
                     </div>
-                  )}
-                  {!needsBase && !existing && (
-                    <details class="disclosure">
-                      <summary>{t.customApiBase}</summary>
-                      <label class="field disclosure-field">
-                        <span class="field-label">{t.setApiBase}</span>
-                        <input
-                          type="url"
-                          value={draftBase}
-                          placeholder={ollama ? "http://127.0.0.1:11434" : (provider.default_base ?? "https://example.com/v1")}
-                          onInput={(event) => setDraftBase(event.currentTarget.value)}
-                        />
-                      </label>
-                    </details>
                   )}
                 </section>
                 {discovering && discovery === null && (
@@ -1024,16 +1051,18 @@ export function ModelsSettings({
             )
           ) : (
             <>
-              <div class="settings-summary">
-                <span>{t.modelsConfigured(settings.deployments.length)}</span>
-                <button ref={addButton} type="button" class="btn btn-primary" onClick={() => setAdding(true)}>
-                  {t.addModels}
-                </button>
-              </div>
               {settings.deployments.length === 0 ? (
-                <p class="dialog-dim">{t.setStatusNone}</p>
+                <StateBlock icon="Cpu" title={t.setStatusNone} text={t.modelsEmptyText} primary={{ label: t.addModels, run: () => setAdding(true), ref: addButton }} />
               ) : (
-                <div class="model-rows">{settings.deployments.map((deployment) => modelRow(deployment))}</div>
+                <>
+                  <div class="settings-summary">
+                    <span>{t.modelsConfigured(settings.deployments.length)}</span>
+                    <button ref={addButton} type="button" class="btn btn-primary" onClick={() => setAdding(true)}>
+                      {t.addModels}
+                    </button>
+                  </div>
+                  <div class="model-rows">{settings.deployments.map((deployment) => modelRow(deployment))}</div>
+                </>
               )}
               {settings.detected.length > 0 && (
                 <section class="detected">

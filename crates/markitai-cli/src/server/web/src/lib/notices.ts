@@ -4,7 +4,7 @@
 // its template (names, numbers and quoted values blanked out) and shown with
 // its first wording.
 
-export type NoticeKind = "alt_kept" | "cost_incomplete" | "json_resent" | "image_requests_split" | "resent" | "deployment_skipped" | "other";
+export type NoticeKind = "no_model" | "alt_kept" | "cost_incomplete" | "json_resent" | "image_requests_split" | "resent" | "deployment_skipped" | "other";
 
 export interface NoticeEntry {
   itemKey: string;
@@ -28,6 +28,8 @@ export interface NoticeGroup {
 }
 
 const SHAPES: [NoticeKind, RegExp][] = [
+  // Every model request failed: no `.llm.md` was written (contract v1.6, both backends word it so).
+  ["no_model", /^No model succeeded for this document\b/],
   ["alt_kept", /^Image analysis failed for [\s\S]+?existing alt text was retained/],
   ["cost_incomplete", /^Cost is incomplete: /],
   ["json_resent", /^LLM JSON-text answer was rejected\b/],

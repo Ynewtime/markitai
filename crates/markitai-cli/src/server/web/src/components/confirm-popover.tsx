@@ -1,6 +1,8 @@
 // An anchored confirmation for a destructive action. The card lives on <body>
 // so no scrolling container clips it, and flips above its trigger when the
 // space below is short. Escape or a click elsewhere cancels; focus returns.
+// A menu entry opens it from outside (`open`, `anchor`): it then draws no
+// trigger of its own and points at the menu's button.
 import { createPortal } from "preact/compat";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
@@ -16,6 +18,9 @@ export function ConfirmPopover({
   cancelLabel,
   busyLabel,
   disabled = false,
+  anchor,
+  open: openFromOutside,
+  onClose,
   onConfirm,
 }: {
   triggerLabel: string;
@@ -27,10 +32,23 @@ export function ConfirmPopover({
   cancelLabel: string;
   busyLabel: string;
   disabled?: boolean;
+  /** The element the card points at when it is opened from outside. */
+  anchor?: () => HTMLElement | null;
+  /** Opened by its owner (a menu entry) instead of its own trigger. */
+  open?: boolean;
+  onClose?: () => void;
   onConfirm: () => Promise<boolean>;
 }) {
   const [id] = useState(() => `confirm-${++cards}`);
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const controlled = openFromOutside !== undefined;
+  const open = controlled ? openFromOutside : ownOpen;
+  const setOpen = (value: boolean | ((previous: boolean) => boolean)) => {
+    const next = typeof value === "function" ? value(open) : value;
+    if (controlled) {
+      if (!next) onClose?.();
+    } else setOwnOpen(next);
+  };
   const [busy, setBusy] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -38,16 +56,23 @@ export function ConfirmPopover({
   const arrow = useRef<HTMLSpanElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
 
-  const close = useCallback((returnFocus = true) => {
+  const target = () => anchor?.() ?? trigger.current;
+  const close = (returnFocus = true) => {
     setOpen(false);
-    if (returnFocus) requestAnimationFrame(() => trigger.current?.isConnected && trigger.current.focus());
-  }, []);
+    if (returnFocus)
+      requestAnimationFrame(() => {
+        const node = target();
+        if (node?.isConnected) node.focus();
+      });
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
 
   const place = useCallback(() => {
-    const anchor = trigger.current;
+    const node = target();
     const box = card.current;
-    if (!anchor || !box) return;
-    const rect = anchor.getBoundingClientRect();
+    if (!node || !box) return;
+    const rect = node.getBoundingClientRect();
     const margin = 12;
     const gap = 10;
     const width = Math.min(352, window.innerWidth - margin * 2);
@@ -80,13 +105,13 @@ export function ConfirmPopover({
     cancel.current?.focus();
     const away = (event: PointerEvent) => {
       if (event.target instanceof Node && (root.current?.contains(event.target) || card.current?.contains(event.target))) return;
-      close(false);
+      closeRef.current(false);
     };
     const keys = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        close();
+        closeRef.current();
         return;
       }
       // Tab stays between the two buttons while the card is up.
@@ -113,7 +138,7 @@ export function ConfirmPopover({
       document.removeEventListener("pointerdown", away, true);
       document.removeEventListener("keydown", keys, true);
     };
-  }, [open, close]);
+  }, [open]);
 
   const confirm = async () => {
     if (busy) return;
@@ -121,10 +146,12 @@ export function ConfirmPopover({
     const done = await onConfirm();
     setBusy(false);
     if (done) close(false);
+    else if (controlled) cancel.current?.focus();
   };
 
   return (
     <span ref={root} class="confirm" onClick={(event) => event.stopPropagation()}>
+      {!controlled && (
       <button
         ref={trigger}
         type="button"
@@ -139,6 +166,7 @@ export function ConfirmPopover({
       >
         {triggerText ?? <Icon name="Trash" size={14} />}
       </button>
+      )}
       {open &&
         createPortal(
           <div

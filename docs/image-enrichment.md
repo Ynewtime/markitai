@@ -63,7 +63,10 @@ Standalone no-model and unsupported-backend errors retain their error categories
 Other standalone failures use the document's `llm.on_failure` policy; an in-memory
 conversion cannot claim a usable enriched image document when analysis failed.
 Embedded-image failures keep the successfully enhanced document and its author
-captions, with explicit warnings.
+captions, with explicit warnings. When no model answered for the file at all (its
+enhancement failed and no image was answered, or a standalone image's analysis
+failed), only the base Markdown is written, never `.llm.md`, and the warnings end
+with `No model succeeded for this document; only the base Markdown was kept.`
 
 ## Prompts, budgets and model usage
 
@@ -71,7 +74,9 @@ The first request asks for a JSON object containing string `caption` and
 `description` fields and optional string/null `extracted_text`. A malformed
 structured answer falls back to separate caption and description requests, as
 long as the document request budget permits. It does not invent extracted text
-from that fallback.
+from that fallback. A caption that only declines the request (it opens with an
+apology or a refusal such as `I'm sorry, I can't …` or `抱歉…`) counts as a failed
+analysis, so the image keeps its original alt text.
 
 The existing prompt file settings are supported: `image_analysis_system/user`,
 `image_caption_system/user`, and `image_description_system/user`. Values are file

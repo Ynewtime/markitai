@@ -24,9 +24,10 @@ export const ja: Dict = {
   options: "オプション",
   cliAria: "CLI コマンド",
   browse: "アップロード",
-  uploadMore: "その他のアップロード方法",
+  newConversion: "新しい変換",
   uploadFiles: "ファイルをアップロード",
   folderAria: "フォルダーをアップロード",
+  folderShort: "フォルダー",
   sourceActions: "変換の操作",
   dropToConvert: "ドロップして変換",
   copy: "コピー",
@@ -118,7 +119,6 @@ export const ja: Dict = {
     "LLM なしの場合：URL はスクリーンショットを取得し（ウェブの結果には Markdown のラッパーが付きます）、ファイルは通常のコンバーターで変換します。",
 
   // feedback under the composer
-  capHintLink: "LLM を設定",
   submitting: "アップロードしてタスクを作成しています…",
   uploadProgress: (percent: number, sent: string, total: string) => `アップロード中 ${percent}% · ${sent} / ${total}`,
   uploadUnknown: (sent: string) => `アップロード中 · ${sent} 送信済み`,
@@ -164,7 +164,6 @@ export const ja: Dict = {
   itemsAria: "変換した項目",
   baseTag: "Base",
   llmTag: "LLM",
-  downloadMd: ".md をダウンロード",
   downloadFile: (name: string) => `${name} をダウンロード`,
   retryAria: (name: string) => `${name} を再試行`,
   retryFailed: "再試行に失敗しました",
@@ -179,6 +178,7 @@ export const ja: Dict = {
   stagedCount: (n: number) => `${n} 個のファイル`,
   stagedClear: (label: string) => `${label} を送信対象から外す`,
   histDeleteAria: (name: string) => `${name} を完全に削除`,
+  deleteAction: "削除",
   deleteItemTitle: (name: string) => `${name} を削除しますか？`,
   deleteItemDescription: "保存された結果を削除します。この操作は元に戻せません。",
   deletePermanently: "完全に削除",
@@ -212,6 +212,8 @@ export const ja: Dict = {
   filesTab: "ファイル",
   versionAria: "Markdown のバージョン",
   loading: "読み込み中…",
+  previewLoading: (size: string | null) => (size ? `${size} を読み込み中…` : "読み込み中…"),
+  previewRendering: "レイアウト中…",
   exportPdf: "PDF をエクスポート",
   pdfSettings: "PDF の設定",
   pdfCustomHeaderFooter: "カスタムのヘッダーとフッター",
@@ -269,8 +271,16 @@ export const ja: Dict = {
     kind: string,
     provider: string,
     source: string,
-    { local = false, manualOnly = false, needsBase = false }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean } = {},
+    {
+      local = false,
+      manualOnly = false,
+      needsBase = false,
+      subscription = false,
+      cloud = false,
+    }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean; subscription?: boolean; cloud?: boolean } = {},
   ) => {
+    if (subscription) return "サーバー上の公式アプリのサインインを使用します。モデルは自動で読み込まれます。";
+    if (cloud) return "サーバーが見つけたクラウドの認証情報を使用します。下のキーは任意です。使用するモデル ID を下に追加してください。";
     if (manualOnly) return "このプロバイダーはモデルの一覧を提供していません。使用するモデル ID を下に追加してください。";
     if (kind === "configured") return "保存済みの接続から、利用可能なモデルを自動で読み込みます。";
     if (kind === "environment") return `${source} の認証情報を使用しています。`;
@@ -282,25 +292,39 @@ export const ja: Dict = {
   optionalKeyVariable: (variable: string) => `${variable}（任意）`,
   manualModelsOnly: "このプロバイダーからはモデルの一覧を取得できません · 下にモデル ID を追加してください",
   serverAddressRequired: "サーバーのアドレスが必要です",
-  providerGroup: (kind: string) =>
+  searchProviders: (n: number) => `${n} 件のプロバイダーを検索`,
+  providersFound: (n: number) => `${n} 件のプロバイダーが見つかりました`,
+  providersNoMatch: "一致するプロバイダーはありません",
+  providersSaved: "保存済み",
+  providersCommon: "よく使うプロバイダー",
+  providersAll: (n: number) => `すべてのプロバイダー（${n}）`,
+  providerFilterAria: "プロバイダーの種類",
+  providerFilter: (group: string) =>
     (
       ({
-        environment: "設定済みの環境変数の認証情報",
-        configured: "保存済みのプロバイダー",
-        common: "主なプロバイダー",
-        compatible: "その他の OpenAI 互換プロバイダー",
+        all: "すべて",
+        clouds: "クラウド",
+        inference: "推論サービス",
+        gateways: "ゲートウェイ",
+        local: "ローカル",
+        subscriptions: "サブスクリプション",
+        makers: "モデル開発元",
       }) as Record<string, string>
-    )[kind] ?? kind,
+    )[group] ?? group,
   providerCustom: "OpenAI 互換エンドポイント",
   providerUnknown: "不明なプロバイダー",
   customApiBase: "カスタムの API ベース URL を使用",
   requiredField: "必須",
+  optionalField: "任意",
   manualModelToggle: "モデル ID を手動で追加",
+  manualAndRouting: "モデル ID とルーティング",
+  manualModelLabel: "ID でモデルを追加",
   searchModels: "モデルを検索",
   selectAll: "すべて選択",
   manualModelPh: "完全なモデル ID",
   azureDeploymentPh: "Azure のデプロイ名",
   addManual: "手動で追加",
+  addModelId: "追加",
   modelsAvailable: "利用可能なモデル",
   alreadyConfigured: "設定済み",
   visionTag: "ビジョン",
@@ -318,6 +342,7 @@ export const ja: Dict = {
   deleteModelTitle: (model: string) => `${model} を削除しますか？`,
   deleteModelDescription: "プロバイダーの認証情報は保持されるため、後でモデルを追加できます。",
   setStatusNone: "モデルが設定されていません",
+  modelsEmptyText: "モデルは Markdown の整形、画像の説明、スキャンしたページの読み取りに使います。モデルがなくてもファイルは変換できます。",
   setSourceLbl: "設定元",
   openConfigFile: "エディターで設定ファイルを開く",
   setApiKey: "API キー",
@@ -342,6 +367,8 @@ export const ja: Dict = {
   addressKeyLabel: "このアドレス用の API キー",
   addressKeyNote: "保存済みのキーが新しいアドレスに送信されることはありません。",
   addressNoKeyNote: "キーなしで接続する場合は、空欄のままにしてください。",
+  maskedAddressNote: "… と表示された部分は非表示です。アドレスをそのままにすると保持されます。変更する場合は新しいアドレスを全部入力してください。",
+  maskedAddress: "アドレスを全部入力してください。非表示の部分（…）は保存できません。",
   keyRequired: "API キーを入力してください。",
   endpointKeyRequired: "新しいアドレス用の API キーを入力してください。保存済みのキーが新しいアドレスに送信されることはありません。",
   literalCredentialsOnly: "API キーとアドレスは実際の値を入力してください。環境変数の参照は、サーバーの設定ファイルでのみ指定できます。",
@@ -417,7 +444,6 @@ export const ja: Dict = {
 
   // convert view
   recentTitle: "最近の変換",
-  allConversions: "すべての変換",
   failedCount: (n: number) => `${n} 件失敗`,
 
   // conversions view
@@ -426,13 +452,40 @@ export const ja: Dict = {
     [`${total} 件中 ${done} 件を変換済み`, ...(failed ? [`${failed} 件失敗`] : []), ...(stopped ? [`${stopped} 件停止`] : []), ...(skipped ? [`${skipped} 件スキップ`] : [])].join("、") + "。",
   summaryRunning: (done: number, total: number, running: number, queued: number) =>
     [`${total} 件中 ${done} 件を変換済み`, ...(running ? [`${running} 件変換中`] : []), ...(queued ? [`${queued} 件待機中`] : [])].join("、") + "。",
-  emptyConversions: "まだ変換はありません。ここにファイルをドロップするか、上に URL を貼り付けてください。",
+  emptyTitle: "まだ変換はありません",
+  emptyText: "上に URL を貼り付けるか、ファイルをドロップすると変換できます。",
+  emptyTextKept: (days: number) => `上に URL を貼り付けるか、ファイルをドロップすると変換できます。変換結果は ${days} 日間保存されます。`,
+  listBlockedTitle: "変換を表示できません",
+  goneTitle: "この変換はもう存在しません",
+  goneText: "削除されたか、古い履歴とともに削除されました。",
+  goneTextDays: (days: number) => `削除されたか、${days} 日後に削除されました。`,
+  showAllConversions: "すべての変換を表示",
+  tokenNeededTitle: "アクセストークンが必要です",
+  serverDownTitle: "サーバーに接続できません",
+  serverDownText: "markitai serve は実行中ですか？このページは数秒ごとに再接続を試みます。",
+  filterNoneTitle: "一致する項目はありません",
+  listNeedsToken: "変換を表示するには、このブラウザーにアクセストークンが必要です。",
+  listLoadFailed: "保存された変換を読み込めませんでした。",
+  clearFilter: "フィルターを解除",
+  filterNoMatchQuery: (query: string) => `「${query}」に一致する変換はありません。`,
+  filterNoFailed: "失敗した変換はありません。",
+  filterNoNotices: "お知らせのある変換はありません。",
+  tryNow: "今すぐ再試行",
+  noteView: "表示",
+  notificationsLabel: "通知",
+  stopFailed: "停止できませんでした",
+  noModelLine: "LLM なしで変換しました：モデルが設定されていません。",
+  configureModels: "設定する",
+  submitFailedShort: "変換を開始できませんでした。",
+  submitNeedsToken: "権限がありません：アクセストークンを入力してください。",
+  submitNoServer: "サーバーに接続できませんでした。",
+  notFoundTitle: "ページが見つかりません",
+  notFoundText: (path: string) => `${path} にはページがありません。`,
+  titleNotFound: "ページが見つかりません · Markitai",
   downloadAll: "すべてダウンロード",
   retryFailedN: (n: number) => `失敗した項目を再試行（${n}）`,
   filterByName: "名前で絞り込み",
   filterNotices: "お知らせあり",
-  historyLoadFailed: "保存された変換を読み込めませんでした",
-  capHintText: "モデルが設定されていないため、LLM 強化はオフです。",
   dismiss: "閉じる",
   downloadFailedFile: "ダウンロードに失敗しました",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
@@ -446,6 +499,7 @@ export const ja: Dict = {
 
   // inspector
   overviewTitle: "すべての変換",
+  overviewLink: "概要",
   overviewEmpty: "変換したファイルやページがここに表示されます。",
   selectHint: "変換を選択すると、詳細が表示されます。",
   preview: "プレビュー",
@@ -490,6 +544,8 @@ export const ja: Dict = {
     // Model IDs are Latin, so a space separates them from the particle; the counted form ends in Japanese.
     const list = (names: string[]) => (names.length <= 2 ? `${names.join("、")} ` : `${names.slice(0, 2).join("、")} ほか ${names.length - 2} 個のモデル`);
     switch (kind) {
+      case "no_model":
+        return count === 1 ? "使えるモデルの回答がなかったため、基本の Markdown だけを残しました" : `${count} 件の文書は使えるモデルの回答がなかったため、基本の Markdown だけを残しました`;
       case "alt_kept":
         return `${count} 枚の画像は分析に失敗したため、元の代替テキストを残しました`;
       case "cost_incomplete":
@@ -511,7 +567,6 @@ export const ja: Dict = {
   showItem: "この項目を表示",
   showItems: "これらの項目を表示",
   resultStart: "結果の冒頭",
-  openPreview: "プレビューを開く",
   failedHeading: (n: number) => `${n} 件失敗`,
   stoppedCount: (n: number) => `${n} 件は変換前に停止しました。`,
   deleteSubmissionAria: (label: string) => `${label} を完全に削除`,
@@ -521,11 +576,12 @@ export const ja: Dict = {
   previousItem: "前の項目",
   nextItem: "次の項目",
   positionOf: (index: number, total: number) => `${index} / ${total}`,
-  closePreview: "プレビューを閉じる",
-  fullWidth: "全幅で表示",
-  dockPreview: "一覧の横に表示",
   moreActions: "その他の操作",
   openPage: "ページを開く",
+  peekDetails: "詳細",
+  peekViews: "表示",
+  peekDock: "一覧の横に表示",
+  peekUndock: "ウィンドウで開く",
   keysMove: "前 / 次の項目",
   keysClose: "閉じる",
   tableCapped: (shown: string, total: string) =>
@@ -561,17 +617,19 @@ export const ja: Dict = {
   themeHint: "システムに合わせるか、常にライトまたはダークを使用します。",
   accessHeld: "このタブにはアクセストークンがあります。",
   accessNone: "このタブにはアクセストークンがありません。",
-  accessRefused: "サービスがこのタブのアクセストークンを拒否しました。",
-  accessExplain: "markitai serve が表示したリンクを開いてください。リンクにトークンが含まれています。または、ここにトークンを貼り付けてください。",
-  replaceToken: "アクセストークンを置き換え",
-  forgetToken: "トークンを消去",
-  tokenSaved: "このタブ用にトークンを保存しました。",
+  accessRefused: "サーバーがこのタブのトークンを拒否しました。",
+  accessRefusedHint: "新しいトークンを貼り付けてください。",
+  accessExplain: "markitai serve が表示したリンクのトークンを貼り付けてください。",
+  replaceToken: "新しいトークンを貼り付けると置き換わります。",
+  forgetToken: "消去",
+  tokenSaved: "トークンを保存しました。",
 
   // token dialog
   tokenTitle: "サービスへのアクセス",
   tokenText: "markitai serve の起動時に表示されたアクセストークンを入力してください。",
   tokenLabel: "アクセストークン",
-  tokenNote: "このブラウザータブでのみ保持されます。",
+  tokenField: "トークン",
+  tokenNote: "このタブにのみ保持されます。",
   connect: "接続",
 
   // crash surface (also read before the dictionary is available)

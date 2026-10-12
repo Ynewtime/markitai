@@ -3,27 +3,30 @@
 // keeps the selected item and the open preview in its address, so reloads and
 // Back return to them. Notices sit in the page, never over its buttons.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, fetchCapabilities, filePath, NetworkError } from "./api/client.ts";
+import { ApiError, fetchCapabilities, filePath, NetworkError, setItemAssets } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
 import type { Capabilities, JobOptions } from "./api/types.ts";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
 import { ConversionsPage } from "./components/conversions-page.tsx";
 import { ConvertPage } from "./components/convert-page.tsx";
 import { DropOverlay } from "./components/drop-overlay.tsx";
-import { Notes, type Note } from "./components/notes.tsx";
+import { MAX_NOTES, NoticeStack, type Note } from "./components/notes.tsx";
 import { OptionsPanel } from "./components/options-panel.tsx";
+import { readDocked, storeDocked } from "./components/peek.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
 import { ModelsSettings } from "./components/settings-models.tsx";
 import { Shell, useSidebar } from "./components/shell.tsx";
+import type { PanelState } from "./components/conversions-page.tsx";
+import { StateBlock } from "./components/state-block.tsx";
 import { TokenDialog } from "./components/token-dialog.tsx";
 import { UrlInput } from "./components/url-input.tsx";
-import type { InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
+import type { ActionFailure, InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
 import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
 import { useConnectivity } from "./hooks/use-connectivity.ts";
 import { useConversions } from "./hooks/use-conversions.ts";
 import { useMedia } from "./hooks/use-media.ts";
 import { detectLocale, dicts, loadLocale, storeLocale, type Locale } from "./i18n/index.ts";
-import { apiErrorText, persistenceText } from "./i18n/errors.ts";
+import { apiErrorText } from "./i18n/errors.ts";
 import { LANG_TAGS } from "./i18n/locale.ts";
 import { isFailed, jobKey, submissions, type Filter, type LabelWords } from "./lib/conversions.ts";
 import { download } from "./lib/download.ts";
@@ -69,11 +72,11 @@ export function App() {
   const announce = useCallback((message: string) => setLive((previous) => (previous === message ? `${message} ` : message)), []);
   useEffect(() => setLive(""), [locale]);
 
-  // ---- page notices
+  // ---- transient notices: oldest first, newest last; a fourth removes the oldest
   const [notes, setNotes] = useState<Note[]>([]);
   const note = useCallback((next: Omit<Note, "id"> & { id?: string }) => {
     const id = next.id ?? `note-${++noteSequence}`;
-    setNotes((previous) => [{ ...next, id }, ...previous.filter((entry) => entry.id !== id)].slice(0, 4));
+    setNotes((previous) => [...previous.filter((entry) => entry.id !== id), { ...next, id }].slice(-MAX_NOTES));
     return id;
   }, []);
   const dismiss = useCallback((id: string) => setNotes((previous) => previous.filter((entry) => entry.id !== id)), []);
@@ -84,6 +87,7 @@ export function App() {
   const refreshCaps = useCallback(() => {
     fetchCapabilities().then(
       (value) => {
+        setItemAssets(value.features?.item_assets === true);
         setCaps(value);
         setUnauthorized(false);
       },
@@ -149,9 +153,9 @@ export function App() {
     dismiss("offline");
     note({ tone: "success", text: dicts[localeRef.current].reconnected });
   });
-  useEffect(() => {
-    if (offline) note({ id: "offline", tone: "error", text: dicts[localeRef.current].submitNetworkFailed });
-  }, [offline, note]);
+  // An unreachable server is a lasting condition, not a notice: the list's panel
+  // says it when nothing could be loaded, and a failed action says it in its
+  // conversion's inspector. The connectivity hook asks again every few seconds.
 
   // ---- routes
   const [route, setRoute] = useState<Route>(() => parseRoute(location.pathname));
@@ -189,7 +193,10 @@ export function App() {
   }, [route, phone]);
 
   const [collapsedSidebar, toggleSidebar] = useSidebar();
-  const [wide, setWide] = useState(false);
+  // A conversion opens as a window over the list, or docked beside it (remembered per browser).
+  const [docked, setDocked] = useState(readDocked);
+  const routeRef = useRef(route);
+  routeRef.current = route;
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
@@ -202,7 +209,7 @@ export function App() {
       return next;
     });
 
-  const titles: Record<Route["view"], string> = { convert: t.titleHome, jobs: t.titleWorkspace, settings: t.titleSettings };
+  const titles: Record<Route["view"], string> = { convert: t.titleHome, jobs: t.titleWorkspace, settings: t.titleSettings, missing: t.titleNotFound };
   useEffect(() => {
     const base = titles[route.view];
     document.title = conversions.activeCount > 0 ? `${conversions.activeCount} · ${base}` : base;
@@ -295,7 +302,7 @@ export function App() {
       } else if (folder?.truncated) notes.push(t.dropLimit(chosen.length));
       if (folder?.hidden) notes.push(t.folderHidden(folder.hidden));
       if (folder?.unreadable) notes.push(t.folderUnreadable(folder.unreadable));
-      if (notes.length) note({ id: "drop", tone: "info", text: notes.join(" · "), ttl: 10_000 });
+      if (notes.length) note({ id: "drop", tone: "warning", text: notes.join(" · ") });
       const large = oversized(chosen);
       if (large.length) {
         note({ id: "input", tone: "error", text: t.filesTooLarge(large.map((file) => `${file.name} (${fmtBytes(file.size)})`).join(", ")) });
@@ -305,11 +312,13 @@ export function App() {
       const batch = stagedBatch(chosen, folder?.folder === true);
       if (batch) {
         setStaged(batch);
+        // The staged line and its Convert button live on the Convert page.
+        if (routeRef.current.view !== "convert") navigate({ view: "convert" });
         return;
       }
       void send(chosen, []);
     },
-    [maxItems, send, t, note, dismiss],
+    [maxItems, send, t, note, dismiss, navigate],
   );
   const submitFolder = useCallback((files: File[], hidden: number) => submitFiles(files, { hidden, unreadable: 0, truncated: false, folder: true }), [submitFiles]);
   const submitWalked = useCallback((walked: Walked) => submitFiles(walked.files, walked), [submitFiles]);
@@ -325,7 +334,7 @@ export function App() {
       }
       let list = parsed.urls;
       if (list.length > maxItems) {
-        note({ id: "drop", tone: "info", text: t.dropTruncated(maxItems, list.length), ttl: 10_000 });
+        note({ id: "drop", tone: "warning", text: t.dropTruncated(maxItems, list.length) });
         list = list.slice(0, maxItems);
       }
       const files = staged?.files ?? [];
@@ -338,9 +347,25 @@ export function App() {
     [maxItems, send, staged, t, note, dismiss],
   );
 
+  // ---- a failed action on one conversion: one line in its inspector (no
+  // notice), until the action is tried again or another conversion is chosen
+  const [actionFailure, setActionFailure] = useState<ActionFailure | null>(null);
+  const failAction = useCallback(
+    (key: string, failure: string, error?: unknown) => {
+      const words = error === undefined ? { text: "", detail: "" } : describe(error);
+      const [first = "", ...rest] = words.text.split(/(?<=[.!?。！？])\s*/);
+      const text = first ? `${failure} · ${first}` : failure;
+      setActionFailure({ key, text, detail: [rest.join(" ").trim(), words.detail].filter(Boolean).join("\n") });
+      announce(text);
+    },
+    [describe, announce],
+  );
+  const clearFailure = useCallback((key: string) => setActionFailure((previous) => (previous?.key === key ? null : previous)), []);
+
   // ---- item actions
   const requestItem = useCallback(
     async (item: SessionItem, request: () => Promise<unknown>, failure: string) => {
+      clearFailure(item.key);
       mark(item.key, true);
       let error: unknown = null;
       try {
@@ -349,13 +374,10 @@ export function App() {
         error = reason;
       }
       mark(item.key, false);
-      if (error !== null && error !== undefined) {
-        const text = describe(error);
-        note({ tone: "error", text: `${failure} · ${item.name} · ${text.text}`, detail: text.detail });
-      }
+      if (error !== null && error !== undefined) failAction(item.key, failure, error);
       return error;
     },
-    [describe, note],
+    [clearFailure, failAction],
   );
   const savedOptions = (item: SessionItem): JobOptions => publicOptions(item.options ?? conversionsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
   const retry = useCallback(
@@ -379,11 +401,10 @@ export function App() {
       updateList({ selected: item.key, mode: "compare" }, true);
     },
     download: (item, path) => {
-      void download(filePath(item.jobId, path), basename(path)).catch((error: unknown) => {
-        const text = describe(error);
-        note({ tone: "error", text: `${dicts[localeRef.current].downloadFailedFile} · ${text.text}`, detail: text.detail });
-      });
+      clearFailure(item.key);
+      void download(filePath(item.jobId, path), basename(path)).catch((error: unknown) => failAction(item.key, dicts[localeRef.current].downloadFailedFile, error));
     },
+    copyFailed: (item) => failAction(item.key, dicts[localeRef.current].copyFailed),
     retry: (item) => void retry(item),
     retryPlain: (item) => void retry(item, { ...savedOptions(item), llm: false, alt: null, desc: null }),
     retryWithOcr: (item) => {
@@ -415,45 +436,57 @@ export function App() {
       mark(key, true);
       try {
         const authorized = await cloudflare.authorizeBatch(batch.map(({ item, options }) => ({ options, sources: [{ name: item.name, kind: item.kind }] })), true);
+        if (key.startsWith("job:")) clearFailure(key);
         const result = await submitRetryBatch(batch, authorized, (item, options) => conversionsRef.current.retry(item, options));
         if (result) announce(retryBatchAnnouncement(batch, result, dicts[localeRef.current]));
-        if (result?.failed) note({ tone: "error", text: dicts[localeRef.current].announceRetryAllFailed(result.attempted, result.failed) });
+        // One submission's retries fail in its inspector; all of them, in the page.
+        if (result?.failed && key.startsWith("job:")) failAction(key, dicts[localeRef.current].announceRetryAllFailed(result.attempted, result.failed));
+        else if (result?.failed)
+          note({
+            tone: "error",
+            text: dicts[localeRef.current].announceRetryAllFailed(result.attempted, result.failed),
+            action: { label: dicts[localeRef.current].noteView, run: () => (setRoute({ view: "jobs" }), setFilter("failed")) },
+          });
       } finally {
         mark(key, false);
       }
     },
-    [cloudflare.authorizeBatch, announce, note],
+    [cloudflare.authorizeBatch, announce, note, clearFailure, failAction],
   );
   const downloadArchive = useCallback(
-    (path: string, name: string) => {
+    (path: string, name: string, key?: string) => {
+      if (key) clearFailure(key);
       void download(path, name, features?.download_tickets === true).catch((error: unknown) => {
-        const text = describe(error);
-        note({ tone: "error", text: `${dicts[localeRef.current].downloadFailed} · ${text.text}`, detail: text.detail });
+        if (key) return failAction(key, dicts[localeRef.current].downloadFailed, error);
+        const [first = ""] = describe(error).text.split(/(?<=[.!?。！？])\s*/);
+        note({ tone: "error", text: first ? `${dicts[localeRef.current].downloadFailed} · ${first}` : dicts[localeRef.current].downloadFailed });
       });
     },
-    [features, describe, note],
+    [features, describe, note, clearFailure, failAction],
   );
   const stopJobs = useCallback(
     async (jobIds: string[], key: string) => {
+      if (key.startsWith("job:")) clearFailure(key);
       mark(key, true);
       const result = await conversionsRef.current.stop(jobIds);
       mark(key, false);
-      if (result.error) {
-        const text = describe(result.error);
-        note({ tone: "error", text: `${dicts[localeRef.current].stopRemaining} · ${text.text}`, detail: text.detail });
+      if (result.error && key.startsWith("job:")) failAction(key, dicts[localeRef.current].stopRemaining, result.error);
+      else if (result.error) {
+        const [first = ""] = describe(result.error).text.split(/(?<=[.!?。！？])\s*/);
+        note({ tone: "error", text: first ? `${dicts[localeRef.current].stopFailed} · ${first}` : dicts[localeRef.current].stopFailed });
       } else if (result.stopping > 0) announce(dicts[localeRef.current].stopRequested(result.stopping));
     },
-    [describe, note, announce],
+    [describe, note, announce, clearFailure, failAction],
   );
   const jobActions: JobActionsApi = {
-    zip: (jobId) => downloadArchive(`/api/jobs/${encodeURIComponent(jobId)}/archive`, `markitai-${jobId}.zip`),
+    zip: (jobId) => downloadArchive(`/api/jobs/${encodeURIComponent(jobId)}/archive`, `markitai-${jobId}.zip`, `job:${jobId}`),
     retryFailed: (jobId) => void retryItems(conversionsRef.current.items.filter((item) => item.jobId === jobId), `job:${jobId}`),
     stop: (jobId) => void stopJobs([jobId], `job:${jobId}`),
     remove: async (jobId) => {
+      clearFailure(`job:${jobId}`);
       const error = await conversionsRef.current.removeJob(jobId);
       if (error !== null) {
-        const text = describe(error);
-        note({ tone: "error", text: `${dicts[localeRef.current].deleteFailed} · ${text.text}`, detail: text.detail });
+        failAction(`job:${jobId}`, dicts[localeRef.current].deleteFailed, error);
         return false;
       }
       updateList({ selected: null, mode: "inspector" });
@@ -478,46 +511,34 @@ export function App() {
   }, [conversions.items, t, announce]);
 
   // ---- notices from the store
-  const persistence = Object.values(conversions.jobs).filter((job) => job.persistenceError);
   const submitError = conversions.submitError;
-  const submitText = submitError && !(submitError instanceof ApiError && submitError.status === 401) ? describe(submitError) : null;
   const [tokenOpen, setTokenOpen] = useState(false);
+  // A refused submission is a strip with one sentence; the composer keeps its input.
+  useEffect(() => {
+    if (!submitError) return;
+    const words = dicts[localeRef.current];
+    // One short sentence; the service's wording is not repeated in a strip.
+    if (submitError instanceof ApiError && submitError.status === 401) {
+      note({ id: "submit", tone: "error", text: words.submitNeedsToken, action: { label: words.enterToken, run: () => setTokenOpen(true) } });
+    } else {
+      note({ id: "submit", tone: "error", text: submitError instanceof NetworkError ? words.submitNoServer : words.submitFailedShort });
+    }
+    conversions.clearSubmitError();
+  }, [submitError]);
+  const restoreFailed = conversions.restoreFailed.size > 0;
+  useEffect(() => {
+    if (restoreFailed) note({ id: "restore", tone: "warning", text: dicts[localeRef.current].restoreFailed, action: { label: dicts[localeRef.current].restoreRetry, run: () => void conversionsRef.current.retryRestore() } });
+  }, [restoreFailed]);
   const uploadText = (() => {
     if (!upload) return t.submitting;
     if (!(upload.total > 0)) return upload.loaded > 0 ? t.uploadUnknown(fmtBytes(upload.loaded)) : t.submitting;
     if (upload.loaded >= upload.total) return t.uploadDone;
     return t.uploadProgress(Math.min(99, Math.floor((upload.loaded / upload.total) * 100)), fmtBytes(upload.loaded), fmtBytes(upload.total));
   })();
-  const [llmHintDismissed, setLlmHintDismissed] = useState(false);
-  const pageNotes: Note[] = [
-    ...(submitting ? [{ id: "upload", tone: "info" as const, text: uploadText, busy: true, action: { label: t.cancelSubmit, run: cancelSubmit } }] : []),
-    ...(unauthorized || (submitError instanceof ApiError && submitError.status === 401)
-      ? [{ id: "token", tone: "error" as const, text: apiErrorText(locale, { reason: "token_required" })?.text ?? "", action: { label: t.enterToken, run: () => setTokenOpen(true) } }]
-      : []),
-    ...(submitText ? [{ id: "submit", tone: "error" as const, text: submitText.text, detail: submitText.detail, action: { label: t.dismiss, run: () => conversions.clearSubmitError() } }] : []),
-    ...(conversions.restoreFailed.size > 0 ? [{ id: "restore", tone: "warning" as const, text: t.restoreFailed, action: { label: t.restoreRetry, run: () => void conversions.retryRestore() } }] : []),
-    ...persistence.map((job) => ({ id: `persist-${job.jobId}`, tone: "error" as const, ...persistenceText(locale, job.persistenceError ?? "") })),
-    ...(conversions.loadError && !(conversions.loadError instanceof NetworkError) && !unauthorized
-      ? [{ id: "history", tone: "error" as const, text: `${t.historyLoadFailed} · ${describe(conversions.loadError).text}`, action: { label: t.retryLoad, run: () => void conversions.refresh() } }]
-      : []),
-    ...(caps !== null && !caps.llm.routable && route.view !== "settings" && !llmHintDismissed
-      ? [{ id: "llm", tone: "info" as const, text: t.capHintText, ttl: 0, action: { label: t.capHintLink, run: () => navigate({ view: "settings", section: "models" }) } }]
-      : []),
-    ...notes,
-  ];
-  const noteArea = pageNotes.length > 0 && (
-    <Notes
-      t={t}
-      notes={pageNotes}
-      onDismiss={(id) => {
-        if (id === "submit") conversions.clearSubmitError();
-        if (id === "llm") setLlmHintDismissed(true);
-        dismiss(id);
-      }}
-    />
-  );
+  // An upload in progress is the newest strip until it ends (Cancel stops it).
+  const stack: Note[] = [...notes, ...(submitting ? [{ id: "upload", tone: "success" as const, text: uploadText, busy: true, action: { label: t.cancelSubmit, run: cancelSubmit } }] : [])].slice(-MAX_NOTES);
 
-  const composerFor = (compact: boolean) => (
+  const composerPanel = (
     <OptionsPanel
       t={t}
       state={composer}
@@ -537,7 +558,6 @@ export function App() {
           onText={setUrlText}
           onConvert={submitUrls}
           busy={submitting || cloudflare.pending !== null}
-          compact={compact}
           staged={staged}
           onClearStaged={() => setStaged(null)}
           tools={tools}
@@ -559,17 +579,39 @@ export function App() {
     busy,
     labelWords,
     describe,
+    failure: actionFailure,
   };
   const waiting = waitingJobs(conversions.items, conversions.jobs);
   const retryable = conversions.items.filter((item) => (isFailed(item) || item.skipReason === "user_stopped") && canRetry(item));
 
-  // A selection that no longer exists (deleted, expired) falls back to the overview.
+  // A selection that no longer exists (deleted, expired) falls back to the
+  // overview; when it came with the address (a bookmark, a shared link), a
+  // notice says why the page shows something else.
   const selected = listState.selected;
+  useEffect(() => setActionFailure((previous) => (previous && previous.key !== selected ? null : previous)), [selected]);
+  const linked = useRef(listState.selected);
+  const [gone, setGone] = useState(false);
   useEffect(() => {
+    if (selected !== null) setGone(false);
     if (selected === null || !conversions.loaded) return;
     const exists = selected.startsWith("job:") ? selected.slice(4) in conversions.jobs : conversions.items.some((item) => item.key === selected);
-    if (!exists && conversions.restoreFailed.size === 0) updateList({ selected: null, mode: "inspector" });
+    if (exists || conversions.restoreFailed.size > 0) return;
+    updateList({ selected: null, mode: "inspector" });
+    if (selected === linked.current) setGone(true);
+    linked.current = null;
   }, [selected, conversions.items, conversions.jobs, conversions.loaded]);
+  const retentionDays = caps?.limits.history_retention_days;
+  const gonePanel: PanelState | null = gone
+    ? { icon: "LinkBreak", title: t.goneTitle, text: retentionDays ? t.goneTextDays(retentionDays) : t.goneText, secondary: { label: t.showAllConversions, run: () => setGone(false) } }
+    : null;
+  // The saved conversions cannot be listed: why, and the way on.
+  const blocked: PanelState | null = unauthorized
+    ? { icon: "Key", title: t.tokenNeededTitle, text: t.listNeedsToken, primary: { label: t.enterToken, run: () => setTokenOpen(true) } }
+    : offline
+      ? { icon: "Plugs", title: t.serverDownTitle, text: t.serverDownText, secondary: { label: t.tryNow, run: refreshCaps } }
+      : conversions.loadError
+        ? { icon: "WarningCircle", title: t.listBlockedTitle, text: t.listLoadFailed, secondary: { label: t.retryLoad, run: () => void conversions.refresh() }, tone: "error" }
+        : null;
 
   const recent = useMemo(() => submissions(conversions.jobs, conversions.items).slice(0, 3), [conversions.jobs, conversions.items]);
 
@@ -583,11 +625,11 @@ export function App() {
         jobs={conversions.jobs}
         items={conversions.items}
         loaded={conversions.loaded}
-        composer={composerFor(true)}
-        notes={noteArea}
+        blocked={blocked}
+        gone={gonePanel}
         selected={selected}
         mode={listState.mode}
-        wide={wide}
+        docked={docked}
         filter={filter}
         query={query}
         collapsed={collapsedGroups}
@@ -606,15 +648,16 @@ export function App() {
           onRetry: () => void retryItems(conversions.items, "all:retry"),
           onZip: () => downloadArchive("/api/history/archive", "markitai-all.zip"),
         }}
-        onSelect={(key) => updateList({ selected: key, mode: key === null ? "inspector" : listState.mode === "inspector" ? "inspector" : listState.mode })}
-        onMode={(mode) => {
-          if (mode === "inspector") {
-            updateList({ selected, mode });
-            setWide(false);
-            requestAnimationFrame(() => (selected ? document.querySelector<HTMLElement>(`[data-key="${CSS.escape(selected)}"]`)?.focus() : null));
-          } else updateList({ selected, mode });
-        }}
-        onWide={() => setWide((value) => !value)}
+        onSelect={(key) => updateList({ selected: key, mode: key === null ? "inspector" : listState.mode })}
+        onMode={(mode) => updateList({ selected, mode })}
+        onDock={() =>
+          setDocked((value) => {
+            storeDocked(!value);
+            return !value;
+          })
+        }
+        onNewConversion={() => navigate({ view: "convert" })}
+        onCopied={() => note({ tone: "success", text: dicts[localeRef.current].copied })}
         onFilter={setFilter}
         onQuery={setQuery}
         onToggleGroup={(jobId, open) =>
@@ -636,14 +679,28 @@ export function App() {
         describe={describe}
       />
     );
+  } else if (route.view === "missing") {
+    page = (
+      <div class="page page-missing">
+        <StateBlock
+          heading="h1"
+          icon="Compass"
+          title={t.notFoundTitle}
+          text={t.notFoundText(route.path)}
+          primary={{ label: t.navConvert, run: () => navigate({ view: "convert" }) }}
+          secondary={{ label: t.conversions, run: () => navigate({ view: "jobs" }) }}
+        />
+      </div>
+    );
   } else if (route.view === "settings") {
     const section = route.section ?? (phone ? null : "models");
     page =
       section === null ? (
-        <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} onNavigate={navigate} />
+        <div class="page">
+          <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} onNavigate={navigate} />
+        </div>
       ) : section === "models" ? (
         <div class="page">
-          {noteArea}
           <ModelsSettings t={t} locale={locale} onSaved={refreshCaps} announce={announce} describe={describe} />
         </div>
       ) : section === "appearance" ? (
@@ -670,15 +727,14 @@ export function App() {
       <ConvertPage
         t={t}
         locale={locale}
-        composer={composerFor(false)}
-        notes={noteArea}
+        composer={composerPanel}
         recent={recent}
+        blocked={conversions.loaded ? null : blocked}
         labelWords={labelWords}
         onOpen={(key) => {
           setRoute({ view: "jobs" });
           updateList({ selected: key, mode: "inspector" }, true);
         }}
-        onAll={() => navigate({ view: "jobs" })}
       />
     );
   }
@@ -725,9 +781,10 @@ export function App() {
           }}
         />
       )}
+      <NoticeStack label={t.notificationsLabel} notes={stack} onDismiss={dismiss} />
       <DropOverlay
         label={t.dropToConvert}
-        suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || listState.mode !== "inspector"}
+        suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || (route.view === "jobs" && listState.selected !== null && (phone || !docked))}
         limit={maxItems}
         onFiles={(files) => submitFiles(files)}
         onFolder={submitWalked}

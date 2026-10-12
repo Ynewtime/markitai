@@ -1,12 +1,12 @@
 // Shared modal behaviour: the page behind stops scrolling, focus moves into
 // the dialog, Tab cycles inside it, and Escape closes it, unless a smaller
-// layer (a confirmation or the PDF settings card) is on top and owns both.
+// layer (a confirmation, the PDF settings card or an open "⋯" menu) is on top and owns both.
 import { useEffect, useRef, type MutableRef } from "preact/hooks";
 
 const FOCUSABLE = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
 
 export const topLayer = (): HTMLElement | null =>
-  document.querySelector<HTMLElement>(".confirm-card") ?? document.querySelector<HTMLElement>(".pdf-card");
+  document.querySelector<HTMLElement>(".confirm-card") ?? document.querySelector<HTMLElement>(".pdf-card") ?? document.querySelector<HTMLElement>(".menu");
 
 export function useModal(dialog: MutableRef<HTMLElement | null>, onEscape: () => void): void {
   const escape = useRef(onEscape);
