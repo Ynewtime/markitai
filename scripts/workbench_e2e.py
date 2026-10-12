@@ -17,7 +17,8 @@ screenshots every state:
     from the "⋯" menu (ticket; on a phone Stop from the header of the
     full-screen windows and on its own row under the Conversions title, a
     long URL title cut in the middle), an inline SVG drawing in the preview,
-    settings model test (fake LLM), every settings page and Convert as one
+    settings model test (fake LLM) and a model whose key the server lacks
+    (the test names the variable), every settings page and Convert as one
     centred column, the provider picker (groups, brand marks, search), a
     saved address shown without its credentials, a provider beyond the first
     eight connected with a key and an address, Vertex AI connected without an
@@ -1736,6 +1737,68 @@ def browse(
             return "model test answered by the fake LLM"
 
         run.step(page, "settings-test", settings)
+
+        # 12b. A model whose key the server lacks (no DEEPSEEK_API_KEY here):
+        # its test names the variable and sends nothing (owner, 2026-10-12)
+        def settings_missing_key() -> str:
+            revision = _api(page, base, "GET", "/api/settings/llm").json()["revision"]
+            saved = _api(
+                page,
+                base,
+                "POST",
+                "/api/settings/llm/deployments/batch",
+                data={
+                    "expected_revision": revision,
+                    "deployments": [
+                        {
+                            "model_name": "e2e-missing-key",
+                            "model": "deepseek/deepseek-flash",
+                            "provider": "deepseek",
+                        }
+                    ],
+                },
+            )
+            if saved.status != 200:
+                raise AssertionError(f"saving the model: {saved.status} {saved.text()}")
+            deployment = next(
+                d
+                for d in saved.json()["deployments"]
+                if d["routing_group"] == "e2e-missing-key"
+            )
+            try:
+                _open(page, lambda: page.goto(f"{base}/settings/models"))
+                before = len(run.api)
+                _click_visible(
+                    page.get_by_role(
+                        "button", name="Test deepseek/deepseek-flash", exact=True
+                    )
+                )
+                note = page.get_by_text(
+                    re.compile(r"DEEPSEEK_API_KEY is not set on the server")
+                ).first
+                note.wait_for(timeout=15000)
+                tests = [
+                    call
+                    for call in run.api[before:]
+                    if call[1].startswith("/api/settings/llm/test")
+                ]
+                if len(tests) != 1:
+                    raise AssertionError(f"model tests sent: {tests}")
+            finally:
+                _api(
+                    page,
+                    base,
+                    "DELETE",
+                    f"/api/settings/llm/deployments/{deployment['deployment_id']}"
+                    "?expected_revision="
+                    + _api(page, base, "GET", "/api/settings/llm").json()["revision"],
+                )
+            return (
+                "a DeepSeek model without DEEPSEEK_API_KEY on the server: the test "
+                "names the variable (reason missing_key), nothing sent"
+            )
+
+        run.step(page, "settings-test-missing-key", settings_missing_key)
 
         # 12a. Every settings page, and Convert, is one centred column
         def settings_pages() -> str:
