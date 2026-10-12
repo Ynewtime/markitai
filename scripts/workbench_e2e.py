@@ -14,12 +14,14 @@ screenshots every state:
     header arrows between items, the window docked beside the list and back
     (a per-browser choice), retry of a failed item, a failed action reported
     in the window, New conversion and stop remaining (cancel), download all
-    from the "⋯" menu (ticket), an inline SVG drawing in the preview,
+    from the "⋯" menu (ticket; on a phone Stop from the header of the
+    full-screen windows), an inline SVG drawing in the preview,
     settings model test (fake LLM), every settings page and Convert as one
     centred column, the provider picker (groups, brand marks, search), a
     saved address shown without its credentials, a provider beyond the first
-    eight connected with a key and an address, history after a reload, token
-    prompt
+    eight connected with a key and an address, Vertex AI connected without an
+    address (its login note; Bedrock keeps its address), history after a
+    reload, token prompt
 
 Notices must be strips at the bottom (never the page-wide banners the UI
 had before) and leave by themselves.
@@ -31,6 +33,7 @@ Usage (needs the serve and browser extras, and the browser for Playwright:
 ``--browser``)::
 
     uv run python scripts/workbench_e2e.py --out /tmp/workbench-e2e
+    uv run --with google-auth python scripts/workbench_e2e.py   # + the Vertex AI card
     uv run python scripts/workbench_e2e.py --browser webkit --theme dark
     uv run python scripts/workbench_e2e.py --widths 1440 --bundle path/to/unpacked-bundle
 
@@ -72,6 +75,13 @@ CONNECTION_ID = "00000000-0000-4000-8000-0000000000c1"
 BASE_SECRETS = ("e2e-user", "e2e-pass-0000", "e2e-base-secret-0000")
 # The server's own OpenAI key, behind the environment card
 ENV_KEY = ("OPENAI_API_KEY", "sk-e2e-env-0000")
+# The settings API's refusal of a Vertex AI address (the UI translates it by
+# this wording)
+VERTEX_REFUSAL = (
+    "api_base: Vertex AI models send the server's own Google credentials to any "
+    "address, so here they can only use Vertex AI's own endpoint; set another "
+    "address in the config file"
+)
 
 
 DRAWING = (
@@ -924,6 +934,45 @@ def _control_height(locator: Any, phone: bool) -> str:
     return f"{expected} px buttons"
 
 
+def _header_stop(page: Any) -> Any:
+    """The window's Stop remaining: a button of its header (above its tabs
+    or body), within the screen, never folded into "⋯"."""
+    window = _peek(page)
+    window.wait_for(timeout=10000)
+    _window_placement(page, True)  # after its slide-in from below
+    stop = window.get_by_role("button", name=re.compile(r"^Stop remaining"))
+    stop.first.wait_for(timeout=10000)
+    box, frame, view = (
+        stop.first.bounding_box(),
+        window.bounding_box(),
+        page.viewport_size,
+    )
+    if box is None or frame is None or view is None:
+        raise AssertionError("Stop remaining has no box")
+    if box["y"] < 0 or box["y"] + box["height"] > min(frame["y"] + 120, view["height"]):
+        raise AssertionError(f"Stop remaining is not in the window's header: {box}")
+    if box["x"] < 0 or box["x"] + box["width"] > view["width"]:
+        raise AssertionError(f"Stop remaining is off the screen: {box}")
+    return stop.first
+
+
+def _phone_stop(page: Any, run: Run) -> str:
+    """Stop reached on a phone while the full-screen windows cover the list."""
+    _header_stop(page)
+    run.shot(page, "phone-stop-submission")
+    title = " ".join(page.locator("#peek-title").inner_text().split())
+    _click_visible(page.get_by_role("button", name="Close"))
+    _peek(page).wait_for(state="detached", timeout=10000)
+    run.shot(page, "phone-stop-list")
+    # The last URL waits behind the others (one URL at a time)
+    _item(page, "slow/s5.html").click()
+    _heading(page, "slow/s5.html").wait_for()
+    stop = _header_stop(page)
+    run.shot(page, "phone-stop-item")
+    stop.click()
+    return f"the header of {title}'s window and of a waiting item's window"
+
+
 #: The notices of the UI before the bundle of 2026-10-11 (rounded boxes with
 #: a bar and a close button, page-wide banners): none may be left
 OLD_NOTICES = ".notice, .notes-region, .note-close"
@@ -971,6 +1020,14 @@ def _at_the_bottom(page: Any, strip: Any) -> str:
     if right < width - 48 or height - bottom > 48 or box["width"] > 420:
         raise AssertionError(f"the strip is not in the bottom-right corner: {box}")
     return f"{box['width']:.0f} px wide, {width - right:.0f} px from the right edge"
+
+
+def _google_auth() -> bool:
+    """Whether the server (this interpreter) can sign Vertex AI requests."""
+    try:
+        return importlib.util.find_spec("google.auth") is not None
+    except ModuleNotFoundError:
+        return False
 
 
 def _api(page: Any, base: str, method: str, path: str, **kwargs: Any) -> Any:
@@ -1473,11 +1530,16 @@ def browse(
             page.get_by_role("button", name="Convert", exact=True).click()
             _wait(page, lambda: created() > before, what="the second job")
             page.wait_for_timeout(1200)
-            # A phone opens the new submission's summary over the list
-            _dismiss(page)
-            _click_visible(
-                page.get_by_role("button", name=re.compile(r"^Stop remaining"))
-            )
+            where = "the list's header"
+            if phone:
+                # A phone opens the new submission full screen over the list:
+                # Stop stays a button in that window's header, then in a
+                # waiting item's window
+                where = _phone_stop(page, run)
+            else:
+                _click_visible(
+                    page.get_by_role("button", name=re.compile(r"^Stop remaining"))
+                )
             _wait(
                 page, lambda: run.saw("POST", r"/cancel$", 202), what="the stop request"
             )
@@ -1487,8 +1549,8 @@ def browse(
             if not re.search(r"Stopped|Cancelled", texts):
                 raise AssertionError(f"no stopped item shown: {texts[:300]}")
             return (
-                f"New conversion led to Convert ({scale}); queued URLs stopped, "
-                "the running one finished"
+                f"New conversion led to Convert ({scale}); queued URLs stopped "
+                f"from {where}, the running one finished"
             )
 
         run.step(page, "stopped", stop)
@@ -1966,6 +2028,146 @@ def browse(
             return f"a model added from the {variable} card; saved as env:{variable}"
 
         run.step(page, "settings-environment-card", environment_card)
+
+        # 13d. Vertex AI signs in with the server's Google login at its own
+        # endpoint: Add models offers it no address (the settings API refuses
+        # one, contract v1.9) and says so; Bedrock keeps its address. The
+        # card needs google-auth (``uv run --with google-auth``)
+        def vertex_ai() -> str:
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            _click_visible(page.get_by_role("button", name="Add models"))
+            panel = page.locator(".provider-picker")
+            panel.wait_for()
+            search = panel.get_by_role("searchbox")
+            detail = page.locator(".provider-detail")
+            address = detail.locator("input[type=url]")
+            note = page.locator(".login-note")
+            # Bedrock: optional key and address, no login note
+            search.fill("bedrock")
+            _click_visible(
+                panel.locator(".provider-item").filter(
+                    has_text=re.compile(r"^\s*Amazon Bedrock\s*$")
+                )
+            )
+            detail.wait_for(timeout=10000)
+            if address.count() != 1 or note.count():
+                raise AssertionError(
+                    f"Bedrock: {address.count()} address field(s), "
+                    f"{note.count()} login note(s)"
+                )
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            _click_visible(page.get_by_role("button", name="Add models"))
+            panel.wait_for()
+            search.fill("vertex")
+            offered = panel.locator(".provider-item").filter(has_text="Vertex AI")
+            page.wait_for_timeout(300)
+            if not _google_auth():
+                if offered.count():
+                    raise AssertionError("Vertex AI offered without google-auth")
+                return (
+                    "Bedrock offers its address; Vertex AI not offered (no google-auth)"
+                )
+            _click_visible(offered)
+            note.wait_for(timeout=10000)
+            said = " ".join(note.inner_text().split())
+            if said != "Uses this server's Google login at Vertex AI's own endpoint.":
+                raise AssertionError(f"the login note says {said!r}")
+            if address.count() or detail.locator("input").count():
+                raise AssertionError("Vertex AI offers a key or an address")
+            # The form may draw again as it settles (a phone did), dropping
+            # what was typed: type until Add takes it
+            typed, add = (
+                page.get_by_label("Add a model by ID"),
+                page.get_by_role("button", name="Add", exact=True),
+            )
+            for _ in range(10):
+                typed.fill("gemini-2.5-flash")
+                page.wait_for_timeout(200)
+                if typed.input_value() == "gemini-2.5-flash" and add.is_enabled():
+                    break
+            add.click()
+            page.get_by_label("Routing group").fill("e2e-vertex")
+            run.shot(page, "provider-connect-vertex")
+            before = len(run.api)
+            page.locator(".form-actions").get_by_role("button", name="Save").click()
+            _wait(
+                page,
+                lambda: (
+                    run.saw(
+                        "POST",
+                        r"^/api/settings/llm/deployments/batch$",
+                        200,
+                        since=before,
+                    )
+                    and run.saw(
+                        "GET", r"^/api/settings/llm/providers", 200, since=before
+                    )
+                ),
+                what="the saved Vertex AI model",
+            )
+            stored = json.loads(config.read_text(encoding="utf-8"))["llm"]
+            added = [m for m in stored["model_list"] if m["model_name"] == "e2e-vertex"]
+            if [m["litellm_params"] for m in added] != [
+                {"model": "vertex_ai/gemini-2.5-flash"}
+            ]:
+                raise AssertionError(f"saved models: {added}")
+            # Neither key nor address: no connection is stored for it (the
+            # list shows the model as its own configured card)
+            linked = [
+                p
+                for p in stored.get("providers", [])
+                if p["id"] == added[0]["model_info"].get("provider_id")
+            ]
+            if any(p.get("api_key") or p.get("api_base") for p in linked):
+                raise AssertionError(f"saved connection: {linked}")
+            # The saved connection shows its address row without Edit or Reset
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            _click_visible(page.get_by_role("button", name="Add models"))
+            panel.wait_for()
+            row = panel.locator(".provider-row").filter(has_text="Vertex AI")
+            _click_visible(row.locator(".provider-pick"))
+            base_row = page.locator(".conn-row").filter(has_text="API base")
+            base_row.wait_for(timeout=10000)
+            page.wait_for_timeout(300)
+            if base_row.get_by_role("button").count():
+                raise AssertionError(
+                    f"the saved connection offers {base_row.get_by_role('button').all_inner_texts()}"
+                )
+            run.shot(page, "provider-saved-vertex")
+            # An API caller naming an address gets the wording the UI translates
+            refused = _api(
+                page,
+                base,
+                "POST",
+                "/api/settings/llm/deployments/batch",
+                data={
+                    "expected_revision": _api(
+                        page, base, "GET", "/api/settings/llm"
+                    ).json()["revision"],
+                    "deployments": [
+                        {
+                            "model_name": "e2e-vertex-address",
+                            "model": "vertex_ai/gemini-2.5-flash",
+                            "provider": "vertex_ai",
+                            "api_base": "https://caller.example/v1",
+                        }
+                    ],
+                },
+            )
+            detail_text = (
+                refused.json().get("detail") if refused.status == 422 else None
+            )
+            if detail_text != VERTEX_REFUSAL:
+                raise AssertionError(
+                    f"address refused as {refused.status}: {detail_text!r}"
+                )
+            return (
+                "Bedrock offers its address; Vertex AI: no key or address, the "
+                "login note, a model saved without an address, no Edit on its "
+                "connection; an address through the API is 422 as worded"
+            )
+
+        run.step(page, "settings-vertex-ai", vertex_ai)
 
         # 14. History survives a reload
         def history() -> str:
