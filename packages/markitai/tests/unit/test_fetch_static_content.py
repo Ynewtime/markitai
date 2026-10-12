@@ -106,6 +106,56 @@ class TestCharsetEndToEnd:
         assert result.metadata["content_kind"] == "text"
 
 
+class TestThePageIsKept:
+    """A fetched HTML page travels with the result (contract v1.11 section 7:
+    the workbench shows it as the URL item's original); text, Markdown and
+    documents carry none."""
+
+    @pytest.mark.asyncio
+    async def test_a_natively_extracted_page(self):
+        html = _article("Kept", "".join(f"<p>{PARA}</p>" for _ in range(5)))
+        response = StaticHttpResponse(
+            content=html.encode(),
+            status_code=200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            url="https://example.com/kept",
+        )
+        result = (await _conditional(response, "https://example.com/kept")).result
+        assert result is not None
+        assert result.metadata["converter"] == "native-html"
+        assert result.html == html
+
+    @pytest.mark.asyncio
+    async def test_a_page_markitdown_converts_as_decoded(self):
+        html = '<html><head><meta charset="gbk"></head><body><p>朱镕基讲话</p></body></html>'
+        response = StaticHttpResponse(
+            content=html.encode("gbk"),
+            status_code=200,
+            headers={"content-type": "text/html"},
+            url="https://example.cn/short",
+        )
+        result = (await _conditional(response, "https://example.cn/short")).result
+        assert result is not None
+        assert result.metadata["converter"] == "markitdown"
+        assert result.html == html
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("content_type", "body"),
+        [("text/plain", b"plain words\n"), ("text/markdown", b"# Title\n\nwords\n")],
+    )
+    async def test_text_carries_none(self, content_type: str, body: bytes):
+        response = StaticHttpResponse(
+            content=body,
+            status_code=200,
+            headers={"content-type": content_type},
+            url="https://example.com/note",
+        )
+        result = (await _conditional(response, "https://example.com/note")).result
+        assert result is not None
+        assert result.html is None
+
+
 class TestRedirectBaseUrl:
     @pytest.mark.asyncio
     async def test_relative_links_resolve_against_final_url(self):

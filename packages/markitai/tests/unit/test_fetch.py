@@ -4213,6 +4213,8 @@ class TestCloudflareStrategy:
         assert mock_native.await_args.kwargs["html"] == html
         assert mock_native.await_args.kwargs["strategy_used"] == "cloudflare"
         assert result is native_result
+        # The rendered page is kept for the workbench's Compare
+        assert result.html == html
 
         # Endpoint is /content (raw HTML), not /markdown (server-side conversion)
         posted_url = mock_client.post.await_args.args[0]
@@ -4271,6 +4273,7 @@ class TestCloudflareStrategy:
         assert result.strategy_used == "cloudflare"
         assert result.metadata.get("converter") == "markitdown"
         assert result.metadata.get("browser_ms_used") == "900"
+        assert result.html == html
 
     @pytest.mark.asyncio
     async def test_fetch_with_cloudflare_api_success_false(self):

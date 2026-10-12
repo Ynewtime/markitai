@@ -70,6 +70,8 @@ class UrlCascadeResult:
     #: Problems that did not fail the URL (an image whose analysis failed
     #: and kept its original alt text).
     warnings: list[str] = field(default_factory=list)
+    #: The fetched page's HTML (FetchResult.html), when there was one
+    html: str | None = None
 
 
 async def convert_url_cascade(
@@ -412,6 +414,7 @@ async def convert_url_cascade(
         extra_meta=extra_meta,
         cache_hit=fetch_result.cache_hit,
         warnings=warnings,
+        html=fetch_result.html,
     )
 
 

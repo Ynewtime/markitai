@@ -581,6 +581,8 @@ class PlaywrightFetchResult:
     #: vertical tiles (primary path first) of a long page split for VLM reads.
     screenshot_tiles: list[Path] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: The rendered page's HTML (``page.content()``), when one was read
+    html: str | None = None
 
 
 @dataclass
@@ -1203,6 +1205,7 @@ class PlaywrightRenderer:
                 screenshot_path=screenshot_path,
                 screenshot_tiles=screenshot_tiles,
                 metadata=metadata,
+                html=html_content,
             )
         except PlaywrightPageTimeoutError:
             timed_out = True

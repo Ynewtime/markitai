@@ -210,6 +210,7 @@ async def fetch_with_cloudflare(
         base_metadata=base_metadata,
     )
     if native_result is not None:
+        native_result.html = html_content
         return native_result
 
     try:
@@ -232,6 +233,7 @@ async def fetch_with_cloudflare(
         url=url,
         final_url=url,
         metadata={**base_metadata, "converter": "markitdown"},
+        html=html_content,
     )
 
 

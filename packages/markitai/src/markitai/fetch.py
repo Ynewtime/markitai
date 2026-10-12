@@ -454,6 +454,7 @@ def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult
         cache_hit=result.cache_hit,
         screenshot_path=getattr(pw_result, "screenshot_path", None),
         screenshot_tiles=list(getattr(pw_result, "screenshot_tiles", []) or []),
+        html=result.html,
     )
 
 
@@ -1253,6 +1254,7 @@ async def _screenshot_only_fallback(
         metadata=metadata,
         screenshot_path=pw_result.screenshot_path,
         screenshot_tiles=list(pw_result.screenshot_tiles or []),
+        html=getattr(pw_result, "html", None),
     )
 
 

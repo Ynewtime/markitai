@@ -314,6 +314,8 @@ class TestRedirectedPageBaseUrl:
             )
         assert seen == ["https://example.com/new/place/article"]
         assert result.final_url == "https://example.com/new/place/article"
+        # The rendered page goes with the result, for the workbench's Compare
+        assert result.html == LONG_HTML
 
 
 class TestTilesAndFilenames:
@@ -343,6 +345,35 @@ class TestTilesAndFilenames:
         ):
             result = await PlaywrightRunner().fetch("https://example.com/a", ctx)
         assert result.screenshot_tiles == tiles
+        assert result.html is None
+
+    @pytest.mark.asyncio
+    async def test_playwright_runner_keeps_the_rendered_page(self):
+        """``page.content()`` travels with the result (the workbench shows
+        the URL item's fetched page, contract v1.11 section 7)."""
+        from markitai.fetch_session import get_default_session
+        from markitai.fetch_strategies import StrategyContext
+        from markitai.fetch_strategies.playwright import PlaywrightRunner
+
+        page = "<html><head><title>Page</title></head><body>words</body></html>"
+        pw = PlaywrightFetchResult(
+            content="# Page\n\n" + "words " * 50,
+            title="Page",
+            final_url="https://example.com/a",
+            html=page,
+        )
+        ctx = StrategyContext(
+            config=FetchConfig(),
+            session=get_default_session(),
+            explicit=False,
+            screenshot_kwargs={},
+        )
+        with patch(
+            "markitai.fetch_playwright.fetch_with_playwright",
+            AsyncMock(return_value=pw),
+        ):
+            result = await PlaywrightRunner().fetch("https://example.com/a", ctx)
+        assert result.html == page
 
     def test_stale_tiles_are_removed_and_listed_in_order(self, tmp_path):
         tmp_path = tmp_path / "shots"
