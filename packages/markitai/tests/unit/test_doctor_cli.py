@@ -207,7 +207,7 @@ class TestAuthenticationChecks:
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
-            patch("markitai.llm.get_model_info_cached") as mock_info,
+            patch("markitai.model_catalog.supports_vision") as mock_info,
             patch("markitai.providers.is_local_provider_model") as mock_local,
             patch("importlib.util.find_spec") as mock_find_spec,
             patch("markitai.cli.commands.doctor.AuthManager") as MockAuthManager,
@@ -222,7 +222,7 @@ class TestAuthenticationChecks:
                 return None
 
             mock_which.side_effect = which_side_effect
-            mock_info.return_value = {"supports_vision": True}
+            mock_info.return_value = True
             mock_local.return_value = True
             mock_find_spec.return_value = MagicMock()
 
@@ -259,7 +259,7 @@ class TestAuthenticationChecks:
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
-            patch("markitai.llm.get_model_info_cached") as mock_info,
+            patch("markitai.model_catalog.supports_vision") as mock_info,
             patch("markitai.providers.is_local_provider_model") as mock_local,
             patch("importlib.util.find_spec") as mock_find_spec,
             patch("markitai.cli.commands.doctor.AuthManager") as MockAuthManager,
@@ -274,7 +274,7 @@ class TestAuthenticationChecks:
                 return None
 
             mock_which.side_effect = which_side_effect
-            mock_info.return_value = {"supports_vision": True}
+            mock_info.return_value = True
             mock_local.return_value = True
             mock_find_spec.return_value = MagicMock()
 
@@ -311,7 +311,7 @@ class TestAuthenticationChecks:
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
-            patch("markitai.llm.get_model_info_cached") as mock_info,
+            patch("markitai.model_catalog.supports_vision") as mock_info,
             patch("markitai.providers.is_local_provider_model") as mock_local,
             patch("importlib.util.find_spec") as mock_find_spec,
             patch("markitai.cli.commands.doctor.AuthManager") as MockAuthManager,
@@ -328,7 +328,7 @@ class TestAuthenticationChecks:
                 return None
 
             mock_which.side_effect = which_side_effect
-            mock_info.return_value = {"supports_vision": True}
+            mock_info.return_value = True
             mock_local.return_value = True
             mock_find_spec.return_value = MagicMock()
 
@@ -366,7 +366,7 @@ class TestAuthenticationChecks:
             ),
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
-            patch("markitai.llm.get_model_info_cached", return_value={}),
+            patch("markitai.model_catalog.supports_vision", return_value=False),
             patch("markitai.providers.is_local_provider_model", return_value=False),
             patch("importlib.util.find_spec", return_value=MagicMock()),
             patch("markitai.cli.commands.doctor.AuthManager") as MockAuthManager,

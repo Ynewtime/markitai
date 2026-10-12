@@ -499,7 +499,10 @@ markitai doctor
 markitai doctor --fix              # 已装 Playwright 包时安装 Chromium
 markitai doctor --json
 markitai doctor --suggest-extras   # 列出这台机器能用上的 extras
+markitai doctor --timings          # 在 stderr 列出启动和每项检查的用时
 ```
+
+各项检查同时进行；在终端里会有一行显示仍在进行的检查。Chromium 成功启动过一次后会记住一周（同一个 Chromium、Playwright 和 Python），之后不再每次都启动它；`--fix` 总会启动。
 
 你配置了但跑不起来的东西会让命令以非零退出：无法启动的 Playwright 策略、没有设置 API key 的模型（`llm.model_list` 条目里没写，提供商的变量如 `DEEPSEEK_API_KEY` 也没设）、没登录的本地提供商。脚本和 CI 可以依赖这一点。最后一行写 `Ready`（并列出不可用的可选功能）或 `Not ready`（并列出要修复的项）。每条提示都是适用于这台机器的命令：Chromium 用 markitai 自己的 Python 安装，LibreOffice 用你所用发行版的包管理器安装。已设置、但没有任何已配置模型用到的提供商 key，会在 LLM 一节列出。
 

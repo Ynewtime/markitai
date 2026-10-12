@@ -1,5 +1,5 @@
 """Allow running markitai as ``python -m markitai``."""
 
-from markitai.cli import main
+from markitai.launcher import main
 
 main()

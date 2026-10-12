@@ -12,7 +12,10 @@ import os
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import time
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
@@ -191,13 +194,80 @@ _SMOKE_TIMEOUTS_S = (60, 30)
 SMOKE_SLOW = "slow"
 
 
-def _smoke_test_playwright_browser() -> tuple[bool, str]:
+# A successful headless launch is remembered for this long, for the same
+# Chromium, Playwright and Python: a launch costs a Python, Playwright's
+# Node.js driver and Chromium itself, seconds on every doctor run under
+# Windows on Arm's x64 emulation, and a browser that launched does not stop
+# launching by itself.
+_LAUNCH_RECORD_DAYS = 7
+
+
+def _launch_record_path() -> Path:
+    return Path.home() / ".markitai" / "doctor-chromium-launch.json"
+
+
+def _chromium_identity() -> str | None:
+    """What a remembered launch is valid for: this Chromium, Playwright, Python."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    from markitai.fetch_playwright import installed_chromium
+
+    found = installed_chromium()
+    if found is None:
+        return None
+    try:
+        stamp = found.stat().st_mtime_ns
+        playwright_version = version("playwright")
+    except (OSError, PackageNotFoundError):
+        return None
+    return f"{found}|{stamp}|{playwright_version}|{sys.executable}"
+
+
+def _launch_remembered() -> bool:
+    identity = _chromium_identity()
+    if identity is None:
+        return False
+    try:
+        record = json.loads(_launch_record_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(record, dict) or record.get("identity") != identity:
+        return False
+    launched = record.get("launched_at")
+    if not isinstance(launched, int | float):
+        return False
+    age = time.time() - launched
+    return 0 <= age < _LAUNCH_RECORD_DAYS * 86400
+
+
+def _remember_launch() -> None:
+    identity = _chromium_identity()
+    if identity is None:
+        return
+    path = _launch_record_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"identity": identity, "launched_at": time.time()}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _smoke_test_playwright_browser(*, remembered: bool = True) -> tuple[bool, str]:
     """Launch and close Chromium in an isolated subprocess with a timeout.
+
+    Args:
+        remembered: Take a successful launch of the same Chromium in the last
+            ``_LAUNCH_RECORD_DAYS`` days as this one (``--fix`` launches).
 
     Returns:
         ``(True, "")`` on success; ``(False, SMOKE_SLOW)`` when every attempt
         timed out; ``(False, detail)`` when the launch failed.
     """
+    if remembered and _launch_remembered():
+        return True, ""
     result = None
     for timeout in _SMOKE_TIMEOUTS_S:
         try:
@@ -218,6 +288,7 @@ def _smoke_test_playwright_browser() -> tuple[bool, str]:
         return False, SMOKE_SLOW
 
     if result.returncode == 0:
+        _remember_launch()
         return True, ""
 
     detail = _compact_runtime_error(result.stderr or result.stdout)
@@ -732,6 +803,75 @@ def _ordered_providers(providers: set[str]) -> list[str]:
     return sorted(providers, key=lambda p: (order.index(p) if p in order else 99, p))
 
 
+def _record_step(name: str, seconds: float) -> None:
+    """Note a doctor step's duration for the MARKITAI_TIMINGS report."""
+    from markitai.launcher import record
+
+    record(f"doctor: {name}", seconds)
+
+
+def _run_checks(
+    checks: dict[str, tuple[str, Callable[[], dict[str, Any]]]],
+    *,
+    show_progress: bool,
+) -> dict[str, dict[str, Any]]:
+    """Run the checks in parallel and return their results by key.
+
+    On a terminal a transient line on stderr names the checks still
+    running and how long they have taken; nothing is left behind. Each
+    check's duration goes to the timing report.
+    """
+    from markitai.utils.term import get_stderr_console
+
+    console = get_stderr_console()
+    durations: dict[str, float] = {}
+    started = time.perf_counter()
+
+    def timed(key: str, check: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        begun = time.perf_counter()
+        try:
+            return check()
+        finally:
+            durations[key] = time.perf_counter() - begun
+
+    results: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=len(checks)) as executor:
+        futures: dict[Future[dict[str, Any]], str] = {
+            executor.submit(timed, key, check): key
+            for key, (_label, check) in checks.items()
+        }
+        pending = set(futures)
+        live = None
+        if show_progress and console.is_terminal:
+            from rich.live import Live
+            from rich.spinner import Spinner
+
+            spinner = Spinner(ui.STATUS_SPINNER, style="dim")
+            live = Live(spinner, console=console, transient=True, refresh_per_second=8)
+            # Fast checks finish before a spinner would be worth drawing
+            _done, pending = wait(pending, timeout=0.3)
+            if pending:
+                live.start()
+        try:
+            while pending:
+                if live is not None and live.is_started:
+                    names = ", ".join(checks[futures[f]][0] for f in pending)
+                    seconds = time.perf_counter() - started
+                    spinner.update(
+                        text=f"Checking {names}{ui.elapsed_suffix(0.0, seconds)}"
+                    )
+                _done, pending = wait(pending, timeout=0.1)
+        finally:
+            if live is not None and live.is_started:
+                live.stop()
+        for future, key in futures.items():
+            results[key] = future.result()
+    for key, (label, _check) in checks.items():
+        _record_step(label, durations.get(key, 0.0))
+    _record_step("checks (parallel)", time.perf_counter() - started)
+    return results
+
+
 def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     """Implementation of the doctor command.
 
@@ -741,34 +881,52 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     """
     from markitai.fetch_playwright import clear_browser_cache
 
+    started = time.perf_counter()
     manager = ConfigManager()
     config_path, overrides = root_config_options()
     cfg = manager.load(config_path=config_path, overrides=overrides)
+    _record_step("config", time.perf_counter() - started)
 
     results: dict[str, dict[str, Any]] = {}
 
     # Clear Playwright browser cache before parallel checks
     clear_browser_cache()
 
-    # Run independent system tool checks in parallel
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        future_playwright = executor.submit(_check_playwright)
-        future_libreoffice = executor.submit(
-            _check_libreoffice, cfg.office.macos_fallback
-        )
-        future_rapidocr = executor.submit(_check_rapidocr, cfg)
-        future_anydoc = executor.submit(_check_anydoc)
-
-    # Collect results in deterministic order
-    results["playwright"] = future_playwright.result()
-    results["libreoffice"] = future_libreoffice.result()
-    results["rapidocr"] = future_rapidocr.result()
-    results["anydoc"] = future_anydoc.result()
-    results["serve"] = _check_serve()
-
-    # 5. Check LLM API configuration (check model_list for configured models)
     configured_models = cfg.llm.model_list if cfg.llm.model_list else []
     active_models = [m for m in configured_models if _is_active_model(m)]
+    uses_claude_agent = any(
+        m.litellm_params.model.startswith("claude-agent/") for m in active_models
+    )
+    uses_copilot = any(
+        m.litellm_params.model.startswith("copilot/") for m in active_models
+    )
+    uses_chatgpt = any(
+        m.litellm_params.model.startswith("chatgpt/") for m in active_models
+    )
+
+    # Every check that waits on something (a process, the disk, a CLI) runs
+    # at once; the report keeps its own order
+    checks: dict[str, tuple[str, Callable[[], dict[str, Any]]]] = {
+        "playwright": ("Playwright", _check_playwright),
+        "libreoffice": (
+            "LibreOffice",
+            lambda: _check_libreoffice(cfg.office.macos_fallback),
+        ),
+        "rapidocr": ("RapidOCR", lambda: _check_rapidocr(cfg)),
+        "anydoc": ("anydoc", _check_anydoc),
+        "serve": ("Serve", _check_serve),
+    }
+    if uses_claude_agent:
+        checks["claude-agent-auth"] = ("Claude Code sign-in", _check_claude_auth)
+    if uses_copilot:
+        checks["copilot-auth"] = ("Copilot sign-in", _check_copilot_auth)
+    if uses_chatgpt:
+        checks["chatgpt-auth"] = ("ChatGPT sign-in", _check_chatgpt_auth)
+    checked = _run_checks(checks, show_progress=not as_json)
+    for key in ("playwright", "libreoffice", "rapidocr", "anydoc", "serve"):
+        results[key] = checked[key]
+
+    # 5. Check LLM API configuration (check model_list for configured models)
     local_prefixes = ("claude-agent/", "copilot/", "chatgpt/")
     active_api_models = [
         m
@@ -881,22 +1039,6 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         }
 
     # 5a. Check local provider SDKs if configured
-    uses_claude_agent = any(
-        m.litellm_params.model.startswith("claude-agent/")
-        for m in configured_models
-        if _is_active_model(m)
-    )
-    uses_copilot = any(
-        m.litellm_params.model.startswith("copilot/")
-        for m in configured_models
-        if _is_active_model(m)
-    )
-    uses_chatgpt = any(
-        m.litellm_params.model.startswith("chatgpt/")
-        for m in configured_models
-        if _is_active_model(m)
-    )
-
     if uses_claude_agent:
         try:
             import importlib.util
@@ -938,8 +1080,8 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "install_hint": f"curl -fsSL https://markitai.dev/setup.sh | sh  # or: {extra_install_command('claude-agent')}",
             }
 
-        # 5b. Check Claude Agent authentication status
-        results["claude-agent-auth"] = _check_claude_auth()
+        # 5b. Claude Agent authentication status (checked with the others)
+        results["claude-agent-auth"] = checked["claude-agent-auth"]
 
     if uses_copilot:
         try:
@@ -982,11 +1124,11 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "install_hint": f"curl -fsSL https://markitai.dev/setup.sh | sh  # or: {extra_install_command('copilot')}",
             }
 
-        # 5c. Check Copilot authentication status
-        results["copilot-auth"] = _check_copilot_auth()
+        # 5c. Copilot authentication status (checked with the others)
+        results["copilot-auth"] = checked["copilot-auth"]
 
     if uses_chatgpt:
-        results["chatgpt-auth"] = _check_chatgpt_auth()
+        results["chatgpt-auth"] = checked["chatgpt-auth"]
 
     # 6. Check vision model configuration (auto-detect from litellm or config override)
     def is_vision_model(model_config: Any) -> bool:
@@ -1004,11 +1146,11 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         if is_local_provider_model(model_config.litellm_params.model):
             return True
 
-        # Auto-detect from litellm (deferred import: pulls litellm, ~0.5s)
-        from markitai.llm import get_model_info_cached
+        # LiteLLM's model table, read without importing LiteLLM (8 s on
+        # the Windows machine): the same answer as llm.get_model_info_cached
+        from markitai.model_catalog import supports_vision
 
-        info = get_model_info_cached(model_config.litellm_params.model)
-        return info.get("supports_vision", False)
+        return supports_vision(model_config.litellm_params.model)
 
     vision_models = [m for m in active_models if is_vision_model(m)]
     if vision_models:
@@ -1218,7 +1360,9 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                         )
                         repair_failed_names.append(results[component]["name"])
                     else:
-                        runtime_ok, runtime_detail = _smoke_test_playwright_browser()
+                        runtime_ok, runtime_detail = _smoke_test_playwright_browser(
+                            remembered=False
+                        )
                         if not runtime_ok:
                             verification["status"] = "warning"
                             verification.update(
@@ -1369,7 +1513,13 @@ def suggest_extras() -> list[str]:
     is_flag=True,
     help="Output recommended pip extras for the current environment (machine-readable).",
 )
-def doctor(as_json: bool, fix: bool, suggest: bool) -> None:
+@click.option(
+    "--timings",
+    is_flag=True,
+    help="Print how long start-up and each check took, on stderr "
+    "(as MARKITAI_TIMINGS=1 does for any command).",
+)
+def doctor(as_json: bool, fix: bool, suggest: bool, timings: bool) -> None:
     """Check system health, dependencies, and authentication status.
 
     This command helps diagnose setup issues by verifying:
@@ -1396,6 +1546,8 @@ def doctor(as_json: bool, fix: bool, suggest: bool) -> None:
     """
     if as_json and fix:
         raise click.UsageError("--json and --fix cannot be used together")
+    if timings:
+        os.environ["MARKITAI_TIMINGS"] = "1"
     if suggest:
         click.echo(",".join(suggest_extras()))
         return

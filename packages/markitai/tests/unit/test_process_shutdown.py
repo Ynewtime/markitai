@@ -85,5 +85,7 @@ def test_console_scripts_go_through_the_finalizing_entry_point() -> None:
     scripts = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"][
         "scripts"
     ]
-    assert scripts["markitai"] == "markitai.cli:main"
-    assert scripts["mkai"] == "markitai.cli:main"
+    # markitai.launcher answers --version itself and hands everything else
+    # to markitai.cli.main.main
+    assert scripts["markitai"] == "markitai.launcher:main"
+    assert scripts["mkai"] == "markitai.launcher:main"

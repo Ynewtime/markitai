@@ -17,7 +17,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 
 # Modules legitimately outside the "may not import cli" contract:
 # the cli package itself and the __main__ entrypoint that launches it.
-_CLI_SIDE = {"markitai.cli", "markitai.__main__"}
+# Entry points above the CLI: the console scripts' launcher (answers
+# --version, then runs markitai.cli.main) and the post-install warm-up,
+# which imports every module
+_CLI_SIDE = {
+    "markitai.cli",
+    "markitai.__main__",
+    "markitai.launcher",
+    "markitai.warmup",
+}
 
 
 def _top_level_modules() -> set[str]:

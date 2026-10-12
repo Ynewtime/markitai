@@ -499,7 +499,10 @@ markitai doctor
 markitai doctor --fix              # install Chromium when the Playwright package is present
 markitai doctor --json
 markitai doctor --suggest-extras   # extras to add for the capabilities this machine could use
+markitai doctor --timings          # how long start-up and each check took, on stderr
 ```
+
+The checks run at the same time; on a terminal a line names the ones still running. A Chromium that launched is remembered for a week (for the same Chromium, Playwright and Python), so later runs do not start it again; `--fix` always does.
 
 The command exits non-zero when something you configured cannot work: a Playwright strategy that cannot launch, a model whose API key is not set (neither in its `llm.model_list` entry nor in the provider's variable, such as `DEEPSEEK_API_KEY`), or a local provider that is not signed in. Scripts and CI can rely on that. The last line says `Ready` (and names the optional capabilities that are not available) or `Not ready` (and names what to fix). Each hint is a command for this machine: Chromium is installed with markitai's own Python, LibreOffice with your distribution's package manager. Provider keys that are set but used by no configured model are listed under LLM.
 

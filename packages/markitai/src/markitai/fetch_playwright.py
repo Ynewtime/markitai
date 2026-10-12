@@ -101,6 +101,17 @@ def _check_chromium_paths() -> bool:
     Returns:
         True if Chromium executable found
     """
+    return installed_chromium() is not None
+
+
+def installed_chromium() -> Path | None:
+    """The marker or executable that shows Playwright's Chromium is installed.
+
+    Returns:
+        Playwright's ``INSTALLATION_COMPLETE`` marker of the first installed
+        ``chromium-*`` folder, else a known executable in one; None when
+        there is none.
+    """
     import os
     import sys
 
@@ -135,9 +146,10 @@ def _check_chromium_paths() -> bool:
                 # successful install. It is bundle-name and version agnostic
                 # (newer Playwright ships "Google Chrome for Testing.app"
                 # instead of "Chromium.app", which broke path-only checks)
-                if (chromium_dir / "INSTALLATION_COMPLETE").exists():
+                marker = chromium_dir / "INSTALLATION_COMPLETE"
+                if marker.exists():
                     logger.debug(f"Found Chromium install marker in: {chromium_dir}")
-                    return True
+                    return marker
 
                 # Fallback: check known executable layouts
                 if sys.platform == "win32":
@@ -175,9 +187,9 @@ def _check_chromium_paths() -> bool:
                 for exe in exe_paths:
                     if exe.exists():
                         logger.debug(f"Found Chromium at: {exe}")
-                        return True
+                        return exe
 
-    return False
+    return None
 
 
 def clear_browser_cache() -> None:

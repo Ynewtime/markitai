@@ -57,6 +57,10 @@ def finalize_process(code: int = 0) -> NoReturn:
             pdf_parallel.shutdown_pool()
         except Exception:
             pass
+    # MARKITAI_TIMINGS: the run's timing report, before the streams close
+    launcher = sys.modules.get("markitai.launcher")
+    if launcher is not None:
+        launcher.report()
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()
