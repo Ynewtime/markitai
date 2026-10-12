@@ -391,6 +391,7 @@ class LLMProcessor:
         fetch_strategy: str | None = None,
         extra_meta: dict[str, Any] | None = None,
         title: str | None = None,
+        document_meta: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         """Process a document: clean + frontmatter (see DocumentEnhancer)."""
         return await self.documents.process_document(
@@ -399,6 +400,7 @@ class LLMProcessor:
             fetch_strategy=fetch_strategy,
             extra_meta=extra_meta,
             title=title,
+            document_meta=document_meta,
         )
 
     async def enhance_document_complete(

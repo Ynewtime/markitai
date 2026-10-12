@@ -414,9 +414,14 @@ def _prepare_pending(
             # discount.
             oversized.append((base_md, source, pages))
         elif pages:
-            plan = processor.documents.prepare_vision_plan(markdown, pages, source)
+            plan = processor.documents.prepare_vision_plan(
+                markdown, pages, source, original_title=_base_facts(base_md)[0]
+            )
         else:
-            plan = processor.documents._prepare_document_plan(markdown, source)
+            title, document_meta = _base_facts(base_md)
+            plan = processor.documents._prepare_document_plan(
+                markdown, source, title=title, document_meta=document_meta
+            )
             if plan.chunk_calls:
                 # A document past the per-call size is cleaned chunk by chunk;
                 # the batch carries one request per document, so submitting
@@ -864,17 +869,18 @@ async def _run_batch_llm_enhancement(
                 "chunk by chunk, at full price"
             )
         markdown = _body_without_frontmatter(base_md.read_text(encoding="utf-8"))
+        title, document_meta = _base_facts(base_md)
         try:
             if pages:
                 (
                     cleaned,
                     frontmatter,
                 ) = await processor.documents.enhance_document_complete(
-                    markdown, pages, source=source
+                    markdown, pages, source=source, original_title=title
                 )
             else:
                 cleaned, frontmatter = await processor.documents.process_document(
-                    markdown, source
+                    markdown, source, title=title, document_meta=document_meta
                 )
         except Exception as e:
             message = f"LLM enhancement failed: {format_error_message(e)}"
@@ -1346,15 +1352,18 @@ async def _finish_batch(
 
         markdown = (state_dir / item.input_md).read_text(encoding="utf-8")
         vision = item.kind == "vision"
+        title, document_meta = _base_facts(base_md)
         if vision:
             # The screenshots are still where the conversion left them, and
             # their names derive from the same source string, so the plan
             # rebuilds identically hours later.
             plan = processor.documents.prepare_vision_plan(
-                markdown, _document_pages(base_md), item.source
+                markdown, _document_pages(base_md), item.source, original_title=title
             )
         else:
-            plan = processor.documents._prepare_document_plan(markdown, item.source)
+            plan = processor.documents._prepare_document_plan(
+                markdown, item.source, title=title, document_meta=document_meta
+            )
         try:
             if line is None:
                 raise ConversionError(f"no output line for {item.custom_id}")
@@ -1390,10 +1399,14 @@ async def _finish_batch(
                         markdown,
                         _document_pages(base_md),
                         source=item.source,
+                        original_title=title,
                     )
                 else:
                     cleaned, frontmatter = await processor.documents.process_document(
-                        markdown, item.source
+                        markdown,
+                        item.source,
+                        title=title,
+                        document_meta=document_meta,
                     )
             except Exception as live_error:
                 message = (
@@ -1538,3 +1551,25 @@ def _body_without_frontmatter(text: str) -> str:
     """The document body, with any leading YAML frontmatter removed."""
     _frontmatter, body = split_frontmatter(text)
     return body
+
+
+def _base_facts(base_md: Path) -> tuple[str | None, dict[str, Any]]:
+    """The title and the document's own fields a written base ``.md`` carries.
+
+    The LLM output gets the same ones a live run gives it (the converter's
+    title, an EPUB's authors, ...): the base front matter is where they are
+    once the conversion is over. Nothing when the base has none (``--pure``).
+    """
+    import yaml
+
+    from markitai.utils.frontmatter import document_fields
+
+    try:
+        frontmatter, _body = split_frontmatter(base_md.read_text(encoding="utf-8"))
+        data = yaml.safe_load(frontmatter) if frontmatter else None
+    except (OSError, yaml.YAMLError):
+        return None, {}
+    if not isinstance(data, dict):
+        return None, {}
+    title = data.get("title")
+    return (title if isinstance(title, str) and title else None), document_fields(data)

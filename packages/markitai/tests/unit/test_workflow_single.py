@@ -182,24 +182,18 @@ class TestSingleFileWorkflowProcessDocument:
         output_file.write_text("placeholder")
 
         await workflow.process_document_with_llm(
-            markdown=(
-                "**Title:** Test EPUB Document\n\n"
-                "## Test EPUB Document\n\n"
-                "# Chapter 1: Test Content"
-            ),
+            markdown="## Test EPUB Document\n\n# Chapter 1: Test Content",
             source="sample.epub",
             output_file=output_file,
             title="Test EPUB Document",
+            document_meta={"authors": ["Ada"]},
         )
 
         processor.process_document.assert_awaited_once_with(
-            (
-                "**Title:** Test EPUB Document\n\n"
-                "## Test EPUB Document\n\n"
-                "# Chapter 1: Test Content"
-            ),
+            "## Test EPUB Document\n\n# Chapter 1: Test Content",
             "sample.epub",
             title="Test EPUB Document",
+            document_meta={"authors": ["Ada"]},
         )
 
         llm_output = output_file.with_suffix(".llm.md")

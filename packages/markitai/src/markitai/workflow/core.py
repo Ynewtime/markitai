@@ -491,6 +491,7 @@ def _base_markdown_content(ctx: ConversionContext) -> str:
         base_markdown,
         ctx.input_path.name,
         title=title if isinstance(title, str) else None,
+        document_meta=ctx.conversion_result.metadata.get("document_meta"),
     )
 
 
@@ -1088,6 +1089,7 @@ async def process_with_standard_llm(
         document_title = ctx.conversion_result.metadata.get("title")
         if not isinstance(document_title, str):
             document_title = None
+        document_meta = ctx.conversion_result.metadata.get("document_meta")
 
         # Check if image analysis should run
         should_analyze_images = (
@@ -1104,6 +1106,7 @@ async def process_with_standard_llm(
                 ctx.output_file,
                 reference_images=reference_images,
                 title=document_title,
+                document_meta=document_meta,
             )
             img_task = workflow.analyze_images(
                 saved_images,
@@ -1162,6 +1165,7 @@ async def process_with_standard_llm(
                 ctx.output_file,
                 reference_images=reference_images,
                 title=document_title,
+                document_meta=document_meta,
             )
             ctx.llm_cost += doc_cost
             merge_llm_usage(ctx.llm_usage, doc_usage)

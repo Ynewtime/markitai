@@ -278,6 +278,8 @@ class DocumentPlan:
     fetch_strategy: str | None
     extra_meta: dict[str, Any] | None
     chunk_calls: list[LLMCall] = field(default_factory=list)
+    # The document's own facts from its converter (an EPUB's authors, ...)
+    document_meta: dict[str, Any] | None = None
 
 
 class PlaceholderLossError(ValueError):
@@ -1502,6 +1504,7 @@ class DocumentEnhancer:
         title: str | None = None,
         fetch_strategy: str | None = None,
         extra_meta: dict[str, Any] | None = None,
+        document_meta: dict[str, Any] | None = None,
     ) -> str:
         """Build fallback frontmatter when LLM fails.
 
@@ -1541,6 +1544,7 @@ class DocumentEnhancer:
             content=content,
             fetch_strategy=fetch_strategy,
             extra_meta=extra_meta,
+            document_meta=document_meta,
         )
         # Mark degraded output. The failure itself reaches the user once,
         # from the item (its error, or its llm.on_failure fallback warning,
@@ -1596,6 +1600,7 @@ class DocumentEnhancer:
         fetch_strategy: str | None = None,
         extra_meta: dict[str, Any] | None = None,
         title: str | None = None,
+        document_meta: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         """Process a document with LLM: clean and generate frontmatter.
 
@@ -1605,6 +1610,8 @@ class DocumentEnhancer:
             fetch_strategy: Optional fetch strategy (included in frontmatter)
             extra_meta: Optional extra metadata from external strategies
             title: Optional explicit title (takes precedence over extraction)
+            document_meta: The document's own facts from its converter (an
+                EPUB's authors, language, ...) for the front matter
 
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml)
@@ -1622,6 +1629,7 @@ class DocumentEnhancer:
             fetch_strategy=fetch_strategy,
             extra_meta=extra_meta,
             title=title,
+            document_meta=document_meta,
         )
 
         try:
@@ -1643,6 +1651,7 @@ class DocumentEnhancer:
                 plan.original_title,
                 fetch_strategy,
                 extra_meta,
+                document_meta,
             )
             raise LLMEnhancementDegradedError(
                 format_error_message(reason),
@@ -1699,6 +1708,7 @@ class DocumentEnhancer:
         fetch_strategy: str | None = None,
         extra_meta: dict[str, Any] | None = None,
         title: str | None = None,
+        document_meta: dict[str, Any] | None = None,
     ) -> DocumentPlan:
         """Build one document's structured call plus its post-processing state.
 
@@ -1779,6 +1789,7 @@ class DocumentEnhancer:
             fetch_strategy=fetch_strategy,
             extra_meta=extra_meta,
             chunk_calls=calls[1:],
+            document_meta=document_meta,
         )
 
     def finalize_document_plan(
@@ -1877,6 +1888,7 @@ class DocumentEnhancer:
             content=cleaned,
             fetch_strategy=plan.fetch_strategy,
             extra_meta=plan.extra_meta,
+            document_meta=plan.document_meta,
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
         return cleaned, frontmatter_yaml
