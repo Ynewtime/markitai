@@ -141,16 +141,19 @@ def _collect_native_text_pages(doc: Any) -> dict[int, str]:
 # 1.8 square inches at 150 DPI) are icons, logos or rules: not worth an OCR pass.
 _PICTURE_OCR_MIN_PIXELS = 40_000
 
-_MARKDOWN_HEADING_RE = re.compile(r"^#{1,6}\s+\S", re.MULTILINE)
 
+def _document_title(input_path: Path) -> str:
+    """The title ``converter.pdf_title`` reads from the PDF, or ``""``."""
+    import pymupdf
 
-def _metadata_title(doc: Any) -> str:
-    """The PDF's own document title (Info dictionary), or ``""``."""
+    from markitai.converter.pdf_title import document_title
+
     try:
-        title = (doc.metadata or {}).get("title")
-    except Exception:
+        with pymupdf.open(input_path) as doc:
+            return document_title(doc)
+    except Exception as e:
+        logger.debug("[PDF] Title not read: {}", e)
         return ""
-    return " ".join(title.split()) if isinstance(title, str) else ""
 
 
 # --- Hidden-text / prompt-injection sanitization -------------------------------
@@ -654,6 +657,12 @@ class PdfConverter(BaseConverter):
         """
         Convert PDF document to Markdown.
 
+        Every path (text layer, OCR, page renders for a vision model)
+        reports the same ``title`` (``converter.pdf_title``): the PDF's own
+        title when it names the document, else its most prominent text;
+        without one the first heading that names it, then the file name,
+        are the caller's (``utils.frontmatter.resolve_document_title``).
+
         Args:
             input_path: Path to the input file
             output_dir: Optional output directory for extracted images
@@ -661,6 +670,14 @@ class PdfConverter(BaseConverter):
         Returns:
             ConvertResult containing markdown and extracted images
         """
+        result = self._convert(Path(input_path), output_dir)
+        if not result.metadata.get("title"):
+            title = _document_title(Path(input_path))
+            if title:
+                result.metadata["title"] = title
+        return result
+
+    def _convert(self, input_path: Path, output_dir: Path | None) -> ConvertResult:
         input_path = Path(input_path)
         images: list[ExtractedImage] = []
 
@@ -1475,7 +1492,6 @@ class PdfConverter(BaseConverter):
         doc = pymupdf.open(input_path)
         try:
             total_pages = len(doc)
-            pdf_title = _metadata_title(doc)
             if per_page_routing:
                 try:
                     native_pages = sorted(_collect_native_text_pages(doc))
@@ -1718,10 +1734,6 @@ class PdfConverter(BaseConverter):
             }
             if reference_images and output_dir:
                 metadata["reference_images"] = reference_images
-            # No heading to take a title from (a scan): fall back to the
-            # PDF's own title before the filename.
-            if pdf_title and not _MARKDOWN_HEADING_RE.search(extracted_text):
-                metadata["title"] = pdf_title
 
             return ConvertResult(
                 markdown=extracted_text,
