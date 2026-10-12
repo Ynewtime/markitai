@@ -21,11 +21,11 @@ hero:
   <p><code>markitai serve</code> 把同一套转换内核放进本地网页界面。拖入文件、粘贴 URL、看进度，对照原件逐条检查结果，再全部下载。</p>
   <picture class="home-shot-light">
     <source srcset="/workbench.zh.webp" type="image/webp" />
-    <img src="/workbench.zh.png" alt="markitai 网页工作台：左侧栏有「转换」「转换任务」和「系统设置」，中间是按提交分组的已转换文件列表，右侧检查面板显示所选文件的状态、大小、费用和选项。" width="1440" height="700" loading="lazy" />
+    <img src="/workbench.zh.png" alt="markitai 网页工作台：左侧栏有「转换」「转换任务」和「系统设置」，中间是按提交分组的已转换文件列表，所选文件的窗口停靠在列表右侧，打开在「详情」标签，显示状态、大小、费用、选项和结果开头。" width="1440" height="700" loading="lazy" />
   </picture>
   <picture class="home-shot-dark">
     <source srcset="/workbench.zh.dark.webp" type="image/webp" />
-    <img src="/workbench.zh.dark.png" alt="markitai 网页工作台：左侧栏有「转换」「转换任务」和「系统设置」，中间是按提交分组的已转换文件列表，右侧检查面板显示所选文件的状态、大小、费用和选项。" width="1440" height="700" loading="lazy" />
+    <img src="/workbench.zh.dark.png" alt="markitai 网页工作台：左侧栏有「转换」「转换任务」和「系统设置」，中间是按提交分组的已转换文件列表，所选文件的窗口停靠在列表右侧，打开在「详情」标签，显示状态、大小、费用、选项和结果开头。" width="1440" height="700" loading="lazy" />
   </picture>
   <p class="home-shot-link"><a href="/zh/guide/serve">了解网页工作台 <span aria-hidden="true">→</span></a></p>
 </section>
