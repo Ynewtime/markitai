@@ -833,6 +833,7 @@ class TestProviderCredentialLifecycle:
             api_key: str | None,
             api_base: str | None,
             refresh: bool,
+            key_variable: str | None = None,
         ) -> dict[str, Any]:
             captured.update(
                 provider=provider,
@@ -1639,6 +1640,7 @@ class TestDetectedRuntimeSeparation:
             api_key: str | None,
             api_base: str | None,
             refresh: bool,
+            key_variable: str | None = None,
         ) -> dict[str, Any]:
             assert provider == "openai"
             assert api_key == "sk-draft-secret"
@@ -2070,6 +2072,7 @@ class TestClientCredentialBoundary:
                 "api_key": "sk-stored-1234567890",
                 "api_base": "https://proxy.example/v1",
                 "refresh": False,
+                "key_variable": None,
             }
         ]
 

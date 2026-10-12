@@ -738,14 +738,112 @@ async def _listed_models(
     )
 
 
+def _provider_words(response: httpx.Response, secrets: tuple[str, ...]) -> str:
+    """The provider's own message in a refused answer, without credentials."""
+    words = ""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        error = body.get("error")
+        for value in (
+            error.get("message") if isinstance(error, dict) else error,
+            body.get("message"),
+            body.get("detail"),
+        ):
+            if isinstance(value, str) and value.strip():
+                words = value
+                break
+    elif not response.headers.get("content-type", "").startswith("text/html"):
+        words = response.text
+    for secret in secrets:
+        if secret:
+            words = words.replace(secret, "…")
+    words = re.sub(r"(?i)\bBearer\s+\S+", "Bearer …", words)
+    words = re.sub(r"\b(?:sk|gsk|xai|key)-[A-Za-z0-9._-]{4,}\b", "…", words)
+    return " ".join(words.split())[:160]
+
+
+def discovery_failure(
+    error: BaseException,
+    *,
+    keyless: bool,
+    key_variable: str | None = None,
+    secrets: tuple[str, ...] = (),
+) -> dict[str, str]:
+    """Why a model list could not be loaded: ``reason`` and ``detail``.
+
+    The reasons are the model test's (API contract v1.10, ``no_key``,
+    ``key_rejected``, ``rate_limited``, ``network``, ``timeout``,
+    ``provider_error``), so the workbench says what to do the same way;
+    ``key_variable`` comes with ``no_key`` when known. A refusal of a request
+    that carried no key (*keyless*) means the key is missing, not wrong.
+    """
+    failure: dict[str, str]
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        words = _provider_words(error.response, secrets)
+        detail = f"The model list request returned HTTP {status}" + (
+            f": {words}" if words else ""
+        )
+        if status in (401, 403) and keyless:
+            failure = {"reason": "no_key"}
+            failure["detail"] = (
+                f"{key_variable} is not set on the server, so the provider "
+                "refused the model list request: set it where markitai serve "
+                "runs and restart the server, or add a key to this connection"
+                if key_variable
+                else "No API key is available for this provider, so it refused "
+                "the model list request: add a key to this connection"
+            )
+            if key_variable:
+                failure["key_variable"] = key_variable
+            return failure
+        reason = (
+            "key_rejected"
+            if status in (401, 403)
+            else "rate_limited"
+            if status == 429
+            else "network"
+            if 300 <= status < 400  # a redirect is not followed: wrong address
+            else "provider_error"
+        )
+        return {"reason": reason, "detail": detail}
+    if isinstance(error, httpx.TimeoutException | asyncio.TimeoutError | TimeoutError):
+        return {"reason": "timeout", "detail": "The model list request timed out"}
+    if isinstance(error, httpx.TransportError | ConnectionError):
+        return {
+            "reason": "network",
+            "detail": "The model list request did not reach the provider: check "
+            "the address and the server's network",
+        }
+    if isinstance(error, ValueError):
+        # Not JSON, or not the shape of a model list
+        return {
+            "reason": "provider_error",
+            "detail": "The provider's answer is not a model list: check the address",
+        }
+    return {
+        "reason": "provider_error",
+        "detail": f"Model discovery failed ({type(error).__name__})",
+    }
+
+
 async def discover_models(
     provider: str,
     *,
     api_key: str | None = None,
     api_base: str | None = None,
     refresh: bool = False,
+    key_variable: str | None = None,
 ) -> dict[str, Any]:
-    """Discover models with single-flight caching and stale-on-error fallback."""
+    """Discover models with single-flight caching and stale-on-error fallback.
+
+    A failure answers ``status: unavailable`` with a ``reason`` and a
+    ``detail`` (:func:`discovery_failure`); *key_variable* names the
+    variable a missing key would come from.
+    """
     provider = provider.strip().lower()
 
     async def loader() -> dict[str, Any]:
@@ -783,6 +881,12 @@ async def discover_models(
             _cache[key] = _CacheEntry(value=result, fetched_at=time.monotonic())
             return result
         except Exception as error:
+            failure = discovery_failure(
+                error,
+                keyless=not api_key,
+                key_variable=key_variable,
+                secrets=(api_key or "",),
+            )
             cached = _cache.get(key)
             if cached is not None and now - cached.fetched_at < _STALE_CACHE_S:
                 result = dict(cached.value)
@@ -791,15 +895,20 @@ async def discover_models(
                         "cached": True,
                         "stale": True,
                         "status": "partial",
-                        "detail": f"refresh failed ({type(error).__name__}); showing cached models",
+                        "detail": (
+                            f"{failure['detail']}; showing the models loaded before"
+                        )[:240],
+                        "reason": failure["reason"],
                     }
                 )
                 return result
-            return _result(
+            result = _result(
                 provider,
                 status="unavailable",
                 source="live_api",
                 authoritative=False,
                 models=[],
-                detail=f"model discovery failed ({type(error).__name__})",
+                detail=failure.pop("detail"),
             )
+            result.update(failure)
+            return result

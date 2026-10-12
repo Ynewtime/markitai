@@ -1598,6 +1598,40 @@ def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
     return detail[:300]
 
 
+def _key_variables(provider: str) -> tuple[tuple[str, ...], str | None]:
+    """The variables LiteLLM reads *provider*'s key from, and the main one.
+
+    In LiteLLM's order (the first one set is the key a request carries);
+    the main one is the variable markitai names when none is set. None for a
+    cloud signed in with the server's own credentials.
+    """
+    from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_API_KEY_ENV_NAMES
+    from markitai.providers.connectable import CONNECTABLE
+
+    row = next((row for row in CONNECTABLE if row.provider == provider), None)
+    if row is not None and row.cloud:
+        return (), None
+    names = PROVIDER_API_KEY_ENV_NAMES.get(provider) or (
+        (row.key_variable,) if row is not None and row.key_variable else ()
+    )
+    return names, PROVIDER_API_KEY_ENV.get(provider) or (names[0] if names else None)
+
+
+def _environment_key_variable(provider: str) -> str | None:
+    """The variable that serves *provider* a key on this server, if one is set.
+
+    The key a conversion or a model test of a connection with no key of its
+    own carries: LiteLLM reads it from the process environment, where the
+    CLI loads ``./.env`` and ``~/.markitai/.env``.
+    """
+    from markitai.providers import is_local_provider_model
+
+    if is_local_provider_model(f"{provider}/"):
+        return None
+    names, _main = _key_variables(provider)
+    return next((name for name in names if os.environ.get(name, "").strip()), None)
+
+
 def _probe_keyless(body: LLMSettingsUpdate) -> tuple[bool, str | None]:
     """Whether a test carries no real key, and the variable one would be in.
 
@@ -1607,7 +1641,6 @@ def _probe_keyless(body: LLMSettingsUpdate) -> tuple[bool, str | None]:
     reads none). The variable is the provider's main one, the one LiteLLM
     reads, for a model without a key of its own.
     """
-    from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_API_KEY_ENV_NAMES
     from markitai.providers.connectable import CONNECTABLE
 
     model = body.model or ""
@@ -1615,10 +1648,7 @@ def _probe_keyless(body: LLMSettingsUpdate) -> tuple[bool, str | None]:
     row = next((row for row in CONNECTABLE if row.provider == prefix), None)
     if row is not None and row.cloud:
         return False, None
-    names = PROVIDER_API_KEY_ENV_NAMES.get(prefix) or (
-        (row.key_variable,) if row is not None and row.key_variable else ()
-    )
-    variable = PROVIDER_API_KEY_ENV.get(prefix) or (names[0] if names else None)
+    names, variable = _key_variables(prefix)
     key = body.api_key
     if key == NO_KEY:
         return True, None
@@ -1892,6 +1922,35 @@ def _environment_key(
             ),
         )
     return f"env:{variable}"
+
+
+def _credentials_view(
+    provider: str, api_key: str | None, api_base: str | None
+) -> dict[str, str | None]:
+    """One connection's editable values, as the credentials route shows them.
+
+    A connection that stores no key (not the keyless placeholder) is served
+    by the server's own key variable when one is set: it shows as
+    ``env:<VARIABLE>`` with ``api_key_source: environment`` (Rust's
+    ``credentials``), the key its conversions and model tests carry, rather
+    than "Not set".
+    """
+    shown = api_key
+    source = None
+    if not api_key:
+        variable = _environment_key_variable(provider)
+        if variable is not None:
+            shown, source = f"env:{variable}", "environment"
+    masked = _mask_api_key(shown)
+    view: dict[str, str | None] = {
+        "api_key": masked,
+        "api_key_masked": masked,
+        "api_base": _masked_base(api_base),
+        "api_base_placeholder": provider_default_api_base(provider),
+    }
+    if source is not None:
+        view["api_key_source"] = source
+    return view
 
 
 def _reject_rebound_credentials(
@@ -2799,6 +2858,8 @@ def create_app(
     @app.get(
         "/api/settings/llm/providers/{provider_id}/credentials",
         response_model=LLMProviderCredentials,
+        # api_key_source only when the environment serves the key
+        response_model_exclude_unset=True,
     )
     async def get_llm_provider_credentials(
         request: Request, provider_id: str
@@ -2825,13 +2886,7 @@ def create_app(
             # default) so re-saving after only a key edit does not pin the
             # default as an explicit override; the default is offered
             # separately for the editor's placeholder.
-            masked = _mask_api_key(saved.api_key)
-            return {
-                "api_key": masked,
-                "api_key_masked": masked,
-                "api_base": _masked_base(saved.api_base),
-                "api_base_placeholder": provider_default_api_base(saved.provider),
-            }
+            return _credentials_view(saved.provider, saved.api_key, saved.api_base)
 
         deployment_id = (
             provider_id.removeprefix("legacy:")
@@ -2844,14 +2899,11 @@ def create_app(
             else None
         )
         if legacy is not None:
-            legacy_provider = legacy.litellm_params.model.split("/", 1)[0].lower()
-            masked = _mask_api_key(legacy.litellm_params.api_key)
-            return {
-                "api_key": masked,
-                "api_key_masked": masked,
-                "api_base": _masked_base(legacy.litellm_params.api_base),
-                "api_base_placeholder": provider_default_api_base(legacy_provider),
-            }
+            return _credentials_view(
+                legacy.litellm_params.model.split("/", 1)[0].lower(),
+                legacy.litellm_params.api_key,
+                legacy.litellm_params.api_base,
+            )
 
         raise ApiError(
             404,
@@ -2954,11 +3006,51 @@ def create_app(
         )
         api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
         api_base = resolve_env_value(raw_base, strict=False) if raw_base else None
+        provider = body.provider.strip().lower()
+        key_variable = (
+            raw_key[4:]
+            if isinstance(raw_key, str) and raw_key.startswith("env:")
+            else None
+        )
+        if (
+            api_key is None
+            and raw_key is None
+            and fallback_key != NO_KEY
+            and sent_base is None
+        ):
+            # No key of its own: the server's key variable serves it, as it
+            # serves the connection's conversions and model tests. Never for
+            # an address the caller names (that takes the caller's own key)
+            _names, key_variable = _key_variables(provider)
+            found = _environment_key_variable(provider)
+            if found is not None:
+                api_key, key_variable = os.environ[found].strip(), found
+        if api_key is None and key_variable is not None:
+            lacking = model_test.missing_key(f"{provider}/", None, api_base)
+            if lacking is not None:
+                # Nothing is sent: the provider's 401 would read like a
+                # wrong key, as for a model test
+                failure = model_test.missing_key_failure(lacking)
+                answer = {
+                    "provider": provider,
+                    "status": "unavailable",
+                    "source": "live_api",
+                    "authoritative": False,
+                    "cached": False,
+                    "stale": False,
+                    "models": [],
+                    "detail": failure.detail,
+                    "reason": failure.reason,
+                }
+                if failure.key_variable:
+                    answer["key_variable"] = failure.key_variable
+                return answer
         return await discover_models(
             body.provider,
             api_key=api_key,
             api_base=api_base,
             refresh=body.refresh,
+            key_variable=key_variable,
         )
 
     async def _apply_model_list_mutation(

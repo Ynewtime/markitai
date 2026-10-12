@@ -793,7 +793,9 @@ class TestConnectableProviderDiscovery:
         result = await discovery.discover_models("groq", api_key="gsk-never-shown")
         assert result["status"] == "unavailable"
         assert result["models"] == []
-        assert result["detail"] == "model discovery failed (HTTPStatusError)"
+        # The model test's reason (contract v1.10), not an exception's name
+        assert result["reason"] == "key_rejected"
+        assert result["detail"] == "The model list request returned HTTP 401"
         assert "gsk-never-shown" not in str(result)
 
     @pytest.mark.parametrize(
