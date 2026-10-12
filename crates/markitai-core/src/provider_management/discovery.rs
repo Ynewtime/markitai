@@ -1,18 +1,114 @@
 use super::checked_url;
-use crate::{Error, Result};
+use crate::{Error, Result, llm::ProbeReason as Reason};
 use reqwest::{blocking::Client, redirect::Policy};
 use serde_json::{Value, json};
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, io::Read, time::Duration};
 const MAX_RESPONSE: u64 = 2 * 1024 * 1024;
 const MAX_MODELS: usize = 1000;
+/// How long a discovery request may take (shorter under test).
+pub(super) const TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(3)
+} else {
+    Duration::from_secs(10)
+};
+/// The provider's own words in a refusal, at most this many characters.
+const MAX_MESSAGE: usize = 300;
 fn failure(message: &str) -> Error {
     Error::Conversion(message.into())
 }
-pub(super) fn unavailable(provider: &str, detail: &str) -> Value {
-    json!({"provider":provider,"status":"unavailable","source":"live_api","authoritative":false,"cached":false,"stale":false,"models":[],"detail":detail})
+/// A discovery that listed nothing and why: `reason` is one of the reasons
+/// a failed connection test reports, `key_variable` the variable a missing
+/// key would come from.
+pub(super) fn failed(
+    provider: &str,
+    reason: Reason,
+    detail: &str,
+    key_variable: Option<&str>,
+) -> Value {
+    let mut value = json!({"provider":provider,"status":"unavailable","source":"live_api","authoritative":false,"cached":false,"stale":false,"models":[],"detail":detail,"reason":reason.name()});
+    if let Some(variable) = key_variable {
+        value["key_variable"] = variable.into();
+    }
+    value
 }
-pub(super) fn load(provider: &str, base: &str, key: Option<&str>) -> Result<Value> {
-    let mut url = checked_url(base)?;
+
+/// The provider's message in a refused request's body: a JSON
+/// `error.message`, `message` or `error` string, else a short text snippet
+/// without markup or control characters. The key sent is never repeated.
+fn provider_message(body: &[u8], key: Option<&str>) -> String {
+    let parsed: Option<Value> = serde_json::from_slice(body).ok();
+    let text = parsed
+        .as_ref()
+        .and_then(|value| {
+            ["/error/message", "/message", "/error", "/detail"]
+                .iter()
+                .find_map(|pointer| value.pointer(pointer).and_then(Value::as_str))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| {
+            if parsed.is_some() {
+                return String::new();
+            }
+            let text = String::from_utf8_lossy(body);
+            let mut plain = String::with_capacity(text.len().min(4096));
+            let mut markup = false;
+            for character in text.chars().take(64 * 1024) {
+                match character {
+                    '<' => markup = true,
+                    '>' if markup => {
+                        markup = false;
+                        plain.push(' ');
+                    }
+                    _ if markup => {}
+                    other => plain.push(other),
+                }
+            }
+            plain
+        });
+    let mut words = text
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if let Some(key) = key.filter(|key| key.len() >= 4) {
+        words = words.replace(key, "…");
+    }
+    let mut message: String = words.chars().take(MAX_MESSAGE).collect();
+    if words.chars().count() > MAX_MESSAGE {
+        message.push('…');
+    }
+    message
+}
+
+/// How a refused discovery request is reported: 401/403 is a rejected key,
+/// or a missing one when none was sent (`keyless_variable` names the variable
+/// it would come from); 429 a rate limit; a redirect, which discovery never
+/// follows, a network failure; anything else, 404 included (the address
+/// lists no models), a provider error.
+fn refused(status: u16, keyless: bool) -> Reason {
+    match status {
+        401 | 403 if keyless => Reason::NoKey,
+        401 | 403 => Reason::KeyRejected,
+        429 => Reason::RateLimited,
+        300..=399 => Reason::Network,
+        _ => Reason::ProviderError,
+    }
+}
+
+/// List a provider's models, or say why not as [`failed`] does.
+pub(super) fn load(
+    provider: &str,
+    base: &str,
+    key: Option<&str>,
+    keyless_variable: Option<&str>,
+) -> std::result::Result<Value, Value> {
+    let fail = |reason: Reason, detail: &str| failed(provider, reason, detail, None);
+    let mut url = checked_url(base).map_err(|_| {
+        fail(
+            Reason::ProviderError,
+            "Provider endpoint is not a valid HTTP(S) URL",
+        )
+    })?;
     let path = url.path().trim_end_matches('/').to_owned();
     let suffix = match provider {
         "ollama" => "api/tags",
@@ -36,9 +132,14 @@ pub(super) fn load(provider: &str, base: &str, key: Option<&str>) -> Result<Valu
     let client = Client::builder()
         .redirect(Policy::none())
         .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(10))
+        .timeout(TIMEOUT)
         .build()
-        .map_err(|_| failure("Cannot create model discovery client"))?;
+        .map_err(|_| {
+            fail(
+                Reason::ProviderError,
+                "Cannot create model discovery client",
+            )
+        })?;
     let mut request = client.get(url).header("accept", "application/json");
     if let Some(key) = key {
         request = match provider {
@@ -53,26 +154,69 @@ pub(super) fn load(provider: &str, base: &str, key: Option<&str>) -> Result<Valu
     if provider == "anthropic" {
         request = request.header("anthropic-version", "2023-06-01");
     }
-    let response = request
-        .send()
-        .map_err(|_| failure("Model discovery transport failed"))?;
-    if !response.status().is_success() {
-        return Err(failure(
-            "Model discovery returned an unsuccessful HTTP status",
+    let response = request.send().map_err(|error| {
+        if error.is_timeout() {
+            return fail(Reason::Timeout, "Model discovery timed out");
+        }
+        match crate::llm::transport_cause(error) {
+            Some(cause) => fail(
+                Reason::Network,
+                &format!("Model discovery request failed: {cause}"),
+            ),
+            None => fail(Reason::Network, "Model discovery request failed"),
+        }
+    })?;
+    let status = response.status().as_u16();
+    if (300..400).contains(&status) {
+        return Err(fail(
+            Reason::Network,
+            &format!(
+                "Model discovery request failed: the address redirected (HTTP {status}), which discovery does not follow"
+            ),
         ));
     }
+    if !response.status().is_success() {
+        let mut body = Vec::new();
+        let _ = response.take(64 * 1024).read_to_end(&mut body);
+        let message = provider_message(&body, key);
+        let detail = if message.is_empty() {
+            format!("Model discovery returned HTTP {status}")
+        } else {
+            format!("Model discovery returned HTTP {status}: {message}")
+        };
+        // Ollama is sent no key even when one is configured.
+        let keyless = key.is_none() || provider == "ollama";
+        let reason = refused(status, keyless);
+        let variable = (reason == Reason::NoKey)
+            .then_some(keyless_variable)
+            .flatten();
+        return Err(failed(provider, reason, &detail, variable));
+    }
+    let unreadable = |detail: &str| fail(Reason::ProviderError, detail);
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE)
     {
-        return Err(failure("Model discovery response exceeds 2 MiB"));
+        return Err(unreadable("Model discovery response exceeds 2 MiB"));
     }
     let bytes = crate::platform::read_limited(response, MAX_RESPONSE)
-        .map_err(|_| failure("Cannot read model discovery response"))?
-        .ok_or_else(|| failure("Model discovery response exceeds 2 MiB"))?;
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                fail(Reason::Timeout, "Model discovery timed out")
+            } else {
+                unreadable("Cannot read model discovery response")
+            }
+        })?
+        .ok_or_else(|| unreadable("Model discovery response exceeds 2 MiB"))?;
     let data: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| failure("Model discovery response is not JSON"))?;
-    parse(provider, &data)
+        .map_err(|_| unreadable("Model discovery response is not JSON"))?;
+    parse(provider, &data).map_err(|error| {
+        let detail = match error {
+            Error::Conversion(detail) => detail,
+            _ => "Model discovery response has no model list".into(),
+        };
+        unreadable(&detail)
+    })
 }
 pub(super) fn parse(provider: &str, data: &Value) -> Result<Value> {
     let records = data

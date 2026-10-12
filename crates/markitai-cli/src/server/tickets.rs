@@ -38,7 +38,8 @@ fn digest(ticket: &str) -> [u8; 32] {
 }
 
 /// Whether `path` is one of the download routes a ticket may name: a job's
-/// file, a job's archive, an item's original or the history archive. Paths
+/// file, a job's archive, an item's archive, an item's original (its bytes,
+/// or the HTML page a sandboxed frame shows) or the history archive. Paths
 /// are compared as sent, so they must be the exact encoded form the browser
 /// will request.
 pub(super) fn downloadable(path: &str) -> bool {
@@ -66,11 +67,13 @@ pub(super) fn downloadable(path: &str) -> bool {
     if rest == "archive" {
         return true;
     }
-    if let Some(item) = rest
-        .strip_prefix("items/")
-        .and_then(|rest| rest.strip_suffix("/original/file"))
-    {
-        return !item.is_empty() && !item.contains('/') && item != "." && item != "..";
+    if let Some(rest) = rest.strip_prefix("items/") {
+        let item = ["/original/file", "/original/view", "/archive"]
+            .iter()
+            .find_map(|suffix| rest.strip_suffix(suffix));
+        return item.is_some_and(|item| {
+            !item.is_empty() && !item.contains('/') && item != "." && item != ".."
+        });
     }
     let Some(relpath) = rest.strip_prefix("files/") else {
         return false;
@@ -102,6 +105,11 @@ impl Tickets {
         Ok(ticket)
     }
 
+    /// Revoke every outstanding ticket (the access token was replaced).
+    pub(super) fn clear(&self) {
+        self.0.lock().unwrap().clear();
+    }
+
     /// Spend a ticket on a GET of `path`. A ticket presented for another path
     /// is spent as well: it was disclosed, so it must not stay usable.
     pub(super) fn redeem(&self, ticket: &str, path: &str, now: Instant) -> bool {
@@ -121,7 +129,7 @@ pub(super) async fn issue(
         ApiError::new(
             422,
             "invalid_ticket_path",
-            "a download ticket needs a JSON body {\"path\": …} naming a job file, a job archive, an item's original or the history archive",
+            "a download ticket needs a JSON body {\"path\": …} naming a job file, a job archive, an item's archive or original, or the history archive",
         )
     };
     // The service's body limit admits uploads; this body names one path.
@@ -166,6 +174,9 @@ mod tests {
             "/api/jobs/0123456789ab/files/notes.md",
             "/api/jobs/0123456789ab/files/assets/a%20b.png",
             "/api/jobs/0123456789ab/items/i1/original/file",
+            "/api/jobs/0123456789ab/items/i1/original/view",
+            "/api/jobs/0123456789ab/items/i1/archive",
+            "/api/jobs/0123456789ab/items/a%20b/archive",
         ] {
             assert!(downloadable(path), "{path}");
         }
@@ -193,6 +204,20 @@ mod tests {
             "/api/jobs/0123456789ab/items/../original/file",
             "/api/jobs/0123456789ab/items/a/b/original/file",
             "/api/jobs/0123456789ab/items/i1/original/file/",
+            "/api/jobs/0123456789ab/items//archive",
+            "/api/jobs/0123456789ab/items/./archive",
+            "/api/jobs/0123456789ab/items/../archive",
+            "/api/jobs/0123456789ab/items/a/b/archive",
+            "/api/jobs/0123456789ab/items/i1/archive/",
+            "/api/jobs/0123456789ab/items/i1/archive?x=1",
+            "/api/jobs/0123456789ab/items//original/view",
+            "/api/jobs/0123456789ab/items/../original/view",
+            "/api/jobs/0123456789ab/items/a/b/original/view",
+            "/api/jobs/0123456789ab/items/i1/original/view/",
+            "/api/jobs/0123456789ab/items/i1/original/views",
+            "/api/jobs/0123456789ab/items/i1",
+            "/api/jobs/0123456789ab/items/archive",
+            "/api/access-token/regenerate",
         ] {
             assert!(!downloadable(path), "{path}");
         }
@@ -230,6 +255,18 @@ mod tests {
                 .keys()
                 .any(|key| key.as_slice() == ticket.as_bytes())
         );
+    }
+
+    #[test]
+    fn clearing_revokes_every_outstanding_ticket() {
+        let tickets = Tickets::default();
+        let now = Instant::now();
+        let path = "/api/jobs/0123456789ab/items/i1/archive";
+        let ticket = tickets.issue(path, now).unwrap();
+        tickets.clear();
+        assert!(!tickets.redeem(&ticket, path, now));
+        let ticket = tickets.issue(path, now).unwrap();
+        assert!(tickets.redeem(&ticket, path, now));
     }
 
     #[test]

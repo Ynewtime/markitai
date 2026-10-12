@@ -21,7 +21,7 @@ import type { Deployment, DiscoveryResult, NewDeployment, ProviderCard, Settings
 import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
-import { testFailure, type TestFailure } from "../lib/model-test.ts";
+import { listFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
 import { endpointFor, sameEndpoint } from "../lib/models.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
@@ -370,7 +370,7 @@ export function ModelsSettings({
     setConnFailed(false);
     try {
       const credentials = await fetchCredentials(connection.provider_id);
-      if (request === connRequest.current) setConn(providerDraft(credentials));
+      if (request === connRequest.current) setConn(providerDraft(credentials, connection.credential));
     } catch (error) {
       if (request !== connRequest.current) return;
       setConnFailed(true);
@@ -1011,11 +1011,11 @@ export function ModelsSettings({
                           cloud: cloud && login === null && !saved,
                         })}
                       </p>
-                      {(provider.kind === "common" || provider.kind === "compatible") && ((provider.default_base && !baseOptional) || provider.key_variable) && (
+                      {(provider.kind === "common" || provider.kind === "compatible") && ((provider.default_base && !baseOptional) || (provider.key_variable && !showsKey)) && (
                         <p class="provider-facts">
-                          {/* The address field shows the default itself. */}
+                          {/* The address field shows the default itself; the key field names its variable. */}
                           {provider.default_base && !baseOptional && <span class="provider-fact">{provider.default_base}</span>}
-                          {provider.key_variable && <span class="provider-fact">{local ? t.optionalKeyVariable(provider.key_variable) : provider.key_variable}</span>}
+                          {provider.key_variable && !showsKey && <span class="provider-fact">{local ? t.optionalKeyVariable(provider.key_variable) : provider.key_variable}</span>}
                         </p>
                       )}
                     </div>
@@ -1040,13 +1040,27 @@ export function ModelsSettings({
                     // The key and the address side by side, on the same grid as the model ID and routing below.
                     <div class={showsKey && (needsBase || baseOptional) ? "field-grid" : "field-grid is-single"}>
                       {showsKey && (
-                        <label class="field">
-                          <span class="field-label">
+                        <div class="field">
+                          <label class="field-label" for="connect-key">
                             {t.setApiKey}
                             <span class="field-required">{keyRequired ? t.requiredField : t.optionalField}</span>
-                          </span>
-                          <input type="password" value={draftKey} placeholder={t.setKeyPh} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
-                        </label>
+                          </label>
+                          <input
+                            id="connect-key"
+                            type="password"
+                            value={draftKey}
+                            placeholder={t.setKeyPh}
+                            autoComplete="off"
+                            aria-describedby={provider.key_variable && !existing ? "connect-key-hint" : undefined}
+                            onInput={(event) => setDraftKey(event.currentTarget.value)}
+                          />
+                          {/* Where else the key can come from, under the field it stands in for. */}
+                          {provider.key_variable && !existing && (
+                            <p id="connect-key-hint" class="field-hint key-hint">
+                              {t.keyVariableHint(provider.key_variable)}
+                            </p>
+                          )}
+                        </div>
                       )}
                       {((showsKey && needsBase) || baseOptional) && (
                         <label class="field">
@@ -1085,7 +1099,24 @@ export function ModelsSettings({
                     ))}
                   </div>
                 )}
-                {discovery && discovery.status !== "ok" && (
+                {discovery && listFailure(discovery) ? (
+                  <div class="test-failure" role="alert">
+                    <Icon name="WarningCircle" size={16} />
+                    <div class="test-failure-copy">
+                      <p class="test-failure-title">
+                        <strong>{t.testFailTitle(listFailure(discovery)!.reason)}</strong>
+                        <span class="test-failure-model">{t.modelsUnavailable}</span>
+                      </p>
+                      <p>{t.discoveryFailHint(listFailure(discovery)!.reason, listFailure(discovery)!.variable)}</p>
+                      {discovery.detail && (
+                        <details class="test-failure-detail">
+                          <summary>{t.testFailDetail}</summary>
+                          <p>{discovery.detail}</p>
+                        </details>
+                      )}
+                    </div>
+                  </div>
+                ) : discovery && discovery.status !== "ok" && (
                   <div class={discovery.status === "unavailable" ? "discovery-note is-error" : "discovery-note"} role={discovery.status === "unavailable" ? "alert" : "status"}>
                     <strong>{discovery.status === "unavailable" ? t.modelsUnavailable : t.modelsPartial}</strong>
                     {discovery.detail && <span title={serviceNote(locale, discovery.detail).detail || undefined}>{serviceNote(locale, discovery.detail).text}</span>}

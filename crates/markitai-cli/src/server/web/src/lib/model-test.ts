@@ -2,7 +2,7 @@
 // contract v1.10); a server that does not yet is read from its text, so the
 // page names the same categories for both backends. The provider's own words
 // stay available as the detail.
-import type { ProbeResult } from "../api/types.ts";
+import type { DiscoveryResult, ProbeResult } from "../api/types.ts";
 
 export const TEST_REASONS = ["no_key", "key_rejected", "model_not_found", "rate_limited", "network", "timeout", "provider_error"] as const;
 export type TestReason = (typeof TEST_REASONS)[number];
@@ -34,4 +34,15 @@ export function testFailure(result: Pick<ProbeResult, "detail" | "reason" | "key
   const reason = told ?? classifyTestText(detail);
   const variable = typeof result.key_variable === "string" && result.key_variable ? result.key_variable : reason === "no_key" ? (VARIABLE.exec(detail)?.[1] ?? null) : null;
   return { reason, variable, detail };
+}
+
+/** Why a model list could not be loaded, when the server says so (v1.11
+ * `reason`) or its text is a failed request (Python 1.2.1's "model discovery
+ * failed (…)"); null for a list that is only partial or that the provider does
+ * not publish, which keep their own note. */
+export function listFailure(result: Pick<DiscoveryResult, "status" | "detail" | "reason" | "key_variable">): TestFailure | null {
+  if (result.status !== "unavailable") return null;
+  const told = TEST_REASONS.some((reason) => reason === result.reason);
+  if (!told && !/discovery (?:failed|returned|timed out|request failed)/i.test(result.detail ?? "")) return null;
+  return testFailure({ detail: result.detail ?? "", reason: result.reason, key_variable: result.key_variable });
 }

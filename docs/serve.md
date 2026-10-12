@@ -39,7 +39,8 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    the seven-day history retention (`limits`), and, for clients shared with other
    backends, `implementation: "rust"`, `docs_url`, `source_url` and `features` (`cancel`,
    `download_tickets`, `url_lists`, `history_items`, `original`,
-   `result_excerpt`, `job_labels`, `item_assets`, all true).
+   `result_excerpt`, `job_labels`, `item_assets`, `item_archive`, all true, and
+   `token_regenerate`, true unless `--no-auth`).
 2. `POST /api/jobs` accepts form fields `urls` (a JSON array), `options` (a JSON
    object) and `label`, plus repeated multipart `files`. `label` names the
    submission in history (a folder or `.urls` file name): plain text without
@@ -79,7 +80,11 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    Markdown, at most N bytes, ending at a line break in its last quarter when
    there is one and never inside a UTF-8 sequence; `artifacts` stays complete.
    Fetch an artifact through `GET /api/jobs/{job_id}/files/{relpath}`. Download
-   all output files through `GET /api/jobs/{job_id}/archive` after completion.
+   all output files through `GET /api/jobs/{job_id}/archive` after completion, or
+   one item's through `GET /api/jobs/{job_id}/items/{item_id}/archive`: every
+   file its result lists, at the same paths, plus its kept original under
+   `original/` (404 `result_unavailable` without a result, 409 `item_busy` while
+   it runs or waits for a rerun, 413 `archive_too_large` as for a job).
    `GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}` shows one of that
    item's own extracted images in a page: only a PNG, JPEG, GIF, WebP or AVIF
    that the item's result lists, sent inline with
@@ -126,14 +131,30 @@ describes it without drawing anything: `kind` is `pdf`, `image` (png, jpeg, gif,
 webp, avif, bmp, tiff, heic/heif), `html`, `text` (md, markdown, txt, csv, tsv,
 json, xml, yaml, yml, log), chosen by the kept upload's name; `html` for a URL
 item whose page was converted from HTML in this process (the static or browser
-fetch); else `screenshots` when the conversion saved page screenshots; else
+fetch), whose screenshots, when the conversion took some, are listed as its
+pages too; else `screenshots` when the conversion saved page screenshots; else
 `none` with `reason` `not_kept` (a CLI-recorded job, a removed upload, a URL page
 read through Jina, Defuddle or Cloudflare or from the page cache),
 `unsupported_format` (no browser view and no screenshots, for example DOCX or
 SVG) or `render_unavailable` (a PDF or image this build cannot open). It also
 gives the original's `name`, `media_type`, `size`, `download` path, `pages`
 (page boxes: PDF points of the visible box after rotation, image and screenshot
-pixels; at most 2,000), `page_count` and `text_layer` (PDF only).
+pixels; at most 2,000), `page_count`, `text_layer` (PDF only) and, for `html`,
+`view`: the path of the kept page for a sandboxed frame.
+
+`…/original/view` sends that page as `text/html` for the workbench's frame: the
+kept bytes with one insertion after `<head>` (else `<html>`, else the start),
+`<meta http-equiv="x-dns-prefetch-control" content="off">` and
+`<base href="<the item's URL>" target="_blank">` (an upload gets no `href`),
+under `Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox;
+default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:;
+form-action 'none'; frame-ancestors 'self'`, with `nosniff`,
+`Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off` and
+`Cache-Control: no-store`: it runs no script, sends no form and loads nothing
+from the site, and only this service's own pages may frame it. Other kinds are 404
+`original_unavailable`, a page over 10 MiB 413 `result_too_large`. It is opened
+with a download ticket, since a frame cannot send the header; the static pages'
+policy allows `frame-src 'self'` for it.
 
 `…/original/file` sends the kept upload or page snapshot as an attachment with
 `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`; HTML and SVG
@@ -502,20 +523,34 @@ proxy and server logs, shell history and browser history, so prefer the header.
 For a download that a browser must open itself (a navigation cannot send
 `Authorization`), an authenticated client asks `POST /api/download-tickets` with
 `{"path": "/api/jobs/{job_id}/archive"}` (or a job file,
-`/api/jobs/{job_id}/files/{relpath}`, an item's original,
-`/api/jobs/{job_id}/items/{item_id}/original/file`, or `/api/history/archive`,
+`/api/jobs/{job_id}/files/{relpath}`, an item's archive,
+`/api/jobs/{job_id}/items/{item_id}/archive`, an item's original,
+`/api/jobs/{job_id}/items/{item_id}/original/file` or its framed page
+`…/original/view`, or `/api/history/archive`,
 written exactly as it will be requested) and receives 201 `{"ticket", "url",
 "expires_in": 60}`.
 `url` is that path with `?ticket=…`: 64 random hexadecimal characters that admit
 one GET of that path within 60 seconds. Only the ticket's SHA-256 is held, at most
-64 tickets are outstanding (429 `too_many_tickets`), a path outside those four
-download routes is 422 `invalid_ticket_path`, and a request body over 8 KiB is 413
+64 tickets are outstanding (429 `too_many_tickets`), a path outside those
+routes is 422 `invalid_ticket_path`, and a request body over 8 KiB is 413
 `request_too_large`. A ticket presented a second time,
 after it expired, for another path or with another method is spent and refused
 with 401 `ticket_invalid`; loopback clients also redeem tickets exactly once. A ticket never grants
 settings access and never lets the startup token into a URL. The event stream
 `GET /api/jobs/{job_id}/events` takes the header like any other request (a
 fetch-based reader can send it; the browser's EventSource cannot).
+
+`POST /api/access-token/regenerate` (no body, or `{}`) replaces the token with a
+new random one, trusted like the model settings (the token itself): every request
+with the old token is then 401, open event streams end, and outstanding download
+tickets are revoked. It answers `{"token", "network_url", "persistent": false,
+"startup_variable"}` with `Cache-Control: no-store` (`network_url` is the
+network address with the new token when the server listens on all interfaces;
+`startup_variable` is `MARKITAI_SERVE_TOKEN` when that set the token) and prints
+`Access token regenerated from the web workbench; other tabs and devices must
+sign in again.` The new token lives in memory: a restart uses
+`MARKITAI_SERVE_TOKEN` again, or makes a new one. With `--no-auth` it is 409
+`token_disabled`.
 
 All model settings endpoints require the token by default. With `--no-auth`,
 only direct loopback peers without forwarding headers can access settings. Every settings response, including rejected requests,

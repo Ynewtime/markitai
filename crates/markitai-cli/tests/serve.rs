@@ -1108,3 +1108,6 @@ mod workbench;
 
 #[path = "serve/assets.rs"]
 mod assets;
+
+#[path = "serve/token.rs"]
+mod token;

@@ -17,12 +17,13 @@ import type { ComponentChildren } from "preact";
 import { createPortal } from "preact/compat";
 import type { MutableRef } from "preact/hooks";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { fetchBlob, fetchText, filePath, imagePath } from "../api/client.ts";
+import { fetchBlob, fetchText, filePath, imagePath, ticketDownloads } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
+import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import { compareLines, foldRows, type Comparison, type DiffRow } from "../lib/diff.ts";
-import { interceptDownload } from "../lib/download.ts";
+import { download, interceptDownload } from "../lib/download.ts";
 import { basename, fmtBytes, localeTag } from "../lib/format.ts";
 import { parseFrontMatter } from "../lib/frontmatter.ts";
 import {
@@ -153,6 +154,8 @@ export function MarkdownView({
   onError,
   barHost = null,
   compactBar = false,
+  originals = false,
+  onDownloadAll = null,
 }: {
   t: Dict;
   locale: Locale;
@@ -168,11 +171,18 @@ export function MarkdownView({
   /** The window's tab row lends this element to the view switch (and says when it must be compact). */
   barHost?: HTMLElement | null;
   compactBar?: boolean;
+  /** Files lists the item's original too (the server keeps originals). */
+  originals?: boolean;
+  /** Files' Download all (.zip); null hides it. */
+  onDownloadAll?: (() => void) | null;
   /** Called with the rendered body once its content is in place (and with null when it goes). */
   onRendered?: (root: HTMLElement | null) => void;
   onError?: (message: string) => void;
 }) {
   const { result, pair, shown, path, markdown } = doc;
+  const { descriptor: original } = useOriginal(item, originals && !compact);
+  const kept = original?.download ? original : null;
+  const fileCount = result ? result.artifacts.length + (kept ? 1 : 0) : undefined;
   const body = useRef<HTMLDivElement>(null);
   const printable = useRef<HTMLDivElement>(null);
   const tabs = useRef<Record<Tab, HTMLButtonElement | null>>({ rendered: null, source: null, diff: null, files: null });
@@ -579,6 +589,8 @@ export function MarkdownView({
   const note = (error: unknown, kind: "doc" | "source" | "list" = "doc") =>
     error ? <p class="pane-note line-error">{describe(error).text}</p> : <Skeleton label={loadingLabel} kind={kind} />;
   const docName = basename(path || item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "");
+  // An upload keeps its name; a web page's snapshot is saved as the result's name in HTML.
+  const originalName = item.kind === "url" ? `${docName}.html` : basename(kept?.name || item.name);
   const onDocumentLink = (event: MouseEvent) => {
     const link = (event.target as Element | null)?.closest?.("a[data-artifact]");
     const relpath = link?.getAttribute("data-artifact");
@@ -597,7 +609,7 @@ export function MarkdownView({
         {tabButton("rendered", t.rendered)}
         {tabButton("source", t.source)}
         {!compact && pair && tabButton("diff", t.diffTab)}
-        {!compact && tabButton("files", t.filesTab, result?.artifacts.length)}
+        {!compact && tabButton("files", t.filesTab, fileCount)}
       </div>
       {contentsToggle || versioned ? (
         <span class="viewer-side">
@@ -630,7 +642,7 @@ export function MarkdownView({
   const viewMenu = (
     <ViewMenu
       label={t.previewAria}
-      views={order.map((value) => ({ value, label: tabLabels[value], count: value === "files" ? result?.artifacts.length : undefined }))}
+      views={order.map((value) => ({ value, label: tabLabels[value], count: value === "files" ? fileCount : undefined }))}
       view={active}
       onView={onTab}
       versions={pair ? [{ value: "base", label: t.baseTag }, { value: "llm", label: t.llmTag }] : []}
@@ -744,31 +756,43 @@ export function MarkdownView({
         <div id={`${prefix}-pane-files`} role="tabpanel" aria-labelledby={`${prefix}-tab-files`} class="pane" tabIndex={0} hidden={active !== "files"}>
           {result === null ? (
             note(doc.error, "list")
-          ) : result.artifacts.length === 0 ? (
+          ) : result.artifacts.length === 0 && !kept ? (
             <p class="pane-note">{t.filesNone}</p>
           ) : (
-            <ul class="file-list" aria-label={t.filesAria}>
-              {result.artifacts.map((artifact) => (
-                <li key={artifact.relpath}>
-                  <Icon name={/\.(png|jpe?g|gif|webp|avif|svg)$/i.test(artifact.relpath) ? "Image" : "FileText"} size={14} />
-                  <span class="file-path" title={artifact.relpath}>
-                    {artifact.relpath}
-                  </span>
-                  <span class="file-size">{fmtBytes(artifact.size)}</span>
-                  <a
-                    class="icon-btn"
-                    href={filePath(item.jobId, artifact.relpath)}
-                    download={basename(artifact.relpath)}
-                    aria-label={t.downloadFile(artifact.relpath)}
-                    title={t.downloadFile(artifact.relpath)}
-                    onClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => onError?.(describe(error).text))}
-                    onAuxClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => onError?.(describe(error).text))}
-                  >
-                    <Icon name="DownloadSimple" size={15} />
-                  </a>
-                </li>
-              ))}
-            </ul>
+            <div class="files">
+              <ul class="file-list" aria-label={t.filesAria}>
+                {kept && <OriginalRow t={t} item={item} original={kept} name={originalName} onError={(error) => onError?.(describe(error).text)} />}
+                {result.artifacts.map((artifact) => (
+                  <li key={artifact.relpath}>
+                    <Icon name={/\.(png|jpe?g|gif|webp|avif|svg)$/i.test(artifact.relpath) ? "Image" : "FileText"} size={14} />
+                    <span class="file-path" title={artifact.relpath}>
+                      {artifact.relpath}
+                    </span>
+                    <span class="file-size">{fmtBytes(artifact.size)}</span>
+                    <a
+                      class="icon-btn"
+                      href={filePath(item.jobId, artifact.relpath)}
+                      download={basename(artifact.relpath)}
+                      aria-label={t.downloadFile(artifact.relpath)}
+                      title={t.downloadFile(artifact.relpath)}
+                      onClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => onError?.(describe(error).text))}
+                      onAuxClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => onError?.(describe(error).text))}
+                    >
+                      <Icon name="DownloadSimple" size={15} />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+              <div class="files-foot">
+                <span class="files-total">{t.filesTotal(fileCount ?? 0, fmtBytes(result.artifacts.reduce((sum, artifact) => sum + artifact.size, kept?.size ?? 0)))}</span>
+                {onDownloadAll && (
+                  <button type="button" class="btn" onClick={onDownloadAll}>
+                    <Icon name="DownloadSimple" size={14} />
+                    {t.downloadAllZip}
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -792,6 +816,31 @@ export function MarkdownView({
         />
       )}
     </div>
+  );
+}
+
+/** Files' first row: what was converted, as the server kept it. */
+function OriginalRow({ t, item, original, name, onError }: { t: Dict; item: SessionItem; original: { download: string | null; size: number | null }; name: string; onError: (error: unknown) => void }) {
+  const path = original.download ?? "";
+  return (
+    <li class="is-original">
+      <Icon name={item.kind === "url" ? "Globe" : "FileText"} size={14} />
+      <span class="file-path" title={item.kind === "url" ? item.name : name}>
+        {name}
+      </span>
+      <span class="file-tag">{item.kind === "url" ? t.filesOriginalPage : t.original}</span>
+      <span class="file-size">{original.size != null ? fmtBytes(original.size) : ""}</span>
+      <button
+        type="button"
+        class="icon-btn"
+        aria-label={t.downloadFile(name)}
+        title={t.downloadFile(name)}
+        // An upload can be large: the browser streams it through a ticket when the server issues them.
+        onClick={() => void download(path, name, ticketDownloads()).catch(onError)}
+      >
+        <Icon name="DownloadSimple" size={15} />
+      </button>
+    </li>
   );
 }
 

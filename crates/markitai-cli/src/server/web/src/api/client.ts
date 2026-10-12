@@ -7,6 +7,7 @@ import type {
   CreateJobResponse,
   Deployment,
   DiscoveryResult,
+  RegeneratedToken,
   HistoryEntry,
   ItemResult,
   JobOptions,
@@ -270,6 +271,13 @@ export function setItemAssets(supported: boolean): void {
 export const imagePath = (job: string, item: string, relpath: string): string =>
   itemAssets ? `/api/jobs/${enc(job)}/items/${enc(item)}/assets/${encodePath(relpath)}` : filePath(job, relpath);
 
+/** Whether the service issues download tickets, so large files stream instead of being read as a Blob. */
+let tickets = false;
+export function setTicketDownloads(supported: boolean): void {
+  tickets = supported;
+}
+export const ticketDownloads = (): boolean => tickets;
+
 /** A single-use URL, valid for one minute, for a download the browser opens
  * itself: the ticket stands in for the token, which never enters a URL. */
 export async function downloadTicket(path: string): Promise<string> {
@@ -323,6 +331,8 @@ export const fetchHistory = (items = false) => json<HistoryEntry[]>(items ? "/ap
 const itemPath = (job: string, item: string) => `/api/jobs/${enc(job)}/items/${enc(item)}`;
 export const fetchOriginal = (job: string, item: string) => json<OriginalDescriptor>(`${itemPath(job, item)}/original`);
 export const originalFilePath = (job: string, item: string) => `${itemPath(job, item)}/original/file`;
+/** v1.11: one item's files and its original, as a ZIP. */
+export const itemArchivePath = (job: string, item: string) => `${itemPath(job, item)}/archive`;
 export const originalPagePath = (job: string, item: string, page: number, width: number) =>
   `${itemPath(job, item)}/original/pages/${page}?width=${width}`;
 export const fetchPageText = (job: string, item: string, page: number, abort?: AbortSignal) =>
@@ -358,6 +368,7 @@ export const updateProvider = (id: string, body: Record<string, unknown>) =>
 export const deleteProvider = (id: string, revision: string) =>
   json<SettingsView>(`${settings}/providers/${enc(id)}?expected_revision=${enc(revision)}`, { method: "DELETE" });
 export const openConfig = () => json<null>(`${settings}/config/open`, { method: "POST" });
+export const regenerateToken = () => json<RegeneratedToken>("/api/access-token/regenerate", { method: "POST", body: {} });
 
 /** Only a revision conflict keeps a settings draft for review; other 409s are plain errors. */
 export const isRevisionConflict = (error: unknown): boolean =>

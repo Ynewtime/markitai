@@ -420,6 +420,28 @@ fn actual_service_reports_an_unset_key_variable_before_any_request() {
             "{body}"
         );
     }
+    // Model discovery finds the same before sending anything.
+    for (body, variable) in [
+        (
+            json!({"provider":"deepseek","deployment_id":ids[0]}),
+            "DEEPSEEK_API_KEY",
+        ),
+        (json!({"provider":"deepseek"}), "DEEPSEEK_API_KEY"),
+        (json!({"provider":"openai","deployment_id":ids[1]}), unset),
+    ] {
+        let (status, headers, result) =
+            server.request("POST", "/api/settings/llm/model-discovery", Some(&body));
+        assert_eq!(status, 200, "{result}");
+        assert_eq!(headers["cache-control"], "no-store");
+        assert_eq!(
+            result,
+            json!({"provider":body["provider"],"status":"unavailable","source":"live_api",
+                "authoritative":false,"cached":false,"stale":false,"models":[],"reason":"no_key",
+                "key_variable":variable,
+                "detail":format!("{variable} is not set on the server, so nothing was sent")}),
+            "{body}"
+        );
+    }
     assert!(backend.seen.lock().unwrap().is_empty());
     // A local server needs no key: it is tested, not refused.
     let (status, _, result) = server.request(

@@ -237,19 +237,46 @@ mod tests {
     }
 
     #[test]
-    fn the_test_result_lists_the_reasons_a_failed_test_reports() {
+    fn the_test_and_discovery_results_list_the_reasons_a_failure_reports() {
         let document = parsed();
-        let listed = document
-            .pointer("/components/schemas/ProbeResult/properties/reason/enum")
-            .and_then(Value::as_array)
+        for schema in ["ProbeResult", "DiscoveryResult"] {
+            let listed = document
+                .pointer(&format!(
+                    "/components/schemas/{schema}/properties/reason/enum"
+                ))
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                listed,
+                markitai_core::provider_management::probe_reasons().collect::<Vec<_>>(),
+                "{schema}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_features_schema_lists_every_feature_the_service_reports() {
+        let document = parsed();
+        let features = &document["components"]["schemas"]["Features"];
+        let properties: BTreeSet<&str> = features["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let required: BTreeSet<&str> = features["required"]
+            .as_array()
             .unwrap()
             .iter()
             .map(|value| value.as_str().unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            listed,
-            markitai_core::provider_management::probe_reasons().collect::<Vec<_>>()
-        );
+            .collect();
+        assert_eq!(properties, required);
+        for feature in ["item_archive", "token_regenerate"] {
+            assert!(properties.contains(feature), "{feature}");
+        }
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@
 // time) followed by its items at level 2; a one-item submission is a single
 // level-1 row. Each row is named by its own text. Arrows walk the rows and
 // Right/Left open and close a submission; a click, Enter or Space opens the
-// window. Docked beside the list, the window follows the arrows instead.
+// window.
 import { memo } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
@@ -85,7 +85,6 @@ export function ConversionList({
   onSelect,
   onToggle,
   onOpen,
-  followFocus = true,
 }: {
   t: Dict;
   locale: Locale;
@@ -96,15 +95,12 @@ export function ConversionList({
   onSelect: (key: string, from: "pointer" | "keyboard") => void;
   onToggle: (jobId: string, open?: boolean) => void;
   onOpen: (key: string) => void;
-  /** Selection follows the keyboard (a docked window beside the list). Off when
-   * selecting opens a window: the arrows then only move, Enter or Space opens. */
-  followFocus?: boolean;
 }) {
   const root = useRef<HTMLUListElement>(null);
   const order = navigationOrder(list, collapsed);
   const [cursor, setCursor] = useState<string | null>(null);
   const focusKey =
-    !followFocus && cursor !== null && order.includes(cursor)
+    cursor !== null && order.includes(cursor)
       ? cursor
       : selected !== null && order.includes(selected)
         ? selected
@@ -121,8 +117,7 @@ export function ConversionList({
 
   const move = (key: string | undefined) => {
     if (key === undefined) return;
-    if (followFocus) onSelect(key, "keyboard");
-    else setCursor(key);
+    setCursor(key);
     requestAnimationFrame(() => document.getElementById(rowId(key))?.focus({ preventScroll: false }));
   };
 
@@ -158,7 +153,6 @@ export function ConversionList({
         break;
       case "Enter":
         if (group !== null) onToggle(group);
-        else if (followFocus) onOpen(key);
         else onSelect(key, "keyboard");
         break;
       case " ":

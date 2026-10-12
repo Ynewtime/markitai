@@ -21,8 +21,7 @@ GitHub) with the version centred below it. Every view is an address (`/`, `/jobs
 it. Any other address opens the workbench (with status 404) on "Page not found",
 with the way to Convert and Conversions. On a wide window every page is one
 column centred between the sidebar and the window's edge (Convert 800 px, the
-Settings pages 760 px, Conversions 1280 px); Conversions with the window docked
-beside the list takes the whole width.
+Settings pages 760 px, Conversions 1280 px).
 
 Controls share one scale: buttons 28 px with 13 px labels (36 px on a phone),
 one filled button per area, secondary actions as outlined buttons and the rest
@@ -64,18 +63,19 @@ files wait on Convert); typing URLs is Convert's job.
   row at the outer edge. It is
   an ARIA tree with no controls inside rows: Up and Down move, Right and Left
   open and close a submission, Home and End jump, and a click, Enter or Space
-  opens the conversion's window (docked beside the list, the window follows the
-  arrows instead).
+  opens the conversion's window.
 - The **peek window** opens over the dimmed list: previous and next with the
   position (`8 of 14`), the name (all on one centre line with the buttons; a
   long name gives up its middle at about 34 characters and shows in full on
-  hover), the actions that matter (Download; Retry, Add a
-  model or Enable OCR and retry when that is the fix) and "⋯" (Enhance with LLM,
-  Run again, Retry without LLM, Delete), then Details, Preview and Compare as
-  tabs. ◫ docks it beside the list instead, and ⤢ opens it as a window again;
-  the choice is remembered in this browser. Up and Down (outside the scrolling
-  document) move between items, C switches Compare, Escape, ✕ or a click on the
-  dimmed list closes it and returns to the row.
+  hover), the actions that matter (Download, which opens Preview's Files; Retry,
+  Add a model or Enable OCR and retry when that is the fix) and "⋯" (Enhance
+  with LLM, Run again, Retry without LLM, Delete), then Details, Preview and
+  Compare as tabs. The expand button (or F) grows the window to the whole
+  viewport and back, remembered in this browser. Up and Down (outside the
+  scrolling document) move between items, C switches Compare, Escape, ✕ or a
+  click on the dimmed list closes it and returns to the row. (The docked
+  side-panel layout of earlier builds is gone; a browser that chose it opens the
+  window.)
 - **Details** shows the item: its state in a sentence
   ("Converted with LLM in 14.6 s · 12 images", or the failure in plain words), the
   facts (source and its size, output, what else was saved, models, cost,
@@ -86,8 +86,7 @@ files wait on Convert); typing URLs is Convert's job.
   submission's window shows its progress as one bar (done, failed, stopped,
   converting, waiting) with Retry failed, Download .zip, Stop remaining and Delete,
   the cost, its failures and the notices of all its items; Summary opens the same
-  overview for the whole list. Docked, a click on the page's empty space or
-  Escape in the list lets go of the selection.
+  overview for the whole list.
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N
   requests without a price", a model that ran without pricing "Unknown". An item
@@ -99,13 +98,20 @@ files wait on Convert); typing URLs is Convert's job.
   with a count. Each keeps its full original text behind Details.
 
 **Preview** is the window's second tab; its "⋯" adds Copy, Export PDF and its
-header-and-footer choice, and Open the page for a URL. The window has one fixed
+header-and-footer choice (what it means is behind the (i) at the end of that
+entry: hover or focus on a computer, tap on a phone), and Open the page for a
+URL. **Files** lists the original first (the upload, or the page as the server
+fetched it), then every file of the result, each with its own download, their
+count and size, and Download all (.zip) at the bottom right: one ZIP of the
+item's files and its original (servers without the item ZIP zip a one-item
+submission's job instead, without the original, and offer nothing for an item of
+a larger submission). The window has one fixed
 height, so the tabs never move it: Rendered, Source, Diff (only for an exact base/LLM pair) and
 Files, with the contents button and the Base | LLM switch beside them, sit at the
 end of the window's own tab row (Details, Preview, Compare), so the window has one
 tab row. Where they do not fit (a phone) they become one button naming the view
 and version on screen, whose menu holds the views and versions. Each keeps its reading
-column (820 px at most) centred in the window, docked or not. Rendered starts with
+column (820 px at most) centred in the window. Rendered starts with
 the conversion's notices (collapsed to one line) and a front-matter card (title,
 description, tags). Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
@@ -135,9 +141,15 @@ narrow window a round button over the document's corner opens them as a sheet.
 Export PDF waits for the whole document and every picture before it prints.
 
 **Compare** puts the original beside the Markdown: a PDF's pages (drawn by the
-server, loaded as they scroll into view), an uploaded image, the HTML the server
-kept for a web page (sanitized: no scripts, styles, frames, forms, links or
-remote images), a text file, or the page screenshots a conversion saved.
+server, loaded as they scroll into view), an uploaded image, an uploaded HTML
+file (sanitized: no scripts, styles, frames, forms, links or remote images), a
+text file, or the page screenshots a conversion saved. A web page shows as the
+server fetched it, in a sandboxed frame served by the item's own route: it runs
+no script, sends no form and loads nothing from the site (its inline styles
+stay, its pictures and stylesheets do not; links open in a new tab), with Page |
+Screenshot when a screenshot was taken too and Open the page in the header.
+Live frames of the real address are not used: most sites refuse them, and they
+would send the reader's requests to the site.
 Hovering a heading or a table on either side outlines it on both, in the one
 accent colour; PDF positions come from the page's text layer, HTML by matching
 elements. An original that cannot be shown (a DOCX, a page the server did not
@@ -210,9 +222,22 @@ connection offers no Add key; a key a config entry still holds can be removed).
 A saved subscription offers no key or address. Bedrock keeps its optional key
 and address. A backend that sends
 no provider `group` gets the common eight by name and everything else under All. Appearance (its page is titled Appearance and language) chooses English, 中文 or 日本語 and the
-theme (Auto, Light, Dark); Access token says whether this tab holds a token
-(with Forget beside it) and takes a new one in one field with Save; it is kept in
-this tab only.
+theme (Auto, Light, Dark); Access token says whether this tab is signed in
+(with Sign out of this tab beside it, which forgets the token here only),
+Regenerate token (below), and Use another token, one field with Save; a token is
+kept in this tab only.
+
+In **Add models** a provider appears once among the saved rows: the server's
+key for it (`Using OPENAI_API_KEY`) and its connection at its own endpoint are
+one row, which says how it authenticates (`Using DEEPSEEK_API_KEY`, `Key saved`,
+`No key`) and its model count; a connection at another address is its own row.
+Common and All mark a saved provider as Added, and choosing it opens that row.
+A provider's key field says where else the key can come from (`Or set
+MOONSHOT_API_KEY where markitai serve runs …`). A hand-written model that the
+server serves with its key variable shows `From DEEPSEEK_API_KEY` in Edit, and
+a model list that cannot be loaded says why in the model test's categories (no
+key, key rejected, rate limited, unreachable, no answer in time, provider
+error), with the provider's message folded.
 
 ## Job controls
 
@@ -325,22 +350,33 @@ URL the page requests or shows carries it:
   (`img-src 'self' blob:`) and which are released when the view changes; Export
   PDF waits for them. An image that cannot be fetched becomes the labelled
   placeholder.
-- Download links (the window's Download, Files, file links inside the
-  rendered document) point at the plain `/api/` path. With a token, a click or a
+- Download links (Files, file links inside the rendered document) point at the
+  plain `/api/` path. With a token, a click or a
   middle-click fetches the file with the header and saves it as a Blob, so a
   refusal is reported. Plain download links work without a token only when the
   server was explicitly started with `--no-auth`.
-- Download all and a submission's .zip, which can be larger than memory, are
-  left to the browser:
+- Download all, a submission's or an item's .zip and an item's original, which
+  can be larger than memory, are left to the browser:
   with a token the page first asks `POST /api/download-tickets` for a
   single-use ticket and opens the returned `?ticket=` URL, valid for one GET of
   that archive within a minute (see [serve](serve.md#network-and-file-boundaries)),
   so what stays in the download list is a spent ticket.
+- Compare's framed web page is opened the same way: a frame cannot send the
+  header, so it loads `…/original/view` with a single-use ticket (the page's
+  policy allows `frame-src 'self'` for it).
 
 A 401 shows the Access token needed panel in place of the conversions (and a
 refused submission a strip), both with Enter token; it opens a small dialog that
 stores a typed token for the tab. Settings → Access token shows
-whether the tab holds a token, and replaces or forgets it.
+whether the tab is signed in, signs this tab out, or takes another token.
+**Regenerate token** (on servers that offer it) asks first, then replaces the
+server's token: every other tab and device is signed out at once (open event
+streams end, unused download tickets stop working) and must sign in again,
+while this tab keeps going with the new token. The new token is shown once,
+with a link and its QR code to sign in on another device (the server's network
+address when it listens on the network). Rust keeps the new token until the
+server stops; at the next start it uses `MARKITAI_SERVE_TOKEN` again when that is
+set, or makes a new one.
 After a server restart that generates a new token, reopen its new launch link
 or use Enter token. `--no-auth` explicitly disables API token enforcement; only
 direct loopback clients without forwarding headers receive the additional trust
@@ -361,7 +397,8 @@ downloads only their language. `boot.js` also applies the stored theme, the
 sidebar's collapsed state and the language before first paint (the Content
 Security Policy allows no inline script). Values kept in this browser's
 `localStorage`: `markitai.lang`, `markitai.theme`, `markitai.sidebar`,
-`markitai.peek` (`docked` or `window`: how a conversion opens),
+`markitai.peek` (`full` or `window`: whether a conversion opens at full screen;
+an older `docked` reads as `window`),
 `markitai.options` (preset, LLM, OCR, output profile and the image overrides;
 fetch strategy, backend, cache and source choices are never remembered, so a
 revisit cannot silently re-enable a remote service),

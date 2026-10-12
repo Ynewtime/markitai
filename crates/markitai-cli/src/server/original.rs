@@ -6,7 +6,7 @@ use super::{
     State, files,
     jobs::{self, Job},
     store,
-    types::{ApiError, ApiResult},
+    types::{ApiError, ApiResult, Item},
 };
 use axum::{
     Json,
@@ -197,6 +197,8 @@ struct Original {
     job_id: String,
     item_id: String,
     name: String,
+    /// A URL item's address; `None` for an upload.
+    url: Option<String>,
     stored: Option<Stored>,
     screenshots: Vec<(PathBuf, String)>,
     kind: Kind,
@@ -229,6 +231,29 @@ fn item_missing() -> ApiError {
     ApiError::new(404, "item_not_found", "item not found")
 }
 
+/// The stored original of `item`: its kept upload, or a URL item's page
+/// snapshot. The caller holds the job's access lock.
+fn stored_original(job: &Job, data: &jobs::JobData, item: &Item) -> Option<Stored> {
+    if item.kind == "file" {
+        store::safe_file(&job.folder.join("uploads"), &item.name)
+            .ok()
+            .and_then(|path| stored(path, &item.name, item.name.clone()))
+    } else {
+        let base = files::item_base(data, item).unwrap_or_else(|_| "page".into());
+        snapshot_name(&item.item_id)
+            .and_then(|name| store::safe_file(&job.folder.join("snapshots"), &name).ok())
+            .and_then(|path| stored(path, "page.html", format!("{base}.html")))
+    }
+}
+
+/// The kept original of an item, as `…/original/file` sends it: its path
+/// and file name. The caller holds the job's access lock.
+pub(super) fn kept(job: &Job, item_id: &str) -> Option<(PathBuf, String)> {
+    let data = job.data.lock().unwrap().clone();
+    let item = data.items.iter().find(|item| item.item_id == item_id)?;
+    stored_original(job, &data, item).map(|stored| (stored.path, stored.filename))
+}
+
 /// Find an item's original. Holds the job's access lock, as every reader of
 /// its files does, so a retry's publication is never seen half done.
 fn resolve(job: &Job, item_id: &str) -> ApiResult<Original> {
@@ -243,16 +268,7 @@ fn resolve(job: &Job, item_id: &str) -> ApiResult<Original> {
             .clone();
         (data.clone(), item)
     };
-    let stored = if item.kind == "file" {
-        store::safe_file(&job.folder.join("uploads"), &item.name)
-            .ok()
-            .and_then(|path| stored(path, &item.name, item.name.clone()))
-    } else {
-        let base = files::item_base(&data, &item).unwrap_or_else(|_| "page".into());
-        snapshot_name(item_id)
-            .and_then(|name| store::safe_file(&job.folder.join("snapshots"), &name).ok())
-            .and_then(|path| stored(path, "page.html", format!("{base}.html")))
-    };
+    let stored = stored_original(job, &data, &item);
     let out = job.folder.join("out");
     let screenshot = |name: &String| name.starts_with(".markitai/screenshots/");
     let names: Vec<String> = match data.assets.get(item_id) {
@@ -285,6 +301,7 @@ fn resolve(job: &Job, item_id: &str) -> ApiResult<Original> {
     Ok(Original {
         job_id: data.id,
         item_id: item_id.to_owned(),
+        url: (item.kind == "url").then(|| item.name.clone()),
         name: item.name,
         stored,
         screenshots,
@@ -359,11 +376,23 @@ fn guard(response: &mut Response, filename: &str) {
 }
 
 fn download_path(original: &Original) -> String {
+    original_path(original, "file")
+}
+fn original_path(original: &Original, route: &str) -> String {
     format!(
-        "/api/jobs/{}/items/{}/original/file",
+        "/api/jobs/{}/items/{}/original/{route}",
         files::encoded(&original.job_id),
         files::encoded(&original.item_id)
     )
+}
+
+impl Original {
+    /// Whether the page screenshots stand in for pages: kind `screenshots`,
+    /// or a URL item's kept page that also has screenshots to fall back to.
+    fn screenshot_pages(&self) -> bool {
+        self.kind == Kind::Screenshots
+            || self.kind == Kind::Html && self.url.is_some() && !self.screenshots.is_empty()
+    }
 }
 
 fn page(size: PageSize) -> Value {
@@ -422,7 +451,7 @@ fn describe(original: Original) -> Value {
                 None => (kind, reason) = (Kind::None, Some("render_unavailable")),
             }
         }
-        (Kind::Screenshots, _) => {
+        _ if original.screenshot_pages() => {
             count = original.screenshots.len();
             pages = original
                 .screenshots
@@ -440,6 +469,7 @@ fn describe(original: Original) -> Value {
         "media_type": stored.map(|stored| stored.media),
         "size": stored.map(|stored| stored.size),
         "download": stored.map(|_| download_path(&original)),
+        "view": (kind == Kind::Html).then(|| original_path(&original, "view")),
         "pages": pages,
         "page_count": count,
         "text_layer": kind == Kind::Pdf,
@@ -492,6 +522,138 @@ pub(super) async fn file(
         &stored.filename,
     )?;
     guard(&mut response, &stored.filename);
+    Ok(response)
+}
+
+/// The largest HTML original `view` frames.
+const MAX_VIEW: u64 = 10 * 1024 * 1024;
+/// The policy of a framed HTML original: no script, no request leaves the
+/// page (styles inline, images and fonts only as data), links open outside
+/// the frame, and only the workbench may frame it.
+const VIEW_POLICY: &str = "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; frame-ancestors 'self'";
+
+/// HTML-attribute escaping of `&`, `<`, `>`, `"` and `'`.
+fn attribute(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
+/// Where the first `<name…>` start tag ends (just after its `>`): `<name`
+/// matched ASCII case-insensitively and followed by whitespace, `>` or `/`.
+fn after_start_tag(html: &str, name: &str) -> Option<usize> {
+    let bytes = html.as_bytes();
+    let open = format!("<{name}");
+    let mut from = 0;
+    while let Some(found) = find_caseless(&bytes[from..], open.as_bytes()) {
+        let start = from + found;
+        let next = start + open.len();
+        match bytes.get(next) {
+            Some(byte) if byte.is_ascii_whitespace() || matches!(byte, b'>' | b'/') => {
+                return bytes[next..]
+                    .iter()
+                    .position(|byte| *byte == b'>')
+                    .map(|end| next + end + 1);
+            }
+            Some(_) => from = next,
+            None => return None,
+        }
+    }
+    None
+}
+fn find_caseless(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// The kept page with one insertion: no DNS prefetching, and a base that
+/// resolves relative links against the page's address (for a URL item) and
+/// opens them outside the frame. It goes after the first `<head>` tag, else
+/// after the first `<html>` tag, else at the start after a leading doctype.
+fn framed(html: &str, url: Option<&str>) -> String {
+    let base = match url {
+        Some(url) => format!("<base href=\"{}\" target=\"_blank\">", attribute(url)),
+        None => "<base target=\"_blank\">".to_owned(),
+    };
+    let insertion = format!("<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">{base}");
+    let at = after_start_tag(html, "head")
+        .or_else(|| after_start_tag(html, "html"))
+        .unwrap_or_else(|| {
+            let lead = html.len()
+                - html
+                    .trim_start_matches(['\u{feff}', ' ', '\t', '\n', '\r', '\x0c'])
+                    .len();
+            let rest = &html.as_bytes()[lead..];
+            if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case(b"<!doctype") {
+                rest.iter()
+                    .position(|byte| *byte == b'>')
+                    .map_or(lead, |end| lead + end + 1)
+            } else {
+                html.len() - html.trim_start_matches('\u{feff}').len()
+            }
+        });
+    let mut framed = String::with_capacity(html.len() + insertion.len());
+    framed.push_str(&html[..at]);
+    framed.push_str(&insertion);
+    framed.push_str(&html[at..]);
+    framed
+}
+
+/// `GET /api/jobs/{job_id}/items/{item_id}/original/view`: a kept HTML
+/// original for a sandboxed frame of the workbench.
+pub(super) async fn view(
+    ExtractState(state): ExtractState<Arc<State>>,
+    Path((id, item_id)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let original = original(&state, &id, item_id).await?;
+    let stored = match (original.kind, original.stored) {
+        (Kind::Html, Some(stored)) => stored,
+        _ => return Err(unavailable()),
+    };
+    if stored.size > MAX_VIEW {
+        return Err(ApiError::new(
+            413,
+            "result_too_large",
+            "the page is too large to show; download the original instead",
+        ));
+    }
+    let url = original.url;
+    let page = crate::task::blocking(move || -> ApiResult<String> {
+        let bytes = read(&stored.path, MAX_VIEW + 1).map_err(|_| unavailable())?;
+        if bytes.len() as u64 > MAX_VIEW {
+            return Err(ApiError::new(
+                413,
+                "result_too_large",
+                "the page is too large to show; download the original instead",
+            ));
+        }
+        Ok(framed(&String::from_utf8_lossy(&bytes), url.as_deref()))
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    let mut response = page.into_response();
+    let headers = response.headers_mut();
+    for (name, value) in [
+        ("content-type", "text/html; charset=utf-8"),
+        ("content-security-policy", VIEW_POLICY),
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+        ("x-dns-prefetch-control", "off"),
+        ("cache-control", "no-store"),
+        ("content-disposition", "inline"),
+    ] {
+        headers.insert(name, HeaderValue::from_static(value));
+    }
     Ok(response)
 }
 
@@ -590,7 +752,7 @@ pub(super) async fn page_image(
             let version = stored.version.clone();
             (Plan::Image(stored), version)
         }
-        (Kind::Screenshots, _) => {
+        _ if original.screenshot_pages() => {
             let (path, name) = original
                 .screenshots
                 .get(number - 1)
@@ -736,6 +898,56 @@ mod tests {
         }
         let (format, media) = format("notes.md");
         assert_eq!(sent_type(format, media), "text/markdown; charset=utf-8");
+    }
+
+    #[test]
+    fn a_framed_page_gets_one_insertion_after_its_head_or_html_or_doctype() {
+        const META: &str = "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">";
+        let upload = format!("{META}<base target=\"_blank\">");
+        for (page, expected) in [
+            (
+                "<!doctype html><html lang=en><head><title>T</title></head><body>x</body></html>",
+                format!(
+                    "<!doctype html><html lang=en><head>{upload}<title>T</title></head><body>x</body></html>"
+                ),
+            ),
+            (
+                "<HTML><HEAD\n data-x=1><TITLE>T</TITLE></HEAD></HTML>",
+                format!("<HTML><HEAD\n data-x=1>{upload}<TITLE>T</TITLE></HEAD></HTML>"),
+            ),
+            ("<head/><p>x", format!("<head/>{upload}<p>x")),
+            (
+                "<html><header>h</header><p>x</p></html>",
+                format!("<html>{upload}<header>h</header><p>x</p></html>"),
+            ),
+            (
+                "<header>h</header><heading><head>",
+                format!("<header>h</header><heading><head>{upload}"),
+            ),
+            (
+                "<htmlx><HTML\tdir=ltr><p>x",
+                format!("<htmlx><HTML\tdir=ltr>{upload}<p>x"),
+            ),
+            (
+                "  <!DOCTYPE html>\n<p>x</p>",
+                format!("  <!DOCTYPE html>{upload}\n<p>x</p>"),
+            ),
+            ("<p>x</p>", format!("{upload}<p>x</p>")),
+            ("\u{feff}<p>x</p>", format!("\u{feff}{upload}<p>x</p>")),
+            ("", upload.clone()),
+            ("<head", upload.clone() + "<head"),
+        ] {
+            assert_eq!(framed(page, None), expected, "{page}");
+        }
+        assert_eq!(
+            framed(
+                "<head><title>T</title>",
+                Some("https://example.test/a?b=1&c=\"<'>")
+            ),
+            format!(
+                "<head>{META}<base href=\"https://example.test/a?b=1&amp;c=&quot;&lt;&#39;&gt;\" target=\"_blank\"><title>T</title>"
+            )
+        );
     }
 
     #[test]

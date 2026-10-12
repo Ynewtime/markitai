@@ -3,7 +3,7 @@
 // keeps the selected item and the open preview in its address, so reloads and
 // Back return to them. Notices sit in the page, never over its buttons.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, fetchCapabilities, filePath, NetworkError, setItemAssets } from "./api/client.ts";
+import { ApiError, fetchCapabilities, filePath, itemArchivePath, NetworkError, setItemAssets, setTicketDownloads } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
 import type { Capabilities, JobOptions } from "./api/types.ts";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
@@ -12,7 +12,6 @@ import { ConvertPage } from "./components/convert-page.tsx";
 import { DropOverlay } from "./components/drop-overlay.tsx";
 import { MAX_NOTES, NoticeStack, type Note } from "./components/notes.tsx";
 import { OptionsPanel } from "./components/options-panel.tsx";
-import { readDocked, storeDocked } from "./components/peek.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
 import { ModelsSettings } from "./components/settings-models.tsx";
 import { Shell, useSidebar } from "./components/shell.tsx";
@@ -88,6 +87,7 @@ export function App() {
     fetchCapabilities().then(
       (value) => {
         setItemAssets(value.features?.item_assets === true);
+        setTicketDownloads(value.features?.download_tickets === true);
         setCaps(value);
         setUnauthorized(false);
       },
@@ -193,8 +193,6 @@ export function App() {
   }, [route, phone]);
 
   const [collapsedSidebar, toggleSidebar] = useSidebar();
-  // A conversion opens as a window over the list, or docked beside it (remembered per browser).
-  const [docked, setDocked] = useState(readDocked);
   const routeRef = useRef(route);
   routeRef.current = route;
   const [filter, setFilter] = useState<Filter>("all");
@@ -629,7 +627,6 @@ export function App() {
         gone={gonePanel}
         selected={selected}
         mode={listState.mode}
-        docked={docked}
         filter={filter}
         query={query}
         collapsed={collapsedGroups}
@@ -650,12 +647,6 @@ export function App() {
         }}
         onSelect={(key) => updateList({ selected: key, mode: key === null ? "inspector" : listState.mode })}
         onMode={(mode) => updateList({ selected, mode })}
-        onDock={() =>
-          setDocked((value) => {
-            storeDocked(!value);
-            return !value;
-          })
-        }
         onNewConversion={() => navigate({ view: "convert" })}
         onCopied={() => note({ tone: "success", text: dicts[localeRef.current].copied })}
         onFilter={setFilter}
@@ -674,7 +665,14 @@ export function App() {
           if (first) updateList({ selected: first, mode: "inspector" });
           if (keys.length > 1) setFilter(keys.every((key) => conversions.items.find((item) => item.key === key && isFailed(item))) ? "failed" : "notices");
         }}
-        onDownload={itemActions.download}
+        downloadAll={(item) => {
+          const name = `${basename(item.output ?? item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "") || "markitai"}.zip`;
+          if (features?.item_archive === true) return () => downloadArchive(itemArchivePath(item.jobId, item.itemId), name, item.key);
+          // Without the item route, a submission of this one item zips the same files (not the original).
+          if (conversions.items.filter((other) => other.jobId === item.jobId).length === 1)
+            return () => downloadArchive(`/api/jobs/${encodeURIComponent(item.jobId)}/archive`, name, item.key);
+          return null;
+        }}
         announce={announce}
         describe={describe}
       />
@@ -712,6 +710,8 @@ export function App() {
           <AccessSettings
             t={t}
             unauthorized={unauthorized}
+            canRegenerate={features?.token_regenerate === true}
+            describe={describe}
             onToken={() => {
               setUnauthorized(false);
               conversions.clearSubmitError();
@@ -784,7 +784,7 @@ export function App() {
       <NoticeStack label={t.notificationsLabel} notes={stack} onDismiss={dismiss} />
       <DropOverlay
         label={t.dropToConvert}
-        suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || (route.view === "jobs" && listState.selected !== null && (phone || !docked))}
+        suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || (route.view === "jobs" && listState.selected !== null)}
         limit={maxItems}
         onFiles={(files) => submitFiles(files)}
         onFolder={submitWalked}

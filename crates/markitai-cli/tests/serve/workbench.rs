@@ -451,7 +451,8 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
     assert_eq!(
         capabilities["features"],
         json!({"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
-            "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true})
+            "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
+            "item_archive":true,"token_regenerate":false})
     );
     let id = server.submit(&[("report.pdf", PDF)], json!([]), json!({}))["job_id"]
         .as_str()
@@ -466,7 +467,7 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
     assert_eq!(
         descriptor,
         json!({"kind":"pdf","name":"report.pdf","media_type":"application/pdf","size":PDF.len(),
-            "download":format!("{base}/file"),"page_count":3,"text_layer":true,"reason":null,
+            "download":format!("{base}/file"),"view":null,"page_count":3,"text_layer":true,"reason":null,
             "pages":[{"width":612.0,"height":792.0},{"width":612.0,"height":792.0},{"width":612.0,"height":792.0}]})
     );
     let file = server.request("GET", &format!("{base}/file"), &[], &[]);
@@ -753,7 +754,7 @@ fn a_url_item_keeps_its_page_and_a_cli_record_keeps_nothing() {
     assert_eq!(
         none,
         json!({"kind":"none","name":"report.pdf","media_type":null,"size":null,"download":null,
-            "pages":[],"page_count":0,"text_layer":false,"reason":"not_kept"})
+            "view":null,"pages":[],"page_count":0,"text_layer":false,"reason":"not_kept"})
     );
     for rest in ["file", "pages/1", "pages/1/text"] {
         let reply = server.request(
@@ -815,6 +816,301 @@ fn saved_page_screenshots_stand_in_for_an_original_that_was_not_kept() {
             .request("GET", &format!("{base}/file"), &[], &[])
             .json()["reason"],
         "original_unavailable"
+    );
+    server.stop();
+}
+
+#[test]
+fn an_item_archive_holds_its_result_files_and_its_kept_original() {
+    let origin = Origin::start();
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let capabilities = server.json("/api/capabilities");
+    assert_eq!(capabilities["features"]["item_archive"], true);
+    assert_eq!(capabilities["features"]["token_regenerate"], false);
+    let notes = b"# Notes\n\nKept text.\n";
+    let id = server.submit(
+        &[("notes.md", notes), ("data.xyz", b"opaque")],
+        json!([origin.url("/first")]),
+        json!({"strategy":"static"}),
+    )["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let snapshot = server.done(&id);
+    assert_eq!(snapshot["items"][0]["status"], "done", "{snapshot}");
+    assert_eq!(snapshot["items"][1]["status"], "error", "{snapshot}");
+    for (item, original) in [("i1", "original/notes.md"), ("i3", "")] {
+        let result = server.json(&format!("/api/jobs/{id}/items/{item}/result"));
+        let reply = server.request(
+            "GET",
+            &format!("/api/jobs/{id}/items/{item}/archive"),
+            &[],
+            &[],
+        );
+        assert_eq!(reply.status, 200, "{}", reply.text());
+        assert_eq!(reply.headers["content-type"], "application/zip");
+        assert_eq!(reply.headers["x-content-type-options"], "nosniff");
+        let output = snapshot["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["item_id"] == item)
+            .unwrap()["output"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let base = output.strip_suffix(".md").unwrap();
+        assert_eq!(
+            reply.headers["content-disposition"],
+            format!("attachment; filename*=UTF-8''{}.zip", encode_path(base))
+        );
+        let files = zip_contents(&reply.body);
+        let file = server.request(
+            "GET",
+            &format!("/api/jobs/{id}/items/{item}/original/file"),
+            &[],
+            &[],
+        );
+        let sent = url::form_urlencoded::parse(
+            format!(
+                "name={}",
+                file.headers["content-disposition"]
+                    .strip_prefix("attachment; filename*=UTF-8''")
+                    .unwrap()
+            )
+            .as_bytes(),
+        )
+        .next()
+        .unwrap()
+        .1
+        .into_owned();
+        let original = if original.is_empty() {
+            format!("original/{sent}")
+        } else {
+            assert_eq!(format!("original/{sent}"), original);
+            original.to_owned()
+        };
+        let mut expected: std::collections::BTreeSet<String> = result["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|artifact| artifact["relpath"].as_str().unwrap().to_owned())
+            .collect();
+        expected.insert(original.clone());
+        assert_eq!(
+            files
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected,
+            "{item}"
+        );
+        assert_eq!(files[&original], file.body, "{item}");
+        for artifact in result["artifacts"].as_array().unwrap() {
+            let relpath = artifact["relpath"].as_str().unwrap();
+            assert_eq!(
+                files[relpath],
+                std::fs::read(server.jobdir(&id).join("out").join(relpath)).unwrap()
+            );
+        }
+    }
+    let reason = |path: &str| {
+        let reply = server.request("GET", path, &[], &[]);
+        (reply.status, reply.json()["reason"].clone())
+    };
+    assert_eq!(
+        reason(&format!("/api/jobs/{id}/items/i2/archive")),
+        (404, json!("result_unavailable"))
+    );
+    assert_eq!(
+        reason(&format!("/api/jobs/{id}/items/i9/archive")),
+        (404, json!("item_not_found"))
+    );
+    assert_eq!(
+        reason("/api/jobs/000000000000/items/i1/archive"),
+        (404, json!("job_not_found"))
+    );
+    // A running item is busy.
+    let held = server.submit(
+        &[],
+        json!([origin.url("/hold")]),
+        json!({"strategy":"static"}),
+    )["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    until("held URL reaches origin", || {
+        origin.entered.load(Ordering::SeqCst) >= 2
+    });
+    assert_eq!(
+        reason(&format!("/api/jobs/{held}/items/i1/archive")),
+        (409, json!("item_busy"))
+    );
+    origin.release();
+    server.done(&held);
+    assert_eq!(
+        server
+            .request(
+                "GET",
+                &format!("/api/jobs/{held}/items/i1/archive"),
+                &[],
+                &[]
+            )
+            .status,
+        200
+    );
+    server.stop();
+}
+
+#[test]
+fn a_kept_html_page_is_framed_with_its_base_and_a_closed_policy() {
+    let origin = Origin::start();
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let page = b"<!DOCTYPE html><html><HEAD><title>Kept</title></HEAD><body><h1>Kept</h1><header>h</header></body></html>";
+    let id = server.submit(
+        &[("page.html", page), ("notes.md", b"# Notes\n")],
+        json!([origin.url("/first?a=1&b=\"2\"")]),
+        json!({"strategy":"static"}),
+    )["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    server.done(&id);
+    let describe = |item: &str| server.json(&format!("/api/jobs/{id}/items/{item}/original"));
+    let path = |item: &str| format!("/api/jobs/{id}/items/{item}/original/view");
+    const META: &str = "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">";
+    let upload = describe("i1");
+    assert_eq!(upload["view"], path("i1"));
+    assert_eq!(
+        (upload["pages"].clone(), upload["page_count"].clone()),
+        (json!([]), json!(0))
+    );
+    let view = server.request("GET", &path("i1"), &[], &[]);
+    assert_eq!(view.status, 200, "{}", view.text());
+    for (name, value) in [
+        ("content-type", "text/html; charset=utf-8"),
+        (
+            "content-security-policy",
+            "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; frame-ancestors 'self'",
+        ),
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+        ("x-dns-prefetch-control", "off"),
+        ("cache-control", "no-store"),
+        ("content-disposition", "inline"),
+    ] {
+        assert_eq!(view.headers[name], value, "{name}");
+    }
+    assert!(!view.headers.contains_key("x-frame-options"));
+    assert_eq!(
+        view.text(),
+        format!(
+            "<!DOCTYPE html><html><HEAD>{META}<base target=\"_blank\"><title>Kept</title></HEAD><body><h1>Kept</h1><header>h</header></body></html>"
+        )
+    );
+    // A URL item's page resolves its links against its own address.
+    let url = describe("i3");
+    assert_eq!(url["kind"], "html");
+    assert_eq!(url["view"], path("i3"));
+    let framed = server.request("GET", &path("i3"), &[], &[]).text();
+    let address = url["name"]
+        .as_str()
+        .unwrap()
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\'', "&#39;");
+    assert!(address.contains("/first?a=1&amp;b="), "{address}");
+    let snapshot = std::fs::read_to_string(server.jobdir(&id).join("snapshots/i3.html")).unwrap();
+    let inserted = format!("{META}<base href=\"{address}\" target=\"_blank\">");
+    assert_eq!(framed.matches(&inserted).count(), 1, "{framed}");
+    assert_eq!(framed.replacen(&inserted, "", 1), snapshot);
+    // Anything but HTML has no view.
+    assert_eq!(describe("i2")["view"], Value::Null);
+    let reply = server.request("GET", &path("i2"), &[], &[]);
+    assert_eq!(
+        (reply.status, reply.json()["reason"].clone()),
+        (404, json!("original_unavailable"))
+    );
+    server.stop();
+}
+
+#[test]
+fn a_url_page_with_screenshots_offers_both_and_a_large_page_is_not_framed() {
+    let temp = tempfile::tempdir().unwrap();
+    configure(temp.path());
+    let id = "00000000abce";
+    let folder = temp.path().join("home/serve/jobs").join(id);
+    std::fs::create_dir_all(folder.join("out/.markitai/screenshots")).unwrap();
+    std::fs::create_dir_all(folder.join("snapshots")).unwrap();
+    std::fs::write(folder.join("out/a.md"), "# A\n").unwrap();
+    std::fs::write(folder.join("out/b.md"), "# B\n").unwrap();
+    for name in ["a.full.png", "a.full--2.png"] {
+        std::fs::write(folder.join("out/.markitai/screenshots").join(name), PNG).unwrap();
+    }
+    std::fs::write(folder.join("snapshots/i1.html"), "<p>A</p>").unwrap();
+    let mut large = b"<html><head></head><body>".to_vec();
+    large.resize(10 * 1024 * 1024 + 1, b'x');
+    std::fs::write(folder.join("snapshots/i2.html"), &large).unwrap();
+    let item = |id: &str, base: &str| {
+        json!({"item_id":id,"name":format!("https://example.test/{base}"),"kind":"url","status":"done",
+            "output":format!("{base}.md"),"output_name":format!("{base}.md")})
+    };
+    let meta = json!({"job_id":id,"created_at":hours_ago(1),"finished_at":hours_ago(1),"status":"done",
+        "version":2,"options":{},"items":[item("i1","a"),item("i2","b")],"native_bases":{"i1":"a","i2":"b"},
+        "native_assets":{"i1":[".markitai/screenshots/a.full.png",".markitai/screenshots/a.full--2.png"],"i2":[]}});
+    std::fs::write(folder.join("meta.json"), meta.to_string()).unwrap();
+    let server = Server::start(temp.path());
+    let base = format!("/api/jobs/{id}/items/i1/original");
+    let original = server.json(&base);
+    assert_eq!(
+        (
+            original["kind"].clone(),
+            original["page_count"].clone(),
+            original["view"].clone()
+        ),
+        (json!("html"), json!(2), json!(format!("{base}/view")))
+    );
+    assert_eq!(original["pages"][1], json!({"width":819.0,"height":301.0}));
+    assert!(
+        original["download"]
+            .as_str()
+            .unwrap()
+            .ends_with("/original/file")
+    );
+    let stored = server.request("GET", &format!("{base}/pages/2?width=1000"), &[], &[]);
+    assert_eq!((stored.status, stored.body.as_slice()), (200, PNG));
+    assert_eq!(
+        server
+            .request("GET", &format!("{base}/pages/3"), &[], &[])
+            .status,
+        404
+    );
+    let framed = server
+        .request("GET", &format!("{base}/view"), &[], &[])
+        .text();
+    assert_eq!(
+        framed,
+        "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\"><base href=\"https://example.test/a\" target=\"_blank\"><p>A</p>"
+    );
+    // Without screenshots, a page has no pages; past 10 MiB it is not framed.
+    let large = server.json(&format!("/api/jobs/{id}/items/i2/original"));
+    assert_eq!(
+        (large["kind"].clone(), large["page_count"].clone()),
+        (json!("html"), json!(0))
+    );
+    let reply = server.request(
+        "GET",
+        &format!("/api/jobs/{id}/items/i2/original/view"),
+        &[],
+        &[],
+    );
+    assert_eq!(
+        (reply.status, reply.json()["reason"].clone()),
+        (413, json!("result_too_large"))
     );
     server.stop();
 }

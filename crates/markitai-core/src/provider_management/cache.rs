@@ -1,5 +1,5 @@
 use super::discovery;
-use crate::{Error, Result};
+use crate::{Error, Result, llm::ProbeReason as Reason};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
@@ -60,7 +60,7 @@ impl Cache {
         base: &str,
         key: Option<&str>,
         refresh: bool,
-        loader: impl FnOnce() -> Result<Value>,
+        loader: impl FnOnce() -> std::result::Result<Value, Value>,
     ) -> Result<Value> {
         let id = identity(provider, base, key);
         let slot = {
@@ -80,9 +80,11 @@ impl Cache {
                 if let Some(key) = removable {
                     entries.remove(&key);
                 } else {
-                    return Ok(discovery::unavailable(
+                    return Ok(discovery::failed(
                         provider,
+                        Reason::ProviderError,
                         "Too many model discovery requests are active",
+                        None,
                     ));
                 }
             }
@@ -101,14 +103,32 @@ impl Cache {
                 .wait_timeout_while(state, WAIT, |state| state.running)
                 .map_err(poisoned)?;
             if wait.timed_out() && state.running {
-                return Ok(discovery::unavailable(
+                return Ok(discovery::failed(
                     provider,
+                    Reason::Timeout,
                     "Model discovery wait timed out",
+                    None,
                 ));
             }
-            return Ok(state.last.clone().map(cached).unwrap_or_else(|| {
-                discovery::unavailable(provider, "Model discovery did not complete")
-            }));
+            // A failure is passed on as it is, never as a cached result.
+            return Ok(state
+                .last
+                .clone()
+                .map(|value| {
+                    if value["status"] == "unavailable" {
+                        value
+                    } else {
+                        cached(value)
+                    }
+                })
+                .unwrap_or_else(|| {
+                    discovery::failed(
+                        provider,
+                        Reason::ProviderError,
+                        "Model discovery did not complete",
+                        None,
+                    )
+                }));
         }
         state.running = true;
         drop(state);
@@ -125,7 +145,7 @@ impl Cache {
                 });
                 value
             }
-            Ok(Err(_)) | Err(_) => {
+            failure => {
                 if let Some(good) = &state.good
                     && good.fetched.elapsed() < STALE
                 {
@@ -135,10 +155,15 @@ impl Cache {
                     value["detail"] = "Refresh failed; showing previously discovered models".into();
                     value
                 } else {
-                    discovery::unavailable(
-                        provider,
-                        "Model discovery failed; check endpoint, credentials and provider availability",
-                    )
+                    match failure {
+                        Ok(Err(failed)) => failed,
+                        _ => discovery::failed(
+                            provider,
+                            Reason::ProviderError,
+                            "Model discovery failed; check endpoint, credentials and provider availability",
+                            None,
+                        ),
+                    }
                 }
             }
         };

@@ -96,6 +96,12 @@ async fn network(mut request: Value, is_probe: bool) -> ApiResult<Value> {
                 "Too many provider requests are active",
             )
         })?;
+    let provider = request["provider"].as_str().unwrap_or_default().to_owned();
+    // A failed discovery is a result that says why, like a failed test.
+    let failed = |reason: &str, detail: &str| {
+        serde_json::json!({"provider":provider,"status":"unavailable","source":"live_api",
+            "authoritative":false,"cached":false,"stale":false,"models":[],"detail":detail,"reason":reason})
+    };
     // This marker is produced by the settings resolver, never accepted from JSON clients.
     let use_environment = request
         .as_object_mut()
@@ -125,23 +131,19 @@ async fn network(mut request: Value, is_probe: bool) -> ApiResult<Value> {
                 "Provider request or environment reference is invalid",
             ))
         }
-        Ok(Ok(Err(_))) | Ok(Err(_)) => Err(ApiError::new(
+        Ok(Ok(Err(_))) | Ok(Err(_)) if is_probe => Err(ApiError::new(
             503,
             "provider_unavailable",
             "Provider operation could not complete",
         )),
-        Err(_) => {
-            if is_probe {
-                Ok(
-                    serde_json::json!({"ok":false,"detail":"Model connection test timed out","reason":"timeout"}),
-                )
-            } else {
-                Err(ApiError::new(
-                    503,
-                    "discovery_timeout",
-                    "Model discovery timed out",
-                ))
-            }
-        }
+        Ok(Ok(Err(_))) | Ok(Err(_)) => Ok(failed(
+            "provider_error",
+            "Model discovery could not complete",
+        )),
+        Err(_) => Ok(if is_probe {
+            serde_json::json!({"ok":false,"detail":"Model connection test timed out","reason":"timeout"})
+        } else {
+            failed("timeout", "Model discovery timed out")
+        }),
     }
 }

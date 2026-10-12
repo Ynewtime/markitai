@@ -76,9 +76,9 @@ pub(super) async fn guard(
     request: Request,
     next: Next,
 ) -> Response {
-    let settings = settings_path(request.uri().path());
+    let private = settings_path(request.uri().path()) || request.uri().path() == REGENERATE;
     let mut response = guard_inner(state, request, next).await;
-    if settings {
+    if private {
         response.headers_mut().insert(
             axum::http::header::CACHE_CONTROL,
             axum::http::HeaderValue::from_static("no-store"),
@@ -89,6 +89,106 @@ pub(super) async fn guard(
 
 fn settings_path(path: &str) -> bool {
     path == "/api/settings/llm" || path.starts_with("/api/settings/llm/")
+}
+
+/// The route that replaces the access token; trusted like the settings.
+const REGENERATE: &str = "/api/access-token/regenerate";
+
+/// A fresh access token: 64 hexadecimal characters from two random UUIDs.
+pub(super) fn new_token() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+/// `POST /api/access-token/regenerate`: replace the access token, revoke
+/// every download ticket and end every open event stream, so other tabs and
+/// devices must sign in again with the new token. The token lives in memory
+/// only; a restart takes `MARKITAI_SERVE_TOKEN` or a fresh one again.
+pub(super) async fn regenerate(
+    ExtractState(state): ExtractState<Arc<State>>,
+    request: Request,
+) -> ApiResult<Response> {
+    let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
+    let bytes = axum::body::to_bytes(request.into_body(), 1024)
+        .await
+        .map_err(|_| ApiError::new(413, "request_too_large", "request exceeds 1 KiB"))?;
+    let empty = bytes.iter().all(u8::is_ascii_whitespace)
+        || serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|value| value.as_object().map(serde_json::Map::is_empty))
+            == Some(true);
+    if !state.auth_enabled() {
+        return Err(token_disabled());
+    }
+    if !trusted {
+        return Err(settings_forbidden());
+    }
+    if !empty {
+        return Err(ApiError::new(
+            422,
+            "invalid_json",
+            "token regeneration takes no body or {}",
+        ));
+    }
+    let token = new_token();
+    {
+        let mut current = state
+            .token
+            .write()
+            .unwrap_or_else(|error| error.into_inner());
+        if current.is_none() {
+            return Err(token_disabled());
+        }
+        *current = Some(token.clone());
+    }
+    state.tickets.clear();
+    state
+        .token_generation
+        .send_modify(|generation| *generation += 1);
+    crate::app::logging::shaped(
+        crate::app::logging::Shape::item(crate::term::Mark::Action),
+        "Access token regenerated from the web workbench; other tabs and devices must sign in again.",
+        None,
+    );
+    let network_url = state
+        .address
+        .get()
+        .filter(|address| address.ip().is_unspecified())
+        .and_then(|address| {
+            super::startup::network_address().map(|ip| {
+                super::launch::address_url(SocketAddr::new(ip, address.port()), Some(&token))
+            })
+        });
+    let mut response = axum::Json(serde_json::json!({
+        "token": token,
+        "network_url": network_url,
+        "persistent": false,
+        "startup_variable": state.token_from_environment.then_some("MARKITAI_SERVE_TOKEN"),
+    }))
+    .into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
+fn token_disabled() -> ApiError {
+    ApiError::new(
+        409,
+        "token_disabled",
+        "the server runs without an access token (--no-auth); there is none to regenerate",
+    )
+}
+fn settings_forbidden() -> ApiError {
+    ApiError::new(
+        403,
+        "settings_forbidden",
+        "settings access requires loopback or token authentication",
+    )
 }
 
 async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Response {
@@ -118,7 +218,8 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
         })
     };
     let query = parameter("token");
-    let mut authenticated = state.token.as_ref().is_some_and(|token| {
+    let token = state.token();
+    let mut authenticated = token.as_ref().is_some_and(|token| {
         [header.as_deref(), query.as_deref()]
             .into_iter()
             .flatten()
@@ -128,7 +229,7 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
     // A download ticket stands in for the token on exactly one GET of the path
     // it was issued for (see `tickets`); any other use spends it for nothing.
     if api
-        && state.token.is_some()
+        && token.is_some()
         && !authenticated
         && let Some(ticket) = parameter("ticket")
     {
@@ -147,7 +248,7 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
             .into_response();
         }
     }
-    if api && state.token.is_some() && !authenticated {
+    if api && token.is_some() && !authenticated {
         return ApiError::new(
             401,
             "token_required",
@@ -189,14 +290,10 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
             .into_response();
         }
     }
-    let trusted = authenticated || (state.token.is_none() && loopback);
-    if settings_path(request.uri().path()) && !trusted {
-        return ApiError::new(
-            403,
-            "settings_forbidden",
-            "settings access requires loopback or token authentication",
-        )
-        .into_response();
+    let trusted = authenticated || (token.is_none() && loopback);
+    let path = request.uri().path();
+    if (settings_path(path) || path == REGENERATE) && !trusted {
+        return settings_forbidden().into_response();
     }
     if request
         .headers()
@@ -274,7 +371,10 @@ mod router_tests {
             persistence_failed: AtomicBool::new(false),
             shutdown,
             tasks: Mutex::new(Vec::new()),
-            token: token.map(str::to_owned),
+            token: std::sync::RwLock::new(token.map(str::to_owned)),
+            token_generation: watch::channel(0).0,
+            token_from_environment: false,
+            address: Default::default(),
             allowed_hosts: HashSet::from(["trusted.example".into()]),
             tickets: Default::default(),
             previews: Default::default(),
@@ -301,6 +401,19 @@ mod router_tests {
                 .post(|| async { Json(json!({"ok":true})) }),
             )
             .route("/api/download-tickets", post(super::super::tickets::issue))
+            .route(
+                "/api/jobs/{job_id}/items/{item_id}/archive",
+                get(|Extension(trust): Extension<Trusted>| async move {
+                    Json(json!({"trusted":trust.0}))
+                }),
+            )
+            .route(
+                "/api/jobs/{job_id}/items/{item_id}/original/view",
+                get(|Extension(trust): Extension<Trusted>| async move {
+                    Json(json!({"trusted":trust.0}))
+                }),
+            )
+            .route("/api/access-token/regenerate", post(regenerate))
             .layer(middleware::from_fn_with_state(state.clone(), guard))
             .with_state(state)
     }
@@ -751,6 +864,125 @@ mod router_tests {
         )
         .await;
         assert_eq!(refused["reason"], "request_too_large");
+    }
+
+    #[tokio::test]
+    async fn a_ticket_admits_an_item_archive_and_a_framed_original_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let router = app(temp.path(), Some("private-test-token"));
+        let peer = "203.0.113.40:4321";
+        let bearer = [
+            ("content-type", "application/json"),
+            ("authorization", "Bearer private-test-token"),
+        ];
+        for path in [
+            "/api/jobs/0123456789ab/items/i1/archive",
+            "/api/jobs/0123456789ab/items/i1/original/view",
+        ] {
+            let issued = checked(
+                router.clone(),
+                request(
+                    "POST",
+                    "/api/download-tickets",
+                    peer,
+                    &bearer,
+                    &format!(r#"{{"path":"{path}"}}"#),
+                ),
+                201,
+            )
+            .await;
+            let url = issued["url"].as_str().unwrap().to_owned();
+            assert_eq!(
+                checked(router.clone(), request("GET", &url, peer, &[], ""), 200).await["trusted"],
+                true,
+                "{path}"
+            );
+            checked(router.clone(), request("GET", &url, peer, &[], ""), 401).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn regenerating_the_token_swaps_it_and_revokes_tickets() {
+        let temp = tempfile::tempdir().unwrap();
+        let router = app(temp.path(), Some("private-test-token"));
+        let peer = "203.0.113.40:4321";
+        let old = [("authorization", "Bearer private-test-token")];
+        let body = r#"{"path":"/api/jobs/0123456789ab/archive"}"#;
+        let headers = [
+            ("content-type", "application/json"),
+            ("authorization", "Bearer private-test-token"),
+        ];
+        let url = checked(
+            router.clone(),
+            request("POST", "/api/download-tickets", peer, &headers, body),
+            201,
+        )
+        .await["url"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let response = router
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/access-token/regenerate",
+                peer,
+                &old,
+                "",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let answer: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1 << 16).await.unwrap())
+                .unwrap();
+        let token = answer["token"].as_str().unwrap().to_owned();
+        // Not bound to every interface, and not from MARKITAI_SERVE_TOKEN.
+        assert_eq!(
+            answer,
+            json!({"token":token,"network_url":null,"persistent":false,"startup_variable":null})
+        );
+        assert_eq!(
+            checked(
+                router.clone(),
+                request("GET", "/api/probe", peer, &old, ""),
+                401
+            )
+            .await["reason"],
+            "token_required"
+        );
+        let new = format!("Bearer {token}");
+        checked(
+            router.clone(),
+            request("GET", "/api/probe", peer, &[("authorization", &new)], ""),
+            200,
+        )
+        .await;
+        assert_eq!(
+            checked(router.clone(), request("GET", &url, peer, &[], ""), 401).await["reason"],
+            "ticket_invalid"
+        );
+        // Only the token's holder may ask; without a token there is none.
+        checked(
+            router.clone(),
+            request("POST", "/api/access-token/regenerate", peer, &[], ""),
+            401,
+        )
+        .await;
+        let open = app(temp.path(), None);
+        for (peer, status, reason) in [
+            ("127.0.0.1:4321", 409, "token_disabled"),
+            ("203.0.113.40:4321", 403, "settings_forbidden"),
+        ] {
+            let value = checked(
+                open.clone(),
+                request("POST", "/api/access-token/regenerate", peer, &[], ""),
+                status,
+            )
+            .await;
+            assert_eq!(value["reason"], reason, "{peer}");
+        }
     }
 
     #[tokio::test]

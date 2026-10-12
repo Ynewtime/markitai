@@ -1,9 +1,10 @@
 use super::{SettingsSource, identity, model, store::Data};
 use markitai_core::provider_management::{
-    catalog, provider_default_base, provider_entry as entry, provider_label,
+    catalog, environment_key_variable, provider_default_base, provider_entry as entry,
+    provider_label,
 };
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 fn set(variable: &str) -> bool {
     std::env::var(variable).is_ok_and(|value| !value.trim().is_empty())
@@ -135,19 +136,122 @@ pub(super) fn payload(data: &Data, source: &SettingsSource) -> Value {
         .unwrap_or_else(|| source.path.to_string_lossy().into_owned());
     json!({"configured":!data.models.is_empty(),"routable":routable(data),"source":if !data.models.is_empty(){"config"}else if !data.detected.is_empty(){"detected"}else{"none"},"config_path":path,"config_origin":source.origin,"revision":data.revision,"deployments":data.models.iter().enumerate().map(|(index,entry)|deployment(entry,index,true)).collect::<Vec<_>>(),"detected":data.detected.iter().enumerate().map(|(index,entry)|deployment(entry,index,false)).collect::<Vec<_>>()})
 }
+/// How a saved connection authenticates, when the environment supplies its
+/// key: `env:VAR` for a key that is an `env:VAR` reference, or for a
+/// connection with no key at all (hand-written; never the keyless
+/// placeholder) that may use the environment's credentials while one of its
+/// provider's key variables is set.
+fn credential(
+    provider: &str,
+    key: &Value,
+    use_environment: &Value,
+    env: &HashMap<String, String>,
+) -> Option<String> {
+    match key.as_str().filter(|key| !key.is_empty()) {
+        Some(key) => key
+            .strip_prefix("env:")
+            .filter(|name| !name.is_empty())
+            .map(|name| format!("env:{name}")),
+        None if use_environment.as_bool() != Some(false) => {
+            environment_key_variable(provider, env).map(|name| format!("env:{name}"))
+        }
+        None => None,
+    }
+}
+/// Whether a connection's address is its provider's own endpoint.
+fn own_endpoint(provider: &str, base: &Value) -> bool {
+    match base.as_str().filter(|base| !base.is_empty()) {
+        None => true,
+        Some(base) => provider_default_base(provider) == Some(base),
+    }
+}
+/// The cards of saved connections (`configured`) and of hand-written
+/// model entries without one (`legacy`), each with whether it is aimed at
+/// its provider's own endpoint.
+fn configured_cards(data: &Data, env: &HashMap<String, String>) -> Vec<(Value, bool)> {
+    let mut cards = Vec::new();
+    for saved in &data.providers {
+        let name = saved["provider"].as_str().unwrap_or_default();
+        let id = saved["id"].as_str().unwrap_or_default();
+        let count = data
+            .models
+            .iter()
+            .filter(|entry| model::linked(entry) == Some(id))
+            .count();
+        let mut card = json!({"id":format!("provider:{id}"),"provider_id":id,"provider":name,"label":provider_label(name),"kind":"configured","status":if !saved["api_key"].is_null()||!saved["api_base"].is_null(){"ready"}else{"needs_credentials"},"source":"config","api_key_configured":model::real_key(saved["api_key"].as_str()),"api_base_configured":nonempty(&saved["api_base"]),"api_base":origin(saved["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(name))),"model_count":count,"supports_discovery":!model::local(name)});
+        if let Some(credential) = credential(
+            name,
+            &saved["api_key"],
+            &saved["use_environment_credentials"],
+            env,
+        ) {
+            card["credential"] = json!(credential);
+        }
+        cards.push((card, own_endpoint(name, &saved["api_base"])));
+    }
+    let mut seen = HashSet::new();
+    for (index, entry) in data.models.iter().enumerate() {
+        let name = model::provider(entry);
+        let params = &entry["litellm_params"];
+        if model::local(&name)
+            || data.providers.iter().any(|p| {
+                model::linked(entry) == p["id"].as_str()
+                    || p["provider"] == name
+                        && p["api_key"] == params["api_key"]
+                        && p["api_base"] == params["api_base"]
+            })
+        {
+            continue;
+        }
+        let connection = json!([name, params["api_key"], params["api_base"]]).to_string();
+        if !seen.insert(connection) {
+            continue;
+        }
+        let count = data
+            .models
+            .iter()
+            .filter(|other| {
+                model::provider(other) == name
+                    && other["litellm_params"]["api_key"] == params["api_key"]
+                    && other["litellm_params"]["api_base"] == params["api_base"]
+            })
+            .count();
+        let id = identity::id(entry, index);
+        let mut card = json!({"id":format!("provider:legacy:{id}"),"provider_id":format!("legacy:{id}"),"deployment_id":id,"provider":name,"label":provider_label(&name),"kind":"configured","status":if params["weight"].as_u64()==Some(0){"disabled"}else{"ready"},"source":"config","api_key_configured":model::real_key(params["api_key"].as_str()),"api_base_configured":nonempty(&params["api_base"]),"api_base":origin(params["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(&name))),"model_count":count,"supports_discovery":true});
+        if let Some(credential) = credential(
+            &name,
+            &params["api_key"],
+            &params["use_environment_credentials"],
+            env,
+        ) {
+            card["credential"] = json!(credential);
+        }
+        cards.push((card, own_endpoint(&name, &params["api_base"])));
+    }
+    cards
+}
 pub(super) fn providers(data: &Data) -> Value {
     let mut result = Vec::new();
     let catalog = catalog();
+    let env = markitai_core::config::environment();
+    let configured = configured_cards(data, &env);
     for known in &catalog {
         let name = known.provider;
         let Some(variable) = known.key_variables.iter().copied().find(|v| set(v)) else {
             continue;
         };
-        if !data
-            .providers
-            .iter()
-            .filter(|p| p["provider"] == name)
-            .any(|p| p["api_key"] == format!("env:{variable}"))
+        let reference = format!("env:{variable}");
+        // A saved connection that already uses this variable at the
+        // provider's own endpoint stands for it.
+        let served = configured.iter().any(|(card, own)| {
+            *own && card["provider"] == name && card["credential"] == reference.as_str()
+        });
+        if !served
+            && !data
+                .providers
+                .iter()
+                .filter(|p| p["provider"] == name)
+                .any(|p| p["api_key"] == reference)
         {
             result.push(json!({"id":format!("env:{name}"),"provider":name,"label":provider_label(name),"kind":"environment","status":"ready","source":variable,"credential":format!("env:{variable}"),"supports_discovery":known.discovery}));
         }
@@ -179,49 +283,70 @@ pub(super) fn providers(data: &Data) -> Value {
         };
         result.push(json!({"id":format!("common:{name}"),"provider":name,"label":label,"kind":if known.compatible{"compatible"}else{"common"},"status":status,"source":"built_in","supports_discovery":known.discovery}));
     }
-    for saved in &data.providers {
-        let name = saved["provider"].as_str().unwrap_or_default();
-        let id = saved["id"].as_str().unwrap_or_default();
-        let count = data
-            .models
-            .iter()
-            .filter(|entry| model::linked(entry) == Some(id))
-            .count();
-        result.push(json!({"id":format!("provider:{id}"),"provider_id":id,"provider":name,"label":provider_label(name),"kind":"configured","status":if !saved["api_key"].is_null()||!saved["api_base"].is_null(){"ready"}else{"needs_credentials"},"source":"config","api_key_configured":model::real_key(saved["api_key"].as_str()),"api_base_configured":nonempty(&saved["api_base"]),"api_base":origin(saved["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(name))),"model_count":count,"supports_discovery":!model::local(name)}));
-    }
-    let mut seen = HashSet::new();
-    for (index, entry) in data.models.iter().enumerate() {
-        let name = model::provider(entry);
-        let params = &entry["litellm_params"];
-        if model::local(&name)
-            || data.providers.iter().any(|p| {
-                model::linked(entry) == p["id"].as_str()
-                    || p["provider"] == name
-                        && p["api_key"] == params["api_key"]
-                        && p["api_base"] == params["api_base"]
-            })
-        {
-            continue;
-        }
-        let connection = json!([name, params["api_key"], params["api_base"]]).to_string();
-        if !seen.insert(connection) {
-            continue;
-        }
-        let count = data
-            .models
-            .iter()
-            .filter(|other| {
-                model::provider(other) == name
-                    && other["litellm_params"]["api_key"] == params["api_key"]
-                    && other["litellm_params"]["api_base"] == params["api_base"]
-            })
-            .count();
-        let id = identity::id(entry, index);
-        result.push(json!({"id":format!("provider:legacy:{id}"),"provider_id":format!("legacy:{id}"),"deployment_id":id,"provider":name,"label":provider_label(&name),"kind":"configured","status":if params["weight"].as_u64()==Some(0){"disabled"}else{"ready"},"source":"config","api_key_configured":model::real_key(params["api_key"].as_str()),"api_base_configured":nonempty(&params["api_base"]),"api_base":origin(params["api_base"].as_str().filter(|s|!s.is_empty()).or_else(||provider_default_base(&name))),"model_count":count,"supports_discovery":true}));
-    }
+    result.extend(configured.into_iter().map(|(card, _)| card));
     for card in &mut result {
         let name = card["provider"].as_str().unwrap_or_default().to_owned();
         facts(&name, card);
     }
     json!({"providers":result})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_connection_names_the_environment_key_it_authenticates_with() {
+        let env = HashMap::from([
+            ("DEEPSEEK_API_KEY".to_owned(), "set".to_owned()),
+            ("GROQ_API_KEY".to_owned(), " ".to_owned()),
+        ]);
+        let on = json!(true);
+        let unset = Value::Null;
+        for (provider, key, environment, expected) in [
+            // A reference is named as written, set or not.
+            (
+                "openai",
+                json!("env:OPENAI_API_KEY"),
+                &unset,
+                Some("env:OPENAI_API_KEY"),
+            ),
+            (
+                "deepseek",
+                json!("env:OTHER"),
+                &json!(false),
+                Some("env:OTHER"),
+            ),
+            // No key at all: the provider's key variable that holds a value.
+            (
+                "deepseek",
+                Value::Null,
+                &unset,
+                Some("env:DEEPSEEK_API_KEY"),
+            ),
+            ("deepseek", json!(""), &on, Some("env:DEEPSEEK_API_KEY")),
+            // Not when the connection never uses the environment, nor for a
+            // stored key, the keyless placeholder, or an empty variable.
+            ("deepseek", Value::Null, &json!(false), None),
+            ("deepseek", json!("sk-literal"), &on, None),
+            ("deepseek", json!(model::NO_KEY), &on, None),
+            ("groq", Value::Null, &on, None),
+            ("ollama", Value::Null, &on, None),
+            ("custom", Value::Null, &on, None),
+        ] {
+            assert_eq!(
+                credential(provider, &key, environment, &env).as_deref(),
+                expected,
+                "{provider} {key} {environment}"
+            );
+        }
+        assert!(own_endpoint("deepseek", &Value::Null));
+        assert!(own_endpoint("deepseek", &json!("")));
+        assert!(own_endpoint("deepseek", &json!("https://api.deepseek.com")));
+        assert!(!own_endpoint(
+            "deepseek",
+            &json!("https://proxy.example/v1")
+        ));
+        assert!(!own_endpoint("custom", &json!("http://127.0.0.1:8000/v1")));
+    }
 }

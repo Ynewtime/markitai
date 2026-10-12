@@ -79,12 +79,17 @@ function savedKey(value: string | null, detected: boolean): SavedKey {
   return { state: "saved", ending: at > 0 && ending.length === 4 ? ending : null };
 }
 
-/** Neither saved literal keys nor environment references become editable input. */
-export function providerDraft(credentials: ProviderCredentials): ProviderDraft {
+/** Neither saved literal keys nor environment references become editable input.
+ * `cardCredential` is the connection card's `credential` (v1.11): a connection
+ * written by hand without a key that the server serves from its key variable
+ * says so there even where the credentials route does not (Python 1.2.1). */
+export function providerDraft(credentials: ProviderCredentials, cardCredential?: string): ProviderDraft {
   const baseRetained = credentials.api_base?.trim().startsWith("env:") === true;
+  const stored = credentials.api_key_masked ?? credentials.api_key ?? null;
+  const served = !stored && cardCredential?.trim().startsWith("env:") ? cardCredential : null;
   return {
-    configured: Boolean(credentials.api_key_masked ?? credentials.api_key),
-    key: savedKey(credentials.api_key_masked ?? credentials.api_key ?? null, credentials.api_key_source === "environment"),
+    configured: Boolean(stored),
+    key: served ? savedKey(served, true) : savedKey(stored, credentials.api_key_source === "environment"),
     base: baseRetained ? "" : credentials.api_base ?? "",
     baseMasked: !baseRetained && (credentials.api_base ?? "").includes(MASK),
     baseRetained,

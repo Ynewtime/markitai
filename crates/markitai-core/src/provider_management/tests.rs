@@ -256,7 +256,13 @@ fn cache_ttl_stale_boundary_and_failure_do_not_extend_good_age() {
     let cache = cache::Cache::default();
     let value = json!({"provider":"custom","status":"ok","cached":false,"stale":false,"models":[{"model":"openai/saved"}]});
     let good = || Ok(value.clone());
-    let bad = || Err(Error::Conversion("SECRET URL KEY must never escape".into()));
+    let failure = discovery::failed(
+        "custom",
+        crate::llm::ProbeReason::Network,
+        "Model discovery request failed: connection refused",
+        None,
+    );
+    let bad = || Err(failure.clone());
     cache
         .discover("custom", "http://local", None, false, good)
         .unwrap();
@@ -272,8 +278,205 @@ fn cache_ttl_stale_boundary_and_failure_do_not_extend_good_age() {
     let gone = cache
         .discover("custom", "http://local", None, false, bad)
         .unwrap();
-    assert_eq!(gone["status"], "unavailable");
-    assert_eq!(gone["models"], json!([]));
+    // With no good list left, the failure says why, and it is not cached.
+    assert_eq!(gone, failure);
+    assert_eq!(gone["reason"], "network");
+    let waiting = cache
+        .discover("custom", "http://other", None, false, bad)
+        .unwrap();
+    assert_eq!(waiting["cached"], false);
+    assert_eq!(
+        cache
+            .discover("custom", "http://other", None, false, good)
+            .unwrap()["cached"],
+        false,
+        "a failure is never served as a cached list"
+    );
+}
+
+/// Discover through a mock that answers every request with `answer`.
+fn discovered(request: Value, answer: String) -> (Value, Vec<String>) {
+    let server = Mock::new(move |_| answer.clone());
+    let mut request = request;
+    request["api_base"] = format!("{}/v1", server.base).into();
+    request["refresh"] = true.into();
+    let result = discover_explicit(&request).unwrap();
+    (result, server.requests())
+}
+
+#[test]
+fn a_failed_discovery_says_why_in_the_probes_reasons() {
+    let keyed = json!({"provider":"openai","api_key":"sk-secret-discovery-key"});
+    for (status, body, reason, detail) in [
+        (
+            401,
+            r#"{"error":{"message":"Incorrect API key provided: sk-secret-discovery-key","type":"invalid_request_error"}}"#,
+            "key_rejected",
+            "Model discovery returned HTTP 401: Incorrect API key provided: …",
+        ),
+        (
+            403,
+            r#"{"message":"Forbidden here"}"#,
+            "key_rejected",
+            "Model discovery returned HTTP 403: Forbidden here",
+        ),
+        (
+            429,
+            r#"{"error":"Slow down"}"#,
+            "rate_limited",
+            "Model discovery returned HTTP 429: Slow down",
+        ),
+        (
+            404,
+            "<html><head><title>404</title></head><body><h1>Not   Found</h1></body></html>",
+            "provider_error",
+            "Model discovery returned HTTP 404: 404 Not Found",
+        ),
+        (
+            500,
+            r#"{"error":{"code":1}}"#,
+            "provider_error",
+            "Model discovery returned HTTP 500",
+        ),
+        (
+            200,
+            "not JSON",
+            "provider_error",
+            "Model discovery response is not JSON",
+        ),
+        (
+            200,
+            r#"{"error":"secret"}"#,
+            "provider_error",
+            "Model discovery response has no model list",
+        ),
+    ] {
+        let (result, requests) = discovered(keyed.clone(), reply(status, body));
+        assert_eq!(requests.len(), 1, "{status}");
+        assert_eq!(
+            result,
+            json!({"provider":"openai","status":"unavailable","source":"live_api","authoritative":false,
+                "cached":false,"stale":false,"models":[],"detail":detail,"reason":reason}),
+            "{status} {body}"
+        );
+        assert!(!result.to_string().contains("sk-secret-discovery-key"));
+    }
+    // A long message is cut to 300 characters.
+    let long = format!(r#"{{"message":"{}"}}"#, "x".repeat(400));
+    let (result, _) = discovered(keyed.clone(), reply(400, &long));
+    let detail = result["detail"].as_str().unwrap();
+    assert_eq!(
+        detail,
+        format!("Model discovery returned HTTP 400: {}…", "x".repeat(300))
+    );
+    // A redirect is never followed: no HTTP answer from the provider.
+    let (result, _) = discovered(
+        keyed.clone(),
+        "HTTP/1.1 302 Found
+Location: http://127.0.0.1:9/
+Content-Length: 0
+Connection: close
+
+"
+        .into(),
+    );
+    assert_eq!(result["reason"], "network");
+    assert!(
+        result["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("Model discovery request failed: ")
+    );
+    // A keyless request refused for want of a key: the key is what is missing.
+    let (result, requests) = discovered(json!({"provider":"deepseek"}), reply(401, "{}"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(result["reason"], "no_key");
+    assert_eq!(result["detail"], "Model discovery returned HTTP 401");
+    assert!(
+        result.get("key_variable").is_none(),
+        "an explicit discovery reads no variable"
+    );
+    // Nobody listening.
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = closed.local_addr().unwrap();
+    drop(closed);
+    let result = discover_explicit(
+        &json!({"provider":"openai","api_key":"k","api_base":format!("http://{address}/v1"),"refresh":true}),
+    )
+    .unwrap();
+    assert_eq!(result["reason"], "network");
+    assert_eq!(
+        result["detail"],
+        "Model discovery request failed: connection refused"
+    );
+}
+
+#[test]
+fn a_discovery_that_gets_no_answer_in_time_says_so() {
+    let (result, _) = discovered(json!({"provider":"openai","api_key":"k"}), String::new());
+    // An empty answer closes the connection without a response.
+    assert_eq!(result["reason"], "network");
+    let server = Mock::new(|_| {
+        thread::sleep(discovery::TIMEOUT + Duration::from_secs(1));
+        reply(200, r#"{"data":[]}"#)
+    });
+    let result = discover_explicit(
+        &json!({"provider":"openai","api_key":"k","api_base":server.base,"refresh":true}),
+    )
+    .unwrap();
+    assert_eq!(result["reason"], "timeout");
+    assert_eq!(result["detail"], "Model discovery timed out");
+}
+
+#[test]
+fn a_missing_discovery_key_is_reported_before_any_request() {
+    let server = Mock::new(|_| reply(200, r#"{"data":[{"id":"listed"}]}"#));
+    let unset = "MARKITAI_DISCOVERY_TEST_UNSET_KEY_2B9D";
+    assert!(!crate::config::environment().contains_key(unset));
+    for request in [
+        json!({"provider":"openai","api_key":format!("env:{unset}"),"api_base":server.base}),
+        json!({"provider":"ollama","api_key":format!("env:{unset}"),"api_base":server.base}),
+    ] {
+        for result in [
+            discover(&request).unwrap(),
+            discover_explicit(&request).unwrap(),
+        ] {
+            assert_eq!(
+                result,
+                json!({"provider":request["provider"],"status":"unavailable","source":"live_api",
+                    "authoritative":false,"cached":false,"stale":false,"models":[],"reason":"no_key",
+                    "key_variable":unset,"detail":format!("{unset} is not set on the server, so nothing was sent")})
+            );
+        }
+    }
+    // A provider that needs a key, at its own endpoint, with none: an
+    // explicit discovery reads no variable, so none is named.
+    let result = discover_explicit(&json!({"provider":"deepseek"})).unwrap();
+    assert_eq!(result["reason"], "no_key");
+    assert!(result.get("key_variable").is_none());
+    assert_eq!(
+        result["detail"],
+        "Model discovery needs an API key, and none is set, so nothing was sent"
+    );
+    assert!(server.requests().is_empty());
+    // Local servers, OpenAI-compatible endpoints, the keyless placeholder and
+    // an address of the caller's own are tried.
+    for request in [
+        json!({"provider":"ollama","api_base":server.base}),
+        json!({"provider":"lm_studio","api_base":format!("{}/v1",server.base)}),
+        json!({"provider":"custom","api_base":server.base}),
+        json!({"provider":"deepseek","api_key":NO_KEY,"api_base":server.base}),
+        json!({"provider":"openai","api_base":format!("{}/v1",server.base)}),
+    ] {
+        let mut request = request;
+        request["refresh"] = true.into();
+        let result = discover_explicit(&request).unwrap();
+        assert!(
+            result.get("reason").is_none() || result["reason"] != "no_key",
+            "{request}: {result}"
+        );
+    }
+    assert_eq!(server.requests().len(), 5);
 }
 
 #[test]
@@ -509,10 +712,9 @@ fn requests_validate_types_urls_without_echoing_values() {
     }
     assert!(probe(&json!({"model":"","api_key":"secret"})).is_err());
     assert!(probe(&json!({"model":"openai/x","fallbacks":["openai/y"]})).is_err());
-    assert_eq!(
-        discover(&json!({"provider":"claude-agent"})).unwrap()["status"],
-        "unavailable"
-    );
+    let subscription = discover(&json!({"provider":"claude-agent"})).unwrap();
+    assert_eq!(subscription["status"], "unavailable");
+    assert_eq!(subscription["reason"], "provider_error");
 }
 
 #[test]

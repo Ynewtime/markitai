@@ -466,27 +466,77 @@ pub(super) async fn result(
     .map_err(ApiError::internal)?
 }
 
+/// Files an archive holds at most; more is 413 `archive_too_large`.
+const MAX_ARCHIVE_FILES: usize = 100_000;
+
+/// A ZIP archive being written to a private temporary file under `root`.
+struct Archive {
+    temporary: tempfile::NamedTempFile,
+    writer: zip::ZipWriter<File>,
+    count: usize,
+}
+impl Archive {
+    fn new(root: &std::path::Path) -> ApiResult<Self> {
+        let temporary = tempfile::Builder::new()
+            .prefix(".archive-")
+            .suffix(".tmp")
+            .tempfile_in(root)
+            .map_err(ApiError::internal)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            temporary
+                .as_file()
+                .set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(ApiError::internal)?;
+        }
+        let writer = zip::ZipWriter::new(temporary.reopen().map_err(ApiError::internal)?);
+        Ok(Self {
+            temporary,
+            writer,
+            count: 0,
+        })
+    }
+    /// Copy the file at `path` into the archive as `name`.
+    fn add(&mut self, name: &str, path: &std::path::Path) -> ApiResult<()> {
+        self.count += 1;
+        if self.count > MAX_ARCHIVE_FILES {
+            return Err(ApiError::new(
+                413,
+                "archive_too_large",
+                "archive has too many files",
+            ));
+        }
+        self.writer
+            .start_file(
+                name,
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated)
+                    .unix_permissions(0o600),
+            )
+            .map_err(ApiError::internal)?;
+        let mut input = File::open(path).map_err(ApiError::internal)?;
+        std::io::copy(&mut input, &mut self.writer).map_err(ApiError::internal)?;
+        Ok(())
+    }
+    fn finish(self) -> ApiResult<(File, tempfile::NamedTempFile)> {
+        self.writer
+            .finish()
+            .map_err(ApiError::internal)?
+            .sync_all()
+            .map_err(ApiError::internal)?;
+        let file = self.temporary.reopen().map_err(ApiError::internal)?;
+        Ok((file, self.temporary))
+    }
+}
+
 fn zip_jobs(
     root: &std::path::Path,
     jobs: Vec<Arc<Job>>,
 ) -> ApiResult<(File, tempfile::NamedTempFile)> {
-    let temporary = tempfile::Builder::new()
-        .prefix(".archive-")
-        .suffix(".tmp")
-        .tempfile_in(root)
-        .map_err(ApiError::internal)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        temporary
-            .as_file()
-            .set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(ApiError::internal)?;
-    }
-    let mut writer = zip::ZipWriter::new(temporary.reopen().map_err(ApiError::internal)?);
+    let mut archive = Archive::new(root)?;
     let multiple = jobs.len() > 1;
     let mut directories = HashSet::new();
-    let mut count = 0usize;
     for job in jobs {
         let _guard = job.access.lock().unwrap();
         let data = job.data.lock().unwrap();
@@ -523,33 +573,75 @@ fn zip_jobs(
             if !public_member(&relative) {
                 continue;
             }
-            count += 1;
-            if count > 100_000 {
-                return Err(ApiError::new(
-                    413,
-                    "archive_too_large",
-                    "archive has too many files",
-                ));
-            }
-            writer
-                .start_file(
-                    format!("{prefix}{relative}"),
-                    zip::write::SimpleFileOptions::default()
-                        .compression_method(zip::CompressionMethod::Deflated)
-                        .unix_permissions(0o600),
-                )
-                .map_err(ApiError::internal)?;
-            let mut input = File::open(path).map_err(ApiError::internal)?;
-            std::io::copy(&mut input, &mut writer).map_err(ApiError::internal)?;
+            archive.add(&format!("{prefix}{relative}"), &path)?;
         }
     }
-    writer
-        .finish()
-        .map_err(ApiError::internal)?
-        .sync_all()
-        .map_err(ApiError::internal)?;
-    let file = temporary.reopen().map_err(ApiError::internal)?;
-    Ok((file, temporary))
+    archive.finish()
+}
+
+/// One item's archive under `job.access`: the files its result lists, at
+/// their relpaths, and its kept original under `original/`. Returns the
+/// archive and the item's output base name.
+fn zip_item(
+    root: &std::path::Path,
+    job: &Job,
+    item_id: &str,
+) -> ApiResult<(File, tempfile::NamedTempFile, String)> {
+    let _guard = job.access.lock().unwrap();
+    {
+        let data = job.data.lock().unwrap();
+        let item = data
+            .items
+            .iter()
+            .find(|item| item.item_id == item_id)
+            .ok_or_else(|| ApiError::new(404, "item_not_found", "item not found"))?;
+        if !["done", "error"].contains(&item.status.as_str())
+            || job.retry_pending.lock().unwrap().contains(item_id)
+        {
+            return Err(ApiError::new(
+                409,
+                "item_busy",
+                "item has not reached a terminal state yet; download it when done",
+            ));
+        }
+    }
+    let shown = shown(job, item_id)?;
+    let base = shown
+        .base
+        .0
+        .strip_suffix(".md")
+        .unwrap_or(&shown.base.0)
+        .to_owned();
+    let mut archive = Archive::new(root)?;
+    for relative in shown.artifacts(None)? {
+        if let Ok(path) = store::safe_file(&shown.out, &relative) {
+            archive.add(&relative, &path)?;
+        }
+    }
+    if let Some((path, filename)) = super::original::kept(job, item_id) {
+        let leaf = filename
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|leaf| !leaf.is_empty() && !matches!(*leaf, "." | ".."))
+            .unwrap_or("original");
+        archive.add(&format!("original/{leaf}"), &path)?;
+    }
+    let (file, temporary) = archive.finish()?;
+    Ok((file, temporary, base))
+}
+
+/// `GET /api/jobs/{job_id}/items/{item_id}/archive`: a ZIP of one item's
+/// result files and its kept original.
+pub(super) async fn item_archive(
+    ExtractState(state): ExtractState<Arc<State>>,
+    Path((id, item_id)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let job = jobs::get(&state, &id)?;
+    let root = state.root.clone();
+    let (file, temp, base) = crate::task::blocking(move || zip_item(&root, &job, &item_id))
+        .await
+        .map_err(ApiError::internal)??;
+    body(file, Some(temp), "application/zip", &format!("{base}.zip"))
 }
 pub(super) async fn job_archive(
     ExtractState(state): ExtractState<Arc<State>>,

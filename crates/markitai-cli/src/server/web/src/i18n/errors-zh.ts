@@ -14,6 +14,7 @@ export const zh: Record<MessageKey, string> = {
   errHostNotAllowed: "服务不接受这个访问地址。请通过 localhost、IP 地址，或用 --allowed-host 允许的主机名访问。",
   errOriginNotAllowed: "服务拒绝了来自其他网站的请求。",
   errSettingsForbidden: "只有在本机或使用访问令牌时才能修改模型设置。",
+  errTokenDisabled: "这个服务器未启用访问令牌（以 --no-auth 启动），因此没有可重新生成的令牌。",
   errRequestTooLarge: "本次上传超出服务单次请求可接收的大小。",
   errFileTooLarge: "有文件超过 100 MiB 的上传上限。",
   errTooManyItems: "这个任务包含的文件和 URL 超出服务上限。",

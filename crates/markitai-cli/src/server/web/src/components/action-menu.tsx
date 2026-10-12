@@ -1,10 +1,12 @@
 // A "⋯" button with the actions that do not fit beside it: a menu that the
 // arrow keys walk, Escape and a click elsewhere close, and that opens upward
 // from a bar pinned to the bottom of the screen. A destructive entry asks
-// first, in a confirmation anchored to the "⋯" button.
+// first, in a confirmation anchored to the "⋯" button. A setting's explanation
+// sits behind a small (i) at the end of its entry.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { IconName } from "./icon-paths.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
+import { InfoTip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 
 export interface MenuAction {
@@ -15,7 +17,7 @@ export interface MenuAction {
   disabled?: boolean;
   /** A setting that the entry turns on and off; the menu stays open. */
   checked?: boolean;
-  /** One line under the entry, for what the setting means. */
+  /** What the setting means, behind an (i) at the end of the entry. */
   note?: string;
   /** An external page: the entry is a link that opens it in a new tab. */
   href?: string;
@@ -60,7 +62,9 @@ export function ActionMenu({
     if (!open) return;
     requestAnimationFrame(() => items()[0]?.focus());
     const away = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Element | null;
+      // An entry's explanation bubble belongs to the menu.
+      if (!root.current?.contains(target) && !target?.closest?.(".help-bubble")) setOpen(false);
     };
     document.addEventListener("pointerdown", away, true);
     return () => document.removeEventListener("pointerdown", away, true);
@@ -114,11 +118,21 @@ export function ActionMenu({
                   {action.hint && <span class="sr-only"> {action.hint}</span>}
                 </a>
               ) : action.checked !== undefined ? (
-                <button key={action.key} type="button" role="menuitemcheckbox" aria-checked={action.checked} tabIndex={-1} disabled={action.disabled} onClick={action.run}>
+                <button
+                  key={action.key}
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={action.checked}
+                  aria-describedby={action.note ? `menu-note-${action.key}` : undefined}
+                  tabIndex={-1}
+                  disabled={action.disabled}
+                  onClick={action.run}
+                >
                   <span class="menu-check" aria-hidden="true">
                     {action.checked && <Icon name="Check" size={13} />}
                   </span>
                   {action.label}
+                  {action.note && <InfoTip id={`menu-note-${action.key}`} text={action.note} />}
                 </button>
               ) : (
                 <button key={action.key} type="button" role="menuitem" tabIndex={-1} disabled={action.disabled} onClick={() => choose(action.run)}>
@@ -126,7 +140,7 @@ export function ActionMenu({
                   {action.label}
                 </button>
               );
-            return action.note ? [entry, <p key={`${action.key}-note`} class="menu-note">{action.note}</p>] : entry;
+            return entry;
           })}
           {danger && (
             <button type="button" role="menuitem" tabIndex={-1} class="is-danger" onClick={() => choose(() => setConfirming(true))}>

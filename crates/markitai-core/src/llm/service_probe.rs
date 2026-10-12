@@ -410,6 +410,12 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
     }
     Ok(())
 }
+/// Why a request that was not timed out received no HTTP response, as a
+/// connection test names it (model discovery says the same).
+pub(crate) fn transport_cause(error: reqwest::Error) -> Option<String> {
+    diagnosis::cause(error)
+}
+
 fn failure(reason: Reason, message: &str) -> Failure {
     Failure {
         reason,

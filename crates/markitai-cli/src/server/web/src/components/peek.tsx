@@ -1,15 +1,16 @@
 // The peek window: a click on a conversion opens one window over the dimmed
 // list, with Details, Preview and Compare as tabs, previous/next with its
-// position, the one or two actions that matter and "⋯" for the rest. ◫ docks
-// the same window beside the list instead (remembered per browser); on a
-// phone it fills the screen. Up/Down move between items (outside the scrolling
-// document), C switches Compare, Escape closes.
+// position, the one or two actions that matter and "⋯" for the rest. The
+// expand button (or F) grows it to the whole viewport and back, remembered per
+// browser; on a phone it always fills the screen. Up/Down move between items
+// (outside the scrolling document), C switches Compare, Escape closes.
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useModal } from "../hooks/use-modal.ts";
 import { useResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { headerActs } from "../lib/acts.ts";
+import { readFull, storeFull } from "../lib/peek-pref.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { basename } from "../lib/format.ts";
 import { printDocument, type PrintJob } from "../lib/print.ts";
@@ -24,29 +25,11 @@ import { readFurniture, storeFurniture } from "./pdf-settings.tsx";
 
 export type PeekTab = "details" | "preview" | "compare";
 
-const DOCK_KEY = "markitai.peek";
-/** Whether this browser opens conversions docked beside the list instead of as a window. */
-export function readDocked(): boolean {
-  try {
-    return localStorage.getItem(DOCK_KEY) === "docked";
-  } catch {
-    return false;
-  }
-}
-export function storeDocked(docked: boolean): void {
-  try {
-    localStorage.setItem(DOCK_KEY, docked ? "docked" : "window");
-  } catch {
-    // A browser without storage keeps the choice for this page only.
-  }
-}
-
 const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 /** What the open document lets the header's "⋯" do with it. */
 interface DocTools {
-  path: string;
   ready: boolean;
   copy: () => void;
   exportPdf: () => void;
@@ -64,8 +47,11 @@ export interface PeekProps {
   position: { index: number; total: number } | null;
   tab: PeekTab;
   phone: boolean;
-  docked: boolean;
   compareAvailable: boolean;
+  /** The server keeps originals (`features.original`): Files lists the item's own. */
+  originals: boolean;
+  /** Download all (.zip) of the item, or null when the server offers none. */
+  onDownloadAll: (() => void) | null;
   acts: ActSet | null;
   /** The source page of a URL item, offered as "Open the page". */
   url: string | null;
@@ -74,9 +60,7 @@ export interface PeekProps {
   onTab: (tab: PeekTab) => void;
   onPrevious: (() => void) | null;
   onNext: (() => void) | null;
-  onDock: () => void;
   onClose: () => void;
-  onDownloadPath: (path: string) => void;
   onCopied: () => void;
   onCopyFailed: () => void;
   announce: (message: string) => void;
@@ -84,7 +68,7 @@ export interface PeekProps {
 }
 
 export function Peek(props: PeekProps) {
-  const { t, item, title, position, phone, docked, compareAvailable, acts, url, failure, onTab, onPrevious, onNext, onClose } = props;
+  const { t, item, title, position, phone, compareAvailable, acts, url, failure, onTab, onPrevious, onNext, onClose } = props;
   const frame = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Record<PeekTab, HTMLButtonElement | null>>({ details: null, preview: null, compare: null });
   const [tools, setTools] = useState<DocTools | null>(null);
@@ -92,7 +76,17 @@ export function Peek(props: PeekProps) {
   const tabs: PeekTab[] = previewable ? (compareAvailable ? ["details", "preview", "compare"] : ["details", "preview"]) : ["details"];
   const tab = tabs.includes(props.tab) ? props.tab : "details";
   const labels: Record<PeekTab, string> = { details: t.peekDetails, preview: t.preview, compare: t.compare };
-  const windowed = !docked || phone;
+  const [full, setFull] = useState(readFull);
+  const wide = full && !phone;
+  const toggleFull = useCallback(() => {
+    setFull((value) => {
+      storeFull(!value);
+      return !value;
+    });
+  }, []);
+  // The header's Download opens Preview's Files, where each file and the whole
+  // item can be downloaded; the document switches to it and clears the request.
+  const [wantFiles, setWantFiles] = useState(false);
   // Preview's own views share this row, at its end: as tabs when they fit beside
   // the window's tabs, else as one compact switch. `needed` is the width the tabs took.
   const row = useRef<HTMLDivElement>(null);
@@ -118,16 +112,16 @@ export function Peek(props: PeekProps) {
     return () => observer.disconnect();
   }, [compactBar, slot, tab]);
 
-  // Keys that work anywhere in the window (and, docked, outside the list).
+  // Keys that work anywhere in the window.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || typing(event.target)) return;
       if (document.querySelector(".confirm-card, .menu, .pdf-card, .toc-sheet")) return;
       const target = event.target as Element | null;
       if (target?.closest?.(".conv-list")) return;
-      if (event.key === "Escape" && !windowed) {
+      if ((event.key === "f" || event.key === "F") && !phone) {
         event.preventDefault();
-        onClose();
+        toggleFull();
       } else if ((event.key === "c" || event.key === "C") && tabs.includes("compare")) {
         event.preventDefault();
         onTab(tab === "compare" ? "preview" : "compare");
@@ -140,7 +134,7 @@ export function Peek(props: PeekProps) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [windowed, tab, tabs.join(), onTab, onNext, onPrevious, onClose]);
+  }, [phone, tab, tabs.join(), onTab, onNext, onPrevious, toggleFull]);
 
   const onTabKey = (event: KeyboardEvent) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
@@ -169,7 +163,11 @@ export function Peek(props: PeekProps) {
     ...(url ? [{ key: "page", label: t.openPage, icon: "ArrowSquareOut" as const, run: () => undefined, href: url, hint: t.opensNewTab }] : []),
     ...(acts?.more ?? []).map((act) => ({ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled })),
   ];
-  const run = (act: ActSet["shown"][number]) => (act.key === "download" && tools ? () => props.onDownloadPath(tools.path) : act.run);
+  const openFiles = () => {
+    setWantFiles(true);
+    onTab("preview");
+  };
+  const run = (act: ActSet["shown"][number]) => (act.key === "download" && previewable ? openFiles : act.run);
 
   const header = (
     <header class="peek-head">
@@ -209,7 +207,7 @@ export function Peek(props: PeekProps) {
             key={act.key}
             type="button"
             class={act.primary ? "btn btn-primary" : "btn"}
-            title={act.title}
+            title={act.key === "download" && previewable ? t.downloadChoose : act.title}
             disabled={act.disabled}
             aria-busy={act.busy || undefined}
             onClick={run(act)}
@@ -220,8 +218,8 @@ export function Peek(props: PeekProps) {
         ))}
         <ActionMenu label={t.moreActions} actions={menu} danger={acts?.danger ?? undefined} plain />
         {!phone && (
-          <button type="button" class="icon-btn" aria-pressed={docked} aria-label={docked ? t.peekUndock : t.peekDock} title={docked ? t.peekUndock : t.peekDock} onClick={props.onDock}>
-            <Icon name={docked ? "ArrowsOutSimple" : "SidebarSimple"} size={15} />
+          <button type="button" class="icon-btn" aria-pressed={full} aria-label={t.peekFullScreen} title={`${full ? t.peekExitFullScreen : t.peekFullScreen} (F)`} onClick={toggleFull}>
+            <Icon name={full ? "ArrowsInSimple" : "ArrowsOutSimple"} size={15} />
           </button>
         )}
         {!phone && (
@@ -236,9 +234,9 @@ export function Peek(props: PeekProps) {
   const body = (
     <div
       ref={frame}
-      class={`peek${docked && !phone ? " is-docked" : ""}${phone ? " is-phone" : ""}`}
-      role={windowed ? "dialog" : "region"}
-      aria-modal={windowed ? "true" : undefined}
+      class={`peek${wide ? " is-full" : ""}${phone ? " is-phone" : ""}`}
+      role="dialog"
+      aria-modal="true"
       aria-labelledby="peek-title"
       tabIndex={-1}
     >
@@ -274,7 +272,7 @@ export function Peek(props: PeekProps) {
         {tab === "details" || item === null ? (
           <div class="peek-details">{props.details}</div>
         ) : (
-          <PeekDocument {...props} item={item} mode={tab === "compare" ? "compare" : "preview"} onTools={setTools} barHost={tab === "preview" ? slot : null} compactBar={compactBar} />
+          <PeekDocument {...props} item={item} mode={tab === "compare" ? "compare" : "preview"} onTools={setTools} barHost={tab === "preview" ? slot : null} compactBar={compactBar} wantFiles={wantFiles} onFilesShown={() => setWantFiles(false)} />
         )}
       </div>
       {!phone && (
@@ -293,20 +291,22 @@ export function Peek(props: PeekProps) {
               <kbd>C</kbd> {t.compare}
             </span>
           )}
+          <span>
+            <kbd>F</kbd> {full ? t.peekExitFullScreen : t.peekFullScreen}
+          </span>
         </footer>
       )}
     </div>
   );
-  if (!windowed) return body;
   return (
-    <PeekVeil frame={frame} phone={phone} onClose={onClose}>
+    <PeekVeil frame={frame} phone={phone} full={wide} onClose={onClose}>
       {body}
     </PeekVeil>
   );
 }
 
 /** The window over the dimmed list; a click on the dimmed part closes it. */
-function PeekVeil({ frame, phone, onClose, children }: { frame: { current: HTMLDivElement | null }; phone: boolean; onClose: () => void; children: ComponentChildren }) {
+function PeekVeil({ frame, phone, full, onClose, children }: { frame: { current: HTMLDivElement | null }; phone: boolean; full: boolean; onClose: () => void; children: ComponentChildren }) {
   useModal(frame, onClose);
   // Notices sit at the bottom edge while the phone window covers the tab bar.
   useEffect(() => {
@@ -316,7 +316,7 @@ function PeekVeil({ frame, phone, onClose, children }: { frame: { current: HTMLD
     return () => root.style.removeProperty("--strips-bottom");
   }, [phone]);
   return (
-    <div class={phone ? "veil peek-veil is-phone" : "veil peek-veil"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div class={`veil peek-veil${phone ? " is-phone" : full ? " is-full" : ""}`} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       {children}
     </div>
   );
@@ -338,7 +338,11 @@ function PeekDocument({
   describe,
   barHost,
   compactBar,
-}: PeekProps & { item: SessionItem; mode: "preview" | "compare"; onTools: (tools: DocTools | null) => void; barHost: HTMLElement | null; compactBar: boolean }) {
+  wantFiles,
+  onFilesShown,
+  originals,
+  onDownloadAll,
+}: PeekProps & { item: SessionItem; mode: "preview" | "compare"; onTools: (tools: DocTools | null) => void; barHost: HTMLElement | null; compactBar: boolean; wantFiles: boolean; onFilesShown: () => void }) {
   const doc = useResultDocument(item);
   const [tab, setTab] = useState<Tab>("rendered");
   const [error, setError] = useState<string | null>(null);
@@ -350,6 +354,11 @@ function PeekDocument({
     setError(null);
   }, [item.key]);
   useEffect(() => () => printing.current?.cancel(), []);
+  useEffect(() => {
+    if (!wantFiles || mode !== "preview") return;
+    setTab("files");
+    onFilesShown();
+  }, [wantFiles, mode]);
 
   const exportPdf = useCallback(async () => {
     if (doc.markdown === null) return;
@@ -386,7 +395,6 @@ function PeekDocument({
 
   useEffect(() => {
     onTools({
-      path: doc.path,
       ready: doc.markdown !== null,
       copy: () =>
         void copyText(doc.markdown ?? "").then((ok) => {
@@ -416,7 +424,7 @@ function PeekDocument({
       {mode === "compare" ? (
         <CompareView t={t} locale={locale} item={item} doc={doc} createdAt={createdAt} describe={describe} phone={phone} />
       ) : (
-        <MarkdownView t={t} locale={locale} item={item} doc={doc} createdAt={createdAt} describe={describe} tab={tab} onTab={setTab} rendered={rendered} onError={setError} barHost={barHost} compactBar={compactBar} />
+        <MarkdownView t={t} locale={locale} item={item} doc={doc} createdAt={createdAt} describe={describe} tab={tab} onTab={setTab} rendered={rendered} onError={setError} barHost={barHost} compactBar={compactBar} originals={originals} onDownloadAll={onDownloadAll} />
       )}
     </>
   );

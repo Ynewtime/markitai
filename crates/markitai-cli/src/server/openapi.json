@@ -58,6 +58,23 @@
         }
       }
     },
+    "/api/access-token/regenerate": {
+      "post": {
+        "tags": ["service"],
+        "operationId": "regenerateAccessToken",
+        "summary": "Replace the access token; other tabs and devices must sign in again",
+        "description": "Trusted like the settings: the current token is required (403 `settings_forbidden` otherwise), and a server started with `--no-auth` has no token to replace (409 `token_disabled`). The body is empty or `{}`. Generates a new 64-character token, replaces the old one at once (it is refused with 401 from then on), revokes every outstanding download ticket and ends every open event stream. The token lives in memory only: a restart takes `MARKITAI_SERVE_TOKEN` or a fresh random token again. The answer carries `Cache-Control: no-store`.",
+        "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
+        "responses": {
+          "200": { "description": "The new token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegeneratedToken" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/jobs": {
       "post": {
         "tags": ["jobs"],
@@ -236,6 +253,23 @@
         }
       }
     },
+    "/api/jobs/{job_id}/items/{item_id}/archive": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "downloadItemArchive",
+        "summary": "Download one item's result files and its kept original as a ZIP",
+        "description": "Holds every file the item's result lists in `artifacts`, at those relpaths, and the item's kept original (the upload, or a URL item's page snapshot: the bytes `…/original/file` sends) at `original/<the file name that route sends>`. Sent as `Content-Disposition: attachment; filename*=UTF-8''<item output base name>.zip` with `nosniff`. 404 `job_not_found`, `item_not_found`, or `result_unavailable` when the item has no result; 409 `item_busy` while the item runs or waits for a retry; 413 `archive_too_large` past the job archive's limit. Its path may be named by a download ticket.",
+        "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "ZIP archive", "content": { "application/zip": { "schema": { "type": "string", "contentMediaType": "application/zip" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/jobs/{job_id}/items/{item_id}/original": {
       "get": {
         "tags": ["jobs"],
@@ -265,12 +299,28 @@
         }
       }
     },
+    "/api/jobs/{job_id}/items/{item_id}/original/view": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "viewOriginalPage",
+        "summary": "A kept HTML original, for a sandboxed frame of the workbench",
+        "description": "Only for `html` originals (404 `original_unavailable` otherwise); over 10 MiB: 413 `result_too_large`. The stored bytes as UTF-8 text with one insertion right after the first `<head>` start tag, else after the first `<html>` start tag, else at the start after a leading doctype: `<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">` and `<base href=\"<the item's URL>\" target=\"_blank\">` for a URL item (`<base target=\"_blank\">` for an upload). Sent with `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; frame-ancestors 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`, `Cache-Control: no-store` and `Content-Disposition: inline`: no script runs and nothing is fetched. A frame cannot send `Authorization`, so its path may be named by a download ticket.",
+        "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "The framed page", "content": { "text/html": { "schema": { "type": "string" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}": {
       "get": {
         "tags": ["jobs"],
         "operationId": "getOriginalPage",
         "summary": "One page of the original as an image",
-        "description": "`pdf`: page `n` drawn on white, `width` pixels wide (narrower when the 32-megapixel limit requires). `image` (`n` = 1): the stored image when browsers show its type (png, jpeg, gif, webp, avif, bmp) and it is not wider than `width`, otherwise a PNG scaled to `width`. `screenshots`: screenshot `n`, scaled to a PNG when wider than `width`. At most two pages are drawn at a time; another request is refused with 429 `render_busy` and `Retry-After`. Responses carry `Cache-Control: private, max-age=86400` and an ETag (answered with 304), and drawn pages are kept briefly in memory.",
+        "description": "`pdf`: page `n` drawn on white, `width` pixels wide (narrower when the 32-megapixel limit requires). `image` (`n` = 1): the stored image when browsers show its type (png, jpeg, gif, webp, avif, bmp) and it is not wider than `width`, otherwise a PNG scaled to `width`. `screenshots`, or `html` for a URL item whose conversion also saved page screenshots: screenshot `n`, scaled to a PNG when wider than `width`. At most two pages are drawn at a time; another request is refused with 429 `render_busy` and `Retry-After`. Responses carry `Cache-Control: private, max-age=86400` and an ETag (answered with 304), and drawn pages are kept briefly in memory.",
         "parameters": [
           { "$ref": "#/components/parameters/JobId" },
           { "$ref": "#/components/parameters/ItemId" },
@@ -522,6 +572,7 @@
         "tags": ["providers"],
         "operationId": "discoverModels",
         "summary": "List a provider's models with the given or saved connection",
+        "description": "A discovery that lists nothing answers 200 with `status: \"unavailable\"`, a `detail` and a `reason`, as a failed connection test does: a missing key is found before any request is sent.",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryRequest" } } } },
         "responses": {
           "200": { "description": "Discovery result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryResult" } } } },
@@ -530,8 +581,7 @@
           "404": { "$ref": "#/components/responses/Error" },
           "413": { "$ref": "#/components/responses/Error" },
           "422": { "$ref": "#/components/responses/Error" },
-          "429": { "$ref": "#/components/responses/Error" },
-          "503": { "$ref": "#/components/responses/Error" }
+          "429": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -587,7 +637,7 @@
           "reason": {
             "type": "string",
             "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
-            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
           }
         }
       },
@@ -611,7 +661,7 @@
       "Features": {
         "type": "object",
         "description": "What this service implements beyond the base job API, for a client shared with other backends",
-        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets"],
+        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate"],
         "properties": {
           "cancel": { "type": "boolean", "description": "POST /api/jobs/{job_id}/cancel" },
           "download_tickets": { "type": "boolean", "description": "POST /api/download-tickets" },
@@ -620,7 +670,9 @@
           "original": { "type": "boolean", "description": "The /original routes of an item" },
           "result_excerpt": { "type": "boolean", "description": "GET …/result?max_bytes=" },
           "job_labels": { "type": "boolean", "description": "`label` on POST /api/jobs, echoed in snapshots and history" },
-          "item_assets": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}" }
+          "item_assets": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}" },
+          "item_archive": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/archive" },
+          "token_regenerate": { "type": "boolean", "description": "POST /api/access-token/regenerate; false when the server runs without a token (--no-auth)" }
         }
       },
       "CloudflareCapabilities": {
@@ -652,7 +704,7 @@
         "type": "object",
         "required": ["path"],
         "additionalProperties": false,
-        "properties": { "path": { "type": "string", "description": "`/api/jobs/{job_id}/files/{relpath}`, `/api/jobs/{job_id}/archive`, `/api/jobs/{job_id}/items/{item_id}/original/file` or `/api/history/archive`, exactly as it will be requested (percent-encoded ASCII, no query)", "examples": ["/api/jobs/0123456789ab/archive"] } }
+        "properties": { "path": { "type": "string", "description": "`/api/jobs/{job_id}/files/{relpath}`, `/api/jobs/{job_id}/archive`, `/api/jobs/{job_id}/items/{item_id}/archive`, `/api/jobs/{job_id}/items/{item_id}/original/file`, `/api/jobs/{job_id}/items/{item_id}/original/view` or `/api/history/archive`, exactly as it will be requested (percent-encoded ASCII, no query)", "examples": ["/api/jobs/0123456789ab/archive"] } }
       },
       "Ticket": {
         "type": "object",
@@ -661,6 +713,16 @@
           "ticket": { "type": "string", "description": "64 hexadecimal characters" },
           "url": { "type": "string", "description": "The path with `?ticket=`; open it once" },
           "expires_in": { "type": "integer", "description": "Seconds the ticket stays valid", "examples": [60] }
+        }
+      },
+      "RegeneratedToken": {
+        "type": "object",
+        "required": ["token", "network_url", "persistent", "startup_variable"],
+        "properties": {
+          "token": { "type": "string", "description": "The new access token (64 hexadecimal characters)" },
+          "network_url": { "type": ["string", "null"], "description": "`http://<this computer's network address>:<port>/#token=<new>` when the server listens on every interface and a network address is found; else null" },
+          "persistent": { "type": "boolean", "const": false, "description": "Always false: the token is kept in memory only, and a restart replaces it" },
+          "startup_variable": { "type": ["string", "null"], "enum": ["MARKITAI_SERVE_TOKEN", null], "description": "`MARKITAI_SERVE_TOKEN` when the startup token came from that variable (a restart takes it again); else null" }
         }
       },
       "JobOptions": {
@@ -805,15 +867,16 @@
       },
       "OriginalDescriptor": {
         "type": "object",
-        "required": ["kind", "name", "media_type", "size", "download", "pages", "page_count", "text_layer", "reason"],
+        "required": ["kind", "name", "media_type", "size", "download", "view", "pages", "page_count", "text_layer", "reason"],
         "properties": {
           "kind": { "type": "string", "enum": ["pdf", "image", "html", "text", "screenshots", "none"] },
           "name": { "type": "string", "description": "The upload name or URL" },
           "media_type": { "type": ["string", "null"], "description": "Of the stored original bytes" },
           "size": { "type": ["integer", "null"], "description": "Bytes of the stored original" },
           "download": { "type": ["string", "null"], "description": "API path of the stored original bytes (also a download ticket path); null when none is kept" },
-          "pages": { "type": "array", "description": "Page boxes, in order, at most 2000: points of the visible page box after rotation for a PDF, pixels for an image or screenshot; empty for html, text and none", "items": { "type": "object", "required": ["width", "height"], "properties": { "width": { "type": "number" }, "height": { "type": "number" } } } },
-          "page_count": { "type": "integer", "description": "PDF pages, 1 for an image, the number of screenshots, else 0" },
+          "view": { "type": ["string", "null"], "description": "API path of the page for a sandboxed frame (`…/original/view`, also a download ticket path) when `kind` is `html`; else null" },
+          "pages": { "type": "array", "description": "Page boxes, in order, at most 2000: points of the visible page box after rotation for a PDF, pixels for an image or screenshot; for a URL item's `html` page, its page screenshots when the conversion saved any (a fallback view); else empty for html, text and none", "items": { "type": "object", "required": ["width", "height"], "properties": { "width": { "type": "number" }, "height": { "type": "number" } } } },
+          "page_count": { "type": "integer", "description": "PDF pages, 1 for an image, the number of screenshots (also for a URL item's `html` page that has them), else 0" },
           "text_layer": { "type": "boolean", "description": "`…/pages/{n}/text` answers (PDF only)" },
           "reason": { "type": ["string", "null"], "enum": [null, "not_kept", "unsupported_format", "too_large", "render_unavailable"], "description": "Why `kind` is `none`: no original kept (a CLI-recorded job, a URL page not converted from HTML here, or a removed upload), a format without a browser view and no screenshots, or a PDF or image this build cannot open" }
         }
@@ -915,7 +978,7 @@
           "aliases": { "type": "array", "items": { "type": "string" }, "description": "Further model prefixes routed the same way, then other names the provider is searched by", "examples": [["ollama_chat"]] },
           "status": { "type": "string", "examples": ["ready", "needs_credentials", "unknown", "disabled"] },
           "source": { "type": "string", "description": "The environment variable, `config` or `built_in`" },
-          "credential": { "type": "string" },
+          "credential": { "type": "string", "description": "How the connection authenticates when the environment supplies its key: `env:VAR`. On an `environment` card always; on a `configured` card when its key is an `env:VAR` reference, or when it stores no key (a hand-written entry, never the keyless placeholder), may use the environment's credentials and one of its provider's key variables is set; otherwise absent", "examples": ["env:DEEPSEEK_API_KEY"] },
           "api_key_configured": { "type": "boolean" },
           "api_base_configured": { "type": "boolean" },
           "api_base": { "type": ["string", "null"] },
@@ -1024,7 +1087,13 @@
           "cached": { "type": "boolean" },
           "stale": { "type": "boolean" },
           "models": { "type": "array", "items": { "type": "object", "required": ["model", "label", "supports_vision"], "properties": { "model": { "type": "string" }, "label": { "type": "string" }, "supports_vision": { "type": "boolean" } } } },
-          "detail": { "type": "string" }
+          "detail": { "type": "string", "description": "English summary; for a failure its cause, such as `Model discovery returned HTTP 401: <the provider's message>`, `Model discovery timed out`, `Model discovery request failed: <cause>` or `DEEPSEEK_API_KEY is not set on the server, so nothing was sent`; never the key" },
+          "reason": {
+            "type": "string",
+            "description": "Only on a failed discovery (`status: \"unavailable\"` from a live list or a subscription runtime): why. `no_key`: no key while the provider needs one, found before any request, or a keyless request refused with 401/403; `key_rejected`: HTTP 401 or 403; `rate_limited`: HTTP 429; `network`: no HTTP response (name resolution, connection, TLS, a redirect, which discovery never follows); `timeout`: no answer in time; `provider_error`: anything else, HTTP 404 (the address lists no models) and an unreadable list included. `model_not_found` is listed for symmetry with the connection test and not sent by discovery",
+            "enum": ["no_key", "key_rejected", "model_not_found", "rate_limited", "network", "timeout", "provider_error"]
+          },
+          "key_variable": { "type": "string", "description": "With `no_key`, the name of the environment variable the key would come from, when one is named; never its value" }
         }
       },
       "ProbeRequest": {

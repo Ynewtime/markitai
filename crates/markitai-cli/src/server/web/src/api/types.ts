@@ -210,6 +210,21 @@ export interface Features {
   job_labels: boolean;
   /** v1.6: GET /api/jobs/{id}/items/{item}/assets/{relpath} serves the item's own images inline. */
   item_assets?: boolean;
+  /** v1.11: GET /api/jobs/{id}/items/{item}/archive zips one item's files and its original. */
+  item_archive?: boolean;
+  /** v1.11: POST /api/access-token/regenerate replaces the server's access token. */
+  token_regenerate?: boolean;
+}
+
+/** v1.11: `POST /api/access-token/regenerate`. */
+export interface RegeneratedToken {
+  token: string;
+  /** The address other devices on the network open, with the new token; null when the server is not on the network. */
+  network_url: string | null;
+  /** The new token survives a restart of the server. */
+  persistent: boolean;
+  /** The variable that sets the token when the server starts (it comes back then), or null. */
+  startup_variable: string | null;
 }
 
 /** One entry of `GET /api/history`, newest first. */
@@ -320,6 +335,9 @@ export interface DiscoveryResult {
   stale?: boolean;
   models: ModelCandidate[];
   detail?: string;
+  /** v1.11: why an unavailable list failed, with the test's categories (v1.10). */
+  reason?: string;
+  key_variable?: string;
 }
 
 export interface ProbeResult {
@@ -358,8 +376,11 @@ export interface OriginalDescriptor {
   size: number | null;          // bytes of the stored original
   /** API path for downloading the stored original bytes (also allowed as a ticket path); null when none is kept. */
   download: string | null;
+  /** v1.11, html only: API path of the kept page for a sandboxed frame (opened through a ticket). */
+  view?: string | null;
   /** Page boxes, in order. pdf: points (1/72 in) of the visible page box after rotation; image, screenshots:
-   *  pixels. At most 2000 entries (the first pages); `page_count` is the total. Empty for html/text/none. */
+   *  pixels. At most 2000 entries (the first pages); `page_count` is the total. Empty for text/none, and for
+   *  html unless a URL item also saved page screenshots (v1.11: then those, served as pages). */
   pages: { width: number; height: number }[];
   page_count: number;           // pdf: total pages; image: 1; screenshots: number of images; else 0
   /** pdf only: GET .../pages/{n}/text answers. */

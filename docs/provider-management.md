@@ -46,8 +46,24 @@ limit; the service uses a twenty-second backstop. Probes have a fifteen-second
 request limit and thirty-second service backstop. Redirects are never followed.
 The service admits at most eight provider network operations at once, separately
 from document conversion. A timed-out service wait does not falsely release a
-slot while its blocking request is still alive. Response/status errors contain
-fixed descriptions, never upstream response text or credential-bearing URLs.
+slot while its blocking request is still alive. Errors never contain
+credential-bearing URLs.
+
+A discovery that fails answers HTTP 200 with `status: "unavailable"`, no models,
+and why, in the connection check's categories: `reason` `no_key` (found before
+any request: the key it would send is an unset or empty `env:` reference or key
+variable, for a provider that needs one; `key_variable` names the variable),
+`key_rejected` (401/403; refused without a key it is `no_key`), `rate_limited`
+(429), `network` (no answer: DNS, connection, TLS, or a redirect, which discovery
+does not follow), `timeout` (the request limit or the service backstop) or
+`provider_error` (404, which for a list means the address has none, any other
+status, or an answer without a readable list). `detail` reads
+`Model discovery returned HTTP 401: <the provider's message>` (the message from
+its JSON `error.message`, `message`, `error` or `detail`, else a short text
+excerpt without markup, at most 300 characters, with the key that was sent
+replaced by "…"), `Model discovery timed out`, `Model discovery request failed:
+<cause>`, or `DEEPSEEK_API_KEY is not set on the server, so nothing was sent`.
+Discovery no longer answers 503 for these.
 
 A connection check reuses native deployment resolution, endpoint construction
 and provider payload construction. It requests exactly `Reply with exactly OK.`
@@ -71,7 +87,10 @@ process variables, then `.env` in the current directory, then
 `MARKITAI_HOME/.env` (`~/.markitai/.env`), with existing values taking
 precedence. They resolve explicit `env:NAME` references and provider fallback
 variables from it, and do not load user configuration or auth files. A missing
-explicit reference is an error. The explicit variants read no environment, nor
+explicit reference fails a probe and is `no_key` for discovery. A model written
+by hand without a key uses its provider's key variable for discovery and its
+credentials view (`env:VAR`, `api_key_source: "environment"`), as conversions
+do. The explicit variants read no environment, nor
 the server's gcloud login. Discovery sends no key for the keyless placeholder
 `markitai-no-key`; a probe sends it as written. Endpoints must be
 HTTP(S), without URL user information or fragments. Trusted callers may choose

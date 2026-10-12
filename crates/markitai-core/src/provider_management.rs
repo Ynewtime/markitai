@@ -460,7 +460,7 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
                 json!({"provider":"copilot","status":"ok","source":"official_cli","authoritative":true,"cached":false,"stale":false,"models":models,"detail":"Models reported by the authenticated official Copilot runtime"})
             }
             Err(_) => {
-                json!({"provider":"copilot","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Copilot runtime or authentication is unavailable"})
+                json!({"provider":"copilot","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Copilot runtime or authentication is unavailable","reason":"provider_error"})
             }
         });
     }
@@ -480,7 +480,7 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
                 json!({"provider":"claude-agent","status":"ok","source":"official_cli","authoritative":true,"cached":false,"stale":false,"models":models,"detail":"Models reported by the authenticated official Claude runtime"})
             }
             Err(_) => {
-                json!({"provider":"claude-agent","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Claude runtime or subscription authentication is unavailable"})
+                json!({"provider":"claude-agent","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Claude runtime or subscription authentication is unavailable","reason":"provider_error"})
             }
         });
     }
@@ -500,7 +500,7 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
                 json!({"provider":"chatgpt","status":"ok","source":"adapter_allowlist","authoritative":false,"cached":false,"stale":false,"models":models,"detail":"Only the pinned gpt-5.5 adapter capability is listed; account entitlement is not discovered"})
             }
             Err(_) => {
-                json!({"provider":"chatgpt","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Codex runtime or subscription authentication is unavailable"})
+                json!({"provider":"chatgpt","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Codex runtime or subscription authentication is unavailable","reason":"provider_error"})
             }
         });
     }
@@ -514,6 +514,26 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         return Ok(
             json!({"provider":entry.provider,"status":"unavailable","source":"manual","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"This provider does not publish a model list; enter model IDs manually"}),
         );
+    }
+    // A key the provider needs and nothing supplies: say so before sending
+    // anything, as a connection test does.
+    if let Some(variable) = missing_key(
+        entry,
+        field(request, "api_key")?,
+        field(request, "api_base")?,
+        &env,
+        allow_environment,
+    ) {
+        let detail = match &variable {
+            Some(variable) => format!("{variable} is not set on the server, so nothing was sent"),
+            None => "Model discovery needs an API key, and none is set, so nothing was sent".into(),
+        };
+        return Ok(discovery::failed(
+            &provider,
+            ProbeReason::NoKey,
+            &detail,
+            variable.as_deref(),
+        ));
     }
     // The first of the provider's key variables that holds a value.
     let variable = entry
@@ -535,14 +555,63 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         checked_url(base)?;
     }
     let Some(base) = base.filter(|value| !value.trim().is_empty()) else {
-        return Ok(discovery::unavailable(
+        return Ok(discovery::failed(
             &provider,
+            ProbeReason::ProviderError,
             "An API endpoint is required",
+            None,
         ));
     };
+    // A keyless request refused for want of a key names the variable the
+    // server would read it from (none when it reads no environment).
+    let keyless_variable = allow_environment
+        .then(|| entry.key_variables.first().copied())
+        .flatten();
     cache::global().discover(&provider, &base, key.as_deref(), refresh, || {
-        discovery::load(&provider, &base, key.as_deref())
+        discovery::load(&provider, &base, key.as_deref(), keyless_variable)
     })
+}
+
+/// A discovery that has no key while its provider needs one, found before
+/// any request, by the rule a connection test applies: `Some` with the
+/// variable the key would come from, if one is named. An unset or empty
+/// `env:` reference always counts. Without a key, it counts unless the
+/// provider takes none (local servers, subscriptions, clouds with their own
+/// credentials, OpenAI-compatible endpoints) or the request is aimed at an
+/// address of its own, which is tried. The keyless placeholder is a key.
+fn missing_key(
+    entry: &ProviderEntry,
+    key: Option<&str>,
+    base: Option<&str>,
+    env: &HashMap<String, String>,
+    allow_environment: bool,
+) -> Option<Option<String>> {
+    let set = |name: &str| env.get(name).is_some_and(|value| !value.trim().is_empty());
+    if let Some(key) = key.filter(|key| !key.is_empty()) {
+        return key
+            .strip_prefix("env:")
+            .filter(|name| !set(name))
+            .map(|name| {
+                let named = (1..=128).contains(&name.len())
+                    && name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+                named.then(|| name.to_owned())
+            });
+    }
+    if entry.key_optional || entry.key_variables.is_empty() {
+        return None;
+    }
+    let addressed = base.is_some_and(|base| !base.is_empty())
+        || allow_environment && entry.base_variables.iter().any(|name| set(name));
+    if addressed || allow_environment && entry.key_variables.iter().any(|name| set(name)) {
+        return None;
+    }
+    Some(
+        allow_environment
+            .then(|| entry.key_variables.first().map(|name| (*name).to_owned()))
+            .flatten(),
+    )
 }
 
 /// Make one short request to exactly the requested deployment, without retry,

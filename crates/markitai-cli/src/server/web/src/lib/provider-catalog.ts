@@ -1,6 +1,9 @@
 // How the provider picker arranges the server's provider cards: saved
 // connections, the common eight, then every other provider by name under a
-// group filter. A server that sends no `group` (Python 1.2.1) still works:
+// group filter. A provider appears once among the saved rows: the server's
+// environment key folds into the provider's connection at its own endpoint,
+// and a provider with a saved row is marked as added in Common and All, where
+// choosing it opens that connection (contract v1.11). A server that sends no `group` (Python 1.2.1) still works:
 // Common is inferred from the eight names and everything else is listed
 // under All providers without a filter.
 import type { ProviderCard } from "../api/types.ts";
@@ -64,11 +67,51 @@ export interface ProviderChoice {
   group: string | null;
   icon: string | null;
   card: ProviderCard;
+  /** The provider has a saved row; choosing it opens that connection. */
+  added: boolean;
+}
+
+/** How a saved row authenticates: the server's key variable, a key saved in
+ * the connection, none, or nothing to say (subscriptions, local servers, clouds). */
+export type SavedAuth = { kind: "environment"; variable: string } | { kind: "key" } | { kind: "none" } | null;
+
+const variableOf = (credential: string | undefined): string | null => (credential?.trim().startsWith("env:") ? credential.trim().slice(4).trim() || null : null);
+
+const originOf = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value;
+  }
+};
+
+/** A connection at its provider's own endpoint (no address, or the default one). */
+export const atOwnEndpoint = (card: Pick<ProviderCard, "api_base" | "default_base">): boolean =>
+  !card.api_base || (card.default_base != null && originOf(card.api_base) === originOf(card.default_base));
+
+/** What a saved row says about its key; `environment` is the server's key card folded into it. */
+export function savedAuth(card: ProviderCard, environment: ProviderCard | null = null, served: string | null = null): SavedAuth {
+  if (card.kind === "environment") return { kind: "environment", variable: variableOf(card.credential) ?? card.source };
+  const variable = variableOf(card.credential);
+  if (variable) return { kind: "environment", variable };
+  if (card.api_key_configured) return { kind: "key" };
+  if (environment) return { kind: "environment", variable: variableOf(environment.credential) ?? environment.source };
+  // A model written by hand without a key (a `legacy:` connection) uses the
+  // server's key variable wherever it points, as conversions do.
+  if (served && card.provider_id?.startsWith("legacy:")) return { kind: "environment", variable: served };
+  if (card.key_optional || isSubscription(card) || card.provider === "custom") return null;
+  return card.kind === "configured" ? { kind: "none" } : null;
 }
 
 export interface ProviderArrangement {
-  /** Saved connections and server environment credentials, as the server lists them. */
+  /** Saved connections and server environment credentials, as the server lists them,
+   * an environment card folded into its provider's connection at its own endpoint. */
   saved: ProviderCard[];
+  /** The environment card folded into a saved row, by the row's card id. */
+  folded: Map<string, ProviderCard>;
+  /** The server's key variable for each provider that has one. */
+  variables: Map<string, string>;
   common: ProviderChoice[];
   /** Every other provider, by label, within the filter. */
   all: ProviderChoice[];
@@ -94,7 +137,26 @@ export function arrangeProviders(
   cards: ProviderCard[],
   options: { query: string; filter: ProviderFilter; label: (card: ProviderCard) => string },
 ): ProviderArrangement {
-  const saved = cards.filter((card) => !builtIn(card));
+  const listed = cards.filter((card) => !builtIn(card));
+  // The server's key for a provider and the provider's connection at its own
+  // endpoint are one row: the connection, which says it uses the key.
+  const folded = new Map<string, ProviderCard>();
+  const absorbed = new Set<ProviderCard>();
+  for (const environment of listed.filter((card) => card.kind === "environment")) {
+    const variable = variableOf(environment.credential) ?? environment.source;
+    const own = listed.filter((card) => card.kind === "configured" && card.provider === environment.provider && atOwnEndpoint(card) && !folded.has(card.id));
+    const host =
+      own.find((card) => variableOf(card.credential) === variable) ?? own.find((card) => !card.api_key_configured && !variableOf(card.credential)) ?? own[0];
+    if (!host) continue;
+    folded.set(host.id, environment);
+    absorbed.add(environment);
+  }
+  const saved = listed.filter((card) => !absorbed.has(card));
+  const variables = new Map<string, string>();
+  for (const card of listed) if (card.kind === "environment") variables.set(card.provider, variableOf(card.credential) ?? card.source);
+  // Every provider but the OpenAI-compatible endpoint (each one is another server) is added once saved.
+  const savedRow = new Map<string, ProviderCard>();
+  for (const card of saved) if (card.provider !== "custom" && !savedRow.has(card.provider)) savedRow.set(card.provider, card);
   const grouped = cards.some((card) => typeof card.group === "string");
   // One choice per provider: its built-in card, else the first saved or
   // environment connection (whose provider the server no longer offers).
@@ -103,12 +165,14 @@ export function arrangeProviders(
     if (choices.has(card.provider)) continue;
     if (!builtIn(card) && !(grouped ? card.group : COMMON_PROVIDERS.includes(card.provider))) continue;
     const common = grouped ? card.group === "common" : COMMON_PROVIDERS.includes(card.provider);
+    const row = savedRow.get(card.provider);
     choices.set(card.provider, {
       provider: card.provider,
       label: options.label(card),
       group: common ? "common" : grouped ? (card.group ?? null) : null,
       icon: iconKey(card),
-      card,
+      card: row ?? card,
+      added: row !== undefined,
     });
   }
   const offered = [...choices.values()];
@@ -125,6 +189,8 @@ export function arrangeProviders(
   const found = (choice: ProviderChoice) => matches(choice.card, choice.label, options.query);
   return {
     saved: saved.filter((card) => matches(card, options.label(card), options.query)),
+    folded,
+    variables,
     common: common.filter(found),
     all: rest.filter((choice) => (filter === "all" || choice.group === filter) && found(choice)),
     filters,

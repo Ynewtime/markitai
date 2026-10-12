@@ -15,6 +15,7 @@ export const ja: Record<MessageKey, string> = {
     "サービスはこのアドレスを受け付けません。localhost、IP アドレス、または --allowed-host で許可した名前で開いてください。",
   errOriginNotAllowed: "サービスが別のサイトからのリクエストを拒否しました。",
   errSettingsForbidden: "モデルの設定は、このコンピューター上か、アクセストークンを使用している場合にのみ変更できます。",
+  errTokenDisabled: "このサーバーはアクセストークンを使っていません（--no-auth で起動）。再生成するトークンはありません。",
   errRequestTooLarge: "このアップロードは、サービスが 1 回のリクエストで受け付けられるサイズを超えています。",
   errFileTooLarge: "アップロード上限の 100 MiB を超えるファイルがあります。",
   errTooManyItems: "このタスクのファイルと URL の数が、サービスの上限を超えています。",

@@ -650,3 +650,82 @@ fn routability_and_cards_follow_what_a_connection_will_send() {
         ["authorization: Bearer markitai-no-key"]
     );
 }
+
+#[test]
+fn cards_name_the_environment_key_a_connection_authenticates_with() {
+    let dir = tempfile::tempdir().unwrap();
+    let operator = ModelServer::start();
+    configure(
+        dir.path(),
+        &operator.base,
+        json!([
+            // Hand-written without a key, at the provider's own endpoint.
+            {"model_name":"default","litellm_params":{"model":"groq/own"},"model_info":{"id":"groq-own"}},
+            // Hand-written without a key, at an address of the operator's own.
+            {"model_name":"default","litellm_params":{"model":"anthropic/proxied","api_base":"OPERATOR/v1"},"model_info":{"id":"anthropic-proxied"}},
+            // A reference, a literal key, the keyless placeholder, and no environment.
+            {"model_name":"default","litellm_params":{"model":"deepseek/referenced","api_key":"env:DEEPSEEK_TEST_UNSET"},"model_info":{"id":"deepseek-referenced"}},
+            {"model_name":"default","litellm_params":{"model":"xai/literal","api_key":"xai-literal-test"},"model_info":{"id":"xai-literal"}},
+            {"model_name":"default","litellm_params":{"model":"cerebras/keyless","api_key":NO_KEY,"api_base":"OPERATOR/v1"},"model_info":{"id":"cerebras-keyless"}},
+            {"model_name":"default","litellm_params":{"model":"mistral/literal-mode","use_environment_credentials":false},"model_info":{"id":"mistral-literal"}}
+        ]),
+    );
+    let server = Server::start(dir.path(), &operator.base);
+    let cards = server.cards();
+    let card = |deployment: &str| {
+        cards
+            .iter()
+            .find(|card| card["deployment_id"] == deployment)
+            .unwrap_or_else(|| panic!("{deployment}: {cards:?}"))
+            .clone()
+    };
+    assert_eq!(card("groq-own")["credential"], "env:GROQ_API_KEY");
+    assert_eq!(card("groq-own")["api_key_configured"], false);
+    assert_eq!(
+        card("anthropic-proxied")["credential"],
+        "env:ANTHROPIC_API_KEY"
+    );
+    assert_eq!(
+        card("deepseek-referenced")["credential"],
+        "env:DEEPSEEK_TEST_UNSET"
+    );
+    for deployment in ["xai-literal", "cerebras-keyless", "mistral-literal"] {
+        assert!(card(deployment).get("credential").is_none(), "{deployment}");
+    }
+    // The hand-written groq entry at its own endpoint stands for the
+    // environment card; the anthropic one elsewhere does not.
+    let environment: Vec<_> = cards
+        .iter()
+        .filter(|card| card["kind"] == "environment")
+        .map(|card| card["provider"].as_str().unwrap())
+        .collect();
+    assert!(!environment.contains(&"groq"), "{environment:?}");
+    assert!(environment.contains(&"anthropic"), "{environment:?}");
+    // Its credentials name the variable, never the key.
+    let credentials = server.ok(
+        "GET",
+        &format!(
+            "/api/settings/llm/providers/{}/credentials",
+            card("groq-own")["provider_id"].as_str().unwrap()
+        ),
+        None,
+    );
+    assert_eq!(credentials["api_key_masked"], "env:GROQ_API_KEY");
+    assert_eq!(credentials["api_key_source"], "environment");
+    assert!(!credentials.to_string().contains("gsk-test"));
+    // A hand-written entry discovers with the environment's key.
+    let found = server.ok(
+        "POST",
+        "/api/settings/llm/model-discovery",
+        Some(json!({"provider":"anthropic","deployment_id":"anthropic-proxied","refresh":true})),
+    );
+    assert_eq!(found["status"], "ok", "{found}");
+    let seen = operator.take();
+    assert_eq!(seen.len(), 1);
+    assert!(
+        seen[0].line.starts_with("GET /v1/models"),
+        "{}",
+        seen[0].line
+    );
+    assert_eq!(seen[0].credentials, ["x-api-key: sk-ant-test-env-0000"]);
+}

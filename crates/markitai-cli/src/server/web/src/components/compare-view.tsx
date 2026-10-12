@@ -3,10 +3,14 @@
 // conversion's page screenshots); page images load as they scroll into view,
 // fetched with the header token. Hovering a heading or table on either side
 // outlines its counterpart: PDF pages are matched through their text layer,
-// HTML by element. On phones the original sits above the Markdown.
+// HTML by element. A web page's kept snapshot is shown as the page itself, in
+// a sandboxed frame that runs nothing and loads nothing from the site, with its
+// screenshot as the other view. On phones the original sits above the Markdown.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, fetchBlob, fetchOriginal, fetchPageText, fetchText, originalPagePath } from "../api/client.ts";
+import { ApiError, downloadTicket, fetchBlob, fetchPageText, fetchText, originalPagePath } from "../api/client.ts";
+import { hasToken } from "../api/token.ts";
 import type { OriginalDescriptor } from "../api/types.ts";
+import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { locate, norm, pairElements, targetsOf, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
@@ -18,7 +22,6 @@ import { Icon } from "./icons.tsx";
 import { Skeleton } from "./skeleton.tsx";
 import { MarkdownView, type Tab } from "./markdown-view.tsx";
 
-const descriptors = new Map<string, OriginalDescriptor>();
 /** Text layers read for matching, at most this many pages. */
 const TEXT_PAGES = 40;
 const ORIGINAL_TEXT_BYTES = 5 * 1024 * 1024;
@@ -50,31 +53,18 @@ export function CompareView({
   describe: (error: unknown) => { text: string; detail: string };
   phone: boolean;
 }) {
-  const [descriptor, setDescriptor] = useState<OriginalDescriptor | null>(() => descriptors.get(item.key) ?? null);
-  const [error, setError] = useState<unknown>(null);
+  const { descriptor, error } = useOriginal(item);
   const [tab, setTab] = useState<Tab>("rendered");
   const [targets, setTargets] = useState<{ element: HTMLElement; target: Target }[]>([]);
   const [hover, setHover] = useState<Linked | null>(null);
   const markdownRoot = useRef<HTMLElement | null>(null);
+  const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
+  // A web page kept as HTML: the page itself, or its screenshot when one was taken.
+  const framed = url !== null && descriptor?.kind === "html" && typeof descriptor.view === "string";
+  const [snapView, setSnapView] = useState<"page" | "shot">("page");
+  useEffect(() => setSnapView("page"), [item.key]);
 
-  useEffect(() => {
-    const known = descriptors.get(item.key);
-    setDescriptor(known ?? null);
-    setError(null);
-    setHover(null);
-    if (known) return;
-    let stale = false;
-    fetchOriginal(item.jobId, item.itemId).then(
-      (value) => {
-        descriptors.set(item.key, value);
-        if (!stale) setDescriptor(value);
-      },
-      (reason: unknown) => !stale && setError(reason),
-    );
-    return () => {
-      stale = true;
-    };
-  }, [item.key]);
+  useEffect(() => setHover(null), [item.key]);
 
   const onRendered = useCallback((root: HTMLElement | null) => {
     markdownRoot.current = root;
@@ -112,11 +102,23 @@ export function CompareView({
 
   const original = (
     <div class="orig">
-      <OriginalHeader t={t} item={item} descriptor={descriptor} />
+      <OriginalHeader
+        t={t}
+        item={item}
+        descriptor={descriptor}
+        url={url}
+        views={framed && descriptor.page_count > 0 ? { value: snapView, onChange: setSnapView } : null}
+      />
       {error ? (
         <p class="pane-note line-error">{describe(error).text}</p>
       ) : descriptor === null ? (
         <Skeleton label={t.loading} kind="page" />
+      ) : framed ? (
+        snapView === "shot" ? (
+          <Pages t={t} item={item} descriptor={descriptor} targets={[]} hover={null} onHover={() => undefined} />
+        ) : (
+          <PageFrame t={t} item={item} view={descriptor.view as string} describe={describe} onFailed={descriptor.page_count > 0 ? () => setSnapView("shot") : null} />
+        )
       ) : (
         <OriginalBody
           t={t}
@@ -143,12 +145,33 @@ export function CompareView({
   );
 }
 
-function OriginalHeader({ t, item, descriptor }: { t: Dict; item: SessionItem; descriptor: OriginalDescriptor | null }) {
+function OriginalHeader({
+  t,
+  item,
+  descriptor,
+  url,
+  views,
+}: {
+  t: Dict;
+  item: SessionItem;
+  descriptor: OriginalDescriptor | null;
+  url: string | null;
+  views: { value: "page" | "shot"; onChange: (value: "page" | "shot") => void } | null;
+}) {
   const [failed, setFailed] = useState(false);
   const fetchable = descriptor?.download;
   return (
     <div class="orig-head">
       <span class="orig-label">{t.original}</span>
+      {views && (
+        <span class="seg orig-views" role="group" aria-label={t.originalViews}>
+          {(["page", "shot"] as const).map((value) => (
+            <button key={value} type="button" class={views.value === value ? "is-on" : undefined} aria-pressed={views.value === value} onClick={() => views.onChange(value)}>
+              {value === "page" ? t.originalPage : t.originalScreenshot}
+            </button>
+          ))}
+        </span>
+      )}
       {descriptor?.size != null && <span class="orig-size">{fmtBytes(descriptor.size)}</span>}
       {fetchable && (
         <button
@@ -166,6 +189,64 @@ function OriginalHeader({ t, item, descriptor }: { t: Dict; item: SessionItem; d
           <Icon name="DownloadSimple" size={15} />
         </button>
       )}
+      {url && descriptor !== null && descriptor.kind !== "none" && (
+        <a class="icon-btn" href={url} target="_blank" rel="noopener noreferrer" aria-label={`${t.openPage} ${t.opensNewTab}`} title={t.openPage}>
+          <Icon name="ArrowSquareOut" size={15} />
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** A web page as the server fetched it, in a frame that runs no script, sends no
+ * form and loads nothing from the site (the server's own CSP for this route);
+ * a frame cannot send the token, so it opens with a single-use ticket. */
+function PageFrame({
+  t,
+  item,
+  view,
+  describe,
+  onFailed,
+}: {
+  t: Dict;
+  item: SessionItem;
+  view: string;
+  describe: (error: unknown) => { text: string; detail: string };
+  onFailed: (() => void) | null;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    let stale = false;
+    setSrc(null);
+    setError(null);
+    (hasToken() ? downloadTicket(view) : Promise.resolve(view)).then(
+      (value) => !stale && setSrc(value),
+      (reason: unknown) => {
+        if (stale) return;
+        if (onFailed) onFailed();
+        else setError(reason);
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [item.key, view]);
+  if (error) return <p class="pane-note line-error">{describe(error).text}</p>;
+  return (
+    <div class="orig-frame-wrap">
+      {src === null ? (
+        <p class="pane-note">{t.loading}</p>
+      ) : (
+        <iframe
+          class="orig-frame"
+          src={src}
+          title={t.originalPageTitle}
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          referrerpolicy="no-referrer"
+        />
+      )}
+      <p class="orig-caption">{t.originalPageNote}</p>
     </div>
   );
 }

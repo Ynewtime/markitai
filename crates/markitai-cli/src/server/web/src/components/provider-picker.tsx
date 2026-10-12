@@ -1,12 +1,13 @@
 // The provider picker of Add models: one search over everything, saved
-// connections as rows (their model count, Edit opens the provider's page where
-// its key and address are managed, Delete removes it in place), the common
-// eight as cards, then every other provider by name under a group filter.
-// Selecting a provider opens its connect page.
+// connections as rows (how each authenticates, its model count, Edit opens the
+// provider's page where its key and address are managed, Delete removes it in
+// place), the common eight as cards, then every other provider by name under a
+// group filter. A provider is one saved row (the server's key folds into its
+// connection) and is marked as added below; selecting it opens that row.
 import { useState } from "preact/hooks";
 import type { ProviderCard } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
-import { arrangeProviders, iconKey, type ProviderFilter } from "../lib/provider-catalog.ts";
+import { arrangeProviders, atOwnEndpoint, iconKey, savedAuth, type ProviderFilter } from "../lib/provider-catalog.ts";
 import { BrandIcon, useBrandMarks } from "./brand-icon.tsx";
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
@@ -41,6 +42,14 @@ export function ProviderPicker({
   const shown = view.filters.includes(filter) ? filter : "all";
   const searching = query.trim() !== "";
   const found = view.saved.length + view.common.length + view.all.length;
+  /** How the row connects, and where when it is not the provider's own endpoint. */
+  const meta = (card: ProviderCard) => {
+    const auth = savedAuth(card, view.folded.get(card.id) ?? null, view.variables.get(card.provider) ?? null);
+    const how = auth === null ? null : auth.kind === "environment" ? t.savedUsing(auth.variable) : auth.kind === "key" ? t.savedKey : t.savedNoKey;
+    const where = card.api_base && (card.provider === "custom" || !atOwnEndpoint(card)) ? card.api_base : null;
+    const parts = [how, where].filter((part): part is string => part !== null);
+    return parts.length ? parts.join(" · ") : (card.api_base ?? t.providerCardMeta(card.kind, card.status, card.source));
+  };
   const icon = (card: ProviderCard, name: string, size: 22 | 32) => (
     <BrandIcon marks={marks} icon={iconKey(card)} label={name} size={size} generic={card.provider === "custom"} />
   );
@@ -74,7 +83,7 @@ export function ProviderPicker({
                     {icon(card, name, 22)}
                     <span class="provider-text">
                       <span class="provider-name">{name}</span>
-                      <span class="provider-meta">{card.api_base ?? t.providerCardMeta(card.kind, card.status, card.source)}</span>
+                      <span class="provider-meta">{meta(card)}</span>
                     </span>
                   </button>
                   {manageable(card) && (
@@ -112,8 +121,11 @@ export function ProviderPicker({
               <li key={choice.provider}>
                 <button type="button" class="provider-tile" disabled={choice.card.status === "disabled"} onClick={() => onSelect(choice.card)}>
                   {icon(choice.card, choice.label, 32)}
-                  <span class="provider-name" title={choice.label}>
-                    {choice.label}
+                  <span class="provider-tile-text">
+                    <span class="provider-name" title={choice.label}>
+                      {choice.label}
+                    </span>
+                    {choice.added && <Added t={t} />}
                   </span>
                 </button>
               </li>
@@ -156,6 +168,7 @@ export function ProviderPicker({
                   <span class="provider-item-name" title={choice.label}>
                     {choice.label}
                   </span>
+                  {choice.added && <Added t={t} />}
                 </button>
               </li>
             ))}
@@ -165,5 +178,15 @@ export function ProviderPicker({
         )}
       </section>
     </div>
+  );
+}
+
+/** A provider that already has a saved row: choosing it opens that connection. */
+function Added({ t }: { t: Dict }) {
+  return (
+    <span class="provider-added">
+      <Icon name="Check" size={12} />
+      {t.providerAdded}
+    </span>
   );
 }

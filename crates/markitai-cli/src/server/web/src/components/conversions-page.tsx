@@ -1,8 +1,8 @@
 // The Conversions view: a summary, New conversion and "⋯" for the batch
 // actions, filters (All / Failed / Notices and a name filter), and the list at
 // the page's width. A click on a conversion opens the peek window (Details,
-// Preview and Compare as tabs) over the list, or docked beside it when this
-// browser prefers that; on phones the window fills the screen. Dropping files
+// Preview and Compare as tabs) over the list, or over the whole page at full
+// screen; on phones the window fills the screen. Dropping files
 // anywhere still converts; typing URLs is the Convert page's job.
 import { useMemo, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
@@ -42,8 +42,6 @@ export interface ConversionsPageProps {
   gone: PanelState | null;
   selected: string | null;
   mode: PaneMode;
-  /** This browser docks the window beside the list instead of over it. */
-  docked: boolean;
   filter: Filter;
   query: string;
   collapsed: ReadonlySet<string>;
@@ -55,20 +53,17 @@ export interface ConversionsPageProps {
   compareAvailable: boolean;
   onSelect: (key: string | null, from?: "pointer" | "keyboard") => void;
   onMode: (mode: PaneMode) => void;
-  onDock: () => void;
   onNewConversion: () => void;
   onFilter: (filter: Filter) => void;
   onQuery: (query: string) => void;
   onToggleGroup: (jobId: string, open?: boolean) => void;
   onShowItems: (keys: string[]) => void;
-  onDownload: (item: SessionItem, path: string) => void;
+  /** Download all (.zip) for an item's Files, or null when this server cannot zip it. */
+  downloadAll: (item: SessionItem) => (() => void) | null;
   onCopied: () => void;
   announce: (message: string) => void;
   describe: (error: unknown) => { text: string; detail: string };
 }
-
-/** What a click may land on without being a click on the page's empty space. */
-const NOT_EMPTY = "button, a, input, textarea, select, label, summary, [role=tree], [role=treeitem], .conv-list, .peek, .page-head, .toolbar, .state, .menu, .confirm-card";
 
 function summaryText(t: Dict, items: SessionItem[]): string {
   const tally = counts(items);
@@ -96,7 +91,6 @@ export function ConversionsPage(props: ConversionsPageProps) {
   };
   // The summary of everything listed opens in the same window as a conversion.
   const [overview, setOverview] = useState(false);
-  const docked = props.docked && !phone;
 
   /** Close the window and give the keyboard back to the row it was opened from. */
   const close = () => {
@@ -104,24 +98,6 @@ export function ConversionsPage(props: ConversionsPageProps) {
     setOverview(false);
     props.onSelect(null);
     if (key) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true }));
-  };
-
-  // Docked beside the list, a click on the page's empty space (outside the list
-  // and the window) lets go of the selection, as Escape does in the list.
-  // Ending a text selection is not such a click.
-  const canRelease = docked && (selected !== null || overview);
-  const releaseOnEmpty = (event: MouseEvent) => {
-    if (!canRelease || event.button !== 0) return;
-    if ((event.target as Element | null)?.closest?.(NOT_EMPTY)) return;
-    if (String(window.getSelection?.() ?? "").trim()) return;
-    close();
-  };
-  const releaseOnEscape = (event: KeyboardEvent) => {
-    if (!canRelease || event.key !== "Escape" || event.defaultPrevented) return;
-    if (!(event.target as Element | null)?.closest?.(".conv-list")) return;
-    if (document.querySelector(".menu, .confirm-card, .veil")) return;
-    event.preventDefault();
-    close();
   };
 
   const counters: Record<Filter, number> = { all: tally.total, failed: tally.failed, notices: tally.notices };
@@ -153,8 +129,9 @@ export function ConversionsPage(props: ConversionsPageProps) {
       position={selectedItem ? { index: Math.max(0, position), total: order.length } : null}
       tab={tab}
       phone={phone}
-      docked={docked}
       compareAvailable={props.compareAvailable}
+      originals={props.compareAvailable}
+      onDownloadAll={selectedItem ? props.downloadAll(selectedItem) : null}
       acts={acts()}
       url={url}
       failure={
@@ -172,9 +149,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
       onTab={(next) => props.onMode(TAB_MODE[next])}
       onPrevious={selectedItem ? step(-1) : null}
       onNext={selectedItem ? step(1) : null}
-      onDock={props.onDock}
       onClose={close}
-      onDownloadPath={(path) => selectedItem && props.onDownload(selectedItem, path)}
       onCopied={props.onCopied}
       onCopyFailed={() => selectedItem && props.itemActions.copyFailed(selectedItem)}
       announce={props.announce}
@@ -187,10 +162,9 @@ export function ConversionsPage(props: ConversionsPageProps) {
   const clearFilter = { label: t.clearFilter, run: () => (props.onQuery(""), props.onFilter("all")) };
   const noMatch = query.trim() ? t.filterNoMatchQuery(query.trim()) : filter === "failed" ? t.filterNoFailed : filter === "notices" ? t.filterNoNotices : t.filterNoMatch;
   const gone = props.gone && selected === null ? <StateBlock {...props.gone} /> : null;
-  const side = docked && peekOpen;
 
   return (
-    <div class={side ? "page conversions is-docked" : "page conversions"} onClick={releaseOnEmpty} onKeyDown={releaseOnEscape}>
+    <div class="page conversions">
       <header class="page-head conv-head">
         <div class="conv-title">
           <h1>{t.conversions}</h1>
@@ -249,7 +223,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
           </div>
         </div>
       )}
-      <div class={side ? "split has-peek" : "split is-single"}>
+      <div class="split is-single">
         <div class="list-col">
           {gone}
           {empty ? (
@@ -268,7 +242,6 @@ export function ConversionsPage(props: ConversionsPageProps) {
               collapsed={collapsed}
               selected={selected}
               labelWords={props.labelWords}
-              followFocus={side}
               onSelect={(key, from) => props.onSelect(key, from)}
               onToggle={props.onToggleGroup}
               onOpen={(key) => {
@@ -278,9 +251,8 @@ export function ConversionsPage(props: ConversionsPageProps) {
             />
           )}
         </div>
-        {side && <div class="side-col">{peek}</div>}
       </div>
-      {!side && peek}
+      {peek}
     </div>
   );
 }

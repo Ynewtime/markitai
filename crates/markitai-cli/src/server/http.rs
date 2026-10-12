@@ -73,7 +73,8 @@ pub(super) async fn capabilities(
         "extras":{"browser":markitai_core::browser_available(),"svg":true},
         "limits":{"max_job_items":MAX_ITEMS,"history_retention_days":super::retention::DAYS},
         "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
-            "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true},
+            "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
+            "item_archive":true,"token_regenerate":state.auth_enabled()},
     }))
 }
 
@@ -554,16 +555,19 @@ pub(super) async fn events(
         (data.snapshot(), job.events.subscribe())
     };
     let terminal = snapshot["status"] != "running";
+    // A new access token ends the stream: its reader reconnects with the
+    // token it holds, which the service then refuses if it is the old one.
+    let generation = state.token_generation.subscribe();
     let stream = stream::unfold(
         (
             job,
             receiver,
-            state.shutdown.subscribe(),
+            (state.shutdown.subscribe(), generation),
             Some(snapshot),
             terminal,
             false,
         ),
-        |(job, mut receiver, mut shutdown, initial, terminal, ended)| async move {
+        |(job, mut receiver, (mut shutdown, mut generation), initial, terminal, ended)| async move {
             if ended {
                 return None;
             }
@@ -575,27 +579,28 @@ pub(super) async fn events(
                             .json_data(snapshot)
                             .unwrap(),
                     ),
-                    (job, receiver, shutdown, None, terminal, false),
+                    (job, receiver, (shutdown, generation), None, terminal, false),
                 ));
             }
             if terminal {
                 let progress = job.data.lock().unwrap().progress();
                 return Some((
                     Ok(Event::default().event("job").json_data(progress).unwrap()),
-                    (job, receiver, shutdown, None, true, true),
+                    (job, receiver, (shutdown, generation), None, true, true),
                 ));
             }
-            if *shutdown.borrow() {
+            if *shutdown.borrow() || generation.has_changed().unwrap_or(false) {
                 return None;
             }
             tokio::select! {
                 _=shutdown.changed()=>None,
+                _=generation.changed()=>None,
                 message=receiver.recv()=>{
                     let (kind,mut payload)=match message {Ok(value)=>value,Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>("snapshot",job.data.lock().unwrap().snapshot()),Err(_)=>return None};
                     if kind=="item" { payload=job.data.lock().unwrap().with_item_options(payload); }
                     let ended=kind=="job"&&payload["status"]!="running";
                     let terminal=kind=="snapshot"&&payload["status"]!="running";
-                    Some((Ok(Event::default().event(kind).json_data(payload).unwrap()),(job,receiver,shutdown,None,terminal,ended)))
+                    Some((Ok(Event::default().event(kind).json_data(payload).unwrap()),(job,receiver,(shutdown,generation),None,terminal,ended)))
                 }
             }
         },
@@ -806,7 +811,10 @@ mod error_code_tests {
             persistence_failed: AtomicBool::new(false),
             shutdown,
             tasks: Mutex::new(Vec::new()),
-            token: None,
+            token: std::sync::RwLock::new(None),
+            token_generation: watch::channel(0).0,
+            token_from_environment: false,
+            address: Default::default(),
             allowed_hosts: HashSet::new(),
             tickets: Default::default(),
             previews: Default::default(),

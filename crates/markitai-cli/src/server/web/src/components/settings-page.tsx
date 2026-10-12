@@ -1,12 +1,17 @@
 // Settings as pages of the sidebar's Settings section: Models (see
 // settings-models), Appearance and language, and Access token. On phones
 // `/settings` lists the three sections and the external links in one list.
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { regenerateToken } from "../api/client.ts";
 import { hasToken, setToken } from "../api/token.ts";
+import type { RegeneratedToken } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { LOCALES } from "../i18n/locale.ts";
 import { ownClick, type Route, type Section } from "../lib/route.ts";
 import { applyTheme, storedTheme, THEMES, type Theme } from "../lib/theme.ts";
+import { copyText } from "../lib/clipboard.ts";
+import { qrModules, qrPath } from "../lib/qr.ts";
+import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 import type { IconName } from "./icon-paths.ts";
 
@@ -88,12 +93,29 @@ export function AppearanceSettings({ t, locale, onLocale }: { t: Dict; locale: L
   );
 }
 
-export function AccessSettings({ t, unauthorized, onToken }: { t: Dict; unauthorized: boolean; onToken: () => void }) {
+export function AccessSettings({
+  t,
+  unauthorized,
+  canRegenerate,
+  describe,
+  onToken,
+}: {
+  t: Dict;
+  unauthorized: boolean;
+  /** The server can replace its token (`features.token_regenerate`). */
+  canRegenerate: boolean;
+  describe: (error: unknown) => { text: string; detail: string };
+  onToken: () => void;
+}) {
   const [value, setValue] = useState("");
   const [held, setHeld] = useState(hasToken);
   const [saved, setSaved] = useState(false);
-  // One status line: what this tab holds, with Forget beside it; one field with
-  // Save attached; one hint under the field.
+  const [confirming, setConfirming] = useState(false);
+  const [fresh, setFresh] = useState<RegeneratedToken | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const regenerate = useRef<HTMLButtonElement>(null);
+  // One status line: what this tab holds, with Sign out beside it; then making a
+  // new token for the server; then one field with Save for using another token.
   const refused = unauthorized && !saved;
   const state = refused ? t.accessRefused : saved ? t.tokenSaved : held ? t.accessHeld : t.accessNone;
   const hint = refused ? t.accessRefusedHint : held ? t.replaceToken : t.accessExplain;
@@ -110,16 +132,70 @@ export function AccessSettings({ t, unauthorized, onToken }: { t: Dict; unauthor
             <button
               type="button"
               class="text-link"
+              title={t.signOutTabHint}
               onClick={() => {
                 setToken("");
                 setHeld(false);
                 setSaved(false);
+                setFresh(null);
               }}
             >
-              {t.forgetToken}
+              {t.signOutTab}
             </button>
           )}
         </p>
+        {canRegenerate && (
+          <section class="access-section" aria-labelledby="regenerate-title">
+            <h2 id="regenerate-title" class="group-title">
+              {t.regenerateTitle}
+            </h2>
+            {fresh ? (
+              <NewToken t={t} token={fresh} onDone={() => setFresh(null)} />
+            ) : (
+              <>
+                <p class="field-hint">{t.regenerateText}</p>
+                <div>
+                  <button ref={regenerate} type="button" class="btn" aria-haspopup="dialog" aria-expanded={confirming} onClick={() => setConfirming(true)}>
+                    <Icon name="ArrowCounterClockwise" size={14} />
+                    {t.regenerateButton}
+                  </button>
+                  <ConfirmPopover
+                    triggerLabel={t.regenerateButton}
+                    title={t.regenerateConfirmTitle}
+                    description={t.regenerateConfirmText}
+                    confirmLabel={t.regenerateConfirm}
+                    cancelLabel={t.cancel}
+                    busyLabel={t.regenerating}
+                    anchor={() => regenerate.current}
+                    open={confirming}
+                    onClose={() => setConfirming(false)}
+                    onConfirm={async () => {
+                      setFailure(null);
+                      try {
+                        const next = await regenerateToken();
+                        // This tab signs in with the new token at once; every other one must again.
+                        setToken(next.token);
+                        setHeld(true);
+                        setSaved(false);
+                        setFresh(next);
+                        onToken();
+                        return true;
+                      } catch (error) {
+                        setFailure(describe(error).text);
+                        return true;
+                      }
+                    }}
+                  />
+                </div>
+                {failure && (
+                  <p class="line-error" role="alert">
+                    {t.regenerateFailed} · {failure}
+                  </p>
+                )}
+              </>
+            )}
+          </section>
+        )}
         <form
           class="access-form"
           onSubmit={(event) => {
@@ -133,7 +209,7 @@ export function AccessSettings({ t, unauthorized, onToken }: { t: Dict; unauthor
           }}
         >
           <label class="field-label" for="access-token">
-            {t.tokenField}
+            {canRegenerate ? t.useOtherToken : t.tokenField}
           </label>
           <div class="input-group">
             <input
@@ -158,6 +234,68 @@ export function AccessSettings({ t, unauthorized, onToken }: { t: Dict; unauthor
         </form>
       </div>
     </section>
+  );
+}
+
+/** The new token, shown this once: copy it, or sign in on another device by its link or QR code. */
+function NewToken({ t, token, onDone }: { t: Dict; token: RegeneratedToken; onDone: () => void }) {
+  const [copied, setCopied] = useState<"token" | "link" | null>(null);
+  const heading = useRef<HTMLParagraphElement>(null);
+  useEffect(() => heading.current?.focus(), []);
+  // Another device opens the server's network address; without one, this page's own.
+  const link = token.network_url ?? `${location.origin}/#${new URLSearchParams({ token: token.token }).toString()}`;
+  const modules = useMemo(() => qrModules(link), [link]);
+  const copy = (what: "token" | "link", text: string) =>
+    void copyText(text).then((ok) => {
+      if (ok) setCopied(what);
+    });
+  return (
+    <div class="new-token">
+      <p ref={heading} class="access-state" tabIndex={-1}>
+        <Icon name="Check" size={15} />
+        <span>{t.regenerated}</span>
+      </p>
+      <div class="field">
+        <span class="field-label" id="new-token-label">
+          {t.newTokenLabel}
+        </span>
+        <div class="input-group">
+          <code class="token-value" aria-labelledby="new-token-label">
+            {token.token}
+          </code>
+          <button type="button" class="btn" onClick={() => copy("token", token.token)}>
+            <Icon name={copied === "token" ? "Check" : "Copy"} size={14} />
+            {copied === "token" ? t.copied : t.copy}
+          </button>
+        </div>
+        <p class="field-hint">{t.newTokenOnce}</p>
+      </div>
+      <div class="token-device">
+        {modules && (
+          <svg class="token-qr" viewBox={`0 0 ${modules.length + 8} ${modules.length + 8}`} role="img" aria-label={t.qrLabel} shape-rendering="crispEdges">
+            <rect width="100%" height="100%" fill="#fff" />
+            <path d={qrPath(modules)} fill="#000" />
+          </svg>
+        )}
+        <div class="token-device-copy">
+          <strong>{t.signInDevice}</strong>
+          <p class="field-hint">{token.network_url ? t.signInDeviceNetwork : t.signInDeviceHere}</p>
+          <code class="token-link">{link}</code>
+          <div>
+            <button type="button" class="btn btn-sm" onClick={() => copy("link", link)}>
+              <Icon name={copied === "link" ? "Check" : "Copy"} size={14} />
+              {copied === "link" ? t.copied : t.copyLink}
+            </button>
+          </div>
+        </div>
+      </div>
+      {!token.persistent && <p class="conn-note">{token.startup_variable ? t.tokenUntilRestartVariable(token.startup_variable) : t.tokenUntilRestart}</p>}
+      <div>
+        <button type="button" class="btn btn-primary" onClick={onDone}>
+          {t.done}
+        </button>
+      </div>
+    </div>
   );
 }
 

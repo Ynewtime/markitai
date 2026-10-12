@@ -42,7 +42,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock, RwLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -66,7 +66,15 @@ struct State {
     persistence_failed: AtomicBool,
     shutdown: watch::Sender<bool>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
-    token: Option<String>,
+    /// The access token; `None` with `--no-auth`, which never changes. The
+    /// web workbench may replace it (`POST /api/access-token/regenerate`).
+    token: RwLock<Option<String>>,
+    /// Counts token replacements; open event streams end when it changes.
+    token_generation: watch::Sender<u64>,
+    /// Whether the startup token came from `MARKITAI_SERVE_TOKEN`.
+    token_from_environment: bool,
+    /// The address the listener bound, set once after binding.
+    address: OnceLock<std::net::SocketAddr>,
     allowed_hosts: HashSet<String>,
     tickets: tickets::Tickets,
     previews: original::Previews,
@@ -76,6 +84,7 @@ api_routes! {
     get "/api/capabilities" => http::capabilities;
     get "/api/openapi.json" => openapi::document;
     post "/api/download-tickets" => tickets::issue;
+    post "/api/access-token/regenerate" => security::regenerate;
     post "/api/jobs" => http::create;
     get "/api/jobs/{job_id}" => http::snapshot;
     get "/api/jobs/{job_id}/events" => http::events;
@@ -86,6 +95,8 @@ api_routes! {
     get "/api/jobs/{job_id}/items/{item_id}/assets/{*relpath}" => files::asset;
     get "/api/jobs/{job_id}/items/{item_id}/original" => original::descriptor;
     get "/api/jobs/{job_id}/items/{item_id}/original/file" => original::file;
+    get "/api/jobs/{job_id}/items/{item_id}/original/view" => original::view;
+    get "/api/jobs/{job_id}/items/{item_id}/archive" => files::item_archive;
     get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}" => original::page_image;
     get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text" => original::page_text;
     get "/api/jobs/{job_id}/files/{*relpath}" => files::download;
@@ -93,6 +104,22 @@ api_routes! {
     get "/api/history" => http::history;
     get "/api/history/archive" => files::history_archive;
     delete "/api/history/{job_id}" => http::delete;
+}
+
+impl State {
+    /// The current access token; `None` with `--no-auth`.
+    fn token(&self) -> Option<String> {
+        self.token
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+    fn auth_enabled(&self) -> bool {
+        self.token
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_some()
+    }
 }
 
 /// Every API route the service registers, as (method, path).
@@ -118,21 +145,14 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
     let service_lock = store::service_lock(&root).map_err(|e| e.to_string())?;
     store::clean_uploads(&root, &service_lock).map_err(|e| e.to_string())?;
     let (shutdown, _) = watch::channel(false);
+    let configured = std::env::var("MARKITAI_SERVE_TOKEN")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let token_from_environment = !options.no_auth && configured.is_some();
     let token = if options.no_auth {
         None
     } else {
-        Some(
-            std::env::var("MARKITAI_SERVE_TOKEN")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| {
-                    format!(
-                        "{}{}",
-                        uuid::Uuid::new_v4().simple(),
-                        uuid::Uuid::new_v4().simple()
-                    )
-                }),
-        )
+        Some(configured.unwrap_or_else(security::new_token))
     };
     let allowed_hosts = options
         .allowed_host
@@ -152,7 +172,10 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         persistence_failed: AtomicBool::new(false),
         shutdown,
         tasks: Mutex::new(Vec::new()),
-        token,
+        token: RwLock::new(token),
+        token_generation: watch::channel(0).0,
+        token_from_environment,
+        address: OnceLock::new(),
         allowed_hosts,
         tickets: tickets::Tickets::default(),
         previews: original::Previews::default(),
@@ -182,13 +205,15 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         .await
         .map_err(|e| startup::bind_error(lang, &options.host, options.port, &e))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
+    let _ = state.address.set(address);
+    let token = state.token();
     // Shown absolute: a relative MARKITAI_HOME would otherwise name nothing useful.
     let data = std::path::absolute(&state.root).unwrap_or_else(|_| state.root.clone());
     for (kind, line) in startup::lines(
         lang,
         &startup::Startup {
             address,
-            token: state.token.as_deref(),
+            token: token.as_deref(),
             data: &data,
             network: address
                 .ip()
@@ -216,7 +241,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         console(shape, &line);
     }
     if !options.no_open {
-        let url = launch::browser_url(address, state.token.as_deref());
+        let url = launch::browser_url(address, token.as_deref());
         if let Err(error) = launch::open_browser(&url) {
             eprintln!(
                 "Warning: Could not open a browser: {error}; open the address above manually."
