@@ -243,6 +243,7 @@ LiteLLM also takes Gemini's key from `GOOGLE_API_KEY` (ahead of `GEMINI_API_KEY`
 | `MARKITAI_INSTALL_OPTIONAL` | Setup script: install optional components without prompting |
 | `MARKITAI_USE_MIRROR` | Setup script: `1` always offers a package mirror, `0` never asks |
 | `MARKITAI_VERSION` | Setup script: version to install |
+| `MARKITAI_SETUP_TIMINGS` | Setup script: list every step's duration at the end (`1`, `true`, `yes`, `on`); each step's own row and the total are always shown |
 
 ### `.env` File Loading
 
