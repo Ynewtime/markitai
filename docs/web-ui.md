@@ -56,7 +56,8 @@ files wait on Convert); typing URLs is Convert's job.
   running first: a status glyph (one shape per state: ✓ done, × failed, a
   dashed minus for stopped, a warning sign for skipped, a spinner, a ring for
   waiting), the name with its extension always visible (a long name loses its
-  middle, `blog-japanese-…ning.html`; a URL dims its host), a warning count, and
+  middle, `blog-japanese-…ning.html`; a URL dims its host, which a phone leaves
+  out), a warning count, and
   the duration or the state in words. A submission of several items is a header
   (what was submitted: `report-materials`, `14 files`, `3 web pages`; the preset;
   the time) with its items under it, indented, so a submission of one item is one
@@ -100,7 +101,10 @@ files wait on Convert); typing URLs is Convert's job.
 **Preview** is the window's second tab; its "⋯" adds Copy, Export PDF and its
 header-and-footer choice, and Open the page for a URL. The window has one fixed
 height, so the tabs never move it: Rendered, Source, Diff (only for an exact base/LLM pair) and
-Files, with the Base | LLM switch beside them for a pair. Each keeps its reading
+Files, with the contents button and the Base | LLM switch beside them, sit at the
+end of the window's own tab row (Details, Preview, Compare), so the window has one
+tab row. Where they do not fit (a phone) they become one button naming the view
+and version on screen, whose menu holds the views and versions. Each keeps its reading
 column (820 px at most) centred in the window, docked or not. Rendered starts with
 the conversion's notices (collapsed to one line) and a front-matter card (title,
 description, tags). Tables over 500 rows show their first 500 rows under a
@@ -145,9 +149,12 @@ Preview), the name on a row of its own below them, then the same three tabs. Whi
 stays a button in the header, since the window covers the list's own: a
 submission's window stops that submission, an item's window the submission it
 belongs to, and Summary everything listed; Compare places the original above the
-Markdown. A long name gives up its middle: a file keeps its end and extension,
-a web address its host and the end of its path (a query goes first); a long
-press on a shortened name shows it whole. On a phone the Conversions header
+Markdown. A long name gives up its middle, cut to the width it has with the "…"
+right against what follows: a path or web address loses whole folders first
+(`slow/annual-reports/…/s5.html`), keeping its host and last segment (a query
+goes first), and only then the middle of that segment; a file keeps its
+extension and the four characters before it. The whole name is in the tooltip
+and read aloud; a long press on a shortened name shows it whole. On a phone the Conversions header
 keeps its title, New conversion and "⋯" on one row (the two buttons go below
 the title when they do not fit), the status sentence below, and Stop remaining
 on a row of its own.

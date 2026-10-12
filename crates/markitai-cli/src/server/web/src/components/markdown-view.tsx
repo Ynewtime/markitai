@@ -44,11 +44,12 @@ import { groupNotices } from "../lib/notices.ts";
 import { cachedExcerpt, resultKey } from "../lib/results.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { capTables, freezeColumns, markNumericColumns, MARKER, ROW_CHUNK, ROW_LIMIT, tableSlice, type CappedTable } from "../lib/tables.ts";
+import { entryAt, tocEntries } from "../lib/toc.ts";
 import { FrontCard } from "./inspector.tsx";
 import { Icon, Logo } from "./icons.tsx";
 import { Skeleton } from "./skeleton.tsx";
-import { entryAt, tocEntries } from "../lib/toc.ts";
 import { TocAside, TocSheet } from "./toc.tsx";
+import { ViewMenu } from "./view-menu.tsx";
 
 /** Larger sides are offered as downloads instead of being compared in the page. */
 const DIFF_BYTES = 8 * 1024 * 1024;
@@ -150,6 +151,8 @@ export function MarkdownView({
   rendered,
   onRendered,
   onError,
+  barHost = null,
+  compactBar = false,
 }: {
   t: Dict;
   locale: Locale;
@@ -162,6 +165,9 @@ export function MarkdownView({
   /** Compare: only Rendered and Source, no notices. */
   compact?: boolean;
   rendered?: MutableRef<RenderedState>;
+  /** The window's tab row lends this element to the view switch (and says when it must be compact). */
+  barHost?: HTMLElement | null;
+  compactBar?: boolean;
   /** Called with the rendered body once its content is in place (and with null when it goes). */
   onRendered?: (root: HTMLElement | null) => void;
   onError?: (message: string) => void;
@@ -581,41 +587,63 @@ export function MarkdownView({
   };
   const words = new Intl.NumberFormat(localeTag(locale));
 
+  const versioned = pair !== null && (active === "rendered" || active === "source");
+  const contentsToggle = entries.length > 0 && wide && active === "rendered";
+  const tabLabels: Record<Tab, string> = { rendered: t.rendered, source: t.source, diff: t.diffTab, files: t.filesTab };
+  // Rendered | Source | Diff | Files with Base | LLM: in the window's tab row when it lends one (barHost).
+  const bar = (
+    <>
+      <div class="tabs" role="tablist" aria-label={t.previewAria}>
+        {tabButton("rendered", t.rendered)}
+        {tabButton("source", t.source)}
+        {!compact && pair && tabButton("diff", t.diffTab)}
+        {!compact && tabButton("files", t.filesTab, result?.artifacts.length)}
+      </div>
+      {contentsToggle || versioned ? (
+        <span class="viewer-side">
+          {contentsToggle && (
+            <button
+              type="button"
+              class={showAside ? "icon-btn toc-toggle is-on" : "icon-btn toc-toggle"}
+              aria-label={t.tocTitle}
+              title={tocOpen ? t.tocHide : t.tocShow}
+              aria-pressed={tocOpen}
+              onClick={toggleToc}
+            >
+              <Icon name="ListBullets" size={16} />
+            </button>
+          )}
+          {versioned && (
+            <span class="seg" role="group" aria-label={t.versionAria}>
+              {(["base", "llm"] as const).map((value) => (
+                <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => doc.setVersion(value)}>
+                  {value === "base" ? t.baseTag : t.llmTag}
+                </button>
+              ))}
+            </span>
+          )}
+        </span>
+      ) : null}
+    </>
+  );
+  // A row too narrow for all of them: one button naming the view, with the views and versions in its menu.
+  const viewMenu = (
+    <ViewMenu
+      label={t.previewAria}
+      views={order.map((value) => ({ value, label: tabLabels[value], count: value === "files" ? result?.artifacts.length : undefined }))}
+      view={active}
+      onView={onTab}
+      versions={pair ? [{ value: "base", label: t.baseTag }, { value: "llm", label: t.llmTag }] : []}
+      versionLabel={t.versionAria}
+      version={versioned ? shown : null}
+      onVersion={(value) => doc.setVersion(value as "base" | "llm")}
+      contents={contentsToggle ? { label: t.tocTitle, on: tocOpen, toggle: toggleToc } : null}
+    />
+  );
+
   return (
     <div ref={viewer} class={compact ? "viewer is-compact" : "viewer"}>
-      <div class="viewer-bar">
-        <div class="tabs" role="tablist" aria-label={t.previewAria}>
-          {tabButton("rendered", t.rendered)}
-          {tabButton("source", t.source)}
-          {!compact && pair && tabButton("diff", t.diffTab)}
-          {!compact && tabButton("files", t.filesTab, result?.artifacts.length)}
-        </div>
-        {(entries.length > 0 && wide && active === "rendered") || (pair && (active === "rendered" || active === "source")) ? (
-          <span class="viewer-side">
-            {entries.length > 0 && wide && active === "rendered" && (
-              <button
-                type="button"
-                class={showAside ? "icon-btn toc-toggle is-on" : "icon-btn toc-toggle"}
-                aria-label={t.tocTitle}
-                title={tocOpen ? t.tocHide : t.tocShow}
-                aria-pressed={tocOpen}
-                onClick={toggleToc}
-              >
-                <Icon name="ListBullets" size={16} />
-              </button>
-            )}
-            {pair && (active === "rendered" || active === "source") && (
-              <span class="seg" role="group" aria-label={t.versionAria}>
-                {(["base", "llm"] as const).map((value) => (
-                  <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => doc.setVersion(value)}>
-                    {value === "base" ? t.baseTag : t.llmTag}
-                  </button>
-                ))}
-              </span>
-            )}
-          </span>
-        ) : null}
-      </div>
+      {barHost ? createPortal(compactBar ? viewMenu : bar, barHost) : <div class="viewer-bar">{bar}</div>}
 
       <div class="viewer-main">
       {showAside && <TocAside t={t} entries={entries} active={readingEntry} onPick={goTo} />}

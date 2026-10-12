@@ -1088,29 +1088,16 @@ main:focus {
 .row.is-skipped .row-side {
   color: var(--warning);
 }
+/* an item's name in a list: a submission's label ellipsizes; a file or address is a .mid-name */
 .nm {
-  display: flex;
   min-width: 0;
+  overflow: hidden;
   font-weight: 450;
-}
-.nm-head {
-  min-width: 0;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.nm-tail {
-  flex: none;
-  white-space: pre;
-}
-.nm-host {
-  flex: 0 20 auto;
-  min-width: 0;
-  max-width: 45%;
-  overflow: hidden;
+.nm.has-host .mid-host {
   color: var(--text-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .warn-mark {
   display: inline-flex;
@@ -1298,29 +1285,27 @@ main:focus {
 .fact-size {
   flex: none;
 }
-.file-name {
-  display: inline-flex;
+/* A name cut in the middle to the width it has (file-name.tsx): the whole name
+   sizes the box in an invisible row, the cut name is drawn in it. */
+.mid-name {
+  display: inline-grid;
+  grid-template-columns: minmax(0, max-content);
   min-width: 0;
   max-width: 100%;
+  overflow: hidden;
   white-space: nowrap;
+  vertical-align: bottom;
   -webkit-touch-callout: none;
 }
-.file-name-head {
-  min-width: 0;
+.mid-sizer {
+  height: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  visibility: hidden;
 }
-.file-name-tail {
-  flex: none;
-}
-/* a web address's query or fragment gives way before its path */
-.file-name-rest {
-  flex: 0 1000 auto;
-  min-width: 1em;
+.mid-line {
   overflow: hidden;
-  text-overflow: ellipsis;
 }
-.file-name.is-full {
+.mid-name.is-full {
   display: inline;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -1658,22 +1643,46 @@ main:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.peek-title > .file-name {
-  display: flex;
+.peek-title > .mid-name {
+  display: grid;
 }
-.peek-title > .file-name.is-full {
+.peek-title > .mid-name.is-full {
   display: block;
 }
 .peek .action-error {
   margin: 12px 20px 0;
 }
+/* One tab row: Details, Preview, Compare at the start; on Preview its own views
+   (Rendered, Source, Diff, Files, the contents and Base | LLM) at the end, or one
+   compact switch when they do not fit (peek.tsx measures). */
 .peek-tabs {
   display: flex;
   flex: none;
-  gap: 20px;
+  gap: 24px;
   height: 40px;
   padding: 0 16px;
   border-bottom: 1px solid var(--hairline);
+}
+.peek-tablist,
+.peek-tabs-side {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+.peek-tablist {
+  gap: 20px;
+  align-self: stretch;
+}
+.peek-tabs-side {
+  gap: 12px;
+  margin-left: auto;
+  align-self: stretch;
+}
+.peek-tabs-side > .tabs {
+  height: 100%;
+}
+.peek-tabs-side:empty {
+  display: none;
 }
 .peek-body {
   display: flex;
@@ -1803,7 +1812,8 @@ kbd {
   box-shadow: var(--shadow-pop);
 }
 .menu > button,
-.menu > a {
+.menu > a,
+.menu > [role="group"] > button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1815,7 +1825,8 @@ kbd {
   color: var(--text-1);
 }
 .menu > button svg,
-.menu > a svg {
+.menu > a svg,
+.menu > [role="group"] > button svg {
   color: var(--text-3);
 }
 .menu.is-up {
@@ -1828,6 +1839,40 @@ kbd {
 .menu > button.is-danger,
 .menu > button.is-danger svg {
   color: var(--err);
+}
+/* the compact view switch: the view's name, its version dimmed, a caret */
+.view-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-ui);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.view-menu-btn svg,
+.view-menu-version {
+  color: var(--text-3);
+}
+.view-menu-version {
+  font-weight: 500;
+}
+.view-menu .menu {
+  width: 200px;
+}
+.menu > [role="group"] {
+  display: grid;
+  gap: 2px;
+}
+.menu-group {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--hairline);
+}
+.view-menu .menu-check {
+  border: 0;
 }
 .menu-gap {
   flex: none;
@@ -4737,7 +4782,9 @@ input[type="password"],
   }
   .opt-fold-btn:hover,
   .menu > button:hover,
-  .menu > a:hover {
+  .menu > a:hover,
+  .menu > [role="group"] > button:hover,
+  .view-menu-btn:hover {
     background: var(--strip);
     color: var(--text-1);
   }
@@ -4817,6 +4864,8 @@ input[type="password"],
 .failure-link:focus-visible,
 .settings-index a:focus-visible,
 .menu > :focus-visible,
+.menu > [role="group"] > :focus-visible,
+.view-menu-btn:focus-visible,
 .pane:focus-visible,
 .orig-scroll:focus-visible,
 .doc-body a:focus-visible,
@@ -4998,7 +5047,7 @@ input[type="password"],
   .row {
     min-height: 44px;
   }
-  .nm-host {
+  .nm.has-host .mid-host {
     display: none;
   }
   .facts {

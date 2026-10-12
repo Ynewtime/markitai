@@ -13,7 +13,8 @@ import { isGroup, jobKey, navigationOrder, presetOf, submissionLabel, type Submi
 import { fmtClock } from "../lib/format.ts";
 import { rowWarnings } from "../lib/notices.ts";
 import type { SessionItem } from "../lib/session.ts";
-import { Duration, glyphOf, NameText, StatusGlyph, statusWord, useElapsed } from "./item-bits.tsx";
+import { NameText } from "./file-name.tsx";
+import { Duration, glyphOf, StatusGlyph, statusWord, useElapsed } from "./item-bits.tsx";
 import { Icon } from "./icons.tsx";
 
 export const rowId = (key: string): string => `row-${key.replace(/[^\w-]/g, "-")}`;

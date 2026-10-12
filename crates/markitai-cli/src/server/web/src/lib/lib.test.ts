@@ -3,7 +3,8 @@ import test from "node:test";
 import { cliCommand, shellQuote } from "./cli.ts";
 import { compareLines } from "./diff.ts";
 import { isHiddenName, selectFolderFiles, stagedBatch, walkEntries } from "./files.ts";
-import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, nameTail, splitName, timestampMs, urlParts } from "./format.ts";
+import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, timestampMs } from "./format.ts";
+import { nameShape, shortenName, shortenShape, tailLength } from "./middle.ts";
 import { artifactPath, drawingReference, drawingValue, imageByName, loadArtifactImages, markdownPair, presentationFromStyle, rewrite, splitFrontmatter } from "./markdown.ts";
 import { endpointFor, manualModelId, sameEndpoint } from "./models.ts";
 import {
@@ -114,8 +115,6 @@ test("formatting reads well in tabular columns", () => {
   assert.equal(timestampMs("yesterday"), null);
   assert.equal(fmtDateTime(null), "-");
   assert.equal(countWords("Hello world 你好"), 4);
-  assert.deepEqual(splitName("a-very-long-document-name-here.pdf"), ["a-very-long-document-n", "ame-here.pdf"]);
-  assert.equal(splitName("short.pdf"), null);
 });
 
 test("the rendered view leaves a leading YAML block to Source", () => {
@@ -161,10 +160,10 @@ test("a picture whose paragraph repeats its alt text is decorative", () => {
 
 test("a long file name keeps its extensions and four characters before them", () => {
   const name = "2025年度可持续发展报告（中英文对照版）——环境、社会及治理信息披露全文.pdf.llm.md";
-  assert.equal(name.slice(nameTail(name)), "信息披露全文.pdf.llm.md".slice(2));
-  assert.equal("report.final.v2.docx.md".slice(nameTail("report.final.v2.docx.md")), "inal.v2.docx.md");
-  assert.equal(nameTail("abc"), 0);
-  assert.equal("README".slice(nameTail("README")), "ADME");
+  assert.equal(tailLength(name), "披露全文.pdf.llm.md".length);
+  assert.equal(tailLength("report.final.v2.docx.md"), "inal.v2.docx.md".length);
+  assert.equal(tailLength("abc"), 3);
+  assert.equal(tailLength("README"), 4);
 });
 
 test("an image whose folder does not match resolves by its unique file name only", () => {
@@ -461,15 +460,34 @@ test("an empty header cell becomes a plain cell; a named one stays a header", ()
   assert.equal(pictured.replaced.length, 0);
 });
 
-test("a web address keeps its host and the end of its path; a query gives way first", () => {
-  assert.deepEqual(urlParts("http://127.0.0.1:41819/slow/s5.html"), ["http://127.0.0.1:41819/slow", "/s5.html", ""]);
-  assert.deepEqual(urlParts("https://example.com"), ["https://example.com", "", ""]);
-  assert.deepEqual(urlParts("https://example.com/"), ["https://example.com", "/", ""]);
-  assert.deepEqual(urlParts("https://example.com/docs/guide/"), ["https://example.com/docs", "/guide/", ""]);
-  assert.deepEqual(urlParts("https://news.example.org/2026/10/12/a-very-long-article-title-here.html?utm_source=x#top"), [
-    "https://news.example.org/2026/10/12/a-very-long-article",
-    "-title-here.html",
-    "?utm_source=x#top",
-  ]);
-  for (const url of ["http://127.0.0.1:41819/slow/s5.html", "https://例子.中国/路径/文件.pdf?q=1", "not a url.pdf"]) assert.equal(urlParts(url).join(""), url);
+test("a long name gives up whole folders first, keeps its host and extension, and its ellipsis touches what follows", () => {
+  const chars = (limit: number) => (text: string) => Array.from(text).length <= limit;
+  const cut = (name: string, kind: "file" | "url", limit: number) => {
+    const short = shortenName(name, kind, chars(limit));
+    return short.host + short.body;
+  };
+  const url = "127.0.0.1:9391/slow/annual-reports/2026/q3-statement/s5.html";
+  assert.equal(cut(url, "url", 80), url);
+  assert.equal(cut(url, "url", 50), "127.0.0.1:9391/slow/annual-reports/2026/…/s5.html");
+  assert.equal(cut(url, "url", 40), "127.0.0.1:9391/slow/…/s5.html");
+  assert.equal(cut(url, "url", 28), "127.0.0.1:9391/…/s5.html");
+  assert.deepEqual(nameShape("http://127.0.0.1:41819/slow/s5.html?x=1#top", "url"), { host: "http://127.0.0.1:41819", path: "/slow/s5.html", query: "?x=1#top" });
+  // A query gives way before the path.
+  assert.equal(cut("http://127.0.0.1:9391/slow/s5.html?session=abcdef&x=1", "url", 40), "http://127.0.0.1:9391/slow/s5.html?…");
+  // A file name loses its middle characters, never its extension; no gap or separator before the tail.
+  const report = "2025年度可持续发展报告（中英文对照版）——环境、社会及治理信息披露全文.pdf.llm.md";
+  assert.equal(cut(report, "file", 24), "2025年度可持…披露全文.pdf.llm.md");
+  assert.equal(cut("a-very-long-document-name-here.pdf", "file", 20), "a-very-long…here.pdf");
+  // A relative path (a folder upload) cuts at its folders, then its last segment.
+  const path = "年度报告材料/2025/季度/第三季度/营收说明_final.docx";
+  assert.equal(cut(path, "file", 30), "年度报告材料/2025/…/营收说明_final.docx");
+  assert.equal(cut(path, "file", 20), "…/营收说明_final.docx");
+  assert.equal(cut(path, "file", 14), "…/营收…inal.docx");
+  assert.equal(cut(path, "file", 10), "…inal.docx");
+  // A host the layout hides (phone rows) takes no room, and the query still goes first.
+  const hidden = shortenShape({ ...nameShape("127.0.0.1:9899/archive/2025/年度报告材料/第三季度/营收说明与可持续发展信息披露全文.html?session=abcdef", "url"), host: "" }, chars(20));
+  assert.equal(hidden.body, "/…/营收说明与可持…披露全文.html");
+  // Only then does the host give up its middle; the result always fits when it can.
+  assert.equal(cut(url, "url", 22), "127.0…1:9391/…/s5.html");
+  for (const limit of [20, 30, 45, 70]) for (const name of [url, report, path]) assert.ok(Array.from(cut(name, name === url ? "url" : "file", limit)).length <= limit, `${name} at ${limit}`);
 });

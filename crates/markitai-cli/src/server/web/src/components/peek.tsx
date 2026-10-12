@@ -5,7 +5,7 @@
 // phone it fills the screen. Up/Down move between items (outside the scrolling
 // document), C switches Compare, Escape closes.
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useModal } from "../hooks/use-modal.ts";
 import { useResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
@@ -93,6 +93,30 @@ export function Peek(props: PeekProps) {
   const tab = tabs.includes(props.tab) ? props.tab : "details";
   const labels: Record<PeekTab, string> = { details: t.peekDetails, preview: t.preview, compare: t.compare };
   const windowed = !docked || phone;
+  // Preview's own views share this row, at its end: as tabs when they fit beside
+  // the window's tabs, else as one compact switch. `needed` is the width the tabs took.
+  const row = useRef<HTMLDivElement>(null);
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const [compactBar, setCompactBar] = useState(false);
+  const needed = useRef(0);
+  useEffect(() => setCompactBar(false), [item?.key, t]);
+  useLayoutEffect(() => {
+    const element = row.current;
+    if (!element || typeof ResizeObserver !== "function") return;
+    const check = () => {
+      if (!compactBar) {
+        if (element.scrollWidth > element.clientWidth + 1) {
+          needed.current = element.scrollWidth;
+          setCompactBar(true);
+        }
+      } else if (element.clientWidth >= needed.current) setCompactBar(false);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(element);
+    if (slot) observer.observe(slot);
+    return () => observer.disconnect();
+  }, [compactBar, slot, tab]);
 
   // Keys that work anywhere in the window (and, docked, outside the list).
   useEffect(() => {
@@ -221,7 +245,8 @@ export function Peek(props: PeekProps) {
       {header}
       <ActionError t={t} failure={failure} />
       {tabs.length > 1 && (
-        <div class="peek-tabs" role="tablist" aria-label={t.peekViews}>
+        <div ref={row} class="peek-tabs">
+          <div class="peek-tablist" role="tablist" aria-label={t.peekViews}>
           {tabs.map((value) => (
             <button
               key={value}
@@ -241,13 +266,15 @@ export function Peek(props: PeekProps) {
               {labels[value]}
             </button>
           ))}
+          </div>
+          {tab === "preview" && <div ref={setSlot} class="peek-tabs-side" />}
         </div>
       )}
       <div id="peek-panel" class="peek-body" role={tabs.length > 1 ? "tabpanel" : undefined} aria-labelledby={tabs.length > 1 ? `peek-tab-${tab}` : undefined}>
         {tab === "details" || item === null ? (
           <div class="peek-details">{props.details}</div>
         ) : (
-          <PeekDocument {...props} item={item} mode={tab === "compare" ? "compare" : "preview"} onTools={setTools} />
+          <PeekDocument {...props} item={item} mode={tab === "compare" ? "compare" : "preview"} onTools={setTools} barHost={tab === "preview" ? slot : null} compactBar={compactBar} />
         )}
       </div>
       {!phone && (
@@ -309,7 +336,9 @@ function PeekDocument({
   onCopyFailed,
   announce,
   describe,
-}: PeekProps & { item: SessionItem; mode: "preview" | "compare"; onTools: (tools: DocTools | null) => void }) {
+  barHost,
+  compactBar,
+}: PeekProps & { item: SessionItem; mode: "preview" | "compare"; onTools: (tools: DocTools | null) => void; barHost: HTMLElement | null; compactBar: boolean }) {
   const doc = useResultDocument(item);
   const [tab, setTab] = useState<Tab>("rendered");
   const [error, setError] = useState<string | null>(null);
@@ -387,7 +416,7 @@ function PeekDocument({
       {mode === "compare" ? (
         <CompareView t={t} locale={locale} item={item} doc={doc} createdAt={createdAt} describe={describe} phone={phone} />
       ) : (
-        <MarkdownView t={t} locale={locale} item={item} doc={doc} createdAt={createdAt} describe={describe} tab={tab} onTab={setTab} rendered={rendered} onError={setError} />
+        <MarkdownView t={t} locale={locale} item={item} doc={doc} createdAt={createdAt} describe={describe} tab={tab} onTab={setTab} rendered={rendered} onError={setError} barHost={barHost} compactBar={compactBar} />
       )}
     </>
   );

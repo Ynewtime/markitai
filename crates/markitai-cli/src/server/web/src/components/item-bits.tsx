@@ -1,10 +1,10 @@
 // Small pieces every item view shares: the status glyph (one shape per state,
-// so colour is never the only signal), the item name with its extension kept
-// visible while the head ellipsizes, and the live duration.
+// so colour is never the only signal) and the live duration. Names are in
+// file-name.tsx.
 import { useEffect, useState } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import { isFailed, isStopped } from "../lib/conversions.ts";
-import { displayName, durParts, fmtDur } from "../lib/format.ts";
+import { durParts, fmtDur } from "../lib/format.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { Icon } from "./icons.tsx";
 
@@ -46,34 +46,6 @@ export function StatusGlyph({ glyph, label }: { glyph: Glyph; label?: string }) 
   return (
     <span class={`glyph is-${glyph}`} role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : "true"}>
       {icon}
-    </span>
-  );
-}
-
-/** Head and tail of a name: the tail (the extension and a few characters) never ellipsizes. */
-export function splitDisplay(name: string, kind: "file" | "url"): { host: string; head: string; tail: string } {
-  let text = kind === "url" ? displayName(name) : name;
-  let host = "";
-  if (kind === "url") {
-    const slash = text.indexOf("/");
-    if (slash > 0 && slash < text.length - 1) {
-      host = text.slice(0, slash + 1);
-      text = text.slice(slash + 1);
-    }
-  }
-  const extension = /\.[A-Za-z0-9]{1,6}$/.exec(text)?.[0] ?? "";
-  const keep = Math.min(text.length, extension ? extension.length + 4 : 6);
-  if (text.length <= keep + 6) return { host, head: text, tail: "" };
-  return { host, head: text.slice(0, text.length - keep), tail: text.slice(text.length - keep) };
-}
-
-export function NameText({ name, kind, showHost = true }: { name: string; kind: "file" | "url"; showHost?: boolean }) {
-  const { host, head, tail } = splitDisplay(name, kind);
-  return (
-    <span class="nm" title={name}>
-      {host && showHost && <span class="nm-host">{host}</span>}
-      <span class="nm-head">{head}</span>
-      {tail && <span class="nm-tail">{tail}</span>}
     </span>
   );
 }

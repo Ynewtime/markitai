@@ -79,11 +79,6 @@ export function utf8Bytes(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-/** Long names keep their tail (the extension) visible while the head ellipsizes. */
-export function splitName(name: string, tail = 12): [string, string] | null {
-  return name.length <= tail + 4 ? null : [name.slice(0, -tail), name.slice(-tail)];
-}
-
 /** Display name of an item: a URL without its scheme. */
 export const displayName = (name: string): string => name.replace(/^https?:\/\//, "");
 
@@ -110,32 +105,3 @@ export function fmtDay(ms: number, locale: string): string {
   return new Intl.DateTimeFormat(localeTag(locale), { month: "short", day: "numeric" }).format(new Date(ms));
 }
 
-/** Where the always-visible end of a long file name starts: its extensions
- * (".pdf.llm.md") and the four characters before them. */
-export function nameTail(name: string): number {
-  const extensions = /(?:\.[A-Za-z0-9]{1,8}){1,3}$/.exec(name);
-  const start = extensions ? extensions.index : name.length;
-  return Math.max(0, start - 4);
-}
-
-/** A long web address cut like a file name: the head keeps the scheme and
- * host and gives up the middle of the path first, the tail keeps the end of
- * the path (from its last "/", at most 20 characters, from a word break when
- * one is near), and a query or
- * fragment after it gives way before either. The three parts join to `url`. */
-export function urlParts(url: string): [head: string, tail: string, rest: string] {
-  const match = /^([a-z][a-z\d+.-]*:\/\/[^/?#]*)([^?#]*)(.*)$/is.exec(url);
-  if (!match) {
-    const cut = nameTail(url);
-    return [url.slice(0, cut), url.slice(cut), ""];
-  }
-  const [, host, path, rest] = match;
-  const slash = path.lastIndexOf("/", path.length - 2);
-  let start = Math.max(slash, 0, path.length - 20);
-  // A long last segment is cut at a word break ("-to-markdown.html").
-  if (start > slash) {
-    const word = path.slice(start).search(/[-_ ]/);
-    if (word > 0 && word < 12) start += word;
-  }
-  return [host + path.slice(0, start), path.slice(start), rest];
-}
