@@ -1014,6 +1014,10 @@ def can_attempt_login(provider: str) -> bool:
         return _resolve_cli_path("copilot") is not None
     if provider == "chatgpt":
         try:
+            from markitai.utils.litellm_import import import_litellm
+
+            # The package first: a prewarm thread may be importing it
+            import_litellm()
             from litellm.llms.chatgpt.authenticator import (
                 Authenticator,  # noqa: F401  # pyright: ignore[reportUnusedImport]
             )
