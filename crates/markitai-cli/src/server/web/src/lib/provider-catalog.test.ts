@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { ProviderCard } from "../api/types.ts";
-import { arrangeProviders, iconKey, isSubscription, matches, monogram, usesCloudCredentials } from "./provider-catalog.ts";
+import { en } from "../i18n/en.ts";
+import { ja } from "../i18n/ja.ts";
+import { zh } from "../i18n/zh.ts";
+import { arrangeProviders, iconKey, isSubscription, matches, monogram, ownEndpointLogin, usesCloudCredentials } from "./provider-catalog.ts";
 
 const card = (provider: string, label: string, extra: Partial<ProviderCard> = {}): ProviderCard => ({
   id: `common:${provider}`,
@@ -105,4 +109,26 @@ test("a monogram is one or two initials without generic words", () => {
   assert.equal(monogram("AI/ML API"), "M");
   assert.equal(monogram("SCX.ai"), "S");
   assert.equal(monogram("W&B Inference"), "W");
+});
+
+test("a provider the server refuses an address names its login instead; Bedrock keeps its address", () => {
+  // Contract v1.9: Vertex AI (and watsonx, GigaChat) sign in with the server's
+  // own login at any address, so the page offers them none.
+  assert.equal(ownEndpointLogin(card("vertex_ai", "Vertex AI")), "google");
+  assert.equal(ownEndpointLogin(card("vertex_ai_beta", "Vertex AI")), "google");
+  assert.equal(ownEndpointLogin(card("watsonx", "watsonx")), "WATSONX_TOKEN");
+  assert.equal(ownEndpointLogin(card("gigachat", "GigaChat")), "GIGACHAT_ACCESS_TOKEN");
+  for (const provider of ["bedrock", "openai", "azure", "custom", "ollama"]) assert.equal(ownEndpointLogin(card(provider, provider)), null, provider);
+  assert.equal(en.ownEndpointNote("Vertex AI", en.googleLogin), "Uses this server's Google login at Vertex AI's own endpoint.");
+  assert.equal(zh.ownEndpointNote("Vertex AI", zh.googleLogin), "使用这台服务器的 Google 登录，只连接 Vertex AI 自己的接口。");
+  assert.equal(ja.ownEndpointNote("Vertex AI", ja.googleLogin), "このサーバーの Google ログインで、Vertex AI 自身のエンドポイントに接続します。");
+  assert.equal(ja.ownEndpointNote("watsonx", "WATSONX_TOKEN"), "このサーバーの WATSONX_TOKEN で、watsonx 自身のエンドポイントに接続します。");
+});
+
+test("the add form sends no address for a provider that takes none", () => {
+  // The page passes an empty address for these, whatever the draft held.
+  const source = readFileSync(new URL("../components/settings-models.tsx", import.meta.url), "utf8");
+  assert.match(source, /deploymentCredentials\(provider, draftKey, login === null \? draftBase : ""\)/);
+  assert.match(source, /discoveryRequest\(from, draftKey, login === null \? draftBase : "", refresh\)/);
+  assert.match(source, /baseOptional = [^;]*login === null;/);
 });

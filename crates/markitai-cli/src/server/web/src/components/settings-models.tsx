@@ -22,7 +22,7 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { endpointFor, sameEndpoint } from "../lib/models.ts";
-import { isSubscription, usesCloudCredentials } from "../lib/provider-catalog.ts";
+import { isSubscription, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
   deploymentCredentials,
@@ -304,6 +304,9 @@ export function ModelsSettings({
   // server's cloud credentials (a Bedrock API key is optional).
   const subscription = provider !== null && isSubscription(provider);
   const cloud = provider !== null && usesCloudCredentials(provider);
+  // Vertex AI (and watsonx, GigaChat) sign in with the server's own login at
+  // their own endpoint: the server refuses them an address, so none is offered.
+  const login = provider !== null ? ownEndpointLogin(provider) : null;
   // The provider lists no models: IDs are entered by hand.
   const manualOnly = provider !== null && provider.supports_discovery === false;
   const autoLoads = !manualOnly && (existing || subscription || (local && Boolean(provider?.default_base)));
@@ -312,10 +315,11 @@ export function ModelsSettings({
     provider !== null &&
     !subscription &&
     !cloud &&
+    login === null &&
     (provider.provider === "azure" || provider.provider === "custom" || (provider.default_base === null && !existing));
   const showsKey = provider !== null && !existing && !ollama && !subscription && (!cloud || Boolean(provider.key_variable));
   // Every other new connection may move the address; its default shows as the placeholder.
-  const baseOptional = provider !== null && !needsBase && !existing && !subscription;
+  const baseOptional = provider !== null && !needsBase && !existing && !subscription && login === null;
   const keyRequired = provider !== null && provider.provider !== "custom" && !local;
   const canLoad =
     provider !== null &&
@@ -468,7 +472,7 @@ export function ModelsSettings({
     setDiscovering(true);
     setListError(null);
     try {
-      const result = await discoverModels(discoveryRequest(from, draftKey, draftBase, refresh));
+      const result = await discoverModels(discoveryRequest(from, draftKey, login === null ? draftBase : "", refresh));
       setDiscovery(result);
       const available = new Set(result.models.map((candidate) => candidate.model));
       setSelected((previous) => new Set([...previous].filter((model) => available.has(model))));
@@ -496,7 +500,7 @@ export function ModelsSettings({
     if (!provider || (!selected.size && !dropped.size) || revision === null || addBusy) return;
     let credentials: Partial<NewDeployment>;
     try {
-      credentials = deploymentCredentials(provider, draftKey, draftBase);
+      credentials = deploymentCredentials(provider, draftKey, login === null ? draftBase : "");
     } catch (error) {
       await fail(error);
       return;
@@ -763,25 +767,28 @@ export function ModelsSettings({
           <div class="conn-row">
             <span class="conn-label">{t.setApiBase}</span>
             <span class="conn-value">{baseText(conn)}</span>
-            <span class="text-actions">
-              <button
-                type="button"
-                class="text-btn"
-                aria-expanded={connMode === "base"}
-                aria-controls={connMode === "base" ? "conn-base-form" : undefined}
-                disabled={connBusy}
-                onClick={() => (connMode === "base" ? closeConnEdit() : openConnEdit("base", conn.base))}
-              >
-                {t.editAddress}
-              </button>
-              {(conn.base !== "" || conn.baseRetained) && conn.placeholder !== "" && (
-                <button type="button" class="text-btn" disabled={connBusy} onClick={() => openConnEdit("base", "")}>
-                  {t.resetAddress}
+            {/* A login provider takes no address here (the config file may set one). */}
+            {login === null && (
+              <span class="text-actions">
+                <button
+                  type="button"
+                  class="text-btn"
+                  aria-expanded={connMode === "base"}
+                  aria-controls={connMode === "base" ? "conn-base-form" : undefined}
+                  disabled={connBusy}
+                  onClick={() => (connMode === "base" ? closeConnEdit() : openConnEdit("base", conn.base))}
+                >
+                  {t.editAddress}
                 </button>
-              )}
-            </span>
+                {(conn.base !== "" || conn.baseRetained) && conn.placeholder !== "" && (
+                  <button type="button" class="text-btn" disabled={connBusy} onClick={() => openConnEdit("base", "")}>
+                    {t.resetAddress}
+                  </button>
+                )}
+              </span>
+            )}
           </div>
-          {connMode === "base" && (
+          {connMode === "base" && login === null && (
             <form
               id="conn-base-form"
               class="conn-edit"
@@ -944,7 +951,8 @@ export function ModelsSettings({
                           manualOnly,
                           needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom",
                           subscription,
-                          cloud,
+                          // The login note below says how it connects.
+                          cloud: cloud && login === null,
                         })}
                       </p>
                       {(provider.kind === "common" || provider.kind === "compatible") && ((provider.default_base && !baseOptional) || provider.key_variable) && (
@@ -1008,6 +1016,7 @@ export function ModelsSettings({
                       )}
                     </div>
                   )}
+                  {login !== null && <p class="conn-note login-note">{t.ownEndpointNote(label, login === "google" ? t.googleLogin : login)}</p>}
                 </section>
                 {discovering && discovery === null && (
                   <div class="skeleton" role="status">

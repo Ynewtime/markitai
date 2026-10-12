@@ -160,7 +160,11 @@ and, in plain sight under it, Model ID and routing (add a model by its ID, the
 routing group and weight), with a breadcrumb that Escape steps back through.
 Every settings page keeps its primary action in one place, the pinned bar at the
 bottom (Load models, then Save, beside Cancel); a subscription needs no key or
-address, and Bedrock and Vertex AI take model IDs by hand. A backend that sends
+address, and Bedrock and Vertex AI take model IDs by hand. Vertex AI (like
+watsonx and GigaChat, when a backend offers them) takes no address, here or on
+its saved connection: it signs in with the server's own login, which the page
+names in a muted line, at its own endpoint; Bedrock keeps its optional key and
+address. A backend that sends
 no provider `group` gets the common eight by name and everything else under All. Appearance and language chooses English, 中文 or 日本語 and the
 theme (Auto, Light, Dark); Access token says whether this tab holds a token
 (with Forget beside it) and takes a new one in one field with Save; it is kept in

@@ -289,6 +289,9 @@ export const ja: Dict = {
     if (local) return "ローカルの既定のエンドポイントを使用しています。キーはサーバーが求める場合にのみ必要です。";
     return "接続情報を入力すると、利用可能なモデルを読み込みます。";
   },
+  ownEndpointNote: (label: string, credential: string) =>
+    `このサーバーの ${credential}${/[A-Za-z0-9_]$/.test(credential) ? " " : ""}で、${label} 自身のエンドポイントに接続します。`,
+  googleLogin: "Google ログイン",
   optionalKeyVariable: (variable: string) => `${variable}（任意）`,
   manualModelsOnly: "このプロバイダーからはモデルの一覧を取得できません · 下にモデル ID を追加してください",
   serverAddressRequired: "サーバーのアドレスが必要です",

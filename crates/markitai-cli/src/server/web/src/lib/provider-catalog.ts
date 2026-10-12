@@ -23,6 +23,22 @@ export const isSubscription = (card: Pick<ProviderCard, "provider" | "group">): 
 /** Bedrock and Vertex AI read the server's cloud credentials and need no address. */
 export const usesCloudCredentials = (card: Pick<ProviderCard, "provider">): boolean => OWN_CREDENTIALS.has(card.provider);
 
+/** Providers that sign in with the server's own login whatever key an entry
+ * carries, so the settings API refuses them an address (contract v1.9): they
+ * take none here, and the page names the login instead. `google` is the
+ * Google login; the others are the token variable. Bedrock is not here: with an
+ * address it sends no server credential, so its optional address stays. */
+const OWN_ENDPOINT_LOGIN: Record<string, string> = {
+  vertex_ai: "google",
+  vertex_ai_beta: "google",
+  watsonx: "WATSONX_TOKEN",
+  watsonx_text: "WATSONX_TOKEN",
+  gigachat: "GIGACHAT_ACCESS_TOKEN",
+};
+
+/** The server login a provider always uses at its own endpoint, or null when it may take an address. */
+export const ownEndpointLogin = (card: Pick<ProviderCard, "provider">): string | null => OWN_ENDPOINT_LOGIN[card.provider] ?? null;
+
 /** The brand mark a card names; a server that names none (Python 1.2.1) gets
  * the mark whose key is the provider's prefix, when there is one. */
 export const iconKey = (card: Pick<ProviderCard, "provider" | "icon">): string | null =>

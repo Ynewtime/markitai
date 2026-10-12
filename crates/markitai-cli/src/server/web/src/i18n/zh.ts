@@ -263,6 +263,8 @@ export const zh: Dict = {
     return "填写连接信息后加载可用模型。";
   },
   optionalKeyVariable: (variable) => `${variable}（可选）`,
+  ownEndpointNote: (label, credential) => `使用这台服务器的 ${credential}，只连接 ${label} 自己的接口。`,
+  googleLogin: "Google 登录",
   manualModelsOnly: "这个服务商不提供模型列表，请在下方添加模型 ID",
   serverAddressRequired: "需要服务器地址",
   searchProviders: (n) => `搜索 ${n} 个服务商`,

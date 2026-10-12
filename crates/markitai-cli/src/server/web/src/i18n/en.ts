@@ -296,6 +296,8 @@ export const en = {
     return "Enter the connection details to load available models.";
   },
   optionalKeyVariable: (variable: string) => `${variable} (optional)`,
+  ownEndpointNote: (label: string, credential: string) => `Uses this server's ${credential} at ${label}'s own endpoint.`,
+  googleLogin: "Google login",
   manualModelsOnly: "No model list from this provider · add a model ID below",
   serverAddressRequired: "Server address required",
   searchProviders: (n: number) => `Search ${n} providers`,
