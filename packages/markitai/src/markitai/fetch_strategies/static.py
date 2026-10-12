@@ -505,6 +505,7 @@ async def fetch_with_static_conditional(
                 },
             )
             if native_result is not None:
+                native_result.html = response_text
                 return ConditionalFetchResult(
                     result=native_result,
                     not_modified=False,
@@ -516,12 +517,15 @@ async def fetch_with_static_conditional(
             # above, BOM-marked so the BOM wins over any <meta>.
             convert_bytes = b"\xef\xbb\xbf" + response_text.encode("utf-8")
             content_kind = "html"
+            page_html: str | None = response_text
         elif suffix in _TEXT_SUFFIXES:
             convert_bytes = _get_response_text(response).encode("utf-8")
             content_kind = "text"
+            page_html = None
         else:
             convert_bytes = body
             content_kind = "document" if suffix in _DOCUMENT_SUFFIXES else "binary"
+            page_html = None
 
         loop = asyncio.get_running_loop()
         if content_kind == "document":
@@ -570,6 +574,7 @@ async def fetch_with_static_conditional(
                 "content_type": mime,
                 "document_suffix": suffix,
             },
+            html=page_html,
         )
 
         return ConditionalFetchResult(

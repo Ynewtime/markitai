@@ -655,6 +655,8 @@ class ProcessResult:
         error_code: Stable category of a failure (``unsupported``,
             ``fetch_error``, ...) when the producer knows it; the web server
             reports it beside the English ``error``
+        page_html: The HTML page a URL's content was converted from, when
+            this process fetched it (the web server keeps it for Compare)
     """
 
     success: bool
@@ -669,6 +671,7 @@ class ProcessResult:
     llm_enhanced: bool = False
     warnings: list[str] = field(default_factory=list)
     error_code: str | None = None
+    page_html: str | None = None
 
 
 def _count(n: int, noun: str) -> str:

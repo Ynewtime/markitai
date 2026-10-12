@@ -61,6 +61,10 @@ class FetchResult:
     #: All screenshot files: single path when within tile_height, or the
     #: vertical tiles (primary first) of a long page split for VLM reads.
     screenshot_tiles: list[Path] = field(default_factory=list)
+    #: The HTML page the content was converted from, when this process
+    #: fetched it (static, browser, Cloudflare); None for remote services'
+    #: Markdown (Jina, Defuddle), documents and cache hits.
+    html: str | None = None
 
 
 @dataclass
