@@ -8,13 +8,17 @@ For each viewport width it walks the main flows with Playwright/Chromium and
 screenshots every state:
 
     convert page, a refused URL as a bottom notice strip, staged files +
-    URLs, live progress, finished list, inspector, preview, compare
-    (original page beside the Markdown), retry of a failed item, a failed
-    action reported in the inspector, stop remaining (cancel), download all
-    (ticket), an inline SVG drawing in the preview, settings model test
-    (fake LLM), the provider picker (groups, brand marks, search), a saved
-    address shown without its credentials, a provider beyond the first eight
-    connected with a key and an address, history after a reload, token
+    URLs, live progress, finished list, a conversion in the peek window
+    (centred; full screen on a phone) with its Details, Preview and Compare
+    tabs (original page beside the Markdown, C to switch), Up/Down and the
+    header arrows between items, the window docked beside the list and back
+    (a per-browser choice), retry of a failed item, a failed action reported
+    in the window, New conversion and stop remaining (cancel), download all
+    from the "⋯" menu (ticket), an inline SVG drawing in the preview,
+    settings model test (fake LLM), every settings page and Convert as one
+    centred column, the provider picker (groups, brand marks, search), a
+    saved address shown without its credentials, a provider beyond the first
+    eight connected with a key and an address, history after a reload, token
     prompt
 
 Notices must be strips at the bottom (never the page-wide banners the UI
@@ -27,6 +31,7 @@ Usage (needs the serve and browser extras, and the browser for Playwright:
 ``--browser``)::
 
     uv run python scripts/workbench_e2e.py --out /tmp/workbench-e2e
+    uv run python scripts/workbench_e2e.py --browser webkit --theme dark
     uv run python scripts/workbench_e2e.py --widths 1440 --bundle path/to/unpacked-bundle
 
 Results: ``OUT/<NN>-<state>-<width>.png``, ``OUT/results.json`` and ``OUT/INDEX.md``.
@@ -833,6 +838,92 @@ def _heading(page: Any, name: str) -> Any:
     return page.get_by_role("heading", name=_spaced(name)).first
 
 
+def _peek(page: Any) -> Any:
+    """The open conversion: a window over the list (a dialog), or docked
+    beside it (a region); full screen on a phone."""
+    return page.locator(".peek").first
+
+
+def _peek_title(page: Any) -> str:
+    return re.sub(r"\s+", "", page.locator("#peek-title").inner_text())
+
+
+def _tab(page: Any, name: str) -> Any:
+    return page.locator(".peek-tabs").get_by_role("tab", name=name, exact=True)
+
+
+def _show_tab(page: Any, name: str) -> None:
+    tab = _tab(page, name)
+    tab.click()
+    _wait(
+        page,
+        lambda: tab.get_attribute("aria-selected") == "true",
+        timeout=10,
+        what=f"the {name} tab",
+    )
+
+
+def _close_window(page: Any) -> None:
+    """Escape closes the window. Its key handler is registered a frame after
+    the window appears, so give it that frame first."""
+    page.wait_for_timeout(300)
+    page.keyboard.press("Escape")
+    _peek(page).wait_for(state="detached", timeout=10000)
+
+
+def _window_placement(page: Any, phone: bool) -> str:
+    """A window centred in the viewport on a wide screen, the whole screen on
+    a phone."""
+    box, settled, view = _peek(page).bounding_box(), None, page.viewport_size
+    for _ in range(20):  # after its slide-in (a phone's comes from below)
+        page.wait_for_timeout(100)
+        settled, box = box, _peek(page).bounding_box()
+        if box == settled:
+            break
+    if box is None or view is None:
+        raise AssertionError("the window has no box")
+    if phone:
+        if box["x"] > 1 or box["y"] > 1 or box["width"] < view["width"] - 1:
+            raise AssertionError(f"the window does not fill the phone: {box}")
+        if box["height"] < view["height"] - 1:
+            raise AssertionError(f"the window does not fill the phone: {box}")
+        return "full screen"
+    across = box["x"] + box["width"] / 2 - view["width"] / 2
+    down = box["y"] + box["height"] / 2 - view["height"] / 2
+    if abs(across) > 3 or abs(down) > 3:
+        raise AssertionError(f"the window is not centred: {box}")
+    return f"centred, {box['width']:.0f}x{box['height']:.0f}"
+
+
+def _centred_column(page: Any) -> str:
+    """The page's column sits in the middle of the main area (its heading
+    row spans the column; Convert has none)."""
+    heads = page.locator("#main .page-head")
+    column = heads.first if heads.count() else page.locator("#main .page").first
+    gaps = column.evaluate(
+        """page => {
+            const main = document.getElementById("main");
+            const r = page.getBoundingClientRect(), m = main.getBoundingClientRect();
+            return [r.left - m.left, m.left + main.clientWidth - r.right, r.width];
+        }"""
+    )
+    left, right, wide = gaps
+    if abs(left - right) > 2:
+        raise AssertionError(f"the column is off centre: {left:.0f} / {right:.0f} px")
+    return f"{wide:.0f} px column, {left:.0f} px each side"
+
+
+def _control_height(locator: Any, phone: bool) -> str:
+    """One control scale: 28 px buttons, 36 px on a phone."""
+    box = locator.bounding_box()
+    expected = 36 if phone else 28
+    if box is None or abs(box["height"] - expected) > 1:
+        raise AssertionError(
+            f"a button is {box and box['height']} px high, not {expected}"
+        )
+    return f"{expected} px buttons"
+
+
 #: The notices of the UI before the bundle of 2026-10-11 (rounded boxes with
 #: a bar and a close button, page-wide banners): none may be left
 OLD_NOTICES = ".notice, .notes-region, .note-close"
@@ -910,6 +1001,7 @@ def browse(
     *,
     llm_port: int,
     config: Path,
+    theme: str = "light",
 ) -> Run:
     from playwright.sync_api import sync_playwright
 
@@ -921,6 +1013,7 @@ def browse(
             viewport={"width": width, "height": 844 if phone else 900},
             device_scale_factor=2 if phone else 1,
             accept_downloads=True,
+            color_scheme=theme,
         )
         page = context.new_page()
         page.on("pageerror", run.page_error)
@@ -1054,26 +1147,45 @@ def browse(
 
         run.step(page, "finished", finished)
 
-        # 4. Inspector of the PDF
-        def inspector() -> str:
+        # 4. The PDF opens in the peek window on Details
+        def peek() -> str:
             _dismiss(page)
+            before = len(run.api)
             _item(page, "quarterly-report.pdf").click()
             _heading(page, "quarterly-report.pdf").wait_for()
-            page.get_by_text("No model used").first.wait_for()
+            page.get_by_role("dialog", name=_spaced("quarterly-report.pdf")).wait_for()
+            tabs = [
+                " ".join(t.split())
+                for t in page.locator(".peek-tabs [role=tab]").all_inner_texts()
+            ]
+            if tabs != ["Details", "Preview", "Compare"]:
+                raise AssertionError(f"tabs: {tabs}")
+            if _tab(page, "Details").get_attribute("aria-selected") != "true":
+                raise AssertionError("the window did not open on Details")
+            page.locator(".peek").get_by_text("No model used").first.wait_for()
             _wait(
                 page,
-                lambda: run.saw("GET", r"/result\?max_bytes=16384", 200),
+                lambda: run.saw("GET", r"/result\?max_bytes=16384", 200, since=before),
                 what="the result excerpt",
             )
-            return "inspector shows source size, output, cost and the result excerpt"
+            where = _window_placement(page, phone)
+            position = page.locator(".peek-pos")
+            shown = (
+                f"; position {position.inner_text().strip()!r}"
+                if position.count()
+                else ""
+            )
+            return f"window {where} on Details (sizes, cost, excerpt){shown}"
 
-        run.step(page, "inspector", inspector)
+        run.step(page, "peek-details", peek)
 
-        # 5. Preview
+        # 5. Preview tab
         def preview() -> str:
-            _click_visible(page.get_by_role("button", name="Preview", exact=True))
+            _show_tab(page, "Preview")
             page.get_by_role("tab", name=re.compile("Rendered|Source")).first.wait_for()
-            page.get_by_text("Quarterly report, part 1").first.wait_for()
+            page.locator("#peek-panel").get_by_text(
+                "Quarterly report, part 1"
+            ).first.wait_for()
             # The PDF's picture, read through the item's own image route
             # (contract v1.6) and drawn, not "[Image: preview unavailable]"
             _wait(
@@ -1081,7 +1193,9 @@ def browse(
                 lambda: run.saw("GET", r"/items/i\d+/assets/.+\.(png|jpe?g)$", 200),
                 what="the extracted picture from the item's image route",
             )
-            drawn = page.locator("[role=tabpanel]:not([hidden]) .doc-body img").first
+            drawn = page.locator(
+                "#peek-panel [role=tabpanel]:not([hidden]) .doc-body img"
+            ).first
             _wait(
                 page,
                 lambda: (
@@ -1092,13 +1206,13 @@ def browse(
             )
             if page.get_by_text("preview unavailable").count():
                 raise AssertionError("a picture is shown as unavailable")
-            return "rendered Markdown in the preview, its extracted picture drawn"
+            return "Preview tab: rendered Markdown, its extracted picture drawn"
 
-        run.step(page, "preview", preview)
+        run.step(page, "peek-preview", preview)
 
-        # 6. Compare: the original page beside the Markdown
+        # 6. Compare tab: the original page beside the Markdown; C switches
         def compare() -> str:
-            _click_visible(page.get_by_role("button", name="Compare", exact=True))
+            _show_tab(page, "Compare")
             _wait(
                 page,
                 lambda: run.saw("GET", r"/items/i\d+/original$", 200),
@@ -1110,12 +1224,142 @@ def browse(
                 what="page 1 as an image",
             )
             page.wait_for_timeout(800)
-            return "PDF page image and text layer loaded"
+            run.shot(page, "peek-compare-shown")
+            page.wait_for_timeout(300)  # the key handler follows the tab a frame later
+            page.keyboard.press("c")
+            _wait(
+                page,
+                lambda: _tab(page, "Preview").get_attribute("aria-selected") == "true",
+                timeout=10,
+                what="C to switch back to Preview",
+            )
+            page.wait_for_timeout(300)
+            page.keyboard.press("c")
+            _wait(
+                page,
+                lambda: _tab(page, "Compare").get_attribute("aria-selected") == "true",
+                timeout=10,
+                what="C to switch to Compare",
+            )
+            return (
+                "Compare tab: PDF page image and text layer; C toggles Preview/Compare"
+            )
 
-        run.step(page, "compare", compare)
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
-        page.keyboard.press("Escape")
+        run.step(page, "peek-compare", compare)
+
+        # 6b. Up/Down (and the header's arrows) move between items
+        def arrows() -> str:
+            _show_tab(page, "Details")
+            first = _peek_title(page)
+            # The arrows move unless the focus is in the tabs or a document
+            page.locator(".peek").focus()
+            page.keyboard.press("ArrowDown")
+            _wait(page, lambda: _peek_title(page) != first, timeout=10, what="Down")
+            second = _peek_title(page)
+            position = page.locator(".peek-pos")
+            at = position.inner_text().strip() if position.count() else ""
+            page.wait_for_timeout(300)
+            page.locator(".peek").focus()
+            page.keyboard.press("ArrowUp")
+            _wait(page, lambda: _peek_title(page) == first, timeout=10, what="Up")
+            _click_visible(page.get_by_role("button", name="Next item"))
+            _wait(page, lambda: _peek_title(page) == second, timeout=10, what="Next")
+            _click_visible(page.get_by_role("button", name="Previous item"))
+            _wait(page, lambda: _peek_title(page) == first, timeout=10, what="Previous")
+            if not phone and not re.fullmatch(r"2 of \d+", at):
+                raise AssertionError(f"position after Down: {at!r}")
+            _close_window(page)
+            return (
+                f"Down/Up and the header arrows: {first} <-> {second}"
+                + (f" ({at})" if at else "")
+                + "; Escape closed the window"
+            )
+
+        run.step(page, "peek-arrows", arrows)
+
+        # 6c. Dock the window beside the list (a per-browser choice); phones
+        # have no dock and fill the screen
+        def dock() -> str:
+            if phone:
+                _item(page, "quarterly-report.pdf").click()
+                _heading(page, "quarterly-report.pdf").wait_for()
+                if page.get_by_role("button", name="Dock beside the list").count():
+                    raise AssertionError("a phone offers the dock")
+                where = _window_placement(page, phone)
+                _click_visible(page.get_by_role("button", name="Close"))
+                _peek(page).wait_for(state="detached", timeout=10000)
+                return f"no dock on a phone; the window is {where}; Close (←) returns"
+            _item(page, "quarterly-report.pdf").click()
+            _heading(page, "quarterly-report.pdf").wait_for()
+            page.get_by_role("button", name="Dock beside the list").click()
+            region = page.locator(".peek.is-docked")
+            region.wait_for(timeout=10000)
+            if region.get_attribute("role") != "region":
+                raise AssertionError("the docked window is not a region")
+            if page.get_by_role("dialog").count():
+                raise AssertionError("docked, a dialog is still open")
+            tree, side = (
+                page.get_by_role("tree").bounding_box(),
+                _peek(page).bounding_box(),
+            )
+            if not tree or not side or side["x"] < tree["x"] + tree["width"] - 1:
+                raise AssertionError(f"not beside the list: {tree} / {side}")
+            stored = page.evaluate("() => localStorage.getItem('markitai.peek')")
+            if stored != "docked":
+                raise AssertionError(f"markitai.peek = {stored!r}")
+            # Docked, the list's arrows select and the window follows
+            _item(page, "quarterly-report.pdf").focus()
+            page.keyboard.press("ArrowDown")
+            _wait(
+                page,
+                lambda: _peek_title(page) != "quarterly-report.pdf",
+                timeout=10,
+                what="the docked window to follow the list",
+            )
+            followed = _peek_title(page)
+            focused = page.locator("[role=treeitem]:focus")
+            try:
+                _wait(
+                    page,
+                    lambda: (
+                        focused.count() == 1
+                        and re.sub(r"\s+", "", focused.inner_text()).find(followed) >= 0
+                    ),
+                    timeout=5,
+                    what="the focus to follow the selection",
+                )
+            except TimeoutError:
+                raise AssertionError(
+                    f"Down selected {followed} but the focus is on "
+                    f"{focused.all_inner_texts() if focused.count() else 'no row'}"
+                ) from None
+            page.keyboard.press("ArrowUp")
+            _wait(
+                page,
+                lambda: _peek_title(page) == "quarterly-report.pdf",
+                timeout=10,
+                what="the docked window to follow back",
+            )
+            page.wait_for_timeout(600)  # its excerpt, before the reload
+            run.shot(page, "peek-docked")
+            _open(page, page.reload)
+            _items(page).first.wait_for()
+            if not region.is_visible():
+                _item(page, "quarterly-report.pdf").click()
+            region.wait_for(timeout=10000)
+            page.wait_for_timeout(600)
+            page.get_by_role("button", name="Open as a window").click()
+            page.get_by_role("dialog", name=_spaced("quarterly-report.pdf")).wait_for()
+            stored_after = page.evaluate("() => localStorage.getItem('markitai.peek')")
+            if stored_after != "window":
+                raise AssertionError(f"markitai.peek = {stored_after!r}")
+            _close_window(page)
+            return (
+                f"docked beside the list (list arrows select: {followed}), "
+                "kept over a reload, back to a window"
+            )
+
+        run.step(page, "peek-docked", dock)
 
         # 7. Retry a failed item
         def retry() -> str:
@@ -1204,9 +1448,14 @@ def browse(
 
         run.step(page, "inspector-error", action_error)
 
-        # 8. Stop remaining
+        # 8. New conversion (the Conversions composer is gone), then Stop
+        # remaining
         def stop() -> str:
             _dismiss(page)
+            new = page.get_by_role("button", name="New conversion")
+            scale = _control_height(new, phone)
+            new.click()
+            page.wait_for_url(re.compile(r"/(\?.*)?$"), timeout=10000)
             page.get_by_role("textbox", name=re.compile("Paste URLs")).fill(
                 "\n".join(
                     f"http://127.0.0.1:{pages_port}/slow/s{n}.html" for n in range(1, 6)
@@ -1224,6 +1473,8 @@ def browse(
             page.get_by_role("button", name="Convert", exact=True).click()
             _wait(page, lambda: created() > before, what="the second job")
             page.wait_for_timeout(1200)
+            # A phone opens the new submission's summary over the list
+            _dismiss(page)
             _click_visible(
                 page.get_by_role("button", name=re.compile(r"^Stop remaining"))
             )
@@ -1235,15 +1486,21 @@ def browse(
             texts = " ".join(_items(page).all_inner_texts())
             if not re.search(r"Stopped|Cancelled", texts):
                 raise AssertionError(f"no stopped item shown: {texts[:300]}")
-            return "queued URLs stopped, the running one finished"
+            return (
+                f"New conversion led to Convert ({scale}); queued URLs stopped, "
+                "the running one finished"
+            )
 
         run.step(page, "stopped", stop)
 
         # 9. Download all, through a single-use ticket
         def download_all() -> str:
             _dismiss(page)
+            page.locator(".conv-head").get_by_role(
+                "button", name="More actions"
+            ).click()
             with page.expect_download(timeout=60000) as info:
-                _click_visible(page.get_by_role("button", name="Download all"))
+                page.get_by_role("menuitem", name="Download all").click()
             download = info.value
             data = Path(download.path()).read_bytes()
             names = zipfile.ZipFile(io.BytesIO(data)).namelist()
@@ -1251,7 +1508,7 @@ def browse(
                 raise AssertionError("empty archive")
             if not run.saw("POST", r"^/api/download-tickets$", 201):
                 raise AssertionError("the download did not use a ticket")
-            return f"{download.suggested_filename}: {len(names)} files, {len(data)} bytes via a ticket"
+            return f"from ⋯: {download.suggested_filename}: {len(names)} files, {len(data)} bytes via a ticket"
 
         run.step(page, "download-all", download_all)
 
@@ -1314,7 +1571,7 @@ def browse(
             _open(page, lambda: page.goto(f"{base}/jobs"))
             _item(page, "meeting-notes.md").click()
             _heading(page, "meeting-notes.md").wait_for()
-            _click_visible(page.get_by_role("button", name="Preview", exact=True))
+            _show_tab(page, "Preview")
             svg = page.locator("svg", has_text="Q3 drawing").first
             svg.wait_for(timeout=15000)
             if svg.locator("script").count():
@@ -1325,6 +1582,7 @@ def browse(
             page.wait_for_timeout(500)
             if dialogs:
                 raise AssertionError(f"a script ran: {dialogs}")
+            _close_window(page)
             return "inline SVG drawn in the Rendered view, its paint kept, its script removed"
 
         run.step(page, "preview-drawing", drawing)
@@ -1342,6 +1600,28 @@ def browse(
             return "model test answered by the fake LLM"
 
         run.step(page, "settings-test", settings)
+
+        # 12a. Every settings page, and Convert, is one centred column
+        def settings_pages() -> str:
+            notes = []
+            for path, title in (
+                ("/settings/models", "Models"),
+                ("/settings/appearance", "Appearance and language"),
+                ("/settings/access", "Access token"),
+                ("/", None),
+            ):
+                _open(page, lambda path=path: page.goto(f"{base}{path}"))
+                if title is not None:
+                    page.get_by_role("heading", name=title, level=1).wait_for()
+                else:
+                    page.get_by_role("button", name="Convert", exact=True).wait_for()
+                page.wait_for_timeout(400)
+                name = path.strip("/").replace("settings/", "") or "convert"
+                run.shot(page, f"page-{name}")
+                notes.append(f"{name}: {_centred_column(page)}")
+            return "; ".join(notes)
+
+        run.step(page, "settings-pages", settings_pages)
 
         # 12b. Add models: the provider picker groups Python's cards
         def picker() -> str:
@@ -1713,6 +1993,7 @@ def browse(
             fresh = browser.new_context(
                 viewport={"width": width, "height": 844 if phone else 900},
                 device_scale_factor=2 if phone else 1,
+                color_scheme=theme,
             )
             other = fresh.new_page()
             other.on("response", record)
@@ -1776,11 +2057,22 @@ def main(argv: list[str] | None = None) -> int:
         default="chromium",
         help="browser engine (webkit is Safari's; install it with playwright install)",
     )
+    parser.add_argument(
+        "--theme",
+        choices=("light", "dark"),
+        default="light",
+        help="the browser's colour scheme (the workbench follows it by default)",
+    )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     _, llm_port = _serve(_FakeLLM)
     _, pages_port = _serve(_Pages)
-    results: dict[str, Any] = {"widths": {}, "bundle": None, "browser": args.browser}
+    results: dict[str, Any] = {
+        "widths": {},
+        "bundle": None,
+        "browser": args.browser,
+        "theme": args.theme,
+    }
     interrupted: BaseException | None = None
     scratch = Path(tempfile.mkdtemp(prefix="markitai-e2e-"))
     try:
@@ -1813,6 +2105,7 @@ def main(argv: list[str] | None = None) -> int:
                         args.browser,
                         llm_port=llm_port,
                         config=scratch / f"home-{width}" / ".markitai" / "config.json",
+                        theme=args.theme,
                     )
                     entry.update(
                         steps=run.steps,
@@ -1866,7 +2159,7 @@ def main(argv: list[str] | None = None) -> int:
     lines = [
         "# markitai serve: web workbench end-to-end run",
         "",
-        f"markitai {results.get('version')}, workbench bundle `{results['bundle']}`, {sys.platform}, Python {sys.version.split()[0]}, {args.browser}.",
+        f"markitai {results.get('version')}, workbench bundle `{results['bundle']}`, {sys.platform}, Python {sys.version.split()[0]}, {args.browser}, {args.theme}.",
         "Offline: fake LLM, local pages, generated inputs, throwaway HOME.",
         "",
         "| Width | State | Result | Note | Screenshot |",
