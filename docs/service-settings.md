@@ -107,6 +107,19 @@ the address (back to the provider's own endpoint), is allowed. Entries written b
 hand in the configuration file are never given the placeholder: without
 `api_key` they use the provider's key variable wherever their `api_base` points.
 
+A Bedrock or Vertex AI entry saved here with neither a key nor an address uses
+the server's own cloud credentials (the AWS chain, the Google login) at the
+cloud's own endpoint. Vertex AI signs every request with the server's Google
+login whatever key an entry carries, so a `vertex_ai/` or `vertex_ai_beta/`
+model is refused an address on every write and on a draft connection test (422
+`invalid_settings_request`, detail `api_base: Vertex AI models send the server's
+own Google credentials to any address, so here they can only use Vertex AI's own
+endpoint; set another address in the config file`, the same words as Python
+markitai 1.2.1's; `watsonx/` and `gigachat/`, which only Python routes, name
+their token). Another address for Vertex AI is set in the configuration file.
+Bedrock keeps its address: there it sends the placeholder as its Bedrock API key
+and never signs with the server's AWS credentials.
+
 The workbench leaves the key input blank when editing a saved connection. Blank
 means keep; the row's Remove action deletes it. Stored values and
 references are never copied into editable key inputs or echoed in updates.

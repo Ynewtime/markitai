@@ -190,4 +190,5 @@
 - 图片说明只是拒绝请求（`I'm sorry, I can't …`、`I cannot …`、`抱歉…`）时视为分析失败而非替代文本：该图片保留原替代文本并给出警告，单独图片只保留基础 Markdown，serve 的 `enhance` 保留先前结果。
 - 在 Windows 上，`markitai serve` 记录条目的输出与提取图片时使用 `/` 分隔，因此结果会列出它们，「文件」页与预览能找到它们，删除条目时也会一并删除；此前名称中的 `\` 无法解析。
 - 在 `serve` 设置页面保存的、没有密钥却指定了地址的连接，现在与 Python markitai 1.2.1 一样保存占位密钥 `markitai-no-key`，两个后端都不会把该地址理解为「使用服务器的密钥变量」（Rust 此前也从未把环境中的密钥发往该地址：网页保存的条目本就关闭了环境凭据）；占位密钥显示为没有密钥，转换和测试按原样发送它，模型发现不发送密钥。这样的无密钥 OpenAI 兼容端点（或任何不校验密钥的地址）现在可以转换，不再以 `llm_unavailable` 被拒绝。已有密钥的连接不能再在一次请求中改成指向另一主机的无密钥连接（422 `invalid_settings_request`，工作台会说明原因）；不允许使用服务器凭据的 Vertex AI 连接会被拒绝，不再借用服务器的 `gcloud` 登录。
+- `serve` 设置 API 在保存或测试时拒绝带地址的 `vertex_ai/` 或 `vertex_ai_beta/` 模型（422 `invalid_settings_request`，详情与 Python markitai 1.2.1 相同：`api_base: Vertex AI models send the server's own Google credentials to any address, …`；`watsonx/` 和 `gigachat/` 同样拒绝，并写明各自的令牌变量），不再先保存、到转换时才失败：无论条目带什么密钥，Vertex AI 都用服务器的 Google 登录签名，所以只能发往它自己的端点。Bedrock 保留地址，并向该地址发送占位密钥，从不使用服务器的 AWS 凭据（已用带金丝雀 AWS 变量的抓包服务器验证草稿测试、已保存测试和转换）。工作台以中文和日文显示这一拒绝。
 - 工作台「对照」遇到服务器正忙于绘制的 PDF 页面（429 `render_busy`）时会稍后重试几次（间隔逐渐加长），不再显示「无法绘制此页」；页面文字层也按服务器的绘制能力每次读取两页，因此服务器尚未读过该 PDF 时，标题和表格的对照框不再缺失。

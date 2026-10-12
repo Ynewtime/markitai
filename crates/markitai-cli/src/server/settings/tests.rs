@@ -1301,7 +1301,7 @@ fn keyless_cloud_entries_use_the_server_credentials_only_at_the_cloud_endpoint()
         {"model_name":"default","model":"bedrock/anthropic.claude-x","provider":"bedrock"},
         {"model_name":"default","model":"vertex_ai/gemini-2.5-flash","provider":"vertex_ai"},
         {"model_name":"default","model":"bedrock/anthropic.claude-y","provider":"bedrock","api_key":"bedrock-test-key"},
-        {"model_name":"default","model":"vertex_ai/gemini-2.5-pro","provider":"vertex_ai","api_base":"http://127.0.0.1:9"}
+        {"model_name":"default","model":"bedrock/anthropic.claude-z","provider":"bedrock","api_base":"http://127.0.0.1:9"}
     ]}))));
     let raw = saved(&store);
     let models = raw["llm"]["model_list"].as_array().unwrap();
@@ -1315,12 +1315,18 @@ fn keyless_cloud_entries_use_the_server_credentials_only_at_the_cloud_endpoint()
             "{entry}"
         );
     }
-    // A Bedrock API key is used alone; an address never gets them.
+    // A Bedrock API key is used alone; an address never gets them: Bedrock
+    // keeps its address with the placeholder, which it sends as its bearer
+    // key and never signs with the server's AWS chain (core cloud_auth tests).
     assert_eq!(
         models[2]["litellm_params"]["use_environment_credentials"],
         false
     );
     assert_eq!(models[3]["litellm_params"]["api_key"], model::NO_KEY);
+    assert_eq!(
+        models[3]["litellm_params"]["api_base"],
+        "http://127.0.0.1:9"
+    );
     assert_eq!(
         models[3]["litellm_params"]["use_environment_credentials"],
         false
@@ -1349,6 +1355,130 @@ fn keyless_cloud_entries_use_the_server_credentials_only_at_the_cloud_endpoint()
         entry["litellm_params"]["use_environment_credentials"], true,
         "{entry}"
     );
+}
+
+#[test]
+fn a_cloud_login_model_is_refused_an_address_at_save_and_test_time() {
+    let vertex = "api_base: Vertex AI models send the server's own Google credentials to any address, so here they can only use Vertex AI's own endpoint; set another address in the config file";
+    let refused = |result: ApiResult<Value>, detail: &str| {
+        let error = result.expect_err("refused");
+        assert_eq!(
+            (error.status.as_u16(), error.reason, error.detail.as_str()),
+            (422, "invalid_settings_request", detail)
+        );
+    };
+    let original = json!({"llm":{"enabled":false,
+    "providers":[{"id":"gcp","provider":"vertex_ai","use_environment_credentials":true}],
+    "model_list":[
+        {"model_name":"default","litellm_params":{"model":"vertex_ai/gemini-2.5-flash","use_environment_credentials":true},"model_info":{"id":"v","provider_id":"gcp"}},
+        {"model_name":"default","litellm_params":{"model":"openai/gpt-x","api_key":"sk-test-0000000000","api_base":"https://gateway.example/v1"},"model_info":{"id":"o"}}
+    ]}});
+    let (_dir, store) = setup(original);
+    let before = fs::read(&store.source.path).unwrap();
+    // Saving, whatever key the entry has, and through every Python route
+    // name; watsonx and GigaChat name their token.
+    for (model, key, detail) in [
+        ("vertex_ai/gemini-2.5-pro", None, vertex.to_owned()),
+        (
+            "vertex_ai/gemini-2.5-pro",
+            Some("typed-key"),
+            vertex.to_owned(),
+        ),
+        ("Vertex_AI_Beta/claude-x", None, vertex.to_owned()),
+        (
+            "watsonx/ibm/granite",
+            None,
+            vertex
+                .replace("Vertex AI", "watsonx")
+                .replace("Google credentials", "WATSONX_TOKEN"),
+        ),
+        (
+            "gigachat/GigaChat-Max",
+            None,
+            vertex
+                .replace("Vertex AI", "GigaChat")
+                .replace("Google credentials", "GIGACHAT_ACCESS_TOKEN"),
+        ),
+    ] {
+        let mut deployment =
+            json!({"model_name":"default","model":model,"api_base":"https://capture.example/v1"});
+        if let Some(key) = key {
+            deployment["api_key"] = json!(key);
+        }
+        refused(
+            store.mutate(Mutation::Batch(
+                json!({"expected_revision":current(&store),"deployments":[deployment]}),
+            )),
+            &detail,
+        );
+        // A draft test at the caller's address is refused before any request.
+        let mut probe = json!({"model":model,"api_base":"https://capture.example/v1"});
+        if let Some(key) = key {
+            probe["api_key"] = json!(key);
+        }
+        refused(store.resolve_probe(&probe), &detail);
+    }
+    // A model added to the saved Vertex AI connection with an address, an
+    // address set on that connection or one of its models, and a model
+    // moved to Vertex AI while it keeps another address.
+    refused(
+        store.mutate(Mutation::Batch(json!({"expected_revision":current(&store),"deployments":[
+            {"model_name":"default","model":"vertex_ai/gemini-2.5-pro","credential_provider_id":"gcp","api_base":"https://capture.example","api_key":null}
+        ]}))),
+        vertex,
+    );
+    refused(
+        store.mutate(Mutation::Provider {
+            key: "gcp".into(),
+            revision: current(&store),
+            body: Some(
+                json!({"expected_revision":current(&store),"api_base":"https://capture.example"}),
+            ),
+        }),
+        vertex,
+    );
+    let ids: Vec<String> = store.view()["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["deployment_id"].as_str().unwrap().to_owned())
+        .collect();
+    refused(
+        store.mutate(Mutation::Update {
+            key: ids[0].clone(),
+            legacy: false,
+            body: json!({"expected_revision":current(&store),"api_base":"https://capture.example","api_key":null}),
+        }),
+        vertex,
+    );
+    refused(
+        store.mutate(Mutation::Update {
+            key: ids[1].clone(),
+            legacy: false,
+            body: json!({"expected_revision":current(&store),"model":"vertex_ai/gemini-2.5-pro"}),
+        }),
+        vertex,
+    );
+    assert_eq!(fs::read(&store.source.path).unwrap(), before);
+    // Without an address they keep the cloud's own endpoint; a saved model's
+    // own test is the owner's configuration, and Bedrock keeps its address.
+    ok(store.mutate(Mutation::Batch(json!({"expected_revision":current(&store),"deployments":[
+        {"model_name":"default","model":"vertex_ai/gemini-2.5-pro","provider":"vertex_ai"},
+        {"model_name":"default","model":"bedrock/anthropic.claude-x","provider":"bedrock","api_base":"https://capture.example"}
+    ]}))));
+    ok(store.resolve_probe(&json!({"model":"vertex_ai/gemini-2.5-pro"})));
+    ok(store.resolve_probe(&json!({"deployment_id":ids[0]})));
+    let probe = ok(store.resolve_probe(
+        &json!({"model":"bedrock/anthropic.claude-y","api_base":"https://capture.example"}),
+    ));
+    assert_eq!(probe["api_key"], model::NO_KEY);
+    assert_eq!(probe["use_environment_credentials"], false);
+    // Clearing an address is allowed.
+    ok(store.mutate(Mutation::Update {
+        key: ids[0].clone(),
+        legacy: false,
+        body: json!({"expected_revision":current(&store),"api_base":null}),
+    }));
 }
 
 #[test]

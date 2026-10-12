@@ -267,6 +267,8 @@ impl Store {
             return Ok(probe_params(entry, &data.providers));
         }
         let name = name.ok_or_else(|| invalid("deployment_id, model_name or model is required"))?;
+        // An address the caller names; a stored one is the owner's.
+        model::refuse_ambient_login_address(&name, base.as_deref())?;
         let provider = name
             .split_once('/')
             .map_or("openai", |(provider, _)| provider);

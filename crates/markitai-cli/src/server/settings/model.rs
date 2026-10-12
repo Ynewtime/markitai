@@ -7,6 +7,43 @@ use std::collections::HashMap;
 /// another host; the same words as Python markitai 1.2.1's.
 pub(super) const KEYLESS_MOVE: &str = "a connection with a key cannot become one without a key at another address; add a new connection for that server instead";
 
+/// Model prefixes whose requests sign in with the server's own cloud login
+/// whatever key an entry carries, with the product and credential the
+/// refusal names: Vertex AI with the Google login (Rust and Python's
+/// LiteLLM), watsonx and GigaChat with their token variables (Python's
+/// LiteLLM; Rust does not route them, and refuses them the same way so a
+/// configuration file means the same to both). With an address that login
+/// would go there; Bedrock is not here, as it sends the keyless placeholder as
+/// its bearer key and never signs with the AWS chain once it has one.
+const AMBIENT_LOGIN: [(&str, &str, &str); 5] = [
+    ("vertex_ai", "Vertex AI", "Google credentials"),
+    ("vertex_ai_beta", "Vertex AI", "Google credentials"),
+    ("watsonx", "watsonx", "WATSONX_TOKEN"),
+    ("watsonx_text", "watsonx", "WATSONX_TOKEN"),
+    ("gigachat", "GigaChat", "GIGACHAT_ACCESS_TOKEN"),
+];
+
+/// Refuse an entry the settings API writes or tests that would carry the
+/// server's own cloud login to an address: such a model may only use its
+/// cloud's own endpoint here (owner decision, contract v1.9). The detail is
+/// Python markitai 1.2.1's, which the workbench translates by its wording.
+pub(super) fn refuse_ambient_login_address(model: &str, base: Option<&str>) -> ApiResult<()> {
+    if base.is_none_or(|base| base.trim().is_empty()) {
+        return Ok(());
+    }
+    let Some((prefix, _)) = model.split_once('/') else {
+        return Ok(());
+    };
+    let prefix = prefix.trim().to_ascii_lowercase();
+    let Some((_, label, credential)) = AMBIENT_LOGIN.iter().find(|(name, ..)| *name == prefix)
+    else {
+        return Ok(());
+    };
+    Err(invalid(&format!(
+        "api_base: {label} models send the server's own {credential} to any address, so here they can only use {label}'s own endpoint; set another address in the config file"
+    )))
+}
+
 /// The key to store for an entry the settings API writes: `key`, or
 /// [`NO_KEY`] when it has none while `base` names an address and the entry
 /// may not use the environment's credentials, so that no backend reading the
@@ -416,6 +453,7 @@ pub(super) fn create(
     } else {
         fallback["api_base"].clone()
     };
+    refuse_ambient_login_address(&model, base.as_str())?;
     if let Some(old_provider) = fallback["provider"].as_str() {
         check_reuse(
             old_provider,
@@ -505,6 +543,10 @@ pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> Ap
     } else {
         old["api_base"].as_str()
     };
+    if body.get("api_base").is_some() || body.get("model").is_some() {
+        let model = body["model"].as_str().or(old["model"].as_str());
+        refuse_ambient_login_address(model.unwrap_or_default().trim(), base)?;
+    }
     check_reuse(
         &old_provider,
         &next_provider,
@@ -650,6 +692,9 @@ pub(super) fn mutate_provider(
         } else {
             old["api_base"].as_str()
         };
+        if body.get("api_base").is_some() {
+            refuse_ambient_login_address(&format!("{name}/"), next_base)?;
+        }
         check_reuse(
             name,
             name,
