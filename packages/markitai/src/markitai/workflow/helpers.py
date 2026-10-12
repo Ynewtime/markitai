@@ -215,6 +215,10 @@ def normalize_frontmatter(frontmatter: str | dict[str, Any]) -> str:
     if not isinstance(data, dict):
         return str(data)
 
+    from markitai.utils.frontmatter import readable_urls
+
+    data = readable_urls(data)
+
     # Build ordered output
     ordered_lines = []
 
