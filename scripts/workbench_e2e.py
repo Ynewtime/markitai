@@ -10,9 +10,12 @@ screenshots every state:
     convert page, a refused URL as a bottom notice strip, staged files +
     URLs, live progress, finished list, a conversion in the peek window
     (centred; full screen on a phone) with its Details, Preview and Compare
-    tabs (original page beside the Markdown, C to switch), Up/Down and the
-    header arrows between items, the window docked beside the list and back
-    (a per-browser choice), retry of a failed item, a failed action reported
+    tabs (original page beside the Markdown, C to switch), the header's
+    Download opening Preview's Files (the original first, Download all (.zip)
+    through the item's archive), Up/Down and the header arrows between items,
+    a URL item's Compare framing the page as fetched (its style drawn, its
+    script never run, nothing loaded from the site), the window at full
+    screen and back (F; a per-browser choice), retry of a failed item, a failed action reported
     in the window, New conversion and stop remaining (cancel), download all
     from the "⋯" menu (ticket; on a phone Stop from the header of the
     full-screen windows and on its own row under the Conversions title, a
@@ -23,8 +26,11 @@ screenshots every state:
     saved address shown without its credentials, a provider beyond the first
     eight connected with a key and an address, Vertex AI connected without an
     address (its login note; Bedrock keeps its address; its saved connection
-    offers no key and asks for no model list), history after a
-    reload, token prompt
+    offers no key and asks for no model list), a hand-written DeepSeek entry
+    served by DEEPSEEK_API_KEY (one saved row marked Added, Edit "From
+    environment variable", its unreachable list said why), history after a
+    reload, token prompt, and Settings → Access token → Regenerate (the old
+    token refused, another tab holding it too)
 
 Notices must be strips at the bottom (never the page-wide banners the UI
 had before) and leave by themselves.
@@ -87,6 +93,14 @@ BASE_SECRETS = ("e2e-user", "e2e-pass-0000", "e2e-base-secret-0000")
 ENV_KEY = ("OPENAI_API_KEY", "sk-e2e-env-0000")
 # A model entry without a key, as the owner wrote deepseek/deepseek-flash
 HAND_MODEL = "openai/fake-hand"
+# The owner's case: a DeepSeek entry written by hand, at DeepSeek's own
+# endpoint, served by the server's DEEPSEEK_API_KEY (one saved row, contract
+# v1.11). Its list goes to api.deepseek.com, which the dead proxy refuses.
+# Conversions balance over every configured model, so its chat requests go
+# to the fake LLM through DEEPSEEK_API_BASE (LiteLLM reads it), and its ID
+# has no price, as the cost step expects
+DEEPSEEK_MODEL = "deepseek/deepseek-e2e"
+DEEPSEEK_KEY = ("DEEPSEEK_API_KEY", "sk-e2e-deepseek-0000")
 # The settings API's refusal of a Vertex AI address (the UI translates it by
 # this wording)
 VERTEX_REFUSAL = (
@@ -336,14 +350,21 @@ class _FakeLLM(BaseHTTPRequestHandler):
         )
 
 
+#: Paths the page server was asked for: the framed page (contract v1.11)
+#: must load nothing from the site and run no script
+PAGE_REQUESTS: list[str] = []
+
+
 class _Pages(BaseHTTPRequestHandler):
     """``/page/<n>.html`` answers at once, ``/slow/[<dir>/…]<n>.html`` after
-    a pause."""
+    a pause. Each page carries an inline style, a script (it would ask for
+    ``/script-ran``) and a picture and style sheet from the site."""
 
     def log_message(self, *args: Any) -> None:
         pass
 
     def do_GET(self) -> None:
+        PAGE_REQUESTS.append(self.path)
         match = re.fullmatch(r"/(page|slow)/(?:[\w-]+/)*(\w+)\.html", self.path)
         if not match:
             self.send_response(404)
@@ -355,7 +376,11 @@ class _Pages(BaseHTTPRequestHandler):
             f"<tr><td>Row {n}</td><td>{n * 7}</td></tr>" for n in range(1, 8)
         )
         html = (
-            f"<!doctype html><html><head><title>Page {match.group(2)}</title></head><body><article>"
+            f"<!doctype html><html><head><title>Page {match.group(2)}</title>"
+            "<style>h1{color:rgb(200, 0, 0)}</style>"
+            '<link rel="stylesheet" href="/site.css"></head><body><article>'
+            '<script>document.body.dataset.ran="yes";fetch("/script-ran")</script>'
+            '<img src="/remote.png" alt="Remote picture">'
             f"<h1>Page {match.group(2)}</h1><p>A local page for the workbench end-to-end run. "
             "It has a paragraph, a list and a table so the Markdown has some structure.</p>"
             "<ul><li>First point</li><li>Second point</li></ul>"
@@ -500,6 +525,10 @@ def run_server(
                         "api_base": f"http://localhost:{llm_port}/v1",
                     },
                 },
+                {
+                    "model_name": "e2e-deepseek",
+                    "litellm_params": {"model": DEEPSEEK_MODEL},
+                },
             ],
             "providers": [
                 {
@@ -546,6 +575,8 @@ def run_server(
         PYTHONUTF8="1",
     )
     env[ENV_KEY[0]] = ENV_KEY[1]
+    env[DEEPSEEK_KEY[0]] = DEEPSEEK_KEY[1]
+    env["DEEPSEEK_API_BASE"] = f"http://127.0.0.1:{llm_port}/v1"
     if bundle is None:
         command = [
             sys.executable,
@@ -1425,6 +1456,69 @@ def browse(
 
         run.step(page, "peek-compare", compare)
 
+        # 6a. The header's Download opens Preview → Files: the original
+        # first, then every result file, the total, and Download all (.zip)
+        # through the item's archive (contract v1.11 section 6.7)
+        def peek_files() -> str:
+            _show_tab(page, "Details")
+            page.wait_for_timeout(300)
+            if phone:
+                _show_tab(page, "Preview")
+                page.get_by_role(
+                    "button", name=re.compile(r"Preview mode")
+                ).first.click()
+                page.get_by_role("menuitemradio", name=re.compile(r"^Files")).or_(
+                    page.get_by_role("menuitem", name=re.compile(r"^Files"))
+                ).or_(
+                    page.get_by_role("option", name=re.compile(r"^Files"))
+                ).first.click()
+            else:
+                page.locator(".peek-head").get_by_role(
+                    "button", name="Download", exact=True
+                ).click()
+            panel = page.locator("#peek-panel [role=tabpanel]:not([hidden]) .files")
+            panel.wait_for(timeout=15000)
+            first = panel.locator(".file-list li").first
+            first_text = " ".join(first.inner_text().split())
+            if "is-original" not in (first.get_attribute("class") or "") or not (
+                "quarterly-report.pdf" in first_text and "Original" in first_text
+            ):
+                raise AssertionError(f"the first file is {first_text!r}")
+            paths = panel.locator(
+                ".file-list li:not(.is-original) .file-path"
+            ).all_inner_texts()
+            total = " ".join(panel.locator(".files-total").inner_text().split())
+            if not total.startswith(f"{len(paths) + 1} files"):
+                raise AssertionError(
+                    f"{total!r} for {len(paths)} files and the original"
+                )
+            run.shot(page, "peek-files")
+            with (
+                page.expect_download(timeout=60000) as info,
+                page.expect_request(
+                    lambda r: r.url.endswith("/api/download-tickets")
+                ) as ticket,
+            ):
+                panel.get_by_role("button", name="Download all (.zip)").click()
+            asked = json.loads(ticket.value.post_data or "{}").get("path", "")
+            if not re.fullmatch(r"/api/jobs/\w+/items/i\d+/archive", asked):
+                raise AssertionError(f"Download all asked for {asked!r}")
+            download = info.value
+            names = zipfile.ZipFile(
+                io.BytesIO(Path(download.path()).read_bytes())
+            ).namelist()
+            if "original/quarterly-report.pdf" not in names or not set(paths) <= set(
+                names
+            ):
+                raise AssertionError(f"the archive holds {names}, the list {paths}")
+            return (
+                f"Files: the original, {len(paths)} result files, {total!r}; "
+                f"Download all: {download.suggested_filename} ({len(names)} entries, "
+                "original/ included) via the item's archive and a ticket"
+            )
+
+        run.step(page, "peek-files", peek_files)
+
         # 6b. Up/Down (and the header's arrows) move between items
         def arrows() -> str:
             _show_tab(page, "Details")
@@ -1455,89 +1549,131 @@ def browse(
 
         run.step(page, "peek-arrows", arrows)
 
-        # 6c. Dock the window beside the list (a per-browser choice); phones
-        # have no dock and fill the screen
-        def dock() -> str:
+        # 6c. A web page's original is the page the server fetched, framed:
+        # its inline style drawn, its script never run, nothing loaded from
+        # the site (contract v1.11 section 7)
+        def compare_page() -> str:
+            row = _items(page).filter(has_text=re.compile("alpha", re.IGNORECASE)).first
+            row.click()
+            _peek(page).wait_for()
+            asked = len(PAGE_REQUESTS)
+            before = len(run.api)
+            _show_tab(page, "Compare")
+            _wait(
+                page,
+                lambda: run.saw("GET", r"/items/i\d+/original$", 200, since=before),
+                what="the URL item's original",
+            )
+            frame_element = page.locator("#peek-panel iframe")
+            frame_element.wait_for(timeout=15000)
+            sandbox = frame_element.get_attribute("sandbox")
+            if sandbox != "allow-popups allow-popups-to-escape-sandbox":
+                raise AssertionError(f"the frame's sandbox is {sandbox!r}")
+            if frame_element.get_attribute("referrerpolicy") != "no-referrer":
+                raise AssertionError("the frame sends a referrer")
+            source = frame_element.get_attribute("src") or ""
+            if not re.search(r"/items/i\d+/original/view\?ticket=", source):
+                raise AssertionError(f"the frame loads {source!r}")
+            frame = page.frame_locator("#peek-panel iframe")
+            heading = frame.locator("h1")
+            heading.wait_for(timeout=15000)
+            title = heading.inner_text().strip()
+            if title != "Page alpha":
+                raise AssertionError(f"the framed page shows {title!r}")
+            colour = heading.evaluate("h => getComputedStyle(h).color")
+            if colour != "rgb(200, 0, 0)":
+                raise AssertionError(f"the page's own style not drawn: {colour}")
+            ran = frame.locator("body").get_attribute("data-ran")
+            picture = frame.locator("img").evaluate("img => img.naturalWidth")
+            page.wait_for_timeout(1000)
+            fetched = [
+                path
+                for path in PAGE_REQUESTS[asked:]
+                if path in ("/script-ran", "/remote.png", "/site.css")
+            ]
+            if ran is not None or fetched or picture:
+                raise AssertionError(
+                    f"the frame ran a script ({ran!r}) or loaded {fetched} "
+                    f"(picture width {picture})"
+                )
+            link = (
+                page.locator(".peek-head, #peek-panel")
+                .get_by_role("link", name=re.compile("Open the page"))
+                .or_(page.get_by_role("menuitem", name=re.compile("Open the page")))
+            )
+            run.shot(page, "peek-compare-page")
+            note = (
+                f"Compare frames the fetched page (sandbox {sandbox!r}, ticket "
+                f"URL): '{title}' in its own red, no script ran, nothing loaded "
+                "from the site"
+            )
+            if not phone and link.count() == 0:
+                raise AssertionError("no Open the page link")
+            _close_window(page)
+            return note
+
+        run.step(page, "peek-compare-page", compare_page)
+
+        # 6d. The window grows to the whole viewport and back (F or its
+        # button), remembered per browser; a stored "docked" (the layout
+        # earlier versions had) opens as the window. A phone is always full
+        def full_screen() -> str:
             if phone:
                 _item(page, "quarterly-report.pdf").click()
                 _heading(page, "quarterly-report.pdf").wait_for()
-                if page.get_by_role("button", name="Dock beside the list").count():
-                    raise AssertionError("a phone offers the dock")
+                if page.get_by_role("button", name="Full screen").count():
+                    raise AssertionError("a phone offers Full screen")
                 where = _window_placement(page, phone)
                 _click_visible(page.get_by_role("button", name="Close"))
                 _peek(page).wait_for(state="detached", timeout=10000)
-                return f"no dock on a phone; the window is {where}; Close (←) returns"
-            _item(page, "quarterly-report.pdf").click()
-            _heading(page, "quarterly-report.pdf").wait_for()
-            page.get_by_role("button", name="Dock beside the list").click()
-            region = page.locator(".peek.is-docked")
-            region.wait_for(timeout=10000)
-            if region.get_attribute("role") != "region":
-                raise AssertionError("the docked window is not a region")
-            if page.get_by_role("dialog").count():
-                raise AssertionError("docked, a dialog is still open")
-            tree, side = (
-                page.get_by_role("tree").bounding_box(),
-                _peek(page).bounding_box(),
-            )
-            if not tree or not side or side["x"] < tree["x"] + tree["width"] - 1:
-                raise AssertionError(f"not beside the list: {tree} / {side}")
-            stored = page.evaluate("() => localStorage.getItem('markitai.peek')")
-            if stored != "docked":
-                raise AssertionError(f"markitai.peek = {stored!r}")
-            # Docked, the list's arrows select and the window follows
-            _item(page, "quarterly-report.pdf").focus()
-            page.keyboard.press("ArrowDown")
-            _wait(
-                page,
-                lambda: _peek_title(page) != "quarterly-report.pdf",
-                timeout=10,
-                what="the docked window to follow the list",
-            )
-            followed = _peek_title(page)
-            focused = page.locator("[role=treeitem]:focus")
-            try:
-                _wait(
-                    page,
-                    lambda: (
-                        focused.count() == 1
-                        and re.sub(r"\s+", "", focused.inner_text()).find(followed) >= 0
-                    ),
-                    timeout=5,
-                    what="the focus to follow the selection",
-                )
-            except TimeoutError:
-                raise AssertionError(
-                    f"Down selected {followed} but the focus is on "
-                    f"{focused.all_inner_texts() if focused.count() else 'no row'}"
-                ) from None
-            page.keyboard.press("ArrowUp")
-            _wait(
-                page,
-                lambda: _peek_title(page) == "quarterly-report.pdf",
-                timeout=10,
-                what="the docked window to follow back",
-            )
-            page.wait_for_timeout(600)  # its excerpt, before the reload
-            run.shot(page, "peek-docked")
+                return f"no Full screen on a phone; the window is {where}"
+            page.evaluate("() => localStorage.setItem('markitai.peek', 'docked')")
             _open(page, page.reload)
             _items(page).first.wait_for()
-            if not region.is_visible():
-                _item(page, "quarterly-report.pdf").click()
-            region.wait_for(timeout=10000)
-            page.wait_for_timeout(600)
-            page.get_by_role("button", name="Open as a window").click()
+            _item(page, "quarterly-report.pdf").click()
             page.get_by_role("dialog", name=_spaced("quarterly-report.pdf")).wait_for()
+            stored = page.evaluate("() => localStorage.getItem('markitai.peek')")
+            if stored != "window" or page.locator(".peek.is-full").count():
+                raise AssertionError(f"a stored 'docked' opened as {stored!r}")
+            page.get_by_role("button", name="Full screen").click()
+            full = page.locator(".peek.is-full")
+            full.wait_for(timeout=10000)
+            page.wait_for_timeout(400)
+            box = full.bounding_box() or {}
+            viewport = page.viewport_size or {"width": width, "height": 900}
+            if (
+                box.get("width", 0) < viewport["width"] - 2
+                or box.get("height", 0) < viewport["height"] - 2
+            ):
+                raise AssertionError(f"full screen is {box} in {viewport}")
+            if page.evaluate("() => localStorage.getItem('markitai.peek')") != "full":
+                raise AssertionError("full screen not remembered")
+            run.shot(page, "peek-full-screen")
+            _open(page, page.reload)
+            _items(page).first.wait_for()
+            if not full.is_visible():
+                _item(page, "quarterly-report.pdf").click()
+            full.wait_for(timeout=10000)
+            page.wait_for_timeout(300)  # the key handler registers a frame later
+            page.locator(".peek").focus()
+            page.keyboard.press("f")
+            _wait(
+                page,
+                lambda: full.count() == 0,
+                timeout=10,
+                what="F to leave full screen",
+            )
             stored_after = page.evaluate("() => localStorage.getItem('markitai.peek')")
             if stored_after != "window":
                 raise AssertionError(f"markitai.peek = {stored_after!r}")
             _close_window(page)
             return (
-                f"docked beside the list (list arrows select: {followed}), "
-                "kept over a reload, back to a window"
+                f"a stored 'docked' opens the window; Full screen fills "
+                f"{int(box['width'])}x{int(box['height'])}, kept over a reload; F "
+                "returns to the window"
             )
 
-        run.step(page, "peek-docked", dock)
+        run.step(page, "peek-full-screen", full_screen)
 
         # 7. Retry a failed item
         def retry() -> str:
@@ -1790,7 +1926,7 @@ def browse(
 
         # 12b. Why a model test failed, one model per reason (contract v1.10):
         # the server's answer and the workbench's translated block. A model
-        # whose key the server lacks (no DEEPSEEK_API_KEY here) sends nothing
+        # whose key the server lacks (no MISTRAL_API_KEY here) sends nothing
         # (owner, 2026-10-12); the others are refused by the fake LLM or
         # aimed at a port nothing listens on. A timeout (15 s) is left to the
         # unit tests.
@@ -1798,11 +1934,11 @@ def browse(
             cases = [
                 # model, how it is saved, reason, title, provider's words
                 (
-                    "deepseek/deepseek-flash",
-                    {"provider": "deepseek"},
+                    "mistral/mistral-small-latest",
+                    {"provider": "mistral"},
                     "no_key",
                     "No API key",
-                    "DEEPSEEK_API_KEY is not set on the server, so nothing was sent",
+                    "MISTRAL_API_KEY is not set on the server, so nothing was sent",
                 ),
                 *(
                     (
@@ -1882,14 +2018,14 @@ def browse(
                             f"{model}: the provider's message shows {shown!r}"
                         )
                     if reason == "no_key":
-                        if answer.get("key_variable") != "DEEPSEEK_API_KEY":
+                        if answer.get("key_variable") != "MISTRAL_API_KEY":
                             raise AssertionError(f"{model}: {answer}")
                         block.get_by_text(
-                            "DEEPSEEK_API_KEY is not set on the server. Set it where "
+                            "MISTRAL_API_KEY is not set on the server. Set it where "
                             "markitai serve runs"
                         ).wait_for()
                         row = page.locator(".model-test-fail").filter(
-                            has_text="DEEPSEEK_API_KEY"
+                            has_text="MISTRAL_API_KEY"
                         )
                         row.wait_for()
                         tests = [
@@ -1964,7 +2100,26 @@ def browse(
                 timeout=20,
                 what="the common providers with their brand marks",
             )
-            names = [" ".join(n.split()) for n in tiles.all_inner_texts()]
+            shown = [" ".join(n.split()) for n in tiles.all_inner_texts()]
+            # A provider with a saved row is marked Added (contract v1.11)
+            names = [name.removesuffix(" Added") for name in shown]
+            added = [
+                name.removesuffix(" Added") for name in shown if name.endswith(" Added")
+            ]
+            if added != ["OpenAI", "DeepSeek"]:
+                raise AssertionError(f"Common marks {added} as added")
+            # One provider, one saved row: DeepSeek's environment card folded
+            # into the hand-written entry at its own endpoint
+            deepseek_rows = [
+                " ".join(text.split())
+                for text in panel.locator(".provider-row").all_inner_texts()
+                if "DeepSeek" in text
+            ]
+            if (
+                len(deepseek_rows) != 1
+                or f"Using {DEEPSEEK_KEY[0]}" not in deepseek_rows[0]
+            ):
+                raise AssertionError(f"DeepSeek's saved rows: {deepseek_rows}")
             common = [
                 "OpenAI",
                 "Anthropic",
@@ -2047,8 +2202,10 @@ def browse(
             search.fill("")
             _no_banners(page)
             return (
-                f"{total}; Common: {len(names)} providers with marks; "
-                f"filters {' · '.join(chips)}; search by prefix and alias"
+                f"{total}; Common: {len(names)} providers with marks, "
+                f"{' and '.join(added)} marked Added; one DeepSeek row "
+                f"({deepseek_rows[0]}); filters {' · '.join(chips)}; search by "
+                "prefix and alias"
             )
 
         run.step(page, "provider-picker", picker)
@@ -2150,17 +2307,16 @@ def browse(
             panel.wait_for()
             panel.get_by_role("searchbox").fill("groq")
             _click_visible(panel.locator(".provider-item").filter(has_text="Groq"))
-            # The key variable under the title; the default address is the
-            # optional address field's placeholder
-            facts = page.locator(".provider-facts")
+            # The key field says where else its key can come from (v1.11);
+            # the default address is the optional address field's placeholder
+            hint = page.get_by_text(
+                "Or set GROQ_API_KEY where markitai serve runs and restart it; "
+                "the provider then appears under Saved, with no key to paste."
+            )
             default_base = page.get_by_placeholder("https://api.groq.com/openai/v1")
             _wait(
                 page,
-                lambda: (
-                    facts.count() == 1
-                    and "GROQ_API_KEY" in facts.inner_text()
-                    and default_base.count() == 1
-                ),
+                lambda: hint.count() == 1 and default_base.count() == 1,
                 timeout=10,
                 what="Groq's address and key variable",
             )
@@ -2336,6 +2492,49 @@ def browse(
             )
 
         run.step(page, "settings-environment-key", environment_key)
+
+        # 13c''. The owner's case itself: a DeepSeek entry written by hand at
+        # DeepSeek's endpoint, served by DEEPSEEK_API_KEY. Edit names the
+        # variable; its list, sent with that key, cannot reach DeepSeek here
+        # and the page says why (contract v1.11 reasons)
+        def deepseek_key() -> str:
+            variable, secret = DEEPSEEK_KEY
+            _open(page, lambda: page.goto(f"{base}/settings/models"))
+            with page.expect_response(
+                lambda r: r.url.endswith("/api/settings/llm/model-discovery")
+            ) as listed:
+                _click_visible(
+                    page.get_by_role(
+                        "button", name=f"Edit {DEEPSEEK_MODEL}", exact=True
+                    )
+                )
+            answer = listed.value.json()
+            if (answer.get("status"), answer.get("reason")) != (
+                "unavailable",
+                "network",
+            ):
+                raise AssertionError(f"the model list: {answer}")
+            if not answer.get("detail", "").startswith(
+                "Model discovery request failed"
+            ):
+                raise AssertionError(f"the detail: {answer.get('detail')!r}")
+            key_row = page.locator(".conn-row").filter(has_text="API key")
+            key_row.get_by_text(f"From environment variable {variable}").wait_for(
+                timeout=10000
+            )
+            page.get_by_text(
+                "The server could not reach the provider", exact=False
+            ).first.wait_for(timeout=10000)
+            run.shot(page, "settings-deepseek-key")
+            if secret in page.content():
+                raise AssertionError("the environment's key reached the page")
+            return (
+                f"{DEEPSEEK_MODEL} (hand-written, no key): 'From environment variable "
+                f"{variable}'; its list unreachable here: reason network, "
+                f"{answer['detail']!r}"
+            )
+
+        run.step(page, "settings-deepseek-key", deepseek_key)
 
         # 13d. Vertex AI signs in with the server's Google login at its own
         # endpoint: Add models offers it no address (the settings API refuses
@@ -2553,6 +2752,81 @@ def browse(
             return "settings without the token answer 401 and the UI asks for the token"
 
         run.step(page, "token-prompt-checked", token_prompt)
+
+        # 16. Settings → Access token → Regenerate token: this tab keeps the
+        # new token (shown once, with its link and QR code); the old token,
+        # another tab holding it and its tickets stop working (contract v1.11)
+        def regenerate() -> str:
+            fresh = browser.new_context(
+                viewport={"width": width, "height": 844 if phone else 900},
+                device_scale_factor=2 if phone else 1,
+                color_scheme=theme,
+            )
+            other = fresh.new_page()
+            other.on("response", record)
+            other.on("pageerror", run.page_error)
+            other.on("requestfailed", run.request_failed)
+            try:
+                _open(other, lambda: other.goto(f"{base}/#token={TOKEN}"))
+                other.get_by_role("button", name="Convert").wait_for()
+                _open(page, lambda: page.goto(f"{base}/settings/access"))
+                page.get_by_role("button", name="Sign out of this tab").wait_for()
+                _click_visible(page.get_by_role("button", name="Regenerate token…"))
+                with page.expect_response(
+                    lambda r: r.url.endswith("/api/access-token/regenerate")
+                ) as answered:
+                    page.get_by_role("button", name="Regenerate", exact=True).click()
+                body = answered.value.json()
+                new = body["token"]
+                if answered.value.status != 200 or new == TOKEN:
+                    raise AssertionError(f"regenerate answered {answered.value.status}")
+                page.get_by_text(new, exact=True).first.wait_for(timeout=10000)
+                page.get_by_label("QR code of the sign-in link").wait_for(timeout=10000)
+                page.get_by_text(
+                    "Lasts until the server stops; the next start uses "
+                    "MARKITAI_SERVE_TOKEN again"
+                ).first.wait_for(timeout=10000)
+                link = f"{base}/#token={new}"
+                if link not in page.content():
+                    raise AssertionError(f"the sign-in link {link} is not shown")
+                run.shot(page, "access-regenerated")
+                old = _api(page, base, "GET", "/api/settings/llm")
+                renewed = page.request.fetch(
+                    f"{base}/api/settings/llm",
+                    headers={"Authorization": f"Bearer {new}"},
+                )
+                if (old.status, renewed.status) != (401, 200):
+                    raise AssertionError(
+                        f"old token {old.status}, new token {renewed.status}"
+                    )
+                # This tab keeps working with the new token
+                before = len(run.api)
+                _open(page, lambda: page.goto(f"{base}/settings/models"))
+                _wait(
+                    page,
+                    lambda: run.saw("GET", r"^/api/settings/llm$", 200, since=before),
+                    timeout=15,
+                    what="this tab's settings with the new token",
+                )
+                # The other tab, still holding the old token, is refused
+                before = len(run.api)
+                _open(other, lambda: other.goto(f"{base}/jobs"))
+                _wait(
+                    other,
+                    lambda: run.saw("GET", r"^/api/", 401, since=before),
+                    timeout=15,
+                    what="the other tab's old token refused",
+                )
+                run.shot(other, "access-other-tab")
+            finally:
+                fresh.close()
+            return (
+                "Regenerate token: new token shown once with its link and QR code; "
+                "the old token answers 401 (another tab holding it too), the new one "
+                "200, and this tab stays signed in"
+            )
+
+        run.step(page, "access-regenerate", regenerate)
         browser.close()
     run.settle_page_errors(engine)
     return run
