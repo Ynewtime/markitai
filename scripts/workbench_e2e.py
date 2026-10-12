@@ -75,6 +75,13 @@ SLOW_PAGE_S = 2.5
 # A saved connection whose address carries credentials: settings must show
 # it masked and never send these parts to the browser
 CONNECTION_ID = "00000000-0000-4000-8000-0000000000c1"
+# Models the fake LLM refuses, with the status and the words it answers
+REFUSALS = {
+    "fake-401": (401, "Authentication Fails (e2e)"),
+    "fake-404": (404, "The model fake-404 does not exist"),
+    "fake-429": (429, "Rate limit reached for requests (e2e)"),
+    "fake-500": (500, "Upstream overloaded (e2e)"),
+}
 BASE_SECRETS = ("e2e-user", "e2e-pass-0000", "e2e-base-secret-0000")
 # The server's own OpenAI key, behind the environment card
 ENV_KEY = ("OPENAI_API_KEY", "sk-e2e-env-0000")
@@ -257,6 +264,12 @@ class _FakeLLM(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         raw = self.rfile.read(int(self.headers.get("content-length") or 0))
         body = json.loads(raw or b"{}")
+        refusal = REFUSALS.get(str(body.get("model")))
+        if refusal is not None:
+            # A model test's refusal, as an OpenAI-compatible provider says it
+            status, words = refusal
+            self._json(status, {"error": {"message": words, "type": "e2e"}})
+            return
         time.sleep(LLM_DELAY_S)
         content, calls = _answer(body)
         usage = {
@@ -859,7 +872,14 @@ def _peek(page: Any) -> Any:
 
 
 def _peek_title(page: Any) -> str:
-    return re.sub(r"\s+", "", page.locator("#peek-title").inner_text())
+    # 46a0489 draws a name cut to fit, a sizer and a spoken copy: the whole
+    # name is the drawn one's title
+    title = page.locator("#peek-title")
+    name = title.locator(".mid-name")
+    text = (
+        name.first.get_attribute("title") or "" if name.count() else title.inner_text()
+    )
+    return re.sub(r"\s+", "", text)
 
 
 def _tab(page: Any, name: str) -> Any:
@@ -993,28 +1013,32 @@ def _phone_conversions_head(page: Any) -> str:
 
 def _middle_ellipsis(page: Any, host: str, end: str) -> str:
     """A phone window's URL title: on its own row under the header buttons,
-    shortened in the middle (the host and the end of the path stay)."""
+    shortened in the middle at folder boundaries (46a0489: one drawn line
+    with the "…" in it, the host and the last segment kept)."""
     title = page.locator("#peek-title")
-    head = title.locator(".file-name-head")
-    tail = title.locator(".file-name-tail")
-    if not head.count() or not tail.count():
-        raise AssertionError("the window title has no middle ellipsis parts")
-    if not head.inner_text().startswith(f"http://{host}"):
-        raise AssertionError(f"the title starts {head.inner_text()!r}")
-    if not tail.inner_text().endswith(end) or not _fits(tail):
-        raise AssertionError(f"the title ends {tail.inner_text()!r}")
-    full = title.locator(".file-name").get_attribute("title") or ""
-    if head.inner_text() + tail.inner_text() != full:
-        raise AssertionError(f"the title's parts do not make {full!r}")
-    if not tail.is_visible() or not head.is_visible():
-        raise AssertionError("a part of the title is hidden")
+    name = title.locator(".mid-name")
+    line = name.locator(".mid-line")
+    if not name.count() or not line.count():
+        raise AssertionError("the window title is not a middle-cut name")
+    full = name.get_attribute("title") or ""
+    drawn = line.inner_text()
+    if not drawn.startswith(f"http://{host}"):
+        raise AssertionError(f"the title starts {drawn!r}")
+    if not drawn.endswith(end):
+        raise AssertionError(f"the title ends {drawn!r}")
+    if drawn == full or "…" not in drawn:
+        raise AssertionError(f"the title {full!r} is not shortened: {drawn!r}")
+    # Cut at a folder: what follows the "…" is a whole tail of the address
+    after = drawn.split("…", 1)[1]
+    if not after.startswith("/") or not full.endswith(after):
+        raise AssertionError(f"the title is not cut at a folder: {drawn!r}")
+    if not _fits(name) or not line.is_visible():
+        raise AssertionError(f"the drawn title overflows: {drawn!r}")
     close = _peek(page).get_by_role("button", name="Close").bounding_box()
     box = title.bounding_box()
     if close is None or box is None or box["y"] < close["y"] + close["height"] - 1:
         raise AssertionError(f"the title is not on its own row: {box}, Close {close}")
-    if _fits(head):
-        raise AssertionError(f"the title {full!r} is not shortened")
-    return f"title cut in the middle, ends {tail.inner_text()!r} on its own row"
+    return f"title cut at a folder, {drawn!r}, on its own row"
 
 
 #: The last URL of the Stop step: long enough that a phone window's title
@@ -1310,7 +1334,14 @@ def browse(
         # 5. Preview tab
         def preview() -> str:
             _show_tab(page, "Preview")
-            page.get_by_role("tab", name=re.compile("Rendered|Source")).first.wait_for()
+            # Its views: tabs at the end of the window's tab row, or on a
+            # phone one compact switch named after the view ("Rendered, ...,
+            # Preview mode")
+            page.get_by_role("tab", name=re.compile("Rendered|Source")).or_(
+                page.get_by_role(
+                    "button", name=re.compile(r"^Rendered\b.*Preview mode")
+                )
+            ).first.wait_for()
             page.locator("#peek-panel").get_by_text(
                 "Quarterly report, part 1"
             ).first.wait_for()
@@ -1738,9 +1769,51 @@ def browse(
 
         run.step(page, "settings-test", settings)
 
-        # 12b. A model whose key the server lacks (no DEEPSEEK_API_KEY here):
-        # its test names the variable and sends nothing (owner, 2026-10-12)
-        def settings_missing_key() -> str:
+        # 12b. Why a model test failed, one model per reason (contract v1.10):
+        # the server's answer and the workbench's translated block. A model
+        # whose key the server lacks (no DEEPSEEK_API_KEY here) sends nothing
+        # (owner, 2026-10-12); the others are refused by the fake LLM or
+        # aimed at a port nothing listens on. A timeout (15 s) is left to the
+        # unit tests.
+        def settings_test_reasons() -> str:
+            cases = [
+                # model, how it is saved, reason, title, provider's words
+                (
+                    "deepseek/deepseek-flash",
+                    {"provider": "deepseek"},
+                    "no_key",
+                    "No API key",
+                    "DEEPSEEK_API_KEY is not set on the server, so nothing was sent",
+                ),
+                *(
+                    (
+                        f"openai/{name}",
+                        {
+                            "api_key": "sk-e2e-fake-0000",
+                            "api_base": f"http://127.0.0.1:{llm_port}/v1",
+                        },
+                        reason,
+                        title,
+                        "Model connection returned HTTP {}: {}".format(*REFUSALS[name]),
+                    )
+                    for name, reason, title in (
+                        ("fake-401", "key_rejected", "Key rejected"),
+                        ("fake-404", "model_not_found", "Model not found"),
+                        ("fake-429", "rate_limited", "Rate limited or out of quota"),
+                        ("fake-500", "provider_error", "Provider error"),
+                    )
+                ),
+                (
+                    "openai/fake-unreachable",
+                    {
+                        "api_key": "sk-e2e-dead-0000",
+                        "api_base": "http://127.0.0.1:9/v1",
+                    },
+                    "network",
+                    "Provider unreachable",
+                    "Model connection request failed",
+                ),
+            ]
             revision = _api(page, base, "GET", "/api/settings/llm").json()["revision"]
             saved = _api(
                 page,
@@ -1750,55 +1823,86 @@ def browse(
                 data={
                     "expected_revision": revision,
                     "deployments": [
-                        {
-                            "model_name": "e2e-missing-key",
-                            "model": "deepseek/deepseek-flash",
-                            "provider": "deepseek",
-                        }
+                        {"model_name": "e2e-reasons", "model": model, **how}
+                        for model, how, *_ in cases
                     ],
                 },
             )
             if saved.status != 200:
-                raise AssertionError(f"saving the model: {saved.status} {saved.text()}")
-            deployment = next(
-                d
+                raise AssertionError(
+                    f"saving the models: {saved.status} {saved.text()}"
+                )
+            added = [
+                d["deployment_id"]
                 for d in saved.json()["deployments"]
-                if d["routing_group"] == "e2e-missing-key"
-            )
+                if d["routing_group"] == "e2e-reasons"
+            ]
+            notes = []
             try:
                 _open(page, lambda: page.goto(f"{base}/settings/models"))
-                before = len(run.api)
-                _click_visible(
-                    page.get_by_role(
-                        "button", name="Test deepseek/deepseek-flash", exact=True
-                    )
-                )
-                note = page.get_by_text(
-                    re.compile(r"DEEPSEEK_API_KEY is not set on the server")
-                ).first
-                note.wait_for(timeout=15000)
-                tests = [
-                    call
-                    for call in run.api[before:]
-                    if call[1].startswith("/api/settings/llm/test")
-                ]
-                if len(tests) != 1:
-                    raise AssertionError(f"model tests sent: {tests}")
+                for model, _how, reason, title, words in cases:
+                    before = len(run.api)
+                    with page.expect_response(
+                        lambda r: r.url.endswith("/api/settings/llm/test")
+                    ) as answered:
+                        _click_visible(
+                            page.get_by_role("button", name=f"Test {model}", exact=True)
+                        )
+                    answer = answered.value.json()
+                    if answer.get("reason") != reason or "provider_detail" in answer:
+                        raise AssertionError(f"{model}: the server answered {answer}")
+                    if not answer["detail"].startswith(words):
+                        raise AssertionError(f"{model}: detail {answer['detail']!r}")
+                    block = page.locator(".test-failure")
+                    block.get_by_text(title, exact=True).wait_for(timeout=15000)
+                    if f"Test of {model}" not in block.inner_text():
+                        raise AssertionError(f"{model}: the block names another model")
+                    shown = block.locator(".test-failure-detail p").text_content() or ""
+                    if shown != answer["detail"]:
+                        raise AssertionError(
+                            f"{model}: the provider's message shows {shown!r}"
+                        )
+                    if reason == "no_key":
+                        if answer.get("key_variable") != "DEEPSEEK_API_KEY":
+                            raise AssertionError(f"{model}: {answer}")
+                        block.get_by_text(
+                            "DEEPSEEK_API_KEY is not set on the server. Set it where "
+                            "markitai serve runs"
+                        ).wait_for()
+                        row = page.locator(".model-test-fail").filter(
+                            has_text="DEEPSEEK_API_KEY"
+                        )
+                        row.wait_for()
+                        tests = [
+                            call
+                            for call in run.api[before:]
+                            if call[1].startswith("/api/settings/llm/test")
+                        ]
+                        if len(tests) != 1:
+                            raise AssertionError(f"model tests sent: {tests}")
+                        run.shot(page, "settings-test-no-key")
+                    elif "key_variable" in answer:
+                        raise AssertionError(f"{model}: {answer}")
+                    notes.append(f"{reason}: {title!r}")
             finally:
-                _api(
-                    page,
-                    base,
-                    "DELETE",
-                    f"/api/settings/llm/deployments/{deployment['deployment_id']}"
-                    "?expected_revision="
-                    + _api(page, base, "GET", "/api/settings/llm").json()["revision"],
-                )
+                revision = _api(page, base, "GET", "/api/settings/llm").json()[
+                    "revision"
+                ]
+                for deployment_id in added:
+                    gone = _api(
+                        page,
+                        base,
+                        "DELETE",
+                        f"/api/settings/llm/deployments/{deployment_id}"
+                        f"?expected_revision={revision}",
+                    )
+                    revision = gone.json().get("revision", revision)
             return (
-                "a DeepSeek model without DEEPSEEK_API_KEY on the server: the test "
-                "names the variable (reason missing_key), nothing sent"
+                "each reason shown translated with the server's detail under "
+                "Provider's message; " + ", ".join(notes)
             )
 
-        run.step(page, "settings-test-missing-key", settings_missing_key)
+        run.step(page, "settings-test-reasons", settings_test_reasons)
 
         # 12a. Every settings page, and Convert, is one centred column
         def settings_pages() -> str:
