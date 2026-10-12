@@ -116,7 +116,10 @@ keep) says why and offers its download.
 
 **On phones** the window fills the screen, over the tab bar: back, the name,
 previous and next, and "⋯" (Download and every other action, Copy and Export
-PDF on Preview), then the same three tabs; Compare places the original above the
+PDF on Preview), then the same three tabs. While items wait, Stop remaining
+stays a button in the header, since the window covers the list's own: a
+submission's window stops that submission, an item's window the submission it
+belongs to, and Summary everything listed; Compare places the original above the
 Markdown. A long press on a shortened file name shows it whole.
 
 **Notices** are transient: minimal strips at the bottom, on a phone full width

@@ -9,11 +9,11 @@ import type { Dict, Locale } from "../i18n/index.ts";
 import { counts, FILTERS, isJobKey, itemOrder, submissionLabel, submissions, type ConvJob, type Filter, type LabelWords } from "../lib/conversions.ts";
 import { groupNotices } from "../lib/notices.ts";
 import type { PaneMode } from "../lib/route.ts";
-import type { SessionItem } from "../lib/session.ts";
+import { waitingJobs, type SessionItem } from "../lib/session.ts";
 import { ActionMenu } from "./action-menu.tsx";
 import { ConversionList } from "./conversion-list.tsx";
 import { Icon } from "./icons.tsx";
-import { ItemInspector, itemActs, JobInspector, jobActs, Overview, type InspectorContext, type ItemActionsApi, type JobActionsApi } from "./inspector.tsx";
+import { ItemInspector, itemActs, JobInspector, jobActs, Overview, stopAct, type ActSet, type InspectorContext, type ItemActionsApi, type JobActionsApi } from "./inspector.tsx";
 import type { IconName } from "./icon-paths.ts";
 import { Peek, type PeekTab } from "./peek.tsx";
 import { StateBlock, type StateAction } from "./state-block.tsx";
@@ -129,6 +129,19 @@ export function ConversionsPage(props: ConversionsPageProps) {
   const tab: PeekTab = mode === "compare" ? "compare" : mode === "preview" ? "preview" : "details";
   const url = selectedItem && selectedItem.kind === "url" && /^https?:\/\//i.test(selectedItem.name) ? selectedItem.name : null;
 
+  // The full-screen window on a phone covers the list's Stop: an item's window
+  // offers its submission's, and the overview the list's.
+  const acts = (): ActSet | null => {
+    if (selectedItem) {
+      const own = itemActs(ctx, selectedItem, props.itemActions);
+      const waiting = ctx.cancel && waitingJobs(items, jobs).includes(selectedItem.jobId);
+      return waiting ? { ...own, shown: [...own.shown, stopAct(ctx, selectedItem.jobId, props.jobActions)] } : own;
+    }
+    if (selectedJob) return jobActs(ctx, selectedJob, jobItems, props.jobActions);
+    if (!props.head.waiting || !ctx.cancel) return null;
+    const stopping = props.head.stopping;
+    return { shown: [{ key: "stop", label: t.stopRemaining, title: t.stopTitle, icon: "Stop", keep: true, disabled: stopping, busy: stopping, run: props.head.onStop }], more: [], danger: null };
+  };
   const peekOpen = selectedItem !== null || selectedJob !== null || (overview && items.length > 0);
   const peek = peekOpen && (
     <Peek
@@ -142,9 +155,11 @@ export function ConversionsPage(props: ConversionsPageProps) {
       phone={phone}
       docked={docked}
       compareAvailable={props.compareAvailable}
-      acts={selectedItem ? itemActs(ctx, selectedItem, props.itemActions) : selectedJob ? jobActs(ctx, selectedJob, jobItems, props.jobActions) : null}
+      acts={acts()}
       url={url}
-      failure={ctx.failure && (ctx.failure.key === selectedItem?.key || ctx.failure.key === `job:${selectedJob?.jobId ?? ""}`) ? ctx.failure : null}
+      failure={
+        ctx.failure && [selectedItem?.key, `job:${selectedJob?.jobId ?? selectedItem?.jobId ?? ""}`].includes(ctx.failure.key) ? ctx.failure : null
+      }
       details={
         selectedItem ? (
           <ItemInspector ctx={ctx} item={selectedItem} job={jobs[selectedItem.jobId]} actions={props.itemActions} peek headingId="peek-title" />

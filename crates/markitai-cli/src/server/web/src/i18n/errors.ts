@@ -59,6 +59,9 @@ const en = {
   errDiscoveryTimeout: "Model discovery timed out.",
   errSettingsInvalid: "The service did not accept this settings change.",
   errKeylessMove: "A connection with a key cannot drop it while moving to another address. Add a new connection for that server instead.",
+  errCloudLoginAddress:
+    "{label} models would send this server's own {credential} to any address they are given, so here they can only use {label}'s own endpoint. Set another address in the config file.",
+  credGoogle: "Google credentials",
   errInvalidLabel: "The submission name is not valid. Use up to 120 characters on one line.",
   errOriginalUnavailable: "The server no longer keeps the original of this item.",
   errOriginalPageMissing: "This page of the original does not exist.",
@@ -255,8 +258,24 @@ const API_REASONS: Record<string, MessageKey> = {
   config_too_large: "errConfigTooLarge",
 };
 
-/** Refusals told apart by their exact English detail (contract v1.7). */
-const DETAIL_SHAPES: [RegExp, MessageKey][] = [[/^a connection with a key cannot become one without a key at another address/, "errKeylessMove"]];
+/** The credential a cloud-login refusal names: a token variable as it is, the Google login in words. */
+const CREDENTIALS: Record<string, MessageKey> = { "Google credentials": "credGoogle" };
+
+/** Chinese and Japanese set Latin words apart with a space, but not their own words. */
+const spaced = (locale: Locale, text: string): string =>
+  locale === "en" ? text : `${/^[A-Za-z0-9]/.test(text) ? " " : ""}${text}${/[A-Za-z0-9_]$/.test(text) ? " " : ""}`;
+
+/** Refusals told apart by their exact English detail (contract v1.7, v1.9). */
+const DETAIL_SHAPES: [RegExp, (match: RegExpExecArray, locale: Locale) => [MessageKey, Values?]][] = [
+  [/^a connection with a key cannot become one without a key at another address/, () => ["errKeylessMove"]],
+  [
+    /^api_base: (.+?) models send the server's own (.+?) to any address, so here they can only use \1's own endpoint; set another address in the config file$/,
+    ([, label, credential], locale) => [
+      "errCloudLoginAddress",
+      { label, credential: spaced(locale, CREDENTIALS[credential] ? message(locale, CREDENTIALS[credential]) : credential) },
+    ],
+  ],
+];
 
 const API_CODES: Record<string, MessageKey> = {
   bad_request: "errBadRequest",
@@ -423,9 +442,12 @@ export function producibleKeys(): MessageKey[] {
     ...Object.values(ITEM_CODES),
     ...Object.values(PERSISTENCE),
     ...Object.values(MODEL_REASONS),
+    ...Object.values(CREDENTIALS),
   ]);
   for (const prefix of ["errPage", "errModel"] as const) for (const family of HTTP_FAMILY) keys.add(`${prefix}${family}`);
   const probe = ["", "200"] as unknown as RegExpExecArray;
+  const detail = ["", "Label", "credential"] as unknown as RegExpExecArray;
+  for (const [, pick] of DETAIL_SHAPES) keys.add(pick(detail, "en")[0]);
   for (const shapes of [ITEM_SHAPES, NOTE_SHAPES]) {
     for (const [, pick] of shapes) for (const kind of ["file", "url"]) keys.add(pick(probe, kind)[0]);
   }
@@ -439,9 +461,14 @@ export function apiErrorText(locale: Locale, body: unknown): Described | null {
     value.detail !== null && typeof value.detail === "object" ? String((value.detail as { code?: unknown }).code ?? "") : "";
   const original = typeof value.detail === "string" ? value.detail : structured;
   // A refusal whose reason is generic but whose wording both backends share.
-  const shaped = DETAIL_SHAPES.find(([pattern]) => pattern.test(original))?.[1];
+  for (const [pattern, pick] of DETAIL_SHAPES) {
+    const match = pattern.exec(original);
+    if (match) {
+      const [key, values] = pick(match, locale);
+      return { text: message(locale, key, values), detail: original };
+    }
+  }
   const key =
-    shaped ??
     API_REASONS[typeof value.reason === "string" ? value.reason : ""] ??
     API_REASONS[structured] ??
     API_CODES[typeof value.code === "string" ? value.code : ""];

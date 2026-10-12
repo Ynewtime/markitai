@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useModal } from "../hooks/use-modal.ts";
 import { useResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
+import { headerActs } from "../lib/acts.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { basename } from "../lib/format.ts";
 import { printDocument, type PrintJob } from "../lib/print.ts";
@@ -128,11 +129,11 @@ export function Peek(props: PeekProps) {
   };
 
   // "⋯": the document's own actions on Preview and Compare, the page, then the
-  // conversion's secondary actions; on a phone the header's buttons too.
-  const shown = acts?.shown ?? [];
-  const inline = phone ? shown.filter((act) => act.primary) : shown;
+  // conversion's secondary actions; on a phone the header's buttons too, except
+  // the ones that must stay in reach (Stop while items wait).
+  const { inline, folded } = headerActs(acts?.shown ?? [], phone);
   const menu: MenuAction[] = [
-    ...(phone ? shown.filter((act) => !act.primary) : []).map((act) => ({ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled })),
+    ...folded.map((act) => ({ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled })),
     ...(tools
       ? [
           { key: "copy", label: t.copy, icon: "Copy" as const, run: tools.copy, disabled: !tools.ready },
@@ -178,7 +179,15 @@ export function Peek(props: PeekProps) {
           </>
         )}
         {inline.map((act) => (
-          <button key={act.key} type="button" class={act.primary ? "btn btn-primary" : "btn"} disabled={act.disabled} aria-busy={act.busy || undefined} onClick={run(act)}>
+          <button
+            key={act.key}
+            type="button"
+            class={act.primary ? "btn btn-primary" : "btn"}
+            title={act.title}
+            disabled={act.disabled}
+            aria-busy={act.busy || undefined}
+            onClick={run(act)}
+          >
             {act.icon && <Icon name={act.icon} size={14} />}
             {act.label}
           </button>

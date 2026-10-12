@@ -59,6 +59,8 @@ export const zh: Record<MessageKey, string> = {
   errRenderBusy: "服务器正在绘制其他页面，请稍后再试。",
   errSettingsInvalid: "服务不接受这项设置修改。",
   errKeylessMove: "已有密钥的连接不能在改到另一个地址的同时去掉密钥。请为那台服务器另外添加一个连接。",
+  errCloudLoginAddress: "{label} 模型会把这台服务器自己的{credential}发送到给它的任何地址，所以这里只能使用 {label} 自己的接口。其他地址请在配置文件中设置。",
+  credGoogle: "Google 凭据",
   errSettingsMissing: "这项已保存的设置已不存在。请刷新后重试。",
   errSettingsIo: "无法读取或保存配置文件。",
   errConfigMissing: "还没有配置文件。保存一个模型后会自动创建。",

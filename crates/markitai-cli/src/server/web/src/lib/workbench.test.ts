@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ItemPayload } from "../api/types.ts";
 import { family, tokenize, LANGS } from "../highlight/main.ts";
+import { headerActs } from "./acts.ts";
 import { locate, norm, type PageLines } from "./compare.ts";
 import { counts, hasNotices, isGroup, itemOrder, jobKey, navigationOrder, placeholderJob, submissionLabel, submissions, type ConvJob } from "./conversions.ts";
 import { costState, fmtUsd, itemCost, totalCost } from "./cost.ts";
@@ -201,4 +202,23 @@ test("views and the list selection are real addresses", () => {
   assert.deepEqual(parseListState("?sel=../../x&view=other"), { selected: null, mode: "inspector" });
   assert.equal(listQuery({ selected: "a/i1", mode: "preview" }), "?sel=a%2Fi1&view=preview");
   assert.equal(listQuery({ selected: null, mode: "preview" }), "");
+});
+
+test("a phone window keeps Stop as a button while the other secondary actions fold into the menu", () => {
+  // The Python e2e bug: right after Convert the full-screen summary covered the
+  // list's Stop, and its own Stop was folded into "⋯".
+  const shown = [
+    { key: "retry-failed", primary: true },
+    { key: "zip" },
+    { key: "stop", keep: true },
+  ];
+  assert.deepEqual(
+    headerActs(shown, true).inline.map((act) => act.key),
+    ["retry-failed", "stop"],
+  );
+  assert.deepEqual(
+    headerActs(shown, true).folded.map((act) => act.key),
+    ["zip"],
+  );
+  assert.deepEqual(headerActs(shown, false), { inline: shown, folded: [] });
 });

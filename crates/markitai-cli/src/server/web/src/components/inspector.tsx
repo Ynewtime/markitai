@@ -315,6 +315,10 @@ export interface Act {
   icon?: IconName;
   run: () => void;
   primary?: boolean;
+  /** Stays a button on a phone, where the other secondary actions fold into "⋯":
+   * Stop, while the full-screen window covers the list's own Stop. */
+  keep?: boolean;
+  title?: string;
   disabled?: boolean;
   busy?: boolean;
 }
@@ -661,6 +665,12 @@ export function JobInspector({
   );
 }
 
+/** Stop for a submission whose items still wait: shown wherever its window covers the list's Stop. */
+export function stopAct(ctx: InspectorContext, jobId: string, actions: Pick<JobActionsApi, "stop">): Act {
+  const busy = ctx.busy.has(`job:${jobId}`);
+  return { key: "stop", label: ctx.t.stopRemaining, title: ctx.t.stopTitle, icon: "Stop", keep: true, disabled: busy, busy, run: () => actions.stop(jobId) };
+}
+
 /** A submission's actions: its archive, a retry of what failed, Stop while items wait, Delete. */
 export function jobActs(ctx: InspectorContext, job: ConvJob, items: SessionItem[], actions: JobActionsApi): ActSet {
   const { t } = ctx;
@@ -673,7 +683,7 @@ export function jobActs(ctx: InspectorContext, job: ConvJob, items: SessionItem[
   if (retryable > 0)
     shown.push({ key: "retry-failed", label: t.retryFailedN(retryable), icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retryFailed(job.jobId) });
   if (!running) shown.push({ key: "zip", label: t.downloadZip, icon: "DownloadSimple", run: () => actions.zip(job.jobId) });
-  if (waiting && ctx.cancel) shown.push({ key: "stop", label: t.stopRemaining, icon: "Stop", disabled: busy, run: () => actions.stop(job.jobId) });
+  if (waiting && ctx.cancel) shown.push(stopAct(ctx, job.jobId, actions));
   const danger: MenuDanger | null = running
     ? null
     : {

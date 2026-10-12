@@ -60,6 +60,8 @@ export const ja: Record<MessageKey, string> = {
   errRenderBusy: "サーバーがほかのページを描画中です。しばらくしてからもう一度お試しください。",
   errSettingsInvalid: "サービスがこの設定の変更を受け付けませんでした。",
   errKeylessMove: "キーのある接続は、別のアドレスへ移すときにキーを外せません。そのサーバーには新しい接続を追加してください。",
+  errCloudLoginAddress: "{label} のモデルは、このサーバー自身の{credential}を指定されたどのアドレスにも送信するため、ここでは {label} 自身のエンドポイントしか使えません。別のアドレスは設定ファイルで指定してください。",
+  credGoogle: "Google の認証情報",
   errSettingsMissing: "この保存済みの設定はもう存在しません。ページを更新してから、もう一度お試しください。",
   errSettingsIo: "設定ファイルを読み込めないか、保存できませんでした。",
   errConfigMissing: "設定ファイルはまだありません。モデルを保存すると作成されます。",

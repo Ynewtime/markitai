@@ -292,6 +292,42 @@ test("API refusals are read by reason, then structured code, then status code", 
   assert.equal(apiErrorText("en", null), null);
 });
 
+test("a cloud login refused an address is one template, label and credential filled in", () => {
+  // Python markitai 1.2.1's and Rust's detail, verbatim (contract v1.9).
+  const refusal = (label: string, credential: string) =>
+    `api_base: ${label} models send the server's own ${credential} to any address, so here they can only use ${label}'s own endpoint; set another address in the config file`;
+  const body = (detail: string) => ({ detail, code: "invalid_request", reason: "invalid_settings_request" });
+  const vertex = refusal("Vertex AI", "Google credentials");
+  assert.deepEqual(apiErrorText("zh", body(vertex)), {
+    text: "Vertex AI 模型会把这台服务器自己的 Google 凭据发送到给它的任何地址，所以这里只能使用 Vertex AI 自己的接口。其他地址请在配置文件中设置。",
+    detail: vertex,
+  });
+  assert.deepEqual(apiErrorText("ja", body(vertex)), {
+    text: "Vertex AI のモデルは、このサーバー自身の Google の認証情報を指定されたどのアドレスにも送信するため、ここでは Vertex AI 自身のエンドポイントしか使えません。別のアドレスは設定ファイルで指定してください。",
+    detail: vertex,
+  });
+  assert.equal(
+    apiErrorText("en", body(vertex))?.text,
+    "Vertex AI models would send this server's own Google credentials to any address they are given, so here they can only use Vertex AI's own endpoint. Set another address in the config file.",
+  );
+  // A token variable is named as it is; the label is whatever the server sends.
+  for (const [label, credential] of [
+    ["watsonx", "WATSONX_TOKEN"],
+    ["GigaChat", "GIGACHAT_ACCESS_TOKEN"],
+    ["Some Cloud", "SOME_CLOUD_TOKEN"],
+  ]) {
+    for (const locale of ["en", "zh", "ja"] as const) {
+      const result = apiErrorText(locale, body(refusal(label, credential)));
+      const word = locale === "en" ? credential : ` ${credential} `;
+      assert.equal(result?.text, MESSAGES[locale].errCloudLoginAddress!.replaceAll("{label}", label).replace("{credential}", word));
+      assert.equal(result?.detail, refusal(label, credential));
+    }
+  }
+  // Two different labels are not this message; it falls back to the reason.
+  const mixed = "api_base: Vertex AI models send the server's own Google credentials to any address, so here they can only use watsonx's own endpoint; set another address in the config file";
+  assert.equal(apiErrorText("zh", body(mixed))?.text, MESSAGES.zh.errSettingsInvalid);
+});
+
 test("probe and discovery phrases are translated; unknown text is kept", () => {
   assert.deepEqual(serviceNote("en", "openai/gpt-x responded"), { text: "openai/gpt-x responded.", detail: "openai/gpt-x responded" });
   assert.equal(serviceNote("en", "Model connection test timed out").text, MESSAGES_EN.errModelTimeout);
