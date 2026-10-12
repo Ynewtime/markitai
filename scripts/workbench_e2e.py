@@ -15,12 +15,14 @@ screenshots every state:
     (a per-browser choice), retry of a failed item, a failed action reported
     in the window, New conversion and stop remaining (cancel), download all
     from the "⋯" menu (ticket; on a phone Stop from the header of the
-    full-screen windows), an inline SVG drawing in the preview,
+    full-screen windows and on its own row under the Conversions title, a
+    long URL title cut in the middle), an inline SVG drawing in the preview,
     settings model test (fake LLM), every settings page and Convert as one
     centred column, the provider picker (groups, brand marks, search), a
     saved address shown without its credentials, a provider beyond the first
     eight connected with a key and an address, Vertex AI connected without an
-    address (its login note; Bedrock keeps its address), history after a
+    address (its login note; Bedrock keeps its address; its saved connection
+    offers no key and asks for no model list), history after a
     reload, token prompt
 
 Notices must be strips at the bottom (never the page-wide banners the UI
@@ -314,13 +316,14 @@ class _FakeLLM(BaseHTTPRequestHandler):
 
 
 class _Pages(BaseHTTPRequestHandler):
-    """``/page/<n>.html`` answers at once, ``/slow/<n>.html`` after a pause."""
+    """``/page/<n>.html`` answers at once, ``/slow/[<dir>/…]<n>.html`` after
+    a pause."""
 
     def log_message(self, *args: Any) -> None:
         pass
 
     def do_GET(self) -> None:
-        match = re.fullmatch(r"/(page|slow)/(\w+)\.html", self.path)
+        match = re.fullmatch(r"/(page|slow)/(?:[\w-]+/)*(\w+)\.html", self.path)
         if not match:
             self.send_response(404)
             self.end_headers()
@@ -956,6 +959,68 @@ def _header_stop(page: Any) -> Any:
     return stop.first
 
 
+def _fits(locator: Any) -> bool:
+    """Whether *locator*'s text is drawn whole (nothing cut by an ellipsis)."""
+    return bool(locator.evaluate("e => e.scrollWidth <= e.clientWidth + 1"))
+
+
+def _phone_conversions_head(page: Any) -> str:
+    """The phone Conversions header while items wait: the title whole, then
+    the status, then Stop remaining on a row of its own (bcdc180 squeezed
+    the title to "Co" and wrapped the status one word per line)."""
+    head = page.locator(".conv-head")
+    title, summary = head.locator("h1"), head.locator(".conv-summary")
+    stop = head.get_by_role("button", name=re.compile(r"^Stop remaining"))
+    stop.wait_for(timeout=10000)
+    page.wait_for_timeout(300)
+    boxes = [x.bounding_box() for x in (title, summary, stop)]
+    if any(b is None for b in boxes):
+        raise AssertionError(f"Conversions header boxes: {boxes}")
+    t, s, b = boxes
+    if not _fits(title) or t["width"] < 80:
+        raise AssertionError(f"the Conversions title is cut: {t}")
+    line = float(summary.evaluate("e => parseFloat(getComputedStyle(e).lineHeight)"))
+    if s["y"] < t["y"] + t["height"] - 1 or s["height"] > 2 * line + 2:
+        raise AssertionError(f"the status is squeezed: {s} (line {line})")
+    if b["y"] < s["y"] + s["height"] - 1:
+        raise AssertionError(f"Stop remaining is not on its own row: {b}, status {s}")
+    return (
+        f"title whole ({t['width']:.0f} px), status in "
+        f"{round(s['height'] / line)} line(s), Stop on its own row"
+    )
+
+
+def _middle_ellipsis(page: Any, host: str, end: str) -> str:
+    """A phone window's URL title: on its own row under the header buttons,
+    shortened in the middle (the host and the end of the path stay)."""
+    title = page.locator("#peek-title")
+    head = title.locator(".file-name-head")
+    tail = title.locator(".file-name-tail")
+    if not head.count() or not tail.count():
+        raise AssertionError("the window title has no middle ellipsis parts")
+    if not head.inner_text().startswith(f"http://{host}"):
+        raise AssertionError(f"the title starts {head.inner_text()!r}")
+    if not tail.inner_text().endswith(end) or not _fits(tail):
+        raise AssertionError(f"the title ends {tail.inner_text()!r}")
+    full = title.locator(".file-name").get_attribute("title") or ""
+    if head.inner_text() + tail.inner_text() != full:
+        raise AssertionError(f"the title's parts do not make {full!r}")
+    if not tail.is_visible() or not head.is_visible():
+        raise AssertionError("a part of the title is hidden")
+    close = _peek(page).get_by_role("button", name="Close").bounding_box()
+    box = title.bounding_box()
+    if close is None or box is None or box["y"] < close["y"] + close["height"] - 1:
+        raise AssertionError(f"the title is not on its own row: {box}, Close {close}")
+    if _fits(head):
+        raise AssertionError(f"the title {full!r} is not shortened")
+    return f"title cut in the middle, ends {tail.inner_text()!r} on its own row"
+
+
+#: The last URL of the Stop step: long enough that a phone window's title
+#: has to shorten it (in the middle: the host and its file name stay)
+LAST_WAITING = "slow/annual-reports/2026/reading-list/s5.html"
+
+
 def _phone_stop(page: Any, run: Run) -> str:
     """Stop reached on a phone while the full-screen windows cover the list."""
     _header_stop(page)
@@ -963,14 +1028,19 @@ def _phone_stop(page: Any, run: Run) -> str:
     title = " ".join(page.locator("#peek-title").inner_text().split())
     _click_visible(page.get_by_role("button", name="Close"))
     _peek(page).wait_for(state="detached", timeout=10000)
+    head = _phone_conversions_head(page)
     run.shot(page, "phone-stop-list")
     # The last URL waits behind the others (one URL at a time)
-    _item(page, "slow/s5.html").click()
-    _heading(page, "slow/s5.html").wait_for()
+    _item(page, LAST_WAITING).click()
+    _heading(page, LAST_WAITING).wait_for()
     stop = _header_stop(page)
+    named = _middle_ellipsis(page, "127.0.0.1", "/s5.html")
     run.shot(page, "phone-stop-item")
     stop.click()
-    return f"the header of {title}'s window and of a waiting item's window"
+    return (
+        f"the header of {title}'s window and of a waiting item's window "
+        f"({named}); Conversions: {head}"
+    )
 
 
 #: The notices of the UI before the bundle of 2026-10-11 (rounded boxes with
@@ -1515,7 +1585,11 @@ def browse(
             page.wait_for_url(re.compile(r"/(\?.*)?$"), timeout=10000)
             page.get_by_role("textbox", name=re.compile("Paste URLs")).fill(
                 "\n".join(
-                    f"http://127.0.0.1:{pages_port}/slow/s{n}.html" for n in range(1, 6)
+                    [
+                        f"http://127.0.0.1:{pages_port}/slow/s{n}.html"
+                        for n in range(1, 5)
+                    ]
+                    + [f"http://127.0.0.1:{pages_port}/{LAST_WAITING}"]
                 )
             )
 
@@ -2121,6 +2195,7 @@ def browse(
             if any(p.get("api_key") or p.get("api_base") for p in linked):
                 raise AssertionError(f"saved connection: {linked}")
             # The saved connection shows its address row without Edit or Reset
+            opened = len(run.api)
             _open(page, lambda: page.goto(f"{base}/settings/models"))
             _click_visible(page.get_by_role("button", name="Add models"))
             panel.wait_for()
@@ -2133,6 +2208,18 @@ def browse(
                 raise AssertionError(
                     f"the saved connection offers {base_row.get_by_role('button').all_inner_texts()}"
                 )
+            # ... no key to add (it signs with the Google login), and no
+            # model-list request or "could not be loaded" (manual-only)
+            key_row = page.locator(".conn-row").filter(has_text="API key")
+            if key_row.count():
+                raise AssertionError(
+                    f"the saved connection offers a key: {key_row.all_inner_texts()}"
+                )
+            page.wait_for_timeout(700)
+            if page.get_by_text("Models could not be loaded").count():
+                raise AssertionError("the saved connection says models could not load")
+            if run.saw("POST", r"^/api/settings/llm/model-discovery$", since=opened):
+                raise AssertionError("the saved connection asked for a model list")
             run.shot(page, "provider-saved-vertex")
             # An API caller naming an address gets the wording the UI translates
             refused = _api(
@@ -2163,8 +2250,9 @@ def browse(
                 )
             return (
                 "Bedrock offers its address; Vertex AI: no key or address, the "
-                "login note, a model saved without an address, no Edit on its "
-                "connection; an address through the API is 422 as worded"
+                "login note, a model saved without an address, no Edit, key or "
+                "model-list error on its connection; an address through the API "
+                "is 422 as worded"
             )
 
         run.step(page, "settings-vertex-ai", vertex_ai)
