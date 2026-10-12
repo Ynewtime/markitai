@@ -30,6 +30,8 @@ from tests.unit.serve.test_keyless_connections import (
     _capture,
     _saved,
     _send_through_router,
+    workbench_app_js,
+    workbench_detail_patterns,
 )
 from tests.unit.serve.test_serve_settings import _make_app, _model_entry, _serve_client
 
@@ -62,12 +64,30 @@ REFUSED = [
 ]
 
 
+# What each refusal names: the cloud, then its login
+LABELS = {
+    "Google credentials": "Vertex AI",
+    "WATSONX_TOKEN": "watsonx",
+    "GIGACHAT_ACCESS_TOKEN": "GigaChat",
+}
+
+
+def _detail(credential: str) -> str:
+    label = LABELS[credential]
+    return (
+        f"api_base: {label} models send the server's own {credential} to any "
+        f"address, so here they can only use {label}'s own endpoint; set another "
+        "address in the config file"
+    )
+
+
 def _refused(response: httpx.Response, credential: str) -> None:
     assert response.status_code == 422, response.text
     body = response.json()
     assert body["reason"] == "invalid_settings_request"
-    assert credential in body["detail"]
-    assert body["detail"].startswith("api_base: ")
+    # Verbatim: the shared workbench translates this refusal by its wording
+    # (contract v1.9), so a reworded detail would reach users untranslated.
+    assert body["detail"] == _detail(credential)
 
 
 def _deployment(model: str, provider: str | None, **extra: Any) -> dict[str, Any]:
@@ -283,3 +303,39 @@ async def test_litellm_still_sends_the_watsonx_token_despite_the_placeholder(
     assert to_caller[0].headers.get("authorization") == (
         "Bearer fake-server-watsonx-token-0000"
     )
+
+
+@pytest.mark.parametrize("credential", sorted(LABELS))
+def test_the_workbench_translates_the_cloud_login_refusal(credential: str) -> None:
+    """The vendored bundle matches every wording of the refusal as one template."""
+    import re
+
+    patterns = workbench_detail_patterns("errCloudLoginAddress")
+    assert patterns, "the bundle no longer translates the cloud-login refusal"
+    for pattern in patterns:
+        match = re.fullmatch(pattern, _detail(credential))
+        assert match is not None
+        assert match.groups() == (LABELS[credential], credential)
+
+
+def test_the_workbench_offers_no_address_where_the_server_refuses_one() -> None:
+    """Every built-in card whose models the settings API refuses with an
+    address is one the bundle shows without an address field; Bedrock,
+    which keeps its address, is not."""
+    import re
+
+    from markitai.providers.connectable import CONNECTABLE
+    from markitai.serve.app import _AMBIENT_LOGIN
+
+    tables = [
+        set(re.findall(r"(\w+):\"", body))
+        for body in re.findall(r"=\{((?:\w+:\"[^\"]*\",?)+)\}", workbench_app_js())
+        if 'vertex_ai:"' in body
+    ]
+    assert len(tables) == 1, "the bundle's no-address providers were not found"
+    (no_address,) = tables
+    assert set(_AMBIENT_LOGIN) <= no_address
+    cards = {row.provider for row in CONNECTABLE}
+    assert cards & set(_AMBIENT_LOGIN) <= no_address
+    assert "vertex_ai" in cards
+    assert "bedrock" in cards and "bedrock" not in no_address
