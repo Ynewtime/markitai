@@ -140,3 +140,61 @@ def register_missing_models() -> list[str]:
             litellm.suppress_debug_info = quiet
     _registered = True
     return sorted(missing)
+
+
+# LiteLLM's model table, read without importing LiteLLM: markitai sets
+# LITELLM_LOCAL_MODEL_COST_MAP, so this file is the table LiteLLM itself uses
+_LITELLM_TABLE = "model_prices_and_context_window_backup.json"
+_table: dict[str, dict[str, Any]] | None = None
+
+
+def _model_table() -> dict[str, dict[str, Any]]:
+    """LiteLLM's model rows plus markitai's own, without importing LiteLLM."""
+    global _table
+    if _table is None:
+        import importlib.util
+
+        rows: dict[str, dict[str, Any]] = {}
+        spec = importlib.util.find_spec("litellm")
+        for folder in getattr(spec, "submodule_search_locations", None) or []:
+            path = Path(folder) / _LITELLM_TABLE
+            try:
+                rows = json.loads(path.read_text(encoding="utf-8"))
+                break
+            except (OSError, ValueError):
+                continue
+        shipped = {
+            **json.loads(_LITELLM_ROWS.read_text(encoding="utf-8")),
+            **_MISSING_FROM_LITELLM,
+        }
+        for name, entry in shipped.items():
+            rows.setdefault(name, entry)
+        _table = rows
+    return _table
+
+
+def model_row(model: str) -> dict[str, Any] | None:
+    """The model table's row for *model* (``provider/id``), or None.
+
+    LiteLLM's own lookup for a prefixed model: the full name, then the id
+    alone when that row belongs to the same provider. For ``markitai doctor``,
+    which asks what a configured model can do without importing LiteLLM (its
+    import takes about 8 s on runner-win).
+    """
+    table = _model_table()
+    row = table.get(model)
+    if row is not None:
+        return row
+    provider, sep, name = model.partition("/")
+    if not sep:
+        return None
+    row = table.get(name)
+    if row is not None and str(row.get("litellm_provider", "")).startswith(provider):
+        return row
+    return None
+
+
+def supports_vision(model: str) -> bool:
+    """Whether the model table says *model* reads images (False when unknown)."""
+    row = model_row(model)
+    return bool(row.get("supports_vision")) if row else False

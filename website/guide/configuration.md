@@ -239,6 +239,7 @@ LiteLLM also takes Gemini's key from `GOOGLE_API_KEY` (ahead of `GEMINI_API_KEY`
 | `MARKITAI_STATIC_HTTP` | Static fetch client: `httpx` (default) or `curl_cffi` |
 | `MARKITAI_PDF_WORKERS` | Worker processes for PDF page extraction; `0` or `1` keeps it in-process. Default: the CPU count minus two, at most 12, and a quarter of the available memory at about 450 MB each |
 | `MARKITAI_SERVE_TOKEN` | Fixed access token for `markitai serve` |
+| `MARKITAI_TIMINGS` | Print where a command's time went (start-up, each `doctor` check) to stderr when it ends (`1`, `true`, `yes`, `on`) |
 | `MARKITAI_INSTALL_OPTIONAL` | Setup script: install optional components without prompting |
 | `MARKITAI_USE_MIRROR` | Setup script: `1` always offers a package mirror, `0` never asks |
 | `MARKITAI_VERSION` | Setup script: version to install |

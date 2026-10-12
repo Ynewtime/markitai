@@ -122,9 +122,7 @@ def _doctor_rows(
             return_value=_row("Claude Agent Auth", "ok", "signed in"),
         ),
         patch("markitai.fetch_playwright.clear_browser_cache"),
-        patch(
-            "markitai.llm.get_model_info_cached", return_value={"supports_vision": True}
-        ),
+        patch("markitai.model_catalog.supports_vision", return_value=True),
         patch.object(doctor_mod.shutil, "which", return_value="/usr/bin/claude"),
         patch("importlib.util.find_spec", return_value=object()),
         patch.dict("os.environ"),
@@ -483,10 +481,7 @@ class TestWindowsDoctor:
         vision_hint = "Use vision-capable models like gemini-*, gpt-6*, claude-*"
         with (
             _doctor_env(_config("deepseek/deepseek-flash"), env=OWNER_KEYS),
-            patch(
-                "markitai.llm.get_model_info_cached",
-                return_value={"supports_vision": False},
-            ),
+            patch("markitai.model_catalog.supports_vision", return_value=False),
         ):
             out, _ = _run(None)
         assert out.count(vision_hint) == 1
