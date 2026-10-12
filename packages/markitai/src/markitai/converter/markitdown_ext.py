@@ -6,7 +6,10 @@ but markitai didn't previously handle (HTML, CSV, EPUB, MSG, IPYNB).
 
 from __future__ import annotations
 
+import base64
+import posixpath
 import re
+import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -171,107 +174,265 @@ _EPUB_IMAGE_TYPES = {
     ".gif": "gif",
     ".webp": "webp",
 }
-_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+# Stands in for a picture's data: URI while its chapter is converted, so the
+# bytes never go through the HTML parser and markdownify
+_EPUB_PICTURE_PREFIX = "markitai-epub-picture:"
+_EPUB_PICTURE_RE = re.compile(rf"\]\({_EPUB_PICTURE_PREFIX}(\d+)\)")
+_DC_NAMESPACE = "http://purl.org/dc/elements/1.1/"
+_EPUB_METADATA = (
+    "title",
+    "creator",
+    "language",
+    "publisher",
+    "date",
+    "description",
+    "identifier",
+)
 
 
-def _inline_epub_images(input_path: Path, markdown: str) -> str:
-    """Point a book's pictures at their bytes, as an Office document's are.
+class _EpubPictures:
+    """A book's raster pictures, each read from the archive at most once.
 
-    markitdown keeps each chapter's own reference (``../Images/cover.jpg``,
-    relative to a chapter file inside the archive), which resolves nowhere
-    beside the output. A reference to a raster picture the archive holds
-    becomes a ``data:`` URI, which the image pipeline saves as one of the
-    item's assets (``<name>.0001.png``) and links like a DOCX picture.
-    A reference matches the archive file whose path ends with it once its
-    ``../`` steps are dropped (else the one file of that name); an
-    ambiguous or missing one, a remote one and SVG keep their reference.
+    A reference resolves against the folder of the file that makes it
+    (``../Images/cover.jpg`` from ``OEBPS/Text/``); one that resolves
+    nowhere matches the one picture of that file name. A remote, missing
+    or ambiguous reference, SVG, and a picture over 32 MiB (128 MiB per
+    book) keep their reference.
     """
-    import base64
-    import posixpath
-    import zipfile
-    from urllib.parse import unquote, urlsplit
 
-    try:
-        archive = zipfile.ZipFile(input_path)
-    except (OSError, zipfile.BadZipFile):
-        return markdown
-    with archive:
-        images = {
+    def __init__(self, archive: zipfile.ZipFile) -> None:
+        self._archive = archive
+        self._images = {
             info.filename: info
             for info in archive.infolist()
             if not info.is_dir()
             and posixpath.splitext(info.filename)[1].lower() in _EPUB_IMAGE_TYPES
         }
-        if not images:
-            return markdown
-        budget = _EPUB_IMAGES_MAX_BYTES
-        inlined: dict[str, str | None] = {}
+        self._budget = _EPUB_IMAGES_MAX_BYTES
+        self._tokens: dict[str, str | None] = {}
+        self._uris: list[str] = []
+        # Pictures some chapter shows (the OPF's cover is added when none does)
+        self.shown: set[str] = set()
 
-        def member(reference: str) -> zipfile.ZipInfo | None:
-            parts = urlsplit(reference)
-            if parts.scheme or parts.netloc or not parts.path:
-                return None
-            path = posixpath.normpath(unquote(parts.path)).lstrip("/")
-            while path.startswith("../"):
-                path = path[3:]
-            if not path or path.startswith(".."):
-                return None
-            found = [
-                info
-                for name, info in images.items()
-                if name == path or name.endswith("/" + path)
+    def member(self, folder: str, reference: str) -> zipfile.ZipInfo | None:
+        """The picture *reference* names from a file in archive *folder*."""
+        from urllib.parse import unquote, urlsplit
+
+        parts = urlsplit(reference.strip())
+        if parts.scheme or parts.netloc or not parts.path or not self._images:
+            return None
+        path = unquote(parts.path)
+        path = posixpath.normpath(posixpath.join(folder, path)).lstrip("/")
+        if path in self._images:
+            return self._images[path]
+        name = posixpath.basename(path)
+        found = [
+            info
+            for member, info in self._images.items()
+            if posixpath.basename(member) == name
+        ]
+        return found[0] if len(found) == 1 else None
+
+    def token(self, info: zipfile.ZipInfo) -> str | None:
+        """A stand-in for the picture's data: URI, None over the limits."""
+        if info.filename in self._tokens:
+            return self._tokens[info.filename]
+        token = None
+        limit = min(_EPUB_IMAGE_MAX_BYTES, self._budget)
+        if info.file_size <= limit:
+            try:
+                data = self._archive.read(info)
+            except (OSError, zipfile.BadZipFile, RuntimeError):
+                data = b""
+            if data and len(data) <= limit:
+                self._budget -= len(data)
+                kind = _EPUB_IMAGE_TYPES[posixpath.splitext(info.filename)[1].lower()]
+                encoded = base64.b64encode(data).decode("ascii")
+                self._uris.append(f"data:image/{kind};base64,{encoded}")
+                token = f"{_EPUB_PICTURE_PREFIX}{len(self._uris)}"
+        self._tokens[info.filename] = token
+        return token
+
+    def show(self, folder: str, reference: str) -> str | None:
+        """The stand-in for a picture a file in *folder* shows, if it has one."""
+        info = self.member(folder, reference)
+        if info is None:
+            return None
+        self.shown.add(info.filename)
+        return self.token(info)
+
+    def inline(self, markdown: str) -> str:
+        """Put each picture's data: URI where its stand-in is."""
+        return _EPUB_PICTURE_RE.sub(
+            lambda match: f"]({self._uris[int(match.group(1)) - 1]})", markdown
+        )
+
+
+def _epub_chapter_markdown(data: bytes, path: str, pictures: _EpubPictures) -> str:
+    """One chapter (XHTML in the archive at *path*) as Markdown.
+
+    Each picture the book holds becomes its data: URI, which the image
+    pipeline saves as one of the item's assets and links like a DOCX
+    picture. A cover page's picture wrapped in SVG (``<svg><image
+    xlink:href="cover.jpg"/></svg>``, which markdownify drops) becomes an
+    ``<img>`` first.
+    """
+    from bs4 import BeautifulSoup
+    from markitdown.converters import HtmlConverter
+
+    soup = BeautifulSoup(data, "html.parser", from_encoding="utf-8")
+    folder = posixpath.dirname(path)
+    for svg in soup.find_all("svg"):
+        # Inside an SVG already replaced. Not svg.decomposed: on a live tag
+        # bs4 answers that with a search of the whole subtree
+        if svg.__dict__.get("_decomposed"):
+            continue
+        hrefs = [
+            str(image.get("xlink:href") or image.get("href") or "")
+            for image in svg.find_all("image")
+        ]
+        if not any(hrefs):
+            continue
+        for href in filter(None, hrefs):
+            svg.insert_before(soup.new_tag("img", attrs={"src": href, "alt": ""}))
+        svg.decompose()
+    for img in soup.find_all("img"):
+        token = pictures.show(folder, str(img.get("src") or img.get("data-src") or ""))
+        if token is None:
+            continue
+        # Only src and alt, so the link stays the plain ![alt](data:…) the
+        # image pipeline replaces (a title would follow the URI)
+        alt = str(img.get("alt") or img.get("title") or "")
+        img.attrs = {"src": token, "alt": re.sub(r"[\[\]\s]+", " ", alt).strip()}
+    return HtmlConverter().convert_string(str(soup)).markdown.strip()
+
+
+def _convert_epub(input_path: Path) -> ConvertResult:
+    """Convert an EPUB the way markitdown does, keeping the book's pictures.
+
+    The same Markdown as markitdown's EPUB converter (a metadata block, then
+    each spine document through its HTML converter), plus: a spine entry
+    the OPF percent-encodes (``Text/%E7%AC%AC1%E7%AB%A0.xhtml``) is found
+    rather than skipped, each picture the book holds is kept (see
+    ``_epub_chapter_markdown``), and a cover the OPF names but no page shows
+    comes first.
+    """
+    from urllib.parse import unquote
+
+    from defusedxml import minidom
+
+    input_path = Path(input_path)
+    logger.debug("[EpubConverter] Converting: {}", input_path.name)
+    with zipfile.ZipFile(input_path) as archive:
+        container = minidom.parse(archive.open("META-INF/container.xml"))
+        opf_path = (
+            container.getElementsByTagNameNS("*", "rootfile")[0]
+            .getAttribute("full-path")
+            .lstrip("/")
+        )
+        opf = minidom.parse(archive.open(opf_path))
+        opf_folder = posixpath.dirname(opf_path)
+
+        def texts(name: str) -> list[str]:
+            return [
+                node.firstChild.nodeValue.strip()
+                for node in opf.getElementsByTagNameNS(_DC_NAMESPACE, name)
+                if node.firstChild is not None and node.firstChild.nodeValue
             ]
-            if not found:
-                base = posixpath.basename(path)
-                found = [
-                    info
-                    for name, info in images.items()
-                    if posixpath.basename(name) == base
-                ]
-            return found[0] if len(found) == 1 else None
 
-        def data_uri(reference: str) -> str | None:
-            nonlocal budget
-            if reference in inlined:
-                return inlined[reference]
-            info = member(reference)
-            uri = None
-            if info is not None and info.file_size <= min(
-                _EPUB_IMAGE_MAX_BYTES, budget
+        metadata_lines = []
+        for name in _EPUB_METADATA:
+            values = texts(name)
+            value = ", ".join(values) if name == "creator" else next(iter(values), "")
+            if value:
+                label = "Authors" if name == "creator" else name.capitalize()
+                metadata_lines.append(f"**{label}:** {value}")
+        title = next(iter(texts("title")), None)
+
+        items = opf.getElementsByTagNameNS("*", "item")
+        manifest = {
+            item.getAttribute("id"): item.getAttribute("href") for item in items
+        }
+        names = set(archive.namelist())
+        pictures = _EpubPictures(archive)
+        chapters: list[str] = []
+        for itemref in opf.getElementsByTagNameNS("*", "itemref"):
+            href = manifest.get(itemref.getAttribute("idref"))
+            if not href:
+                continue
+            for candidate in (unquote(href), href):
+                path = posixpath.normpath(posixpath.join(opf_folder, candidate))
+                if path in names:
+                    chapters.append(
+                        _epub_chapter_markdown(archive.read(path), path, pictures)
+                    )
+                    break
+
+        # The cover the OPF names (EPUB 2 <meta name="cover">, EPUB 3
+        # properties="cover-image"), when no page shows it
+        cover_ids = {
+            meta.getAttribute("content")
+            for meta in opf.getElementsByTagNameNS("*", "meta")
+            if meta.getAttribute("name") == "cover"
+        }
+        for item in items:
+            if (
+                item.getAttribute("id") not in cover_ids
+                and "cover-image" not in item.getAttribute("properties").split()
             ):
-                try:
-                    data = archive.read(info)
-                except (OSError, zipfile.BadZipFile, RuntimeError):
-                    data = b""
-                if data and len(data) <= _EPUB_IMAGE_MAX_BYTES:
-                    budget -= len(data)
-                    kind = _EPUB_IMAGE_TYPES[
-                        posixpath.splitext(info.filename)[1].lower()
-                    ]
-                    encoded = base64.b64encode(data).decode("ascii")
-                    uri = f"data:image/{kind};base64,{encoded}"
-            inlined[reference] = uri
-            return uri
+                continue
+            info = pictures.member(opf_folder, item.getAttribute("href"))
+            if info is None:  # a cover page, not its picture
+                continue
+            if info.filename not in pictures.shown:
+                token = pictures.token(info)
+                if token is not None:
+                    chapters.insert(0, f"![Cover]({token})")
+            break
 
-        def replace(match: re.Match[str]) -> str:
-            uri = data_uri(match.group(2))
-            return match.group(0) if uri is None else f"![{match.group(1)}]({uri})"
-
-        return _MARKDOWN_IMAGE_RE.sub(replace, markdown)
+    chapters.insert(0, "\n".join(metadata_lines))
+    # markitdown's own clean-up of every result
+    markdown = "\n".join(
+        line.rstrip() for line in re.split(r"\r?\n", "\n\n".join(chapters))
+    )
+    markdown = re.sub(r"\n{3,}", "\n\n", markdown)
+    metadata: dict = {
+        "source": str(input_path),
+        "format": "EPUB",
+        "converter": "markitdown",
+    }
+    if title:
+        metadata["title"] = title
+    return ConvertResult(
+        markdown=pictures.inline(markdown),
+        images=[],
+        metadata=metadata,
+    )
 
 
 @register_converter(FileFormat.EPUB)
 class EpubConverter(BaseConverter):
-    """Converter for EPUB e-book files using markitdown."""
+    """Converter for EPUB e-book files (markitdown's HTML converter)."""
 
     supported_formats = [FileFormat.EPUB]
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        result = _convert(input_path)
-        result.markdown = _inline_epub_images(Path(input_path), result.markdown)
-        return result
+        from xml.parsers.expat import ExpatError
+
+        try:
+            return _convert_epub(Path(input_path))
+        except (
+            KeyError,
+            IndexError,
+            ValueError,
+            ExpatError,
+            zipfile.BadZipFile,
+        ) as exc:
+            # No container or OPF, or one that does not parse (defusedxml's
+            # refusals are ValueErrors)
+            conversion_failed(f"Malformed EPUB: {exc}")
 
 
 # MAPI property streams of an Outlook .msg (OLE compound file). markitdown
