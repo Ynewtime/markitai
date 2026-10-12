@@ -149,7 +149,7 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
             {t.settingsTitle}
           </p>
           {settingsLink("models", "Cpu", t.navModels)}
-          {settingsLink("appearance", "Palette", t.navAppearance)}
+          {settingsLink("appearance", "Palette", t.navAppearanceShort)}
           {settingsLink("access", "Key", t.navAccess)}
         </nav>
         <div class="sidebar-foot">

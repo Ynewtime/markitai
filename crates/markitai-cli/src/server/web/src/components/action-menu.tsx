@@ -40,6 +40,7 @@ export function ActionMenu({
   danger,
   up = false,
   disabled = false,
+  plain = false,
 }: {
   label: string;
   actions: MenuAction[];
@@ -47,6 +48,8 @@ export function ActionMenu({
   /** Open above the button (a bar at the bottom of the screen). */
   up?: boolean;
   disabled?: boolean;
+  /** A bare icon among a window's other icon buttons, instead of a framed one. */
+  plain?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -89,7 +92,7 @@ export function ActionMenu({
       <button
         ref={trigger}
         type="button"
-        class="btn btn-icon"
+        class={plain ? "icon-btn" : "btn btn-icon"}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={label}

@@ -394,6 +394,109 @@ fn probe_errors_are_sanitized_and_never_retry_or_follow_redirects() {
 }
 
 #[test]
+fn failed_probes_report_a_category_from_the_status_or_transport() {
+    let answered = |status: u16, body: &'static str| {
+        let server = Mock::new(move |_| reply(status, body));
+        let result = probe_explicit(
+            &json!({"model":"openai/category-test","api_key":"category-test-key","api_base":server.base}),
+        )
+        .unwrap();
+        assert_eq!(server.requests().len(), 1, "{result}");
+        assert!(result.get("key_variable").is_none(), "{result}");
+        result
+    };
+    let ok = answered(200, r#"{"choices":[{"message":{"content":"OK"}}]}"#);
+    assert_eq!(ok["ok"], true);
+    assert!(ok.get("reason").is_none(), "{ok}");
+    for (status, body, reason) in [
+        (401, "{}", "key_rejected"),
+        (
+            403,
+            r#"{"error":{"code":"permission_denied"}}"#,
+            "key_rejected",
+        ),
+        (404, "{}", "model_not_found"),
+        (
+            400,
+            r#"{"error":{"code":"model_not_found"}}"#,
+            "model_not_found",
+        ),
+        (429, "{}", "rate_limited"),
+        (
+            402,
+            r#"{"error":{"type":"insufficient_balance"}}"#,
+            "rate_limited",
+        ),
+        (
+            403,
+            r#"{"error":{"message":"User location is not supported"}}"#,
+            "provider_error",
+        ),
+        (500, "{}", "provider_error"),
+        (307, "", "network"),
+        (200, r#"{"choices":[]}"#, "provider_error"),
+    ] {
+        let result = answered(status, body);
+        assert_eq!(
+            (&result["ok"], &result["reason"]),
+            (&json!(false), &json!(reason)),
+            "{status} {body}: {result}"
+        );
+    }
+    let refused = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let result = probe_explicit(&json!({"model":"openai/category-test","api_key":"category-test-key","api_base":format!("http://{refused}/v1")})).unwrap();
+    assert_eq!(result["reason"], "network", "{result}");
+}
+
+#[test]
+fn a_missing_key_is_reported_before_any_request_and_keyless_servers_are_tried() {
+    let server = Mock::new(|_| reply(200, r#"{"choices":[{"message":{"content":"OK"}}]}"#));
+    // A synthetic variable no environment or dotenv file sets.
+    let unset = "MARKITAI_PROBE_TEST_UNSET_KEY_5C1E";
+    assert!(!crate::config::environment().contains_key(unset));
+    for request in [
+        json!({"model":"openai/missing-key","api_key":format!("env:{unset}"),"api_base":server.base}),
+        json!({"model":"ollama/missing-key","api_key":format!("env:{unset}"),"api_base":server.base}),
+    ] {
+        for result in [probe(&request).unwrap(), probe_explicit(&request).unwrap()] {
+            assert_eq!(
+                result,
+                json!({"ok":false,"reason":"no_key","key_variable":unset,
+                    "detail":format!("{unset} is not set on the server")})
+            );
+        }
+    }
+    // A provider that needs a key, at its own endpoint, with none supplied:
+    // an explicit test reads no variable, so none is named.
+    assert_eq!(
+        probe_explicit(&json!({"model":"deepseek/missing-key"})).unwrap(),
+        json!({"ok":false,"reason":"no_key","detail":"This model needs an API key, and none is set"})
+    );
+    assert!(server.requests().is_empty());
+    // Local servers and the keyless placeholder at an address are tried.
+    for request in [
+        json!({"model":"ollama/keyless","api_base":server.base}),
+        json!({"model":"lm_studio/keyless","api_base":server.base}),
+        json!({"model":"deepseek/keyless","api_key":NO_KEY,"api_base":server.base}),
+        json!({"model":"openai/keyless","api_base":server.base}),
+    ] {
+        let result = probe_explicit(&request).unwrap();
+        assert_eq!(result["ok"], true, "{request}: {result}");
+    }
+    assert_eq!(server.requests().len(), 4);
+    // An address that refuses the keyless request: the key is what is missing.
+    let refusing = Mock::new(|_| reply(401, "{}"));
+    assert_eq!(
+        probe_explicit(&json!({"model":"deepseek/keyless","api_base":refusing.base})).unwrap()["reason"],
+        "no_key"
+    );
+    assert_eq!(refusing.requests().len(), 1);
+}
+
+#[test]
 fn requests_validate_types_urls_without_echoing_values() {
     for request in [
         json!({"provider":"custom","api_base":"file:///secret"}),

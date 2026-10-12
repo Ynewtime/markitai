@@ -132,7 +132,9 @@ async fn network(mut request: Value, is_probe: bool) -> ApiResult<Value> {
         )),
         Err(_) => {
             if is_probe {
-                Ok(serde_json::json!({"ok":false,"detail":"Model connection test timed out"}))
+                Ok(
+                    serde_json::json!({"ok":false,"detail":"Model connection test timed out","reason":"timeout"}),
+                )
             } else {
                 Err(ApiError::new(
                     503,

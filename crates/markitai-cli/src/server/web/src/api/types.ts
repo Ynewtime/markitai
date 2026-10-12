@@ -325,6 +325,10 @@ export interface DiscoveryResult {
 export interface ProbeResult {
   ok: boolean;
   detail: string;
+  /** Why a test failed (v1.10): no_key, key_rejected, model_not_found, rate_limited, network, timeout, provider_error. */
+  reason?: string;
+  /** The key variable not set on the server (with `no_key`). */
+  key_variable?: string;
 }
 
 export interface NewDeployment {

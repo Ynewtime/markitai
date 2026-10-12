@@ -23,7 +23,9 @@ use base64::Engine;
 pub(crate) use document::{DocumentMetadata, process_document_with_runtime};
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
-pub(crate) use service_probe::probe as service_probe;
+pub(crate) use service_probe::{
+    Failure as ProbeFailure, Reason as ProbeReason, probe as service_probe,
+};
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::io::Read;

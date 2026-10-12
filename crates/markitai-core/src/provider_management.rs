@@ -10,7 +10,10 @@ mod discovery;
 #[cfg(test)]
 mod tests;
 
-use crate::{Error, Result};
+use crate::{
+    Error, Result,
+    llm::{ProbeFailure, ProbeReason},
+};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -569,21 +572,42 @@ fn probe_with_environment(request: &Value, allow_environment: bool) -> Result<Va
         Ok(()) => Ok(
             json!({"ok":true,"detail":format!("{} responded", model.chars().take(280).collect::<String>())}),
         ),
-        Err(error) => {
+        Err(ProbeFailure {
+            reason,
+            error,
+            key_variable,
+        }) => {
             // This helper's errors are deliberately fixed text, an HTTP status
             // with the provider's error type or code, or a transport cause;
             // never reqwest URLs, response bodies or user-supplied credentials.
-            let detail: String = match error {
-                Error::Unsupported(_) => {
+            // A missing key names only its variable.
+            let detail: String = match (reason, &key_variable, error) {
+                (ProbeReason::NoKey, Some(variable), _) => {
+                    format!("{variable} is not set on the server")
+                }
+                (ProbeReason::NoKey, None, _) => {
+                    "This model needs an API key, and none is set".into()
+                }
+                (_, _, Error::Unsupported(_)) => {
                     "This model provider is not supported by the native runtime".into()
                 }
-                Error::Config(_) | Error::NoModelConfigured | Error::InvalidInput(_) => {
+                (_, _, Error::Config(_) | Error::NoModelConfigured | Error::InvalidInput(_)) => {
                     "Model credentials or endpoint configuration are invalid or unavailable".into()
                 }
-                Error::Conversion(message) => message.chars().take(300).collect(),
+                (_, _, Error::Conversion(message)) => message.chars().take(300).collect(),
                 _ => "Model connection test failed".into(),
             };
-            Ok(json!({"ok":false,"detail":detail}))
+            let mut result = json!({"ok":false,"detail":detail,"reason":reason.name()});
+            if let Some(variable) = key_variable {
+                result["key_variable"] = variable.into();
+            }
+            Ok(result)
         }
     }
+}
+
+/// Every `reason` a failed connection test reports, in the order the
+/// settings API documents them.
+pub fn probe_reasons() -> impl Iterator<Item = &'static str> {
+    ProbeReason::ALL.into_iter().map(ProbeReason::name)
 }

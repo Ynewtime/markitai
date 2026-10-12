@@ -98,7 +98,7 @@ export function Peek(props: PeekProps) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || typing(event.target)) return;
-      if (document.querySelector(".confirm-card, .menu, .pdf-card")) return;
+      if (document.querySelector(".confirm-card, .menu, .pdf-card, .toc-sheet")) return;
       const target = event.target as Element | null;
       if (target?.closest?.(".conv-list")) return;
       if (event.key === "Escape" && !windowed) {
@@ -194,7 +194,7 @@ export function Peek(props: PeekProps) {
             {act.label}
           </button>
         ))}
-        <ActionMenu label={t.moreActions} actions={menu} danger={acts?.danger ?? undefined} />
+        <ActionMenu label={t.moreActions} actions={menu} danger={acts?.danger ?? undefined} plain />
         {!phone && (
           <button type="button" class="icon-btn" aria-pressed={docked} aria-label={docked ? t.peekUndock : t.peekDock} title={docked ? t.peekUndock : t.peekDock} onClick={props.onDock}>
             <Icon name={docked ? "ArrowsOutSimple" : "SidebarSimple"} size={15} />
@@ -314,7 +314,7 @@ function PeekDocument({
   const [tab, setTab] = useState<Tab>("rendered");
   const [error, setError] = useState<string | null>(null);
   const [furniture, setFurniture] = useState(readFurniture);
-  const rendered = useRef<RenderedState>({ printable: null, images: null });
+  const rendered = useRef<RenderedState>({ printable: null, images: null, complete: null });
   const printing = useRef<PrintJob | null>(null);
   useEffect(() => {
     setTab("rendered");
@@ -335,7 +335,9 @@ function PeekDocument({
     printing.current?.cancel();
     setError(null);
     const path = doc.path;
-    await rendered.current.images?.done;
+    // A long document is drawn in steps and its pictures load as they come into view: print all of it.
+    await rendered.current.complete;
+    await rendered.current.images?.all();
     const job = printDocument({
       source,
       title: basename(path || item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, ""),

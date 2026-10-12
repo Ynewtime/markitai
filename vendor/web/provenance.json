@@ -156,9 +156,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 22899,
-    "sha256": "578096dfd514634b3ca7f1f6af89271b3d25dbaf1f592c69767f33768fcf11e1",
-    "obtained": "generated: the SVG path strings of 60 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 23196,
+    "sha256": "f6fcf3fa01b6d1a894c90e9a2ec7052d6f585c2a491e3a86134910771d53b851",
+    "obtained": "generated: the SVG path strings of 61 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -329,6 +329,11 @@
         "member": "package/dist/defs/GithubLogo.es.js",
         "bytes": 5630,
         "sha256": "d6fbf39f63cdd5d818765edae5d1ddc1a72b65674b253daa03828097d84981bf"
+      },
+      {
+        "member": "package/dist/defs/ListBullets.es.js",
+        "bytes": 2683,
+        "sha256": "6a400691a7edc0959b5baa502b2c3b0929bf7488622c3ef0f972cf7e31a158d1"
       },
       {
         "member": "package/dist/defs/SidebarSimple.es.js",

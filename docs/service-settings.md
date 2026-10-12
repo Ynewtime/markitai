@@ -26,7 +26,9 @@ save. Responses identify `config_path` and `config_origin`.
 
 Provider detection, live discovery and the transient connection test use
 `/detected`, `/model-discovery` and `/test`; those operations are separate from
-saving settings. They do not persist a connection draft.
+saving settings. They do not persist a connection draft. A failed `/test` answers
+`{ok: false, detail, reason}` with the category of the failure (see
+[LLM](llm.md)).
 
 The deployment view contains `deployment_id`, `routing_group`, `model`, `weight`,
 credential-presence flags, a sanitized API origin and `persisted`. A routing group

@@ -10,12 +10,13 @@ runtime, CDN or external font, and the page makes no request to another origin.
 
 A **sidebar** frames every view: Convert and Conversions (with the number of
 conversions and a pulsing dot while something converts), the Settings sections
-(Models, Appearance and language, Access token), and Docs, GitHub and the
+(Models, Appearance, Access token), and Docs, GitHub and the
 version at the bottom. Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
 keyboard focus, and the choice is remembered in this browser. On phones the
 sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
-Settings). Every view is an address (`/`, `/jobs`, `/settings/models`,
+Settings); Settings there is one list (Models, Appearance, Access token, Docs,
+GitHub) with the version centred below it. Every view is an address (`/`, `/jobs`, `/settings/models`,
 `/settings/appearance`, `/settings/access`), so reloads, Back and new tabs keep
 it. Any other address opens the workbench (with status 404) on "Page not found",
 with the way to Convert and Conversions. On a wide window every page is one
@@ -34,6 +35,8 @@ taps across 44 px.
 (Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
 to six rows), Options, Upload (files) and Folder on the left, Convert on the
 right, and the options drawer, which ends with the equivalent CLI command line.
+On a phone the composer is lighter: the tools are bare 32 px icons (each keeps
+its name for assistive technology and as a tooltip) and Convert is a square arrow.
 The latest three submissions follow, each one click from its details. One file
 starts a job at once; a folder, several files or a `.urls` list waits for
 Convert as one staged line (`sample-folder · 43 files`) that can be removed,
@@ -63,7 +66,9 @@ files wait on Convert); typing URLs is Convert's job.
   opens the conversion's window (docked beside the list, the window follows the
   arrows instead).
 - The **peek window** opens over the dimmed list: previous and next with the
-  position (`8 of 14`), the name (all on one centre line with the buttons), the actions that matter (Download; Retry, Add a
+  position (`8 of 14`), the name (all on one centre line with the buttons; a
+  long name gives up its middle at about 34 characters and shows in full on
+  hover), the actions that matter (Download; Retry, Add a
   model or Enable OCR and retry when that is the fix) and "⋯" (Enhance with LLM,
   Run again, Retry without LLM, Delete), then Details, Preview and Compare as
   tabs. ◫ docks it beside the list instead, and ⤢ opens it as a window again;
@@ -75,7 +80,8 @@ files wait on Convert); typing URLs is Convert's job.
   facts (source and its size, output, what else was saved, models, cost,
   options, finished, kept until; a long output name stays on one line and gives
   up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
-  the start of the result with its front matter and its own pictures. A
+  the start of the result with its front matter and its own pictures, in the same
+  centred reading column as Preview. A
   submission's window shows its progress as one bar (done, failed, stopped,
   converting, waiting) with Retry failed, Download .zip, Stop remaining and Delete,
   the cost, its failures and the notices of all its items; Summary opens the same
@@ -105,6 +111,24 @@ in tabular figures. Code blocks are highlighted by a 3 KB module loaded only whe
 a preview contains code. While a result loads, Rendered, Source and Files show
 its shape in grey lines inside the same frame (with the size of a large result),
 so nothing moves when it arrives.
+
+A long document stays responsive. Rendered reads the Markdown a piece at a time
+(cut only between top-level blocks, so every piece reads as it does in the whole
+document; a document with reference-style link definitions is read at once),
+draws its first screen at once and the rest a few chunks per frame; the browser
+lays out and paints only the chunks near the viewport, and pictures load as they
+come near. A drawn document is kept for its next view (Details, Compare and back,
+Base and LLM), with its scroll position. Source is built the first time it is
+opened, in blocks the browser also skips off screen. Diff compares the two
+versions line by line (Myers' algorithm, bounded so a document changed
+everywhere is refused rather than freezing the page) and folds unchanged
+stretches into "Show N unchanged lines". A document with four or more headings
+gets its **contents**: its top three heading levels (a lone title does not count
+as a level) beside the document on a wide window, marking the section being
+read as it scrolls; a click goes to the heading. The contents button beside
+Base | LLM hides or shows them (remembered in this browser); on a phone or a
+narrow window a round button over the document's corner opens them as a sheet.
+Export PDF waits for the whole document and every picture before it prints.
 
 **Compare** puts the original beside the Markdown: a PDF's pages (drawn by the
 server, loaded as they scroll into view), an uploaded image, the HTML the server
@@ -152,7 +176,11 @@ and an unknown address. Alone on a page the panel is 480 px wide; in a column
 (the list, a settings page, a phone) it takes the
 column's width.
 
-**Settings** are pages. Models lists the configured models (Test, Edit, Delete),
+**Settings** are pages. Models lists the configured models (Test, Edit, Delete;
+a failed test says why, under the model and at the top of the page: no API key,
+naming the server's key variable when it is not set, key rejected, model not
+found, rate limited or out of quota, provider unreachable, no answer in time, or
+a provider error, with what to do and the provider's own message folded below),
 models detected for this session (Save to config) and the configuration source;
 Add models opens the provider picker: one search over every provider (name,
 model prefix and other names), saved connections and environment credentials as
@@ -174,7 +202,7 @@ names in a muted line, at its own endpoint, and takes no key either (a saved
 connection offers no Add key; a key a config entry still holds can be removed).
 A saved subscription offers no key or address. Bedrock keeps its optional key
 and address. A backend that sends
-no provider `group` gets the common eight by name and everything else under All. Appearance and language chooses English, 中文 or 日本語 and the
+no provider `group` gets the common eight by name and everything else under All. Appearance (its page is titled Appearance and language) chooses English, 中文 or 日本語 and the
 theme (Auto, Light, Dark); Access token says whether this tab holds a token
 (with Forget beside it) and takes a new one in one field with Save; it is kept in
 this tab only.

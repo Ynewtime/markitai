@@ -213,6 +213,10 @@ export const zh: Dict = {
   diffTooLarge: "文档过大，无法对比",
   diffSame: "基础版与 LLM 增强版 Markdown 相同",
   diffAria: "基础版与 LLM 增强版 Markdown 的行级对比",
+  diffFold: (lines: string) => `显示 ${lines} 行未改动的内容`,
+  tocTitle: "目录",
+  tocShow: "显示目录",
+  tocHide: "隐藏目录",
   filesAria: "此结果的文件",
   filesNone: "此结果没有文件",
   imagePlaceholder: (alt) => `[图片：${alt}]`,
@@ -358,6 +362,29 @@ export const zh: Dict = {
   modelTestPassed: "模型测试通过",
   modelTestReady: (model) => `${model} 已连接并可正常使用。`,
   modelTestFailed: "模型测试失败",
+  testFailTitle: (reason) =>
+    ({
+      no_key: "未设置 API 密钥",
+      key_rejected: "密钥被拒绝",
+      model_not_found: "找不到模型",
+      rate_limited: "请求受限或额度不足",
+      network: "无法连接服务商",
+      timeout: "响应超时",
+    })[reason] ?? "服务商返回错误",
+  testFailHint: (reason, variable, model) =>
+    reason === "no_key"
+      ? variable
+        ? `服务器上未设置 ${variable}。请在运行 markitai serve 的环境中设置它并重启服务，或为该模型的连接添加密钥。`
+        : "该模型没有可用的 API 密钥。请为它的连接添加密钥，或在运行 markitai serve 的环境中设置服务商的密钥变量。"
+      : (({
+          key_rejected: "服务商拒绝了这个密钥。请确认密钥正确、仍然有效且有权使用该模型；没有单独密钥的模型会使用服务器上设置的密钥变量。",
+          model_not_found: `服务商没有向这个密钥提供 ${model}。请检查模型 ID。`,
+          rate_limited: "服务商正在限制请求，或账户的额度、余额已用完。请稍后重试，或检查账户。",
+          network: "服务器无法连接到服务商。请检查接口地址以及服务器的网络或代理。",
+          timeout: "服务商没有及时响应。请重试；如果反复出现，请查看服务商的状态。",
+        }) as Record<string, string>)[reason] ?? "服务商返回了错误，原文见下方。",
+  testFailFor: (model) => `${model} 的测试`,
+  testFailDetail: "服务商原文",
   save: "保存",
   saving: "保存中…",
   saved: "已保存",
@@ -410,6 +437,7 @@ export const zh: Dict = {
   navConvert: "转换",
   navModels: "模型",
   navAppearance: "外观与语言",
+  navAppearanceShort: "外观",
   navAccess: "访问令牌",
   navLive: (n: number) => `${n} 个正在转换`,
   titleSettings: "设置 · Markitai",

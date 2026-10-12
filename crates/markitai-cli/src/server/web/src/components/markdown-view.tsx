@@ -5,6 +5,14 @@
 // highlighted by a module loaded only when there is code. Every pane has the
 // same fixed height, so switching tabs never moves the frame. Rendering is
 // sanitized and pinned to the result's own files.
+//
+// A long document stays responsive: Rendered draws its first chunk at once and
+// the rest a few chunks per frame, each chunk laid out and painted only near
+// the viewport (`content-visibility`), pictures fetched only as they come
+// near; a drawn document is kept for the next view of it (Details, Compare and
+// back) instead of being drawn again. Source and Diff are built the first time
+// they are opened, in blocks the browser also skips off screen, and Diff folds
+// unchanged stretches. A document with enough headings gets its contents.
 import type { ComponentChildren } from "preact";
 import { createPortal } from "preact/compat";
 import type { MutableRef } from "preact/hooks";
@@ -13,11 +21,25 @@ import { fetchBlob, fetchText, filePath, imagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
-import { compareLines, type Comparison } from "../lib/diff.ts";
+import { compareLines, foldRows, type Comparison, type DiffRow } from "../lib/diff.ts";
 import { interceptDownload } from "../lib/download.ts";
 import { basename, fmtBytes, localeTag } from "../lib/format.ts";
 import { parseFrontMatter } from "../lib/frontmatter.ts";
-import { type ImageLoads, loadArtifactImages, renderMarkdown, splitFrontmatter } from "../lib/markdown.ts";
+import {
+  type DocumentPlan,
+  type Heading,
+  type ImageLoads,
+  loadArtifactImages,
+  countTableRows,
+  emptyPlan,
+  loadLibraries,
+  readPiece,
+  renderChunk,
+  renderMarkdown,
+  type RenderContext,
+  splitFrontmatter,
+  splitMarkdown,
+} from "../lib/markdown.ts";
 import { groupNotices } from "../lib/notices.ts";
 import { cachedExcerpt, resultKey } from "../lib/results.ts";
 import type { SessionItem } from "../lib/session.ts";
@@ -25,6 +47,8 @@ import { capTables, freezeColumns, markNumericColumns, MARKER, ROW_CHUNK, ROW_LI
 import { FrontCard } from "./inspector.tsx";
 import { Icon, Logo } from "./icons.tsx";
 import { Skeleton } from "./skeleton.tsx";
+import { entryAt, tocEntries } from "../lib/toc.ts";
+import { TocAside, TocSheet } from "./toc.tsx";
 
 /** Larger sides are offered as downloads instead of being compared in the page. */
 const DIFF_BYTES = 8 * 1024 * 1024;
@@ -36,6 +60,69 @@ export type Tab = "rendered" | "source" | "diff" | "files";
 export interface RenderedState {
   printable: HTMLElement | null;
   images: ImageLoads | null;
+  /** Settles once every chunk of the document is drawn. */
+  complete: Promise<void> | null;
+}
+
+/** Work per slice while the rest of a document is drawn; then the page answers again. */
+const SLICE_MS = 10;
+/** Contents beside the document from this window width; below, a sheet. */
+const TOC_WIDE = 900;
+const TOC_KEY = "markitai.toc";
+/** Drawn documents kept for their next view. */
+const KEEP_DRAWN = 2;
+
+/** A document drawn in full, kept while another view shows. */
+interface Drawn {
+  nodes: HTMLElement[];
+  plan: DocumentPlan;
+  /** The element of each of the plan's headings, once its chunk is drawn. */
+  headings: (HTMLElement | null)[];
+  capped: CappedTable[];
+  capHosts: HTMLElement[];
+  loads: ImageLoads;
+  scroll: number;
+}
+const drawnDocuments = new Map<string, Drawn>();
+function keepDrawn(key: string, drawn: Drawn): void {
+  drawnDocuments.get(key)?.loads.dispose();
+  drawnDocuments.delete(key);
+  drawnDocuments.set(key, drawn);
+  while (drawnDocuments.size > KEEP_DRAWN) {
+    const [oldest, entry] = drawnDocuments.entries().next().value as [string, Drawn];
+    entry.loads.dispose();
+    drawnDocuments.delete(oldest);
+  }
+}
+/** A kept document leaves the cache while a view shows it, so two views never share its nodes. */
+function takeDrawn(key: string): Drawn | null {
+  const drawn = drawnDocuments.get(key) ?? null;
+  drawnDocuments.delete(key);
+  return drawn;
+}
+const comparisons = new Map<string, Comparison>();
+
+const yieldToMain = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/** A chunk's height before it is laid out, from its length and pictures, so the scroll bar is about right. */
+function estimateHeight(characters: number, images: number, width: number): number {
+  const perLine = Math.max(16, (width - 64) / 11);
+  return Math.round((characters / perLine) * 29 + images * 300 + 24);
+}
+
+function readTocOpen(): boolean {
+  try {
+    return localStorage.getItem(TOC_KEY) !== "hidden";
+  } catch {
+    return true;
+  }
+}
+function storeTocOpen(open: boolean): void {
+  try {
+    localStorage.setItem(TOC_KEY, open ? "shown" : "hidden");
+  } catch {
+    // A browser without storage keeps the choice for this page only.
+  }
 }
 
 interface HighlightModule {
@@ -93,26 +180,42 @@ export function MarkdownView({
   const capHosts = useRef<HTMLElement[]>([]);
   const order: Tab[] = compact ? ["rendered", "source"] : pair ? ["rendered", "source", "diff", "files"] : ["rendered", "source", "files"];
   const active = order.includes(tab) ? tab : "rendered";
+  const viewer = useRef<HTMLDivElement>(null);
+  const pane = useRef<HTMLDivElement>(null);
+  /** Draws every chunk up to the given one now (a contents jump past the drawn part). */
+  const drawUpTo = useRef<(chunk: number) => void>(() => undefined);
+  const headingEls = useRef<(HTMLElement | null)[]>([]);
+  const [headings, setHeadings] = useState<Heading[]>([]);
+  const [reading, setReading] = useState(0);
+  const [wide, setWide] = useState(true);
+  const [tocOpen, setTocOpen] = useState(readTocOpen);
+  const [sheet, setSheet] = useState(false);
+  const [sourceSeen, setSourceSeen] = useState(active === "source");
+  const [opened, setOpened] = useState<ReadonlySet<number>>(new Set());
 
   const split = useMemo(() => (markdown === null ? null : splitFrontmatter(markdown)), [markdown]);
   const front = useMemo(() => parseFrontMatter(split?.frontmatter ?? null), [split]);
   const notices = useMemo(() => (compact ? [] : groupNotices(item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))), [compact, item.warnings, item.key, item.name]);
 
-  // ---- Rendered
+  // ---- Rendered: the first chunk at once, the rest a few per frame
   useEffect(() => {
     const target = body.current;
     if (!target || split === null || !result) return;
     let stale = false;
-    let loads: ImageLoads | null = null;
-    let stopHighlight: (() => void) | null = null;
+    let complete = false;
+    let drawn: Drawn | null = null;
+    const stops: (() => void)[] = [];
+    let finished: () => void = () => undefined;
+    const done = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    if (rendered) rendered.current.complete = done;
     setRenderError(null);
-    setReady(false);
     setExpanding({});
+    setReading(0);
+    const key = `${resultKey(item)}|${item.itemId}|${path}|${locale}|${hasToken() ? "header" : "url"}`;
     const placeholder = (alt: string) => t.imagePlaceholder(alt || t.imageUnavailable);
-    const cut = capTables(split.body);
-    capped.current = cut.tables;
-    capHosts.current = [];
-    renderMarkdown(cut.markdown, {
+    const context: RenderContext = {
       documentPath: path,
       artifacts: result.artifacts,
       // With a token, images are fetched with the header instead of a tokened URL.
@@ -122,61 +225,188 @@ export function MarkdownView({
       fallbackAlt: t.figureFrom(item.name),
       tableLabel: t.tableAria,
       codeLabel: t.codeAria,
-    }).then(
-      (fragment) => {
-        if (stale) return;
-        // A capped table's marker paragraph becomes its caption bar.
-        for (const paragraph of [...fragment.querySelectorAll("p")]) {
-          const text = paragraph.textContent ?? "";
-          if (!text.startsWith(MARKER)) continue;
-          const index = Number(text.slice(MARKER.length));
-          const table = cut.tables[index];
-          if (!table || !Number.isSafeInteger(index)) continue;
-          const bar = document.createElement("div");
-          bar.className = "table-cap";
-          bar.setAttribute("data-cap", String(index));
-          capHosts.current[index] = bar;
-          paragraph.replaceWith(bar);
-          bar.previousElementSibling?.classList.add("is-capped");
-        }
-        for (const wrap of fragment.querySelectorAll<HTMLElement>(".table-scroll")) {
-          const table = wrap.querySelector("table");
-          if (!table) continue;
-          markNumericColumns(table);
-          if (table.rows.length > TALL_ROWS) wrap.classList.add("is-tall");
-        }
-        target.replaceChildren(fragment);
-        setReady(true);
-        // Caption bars are drawn by Preact into the placeholders below.
-        setExpanding(Object.fromEntries(cut.tables.map((_, index) => [index, -1])));
-        loads = loadArtifactImages(
-          target,
-          (relpath) => fetchBlob(imagePath(item.jobId, item.itemId, relpath)).then((file) => file.blob),
-          (image) => {
-            const span = document.createElement("span");
-            span.className = "img-blocked";
-            span.textContent = placeholder(image.getAttribute("alt") ?? "");
-            image.replaceWith(span);
-          },
-        );
-        if (rendered) rendered.current.images = loads;
-        if (target.querySelector("pre > code")) {
-          loadHighlighter().then(
-            (module) => {
-              if (!stale) stopHighlight = module.highlightAll(target);
+    };
+    // The section being read: the last heading above a line near the pane's top. The
+    // chunk at that line is found by its box (a chunk off screen is never laid out for this),
+    // then only that chunk's headings are measured.
+    let frame = 0;
+    const locate = () => {
+      frame = 0;
+      const scroller = pane.current;
+      const nodes = drawn?.nodes ?? [];
+      if (!scroller || !drawn || !nodes.length) return;
+      const line = scroller.getBoundingClientRect().top + Math.min(160, scroller.clientHeight / 4);
+      let low = 0;
+      let high = nodes.length - 1;
+      let at = 0;
+      while (low <= high) {
+        const middle = (low + high) >> 1;
+        if ((nodes[middle] as HTMLElement).getBoundingClientRect().top <= line) {
+          at = middle;
+          low = middle + 1;
+        } else high = middle - 1;
+      }
+      let found = 0;
+      for (const [index, heading] of drawn.plan.headings.entries()) {
+        if (heading.chunk > at) break;
+        const element = headingEls.current[index];
+        if (heading.chunk < at || (element && element.getBoundingClientRect().top <= line)) found = index;
+      }
+      setReading(found);
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(locate);
+    };
+    const spying = !compact ? pane.current : null;
+    spying?.addEventListener("scroll", onScroll, { passive: true });
+    const highlight = (root: HTMLElement) => {
+      if (!root.querySelector("pre > code")) return;
+      loadHighlighter().then(
+        (module) => {
+          if (!stale) stops.push(module.highlightAll(root));
+        },
+        () => undefined,
+      );
+    };
+    const finish = () => {
+      complete = true;
+      if (rendered) rendered.current.images = drawn?.loads ?? null;
+      setExpanding(Object.fromEntries((drawn?.capped ?? []).map((_, index) => [index, -1])));
+      finished();
+      onRendered?.(target);
+    };
+
+    const kept = takeDrawn(key);
+    if (kept) {
+      // Shown before: its nodes come back as they were, pictures included.
+      drawn = kept;
+      target.replaceChildren(...kept.nodes);
+      capped.current = kept.capped;
+      capHosts.current = kept.capHosts;
+      headingEls.current = kept.headings;
+      setHeadings(kept.plan.headings);
+      setReady(true);
+      const scroll = kept.scroll;
+      requestAnimationFrame(() => {
+        if (stale || !pane.current) return;
+        if (scroll) pane.current.scrollTop = scroll;
+        locate();
+      });
+      finish();
+    } else {
+      setReady(false);
+      target.replaceChildren();
+      headingEls.current = [];
+      capHosts.current = [];
+      const cut = capTables(split.body);
+      capped.current = cut.tables;
+      loadLibraries()
+        .then(async (libraries) => {
+          if (stale) return;
+          // Read a piece at a time as the chunks need them; the contents grow with it.
+          const pieces = splitMarkdown(cut.markdown);
+          const plan = emptyPlan(countTableRows(cut.markdown));
+          let read = 0;
+          const loads = loadArtifactImages(
+            target,
+            (relpath) => fetchBlob(imagePath(item.jobId, item.itemId, relpath)).then((file) => file.blob),
+            (image) => {
+              const span = document.createElement("span");
+              span.className = "img-blocked";
+              span.textContent = placeholder(image.getAttribute("alt") ?? "");
+              image.replaceWith(span);
             },
-            () => undefined,
+            { lazy: true },
           );
-        }
-        onRendered?.(target);
-      },
-      (error: unknown) => !stale && setRenderError(error),
-    );
+          if (rendered) rendered.current.images = loads;
+          const current: Drawn = { nodes: [], plan, headings: [], capped: cut.tables, capHosts: capHosts.current, loads, scroll: 0 };
+          drawn = current;
+          headingEls.current = current.headings;
+          let listed = -1;
+          const list = () => {
+            if (plan.headings.length === listed) return;
+            listed = plan.headings.length;
+            setHeadings(plan.headings.slice());
+          };
+          const tables = { offset: 0 };
+          const width = target.clientWidth || 760;
+          let next = 0;
+          const more = () => {
+            while (next >= plan.chunks.length && read < pieces.length) readPiece(libraries, plan, pieces[read++] ?? "");
+            return next < plan.chunks.length;
+          };
+          const drawOne = () => {
+            const index = next++;
+            const fragment = renderChunk(libraries, plan, index, context, tables);
+            // A capped table's marker paragraph becomes its caption bar.
+            for (const paragraph of [...fragment.querySelectorAll("p")]) {
+              const text = paragraph.textContent ?? "";
+              if (!text.startsWith(MARKER)) continue;
+              const table = Number(text.slice(MARKER.length));
+              if (!cut.tables[table] || !Number.isSafeInteger(table)) continue;
+              const bar = document.createElement("div");
+              bar.className = "table-cap";
+              bar.setAttribute("data-cap", String(table));
+              current.capHosts[table] = bar;
+              paragraph.replaceWith(bar);
+              bar.previousElementSibling?.classList.add("is-capped");
+              setExpanding((previous) => ({ ...previous, [table]: -1 }));
+            }
+            for (const wrap of fragment.querySelectorAll<HTMLElement>(".table-scroll")) {
+              const table = wrap.querySelector("table");
+              if (!table) continue;
+              markNumericColumns(table);
+              if (table.rows.length > TALL_ROWS) wrap.classList.add("is-tall");
+            }
+            const chunk = document.createElement("div");
+            chunk.className = "doc-chunk";
+            chunk.style.setProperty("contain-intrinsic-size", `auto ${estimateHeight(plan.sizes[index] ?? 0, fragment.querySelectorAll("img").length, width)}px`);
+            chunk.append(fragment);
+            // The chunk's top-level headings, in order, are the plan's headings of this chunk.
+            const wanted = plan.headings.map((heading, position) => ({ heading, position })).filter(({ heading }) => heading.chunk === index);
+            const found = [...chunk.children].filter((element): element is HTMLElement => /^H[1-6]$/.test(element.tagName));
+            let cursor = 0;
+            for (const { heading, position } of wanted) {
+              const exact = found.length === wanted.length ? found[cursor] : found.slice(cursor).find((element) => (element.textContent ?? "").trim() === heading.text);
+              if (!exact) continue;
+              cursor = found.indexOf(exact) + 1;
+              current.headings[position] = exact;
+            }
+            target.append(chunk);
+            current.nodes.push(chunk);
+            loads.add(chunk);
+            highlight(chunk);
+          };
+          drawUpTo.current = (chunk) => {
+            while (!stale && next <= chunk && more()) drawOne();
+            list();
+          };
+          if (more()) drawOne();
+          list();
+          setReady(true);
+          while (more()) {
+            await yieldToMain();
+            if (stale) return;
+            const until = performance.now() + SLICE_MS;
+            do drawOne();
+            while (more() && performance.now() < until);
+            list();
+          }
+          finish();
+        })
+        .catch((error: unknown) => !stale && setRenderError(error));
+    }
     return () => {
       stale = true;
-      stopHighlight?.();
-      loads?.dispose();
-      if (rendered && rendered.current.images === loads) rendered.current.images = null;
+      drawUpTo.current = () => undefined;
+      for (const stop of stops) stop();
+      spying?.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+      if (drawn && complete) {
+        drawn.scroll = pane.current?.scrollTop ?? 0;
+        keepDrawn(key, drawn);
+      } else drawn?.loads.dispose();
+      if (rendered && rendered.current.images === drawn?.loads) rendered.current.images = null;
       onRendered?.(null);
     };
   }, [split, path, result, item.jobId, item.name, t]);
@@ -184,6 +414,49 @@ export function MarkdownView({
   useEffect(() => {
     if (rendered) rendered.current.printable = printable.current;
   });
+
+  // ---- Contents: beside the document on a wide view, a sheet otherwise
+  useEffect(() => {
+    const root = viewer.current;
+    if (!root || compact || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(() => setWide(root.clientWidth >= TOC_WIDE));
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [compact]);
+  const entries = useMemo(() => (compact ? [] : tocEntries(headings)), [compact, headings]);
+  const readingEntry = entryAt(entries, reading);
+  const showAside = entries.length > 0 && wide && tocOpen && active === "rendered";
+  useEffect(() => {
+    if (!wide || active !== "rendered") setSheet(false);
+  }, [wide, active]);
+  /** Scroll the document to a heading, drawing the chunks before it first. */
+  const goTo = (index: number) => {
+    const heading = headings[index];
+    const scroller = pane.current;
+    if (!heading || !scroller) return;
+    drawUpTo.current(heading.chunk);
+    const element = headingEls.current[index];
+    if (!element) return;
+    const place = () => {
+      scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 12;
+    };
+    place();
+    // Chunks above it are laid out once they come near; put it back at the top if they moved it.
+    requestAnimationFrame(() => requestAnimationFrame(place));
+    setReading(index);
+    element.tabIndex = -1;
+    element.focus({ preventScroll: true });
+  };
+  const toggleToc = () => {
+    if (wide) {
+      setTocOpen(!tocOpen);
+      storeTocOpen(!tocOpen);
+    } else setSheet(true);
+  };
+
+  useEffect(() => {
+    if (active === "source") setSourceSeen(true);
+  }, [active]);
 
   /** Draw a capped table's remaining rows in steps, so the page keeps answering. */
   const showAll = async (index: number) => {
@@ -227,6 +500,13 @@ export function MarkdownView({
   useEffect(() => {
     if (active !== "diff" || !pair || !result) return;
     let stale = false;
+    const key = `${resultKey(item)}|${pair.base}|${pair.llm}`;
+    const known = comparisons.get(key);
+    setOpened(new Set());
+    if (known) {
+      setDiff(known);
+      return;
+    }
     setDiff(null);
     const sizes = new Map(result.artifacts.map((artifact) => [artifact.relpath, artifact.size]));
     if ((sizes.get(pair.base) ?? 0) > DIFF_BYTES || (sizes.get(pair.llm) ?? 0) > DIFF_BYTES) {
@@ -238,7 +518,13 @@ export function MarkdownView({
       return known !== null ? Promise.resolve(known) : fetchText(filePath(item.jobId, relpath), DIFF_BYTES);
     };
     Promise.all([read(pair.base), read(pair.llm)]).then(
-      ([base, llm]) => !stale && setDiff(compareLines(base, llm)),
+      ([base, llm]) => {
+        if (stale) return;
+        const comparison = compareLines(base, llm);
+        comparisons.set(key, comparison);
+        while (comparisons.size > KEEP_DRAWN) comparisons.delete(comparisons.keys().next().value as string);
+        setDiff(comparison);
+      },
       (error: unknown) => {
         if (stale) return;
         setDiff(error instanceof RangeError ? { kind: "too-large" } : { kind: "error", error });
@@ -296,7 +582,7 @@ export function MarkdownView({
   const words = new Intl.NumberFormat(localeTag(locale));
 
   return (
-    <div class={compact ? "viewer is-compact" : "viewer"}>
+    <div ref={viewer} class={compact ? "viewer is-compact" : "viewer"}>
       <div class="viewer-bar">
         <div class="tabs" role="tablist" aria-label={t.previewAria}>
           {tabButton("rendered", t.rendered)}
@@ -304,18 +590,36 @@ export function MarkdownView({
           {!compact && pair && tabButton("diff", t.diffTab)}
           {!compact && tabButton("files", t.filesTab, result?.artifacts.length)}
         </div>
-        {pair && (active === "rendered" || active === "source") && (
-          <span class="seg" role="group" aria-label={t.versionAria}>
-            {(["base", "llm"] as const).map((value) => (
-              <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => doc.setVersion(value)}>
-                {value === "base" ? t.baseTag : t.llmTag}
+        {(entries.length > 0 && wide && active === "rendered") || (pair && (active === "rendered" || active === "source")) ? (
+          <span class="viewer-side">
+            {entries.length > 0 && wide && active === "rendered" && (
+              <button
+                type="button"
+                class={showAside ? "icon-btn toc-toggle is-on" : "icon-btn toc-toggle"}
+                aria-label={t.tocTitle}
+                title={tocOpen ? t.tocHide : t.tocShow}
+                aria-pressed={tocOpen}
+                onClick={toggleToc}
+              >
+                <Icon name="ListBullets" size={16} />
               </button>
-            ))}
+            )}
+            {pair && (active === "rendered" || active === "source") && (
+              <span class="seg" role="group" aria-label={t.versionAria}>
+                {(["base", "llm"] as const).map((value) => (
+                  <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => doc.setVersion(value)}>
+                    {value === "base" ? t.baseTag : t.llmTag}
+                  </button>
+                ))}
+              </span>
+            )}
           </span>
-        )}
+        ) : null}
       </div>
 
-      <div id={`${prefix}-pane-rendered`} role="tabpanel" aria-labelledby={`${prefix}-tab-rendered`} class="pane" tabIndex={0} hidden={active !== "rendered"}>
+      <div class="viewer-main">
+      {showAside && <TocAside t={t} entries={entries} active={readingEntry} onPick={goTo} />}
+      <div ref={pane} id={`${prefix}-pane-rendered`} role="tabpanel" aria-labelledby={`${prefix}-tab-rendered`} class="pane" tabIndex={0} hidden={active !== "rendered"}>
         {markdown === null || renderError ? (
           note(failure)
         ) : (
@@ -374,12 +678,9 @@ export function MarkdownView({
       <div id={`${prefix}-pane-source`} role="tabpanel" aria-labelledby={`${prefix}-tab-source`} class="pane is-source" tabIndex={0} hidden={active !== "source"}>
         {markdown === null || split === null ? (
           note(failure, "source")
-        ) : (
-          <pre class="source" aria-label={t.srcAria}>
-            {split.frontmatter !== null && <span class="fm">{split.frontmatter}</span>}
-            {split.body}
-          </pre>
-        )}
+        ) : sourceSeen ? (
+          <SourceText label={t.srcAria} frontmatter={split.frontmatter} body={split.body} />
+        ) : null}
       </div>
 
       {!compact && pair && (
@@ -396,20 +697,16 @@ export function MarkdownView({
                 {basename(pair.base)} → {basename(pair.llm)} · +{diff.added} -{diff.removed}
                 {diff.added === 0 && diff.removed === 0 && ` · ${t.diffSame}`}
               </p>
-              {diff.rows.map((row, index) => (
-                <div key={index} class={row.type === "add" ? "diff-line is-add" : row.type === "del" ? "diff-line is-del" : "diff-line"}>
-                  <span class="diff-no" aria-hidden="true">
-                    {row.aNo ?? ""}
-                  </span>
-                  <span class="diff-no" aria-hidden="true">
-                    {row.bNo ?? ""}
-                  </span>
-                  <span class="diff-mark" aria-hidden="true">
-                    {row.type === "add" ? "+" : row.type === "del" ? "-" : " "}
-                  </span>
-                  <span class="diff-text">{row.text}</span>
-                </div>
-              ))}
+              {foldRows(diff.rows).map((segment, index) =>
+                segment.kind === "rows" || opened.has(index) ? (
+                  <DiffRows key={index} rows={segment.rows} />
+                ) : (
+                  <button key={index} type="button" class="diff-fold" onClick={() => setOpened((previous) => new Set(previous).add(index))}>
+                    <Icon name="CaretDown" size={13} />
+                    {t.diffFold(words.format(segment.rows.length))}
+                  </button>
+                ),
+              )}
             </div>
           )}
         </div>
@@ -447,7 +744,76 @@ export function MarkdownView({
           )}
         </div>
       )}
+      </div>
+      {/* A phone or a narrow window: the contents open from a button over the document's corner. */}
+      {entries.length > 0 && !wide && active === "rendered" && (
+        <button type="button" class="toc-fab" aria-label={t.tocTitle} title={t.tocTitle} aria-haspopup="dialog" aria-expanded={sheet} onClick={toggleToc}>
+          <Icon name="ListBullets" size={18} />
+        </button>
+      )}
+      {sheet && entries.length > 0 && (
+        <TocSheet
+          t={t}
+          entries={entries}
+          active={readingEntry}
+          onPick={(index) => {
+            setSheet(false);
+            requestAnimationFrame(() => goTo(index));
+          }}
+          onClose={() => setSheet(false)}
+        />
+      )}
     </div>
+  );
+}
+
+/** Lines per block of Source and Diff: a block off screen is not laid out. */
+const BLOCK_LINES = 200;
+
+/** The Markdown as written, in blocks of lines the browser lays out only near the viewport. */
+function SourceText({ label, frontmatter, body }: { label: string; frontmatter: string | null; body: string }) {
+  const blocks = useMemo(() => {
+    const lines = (frontmatter !== null ? body.replace(/^\n/, "") : body).split("\n");
+    const out: string[] = [];
+    for (let index = 0; index < lines.length; index += BLOCK_LINES) out.push(lines.slice(index, index + BLOCK_LINES).join("\n"));
+    return out;
+  }, [frontmatter, body]);
+  return (
+    <pre class="source" aria-label={label}>
+      {frontmatter !== null && <span class="fm source-block">{frontmatter}</span>}
+      {blocks.map((text, index) => (
+        <span key={index} class="source-block" style={{ containIntrinsicSize: `auto ${Math.max(1, Math.ceil(text.length / 60)) * 23}px` }}>
+          {text}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
+function DiffRows({ rows }: { rows: DiffRow[] }) {
+  const blocks: DiffRow[][] = [];
+  for (let index = 0; index < rows.length; index += BLOCK_LINES) blocks.push(rows.slice(index, index + BLOCK_LINES));
+  return (
+    <>
+      {blocks.map((block, index) => (
+        <div key={index} class="diff-block">
+          {block.map((row, line) => (
+            <div key={line} class={row.type === "add" ? "diff-line is-add" : row.type === "del" ? "diff-line is-del" : "diff-line"}>
+              <span class="diff-no" aria-hidden="true">
+                {row.aNo ?? ""}
+              </span>
+              <span class="diff-no" aria-hidden="true">
+                {row.bNo ?? ""}
+              </span>
+              <span class="diff-mark" aria-hidden="true">
+                {row.type === "add" ? "+" : row.type === "del" ? "-" : " "}
+              </span>
+              <span class="diff-text">{row.text}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </>
   );
 }
 

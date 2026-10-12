@@ -527,7 +527,12 @@ after its status instead of the provider's message:
 missing response's cause the same way (`Model connection request failed:
 connection refused`) and uses the same fixed phrases, but of a provider's
 refusal it shows only the error type or code, never its message:
-`Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)`.
+`Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)`. A failed test
+also answers a `reason`: `no_key` (with `key_variable`, the variable that is not
+set on the server; found before any request is sent), `key_rejected` (401/403),
+`model_not_found`, `rate_limited` (429 or an exhausted quota or balance),
+`network`, `timeout` or `provider_error`; the workbench explains each in the
+reader's language.
 
 ## Retries, budgets and usage
 

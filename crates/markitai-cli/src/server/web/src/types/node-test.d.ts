@@ -29,3 +29,8 @@ declare module "node:fs" {
 declare module "node:vm" {
   export function runInNewContext(code: string, context: Record<string, unknown>): unknown;
 }
+
+// The vendored parser, imported by path in tests (the page loads it as /ui/marked.js).
+declare module "*/vendor/web/marked.js" {
+  export { marked } from "/ui/marked.js";
+}

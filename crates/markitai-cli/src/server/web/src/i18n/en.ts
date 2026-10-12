@@ -231,6 +231,10 @@ export const en = {
   diffTooLarge: "Document too large to diff",
   diffSame: "Base and LLM Markdown are identical",
   diffAria: "Line diff of base and LLM Markdown",
+  diffFold: (lines: string) => `Show ${lines} unchanged lines`,
+  tocTitle: "Contents",
+  tocShow: "Show contents",
+  tocHide: "Hide contents",
   filesAria: "Files of this result",
   filesNone: "This result has no files",
   imagePlaceholder: (alt: string) => `[Image: ${alt}]`,
@@ -391,6 +395,29 @@ export const en = {
   modelTestPassed: "Model test passed",
   modelTestReady: (model: string) => `${model} is ready to use.`,
   modelTestFailed: "Model test failed",
+  testFailTitle: (reason: string) =>
+    ({
+      no_key: "No API key",
+      key_rejected: "Key rejected",
+      model_not_found: "Model not found",
+      rate_limited: "Rate limited or out of quota",
+      network: "Provider unreachable",
+      timeout: "No answer in time",
+    })[reason] ?? "Provider error",
+  testFailHint: (reason: string, variable: string | null, model: string) =>
+    reason === "no_key"
+      ? variable
+        ? `${variable} is not set on the server. Set it where markitai serve runs and restart the server, or add a key to this model's connection.`
+        : "No API key is set for this model. Add one to its connection, or set the provider's key variable where markitai serve runs."
+      : (({
+          key_rejected: "The provider refused the key. Check that it is correct, still active and allowed to use this model; a model without a key of its own uses the key variable set on the server.",
+          model_not_found: `The provider does not offer ${model} to this key. Check the model ID.`,
+          rate_limited: "The provider is limiting requests, or the account has no quota or balance left. Try again later, or check the account.",
+          network: "The server could not reach the provider. Check the address and the server's network or proxy.",
+          timeout: "The provider did not answer in time. Try again; if it keeps happening, check the provider's status.",
+        }) as Record<string, string>)[reason] ?? "The provider answered with an error. Its message is below.",
+  testFailFor: (model: string) => `Test of ${model}`,
+  testFailDetail: "Provider's message",
   save: "Save",
   saving: "Saving…",
   saved: "Saved",
@@ -443,6 +470,7 @@ export const en = {
   navConvert: "Convert",
   navModels: "Models",
   navAppearance: "Appearance and language",
+  navAppearanceShort: "Appearance",
   navAccess: "Access token",
   navLive: (n: number) => `${n} converting`,
   titleSettings: "Settings · Markitai",

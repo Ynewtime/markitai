@@ -23,6 +23,9 @@ struct Server {
 }
 impl Server {
     fn start(root: &Path) -> Self {
+        Self::start_with(root, &[])
+    }
+    fn start_with(root: &Path, environment: &[(&str, &str)]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
         command.env_clear();
         for key in ["PATH", "HOME", "TMPDIR", "SYSTEMROOT"] {
@@ -30,6 +33,7 @@ impl Server {
                 command.env(key, value);
             }
         }
+        command.envs(environment.iter().copied());
         let mut child = command
             .current_dir(root)
             .env("MARKITAI_HOME", root.join("home"))
@@ -270,6 +274,7 @@ fn actual_service_discovers_cached_models_and_probes_stored_or_draft_without_mut
     assert_eq!(status, 200, "{result}");
     assert_eq!(headers["cache-control"], "no-store");
     assert_eq!(result["ok"], true);
+    assert!(result.get("reason").is_none(), "{result}");
     let requests = backend.seen.lock().unwrap().clone();
     assert_eq!(requests.len(), 2);
     assert!(
@@ -286,6 +291,8 @@ fn actual_service_discovers_cached_models_and_probes_stored_or_draft_without_mut
     );
     let (_,_,failed)=server.request("POST","/api/settings/llm/test",Some(&json!({"model":"openai/rejected-test-model","api_key":"private-provider-key","api_base":backend.base})));
     assert_eq!(failed["ok"], false);
+    assert_eq!(failed["reason"], "key_rejected");
+    assert!(failed.get("key_variable").is_none());
     assert!(!failed.to_string().contains("private-provider-key"));
     assert!(!failed.to_string().contains("secret-base"));
     assert_eq!(backend.seen.lock().unwrap().len(), 3);
@@ -365,6 +372,66 @@ fn actual_service_probes_and_discovers_with_user_dotenv_credentials() {
     assert!(requests[2].starts_with("GET "));
     assert!(requests[2].contains("authorization: Bearer dotenv-reference-key"));
     assert!(!server.logs.lock().unwrap().contains("dotenv-"));
+}
+
+#[test]
+fn actual_service_reports_an_unset_key_variable_before_any_request() {
+    // The server's environment is cleared, so DEEPSEEK_API_KEY is unset; a
+    // proxy pointing at the mock catches any request meant for the provider.
+    let root = tempfile::tempdir().unwrap();
+    let backend = Provider::start();
+    let proxy = backend.base.trim_end_matches("/v1").to_owned();
+    let unset = "MARKITAI_PROBE_TEST_UNSET_KEY_7F3A";
+    let config = json!({"llm":{"enabled":false,"model_list":[
+        {"model_name":"default","litellm_params":{"model":"deepseek/specific-test-model"}},
+        {"model_name":"default","litellm_params":{"model":"openai/specific-test-model","api_key":format!("env:{unset}"),"api_base":backend.base}},
+        {"model_name":"default","litellm_params":{"model":"ollama/specific-test-model","api_base":backend.base}}
+    ]},"ocr":{"enabled":false},"cache":{"enabled":false},"history":{"record":false},"log":{"dir":null},"prompts":{"dir":root.path().join("prompts")}});
+    std::fs::write(root.path().join("config.json"), config.to_string()).unwrap();
+    let server = Server::start_with(
+        root.path(),
+        &[("HTTPS_PROXY", &proxy), ("HTTP_PROXY", &proxy)],
+    );
+    let (status, _, settings) = server.request("GET", "/api/settings/llm", None);
+    assert_eq!(status, 200, "{settings}");
+    let ids: Vec<String> = settings["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["deployment_id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids.len(), 3);
+    for (body, variable) in [
+        (json!({"deployment_id":ids[0]}), "DEEPSEEK_API_KEY"),
+        (
+            json!({"model":"deepseek/draft-test-model"}),
+            "DEEPSEEK_API_KEY",
+        ),
+        (json!({"deployment_id":ids[1]}), unset),
+    ] {
+        let (status, headers, result) =
+            server.request("POST", "/api/settings/llm/test", Some(&body));
+        assert_eq!(status, 200, "{result}");
+        assert_eq!(headers["cache-control"], "no-store");
+        assert_eq!(
+            result,
+            json!({"ok":false,"reason":"no_key","key_variable":variable,
+                "detail":format!("{variable} is not set on the server")}),
+            "{body}"
+        );
+    }
+    assert!(backend.seen.lock().unwrap().is_empty());
+    // A local server needs no key: it is tested, not refused.
+    let (status, _, result) = server.request(
+        "POST",
+        "/api/settings/llm/test",
+        Some(&json!({"deployment_id":ids[2]})),
+    );
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["ok"], true, "{result}");
+    let requests = backend.seen.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].starts_with("POST /v1/chat/completions"));
 }
 
 #[cfg(test)]

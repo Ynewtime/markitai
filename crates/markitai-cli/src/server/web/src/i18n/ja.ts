@@ -228,6 +228,10 @@ export const ja: Dict = {
   diffTooLarge: "ドキュメントが大きすぎるため、差分を表示できません",
   diffSame: "Base と LLM の Markdown は同一です",
   diffAria: "Base と LLM の Markdown の行単位の差分",
+  diffFold: (lines: string) => `変更のない ${lines} 行を表示`,
+  tocTitle: "目次",
+  tocShow: "目次を表示",
+  tocHide: "目次を隠す",
   filesAria: "この結果のファイル",
   filesNone: "この結果にはファイルがありません",
   imagePlaceholder: (alt: string) => `[画像：${alt}]`,
@@ -386,6 +390,29 @@ export const ja: Dict = {
   modelTestPassed: "モデルのテストに成功しました",
   modelTestReady: (model: string) => `${model} を使用できます。`,
   modelTestFailed: "モデルのテストに失敗しました",
+  testFailTitle: (reason: string) =>
+    ({
+      no_key: "API キーが未設定です",
+      key_rejected: "キーが拒否されました",
+      model_not_found: "モデルが見つかりません",
+      rate_limited: "レート制限または残高不足",
+      network: "プロバイダーに接続できません",
+      timeout: "時間内に応答がありません",
+    })[reason] ?? "プロバイダーのエラー",
+  testFailHint: (reason: string, variable: string | null, model: string) =>
+    reason === "no_key"
+      ? variable
+        ? `サーバーに ${variable} が設定されていません。markitai serve を実行している環境で設定してサーバーを再起動するか、このモデルの接続にキーを追加してください。`
+        : "このモデルには使える API キーがありません。接続にキーを追加するか、markitai serve を実行している環境でプロバイダーのキー変数を設定してください。"
+      : (({
+          key_rejected: "プロバイダーがキーを拒否しました。キーが正しく、有効で、このモデルを使えるか確認してください。専用のキーがないモデルは、サーバーに設定されたキー変数を使います。",
+          model_not_found: `このキーでは ${model} を利用できません。モデル ID を確認してください。`,
+          rate_limited: "プロバイダーがリクエストを制限しているか、アカウントのクォータまたは残高が不足しています。しばらくしてから再試行するか、アカウントを確認してください。",
+          network: "サーバーからプロバイダーに接続できませんでした。アドレスと、サーバーのネットワークまたはプロキシを確認してください。",
+          timeout: "プロバイダーが時間内に応答しませんでした。再試行し、繰り返す場合はプロバイダーの状態を確認してください。",
+        }) as Record<string, string>)[reason] ?? "プロバイダーがエラーを返しました。原文は下にあります。",
+  testFailFor: (model: string) => `${model} のテスト`,
+  testFailDetail: "プロバイダーの原文",
   save: "保存",
   saving: "保存しています…",
   saved: "保存しました",
@@ -441,6 +468,7 @@ export const ja: Dict = {
   navConvert: "変換",
   navModels: "モデル",
   navAppearance: "外観と言語",
+  navAppearanceShort: "外観",
   navAccess: "アクセストークン",
   navLive: (n: number) => `${n} 件を変換中`,
   titleSettings: "設定 · Markitai",

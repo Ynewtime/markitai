@@ -376,7 +376,7 @@ test("waiting images are fetched a few at a time, shown as object URLs and relea
       },
     },
   );
-  await loads.done;
+  await loads.all();
   assert.equal(peak, 2);
   assert.equal(created.length, 5);
   assert.equal(failed, 1);

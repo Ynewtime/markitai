@@ -236,6 +236,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_test_result_lists_the_reasons_a_failed_test_reports() {
+        let document = parsed();
+        let listed = document
+            .pointer("/components/schemas/ProbeResult/properties/reason/enum")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            listed,
+            markitai_core::provider_management::probe_reasons().collect::<Vec<_>>()
+        );
+    }
+
     #[tokio::test]
     async fn the_served_document_carries_this_builds_version() {
         let response = document().await;

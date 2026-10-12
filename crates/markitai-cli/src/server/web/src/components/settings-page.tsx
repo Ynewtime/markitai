@@ -1,6 +1,6 @@
 // Settings as pages of the sidebar's Settings section: Models (see
 // settings-models), Appearance and language, and Access token. On phones
-// `/settings` lists the three sections and the external links.
+// `/settings` lists the three sections and the external links in one list.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { hasToken, setToken } from "../api/token.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
@@ -189,10 +189,8 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, onNavigate }: { 
       </div>
       <ul class="settings-index">
         {entry("models", "Cpu", t.navModels, t.modelsHint)}
-        {entry("appearance", "Palette", t.navAppearance, t.appearanceHint)}
+        {entry("appearance", "Palette", t.navAppearanceShort, t.appearanceHint)}
         {entry("access", "Key", t.navAccess, t.accessHint)}
-      </ul>
-      <ul class="settings-index is-links">
         <li>
           <a href={docsUrl} target="_blank" rel="noopener noreferrer">
             <Icon name="BookOpen" size={18} />

@@ -21,6 +21,7 @@ import type { Deployment, DiscoveryResult, NewDeployment, ProviderCard, Settings
 import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
+import { testFailure, type TestFailure } from "../lib/model-test.ts";
 import { endpointFor, sameEndpoint } from "../lib/models.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
@@ -94,6 +95,9 @@ interface TestNote {
   title: string;
   message: string;
   detail?: string;
+  /** A failed test's category, its model and the provider's own words. */
+  failure?: TestFailure;
+  model?: string;
 }
 
 export function ModelsSettings({
@@ -189,6 +193,8 @@ export function ModelsSettings({
   // ---- model rows: test, edit, delete, save detected
   const [tests, setTests] = useState<Record<string, "busy" | "ok" | "fail">>({});
   const [testNote, setTestNote] = useState<TestNote | null>(null);
+  /** The last failed test of each model, shown under it until it is tested again. */
+  const [failures, setFailures] = useState<Record<string, TestFailure>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), []);
   const settle = (id: string, state: "ok" | "fail") => {
@@ -208,6 +214,7 @@ export function ModelsSettings({
     const id = deployment.deployment_id;
     clearTimeout(timers.current.note);
     setTestNote(null);
+    setFailures(({ [id]: _, ...rest }) => rest);
     setTests((previous) => ({ ...previous, [id]: "busy" }));
     try {
       const result = await probeModel({ deployment_id: id });
@@ -216,8 +223,9 @@ export function ModelsSettings({
         setTestNote({ tone: "success", title: t.modelTestPassed, message: t.modelTestReady(deployment.model) });
         timers.current.note = setTimeout(() => setTestNote(null), 3000);
       } else {
-        const note = serviceNote(locale, result.detail);
-        setTestNote({ tone: "error", title: t.modelTestFailed, message: note.text || t.modelTestFailed, detail: note.detail });
+        const failure = testFailure(result);
+        setFailures((previous) => ({ ...previous, [id]: failure }));
+        setTestNote({ tone: "error", title: t.testFailTitle(failure.reason), message: t.testFailHint(failure.reason, failure.variable, deployment.model), failure, model: deployment.model });
       }
     } catch (error) {
       settle(id, "fail");
@@ -622,6 +630,15 @@ export function ModelsSettings({
             )}
           </span>
         </div>
+        {failures[deployment.deployment_id] && (
+          <p class="model-test-fail">
+            <Icon name="WarningCircle" size={14} />
+            <span>
+              {t.testFailTitle(failures[deployment.deployment_id]?.reason ?? "provider_error")}
+              {failures[deployment.deployment_id]?.variable && <span class="model-test-var"> · {failures[deployment.deployment_id]?.variable}</span>}
+            </span>
+          </p>
+        )}
       </div>
     );
   };
@@ -900,20 +917,51 @@ export function ModelsSettings({
             )}
           </nav>
         </div>
-        {testNote && (
-          <p class={testNote.tone === "error" ? "settings-status line-error" : "settings-status line-note"} role={testNote.tone === "error" ? "alert" : "status"} title={testNote.detail || undefined}>
-            <strong>{testNote.title}</strong> · {testNote.message}
+        {testNote?.failure ? (
+          <div class="test-failure" role="alert">
+            <Icon name="WarningCircle" size={16} />
+            <div class="test-failure-copy">
+              <p class="test-failure-title">
+                <strong>{testNote.title}</strong>
+                {testNote.model && <span class="test-failure-model">{t.testFailFor(testNote.model)}</span>}
+              </p>
+              <p>{testNote.message}</p>
+              {testNote.failure.detail && (
+                <details class="test-failure-detail">
+                  <summary>{t.testFailDetail}</summary>
+                  <p>{testNote.failure.detail}</p>
+                </details>
+              )}
+            </div>
             <button
               type="button"
-              class="text-link"
+              class="icon-btn"
+              aria-label={t.dismiss}
+              title={t.dismiss}
               onClick={() => {
                 clearTimeout(timers.current.note);
                 setTestNote(null);
               }}
             >
-              {t.dismiss}
+              <Icon name="X" size={14} />
             </button>
-          </p>
+          </div>
+        ) : (
+          testNote && (
+            <p class={testNote.tone === "error" ? "settings-status line-error" : "settings-status line-note"} role={testNote.tone === "error" ? "alert" : "status"} title={testNote.detail || undefined}>
+              <strong>{testNote.title}</strong> · {testNote.message}
+              <button
+                type="button"
+                class="text-link"
+                onClick={() => {
+                  clearTimeout(timers.current.note);
+                  setTestNote(null);
+                }}
+              >
+                {t.dismiss}
+              </button>
+            </p>
+          )
         )}
 
         <div class="settings-body">

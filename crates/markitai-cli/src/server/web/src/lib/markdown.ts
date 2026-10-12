@@ -1,6 +1,9 @@
 // Safe rendering of converted Markdown. The vendored marked parser and DOMPurify
 // sanitizer load on first use; the sanitized fragment is then rewritten so that
 // images and attachments resolve only to files listed in the result itself.
+// A long document is read in pieces (`splitMarkdown`, `readPiece`) into a
+// plan of chunks and drawn a chunk at a time (`renderChunk`), so the first
+// screen never waits for the last.
 import type { Artifact } from "../api/types.ts";
 
 /** The leading YAML block; the rendered view leaves it to Source. */
@@ -71,8 +74,25 @@ export interface RenderContext {
   codeLabel: string;
 }
 
-interface Libraries {
-  marked: { parse(markdown: string, options: { async: false; gfm: boolean }): string };
+/** A block of marked's token list: only what the chunk plan reads. */
+export interface Token {
+  type: string;
+  raw: string;
+  depth?: number;
+  text?: string;
+  tokens?: Token[];
+  items?: Token[];
+  header?: Token[];
+  rows?: Token[][];
+}
+type TokenList = Token[] & { links?: unknown };
+
+export interface Libraries {
+  marked: {
+    parse(markdown: string, options: { async: false; gfm: boolean }): string;
+    lexer(markdown: string, options: { gfm: boolean }): TokenList;
+    parser(tokens: TokenList, options: { async: false; gfm: boolean }): string;
+  };
   purify: Purify;
 }
 
@@ -114,7 +134,153 @@ const XLINK_NS = "http://www.w3.org/1999/xlink";
 /** Parse, sanitize and rewrite. Raw HTML never reaches the live document. */
 export async function renderMarkdown(markdown: string, context: RenderContext): Promise<DocumentFragment> {
   const { marked, purify } = await loadLibraries();
-  const html = marked.parse(markdown, { async: false, gfm: true });
+  return sanitized(purify, marked.parse(markdown, { async: false, gfm: true }), context);
+}
+
+/** A heading of the document's outline, by its position among the top-level headings. */
+export interface Heading {
+  depth: number;
+  text: string;
+  /** The chunk that draws it. */
+  chunk: number;
+}
+
+/** A document cut into chunks of about `size` characters of Markdown (the
+ * first one smaller, so the first screen comes quickly); a chunk prefers to
+ * end before a chapter heading. It grows as the document is read in pieces
+ * (`splitMarkdown`), so reading never holds the page either. */
+export interface DocumentPlan {
+  chunks: TokenList[];
+  /** Characters (UTF-16 units) of Markdown per chunk, for a size estimate before it is drawn. */
+  sizes: number[];
+  headings: Heading[];
+  /** Tables in the whole document, counted before it is read. */
+  tables: number;
+}
+
+export const FIRST_CHUNK = 3000;
+export const CHUNK = 5000;
+
+export const emptyPlan = (tables = 0): DocumentPlan => ({ chunks: [], sizes: [], headings: [], tables });
+
+/** Add one piece's blocks to a plan; a piece always starts a chunk of its own. */
+export function extendPlan(plan: DocumentPlan, tokens: TokenList, { first = FIRST_CHUNK, size = CHUNK }: { first?: number; size?: number } = {}): DocumentPlan {
+  let current: TokenList = [];
+  let length = 0;
+  const close = () => {
+    if (!current.length) return;
+    current.links = tokens.links;
+    plan.chunks.push(current);
+    plan.sizes.push(length);
+    current = [];
+    length = 0;
+  };
+  for (const token of tokens) {
+    const target = plan.chunks.length === 0 ? first : size;
+    const chapter = token.type === "heading" && (token.depth ?? 6) <= 2;
+    if (length >= target || (chapter && length >= target / 2)) close();
+    if (token.type === "heading") plan.headings.push({ depth: token.depth ?? 1, text: plainText(token).trim(), chunk: plan.chunks.length });
+    current.push(token);
+    length += token.raw.length;
+  }
+  close();
+  return plan;
+}
+
+/** A whole token list as one plan (tests, and documents read at once). */
+export function planTokens(tokens: TokenList, sizes?: { first?: number; size?: number }): DocumentPlan {
+  let tables = 0;
+  for (const token of tokens) tables += countTables(token);
+  return extendPlan(emptyPlan(tables), tokens, sizes);
+}
+
+const REFERENCE_DEFINITION = /^ {0,3}\[[^\]\n]+\]:/m;
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
+const RAW_BLOCK = /^ {0,3}<(pre|script|style|textarea)[\s>]|^ {0,3}<!--/i;
+const TABLE_DELIMITER = /^ {0,3}\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/** Markdown cut into pieces of about `size` characters that read the same alone
+ * as together: only at a blank line before a line that starts a new top-level
+ * block (not indented, not a list item or quote that would join the one above),
+ * never inside fenced code or a raw HTML block, and not at all when the document
+ * defines reference links (each piece would lose the others' definitions). */
+export function splitMarkdown(markdown: string, { first = FIRST_CHUNK, size = CHUNK }: { first?: number; size?: number } = {}): string[] {
+  if (markdown.length <= first || REFERENCE_DEFINITION.test(markdown)) return [markdown];
+  const pieces: string[] = [];
+  let start = 0;
+  let fence: string | null = null;
+  let raw: RegExp | null = null;
+  let blank = false;
+  let at = 0;
+  while (at < markdown.length) {
+    const newline = markdown.indexOf("\n", at);
+    const end = newline < 0 ? markdown.length : newline + 1;
+    const line = markdown.slice(at, newline < 0 ? markdown.length : newline);
+    if (fence === null && raw === null && blank && at - start >= (pieces.length ? size : first) && /^[^\s>*+\-\d|]/.test(line)) {
+      pieces.push(markdown.slice(start, at));
+      start = at;
+    }
+    const opened = FENCE_LINE.exec(line);
+    if (fence !== null) {
+      if (opened && opened[1]?.[0] === fence[0] && (opened[1]?.length ?? 0) >= fence.length && !line.trim().slice(opened[1]?.length ?? 0).trim()) fence = null;
+    } else if (raw !== null) {
+      if (raw.test(line)) raw = null;
+    } else if (opened) fence = opened[1] ?? "```";
+    else {
+      const html = RAW_BLOCK.exec(line);
+      if (html) {
+        const close = html[1] ? new RegExp(`</${html[1]}>`, "i") : /-->/;
+        if (!close.test(line.slice(html.index + 4))) raw = close;
+      }
+    }
+    blank = line.trim() === "";
+    at = end;
+  }
+  if (start < markdown.length) pieces.push(markdown.slice(start));
+  return pieces;
+}
+
+/** Tables in a document, counted from their delimiter rows (outside fenced code). */
+export function countTableRows(markdown: string): number {
+  let count = 0;
+  let fence = false;
+  let previous = "";
+  for (const line of markdown.split("\n")) {
+    if (FENCE_LINE.test(line)) fence = !fence;
+    else if (!fence && previous.includes("|") && line.includes("-") && TABLE_DELIMITER.test(line)) count++;
+    previous = line;
+  }
+  return count;
+}
+
+/** Draw one chunk of a plan: parsed, sanitized and pinned like a whole document;
+ * `tables` numbers its tables among the document's. */
+export function renderChunk({ marked, purify }: Libraries, plan: DocumentPlan, index: number, context: RenderContext, tables: { offset: number }): DocumentFragment {
+  const tokens = plan.chunks[index] ?? [];
+  return sanitized(purify, marked.parser(tokens, { async: false, gfm: true }), context, { offset: tables.offset, total: plan.tables }, tables);
+}
+
+/** Read one piece of a document into its plan. */
+export function readPiece({ marked }: Libraries, plan: DocumentPlan, piece: string): void {
+  extendPlan(plan, marked.lexer(piece, { gfm: true }));
+}
+
+/** The text a heading shows, without its Markdown. */
+export function plainText(token: Token): string {
+  if (token.tokens?.length) return token.tokens.map(plainText).join("");
+  if (token.type === "image") return "";
+  return (token.text ?? "").replace(/&(amp|lt|gt|quot|#39);/g, (_, name: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[name] ?? "");
+}
+
+function countTables(token: Token): number {
+  if (token.type === "table") return 1;
+  let count = 0;
+  for (const child of token.tokens ?? []) count += countTables(child);
+  for (const item of token.items ?? []) count += countTables(item);
+  return count;
+}
+
+function sanitized(purify: Purify, html: string, context: RenderContext, numbering?: { offset: number; total: number }, counter?: { offset: number }): DocumentFragment {
   // A drawing's paint often sits in `style`, which the page's policy never
   // applies: its drawing properties become attributes, then sanitized like
   // any other. An `id` survives only inside a drawing, where gradients and
@@ -143,7 +309,8 @@ export async function renderMarkdown(markdown: string, context: RenderContext): 
     purify.removeHooks("beforeSanitizeAttributes");
     purify.removeHooks("uponSanitizeAttribute");
   }
-  rewrite(fragment, context);
+  const drawn = rewrite(fragment, context, numbering);
+  if (counter) counter.offset += drawn;
   return fragment;
 }
 
@@ -246,8 +413,10 @@ function pinDrawings(fragment: DocumentFragment): void {
   }
 }
 
-/** Pin every reference to the result's own files; everything else is inert. */
-export function rewrite(fragment: DocumentFragment, context: RenderContext): void {
+/** Pin every reference to the result's own files; everything else is inert.
+ * Tables are named among `numbering.total` from `numbering.offset` on (a chunk
+ * of a longer document); returns how many tables the fragment holds. */
+export function rewrite(fragment: DocumentFragment, context: RenderContext, numbering?: { offset: number; total: number }): number {
   const doc = fragment.ownerDocument;
   const allowed = new Set(context.artifacts.map((artifact) => artifact.relpath));
   const images = context.artifacts.map((artifact) => artifact.relpath).filter((path) => RASTER.test(path));
@@ -318,11 +487,12 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
   }
   // Each table is a scrollable region of its own name ("Table 2"), so a document with several reads them apart.
   const tables = [...fragment.querySelectorAll("table")];
+  const total = numbering?.total ?? tables.length;
   for (const [index, table] of tables.entries()) {
     const wrap = doc.createElement("div");
     wrap.className = "table-scroll";
     wrap.setAttribute("role", "region");
-    wrap.setAttribute("aria-label", tables.length > 1 ? `${context.tableLabel} ${index + 1}` : context.tableLabel);
+    wrap.setAttribute("aria-label", total > 1 ? `${context.tableLabel} ${(numbering?.offset ?? 0) + index + 1}` : context.tableLabel);
     wrap.tabIndex = 0;
     table.replaceWith(wrap);
     wrap.append(table);
@@ -331,56 +501,123 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
     block.tabIndex = 0;
     block.setAttribute("aria-label", context.codeLabel);
   }
+  return tables.length;
 }
 
 export interface ImageLoads {
-  /** Settles once every waiting image is shown or replaced. */
-  done: Promise<void>;
+  /** Also show the waiting images under `root` (a chunk drawn later). */
+  add(root: ParentNode): void;
+  /** Load every waiting image now (printing needs them all); settles once each is shown or replaced. */
+  all(): Promise<void>;
   /** Stop loading and release the object URLs. */
   dispose(): void;
 }
 
 /** Show the images that wait in `data-artifact-src`: each is fetched with the
  * header token (at most `limit` at a time) and shown through an object URL.
- * One that cannot be loaded is handed to `failed` (the view puts a labelled
- * placeholder there). */
+ * `lazy` fetches an image only once it comes near the viewport, so a long
+ * document never downloads and decodes every picture at once. One that cannot
+ * be loaded is handed to `failed` (the view puts a labelled placeholder there). */
 export function loadArtifactImages(
   root: ParentNode,
   load: (path: string) => Promise<Blob>,
   failed: (image: HTMLImageElement) => void,
-  { limit = 4, objectURL = URL }: { limit?: number; objectURL?: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> } = {},
+  {
+    limit = 4,
+    lazy = false,
+    margin = "1200px 0px",
+    objectURL = URL,
+  }: { limit?: number; lazy?: boolean; margin?: string; objectURL?: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> } = {},
 ): ImageLoads {
-  const images = [...root.querySelectorAll<HTMLImageElement>("img[data-artifact-src]")];
   const urls: string[] = [];
+  const known: HTMLImageElement[] = [];
+  const seen = new Set<HTMLImageElement>();
+  const queued = new Set<HTMLImageElement>();
+  const queue: HTMLImageElement[] = [];
+  let waiters: (() => void)[] = [];
+  let active = 0;
   let disposed = false;
-  let next = 0;
-  const worker = async () => {
-    while (!disposed && next < images.length) {
-      const image = images[next++] as HTMLImageElement;
-      const path = image.getAttribute("data-artifact-src") ?? "";
-      let blob: Blob | null = null;
-      try {
-        blob = await load(path);
-      } catch {
-        blob = null;
-      }
-      if (disposed) return;
-      image.removeAttribute("data-artifact-src");
-      if (blob === null) {
-        failed(image);
-        continue;
-      }
-      const url = objectURL.createObjectURL(blob);
-      urls.push(url);
-      image.setAttribute("src", url);
+  const settle = () => {
+    if (active > 0 || (queue.length > 0 && !disposed)) return;
+    const ready = waiters;
+    waiters = [];
+    for (const resolve of ready) resolve();
+  };
+  const show = async (image: HTMLImageElement) => {
+    const path = image.getAttribute("data-artifact-src") ?? "";
+    let blob: Blob | null = null;
+    try {
+      blob = await load(path);
+    } catch {
+      blob = null;
+    }
+    if (disposed) return;
+    image.removeAttribute("data-artifact-src");
+    if (blob === null) {
+      failed(image);
+      return;
+    }
+    const url = objectURL.createObjectURL(blob);
+    urls.push(url);
+    image.setAttribute("src", url);
+  };
+  const pump = () => {
+    while (!disposed && active < limit && queue.length > 0) {
+      const image = queue.shift() as HTMLImageElement;
+      active++;
+      void show(image).finally(() => {
+        active--;
+        pump();
+        settle();
+      });
     }
   };
-  const done = Promise.all(Array.from({ length: Math.min(limit, images.length) }, worker)).then(() => undefined);
+  const enqueue = (image: HTMLImageElement) => {
+    if (disposed || queued.has(image) || image.getAttribute("data-artifact-src") === null) return;
+    queued.add(image);
+    queue.push(image);
+    pump();
+  };
+  const observer =
+    lazy && typeof IntersectionObserver === "function"
+      ? new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              observer?.unobserve(entry.target);
+              enqueue(entry.target as HTMLImageElement);
+            }
+          },
+          { rootMargin: margin },
+        )
+      : null;
+  const add = (scope: ParentNode) => {
+    for (const image of scope.querySelectorAll<HTMLImageElement>("img[data-artifact-src]")) {
+      if (seen.has(image)) continue;
+      seen.add(image);
+      known.push(image);
+      if (observer) observer.observe(image);
+      else enqueue(image);
+    }
+  };
+  add(root);
   return {
-    done,
+    add,
+    all() {
+      for (const image of known) {
+        observer?.unobserve(image);
+        enqueue(image);
+      }
+      return new Promise<void>((resolve) => {
+        waiters.push(resolve);
+        settle();
+      });
+    },
     dispose() {
       disposed = true;
+      observer?.disconnect();
       for (const url of urls.splice(0)) objectURL.revokeObjectURL(url);
+      settle();
     },
   };
 }
