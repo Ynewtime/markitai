@@ -348,17 +348,34 @@ async def test_a_subscription_runtime_takes_no_placeholder(tmp_path: Path) -> No
     assert params == {"model": "claude-agent/haiku"}
 
 
+def workbench_app_js() -> str:
+    """The vendored workbench's script."""
+    import markitai.serve
+
+    return (
+        Path(markitai.serve.__file__).parent / "workbench" / "ui" / "app.js"
+    ).read_text(encoding="utf-8")
+
+
+def workbench_detail_patterns(message_key: str) -> list[str]:
+    """The patterns the bundle matches a 422 detail with to show *message_key*.
+
+    The table is ``[[/<pattern>/, <message key or a function returning it>],
+    ...]``; JavaScript's ``^``, ``(.+?)``, ``\\1`` and ``$`` read the same in
+    Python.
+    """
+    import re
+
+    return re.findall(
+        r"\[/(\^(?:[^/\\]|\\.)*)/,(?:\(\[?[^)]*\)=>\[)?\"" + message_key + r"\"",
+        workbench_app_js(),
+    )
+
+
 def test_the_workbench_translates_the_keyless_move_detail() -> None:
     """The vendored bundle matches the refusal by the start of its wording."""
     import re
 
-    import markitai.serve
-
-    app_js = (
-        Path(markitai.serve.__file__).parent / "workbench" / "ui" / "app.js"
-    ).read_text(encoding="utf-8")
-    patterns = re.findall(
-        r"\[/(\^a connection with a key[^/]*)/,\"errKeylessMove\"\]", app_js
-    )
+    patterns = workbench_detail_patterns("errKeylessMove")
     assert patterns, "the bundle no longer translates the keyless-move refusal"
     assert all(re.match(pattern, KEYLESS_MOVE_DETAIL) for pattern in patterns)
