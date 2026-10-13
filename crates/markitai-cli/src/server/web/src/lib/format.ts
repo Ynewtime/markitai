@@ -80,7 +80,50 @@ export function utf8Bytes(text: string): number {
 }
 
 /** Display name of an item: a URL without its scheme. */
-export const displayName = (name: string): string => name.replace(/^https?:\/\//, "");
+/** A web address without its scheme, its escapes decoded for reading. */
+export const displayName = (name: string): string => readable(name.replace(/^https?:\/\//, ""));
+
+const HEX = /^[0-9a-f]{2}$/i;
+/** Characters an escape keeps standing for: what would change how the text reads as a path or
+ * address (separators, `%` itself), controls, and invisible or direction-changing marks. */
+const KEEP_ESCAPED = /[\u0000-\u001f\u007f-\u009f/\\?#%\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufeff\uffa0\ufff9-\ufffb]/;
+const strict = typeof TextDecoder === "function" ? new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }) : null;
+
+/** One UTF-8 sequence's length from its lead byte (0 = not a lead byte). */
+const sequenceLength = (lead: number): number => (lead < 0x80 ? 1 : lead >= 0xc2 && lead <= 0xdf ? 2 : lead >= 0xe0 && lead <= 0xef ? 3 : lead >= 0xf0 && lead <= 0xf4 ? 4 : 0);
+
+/**
+ * Percent-encoded text as a person reads it (`20260314-%E5%B1%B1%E9%97%B4` → `20260314-山间`), for
+ * display only: names, addresses and links keep their own text. Each run of escapes is decoded as
+ * UTF-8 one character at a time; an escape that is not part of a valid character, or whose
+ * character is in KEEP_ESCAPED, stays as written.
+ */
+export function readable(text: string): string {
+  if (!text.includes("%") || strict === null) return text;
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+    const bytes = run.split("%").slice(1).map((pair) => (HEX.test(pair) ? parseInt(pair, 16) : -1));
+    let out = "";
+    for (let index = 0; index < bytes.length; ) {
+      const length = sequenceLength(bytes[index] ?? 0);
+      let char: string | null = null;
+      if (length > 0 && index + length <= bytes.length) {
+        try {
+          char = strict.decode(new Uint8Array(bytes.slice(index, index + length)));
+        } catch {
+          char = null;
+        }
+      }
+      if (char !== null && char !== "" && !KEEP_ESCAPED.test(char)) {
+        out += char;
+        index += length;
+      } else {
+        out += run.slice(index * 3, index * 3 + 3);
+        index += 1;
+      }
+    }
+    return out;
+  });
+}
 
 export function basename(path: string): string {
   return path.split("/").pop() ?? path;

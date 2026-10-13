@@ -24,7 +24,7 @@ import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import { compareLines, foldRows, type Comparison, type DiffRow } from "../lib/diff.ts";
 import { download, interceptDownload } from "../lib/download.ts";
-import { basename, fmtBytes, localeTag } from "../lib/format.ts";
+import { basename, fmtBytes, localeTag, readable } from "../lib/format.ts";
 import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
 import {
   type DocumentPlan,
@@ -239,7 +239,7 @@ export function MarkdownView({
       imageURL: (relpath) => (hasToken() ? null : imagePath(item.jobId, item.itemId, relpath)),
       fileURL: (relpath) => filePath(item.jobId, relpath),
       placeholder,
-      fallbackAlt: t.figureFrom(item.name),
+      fallbackAlt: t.figureFrom(readable(item.name)),
       tableLabel: t.tableAria,
       codeLabel: t.codeAria,
     };
@@ -494,7 +494,7 @@ export function MarkdownView({
         imageURL: (relpath) => (hasToken() ? null : imagePath(item.jobId, item.itemId, relpath)),
         fileURL: (relpath) => filePath(item.jobId, relpath),
         placeholder: (alt) => t.imagePlaceholder(alt || t.imageUnavailable),
-        fallbackAlt: t.figureFrom(item.name),
+        fallbackAlt: t.figureFrom(readable(item.name)),
         tableLabel: t.tableAria,
         codeLabel: t.codeAria,
       });
@@ -589,7 +589,7 @@ export function MarkdownView({
   const loadingLabel = result === null ? t.previewLoading(bytes !== null && bytes > 256 * 1024 ? fmtBytes(bytes) : null) : t.previewRendering;
   const note = (error: unknown, kind: "doc" | "source" | "list" = "doc") =>
     error ? <p class="pane-note line-error">{describe(error).text}</p> : <Skeleton label={loadingLabel} kind={kind} />;
-  const docName = basename(path || item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "");
+  const docName = readable(basename(path || item.name)).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "");
   // An upload keeps its name; a web page's snapshot is saved as the result's name in HTML.
   const originalName = item.kind === "url" ? `${docName}.html` : basename(kept?.name || item.name);
   const onDocumentLink = (event: MouseEvent) => {
@@ -707,7 +707,7 @@ export function MarkdownView({
             <div class="print-foot" aria-hidden="true">
               <span>{t.pdfPreparedBy}</span>
               <span class="print-source">
-                {t.pdfSource}: {item.name}
+                {t.pdfSource}: {readable(item.name)}
                 {createdAt !== null && ` · ${createdAt.slice(0, 10)}`}
               </span>
             </div>
@@ -766,18 +766,18 @@ export function MarkdownView({
                 {result.artifacts.map((artifact) => (
                   <li key={artifact.relpath}>
                     <Icon name={/\.(png|jpe?g|gif|webp|avif|svg)$/i.test(artifact.relpath) ? "Image" : "FileText"} size={14} />
-                    <span class="file-path" title={artifact.relpath}>
-                      {artifact.relpath}
+                    <span class="file-path" title={readable(artifact.relpath)}>
+                      {readable(artifact.relpath)}
                     </span>
                     <span class="file-size">{fmtBytes(artifact.size)}</span>
                     <a
                       class="icon-btn"
                       href={filePath(item.jobId, artifact.relpath)}
-                      download={basename(artifact.relpath)}
-                      aria-label={t.downloadFile(artifact.relpath)}
-                      title={t.downloadFile(artifact.relpath)}
-                      onClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => onError?.(describe(error).text))}
-                      onAuxClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => onError?.(describe(error).text))}
+                      download={readable(basename(artifact.relpath))}
+                      aria-label={t.downloadFile(readable(artifact.relpath))}
+                      title={t.downloadFile(readable(artifact.relpath))}
+                      onClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), readable(basename(artifact.relpath)), (error) => onError?.(describe(error).text))}
+                      onAuxClick={(event) => interceptDownload(event, filePath(item.jobId, artifact.relpath), readable(basename(artifact.relpath)), (error) => onError?.(describe(error).text))}
                     >
                       <Icon name="DownloadSimple" size={15} />
                     </a>
@@ -826,18 +826,18 @@ function OriginalRow({ t, item, original, name, onError }: { t: Dict; item: Sess
   return (
     <li class="is-original">
       <Icon name={item.kind === "url" ? "Globe" : "FileText"} size={14} />
-      <span class="file-path" title={item.kind === "url" ? item.name : name}>
-        {name}
+      <span class="file-path" title={readable(item.kind === "url" ? item.name : name)}>
+        {readable(name)}
       </span>
       <span class="file-tag">{item.kind === "url" ? t.filesOriginalPage : t.original}</span>
       <span class="file-size">{original.size != null ? fmtBytes(original.size) : ""}</span>
       <button
         type="button"
         class="icon-btn"
-        aria-label={t.downloadFile(name)}
-        title={t.downloadFile(name)}
+        aria-label={t.downloadFile(readable(name))}
+        title={t.downloadFile(readable(name))}
         // An upload can be large: the browser streams it through a ticket when the server issues them.
-        onClick={() => void download(path, name, ticketDownloads()).catch(onError)}
+        onClick={() => void download(path, readable(name), ticketDownloads()).catch(onError)}
       >
         <Icon name="DownloadSimple" size={15} />
       </button>
@@ -868,7 +868,8 @@ function SourceText({ label, frontmatter, body }: { label: string; frontmatter: 
   );
 }
 
-function DiffRows({ rows }: { rows: DiffRow[] }) {
+/** Diff lines in blocks; `marks` names an added or removed line for screen readers. */
+export function DiffRows({ rows, marks }: { rows: DiffRow[]; marks?: { add: string; del: string } }) {
   const blocks: DiffRow[][] = [];
   for (let index = 0; index < rows.length; index += BLOCK_LINES) blocks.push(rows.slice(index, index + BLOCK_LINES));
   return (
@@ -886,6 +887,7 @@ function DiffRows({ rows }: { rows: DiffRow[] }) {
               <span class="diff-mark" aria-hidden="true">
                 {row.type === "add" ? "+" : row.type === "del" ? "-" : " "}
               </span>
+              {marks && row.type !== "ctx" && <span class="sr-only">{row.type === "add" ? marks.add : marks.del} </span>}
               <span class="diff-text">{row.text}</span>
             </div>
           ))}

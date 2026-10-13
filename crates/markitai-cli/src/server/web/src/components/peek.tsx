@@ -12,7 +12,7 @@ import type { Dict, Locale } from "../i18n/index.ts";
 import { headerActs } from "../lib/acts.ts";
 import { readFull, storeFull } from "../lib/peek-pref.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { basename } from "../lib/format.ts";
+import { basename, readable } from "../lib/format.ts";
 import { printDocument, type PrintJob } from "../lib/print.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { ActionMenu, type MenuAction } from "./action-menu.tsx";
@@ -387,7 +387,7 @@ function PeekDocument({
     await rendered.current.images?.all();
     const job = printDocument({
       source,
-      title: basename(path || item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, ""),
+      title: readable(basename(path || item.name)).replace(/\.llm\.md$/i, "").replace(/\.md$/i, ""),
       furniture,
       isCurrent: () => path === doc.path,
       messages: { loading: t.printImagesLoading, broken: t.printImageBroken },

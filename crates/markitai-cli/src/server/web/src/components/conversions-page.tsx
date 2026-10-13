@@ -4,14 +4,15 @@
 // Preview and Compare as tabs) over the list, or over the whole page at full
 // screen; on phones the window fills the screen. Dropping files
 // anywhere still converts; typing URLs is the Convert page's job.
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { counts, FILTERS, isJobKey, itemOrder, submissionLabel, submissions, type ConvJob, type Filter, type LabelWords } from "../lib/conversions.ts";
 import { groupNotices } from "../lib/notices.ts";
 import type { PaneMode } from "../lib/route.ts";
 import { waitingJobs, type SessionItem } from "../lib/session.ts";
 import { ActionMenu } from "./action-menu.tsx";
-import { ConversionList } from "./conversion-list.tsx";
+import { ConfirmPopover } from "./confirm-popover.tsx";
+import { ConversionList, deletable } from "./conversion-list.tsx";
 import { Icon } from "./icons.tsx";
 import { ItemInspector, itemActs, JobInspector, jobActs, Overview, stopAct, type ActSet, type InspectorContext, type ItemActionsApi, type JobActionsApi } from "./inspector.tsx";
 import type { IconName } from "./icon-paths.ts";
@@ -63,6 +64,8 @@ export interface ConversionsPageProps {
   onCopied: () => void;
   announce: (message: string) => void;
   describe: (error: unknown) => { text: string; detail: string };
+  /** Delete whole submissions and single items; resolves once every request has answered. */
+  onDeleteMany: (jobIds: string[], items: SessionItem[]) => Promise<void>;
 }
 
 function summaryText(t: Dict, items: SessionItem[]): string {
@@ -98,6 +101,54 @@ export function ConversionsPage(props: ConversionsPageProps) {
     setOverview(false);
     props.onSelect(null);
     if (key) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true }));
+  };
+
+  // ---- selection for deleting several: item keys; only items listed and settled count
+  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
+  const [selectMode, setSelectMode] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
+  const selecting = !phone || selectMode;
+  const listed = useMemo(() => list.flatMap((submission) => submission.shown).filter(deletable), [list]);
+  const chosen = useMemo(() => listed.filter((item) => checked.has(item.key)), [listed, checked]);
+  // Keys of items that are gone (deleted, or retried into running) drop out.
+  useEffect(() => {
+    if (!checked.size) return;
+    const live = new Set(items.filter(deletable).map((item) => item.key));
+    if ([...checked].some((key) => !live.has(key))) setChecked(new Set([...checked].filter((key) => live.has(key))));
+  }, [items]);
+  useEffect(() => {
+    if (!phone) setSelectMode(false);
+  }, [phone]);
+  const check = (keys: string[], on: boolean) =>
+    setChecked((previous) => {
+      const next = new Set(previous);
+      for (const key of keys) {
+        if (on) next.add(key);
+        else next.delete(key);
+      }
+      return next;
+    });
+  const clearChecks = () => setChecked(new Set());
+  const checkAll = () => setChecked(new Set(listed.map((item) => item.key)));
+  const leaveSelect = () => {
+    setSelectMode(false);
+    clearChecks();
+  };
+  /** Whole submissions go as one request each; the rest item by item. */
+  const deleteChosen = async () => {
+    const byJob = new Map<string, SessionItem[]>();
+    for (const item of chosen) byJob.set(item.jobId, [...(byJob.get(item.jobId) ?? []), item]);
+    const jobIds: string[] = [];
+    const singles: SessionItem[] = [];
+    for (const [jobId, members] of byJob) {
+      if (items.filter((item) => item.jobId === jobId).length === members.length) jobIds.push(jobId);
+      else singles.push(...members);
+    }
+    await props.onDeleteMany(jobIds, singles);
+    clearChecks();
+    if (phone) setSelectMode(false);
+    return true;
   };
 
   const counters: Record<Filter, number> = { all: tally.total, failed: tally.failed, notices: tally.notices };
@@ -221,6 +272,12 @@ export function ConversionsPage(props: ConversionsPageProps) {
               </button>
             ))}
           </div>
+          {/* Phones check rows in Select mode; wide screens always show the boxes. */}
+          {phone && listed.length > 0 && (
+            <button type="button" class="btn select-mode-btn" aria-pressed={selectMode} onClick={() => (selectMode ? leaveSelect() : setSelectMode(true))}>
+              {selectMode ? t.done : t.selectMode}
+            </button>
+          )}
         </div>
       )}
       <div class="split is-single">
@@ -248,7 +305,51 @@ export function ConversionsPage(props: ConversionsPageProps) {
                 const item = items.find((candidate) => candidate.key === key);
                 if (item) props.itemActions.preview(item);
               }}
+              checked={checked}
+              selecting={selecting}
+              tapChecks={phone && selectMode}
+              onCheck={check}
+              onCheckAll={checkAll}
+              onClearChecks={clearChecks}
+              onDeleteChecked={() => chosen.length > 0 && setConfirming(true)}
             />
+          )}
+          {selecting && list.length > 0 && (chosen.length > 0 || selectMode) && (
+            <div class="select-bar" role="region" aria-label={t.selectionAria}>
+              <span class="select-count" role="status">
+                {t.selectedCount(chosen.length)}
+              </span>
+              <button type="button" class="select-link" disabled={chosen.length === listed.length} onClick={checkAll}>
+                {t.selectAllN(listed.length)}
+              </button>
+              <button type="button" class="select-link" disabled={chosen.length === 0} onClick={clearChecks}>
+                {t.clearSelection}
+              </button>
+              <button
+                ref={deleteButton}
+                type="button"
+                class="btn btn-danger select-delete"
+                disabled={chosen.length === 0}
+                aria-haspopup="dialog"
+                aria-expanded={confirming}
+                onClick={() => setConfirming(true)}
+              >
+                <Icon name="Trash" size={14} />
+                {t.deleteSelected}
+              </button>
+              <ConfirmPopover
+                triggerLabel={t.deleteSelected}
+                title={t.deleteManyTitle(chosen.length)}
+                description={t.deleteManyText(chosen.length)}
+                confirmLabel={t.deleteSelected}
+                cancelLabel={t.cancel}
+                busyLabel={t.deleting}
+                anchor={() => deleteButton.current}
+                open={confirming && chosen.length > 0}
+                onClose={() => setConfirming(false)}
+                onConfirm={deleteChosen}
+              />
+            </div>
           )}
         </div>
       </div>

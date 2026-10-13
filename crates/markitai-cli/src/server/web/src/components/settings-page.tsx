@@ -1,14 +1,16 @@
-// Settings as pages of the sidebar's Settings section: Models (see
-// settings-models), Appearance and language, and Access token. On phones
-// `/settings` lists the three sections and the external links in one list.
+// Settings as pages of the sidebar's Settings section: Appearance and
+// language, Models (see settings-models), Access token and Edit config (see
+// settings-config); the last three only for the admin token. On phones
+// `/settings` lists the sections and the external links in one list.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { regenerateToken } from "../api/client.ts";
+import { createUserToken, fetchUserTokens, regenerateToken, revokeUserToken } from "../api/client.ts";
 import { hasToken, setToken } from "../api/token.ts";
-import type { RegeneratedToken } from "../api/types.ts";
+import type { RegeneratedToken, UserToken } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { LOCALES } from "../i18n/locale.ts";
 import { ownClick, type Route, type Section } from "../lib/route.ts";
 import { applyTheme, storedTheme, THEMES, type Theme } from "../lib/theme.ts";
+import { fmtClock } from "../lib/format.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { qrModules, qrPath } from "../lib/qr.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
@@ -63,7 +65,18 @@ function Choice<T extends string>({ label, value, options, onChange }: { label: 
 const LANGUAGE_NAMES: Record<Locale, string> = { en: "English", zh: "中文", ja: "日本語" };
 const LANGUAGE_TAGS: Record<Locale, string> = { en: "en", zh: "zh-CN", ja: "ja" };
 
-export function AppearanceSettings({ t, locale, onLocale }: { t: Dict; locale: Locale; onLocale: (locale: Locale) => void }) {
+export function AppearanceSettings({
+  t,
+  locale,
+  onLocale,
+  userAccess,
+}: {
+  t: Dict;
+  locale: Locale;
+  onLocale: (locale: Locale) => void;
+  /** Signed in with a user token: which one, and the way to another (the Access page is the admin's). */
+  userAccess: { label: string | null; onOtherToken: () => void } | null;
+}) {
   const [theme, setTheme] = useState<Theme>(storedTheme);
   useEffect(() => applyTheme(theme), [theme]);
   const names: Record<Theme, string> = { auto: t.themeAuto, light: t.themeLight, dark: t.themeDark };
@@ -88,22 +101,162 @@ export function AppearanceSettings({ t, locale, onLocale }: { t: Dict; locale: L
           </div>
           <Choice label={t.themeAria} value={theme} options={THEMES.map((value) => ({ value, label: names[value], icon: icons[value] }))} onChange={setTheme} />
         </div>
+        {userAccess && (
+          <div class="setting">
+            <div class="setting-copy">
+              <h2>{t.userAccessTitle}</h2>
+              <p>{userAccess.label ? t.userAccessNamed(userAccess.label) : t.userAccessText}</p>
+            </div>
+            <div class="setting-actions">
+              <button type="button" class="btn" onClick={userAccess.onOtherToken}>
+                <Icon name="Key" size={14} />
+                {t.useOtherToken}
+              </button>
+              <button
+                type="button"
+                class="btn"
+                title={t.signOutTabHint}
+                onClick={() => {
+                  setToken("");
+                  location.reload();
+                }}
+              >
+                {t.signOutTab}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+    </section>
+  );
+}
+
+/** The admin's list of user tokens: create one with a label (its token shown once), revoke one. */
+function UserTokens({ t, locale, describe }: { t: Dict; locale: Locale; describe: (error: unknown) => { text: string; detail: string } }) {
+  const [tokens, setTokens] = useState<UserToken[] | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [label, setLabel] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [fresh, setFresh] = useState<UserToken | null>(null);
+  const load = () =>
+    fetchUserTokens().then(
+      (list) => setTokens(list),
+      (error: unknown) => setFailure(describe(error).text),
+    );
+  useEffect(() => void load(), []);
+  const create = async (event: Event) => {
+    event.preventDefault();
+    const name = label.trim();
+    if (!name || creating) return;
+    setCreating(true);
+    setFailure(null);
+    try {
+      const made = await createUserToken(name);
+      setFresh(made);
+      setLabel("");
+      await load();
+    } catch (error) {
+      setFailure(describe(error).text);
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <section class="access-section user-tokens" aria-labelledby="user-tokens-title">
+      <h2 id="user-tokens-title" class="group-title">
+        {t.userTokensTitle}
+      </h2>
+      <p class="field-hint">{t.userTokensText}</p>
+      {fresh?.token ? (
+        <NewToken
+          t={t}
+          heading={t.userTokenCreated(fresh.label)}
+          token={{ token: fresh.token, network_url: null, persistent: true, startup_variable: null }}
+          onDone={() => setFresh(null)}
+        />
+      ) : (
+        <form class="token-create" onSubmit={create}>
+          <label class="field-label" for="user-token-label">
+            {t.userTokenLabel}
+          </label>
+          <div class="input-group">
+            <input
+              id="user-token-label"
+              type="text"
+              value={label}
+              maxLength={60}
+              autoComplete="off"
+              placeholder={t.userTokenPlaceholder}
+              onInput={(event) => setLabel(event.currentTarget.value)}
+            />
+            <button type="submit" class="btn btn-primary" disabled={!label.trim() || creating} aria-busy={creating || undefined}>
+              <Icon name="Plus" size={14} />
+              {t.userTokenCreate}
+            </button>
+          </div>
+        </form>
+      )}
+      {failure && (
+        <p class="line-error" role="alert">
+          {failure}
+        </p>
+      )}
+      {tokens === null ? (
+        !failure && <p class="field-hint">{t.loading}</p>
+      ) : tokens.length === 0 ? (
+        <p class="token-empty">{t.userTokensNone}</p>
+      ) : (
+        <ul class="token-list" aria-label={t.userTokensTitle}>
+          {tokens.map((token) => (
+            <li key={token.id}>
+              <span class="token-name">{token.label}</span>
+              <code class="token-hint" title={t.userTokenHint}>
+                …{token.hint}
+              </code>
+              <span class="token-when">{token.last_used_at ? t.userTokenUsed(fmtClock(token.last_used_at, locale)) : t.userTokenCreatedAt(fmtClock(token.created_at, locale))}</span>
+              <ConfirmPopover
+                triggerLabel={t.userTokenRevokeAria(token.label)}
+                triggerText={t.userTokenRevoke}
+                title={t.userTokenRevokeTitle(token.label)}
+                description={t.userTokenRevokeText}
+                confirmLabel={t.userTokenRevoke}
+                cancelLabel={t.cancel}
+                busyLabel={t.userTokenRevoking}
+                onConfirm={async () => {
+                  setFailure(null);
+                  try {
+                    await revokeUserToken(token.id);
+                  } catch (error) {
+                    setFailure(describe(error).text);
+                  }
+                  await load();
+                  return true;
+                }}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
 
 export function AccessSettings({
   t,
+  locale,
   unauthorized,
   canRegenerate,
+  userTokens,
   describe,
   onToken,
 }: {
   t: Dict;
+  locale: Locale;
   unauthorized: boolean;
   /** The server can replace its token (`features.token_regenerate`). */
   canRegenerate: boolean;
+  /** v1.13: the admin's user tokens (`features.user_tokens`). */
+  userTokens: boolean;
   describe: (error: unknown) => { text: string; detail: string };
   onToken: () => void;
 }) {
@@ -196,6 +349,7 @@ export function AccessSettings({
             )}
           </section>
         )}
+        {userTokens && <UserTokens t={t} locale={locale} describe={describe} />}
         <form
           class="access-form"
           onSubmit={(event) => {
@@ -238,7 +392,7 @@ export function AccessSettings({
 }
 
 /** The new token, shown this once: copy it, or sign in on another device by its link or QR code. */
-function NewToken({ t, token, onDone }: { t: Dict; token: RegeneratedToken; onDone: () => void }) {
+function NewToken({ t, token, heading: title, onDone }: { t: Dict; token: RegeneratedToken; heading?: string; onDone: () => void }) {
   const [copied, setCopied] = useState<"token" | "link" | null>(null);
   const heading = useRef<HTMLParagraphElement>(null);
   useEffect(() => heading.current?.focus(), []);
@@ -253,7 +407,7 @@ function NewToken({ t, token, onDone }: { t: Dict; token: RegeneratedToken; onDo
     <div class="new-token">
       <p ref={heading} class="access-state" tabIndex={-1}>
         <Icon name="Check" size={15} />
-        <span>{t.regenerated}</span>
+        <span>{title ?? t.regenerated}</span>
       </p>
       <div class="field">
         <span class="field-label" id="new-token-label">
@@ -300,9 +454,15 @@ function NewToken({ t, token, onDone }: { t: Dict; token: RegeneratedToken; onDo
 }
 
 /** Phones: the section list behind the tab bar's Settings. */
-export function SettingsIndex({ t, version, docsUrl, sourceUrl, onNavigate }: { t: Dict; version: string | null; docsUrl: string; sourceUrl: string; onNavigate: (route: Route) => void }) {
+export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, onNavigate }: { t: Dict; version: string | null; docsUrl: string; sourceUrl: string; sections: Section[]; onNavigate: (route: Route) => void }) {
+  const entries: Record<Section, [IconName, string, string]> = {
+    appearance: ["Palette", t.navAppearanceShort, t.appearanceHint],
+    models: ["Cpu", t.navModels, t.modelsHint],
+    access: ["Key", t.navAccess, t.accessHint],
+    config: ["FileCode", t.navConfig, t.configHint],
+  };
   const entry = (section: Section, icon: IconName, label: string, hint: string) => (
-    <li>
+    <li key={section}>
       <a
         href={`/settings/${section}`}
         onClick={(event) => {
@@ -326,9 +486,7 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, onNavigate }: { 
         <h1 id="settings-index-title">{t.settingsTitle}</h1>
       </div>
       <ul class="settings-index">
-        {entry("models", "Cpu", t.navModels, t.modelsHint)}
-        {entry("appearance", "Palette", t.navAppearanceShort, t.appearanceHint)}
-        {entry("access", "Key", t.navAccess, t.accessHint)}
+        {sections.map((section) => entry(section, ...entries[section]))}
         <li>
           <a href={docsUrl} target="_blank" rel="noopener noreferrer">
             <Icon name="BookOpen" size={18} />

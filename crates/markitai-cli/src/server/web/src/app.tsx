@@ -13,6 +13,7 @@ import { DropOverlay } from "./components/drop-overlay.tsx";
 import { MAX_NOTES, NoticeStack, type Note } from "./components/notes.tsx";
 import { OptionsPanel } from "./components/options-panel.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
+import { ConfigSettings } from "./components/settings-config.tsx";
 import { ModelsSettings } from "./components/settings-models.tsx";
 import { Shell, useSidebar } from "./components/shell.tsx";
 import type { PanelState } from "./components/conversions-page.tsx";
@@ -27,13 +28,13 @@ import { useMedia } from "./hooks/use-media.ts";
 import { detectLocale, dicts, loadLocale, storeLocale, type Locale } from "./i18n/index.ts";
 import { apiErrorText } from "./i18n/errors.ts";
 import { LANG_TAGS } from "./i18n/locale.ts";
-import { isFailed, jobKey, submissions, type Filter, type LabelWords } from "./lib/conversions.ts";
+import { isFailed, isJobKey, jobKey, submissions, type Filter, type LabelWords } from "./lib/conversions.ts";
 import { download } from "./lib/download.ts";
 import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked } from "./lib/files.ts";
-import { basename, fmtBytes } from "./lib/format.ts";
+import { basename, displayName, fmtBytes } from "./lib/format.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
-import { listQuery, parseListState, parseRoute, routePath, type PaneMode, type Route } from "./lib/route.ts";
+import { ADMIN_SECTIONS, listQuery, parseListState, parseRoute, routePath, type PaneMode, type Route, type Section } from "./lib/route.ts";
 import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
 import { parseUrls } from "./lib/urls.ts";
 
@@ -104,6 +105,9 @@ export function App() {
   const maxItems = caps?.limits.max_job_items ?? 1000;
   const presets = caps?.preset_options;
   const features = caps?.features ?? null;
+  // v1.13: a user token converts and sees its own conversions; settings are the admin's.
+  const role = caps?.access?.role ?? "admin";
+  const sections: Section[] = role === "admin" ? ["appearance", "models", "access", ...(features?.config_edit === true ? (["config"] as const) : [])] : ["appearance"];
   const docsUrl = caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS;
   const sourceUrl = caps?.source_url && /^https:\/\//.test(caps.source_url) ? caps.source_url : DEFAULT_SOURCE;
 
@@ -187,8 +191,8 @@ export function App() {
   const phone = useMedia(PHONE);
   useEffect(() => {
     if (route.view === "settings" && route.section === null && !phone) {
-      history.replaceState(null, "", "/settings/models");
-      setRoute({ view: "settings", section: "models" });
+      history.replaceState(null, "", "/settings/appearance");
+      setRoute({ view: "settings", section: "appearance" });
     }
   }, [route, phone]);
 
@@ -571,6 +575,7 @@ export function App() {
     compare: features?.original === true,
     cancel: features?.cancel === true,
     retentionDays: caps?.limits.history_retention_days ?? null,
+    admin: role === "admin",
     docsUrl,
     busy,
     labelWords,
@@ -673,6 +678,19 @@ export function App() {
         }}
         announce={announce}
         describe={describe}
+        onDeleteMany={async (jobIds, chosen) => {
+          const words = dicts[localeRef.current];
+          const { removed, failed } = await conversionsRef.current.removeMany(jobIds, chosen);
+          if (selected !== null && !isJobKey(selected) && !conversionsRef.current.items.some((item) => item.key === selected)) updateList({ selected: null, mode: "inspector" });
+          if (!failed.length) {
+            announce(words.deletedMany(removed));
+            note({ tone: "success", text: words.deletedMany(removed) });
+            return;
+          }
+          const [first] = failed;
+          const why = first ? describe(first.error).text.split(/(?<=[.!?。！？])\s*/)[0] ?? "" : "";
+          note({ tone: "error", text: words.deletedSome(removed, failed.length, first ? displayName(first.item.name) : "", why) });
+        }}
       />
     );
   } else if (route.view === "missing") {
@@ -689,11 +707,30 @@ export function App() {
       </div>
     );
   } else if (route.view === "settings") {
-    const section = route.section ?? (phone ? null : "models");
+    const section = route.section ?? (phone ? null : "appearance");
     page =
       section === null ? (
         <div class="page">
-          <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} onNavigate={navigate} />
+          <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} sections={sections} onNavigate={navigate} />
+        </div>
+      ) : caps === null && !unauthorized && ADMIN_SECTIONS.has(section) ? (
+        // Who is asking is not known yet: an admin page waits rather than ask as the wrong one.
+        <div class="page">
+          <p class="pane-note">{t.loading}</p>
+        </div>
+      ) : !sections.includes(section) ? (
+        <div class="page">
+          <StateBlock
+            heading="h1"
+            icon="Key"
+            title={role === "user" ? t.adminOnlyTitle : t.notFoundTitle}
+            text={role === "user" ? t.adminOnlyText : t.notFoundText(routePath(route))}
+            primary={{ label: t.navAppearanceShort, run: () => navigate({ view: "settings", section: "appearance" }) }}
+          />
+        </div>
+      ) : section === "config" ? (
+        <div class="page">
+          <ConfigSettings t={t} announce={announce} describe={describe} onSaved={refreshCaps} />
         </div>
       ) : section === "models" ? (
         <div class="page">
@@ -701,14 +738,21 @@ export function App() {
         </div>
       ) : section === "appearance" ? (
         <div class="page">
-          <AppearanceSettings t={t} locale={locale} onLocale={chooseLocale} />
+          <AppearanceSettings
+            t={t}
+            locale={locale}
+            onLocale={chooseLocale}
+            userAccess={role === "user" ? { label: caps?.access?.label ?? null, onOtherToken: () => setTokenOpen(true) } : null}
+          />
         </div>
       ) : (
         <div class="page">
           <AccessSettings
             t={t}
+            locale={locale}
             unauthorized={unauthorized}
             canRegenerate={features?.token_regenerate === true}
+            userTokens={features?.user_tokens === true && role === "admin" && !unauthorized}
             describe={describe}
             onToken={() => {
               setUnauthorized(false);
@@ -750,6 +794,7 @@ export function App() {
         collapsed={collapsedSidebar}
         onToggle={toggleSidebar}
         onNavigate={navigate}
+        sections={sections}
       >
         {page}
       </Shell>

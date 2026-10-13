@@ -1,5 +1,6 @@
-// The frame of every view: a left sidebar with the two work views, the three
-// settings sections and the external links. It collapses to a 60px icon rail
+// The frame of every view: a left sidebar with the two work views, the
+// settings sections (Appearance for everyone; Models, Access token and Edit
+// config for the admin token only) and the external links. It collapses to a 60px icon rail
 // (each entry keeps its name for assistive technology and shows it as a
 // tooltip); the choice is remembered in this browser. On phones the sidebar
 // gives way to a top bar and a bottom tab bar.
@@ -90,11 +91,16 @@ export interface ShellProps {
   collapsed: boolean;
   onToggle: () => void;
   onNavigate: (route: Route) => void;
+  /** The settings pages this token may open, in sidebar order. */
+  sections: Section[];
   children: ComponentChildren;
 }
 
-export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, collapsed, onToggle, onNavigate, children }: ShellProps) {
-  const section = route.view === "settings" ? route.section ?? "models" : null;
+const SECTION_ICONS: Record<Section, IconName> = { appearance: "Palette", models: "Cpu", access: "Key", config: "FileCode" };
+
+export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, collapsed, onToggle, onNavigate, sections, children }: ShellProps) {
+  const section = route.view === "settings" ? route.section ?? sections[0] ?? "appearance" : null;
+  const sectionLabels: Record<Section, string> = { appearance: t.navAppearanceShort, models: t.navModels, access: t.navAccess, config: t.navConfig };
   const settingsLink = (to: Section, icon: IconName, label: string) => (
     <NavLink to={{ view: "settings", section: to }} icon={icon} label={label} current={section === to} onNavigate={onNavigate} />
   );
@@ -148,9 +154,7 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
           <p id="nav-settings-title" class="nav-title">
             {t.settingsTitle}
           </p>
-          {settingsLink("models", "Cpu", t.navModels)}
-          {settingsLink("appearance", "Palette", t.navAppearanceShort)}
-          {settingsLink("access", "Key", t.navAccess)}
+          {sections.map((entry) => settingsLink(entry, SECTION_ICONS[entry], sectionLabels[entry]))}
         </nav>
         <div class="sidebar-foot">
           <External href={docsUrl} label={t.docsLabel} icon="BookOpen" note={t.opensNewTab} />

@@ -6,7 +6,7 @@
 // (pointer hover) and in the text read aloud; a long press shows it in full on
 // a touch screen until the next tap.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { displayName } from "../lib/format.ts";
+import { displayName, readable } from "../lib/format.ts";
 import { nameShape, shortenShape, type NameKind, type ShortName } from "../lib/middle.ts";
 
 const LONG_PRESS_MS = 450;
@@ -35,7 +35,9 @@ function watch(element: Element, fit: () => void): () => void {
   };
 }
 
-export function MiddleName({ text, kind, title, class: className }: { text: string; kind: NameKind; title?: string; class?: string }) {
+export function MiddleName({ text: raw, kind, title: rawTitle, class: className }: { text: string; kind: NameKind; title?: string; class?: string }) {
+  const text = readable(raw);
+  const title = rawTitle === undefined ? undefined : readable(rawTitle);
   const root = useRef<HTMLSpanElement>(null);
   const hostRef = useRef<HTMLSpanElement>(null);
   const [short, setShort] = useState<ShortName | null>(null);

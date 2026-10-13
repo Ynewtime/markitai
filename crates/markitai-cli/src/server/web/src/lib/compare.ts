@@ -26,6 +26,8 @@ export interface Target {
   page?: number;
   /** A table's last row cells. */
   last?: string[];
+  /** A picture's address as the Markdown wrote it. */
+  src?: string;
 }
 
 export interface Located {
@@ -230,7 +232,7 @@ export function locate(pages: PageLines[], targets: Target[]): Map<string, Locat
 }
 
 /** The elements Compare links: headings, tables and the text blocks between them. */
-export const TARGET_SELECTOR = "h1, h2, h3, h4, h5, h6, table, p, li, pre, dt, dd, img[data-page]";
+export const TARGET_SELECTOR = "h1, h2, h3, h4, h5, h6, table, p, li, pre, dt, dd, img";
 /** What a list item says itself, without the lists, paragraphs and code it holds (those are their own blocks). */
 const OWN_SKIP = new Set(["UL", "OL", "P", "PRE", "TABLE", "BLOCKQUOTE", "DL"]);
 
@@ -263,7 +265,11 @@ export function targetsOf(root: ParentNode): { element: HTMLElement; target: Tar
         },
       });
     } else if (/^H[1-6]$/.test(element.tagName)) result.push({ element, target: { id: `t${index++}`, kind: "heading", text: [element.textContent ?? ""] } });
-    else if (element.tagName === "IMG") result.push({ element, target: { id: `t${index++}`, kind: "image", text: [], page: Number(element.dataset.page) } });
+    else if (element.tagName === "IMG") {
+      const page = Number(element.dataset.page);
+      const src = element.getAttribute("src") ?? "";
+      result.push({ element, target: { id: `t${index++}`, kind: "image", text: [element.getAttribute("alt") ?? ""], ...(page >= 1 ? { page } : {}), ...(/^https:/i.test(src) ? { src } : {}) } });
+    }
     else {
       // A block inside a table is part of the table; one without words (a picture) has nothing to find.
       if (element.closest("table")) continue;
@@ -298,6 +304,114 @@ export function pairElements(markdown: { element: HTMLElement; target: Target }[
         break;
       }
     }
+  }
+  return pairs;
+}
+
+/** One element of a framed web page, as the matcher reads it. */
+export interface PageBlock {
+  /** Lower-case tag name. */
+  tag: string;
+  /** The words it shows itself (a list item without its nested lists). */
+  text: string;
+  /** A picture's resolved address. */
+  src?: string;
+}
+
+/** The frame's elements a block of the Markdown can stand for, in document order. */
+export const PAGE_BLOCKS = "h1, h2, h3, h4, h5, h6, p, li, pre, dt, dd, td, th, blockquote, figcaption, caption, table, img, div, section, article";
+/** Containers count only for the words they hold directly (a page that writes paragraphs as `<div>`s). */
+const CONTAINERS = new Set(["div", "section", "article", "blockquote", "td", "th", "li", "dd"]);
+
+/** A framed page's candidate blocks; `limit` bounds the work on a huge page. */
+export function pageBlocks(root: ParentNode, limit = 20_000): { element: Element; block: PageBlock }[] {
+  const result: { element: Element; block: PageBlock }[] = [];
+  for (const element of root.querySelectorAll(PAGE_BLOCKS)) {
+    if (result.length >= limit) break;
+    const tag = element.tagName.toLowerCase();
+    if (tag === "img") {
+      result.push({ element, block: { tag, text: element.getAttribute("alt") ?? "", src: (element as HTMLImageElement).src || element.getAttribute("src") || "" } });
+      continue;
+    }
+    // Text in a hidden part of the page (menus, templates) is no match for what the reader sees.
+    if (element.closest("script, style, template, noscript, [hidden], nav, header > nav")) continue;
+    const text = CONTAINERS.has(tag) && tag !== "td" && tag !== "th" ? ownText(element) : (element.textContent ?? "");
+    if (tag === "div" || tag === "section" || tag === "article") {
+      // Only a container whose own words make a block (no block children holding them).
+      if (norm(text).length < 8) continue;
+    }
+    result.push({ element, block: { tag, text } });
+  }
+  return result;
+}
+
+const HEADING = /^h[1-6]$/;
+
+/**
+ * Pair the Markdown's targets with a framed web page's blocks, in document order: a heading with a
+ * heading that reads the same, a paragraph, list item or code block with the block that spells it
+ * (the same words, or the page's block holding them, or the start of them when the page splits a
+ * paragraph), a table with the page's tables in order, a picture with the page's picture of the same
+ * address (else the same description). Each search starts after the previous match and falls back to
+ * the whole page once, so one block the page moved does not lose the rest. Returns target id → block index.
+ */
+export function pairBlocks(targets: Target[], blocks: PageBlock[]): Map<string, number> {
+  const pairs = new Map<string, number>();
+  const words = blocks.map((block) => (block.tag === "img" ? "" : norm(block.text)));
+  const tables = blocks.flatMap((block, index) => (block.tag === "table" ? [index] : []));
+  const used = new Set<number>();
+  let cursor = 0;
+  let tableIndex = 0;
+  const search = (test: (index: number) => boolean): number => {
+    for (const [from, to] of [
+      [cursor, blocks.length],
+      [0, cursor],
+    ] as const) {
+      for (let index = from; index < to; index++) if (!used.has(index) && test(index)) return index;
+    }
+    return -1;
+  };
+  for (const target of targets) {
+    let found = -1;
+    if (target.kind === "table") {
+      const index = tables[tableIndex++];
+      if (index !== undefined) found = index;
+    } else if (target.kind === "image") {
+      const src = target.src;
+      const alt = norm(target.text.join(" "));
+      found = src ? search((index) => blocks[index]?.tag === "img" && blocks[index]?.src === src) : -1;
+      if (found < 0 && alt.length >= 2) found = search((index) => blocks[index]?.tag === "img" && norm(blocks[index]?.text ?? "") === alt);
+    } else {
+      const wanted = norm(target.text.join(" "));
+      if (wanted.length < 2) continue;
+      const heading = target.kind === "heading";
+      // The same words; for a heading a heading first.
+      if (heading) found = search((index) => HEADING.test(blocks[index]?.tag ?? "") && words[index] === wanted);
+      if (found < 0) found = search((index) => words[index] === wanted);
+      // The smallest block that holds them (the page wraps a paragraph with more).
+      if (found < 0 && wanted.length >= 6) {
+        let best = -1;
+        for (const [from, to] of [
+          [cursor, blocks.length],
+          [0, cursor],
+        ] as const) {
+          for (let index = from; index < to; index++) {
+            const text = words[index] ?? "";
+            if (used.has(index) || text.length < wanted.length || !text.includes(wanted)) continue;
+            if (best < 0 || text.length < (words[best] ?? "").length) best = index;
+            if (text.length < wanted.length * 1.5) break;
+          }
+          if (best >= 0) break;
+        }
+        found = best;
+      }
+      // The block the paragraph starts with (the page split it in two).
+      if (found < 0 && wanted.length >= 12) found = search((index) => (words[index]?.length ?? 0) >= Math.max(8, wanted.length / 2) && wanted.startsWith(words[index] ?? "\u0000"));
+    }
+    if (found < 0) continue;
+    pairs.set(target.id, found);
+    if (target.kind !== "table") used.add(found);
+    if (found >= cursor) cursor = found + 1;
   }
   return pairs;
 }
