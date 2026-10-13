@@ -270,7 +270,7 @@ fn complete_sidebar_label(text: &str) -> bool {
 
 fn title_like(text: &str, numbered: bool, bold: bool) -> bool {
     let trimmed = text.trim();
-    let word_count = trimmed.split_whitespace().count();
+    let word_count = super::classify::text_words(trimmed);
     if !(1..=12).contains(&word_count)
         || !(4..=140).contains(&trimmed.chars().count())
         || !trimmed.chars().any(|c| c.is_alphabetic())

@@ -4,6 +4,9 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 #[path = "pdf/annotations.rs"]
 mod annotations;
+#[cfg(test)]
+#[path = "pdf/cjk_layout_tests.rs"]
+mod cjk_layout_tests;
 #[path = "pdf/continued.rs"]
 mod continued;
 #[path = "pdf/figures.rs"]

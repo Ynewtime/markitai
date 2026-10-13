@@ -1254,6 +1254,9 @@ const ADJACENT_PAGE_MIN_CONTENT_WIDTH_EM: f32 = 26.0;
 
 type ContextualCandidateOccurrence = (u32, f32, Vec<(usize, u32)>);
 
+/// Markitai: the size from which an edge number is display text, not a folio.
+const DISPLAY_NUMBER_SIZE: f32 = 20.0;
+
 fn page_number_value(item: &TextItem) -> Option<u32> {
     if !matches!(
         item.item_type,
@@ -1265,6 +1268,12 @@ fn page_number_value(item: &TextItem) -> Option<u32> {
     let text = item.text.trim();
 
     if text.is_empty() || text.len() > 4 || !text.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+
+    // Markitai: a folio is set small; a number at display size is the
+    // page's content (a report's year across its cover in 48 pt).
+    if item.font_size >= DISPLAY_NUMBER_SIZE {
         return None;
     }
 
@@ -3392,6 +3401,21 @@ mod tests {
             mcid: None,
             baseline_shift: 0.0,
         }
+    }
+
+    /// Markitai: a year set across a cover at display size is no folio; the
+    /// same number at a folio's size at the page's edge is.
+    #[test]
+    fn a_display_size_number_at_the_top_is_no_page_number() {
+        let mut year = make_item(1, 60.0, 780.0, "2025");
+        year.font_size = 48.0;
+        let body = make_item(1, 60.0, 600.0, "The quarterly figures below");
+        assert_eq!(
+            page_number_removal_mask(&[year.clone(), body.clone()], 1),
+            [false, false]
+        );
+        year.font_size = 10.0;
+        assert_eq!(page_number_removal_mask(&[year, body], 1), [true, false]);
     }
 
     /// Markitai: a printed table continues across pages, so each page's last

@@ -133,6 +133,22 @@ one test to `tests/decryption.rs`:
 The upstream suite, prepared as above: 309 passed (the added test), the same
 33 failed, 3 ignored.
 
+A further change, also marked `markitai`, touches `src/parser/mod.rs` and adds
+one test:
+
+- Content-stream operators and operands may be separated by any PDF
+  white-space character (ISO 32000-1 Table 1), NUL and form feed included, as
+  between objects; only space, tab, CR and LF were, so a content stream whose
+  operators are separated by NUL (iText writes a page it modified that way)
+  stopped at its first NUL and the page read as empty. After an inline image's
+  `ID` the old separators remain, as the image's data, which may start with
+  NUL, follows. `content_with_nul_and_form_feed_separators` covers it.
+
+The library and integration tests (`--lib --tests`, without the examples and
+benchmarks), prepared as above in copies of the unmodified and the patched
+files: 295 and 296 passed (the added test), the same 31 failed by name (all
+read the `assets` directory), 3 ignored.
+
 Local example paths are replaced with `input.pdf` and `output.pdf` placeholders
 to avoid distributing developer home paths. `UPSTREAM.json` retains the original
 archive and upstream-file checksums; they describe the unmodified source, not

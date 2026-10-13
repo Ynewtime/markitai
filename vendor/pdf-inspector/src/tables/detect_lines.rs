@@ -1436,6 +1436,297 @@ fn refine_segment_grid_text_rows(
     ))
 }
 
+/// markitai: the column edges of each run of three or more abutting
+/// segments drawn at one height, with that height: `[(y, edges)]`, the
+/// edges the run's two ends and the joins between its segments.
+fn segmented_rule_runs(horizontals: &[HorizontalRule]) -> Vec<(f32, Vec<f32>)> {
+    let mut rules = horizontals.to_vec();
+    crate::sort::stable(&mut rules, &mut |left, right| {
+        right.0.total_cmp(&left.0).then(left.1.total_cmp(&right.1))
+    });
+    let mut runs = Vec::new();
+    let mut start = 0;
+    while start < rules.len() {
+        let mut end = start + 1;
+        while end < rules.len() && (rules[start].0 - rules[end].0).abs() <= RULE_Y_TOLERANCE {
+            end += 1;
+        }
+        let mut level = rules[start..end].to_vec();
+        crate::sort::stable(&mut level, &mut |left, right| left.1.total_cmp(&right.1));
+        let mut run: Vec<HorizontalRule> = Vec::new();
+        let mut close = |run: &mut Vec<HorizontalRule>| {
+            if run.len() >= 3 {
+                let mut edges = vec![run[0].1];
+                edges.extend(run.windows(2).map(|pair| (pair[0].2 + pair[1].1) / 2.0));
+                edges.push(run[run.len() - 1].2);
+                runs.push((rules[start].0, edges));
+            }
+            run.clear();
+        };
+        for rule in level {
+            if run
+                .last()
+                .is_some_and(|last| (rule.1 - last.2).abs() > RULE_JOIN_GAP || rule.1 < last.1)
+            {
+                close(&mut run);
+            }
+            run.push(rule);
+        }
+        close(&mut run);
+        start = end;
+    }
+    runs
+}
+
+/// markitai: a table whose header row is boxed by two rules each drawn as
+/// the same run of abutting segments, one per column, over rows drawn
+/// without rules (a course schedule: `序号 | 课程名称 | 累计课时分钟 |
+/// …`). The joins of the segments are the column edges. The body runs down
+/// from the lower rule to the next rule across the table, a gap of three
+/// lines, or a line that leaves the columns. A body line holding text in
+/// half the columns or more is a row; a line holding less (the wrapped
+/// lines of a long name, beside which the row's other cells sit centred)
+/// belongs to the nearest such row, and wrapped CJK lines join without a
+/// space.
+/// Each table comes with its band, `(left, bottom, right, top)`: the
+/// header's upper rule down to the rule or line that ends the body.
+fn build_segmented_header_tables(
+    items: &[TextItem],
+    horizontals: &[HorizontalRule],
+    page: u32,
+) -> Vec<(Table, (f32, f32, f32, f32))> {
+    const SAME_EDGE: f32 = 3.0;
+    const MAX_HEADER_HEIGHT: f32 = 60.0;
+    let runs = segmented_rule_runs(horizontals);
+    let mut tables = Vec::new();
+    for (upper, (top, edges)) in runs.iter().enumerate() {
+        let Some((bottom, _)) = runs[upper + 1..].iter().find(|(y, other)| {
+            top - y > RULE_Y_TOLERANCE
+                && top - y <= MAX_HEADER_HEIGHT
+                && other.len() == edges.len()
+                && other
+                    .iter()
+                    .zip(edges)
+                    .all(|(a, b)| (a - b).abs() <= SAME_EDGE)
+        }) else {
+            continue;
+        };
+        if let Some(table) = segmented_header_table(items, horizontals, page, *top, *bottom, edges)
+        {
+            tables.push(table);
+        }
+    }
+    tables
+}
+
+fn segmented_header_table(
+    items: &[TextItem],
+    horizontals: &[HorizontalRule],
+    page: u32,
+    top: f32,
+    bottom: f32,
+    edges: &[f32],
+) -> Option<(Table, (f32, f32, f32, f32))> {
+    let columns = edges.len() - 1;
+    let (left, right) = (edges[0], edges[columns]);
+    let column_of = |item: &TextItem| -> Option<usize> {
+        let (x0, x1) = (item.x, item.x + item.width.max(0.0));
+        if x0 < left - RULE_JOIN_GAP || x1 > right + RULE_JOIN_GAP {
+            return None;
+        }
+        let center = (x0 + x1) / 2.0;
+        let column = (0..columns)
+            .find(|&c| center < edges[c + 1])
+            .unwrap_or(columns - 1);
+        // A run across a column edge is prose or a spanning label.
+        let crosses = |edge: f32| x0 < edge - 2.0 && x1 > edge + 2.0;
+        (!edges[1..columns].iter().any(|&edge| crosses(edge))).then_some(column)
+    };
+    let text = |item: &&TextItem| {
+        item.page == page
+            && crate::extractor::is_text_layout_item(item)
+            && item.is_horizontal()
+            && !item.text.trim().is_empty()
+    };
+    let indexed: Vec<(usize, &TextItem)> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| text(item))
+        .collect();
+
+    // The header: every run between the two rules, in the columns.
+    let header: Vec<(usize, &TextItem)> = indexed
+        .iter()
+        .copied()
+        .filter(|(_, item)| item.y < top && item.y > bottom)
+        .collect();
+    let mut header_cells = vec![Vec::new(); columns];
+    for &(index, item) in &header {
+        header_cells[column_of(item)?].push((index, item));
+    }
+    let named = header_cells.iter().filter(|cell| !cell.is_empty()).count();
+    if named * 3 < columns * 2 {
+        return None;
+    }
+
+    // The body ends at the next rule across most of the table.
+    let floor = horizontals
+        .iter()
+        .filter(|&&(y, x0, x1)| {
+            y < bottom - RULE_Y_TOLERANCE && x1.min(right) - x0.max(left) >= (right - left) * 0.5
+        })
+        .map(|rule| rule.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let mut below: Vec<(usize, &TextItem)> = indexed
+        .iter()
+        .copied()
+        .filter(|(_, item)| {
+            item.y < bottom && item.y > floor && item.x < right && item.x + item.width > left
+        })
+        .collect();
+    crate::sort::stable(&mut below, &mut |a, b| {
+        b.1.y.total_cmp(&a.1.y).then(a.1.x.total_cmp(&b.1.x))
+    });
+    let mut lines: Vec<(f32, f32, Vec<(usize, &TextItem, usize)>)> = Vec::new();
+    let mut previous = bottom;
+    let mut size = header
+        .iter()
+        .map(|(_, item)| item.font_size)
+        .fold(0.0, f32::max);
+    for (index, item) in below {
+        if let Some((y, _, line)) = lines.last_mut() {
+            if (*y - item.y).abs() <= TEXT_ROW_TOLERANCE {
+                let Some(column) = column_of(item) else {
+                    lines.pop();
+                    break;
+                };
+                line.push((index, item, column));
+                continue;
+            }
+        }
+        size = size.max(item.font_size);
+        if previous - item.y > size * 3.0 {
+            break;
+        }
+        let Some(column) = column_of(item) else {
+            break;
+        };
+        previous = item.y;
+        lines.push((item.y, item.font_size, vec![(index, item, column)]));
+    }
+    let filled = |line: &[(usize, &TextItem, usize)]| {
+        line.iter()
+            .map(|&(_, _, column)| column)
+            .collect::<HashSet<_>>()
+            .len()
+    };
+    let dense = columns.div_ceil(2).max(2);
+    let anchors: Vec<usize> = (0..lines.len())
+        .filter(|&index| filled(&lines[index].2) >= dense)
+        .collect();
+    if anchors.is_empty() {
+        return None;
+    }
+    // Lines past the last full row that are no wrap of it end the table.
+    let last = *anchors.last()?;
+    // A wrapped line lies within two and a half lines of its row.
+    fn reach<T>(lines: &[(f32, f32, T)], from: usize, to: usize) -> bool {
+        (lines[from].0 - lines[to].0).abs() <= lines[to].1 * 2.5
+    }
+    let mut kept = lines.len();
+    for index in last + 1..lines.len() {
+        if !reach(&lines, index, last) {
+            kept = index;
+            break;
+        }
+    }
+    lines.truncate(kept);
+
+    let mut rows: Vec<Vec<Vec<(f32, &TextItem)>>> = vec![vec![Vec::new(); columns]];
+    let mut row_ys = vec![header
+        .iter()
+        .map(|(_, item)| item.y)
+        .fold(f32::NEG_INFINITY, f32::max)];
+    let mut item_indices: Vec<usize> = header.iter().map(|&(index, _)| index).collect();
+    for (column, cell) in header_cells.iter().enumerate() {
+        rows[0][column] = cell.iter().map(|&(_, item)| (item.y, item)).collect();
+    }
+    for &anchor in &anchors {
+        rows.push(vec![Vec::new(); columns]);
+        row_ys.push(lines[anchor].0);
+    }
+    for (index, (y, _, line)) in lines.iter().enumerate() {
+        let nearest = anchors
+            .iter()
+            .enumerate()
+            .min_by(|a, b| {
+                (lines[*a.1].0 - y)
+                    .abs()
+                    .total_cmp(&(lines[*b.1].0 - y).abs())
+            })
+            .map(|(row, &anchor)| (row, anchor))?;
+        if !anchors.contains(&index) && !reach(&lines, index, nearest.1) {
+            return None;
+        }
+        for &(item_index, item, column) in line {
+            rows[nearest.0 + 1][column].push((*y, item));
+            item_indices.push(item_index);
+        }
+    }
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| row.iter().map(|cell| wrapped_cell_text(cell)).collect())
+        .collect();
+    item_indices.sort_unstable();
+    item_indices.dedup();
+    log::debug!(
+        "detect_lines p{}: segmented header table, {} columns, {} body rows",
+        page,
+        columns,
+        cells.len() - 1
+    );
+    // The band reaches the rule that ends the body, or its last line.
+    let last_line = lines.last().map_or(bottom, |(y, size, _)| y - size);
+    let band_bottom = if floor.is_finite() { floor } else { last_line };
+    Some((
+        Table::new(edges.to_vec(), row_ys, cells, item_indices),
+        (left, band_bottom, right, top),
+    ))
+}
+
+/// markitai: a cell's text from its runs, line by line from the top; a
+/// line wrapped between two CJK characters joins without a space.
+fn wrapped_cell_text(cell: &[(f32, &TextItem)]) -> String {
+    let mut runs: Vec<(f32, &TextItem)> = cell.to_vec();
+    crate::sort::stable(&mut runs, &mut |a, b| {
+        b.0.total_cmp(&a.0).then(a.1.x.total_cmp(&b.1.x))
+    });
+    let mut text = String::new();
+    let mut start = 0;
+    while start < runs.len() {
+        let mut end = start + 1;
+        while end < runs.len() && (runs[start].0 - runs[end].0).abs() <= TEXT_ROW_TOLERANCE {
+            end += 1;
+        }
+        let line: Vec<&TextItem> = runs[start..end].iter().map(|&(_, item)| item).collect();
+        let line = join_cell_items(&line);
+        let joins_tight = text
+            .chars()
+            .next_back()
+            .is_some_and(crate::text_utils::is_cjk_char)
+            && line
+                .chars()
+                .next()
+                .is_some_and(crate::text_utils::is_cjk_char);
+        if !text.is_empty() && !line.is_empty() && !joins_tight {
+            text.push(' ');
+        }
+        text.push_str(&line);
+        start = end;
+    }
+    text
+}
+
 /// Detect tables from line segments on a given page.
 ///
 /// Lines are classified as horizontal or vertical, snapped into grid edges,
@@ -1776,6 +2067,38 @@ fn detect_tables_from_lines_inner(
 
     if horizontals.len() < 2 {
         return Vec::new();
+    }
+    // markitai: a header boxed by two rules of the same segments names its
+    // columns outright; such a table owns its band, and the page's other
+    // rules are read without it (no booktabs reading of the same band, which
+    // takes each wrapped line of a cell for a row).
+    if allow_alternatives && verticals.len() < 2 {
+        let segmented = build_segmented_header_tables(items, &horizontals, page);
+        if !segmented.is_empty() {
+            let remaining_lines: Vec<PdfLine> = lines
+                .iter()
+                .filter(|line| {
+                    let (y0, y1) = (line.y1.min(line.y2), line.y1.max(line.y2));
+                    let (x0, x1) = (line.x1.min(line.x2), line.x1.max(line.x2));
+                    !segmented.iter().any(|(_, (left, bottom, right, top))| {
+                        x1 >= left - RULE_JOIN_GAP
+                            && x0 <= right + RULE_JOIN_GAP
+                            && y1 >= bottom - RULE_Y_TOLERANCE
+                            && y0 <= top + RULE_Y_TOLERANCE
+                    })
+                })
+                .cloned()
+                .collect();
+            let rest = detect_tables_from_lines_inner(
+                items,
+                &remaining_lines,
+                page,
+                allow_text_anchors,
+                allow_alternatives,
+            );
+            let tables = segmented.into_iter().map(|(table, _)| table).collect();
+            return combine_non_overlapping_tables(tables, rest);
+        }
     }
     let mut alternatives = Vec::new();
     let mut independent_segment_tables = Vec::new();

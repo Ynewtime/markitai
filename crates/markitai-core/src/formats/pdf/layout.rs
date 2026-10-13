@@ -1000,6 +1000,40 @@ fn ended_early(lines: &[Line], above: usize, below: usize, right: f32) -> bool {
     right - end(upper) > word_width + lower.size.max(upper.size) * 1.25
 }
 
+/// Whether `below` continues the CJK line `above` wrapped, however widely
+/// the page spaces its lines: `above` ends in CJK text, not at a sentence
+/// end, within an em and a half of the right edge `right` of the flow's
+/// text (CJK text fills every line of a paragraph but its last), and
+/// `below` follows within 2.6 lines at the same size, starting between
+/// three ems before it and six after (a clause's text hangs past its
+/// number).
+fn cjk_wrap(above: &Line, below: &Line, right: f32) -> bool {
+    let Some(last) = above
+        .items
+        .last()
+        .and_then(|item| item.text.trim_end().chars().next_back())
+    else {
+        return false;
+    };
+    let (Some(start), Some(next)) = (above.items.first(), below.items.first()) else {
+        return false;
+    };
+    let end = above
+        .items
+        .iter()
+        .map(|item| item.x + item.width)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let gap = above.y - below.y;
+    (is_cjk(last) || matches!(last as u32, 0x3000..=0x303F | 0xFF00..=0xFFEF))
+        && !matches!(last, '。' | '！' | '？' | '；' | '：')
+        && end >= right - above.size * 1.5
+        && (below.size - above.size).abs() <= above.size * 0.1
+        && gap > 0.
+        && gap <= above.size * 2.6
+        && next.x >= start.x - above.size * 3.
+        && next.x <= start.x + above.size * 6.
+}
+
 /// A symbol a line may start with as a list marker that stays in the text
 /// (`✅ True HEPA filter`): check marks, crosses, arrows, stars, shapes and
 /// pictographs, followed by a space.
@@ -1243,6 +1277,13 @@ fn flow(lines: &[Line], headings: &[f32], faces: &Faces, bullets: &Bullets) -> O
     let mut previous_index = 0;
     let same_size = same_size_headings(lines, headings, faces);
     let rights = column_rights(lines);
+    // The right edge of the flow's text, which a wrapped CJK line reaches
+    // (a centred title reaches only its own).
+    let flow_right = lines
+        .iter()
+        .flat_map(|line| &line.items)
+        .map(|item| item.x + item.width)
+        .fold(f32::NEG_INFINITY, f32::max);
     // Lines starting with a symbol that two lines or more of the flow start
     // with are items of a list that keeps the symbol (`- ✅ HEPA filter`).
     let symbols: Vec<Option<char>> = lines
@@ -1430,13 +1471,15 @@ fn flow(lines: &[Line], headings: &[f32], faces: &Faces, bullets: &Bullets) -> O
         let in_list = item.is_some();
         let new_block = previous.is_some_and(|prev| {
             let gap = prev.y - line.y;
+            let wrapped = cjk_wrap(prev, line, flow_right);
             level != previous_level
                 || is_list
-                || gap > prev.size.max(line.size) * NEW_BLOCK
+                || (gap > prev.size.max(line.size) * NEW_BLOCK && !wrapped)
                 || ended_early(lines, previous_index, index, rights[previous_index])
                 || (in_list && line.items[0].x + 2. < prev.items[0].x)
                 || (level == 0
                     && !in_list
+                    && !wrapped
                     && (line.items[0].x - prev.items[0].x).abs() > line.size * 2.5)
         });
         if new_block {

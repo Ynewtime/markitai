@@ -774,6 +774,7 @@ mod tests {
         FontWidthInfo {
             widths,
             default_width: 600,
+            default_width_written: false,
             space_width: 300,
             is_cid: false,
             units_scale: 0.001,

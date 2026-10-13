@@ -530,8 +530,14 @@ fn remove_page_numbers(text: &str) -> String {
             continue;
         }
 
-        // Check for page number patterns
-        if is_page_number_line(folio_text(trimmed)) {
+        // Check for page number patterns. Markitai: a bare number the reader
+        // set as a heading is display text (a report's year across its
+        // cover); the item-level folio pass already judged it by its size.
+        let heading_number = trimmed.starts_with('#')
+            && folio_text(trimmed)
+                .chars()
+                .all(|character| character.is_ascii_digit());
+        if !heading_number && is_page_number_line(folio_text(trimmed)) {
             // Check context to determine if this is isolated
             let prev_is_break = i > 0 && lines[i - 1].trim() == "---";
             let next_is_break = i + 1 < lines.len() && lines[i + 1].trim() == "---";
@@ -573,7 +579,17 @@ fn format_urls(text: &str) -> String {
 
     for mat in URL_RE.find_iter(text) {
         let start = mat.start();
+        // markitai: the address ends before CJK text run on after it
+        // (`登录http://example.com/查看`) and before the emphasis markers
+        // closing a bold or italic run around it (`**…/2331/**`).
         let url = mat.as_str();
+        let url = url
+            .find(|c: char| crate::text_utils::is_cjk_char(c))
+            .map_or(url, |at| &url[..at])
+            .trim_end_matches(['*', '_', '.', ',', ';']);
+        if url.len() <= "https://".len() {
+            continue;
+        }
 
         // Check if this URL is already in a markdown link by looking at preceding chars
         // Use safe character boundary checking for multi-byte UTF-8
@@ -629,10 +645,10 @@ fn format_urls(text: &str) -> String {
             }
             pos
         };
-        let safe_end = if text.is_char_boundary(mat.end()) {
-            mat.end()
+        let safe_end = if text.is_char_boundary(start + url.len()) {
+            start + url.len()
         } else {
-            let mut pos = mat.end();
+            let mut pos = start + url.len();
             while pos < text.len() && !text.is_char_boundary(pos) {
                 pos += 1;
             }
@@ -1161,6 +1177,26 @@ mod tests {
     }
 
     // --- format_urls ---
+
+    #[test]
+    fn a_bare_number_set_as_a_heading_is_kept() {
+        assert_eq!(
+            remove_page_numbers("# **2025**\n\n## Highlights\n\n12\n"),
+            "# **2025**\n\n## Highlights\n"
+        );
+    }
+
+    #[test]
+    fn a_url_ends_before_emphasis_markers_and_cjk_text() {
+        assert_eq!(
+            format_urls("**登录http://www.example.com/tabid/2331/** **查看**"),
+            "**登录[http://www.example.com/tabid/2331/](http://www.example.com/tabid/2331/)** **查看**"
+        );
+        assert_eq!(
+            format_urls("登录http://www.example.com自助查询"),
+            "登录[http://www.example.com](http://www.example.com)自助查询"
+        );
+    }
 
     #[test]
     fn test_format_urls_bare_url() {

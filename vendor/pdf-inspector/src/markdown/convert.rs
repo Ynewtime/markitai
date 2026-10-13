@@ -11,7 +11,10 @@ use super::analysis::{
     detect_header_level, font_size_rarity, has_dot_leaders, is_heading_fragment,
     is_leader_continuation, is_toc_entry_line, is_toc_marker_heading, trailing_leader_dots,
 };
-use super::classify::{format_list_item, is_caption_line, is_list_item, starts_with_bullet_marker};
+use super::classify::{
+    format_list_item, is_caption_line, is_list_item, reads_as_field, reads_as_sentence,
+    starts_with_bullet_marker, text_words,
+};
 use super::heading::classify_heading_sequences;
 use super::postprocess::clean_markdown;
 use super::preprocess::{merge_drop_caps, merge_heading_lines};
@@ -244,7 +247,7 @@ fn find_isolated_lines(lines: &[TextLine], base_size: f32, para_threshold: f32) 
         let line = &lines[i];
         let plain = line.text();
         let trimmed = plain.trim();
-        let word_count = trimmed.split_whitespace().count();
+        let word_count = text_words(trimmed);
         if !(1..=6).contains(&word_count) || trimmed.len() <= 3 {
             continue;
         }
@@ -386,13 +389,13 @@ fn merge_wrapped_bold_heading_groups(
         }
         let start = i;
         let mut end = i;
-        let mut word_count = lines[i].text().split_whitespace().count();
+        let mut word_count = text_words(&lines[i].text());
         while end + 1 < lines.len()
             && is_body_size_all_bold_line(&lines[end + 1], base_size)
             && is_wrapped_same_style_line(&lines[end], &lines[end + 1], para_threshold)
         {
             end += 1;
-            word_count += lines[end].text().split_whitespace().count();
+            word_count += text_words(&lines[end].text());
         }
         let line_count = end - start + 1;
         // Column-local isolation: on interleaved multi-column pages the
@@ -465,14 +468,14 @@ fn find_wrapped_bold_paragraph_lines(
 
         let start = i;
         let mut end = i;
-        let mut word_count = lines[i].text().split_whitespace().count();
+        let mut word_count = text_words(&lines[i].text());
 
         while end + 1 < lines.len()
             && is_body_size_all_bold_line(&lines[end + 1], base_size)
             && is_wrapped_same_style_line(&lines[end], &lines[end + 1], para_threshold)
         {
             end += 1;
-            word_count += lines[end].text().split_whitespace().count();
+            word_count += text_words(&lines[end].text());
         }
 
         let line_count = end - start + 1;
@@ -553,7 +556,7 @@ fn find_wrapped_large_paragraph_lines(
         }
         let words: usize = lines[start..end]
             .iter()
-            .map(|line| line.text().split_whitespace().count())
+            .map(|line| text_words(&line.text()))
             .sum();
         if end - start >= 3 && words > 30 {
             found.extend((start..end).map(|line| (line, start)));
@@ -878,6 +881,97 @@ fn heading_tiers(lines: &[TextLine], base_size: f32, options: &MarkdownOptions) 
 }
 
 /// Convert text lines to markdown, inserting tables and images at appropriate Y positions
+/// markitai: where CJK lines end or continue their paragraph, as the
+/// indices `(ends, wraps)`. CJK text fills every line of a paragraph to the
+/// column's edge, a character at a time, but its last (line-breaking rules
+/// move a character or two, a closing bracket with them, to the next line).
+/// A line ending in CJK text more than four ems before the right edge of its
+/// column ends its paragraph; the line after one that ends in CJK text
+/// within an em and a half of that edge, not at a sentence end, continues it
+/// when it follows within 2.6 lines at the same size and starts between
+/// three ems before and six after it (a clause's text hangs past its
+/// number), however widely the page spaces its lines. The column is the
+/// lines of the page beside or under this one (a centred title measures
+/// against the text below it).
+fn cjk_line_breaks(lines: &[TextLine]) -> (HashSet<usize>, HashSet<usize>) {
+    let extent = |line: &TextLine| {
+        let left = line.items.iter().map(|i| i.x).fold(f32::INFINITY, f32::min);
+        let right = line
+            .items
+            .iter()
+            .map(|i| i.x + i.width)
+            .fold(f32::NEG_INFINITY, f32::max);
+        (left, right)
+    };
+    let mut ends = HashSet::new();
+    let mut wraps = HashSet::new();
+    let mut start = 0;
+    while start < lines.len() {
+        let page = lines[start].page;
+        let end = start + lines[start..].iter().take_while(|l| l.page == page).count();
+        let extents: Vec<(f32, f32)> = lines[start..end].iter().map(extent).collect();
+        for (offset, line) in lines[start..end].iter().enumerate() {
+            let text = line.text();
+            let Some(last) = text
+                .trim_end()
+                .chars()
+                .next_back()
+                .filter(|&c| crate::text_utils::is_cjk_char(c))
+            else {
+                continue;
+            };
+            let size = line_font_size(line);
+            let (left, right) = extents[offset];
+            let column = extents
+                .iter()
+                .filter(|(other_left, other_right)| *other_left < right && *other_right > left)
+                .map(|&(_, other_right)| other_right)
+                .fold(right, f32::max);
+            if right < column - size * 4.0 {
+                ends.insert(start + offset);
+            } else if right >= column - size * 1.5
+                && !matches!(last, '。' | '！' | '？' | '；' | '：')
+            {
+                let Some(next) = lines[start..end].get(offset + 1) else {
+                    continue;
+                };
+                let gap = line.y - next.y;
+                if (line_font_size(next) - size).abs() <= size * 0.1
+                    && gap > 0.0
+                    && gap <= size * 2.6
+                    && extents[offset + 1].0 >= left - size * 3.0
+                    && extents[offset + 1].0 <= left + size * 6.0
+                {
+                    wraps.insert(start + offset + 1);
+                }
+            }
+        }
+        start = end;
+    }
+    (ends, wraps)
+}
+
+/// markitai: lines that set runs four ems or more apart, a row of fields
+/// (`报名人：示例学员    证件类型：学生证`) rather than a line of a paragraph.
+fn field_rows(lines: &[TextLine]) -> HashSet<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            let mut runs: Vec<(f32, f32, f32)> = line
+                .items
+                .iter()
+                .filter(|item| !item.text.trim().is_empty())
+                .map(|item| (item.x, item.x + item.width, item.font_size))
+                .collect();
+            runs.sort_by(|a, b| a.0.total_cmp(&b.0));
+            runs.windows(2)
+                .any(|pair| pair[1].0 - pair[0].1 >= pair[0].2.max(pair[1].2) * 4.0)
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
 pub(super) fn to_markdown_from_lines_with_tables_and_images(
     lines: Vec<TextLine>,
     options: MarkdownOptions,
@@ -932,6 +1026,9 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
     // between paragraphs at body font size. Inspired by opendataloader's
     // lookahead in HeadingProcessor (prevNode/nextNode context).
     let isolated_lines = find_isolated_lines(&lines, base_size, para_threshold);
+    // markitai: lines that end or stand apart from their paragraph.
+    let (cjk_paragraph_ends, cjk_wraps) = cjk_line_breaks(&lines);
+    let field_rows = field_rows(&lines);
     let (wrapped_bold_paragraph_lines, wrapped_quoted_paragraph_lines) =
         find_wrapped_bold_paragraph_lines(&lines, base_size, para_threshold);
     let wrapped_large_paragraph_lines =
@@ -1133,7 +1230,16 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             && wrapped_large_paragraph_lines
                 .get(&line_idx)
                 .is_some_and(|run| wrapped_large_paragraph_lines.get(&(line_idx - 1)) == Some(run));
-        let is_para_break = y_gap.abs() > para_threshold && !in_large_paragraph;
+        // markitai: a CJK line stopping short of its column ends its
+        // paragraph, and a row of fields set far apart stands alone.
+        let set_apart = line_idx > 0
+            && lines[line_idx - 1].page == line.page
+            && (cjk_paragraph_ends.contains(&(line_idx - 1))
+                || field_rows.contains(&line_idx)
+                || field_rows.contains(&(line_idx - 1)));
+        let is_para_break = ((y_gap.abs() > para_threshold && !cjk_wraps.contains(&line_idx))
+            || set_apart)
+            && !in_large_paragraph;
         // Also break when X jumps significantly at the same Y level on
         // pages with band-split side-by-side layout.  This prevents
         // interleaved left/right band lines from merging into one paragraph.
@@ -1304,7 +1410,8 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             && !is_code_line
             && !looks_like_list_continuation
             && plain_trimmed.len() > 3
-            && plain_trimmed.split_whitespace().count() <= 15
+            && text_words(plain_trimmed) <= 15
+            && !reads_as_sentence(plain_trimmed)
             && !starts_with_bullet_marker(plain_trimmed)
             && !is_toc_entry_line(plain_trimmed)
             && !is_heading_fragment(plain_trimmed)
@@ -1326,7 +1433,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
                 if line_font_size < base_size * 0.95 {
                     return None;
                 }
-                let word_count = plain_trimmed.split_whitespace().count();
+                let word_count = text_words(plain_trimmed);
                 if !(1..=15).contains(&word_count) {
                     return None;
                 }
@@ -1379,6 +1486,9 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
                 }
             })
             .or_else(|| sequence_heading_levels.get(&line_idx).copied())
+            // markitai: a labelled field set at about the body size
+            // (`班级类型：周末班`) is no heading.
+            .filter(|_| !(line_font_size < base_size * 1.2 && reads_as_field(plain_trimmed)))
         } else {
             None
         };
@@ -1452,7 +1562,11 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
                 // 3. Not a new list item
                 let x_ok = curr_x >= list_x - 5.0 && curr_x <= list_x + 50.0;
                 let y_ok = y_gap < base_size * 7.0;
-                x_ok && y_ok && !is_list_item(plain_trimmed) && !has_dot_leaders(plain_trimmed)
+                (x_ok || cjk_wraps.contains(&line_idx))
+                    && y_ok
+                    && !set_apart
+                    && !is_list_item(plain_trimmed)
+                    && !has_dot_leaders(plain_trimmed)
             } else {
                 false
             };
@@ -1759,6 +1873,9 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
     let para_threshold = compute_paragraph_threshold(&lines, base_size);
 
     let isolated_lines = find_isolated_lines(&lines, base_size, para_threshold);
+    // markitai: lines that end or stand apart from their paragraph.
+    let (cjk_paragraph_ends, cjk_wraps) = cjk_line_breaks(&lines);
+    let field_rows = field_rows(&lines);
     let (wrapped_bold_paragraph_lines, wrapped_quoted_paragraph_lines) =
         find_wrapped_bold_paragraph_lines(&lines, base_size, para_threshold);
     let wrapped_large_paragraph_lines =
@@ -1813,7 +1930,16 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
             && wrapped_large_paragraph_lines
                 .get(&line_idx)
                 .is_some_and(|run| wrapped_large_paragraph_lines.get(&(line_idx - 1)) == Some(run));
-        let is_para_break = y_gap.abs() > para_threshold && !in_large_paragraph;
+        // markitai: a CJK line stopping short of its column ends its
+        // paragraph, and a row of fields set far apart stands alone.
+        let set_apart = line_idx > 0
+            && lines[line_idx - 1].page == line.page
+            && (cjk_paragraph_ends.contains(&(line_idx - 1))
+                || field_rows.contains(&line_idx)
+                || field_rows.contains(&(line_idx - 1)));
+        let is_para_break = ((y_gap.abs() > para_threshold && !cjk_wraps.contains(&line_idx))
+            || set_apart)
+            && !in_large_paragraph;
         let line_all_bold = !line.items.is_empty() && line.items.iter().all(|item| item.is_bold);
         let line_in_wrapped_bold_run = wrapped_bold_paragraph_lines.contains(&line_idx);
         let is_bold_to_regular_break = in_paragraph
@@ -1886,7 +2012,8 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
             && !wrapped_quoted_paragraph_lines.contains(&line_idx)
             && !wrapped_large_paragraph_lines.contains_key(&line_idx)
             && plain_trimmed.len() > 3
-            && plain_trimmed.split_whitespace().count() <= 15
+            && text_words(plain_trimmed) <= 15
+            && !reads_as_sentence(plain_trimmed)
             && !is_toc_entry_line(plain_trimmed)
             && !is_heading_fragment(plain_trimmed)
             && toc_suppress_page != Some(line.page)
@@ -1903,7 +2030,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
                 if line_font_size < base_size * 0.95 {
                     return None;
                 }
-                let word_count = plain_trimmed.split_whitespace().count();
+                let word_count = text_words(plain_trimmed);
                 if !(1..=15).contains(&word_count) {
                     return None;
                 }
@@ -1926,6 +2053,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
                 None
             })
             .or_else(|| sequence_heading_levels.get(&line_idx).copied())
+            .filter(|_| !(line_font_size < base_size * 1.2 && reads_as_field(plain_trimmed)))
             {
                 if in_paragraph {
                     output.push_str("\n\n");
@@ -1971,7 +2099,11 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
                 // 3. Not a new list item
                 let x_ok = curr_x >= list_x - 5.0 && curr_x <= list_x + 50.0;
                 let y_ok = y_gap < base_size * 7.0;
-                x_ok && y_ok && !is_list_item(plain_trimmed) && !has_dot_leaders(plain_trimmed)
+                (x_ok || cjk_wraps.contains(&line_idx))
+                    && y_ok
+                    && !set_apart
+                    && !is_list_item(plain_trimmed)
+                    && !has_dot_leaders(plain_trimmed)
             } else {
                 false
             };

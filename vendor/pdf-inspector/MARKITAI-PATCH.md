@@ -698,6 +698,60 @@ The local changes, each marked `markitai` (or, for sorts, made through
   crate's unit tests in the isolated copy give 1,720 passed and the same 21
   failed.
 
+- CJK layout (a Chinese form printed by iText). Covered by
+  `crates/markitai-core/src/formats/pdf/cjk_layout_tests.rs` with the authored
+  fixtures in `crates/markitai-core/src/formats/pdf/fixtures/cjk-layout/`; each
+  test fails on the unmodified files.
+  - `src/extractor/fonts.rs`, `src/types.rs`: the descriptor's FixedPitch flag
+    yields to the width table when the embedded program does not confirm it
+    (`FontStyle::fixed_pitch_by_program`): two different advances make the
+    face proportional, full-width glyphs alone say nothing. A CID font's
+    written `/DW` counts as one of its advances
+    (`FontWidthInfo::default_width_written`), and a table whose one advance
+    is 0.9 em or more (`Advances::FullWidth`) or half an em
+    (`Advances::HalfWidth`, the Latin half of a CJK face) is no evidence of
+    fixed pitch.
+    iText flags Microsoft YaHei fixed-pitch, and SimSun as Word writes it lists
+    only its 500-unit Latin glyphs, its ideographs at `/DW 1000`: both set every
+    CJK line as inline code or a fenced block. A text decoded through any
+    reading loses its Unicode noncharacters, the ligature joiner
+    (`bidi::GLYPH_JOINER`) aside: iText maps CID 0 to `<ffff>`.
+  - `src/extractor/fonts.rs`: `CMapDecisionCache::consider` charges a reading
+    three points per code of each string it reads as nothing while the other
+    reads it, and `text_score` counts general, CJK and full-width punctuation
+    for neither reading: a Word-exported 楷体_GB2312 subset whose remap read its
+    prose as nothing and its `…` leaders as `措` won over a correct ToUnicode
+    CMap, and the page went to OCR as garbled.
+  - `src/tounicode.rs`: the reverse map of an embedded TrueType cmap skips
+    noncharacters and glyph 0 (a format 4 subtable's final segment maps U+FFFF
+    to the missing glyph).
+  - `src/markdown/classify.rs`, `convert.rs`, `heading.rs`, `preprocess.rs`:
+    word counts count three CJK characters a word (`text_words`); a heading
+    candidate that reads as a sentence (`reads_as_sentence`) is no heading,
+    nor, below 1.2 times the body size, a `label：value` field
+    (`reads_as_field`). `1．`, `1）`, `1、` and `（1）` open list items, written
+    `- 1）…`. A line ending in CJK text four em short of its column (the
+    lines overlapping it) ends its paragraph, a line with runs four em apart
+    stands alone, and the line after a CJK line that reaches its column's
+    edge mid-sentence continues it within 2.6 lines, a list item's too
+    (`cjk_line_breaks`, both renderers).
+  - `src/tables/detect_lines.rs`: `build_segmented_header_tables`, a header
+    row between two rules of the same three or more abutting segments, over
+    unruled rows whose wrapped cells join the row they surround; such a table
+    takes its band from the other line-table readings of the page.
+  - `src/markdown/postprocess.rs`: a bare URL ends before closing emphasis
+    marks and before CJK text, and a bare number the reader set as a heading
+    is no folio.
+  - `src/extractor/layout.rs`: an edge number set at 20 pt or more
+    (`DISPLAY_NUMBER_SIZE`) is no page-number candidate: a report's year
+    across its cover in 48 pt was removed.
+
+  Run in the isolated copy (optional and dev-only dependencies removed, the
+  workspace's `Cargo.lock`, lopdf and htmd patched to their vendored copies),
+  the crate's unit tests give 1,725 passed (5 added) and the same 21 failed as
+  the unmodified files, by name; the `pdf2md` binary's one failure
+  (`items_json_uses_supplied_pdf_password`) is unchanged.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths, except as listed above. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,

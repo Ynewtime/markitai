@@ -677,7 +677,15 @@ fn trim_spaces<'a, O>(
 
 // The following code create parser to parse content stream.
 
+// markitai: every PDF white-space character (ISO 32000-1 Table 1), as
+// between objects: some producers separate content operators with NUL.
 fn content_space(input: ParserInput) -> NomResult<()> {
+    map(take_while(is_whitespace), |_| ()).parse(input)
+}
+
+// The separators skipped after an inline image's `ID`, as before: its data
+// follows, and a NUL there is the image's first byte.
+fn image_data_space(input: ParserInput) -> NomResult<()> {
     map(take_while(|c| b" \t\r\n".contains(&c)), |_| ()).parse(input)
 }
 
@@ -726,7 +734,7 @@ fn inline_image(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
 
 fn inline_image_impl(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
     let (input, stream_dict) = inner_dictionary(crate::reader::MAX_NESTING_DEPTH).parse(input)?;
-    let (input, _) = pair(tag(&b"ID"[..]), content_space).parse(input)?;
+    let (input, _) = pair(tag(&b"ID"[..]), image_data_space).parse(input)?;
     match image_data_stream(input, stream_dict) {
         Ok((input, stream)) => {
             let (input, _) = (content_space, tag(&b"EI"[..]), content_space).parse(input)?;
@@ -1029,6 +1037,18 @@ startxref
     fn header_pdf_2_0() {
         let input = b"%PDF-2.0\n%\xe2\xe3\xcf\xd3\n";
         assert_eq!(header(test_span(input), false), Some("2.0".to_string()));
+    }
+
+    #[test]
+    fn content_with_nul_and_form_feed_separators() {
+        // markitai: NUL and form feed are white space between operators
+        // (ISO 32000-1 Table 1); an iText-modified page separates its
+        // operators with NUL.
+        let input = b"q \x00 1  0  0  -1  0  841.889 cm \x00BT  /F21   10 Tf [ <00C6>]TJ ET \x00\x0cQ \x00";
+        let out = content_strict(test_span(input)).unwrap();
+        let ops: Vec<&str> = out.operations.iter().map(|o| o.operator.as_str()).collect();
+        assert_eq!(ops, ["q", "cm", "BT", "Tf", "TJ", "ET", "Q"]);
+        assert_eq!(out.operations[1].operands.len(), 6);
     }
 
     #[test]

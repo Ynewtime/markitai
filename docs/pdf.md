@@ -100,7 +100,9 @@ do not prevent cleanup; code and HTML literal blocks are preserved. Positional
 running-furniture detection remains separate.
 
 A lone one-to-four-digit number in the top or bottom page band is still removed
-as a folio, except when it shares its baseline with other text and no folio-like
+as a folio, except when it is set at 20 pt or more (a report's year across its
+cover; a bare number the page reader sets as a heading is kept for the same
+reason), or when it shares its baseline with other text and no folio-like
 edge number in the same band corroborates it. Corroboration is another page with
 the same value or the same value per page step (one or two printed pages per PDF
 page), or a same-page neighbour one apart on its baseline (a two-up spread). Only
@@ -391,6 +393,26 @@ which restores indentation and alignment. A fence is longer than any backtick
 run inside the code. Fixed-pitch runs in prose become inline code spans; mono
 links, bare URLs and runs holding a backtick stay text.
 
+A face is fixed-pitch when its embedded program says so (`post` table), when
+its descriptor's FixedPitch flag is set and its widths do not contradict it, or,
+with neither, when a dozen or more of its glyphs share one advance narrower than
+0.9 em. Two different advances contradict the flag, and a CID font's written
+`/DW` counts as one: a CJK face lists its half-width Latin glyphs at 500 units
+and leaves its ideographs to `/DW 1000` (SimSun as Word writes it), and iText
+flags Microsoft YaHei, a proportional face, as fixed-pitch. A table of
+full-width glyphs alone, or of glyphs half an em wide (a CJK face's Latin
+letters, which a Word export lists in a simple TrueType font of their own), says
+nothing either way, so CJK text is not code by its face; a code face of half an
+em (Inconsolata, Ubuntu Mono) is known by its program or its name.
+
+When a CID font's ToUnicode CMap and the reader's remap of a subset font
+disagree, the reading kept for the font is the one whose first strings read
+better as text. CJK, general and full-width punctuation (`…`, `，`, `（`) counts
+for neither, and a reading that makes nothing of a string the other reads loses
+as many points as that many replacement characters would: a Word-exported CJK
+subset whose remap read its prose as nothing and its leader dots as one
+ideograph sent a whole page to OCR as garbled.
+
 Browsers paint list bullets as shapes rather than characters. The geometry pass
 also collects compact painted marks of 1–8pt with the colour they are painted
 in: filled shapes, and stroked rings drawn with curves only (a stroked shape
@@ -424,6 +446,10 @@ edges per geometry pass, 64 graphics-state levels, 32 tables, 32 columns and
 4,096 cells per table. Existing 64 MiB expanded page/Form inspection and image
 budgets remain. Positioned-item limits are checked after the dependency returns;
 they are not a claim of a hard allocation limit inside that dependency.
+
+Operators may be separated by any PDF white-space character, NUL and form feed
+included (iText separates those of a page it modified with NUL); only the byte
+after an inline image's `ID` is read as before, as its data follows.
 
 Each page's content streams are expanded and parsed once. Inspection expands
 them within the 64 MiB page budget, keeping where each stream lies, and parses
@@ -519,6 +545,23 @@ lower-case letter), smaller than the note's text and raised off it, is set
 apart from the text when 0.12 em or more separates them:
 `1 Corresponding author`, not `1Corresponding author`. Set against the text,
 or inside a line, a raised run attaches to its neighbours as before.
+
+In the page reader, CJK text is measured at three characters a word (a heading
+has at most 15 words), and a line is no heading when it reads as a sentence
+(it ends in `。`, `！`, `？`, `；`, `，` or `、`, holds a sentence end before more
+text, or runs on past `，` for twelve characters or more) or, below 1.2 times
+the body size, as a `label：value` field (a label of up to twelve characters
+before a full-width colon, a value after it). Items numbered `1．`, `1）`, `1、`
+or `（1）` are list items, written `- 1）…` since Markdown does not read those
+markers. A line ending in CJK text more than four em short of its column (the
+farthest any line beside or under it reaches) ends its paragraph, and a line
+holding runs four em or more apart (a row of fields) is a paragraph of its own.
+A line ending in CJK text other than a sentence end (`。！？；：`) within an em
+and a half of its column's edge continues into the next line, a list item's
+too, when that follows within 2.6 lines at the same size and starts between
+three em before it and six after (a clause hanging past its number), however
+widely the page spaces its lines; the layout pass applies the same rule
+against the right edge of its flow's text.
 
 The page reader keeps a paragraph set in a heading size together: three or
 more consecutive lines at the same heading level, each at wrap spacing below
@@ -790,6 +833,17 @@ remain different. Detected bar-chart crops use the full platform renderer;
 geometry detection itself does not reproduce PDF painting. Other vector figures
 are not automatically preserved. Use page screenshots when a full visual copy
 is needed.
+
+In the page reader, a header row between two rules that are each drawn as the
+same run of three or more abutting segments, one per column (an iText
+schedule's `序号 | 项目名称 | …`), makes a table of the rows below it: the
+segments' joins are the column edges, and the body runs down to the next rule
+across half the table, a gap of three lines, or a line with a run across a
+column edge or outside the table. A body line with text in half the columns or
+more is a row, and a line with less (a long name's wrapped lines, beside which
+the row's other cells are centred) joins the nearest such row within two and a
+half lines; wrapped CJK lines join without a space. Such a table takes its band
+from other readings of the same rules.
 
 Table geometry is deliberately disabled when resource-dependent colours,
 transparency, Form invocations, shading or inline images make its verdict

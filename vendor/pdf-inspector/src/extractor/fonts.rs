@@ -6,7 +6,7 @@ use super::xobjects::FormContents;
 use crate::glyph_names::glyph_name_to_string;
 use crate::tounicode::{CidDecodeStats, CodeMapping, FontCMaps};
 use crate::types::{
-    BaseEncoding, BoldSource, FontEncoding, FontEncodingMap, FontLabel, FontWidthInfo,
+    Advances, BaseEncoding, BoldSource, FontEncoding, FontEncodingMap, FontLabel, FontWidthInfo,
     PageFontEncodings, PageFontKinds, PageFontWidths, PendingCoverage,
 };
 use log::debug;
@@ -40,6 +40,10 @@ pub(crate) struct CMapDecisionCache {
 struct CMapDecision {
     primary_sample: String,
     remapped_sample: String,
+    /// markitai: points against each reading for the codes of the strings
+    /// it read as nothing while the other read them.
+    primary_unread: i32,
+    remapped_unread: i32,
     sample_bytes: usize,
     choice: Option<CMapChoice>,
 }
@@ -106,10 +110,20 @@ impl CMapDecisionCache {
         entry.sample_bytes = entry.sample_bytes.saturating_add(bytes_len);
         entry.primary_sample.push_str(primary);
         entry.remapped_sample.push_str(remapped);
+        // markitai: a reading that makes nothing of a string the other reads
+        // loses its codes, as a replacement character each would cost (a
+        // remap of a CJK subset that reads its prose as nothing and its
+        // leader dots as one ideograph).
+        let unread = 3 * i32::try_from(bytes_len / 2).unwrap_or(i32::MAX / 4);
+        if primary.is_empty() && !remapped.is_empty() {
+            entry.primary_unread = entry.primary_unread.saturating_add(unread);
+        } else if remapped.is_empty() && !primary.is_empty() {
+            entry.remapped_unread = entry.remapped_unread.saturating_add(unread);
+        }
 
         if entry.choice.is_none() && entry.sample_bytes >= SAMPLE_TARGET_BYTES {
-            let score_primary = score_text(&entry.primary_sample);
-            let score_remap = score_text(&entry.remapped_sample);
+            let score_primary = score_text(&entry.primary_sample) - entry.primary_unread;
+            let score_remap = score_text(&entry.remapped_sample) - entry.remapped_unread;
             entry.choice = if score_remap > score_primary + 5 {
                 Some(CMapChoice::Remapped)
             } else {
@@ -540,6 +554,7 @@ fn base14_fallback_widths(
     Some(FontWidthInfo {
         widths,
         default_width: 500,
+        default_width_written: false,
         space_width,
         is_cid: false,
         units_scale: 0.001,
@@ -648,6 +663,7 @@ pub(crate) fn parse_simple_font_widths(
     Some(FontWidthInfo {
         widths,
         default_width: 0,
+        default_width_written: false,
         space_width,
         is_cid: false,
         units_scale,
@@ -673,15 +689,12 @@ pub(crate) fn parse_type0_widths(
     let cid_font_dict = resolve_dict(doc, &desc_fonts[0])?;
 
     // Get DW (default width)
-    let default_width = cid_font_dict
-        .get(b"DW")
-        .ok()
-        .and_then(|o| match o {
-            Object::Integer(n) => Some(*n as u16),
-            Object::Real(n) => Some(*n as u16),
-            _ => None,
-        })
-        .unwrap_or(1000);
+    let written_default = cid_font_dict.get(b"DW").ok().and_then(|o| match o {
+        Object::Integer(n) => Some(*n as u16),
+        Object::Real(n) => Some(*n as u16),
+        _ => None,
+    });
+    let default_width = written_default.unwrap_or(1000);
 
     let mut widths = HashMap::new();
 
@@ -715,6 +728,7 @@ pub(crate) fn parse_type0_widths(
     Some(FontWidthInfo {
         widths,
         default_width,
+        default_width_written: written_default.is_some(),
         space_width,
         is_cid: true,
         units_scale: 0.001, // CID fonts use standard 1000-unit system
@@ -2490,7 +2504,10 @@ impl FontReadings {
 /// `fixed_pitch` is `Some(true)` when the descriptor's FixedPitch flag or
 /// the embedded program's `post` table says the face is monospaced, else
 /// `None`: an unset flag is no evidence, since producers write `/Flags 4`
-/// whatever the face, and the width table is measured later.
+/// whatever the face, and the width table is measured later. The flag
+/// alone is weaker evidence than the program (`fixed_pitch_by_program`):
+/// CJK producers set it on proportional faces (Microsoft YaHei, SimSun),
+/// and the width table overrules it (see [`FontStyle::with_measured_pitch`]).
 ///
 /// `weight` is the 100..=900 weight class, read in this order: the embedded
 /// font program's OS/2 `usWeightClass` (the weight word of the PostScript
@@ -2507,6 +2524,9 @@ pub(crate) struct FontStyle {
     pub(crate) bold_source: Option<BoldSource>,
     pub(crate) weight: Option<u16>,
     pub(crate) fixed_pitch: Option<bool>,
+    /// markitai: `fixed_pitch` is the embedded program's own `post` verdict,
+    /// which the width table does not second-guess.
+    pub(crate) fixed_pitch_by_program: bool,
 }
 
 impl FontStyle {
@@ -2531,12 +2551,23 @@ impl FontStyle {
         self
     }
 
-    /// The style with the width table's verdict on fixed pitch (see
-    /// [`FontWidthInfo::fixed_pitch_by_advance`]) folded in, for a font
-    /// whose descriptor and program say nothing about it.
+    /// The style with the width table's verdict on fixed pitch folded in
+    /// (see [`FontWidthInfo::advances`]): its say for a font whose
+    /// descriptor and program say nothing about it. markitai: a FixedPitch
+    /// flag the program does not confirm yields to a table whose advances
+    /// differ (`Some(false)`) or that lists only full-width glyphs (no
+    /// verdict): CJK producers flag proportional faces fixed-pitch, and a
+    /// face's ideographs all fill the em whatever its Latin letters do.
     pub(crate) fn with_measured_pitch(mut self, widths: Option<&FontWidthInfo>) -> Self {
-        if self.fixed_pitch.is_none() {
-            self.fixed_pitch = widths.and_then(FontWidthInfo::fixed_pitch_by_advance);
+        let advances = widths.map_or(Advances::Unknown, FontWidthInfo::advances);
+        match self.fixed_pitch {
+            None => self.fixed_pitch = advances.fixed_pitch(),
+            Some(true) if !self.fixed_pitch_by_program => match advances {
+                Advances::Varied => self.fixed_pitch = Some(false),
+                Advances::FullWidth | Advances::HalfWidth => self.fixed_pitch = None,
+                Advances::Uniform | Advances::Unknown => {}
+            },
+            Some(_) => {}
         }
         self
     }
@@ -2597,6 +2628,7 @@ pub(crate) fn font_style(
         weight: None,
         // Flags bit 1: FixedPitch. Only a set bit is evidence.
         fixed_pitch: (flags & 1 != 0).then_some(true),
+        fixed_pitch_by_program: false,
     };
 
     // Descriptors lie: subset generators write ItalicAngle 0 for genuinely
@@ -2612,7 +2644,10 @@ pub(crate) fn font_style(
         style.bold |= embedded.bold;
         style.bold_source = BoldSource::first(style.bold_source, embedded.bold_source);
         style.weight = embedded.weight;
-        style.fixed_pitch = style.fixed_pitch.or(embedded.fixed_pitch);
+        if embedded.fixed_pitch.is_some() {
+            style.fixed_pitch = embedded.fixed_pitch;
+            style.fixed_pitch_by_program = true;
+        }
     }
     style.weight = if has_weight_class {
         style
@@ -2685,6 +2720,7 @@ fn embedded_style(doc: &Document, ff_ref: ObjectId) -> FontStyle {
             // The post table's isFixedPitch, which font tools set for a
             // monospaced face and subsetters carry over.
             fixed_pitch: face.is_monospaced().then_some(true),
+            fixed_pitch_by_program: false,
         }
     } else if let Some(name) = cff_font_name(&data) {
         // FontFile3 is bare CFF (no sfnt container) — ttf_parser
@@ -2698,6 +2734,7 @@ fn embedded_style(doc: &Document, ff_ref: ObjectId) -> FontStyle {
             bold_source: bold.then_some(BoldSource::FontName),
             weight: crate::text_utils::font_weight_from_name(&name),
             fixed_pitch: None,
+            fixed_pitch_by_program: false,
         }
     } else {
         FontStyle::default()
@@ -3407,6 +3444,17 @@ pub(crate) fn extract_text_from_operand(
         }
     })();
     result.map(|text| {
+        // markitai: a noncharacter is no text, whichever reading gave it
+        // (iText's ToUnicode maps the `.notdef` glyph to `<ffff>`), but for
+        // the joiner the readings put between a ligature's characters.
+        let stray = |ch: char| {
+            ch != crate::bidi::GLYPH_JOINER && crate::tounicode::is_noncharacter(ch as u32)
+        };
+        let text = if text.chars().any(stray) {
+            text.chars().filter(|&ch| !stray(ch)).collect()
+        } else {
+            text
+        };
         let (text, legacy_symbol_rewrite) = clean_symbol_pua(text);
         let text = remap_texcm_math_symbols(text, base_font_name);
         (
@@ -3716,6 +3764,12 @@ fn text_score(text: &str) -> TextScore {
                 || ('\u{F900}'..='\u{FAFF}').contains(&ch)
             {
                 letters += 1; // CJK ideographs / kana count as valid text
+            } else if ('\u{2000}'..='\u{206F}').contains(&ch)
+                || ('\u{3000}'..='\u{303F}').contains(&ch)
+                || ('\u{FF00}'..='\u{FFEF}').contains(&ch)
+            {
+                // markitai: general, CJK and full-width punctuation (`…`,
+                // `“`, `、`, `，`, `（`) is text, for neither reading.
             } else {
                 other += 1;
             }
@@ -3870,6 +3924,34 @@ mod tests {
             remapped: Some(cmap(&[(1, "\u{0644}\u{0627}"), (2, "\u{0647}")])),
             fallback: None,
         };
+        // markitai: a CJK subset's ToUnicode read against a remap that makes
+        // nothing of its prose and an ideograph of each leader dot.
+        let mut keeps_primary = CMapDecisionCache::new();
+        keeps_primary.consider(
+            0,
+            "本阅读指引有助于您理解条款，对本合同内容的解释以条款为准",
+            "",
+            54,
+        );
+        keeps_primary.consider(
+            0,
+            "您有退保的权利…………………………",
+            "\u{FFFD}\u{FFFD}\u{FFFD}措措措措措措措措措措",
+            34,
+        );
+        keeps_primary.consider(
+            0,
+            "…………………………………………………………………",
+            "措措措措措措措措措措措措措措措措措措措措措",
+            42,
+        );
+        keeps_primary.consider(
+            0,
+            "日（即犹豫期）内您若要求退保，我们仅扣除工本费……………………",
+            "",
+            120,
+        );
+        assert_eq!(keeps_primary.get_choice(0), Some(CMapChoice::Primary));
         let english = "the and of to in a is that for with on as by from this be are at or not";
         let mut prefers_remapped = CMapDecisionCache::new();
         prefers_remapped.consider(0, "", english, 240);
@@ -3896,6 +3978,7 @@ mod tests {
             FontWidthInfo {
                 widths: HashMap::new(),
                 default_width: 600,
+                default_width_written: false,
                 space_width: 600,
                 is_cid: true,
                 units_scale: 0.001,
@@ -5018,6 +5101,7 @@ mod tests {
         FontWidthInfo {
             widths: widths.iter().copied().collect(),
             default_width,
+            default_width_written: false,
             space_width: widths
                 .iter()
                 .find(|(k, _)| *k == 32)
@@ -5312,6 +5396,7 @@ mod tests {
                 bold_source: None,
                 weight: Some(700),
                 fixed_pitch: None,
+                fixed_pitch_by_program: false,
             }
         );
     }
@@ -5424,6 +5509,7 @@ mod tests {
                 bold_source: Some(BoldSource::FontFlags),
                 weight: None,
                 fixed_pitch: None,
+                fixed_pitch_by_program: false,
             }
         );
         // The same holds for a font dictionary without a subtype at all.
@@ -5450,6 +5536,7 @@ mod tests {
                 bold_source: None,
                 weight: Some(300),
                 fixed_pitch: None,
+                fixed_pitch_by_program: false,
             }
         );
     }
@@ -5522,6 +5609,7 @@ mod tests {
                 bold_source: None,
                 weight: Some(500),
                 fixed_pitch: None,
+                fixed_pitch_by_program: false,
             }
         );
     }
@@ -7401,6 +7489,7 @@ end",
             bold_source: Some(BoldSource::FontFlags),
             weight: Some(700),
             fixed_pitch: None,
+            fixed_pitch_by_program: false,
         };
         // A bold word in the name is what a reader sees first.
         assert_eq!(
@@ -7433,15 +7522,75 @@ end",
             FontStyle::default().with_measured_pitch(None).fixed_pitch,
             None
         );
-        // A declared verdict is not second-guessed by the widths.
+        // The program's verdict is not second-guessed by the widths.
         let declared = FontStyle {
             fixed_pitch: Some(true),
+            fixed_pitch_by_program: true,
             ..FontStyle::default()
         };
         let varied = make_font_info(&[(65, 600), (66, 300)], 0, false);
         assert_eq!(
             declared.with_measured_pitch(Some(&varied)).fixed_pitch,
             Some(true)
+        );
+        // markitai: the descriptor's flag alone yields to advances that
+        // differ (Microsoft YaHei flagged FixedPitch by its producer) and
+        // to a table of full-width glyphs only; it stands on uniform
+        // advances and on no table.
+        let flagged = FontStyle {
+            fixed_pitch: Some(true),
+            ..FontStyle::default()
+        };
+        assert_eq!(
+            flagged.with_measured_pitch(Some(&varied)).fixed_pitch,
+            Some(false)
+        );
+        let ideographs: Vec<(u16, u16)> = (1u16..40).map(|cid| (cid, 1000)).collect();
+        let ideographs = make_font_info(&ideographs, 0, true);
+        assert_eq!(
+            flagged.with_measured_pitch(Some(&ideographs)).fixed_pitch,
+            None
+        );
+        assert_eq!(
+            flagged.with_measured_pitch(Some(&info)).fixed_pitch,
+            Some(true)
+        );
+        assert_eq!(flagged.with_measured_pitch(None).fixed_pitch, Some(true));
+        // markitai: a written /DW is one more advance: a CJK face listing
+        // its half-width Latin letters leaves its ideographs to /DW 1000.
+        let mut cjk = make_font_info(&uniform, 0, true);
+        cjk.default_width = 1000;
+        cjk.default_width_written = true;
+        assert_eq!(
+            FontStyle::default()
+                .with_measured_pitch(Some(&cjk))
+                .fixed_pitch,
+            Some(false)
+        );
+        // A monospaced face writing its one advance as /DW stays one.
+        cjk.default_width = 600;
+        assert_eq!(
+            FontStyle::default()
+                .with_measured_pitch(Some(&cjk))
+                .fixed_pitch,
+            Some(true)
+        );
+        // Nor do half-width glyphs alone, a CJK face's Latin letters.
+        let half: Vec<(u16, u16)> = (32u16..60).map(|code| (code, 500)).collect();
+        let half = make_font_info(&half, 0, false);
+        assert_eq!(
+            FontStyle::default()
+                .with_measured_pitch(Some(&half))
+                .fixed_pitch,
+            None
+        );
+        assert_eq!(flagged.with_measured_pitch(Some(&half)).fixed_pitch, None);
+        // Nor do full-width glyphs alone make an unflagged face fixed-pitch.
+        assert_eq!(
+            FontStyle::default()
+                .with_measured_pitch(Some(&ideographs))
+                .fixed_pitch,
+            None
         );
     }
 

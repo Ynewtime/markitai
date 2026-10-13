@@ -141,6 +141,12 @@ pub(crate) fn is_list_item(text: &str) -> bool {
         }
     }
 
+    // markitai: CJK enumerators, "1．", "1）", "1、", "（1）": one to three
+    // digits and a full-width stop, closing parenthesis or enumeration comma.
+    if full_width_enumerator(trimmed).is_some() {
+        return true;
+    }
+
     // Letter list: "a.", "a)", "(a)"
     let mut chars = trimmed.chars();
     if let (Some(first), Some(second)) = (chars.next(), chars.next()) {
@@ -155,9 +161,84 @@ pub(crate) fn is_list_item(text: &str) -> bool {
     false
 }
 
+/// markitai: the length of a CJK enumerator opening `text` ("1．", "12）",
+/// "3、", "（1）") followed by the item's text, which Markdown does not read
+/// as a list marker.
+pub(crate) fn full_width_enumerator(text: &str) -> Option<usize> {
+    let (open, rest) = match text.strip_prefix('（') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if !(1..=3).contains(&digits) {
+        return None;
+    }
+    let mut after = rest[digits..].chars();
+    let close = after.next()?;
+    let closes = if open {
+        close == '）'
+    } else {
+        matches!(close, '．' | '）' | '、')
+    };
+    let body = after.as_str().trim_start();
+    // "1．5" is a number with a full-width decimal point.
+    let decimal = close == '．' && body.starts_with(|c: char| c.is_ascii_digit());
+    (closes && !body.is_empty() && !decimal).then(|| text.len() - after.as_str().len())
+}
+
+/// markitai: the number of words a line holds: its words set
+/// apart by spaces, a run of CJK text counting a word for every three
+/// characters (CJK text sets no spaces between words, and a 70-character
+/// sentence is one run).
+pub(crate) fn text_words(text: &str) -> usize {
+    text.split_whitespace()
+        .map(|word| {
+            let cjk = word
+                .chars()
+                .filter(|&c| crate::text_utils::is_cjk_char(c))
+                .count();
+            cjk.div_ceil(3).max(1)
+        })
+        .sum()
+}
+
+/// markitai: a line that reads as a sentence, not a heading: it ends with,
+/// or holds within, a CJK sentence end (`。`, `！`, `？`, `；`), ends with a
+/// CJK comma, the sentence running on, or runs on past a comma for a dozen
+/// characters or more.
+pub(crate) fn reads_as_sentence(text: &str) -> bool {
+    let text = text.trim();
+    let ends = |c: char| matches!(c, '。' | '！' | '？' | '；');
+    text.ends_with(|c: char| ends(c) || matches!(c, '，' | '、'))
+        || text
+            .char_indices()
+            .any(|(at, c)| ends(c) && !text[at + c.len_utf8()..].trim().is_empty())
+        || (text.contains('，') && text.chars().count() >= 12)
+}
+
+/// markitai: a labelled field, `label：value`, rather than a heading: a
+/// short label (up to twelve characters, no sentence inside) before a
+/// full-width colon, and a value after it (`报名人：示例学员`, `班级类型：周末班`).
+pub(crate) fn reads_as_field(text: &str) -> bool {
+    let Some((label, value)) = text.trim().split_once('：') else {
+        return false;
+    };
+    let label = label.trim();
+    !label.is_empty()
+        && label.chars().count() <= 12
+        && !label.contains(['。', '，', '；'])
+        && !value.trim().is_empty()
+}
+
 /// Format list item to markdown
 pub(crate) fn format_list_item(text: &str) -> String {
     let trimmed = text.trim_start();
+
+    // markitai: a CJK enumerator is kept as the item's text, after a
+    // Markdown marker (Markdown reads no "1．" or "1）" as one).
+    if full_width_enumerator(trimmed).is_some() {
+        return format!("- {trimmed}");
+    }
 
     // markitai: a check mark is the item's state and stays in its text.
     if starts_with_check_mark(trimmed) {
@@ -409,5 +490,52 @@ mod tests {
         assert!(is_list_item("● Item"));
         assert!(is_list_item("• Item"));
         assert!(is_list_item("- Item"));
+    }
+
+    #[test]
+    fn cjk_enumerators_open_list_items() {
+        for item in [
+            "1．报名学员范围",
+            "1）2类书法课程",
+            "3、学习期间",
+            "（4）其他",
+            "12） 集训",
+        ] {
+            assert!(is_list_item(item), "{item}");
+            assert_eq!(format_list_item(item), format!("- {item}"));
+        }
+        // A number and its unit, a date, or nothing after the marker.
+        for text in ["2026年05月21日", "1．", "1．5倍", "1234．五", "（1"] {
+            assert!(!is_list_item(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn cjk_sentences_and_fields_are_no_headings() {
+        assert_eq!(text_words("Annual Report 2025"), 3);
+        // Seventy characters of one sentence are many words.
+        let sentence = "本中心办学资质与服务评价符合要求，您可以登录官方网站查看最近季度办学资质年检结果和学员服务评价等全部相关信息";
+        assert!(text_words(sentence) > 15);
+        assert!(text_words("社区书法艺术与传统绘画研修进阶课程（周末）说明") <= 15);
+        assert!(reads_as_sentence(
+            "报名人已确认学员符合课程简章所述的报名条件。"
+        ));
+        assert!(reads_as_sentence(
+            "如有隐瞒或填写不实，足以影响学习中心正常安排的，"
+        ));
+        assert!(reads_as_sentence("第一句。第二句"));
+        assert!(reads_as_sentence(
+            "本中心办学资质与服务评价符合要求，您可以登录"
+        ));
+        assert!(!reads_as_sentence("一、总则，范围"));
+        assert!(!reads_as_sentence("学习中心办学资质告知和服务评价"));
+        assert!(!reads_as_sentence("Results."));
+        assert!(reads_as_field("报名人：示例学员 证件类型：学生证"));
+        assert!(reads_as_field("首期材料费合计：960.50"));
+        assert!(!reads_as_field("说明："));
+        assert!(!reads_as_field("Chapter 1: Introduction"));
+        assert!(!reads_as_field(
+            "这是一个很长很长的不像标签的句子开头部分：值"
+        ));
     }
 }

@@ -396,6 +396,7 @@ fn font_readings_stop_at_their_bound() {
     let widths = FontWidthInfo {
         widths: HashMap::from([(65, 700)]),
         default_width: 0,
+        default_width_written: false,
         space_width: 250,
         is_cid: false,
         units_scale: 0.001,

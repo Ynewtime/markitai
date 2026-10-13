@@ -84,8 +84,8 @@ pub(crate) fn merge_heading_lines(
             let close_enough = y_gap > 0.0 && y_gap < line_font * 2.0;
             // Don't merge if combined text would be too long — real headings are short.
             // This prevents merging body-text lines that are mis-tagged as headings.
-            let prev_words = prev.text().split_whitespace().count();
-            let curr_words = line.text().split_whitespace().count();
+            let prev_words = super::classify::text_words(&prev.text());
+            let curr_words = super::classify::text_words(&line.text());
             let not_too_long = prev_words + curr_words <= 20;
             same_page && same_level && close_enough && not_too_long
         } else {

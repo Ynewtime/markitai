@@ -2269,14 +2269,26 @@ pub(crate) fn cmap_glyph_chars(face: &ttf_parser::Face<'_>) -> HashMap<u16, char
             continue;
         }
         subtable.codepoints(|cp| {
+            // markitai: a format 4 subtable ends with a segment for U+FFFF
+            // that selects the missing glyph; noncharacters name no glyph,
+            // and glyph 0 (`.notdef`) draws no character.
+            if is_noncharacter(cp) {
+                return;
+            }
             if let Some(ch) = char::from_u32(cp) {
-                if let Some(gid) = subtable.glyph_index(cp) {
+                if let Some(gid) = subtable.glyph_index(cp).filter(|gid| gid.0 != 0) {
                     chars.entry(gid.0).or_insert(ch);
                 }
             }
         });
     }
     chars
+}
+
+/// markitai: the Unicode noncharacters (U+FDD0..U+FDEF and the last two
+/// code points of every plane), which no text holds.
+pub(crate) fn is_noncharacter(cp: u32) -> bool {
+    (0xFDD0..=0xFDEF).contains(&cp) || cp & 0xFFFE == 0xFFFE
 }
 
 /// What one glyph reads as, given the cmap's characters

@@ -174,6 +174,10 @@ pub(crate) struct FontWidthInfo {
     pub(crate) widths: HashMap<u16, u16>,
     /// Default width for glyphs not in the widths table
     pub(crate) default_width: u16,
+    /// markitai: whether the font wrote its default width (a CID font's
+    /// `/DW`), the advance of every glyph its width table leaves out,
+    /// rather than taking the specification's.
+    pub(crate) default_width_written: bool,
     /// Width of the space character (code 32) if known
     pub(crate) space_width: u16,
     /// Whether this is a CID font (2-byte character codes)
@@ -196,20 +200,63 @@ pub(crate) struct FontWidthInfo {
 /// proportional face's ten tabular digits share theirs too.
 pub(crate) const FIXED_PITCH_MIN_GLYPHS: usize = 12;
 
+/// markitai: the shortest advance, in ems, of a full-width glyph: CJK
+/// ideographs, kana and hangul fill a square em cell in proportional and
+/// fixed-pitch faces alike, where a monospaced Latin face advances about
+/// 0.6 em.
+pub(crate) const FULL_WIDTH_EM: f32 = 0.9;
+
+/// What the advances of a width table say about fixed pitch (see
+/// [`FontWidthInfo::advances`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Advances {
+    /// Two positive widths differ.
+    Varied,
+    /// At least [`FIXED_PITCH_MIN_GLYPHS`] glyphs share one advance
+    /// narrower than [`FULL_WIDTH_EM`].
+    Uniform,
+    /// The glyphs share one advance of at least [`FULL_WIDTH_EM`]: the
+    /// ideographs of any CJK face, which say nothing about its pitch.
+    FullWidth,
+    /// At least [`FIXED_PITCH_MIN_GLYPHS`] glyphs share an advance of half
+    /// an em: the Latin half of a CJK face (a Word export lists only those
+    /// in a simple TrueType font), which says nothing about its pitch
+    /// either. A code face of that width is known by its program or name.
+    HalfWidth,
+    /// Too few widths to say.
+    Unknown,
+}
+
+impl Advances {
+    /// The verdict on fixed pitch for a face nothing else describes.
+    pub(crate) fn fixed_pitch(self) -> Option<bool> {
+        match self {
+            Self::Varied => Some(false),
+            Self::Uniform => Some(true),
+            Self::FullWidth | Self::HalfWidth | Self::Unknown => None,
+        }
+    }
+}
+
 impl FontWidthInfo {
-    /// Whether the glyphs in the width table share one advance: `Some(true)`
+    /// Whether the glyphs in the width table share one advance: `Uniform`
     /// when at least [`FIXED_PITCH_MIN_GLYPHS`] codes carry a positive
     /// width and every one of them is the same (a hair's breadth of
-    /// rounding apart), `Some(false)` when two positive widths differ,
-    /// `None` when the table is too small to say. Zero widths are codes
-    /// without a glyph (or combining marks) and do not count either way;
-    /// a CID font's default width covers glyphs the table does not list
-    /// and is not read.
-    pub(crate) fn fixed_pitch_by_advance(&self) -> Option<bool> {
+    /// rounding apart), `Varied` when two positive widths differ,
+    /// `FullWidth` when the shared advance fills the em, `Unknown` when the
+    /// table is too small to say. Zero widths are codes without a glyph (or
+    /// combining marks) and do not count either way. markitai: a default
+    /// width the font wrote is the advance of the glyphs the table leaves
+    /// out, and counts as one more (a CJK face lists its 500-unit Latin
+    /// letters and leaves its 1000-unit ideographs to `/DW 1000`); the
+    /// specification's default is not read.
+    pub(crate) fn advances(&self) -> Advances {
         let mut count = 0usize;
         let mut low = u16::MAX;
         let mut high = 0u16;
-        for &width in self.widths.values() {
+        let written =
+            (self.default_width_written && !self.widths.is_empty()).then_some(self.default_width);
+        for &width in self.widths.values().chain(written.iter()) {
             if width == 0 {
                 continue;
             }
@@ -218,16 +265,32 @@ impl FontWidthInfo {
             high = high.max(width);
         }
         if count == 0 {
-            return None;
+            return Advances::Unknown;
         }
         // Widths are written in thousandths of the em (or the Type3 glyph
         // space): a unit of rounding between two writings of one advance is
         // still one advance.
         let tolerance = (f32::from(high) * 0.002).max(1.0);
         if f32::from(high - low) > tolerance {
-            return Some(false);
+            return Advances::Varied;
         }
-        (count >= FIXED_PITCH_MIN_GLYPHS).then_some(true)
+        if f32::from(high) * self.units_scale >= FULL_WIDTH_EM {
+            return Advances::FullWidth;
+        }
+        if count >= FIXED_PITCH_MIN_GLYPHS {
+            if (f32::from(high) * self.units_scale - 0.5).abs() <= 0.01 {
+                return Advances::HalfWidth;
+            }
+            Advances::Uniform
+        } else {
+            Advances::Unknown
+        }
+    }
+
+    /// [`FontWidthInfo::advances`] as a verdict on fixed pitch.
+    #[cfg(test)]
+    pub(crate) fn fixed_pitch_by_advance(&self) -> Option<bool> {
+        self.advances().fixed_pitch()
     }
 }
 
@@ -479,14 +542,16 @@ pub struct TextItem {
     /// `font_weight`.
     pub bold_source: Option<BoldSource>,
     /// Whether the font is fixed-pitch (monospaced): `Some(true)` when the
-    /// FontDescriptor's FixedPitch flag or the embedded program's `post`
-    /// table says so, else measured from the font's width table — `Some(true)`
-    /// when at least a dozen of its glyphs share one advance, `Some(false)`
-    /// when two of them differ. `None` when the font declares nothing and no
-    /// two advances differ but fewer than a dozen share one, and for items
+    /// embedded program's `post` table says so, or the FontDescriptor's
+    /// FixedPitch flag does and the width table does not contradict it, else
+    /// measured from the font's width table — `Some(true)` when at least a
+    /// dozen of its glyphs share one advance narrower than 0.9 em,
+    /// `Some(false)` when two of them differ (markitai: a CID font's written
+    /// `/DW` counts as one, and also contradicts the flag). `None` when the
+    /// font declares nothing and no two advances differ but fewer than a dozen
+    /// share one, or all are full-width or half an em wide, and for items
     /// that don't come from a font. Many producers write `/Flags 4` whatever
-    /// the face, so the
-    /// flag is only ever read as a yes. Runs known to be fixed-pitch are not
+    /// the face, so the flag is only ever read as a yes. Runs known to be fixed-pitch are not
     /// merged with runs that are not (an inline code literal keeps its own
     /// item); otherwise an item merged from several runs keeps its first
     /// run's value, like `font` and `font_weight`.

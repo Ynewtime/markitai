@@ -183,12 +183,15 @@ class TextItem:
     ``False``, and for image, link and form-field items."""
     fixed_pitch: Optional[bool]
     """Whether the font is fixed-pitch (monospaced): ``True`` when the
-    FontDescriptor's FixedPitch flag or the embedded program's ``post`` table
-    says so, else measured from the font's width table — ``True`` when a dozen
-    or more of its glyphs share one advance, ``False`` when two differ.
-    ``None`` when the font declares nothing and no two advances differ but
-    fewer than a dozen share one, and for image, link and form-field items.
-    Many producers write
+    embedded program's ``post`` table says so, or the FontDescriptor's
+    FixedPitch flag does and the width table does not contradict it, else
+    measured from the font's width table — ``True`` when a dozen or more of
+    its glyphs share one advance narrower than 0.9 em, ``False`` when two
+    differ (a CID font's written ``/DW`` counting as one, which also
+    contradicts the flag). ``None`` when the font declares nothing and no two
+    advances differ but fewer than a dozen share one, or all are full-width
+    or half an em wide (a CJK face's Latin letters),
+    and for image, link and form-field items. Many producers write
     ``/Flags 4`` whatever the face, so the flag is only ever read as a yes."""
     fill_color: Optional[tuple[int, int, int]]
     """The fill colour the run was shown with, as an sRGB ``(red, green,
