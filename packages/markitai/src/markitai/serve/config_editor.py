@@ -39,7 +39,7 @@ class Kind(Enum):
 
     PLAIN = "plain"
     #: Beneath a key the redaction rule names; an ``env:`` reference is not.
-    SECRET = "secret"
+    SECRET = "secret"  # nosec B105 - a kind of value, not a secret
     #: Beneath an ``extra_http_headers`` object: every value.
     HEADER = "header"
     #: An endpoint address (``api_base``, ``*_api_base``).
