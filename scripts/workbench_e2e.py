@@ -14,7 +14,9 @@ screenshots every state:
     Download opening Preview's Files (the original first, Download all (.zip)
     through the item's archive), Up/Down and the header arrows between items,
     a URL item's Compare framing the page as fetched (its style drawn, its
-    script never run, nothing loaded from the site), the window at full
+    script never run, nothing loaded from the site; hovering a block on either
+    side outlines both; the Markdown's https picture drawn in Compare and
+    Preview, from a local site whose certificate a local test CA issued), the window at full
     screen and back (F; a per-browser choice), retry of a failed item, a failed action reported
     in the window, New conversion and stop remaining (cancel), download all
     from the "⋯" menu (ticket; on a phone Stop from the header of the
@@ -29,8 +31,15 @@ screenshots every state:
     offers no key and asks for no model list), a hand-written DeepSeek entry
     served by DEEPSEEK_API_KEY (one saved row marked Added, Edit "From
     environment variable", its unreachable list said why), history after a
-    reload, token prompt, and Settings → Access token → Regenerate (the old
-    token refused, another tab holding it too)
+    reload, token prompt, three conversions deleted in one request (rows and a
+    submission header checked, the confirmation), a user token made on
+    Settings → Access token and its own tab (only its conversions, "Admin
+    token needed" on the settings pages), Settings → Edit config (secrets
+    masked, the JSON check, Review changes, Save writing exactly that change,
+    a file changed behind the page refused as stale), and Settings → Access
+    token → Regenerate (the old token refused, another tab holding it too).
+    With ``--axe axe.min.js`` axe-core checks every screenshot's page (the
+    page's own policy kept) and a violation fails the run
 
 Notices must be strips at the bottom (never the page-wide banners the UI
 had before) and leave by themselves.
@@ -45,6 +54,7 @@ Usage (needs the serve and browser extras, and the browser for Playwright:
     uv run --with google-auth python scripts/workbench_e2e.py   # + the Vertex AI card
     uv run python scripts/workbench_e2e.py --browser webkit --theme dark
     uv run python scripts/workbench_e2e.py --widths 1440 --bundle path/to/unpacked-bundle
+    uv run python scripts/workbench_e2e.py --axe path/to/axe.min.js
 
 Results: ``OUT/<NN>-<state>-<width>.png``, ``OUT/results.json`` and ``OUT/INDEX.md``.
 """
@@ -76,6 +86,10 @@ from pathlib import Path
 from typing import Any
 
 TOKEN = "e2e-token-0000000000000000"
+# The user token the admin makes in the run (contract v1.13 access levels)
+USER_LABEL = "Reading group laptop"
+# axe-core's source (--axe): every screenshot is checked, violations fail
+AXE_SOURCE = ""
 LLM_DELAY_S = 0.8
 SLOW_PAGE_S = 2.5
 # A saved connection whose address carries credentials: settings must show
@@ -357,6 +371,8 @@ PAGE_REQUESTS: list[str] = []
 #: certificate the browser is told to accept): the framed page loads them.
 #: Empty when no certificate could be made (no ``cryptography``).
 SITE_ASSETS = ""
+# The base64 SHA-256 of the HTTPS site's public key, trusted by Chromium
+SITE_SPKI = ""
 ASSET_REQUESTS: list[str] = []
 
 
@@ -470,9 +486,18 @@ class _SiteAssets(BaseHTTPRequestHandler):
 
 def _serve_https(
     handler: type[BaseHTTPRequestHandler], directory: Path
-) -> tuple[ThreadingHTTPServer, int] | None:
-    """*handler* over HTTPS on 127.0.0.1 with a fresh self-signed certificate."""
+) -> tuple[ThreadingHTTPServer, int, str] | None:
+    """*handler* over HTTPS on 127.0.0.1, its certificate issued by a local CA.
+
+    A fresh test CA (``ca.crt``) signs the site's certificate for 127.0.0.1.
+    Returns the server, its port and the base64 SHA-256 of the site key's
+    SubjectPublicKeyInfo, which Chromium is told to trust
+    (``--ignore-certificate-errors-spki-list``): exactly this site, nothing
+    else. Other engines fall back to ignoring certificate errors.
+    """
+    import base64
     import datetime
+    import hashlib
     import ssl
 
     try:
@@ -484,13 +509,27 @@ def _serve_https(
         return None
     import ipaddress
 
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
     now = datetime.datetime.now(datetime.UTC)
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, "markitai e2e test CA")]
+    )
+    ca = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    key = ec.generate_private_key(ec.SECP256R1())
     certificate = (
         x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")]))
+        .issuer_name(ca_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=5))
@@ -501,11 +540,16 @@ def _serve_https(
             ),
             critical=False,
         )
-        .sign(key, hashes.SHA256())
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .sign(ca_key, hashes.SHA256())
     )
     directory.mkdir(parents=True, exist_ok=True)
+    (directory / "ca.crt").write_bytes(ca.public_bytes(serialization.Encoding.PEM))
     cert_file, key_file = directory / "site.crt", directory / "site.key"
-    cert_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    cert_file.write_bytes(
+        certificate.public_bytes(serialization.Encoding.PEM)
+        + ca.public_bytes(serialization.Encoding.PEM)
+    )
     key_file.write_bytes(
         key.private_bytes(
             serialization.Encoding.PEM,
@@ -513,13 +557,21 @@ def _serve_https(
             serialization.NoEncryption(),
         )
     )
+    spki = base64.b64encode(
+        hashlib.sha256(
+            key.public_key().public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        ).digest()
+    ).decode()
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.load_cert_chain(cert_file, key_file)
     server = _LocalServer(("127.0.0.1", 0), handler)
     server.socket = tls.wrap_socket(server.socket, server_side=True)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, server.server_address[1]
+    return server, server.server_address[1], spki
 
 
 def _free_port() -> int:
@@ -880,6 +932,7 @@ class Run:
     page_errors: list[tuple[str, str]] = field(default_factory=list)
     cancelled: list[str] = field(default_factory=list)
     navigation_cancels: list[str] = field(default_factory=list)
+    axe_checked: int = 0
 
     def page_error(self, error: Any) -> None:
         self.page_errors.append((self.current, str(error)))
@@ -919,7 +972,38 @@ class Run:
         self.counter += 1
         name = f"{self.counter:02d}-{state}-{self.width}.png"
         page.screenshot(path=str(self.out / name))
+        if AXE_SOURCE:
+            self.check_accessibility(page, name)
         return name
+
+    def check_accessibility(self, page: Any, shot: str) -> None:
+        """Run axe-core on the page as shot; a violation is a run error.
+
+        Injected through evaluate, so the page keeps its own policy (a
+        script tag would be refused by it).
+        """
+        try:
+            # Contrast is measured on what is drawn: let fades and slides end
+            # (not spinners, which run until their work is done)
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and page.evaluate(
+                "document.getAnimations().some((a) => a.playState === 'running' && "
+                "a.effect?.getTiming().iterations !== Infinity)"
+            ):
+                page.wait_for_timeout(100)
+            page.evaluate(AXE_SOURCE)
+            violations = page.evaluate(
+                "async () => (await axe.run(document, {resultTypes: ['violations']}))"
+                ".violations.map((v) => ({id: v.id, impact: v.impact, "
+                "nodes: v.nodes.length, target: v.nodes[0]?.target}))"
+            )
+        except Exception as error:  # noqa: BLE001 - recorded as a failure
+            violations = [{"id": "axe-failed", "error": str(error)[:200]}]
+        self.axe_checked += 1
+        with (self.out / f"axe-{self.width}.jsonl").open("a", encoding="utf-8") as log:
+            log.write(json.dumps({"shot": shot, "violations": violations}) + "\n")
+        for violation in violations:
+            self.errors.append(f"axe {shot}: {json.dumps(violation)}"[:400])
 
     def step(self, page: Any, state: str, check: Callable[[], str | None]) -> None:
         started = time.monotonic()
@@ -1284,6 +1368,96 @@ def _google_auth() -> bool:
         return False
 
 
+def _hover_links(page: Any, frame: Any) -> str:
+    """Hovering a block on either side of Compare outlines both (v1.13).
+
+    Markdown → page: the frame's paired block gets ``data-markitai-linked``
+    (the workbench's own style draws its outline); page → Markdown: the
+    Markdown block gets ``is-linked``.
+    """
+    markdown = page.locator("#peek-panel .doc-body h1").first
+    markdown.hover()
+    heading = frame.locator("h1[data-markitai-linked]")
+    heading.wait_for(timeout=10000)
+    outline = heading.evaluate("h => getComputedStyle(h).outlineStyle")
+    if outline != "solid":
+        raise AssertionError(
+            f"the page's heading is linked but not outlined ({outline})"
+        )
+    frame.locator("article p").first.hover()
+    linked = page.locator("#peek-panel .doc-body p.is-linked")
+    linked.first.wait_for(timeout=10000)
+    text = linked.first.inner_text().strip()
+    if not text.startswith("A local page for the workbench end-to-end run."):
+        raise AssertionError(f"hovering the page's paragraph linked {text!r}")
+    page.mouse.move(0, 0)
+    return (
+        "hover links both ways (Markdown heading → the page's h1 outlined; the "
+        "page's paragraph → the Markdown paragraph)"
+    )
+
+
+def _web_picture(scope: Any, alt: str) -> str:
+    """The Markdown's absolute https picture is drawn, not a placeholder (v1.13)."""
+    picture = scope.locator(f'.doc-body img[alt="{alt}"]').first
+    picture.wait_for(timeout=10000)
+    picture.scroll_into_view_if_needed()
+    source = picture.get_attribute("src") or ""
+    if not source.startswith(f"{SITE_ASSETS}/"):
+        raise AssertionError(f"the web picture points at {source!r}")
+    if picture.get_attribute("referrerpolicy") != "no-referrer":
+        raise AssertionError("the web picture sends a referrer")
+    deadline = time.monotonic() + 10
+    while picture.evaluate("img => img.naturalWidth") != 4:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"the web picture {source} did not load")
+        scope.page.wait_for_timeout(200)
+    return f"its https picture drawn from the site ({source}, no referrer)"
+
+
+def _submit_files(base: str, token: str, files: list[tuple[str, bytes]]) -> str:
+    """Convert *files* (minimal preset, no model) as *token*; the job id once done."""
+    import urllib.request
+    import uuid
+
+    boundary = uuid.uuid4().hex
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="files"; '
+        f'filename="{name}"\r\nContent-Type: text/markdown\r\n\r\n'.encode()
+        + content
+        + b"\r\n"
+        for name, content in files
+    ]
+    for key, value in (
+        ("urls", "[]"),
+        ("options", json.dumps({"preset": "minimal", "llm": False})),
+    ):
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"'
+            f"\r\n\r\n{value}\r\n".encode()
+        )
+
+    def call(method: str, path: str, body: bytes | None = None) -> Any:
+        headers = {"Authorization": f"Bearer {token}"}
+        if body is not None:
+            headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        request = urllib.request.Request(
+            f"{base}{path}", data=body, method=method, headers=headers
+        )
+        with urllib.request.urlopen(request, timeout=60) as answer:
+            return json.loads(answer.read())
+
+    job = call("POST", "/api/jobs", b"".join(parts) + f"--{boundary}--\r\n".encode())[
+        "job_id"
+    ]
+    deadline = time.monotonic() + 60
+    while call("GET", f"/api/jobs/{job}")["status"] == "running":
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"job {job} did not finish")
+        time.sleep(0.2)
+    return job
+
+
 def _api(page: Any, base: str, method: str, path: str, **kwargs: Any) -> Any:
     headers = {"Authorization": f"Bearer {TOKEN}"}
     return page.request.fetch(f"{base}{path}", method=method, headers=headers, **kwargs)
@@ -1319,14 +1493,20 @@ def browse(
     run = Run(out=out, width=width)
     phone = width < 600
     with sync_playwright() as playwright:
-        browser = getattr(playwright, engine).launch()
+        # Chromium trusts the site's key from the local test CA, and only
+        # it; the other engines take no such switch and ignore the errors
+        pinned = engine == "chromium" and bool(SITE_SPKI)
+        browser = getattr(playwright, engine).launch(
+            args=[f"--ignore-certificate-errors-spki-list={SITE_SPKI}"]
+            if pinned
+            else []
+        )
         context = browser.new_context(
             viewport={"width": width, "height": 844 if phone else 900},
             device_scale_factor=2 if phone else 1,
             accept_downloads=True,
             color_scheme=theme,
-            # The site's HTTPS files have a self-signed certificate
-            ignore_https_errors=True,
+            ignore_https_errors=not pinned,
         )
         page = context.new_page()
         page.on("pageerror", run.page_error)
@@ -1663,7 +1843,9 @@ def browse(
         # 6c. A web page's original is the page the server fetched, framed:
         # its inline style drawn and the site's HTTPS picture and style sheet
         # loaded, its script never run, nothing loaded over plain HTTP
-        # (contract v1.12 section 7)
+        # (contract v1.12 section 7). v1.13: the frame shares the workbench's
+        # origin, so hovering a block on either side outlines both, and the
+        # Markdown's own https picture shows beside it
         def compare_page() -> str:
             row = _items(page).filter(has_text=re.compile("alpha", re.IGNORECASE)).first
             row.click()
@@ -1680,7 +1862,10 @@ def browse(
             frame_element = page.locator("#peek-panel iframe")
             frame_element.wait_for(timeout=15000)
             sandbox = frame_element.get_attribute("sandbox")
-            if sandbox != "allow-popups allow-popups-to-escape-sandbox":
+            if (
+                sandbox
+                != "allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+            ):
                 raise AssertionError(f"the frame's sandbox is {sandbox!r}")
             if frame_element.get_attribute("referrerpolicy") != "no-referrer":
                 raise AssertionError("the frame sends a referrer")
@@ -1726,18 +1911,28 @@ def browse(
                     f"the frame ran a script ({ran!r}) or loaded {fetched} "
                     f"(picture width {picture})"
                 )
+            linked = _hover_links(page, frame)
+            remote = "no HTTPS site (no cryptography)"
+            if SITE_ASSETS:
+                remote = _web_picture(page.locator("#peek-panel"), "Site picture")
             link = (
                 page.locator(".peek-head, #peek-panel")
                 .get_by_role("link", name=re.compile("Open the page"))
                 .or_(page.get_by_role("menuitem", name=re.compile("Open the page")))
             )
             run.shot(page, "peek-compare-page")
+            has_link = link.count() > 0
+            if SITE_ASSETS:
+                _show_tab(page, "Preview")
+                _web_picture(page.locator("#peek-panel"), "Site picture")
+                run.shot(page, "peek-preview-web-picture")
+                remote += "; Preview draws it too"
             note = (
                 f"Compare frames the fetched page (sandbox {sandbox!r}, ticket "
                 f"URL): '{title}' in its own red, {site}, no script ran, nothing "
-                "loaded over plain HTTP"
+                f"loaded over plain HTTP; {linked}; Markdown side: {remote}"
             )
-            if not phone and link.count() == 0:
+            if not phone and not has_link:
                 raise AssertionError("no Open the page link")
             _close_window(page)
             return note
@@ -2883,6 +3078,311 @@ def browse(
 
         run.step(page, "token-prompt-checked", token_prompt)
 
+        # 15b. Several conversions deleted at once (contract v1.13 §6.8): two
+        # rows and a submission's header checked, Delete, the confirmation;
+        # one POST /api/history/delete, no single DELETE
+        def batch_delete() -> str:
+            pair = _submit_files(
+                base,
+                TOKEN,
+                [
+                    ("delete-me-1.md", b"# Delete me 1\n\nFirst throwaway.\n"),
+                    ("delete-me-2.md", b"# Delete me 2\n\nSecond throwaway.\n"),
+                ],
+            )
+            single = _submit_files(
+                base, TOKEN, [("delete-me-3.md", b"# Delete me 3\n\nThird.\n")]
+            )
+            _open(page, lambda: page.goto(f"{base}/jobs"))
+            third = page.locator(".conv-list .row", has_text="delete-me-3")
+            third.first.wait_for(timeout=15000)
+            head = (
+                page.locator(".conv-list .group-head")
+                .filter(
+                    has=page.locator(
+                        "xpath=following-sibling::li[1][contains(., 'delete-me-1')]"
+                    )
+                )
+                .first
+            )
+            calls: list[str] = []
+
+            def deleting(request: Any) -> None:
+                path = request.url.replace(base, "")
+                if request.method == "DELETE" or path == "/api/history/delete":
+                    calls.append(f"{request.method} {path}")
+
+            page.on("request", deleting)
+            try:
+                if phone:
+                    # Select mode: a tap (here a click) checks a row
+                    _click_visible(page.locator(".select-mode-btn"))
+                    third.first.click()
+                    head.click()
+                else:
+                    third.first.focus()
+                    page.keyboard.press(" ")
+                    head.locator(".row-check").click()
+                count = page.locator(".select-count").inner_text().strip()
+                checked = page.locator(".conv-list [aria-checked=true]").count()
+                if count != "3 selected" or checked != 4:
+                    raise AssertionError(f"{count!r}, {checked} rows aria-checked")
+                run.shot(page, "batch-delete-selected")
+                page.locator(".select-bar .select-delete").click()
+                dialog = page.get_by_role("alertdialog").filter(
+                    has_text="Delete 3 conversions?"
+                )
+                dialog.wait_for(timeout=10000)
+                text = dialog.inner_text()
+                if (
+                    "Their Markdown, pictures and kept originals are deleted too. "
+                    "This cannot be undone." not in text
+                ):
+                    raise AssertionError(f"the confirmation says {text!r}")
+                run.shot(page, "batch-delete-confirm")
+                with page.expect_response(
+                    lambda r: r.url.endswith("/api/history/delete")
+                ) as answered:
+                    dialog.get_by_role("button", name="Delete", exact=True).click()
+                body = answered.value.json()
+                page.locator(".note-strips .note-strip").filter(
+                    has_text="3 conversions deleted"
+                ).first.wait_for(timeout=15000)
+                page.wait_for_timeout(500)
+            finally:
+                page.remove_listener("request", deleting)
+            if calls != ["POST /api/history/delete"]:
+                raise AssertionError(f"the page sent {calls}")
+            sent = json.loads(answered.value.request.post_data or "{}")
+            # A submission whose every item is checked goes as a job
+            named = set(sent.get("jobs", [])) | {
+                entry["job_id"] for entry in sent.get("items", [])
+            }
+            if pair not in sent.get("jobs", []) or named != {pair, single}:
+                raise AssertionError(f"the request named {sent}")
+            if (body["deleted"], body["failed"]) != (2, 0):
+                raise AssertionError(f"the answer was {body}")
+            left = _api(page, base, "GET", "/api/history?include=items").json()
+            names = [
+                item["name"]
+                for entry in left
+                for item in entry.get("items", [])
+                if item["name"].startswith("delete-me")
+            ]
+            if names or page.locator(".conv-list .row", has_text="delete-me").count():
+                raise AssertionError(f"still listed: {names}")
+            return (
+                f"'3 selected' (4 rows aria-checked: 3 + the submission header), the "
+                f"confirmation, one request {calls[0]} with {json.dumps(sent)}, "
+                "'3 conversions deleted', none listed after"
+            )
+
+        run.step(page, "batch-delete", batch_delete)
+
+        # 15c. A user token, made by the admin on Settings → Access token: it
+        # converts and sees only its own conversions, and the settings pages
+        # say the admin's token is needed (contract v1.13 §2)
+        user: dict[str, str] = {}
+
+        def user_token() -> str:
+            _open(page, lambda: page.goto(f"{base}/settings/access"))
+            field = page.get_by_label("Name", exact=True)
+            field.wait_for(timeout=15000)
+            field.fill(USER_LABEL)
+            with page.expect_response(
+                lambda r: (
+                    r.url.endswith("/api/access-tokens") and r.request.method == "POST"
+                )
+            ) as answered:
+                page.get_by_role("button", name="Create token").click()
+            created = answered.value.json()
+            if answered.value.status != 201 or not re.fullmatch(
+                r"mku_[0-9a-f]{64}", created.get("token", "")
+            ):
+                raise AssertionError(f"create answered {answered.value.status}")
+            user.update(token=created["token"], id=created["id"])
+            page.get_by_text(created["token"], exact=True).first.wait_for(timeout=10000)
+            page.get_by_text(f"Token for “{USER_LABEL}” created").first.wait_for()
+            listed = page.locator(".token-list li").filter(has_text=USER_LABEL)
+            listed.first.wait_for(timeout=10000)
+            hint = created["token"][-4:]
+            if hint not in listed.first.inner_text():
+                raise AssertionError(
+                    "the list does not show the token's last characters"
+                )
+            return (
+                f"user token '{USER_LABEL}' created: shown once with its link, "
+                f"listed as …{hint}"
+            )
+
+        run.step(page, "user-token", user_token)
+
+        def user_session() -> str:
+            if not user:
+                raise AssertionError("no user token")
+            fresh = browser.new_context(
+                viewport={"width": width, "height": 844 if phone else 900},
+                device_scale_factor=2 if phone else 1,
+                color_scheme=theme,
+            )
+            other = fresh.new_page()
+            other.on("response", record)
+            other.on("pageerror", run.page_error)
+            other.on("requestfailed", run.request_failed)
+            try:
+                own = _submit_files(
+                    base,
+                    user["token"],
+                    [("field-notes.md", b"# Field notes\n\nThe user's own file.\n")],
+                )
+                _open(other, lambda: other.goto(f"{base}/jobs#token={user['token']}"))
+                other.locator(".conv-list .row", has_text="field-notes").first.wait_for(
+                    timeout=15000
+                )
+                other.wait_for_timeout(800)
+                rows = other.locator(".conv-list .row").count()
+                if rows != 1:
+                    raise AssertionError(f"the user's list shows {rows} rows")
+                run.shot(other, "user-conversions")
+                admins = _api(page, base, "GET", "/api/history").json()
+                hidden = other.request.fetch(
+                    f"{base}/api/jobs/{admins[-1]['job_id']}",
+                    headers={"Authorization": f"Bearer {user['token']}"},
+                )
+                if hidden.status != 404:
+                    raise AssertionError(f"another's job answered {hidden.status}")
+                _open(other, lambda: other.goto(f"{base}/settings/models"))
+                other.get_by_text("Admin token needed").first.wait_for(timeout=15000)
+                run.shot(other, "user-settings")
+                _open(other, lambda: other.goto(f"{base}/settings/config"))
+                other.get_by_text("Admin token needed").first.wait_for(timeout=15000)
+                _open(other, lambda: other.goto(f"{base}/settings/appearance"))
+                other.get_by_text(
+                    f"This tab uses the user token “{USER_LABEL}”"
+                ).first.wait_for(timeout=15000)
+                run.shot(other, "user-appearance")
+            finally:
+                fresh.close()
+            return (
+                f"the user sees 1 row (its own job {own}), another's job is 404, "
+                "Models and Edit config say 'Admin token needed', Appearance names "
+                "the token"
+            )
+
+        run.step(page, "user-session", user_session)
+
+        # 15d. Settings → Edit config: the file's own text with its secrets
+        # masked, JSON checked as typed, Review changes as a line diff, Save
+        # config writing exactly that change (secrets kept on disk), and a
+        # file changed behind the page refused as stale (contract v1.13 §8)
+        def edit_config() -> str:
+            before = config.read_text(encoding="utf-8")
+            _open(page, lambda: page.goto(f"{base}/settings/config"))
+            area = page.locator("#config-text")
+            area.wait_for(timeout=15000)
+            shown = area.input_value()
+            leaked = [
+                secret
+                for secret in ("sk-e2e-fake-0000", "sk-e2e-conn-0000", *BASE_SECRETS)
+                if secret in shown
+            ]
+            if leaked or "…" not in shown:
+                raise AssertionError(f"secrets shown: {leaked}")
+            masked = page.locator(".config-note").filter(has_text="shown masked")
+            masked.first.wait_for(timeout=5000)
+            if '"url_concurrency": 1' not in shown:
+                raise AssertionError("the editor does not show the file")
+            area.fill(shown.replace('"url_concurrency": 1', '"url_concurrency": 1,', 1))
+            check = page.locator("#config-check")
+            _wait(
+                page,
+                lambda: "Not valid JSON at line" in check.inner_text(),
+                timeout=5,
+                what="the JSON check",
+            )
+            if not page.locator(".config-review-btn").is_disabled():
+                raise AssertionError("Review is offered for broken JSON")
+            run.shot(page, "edit-config-invalid")
+            edited = shown.replace('"url_concurrency": 1', '"url_concurrency": 2', 1)
+            area.fill(edited)
+            _wait(
+                page,
+                lambda: check.inner_text().strip() == "Valid JSON · unsaved changes",
+                timeout=5,
+                what="the JSON check to pass",
+            )
+            page.locator(".config-review-btn").click()
+            diff = page.locator(".config-diff")
+            diff.wait_for(timeout=5000)
+            # The rows' text (the blocks are drawn lazily, so not innerText)
+            changed = diff.evaluate(
+                "d => [...d.querySelectorAll('.diff-line.is-del .diff-text, "
+                ".diff-line.is-add .diff-text')].map((e) => e.textContent.trim())"
+            )
+            if changed != ['"url_concurrency": 1', '"url_concurrency": 2']:
+                raise AssertionError(f"the diff changes {changed}")
+            run.shot(page, "edit-config-diff")
+            with page.expect_response(
+                lambda r: (
+                    r.url.endswith("/api/settings/config") and r.request.method == "PUT"
+                )
+            ) as answered:
+                page.get_by_role("button", name="Save config").click()
+            if answered.value.status != 200:
+                raise AssertionError(f"save answered {answered.value.status}")
+            page.locator(".config-note.is-done").filter(
+                has_text="restart the server for the other changes"
+            ).first.wait_for(timeout=10000)
+            after = config.read_text(encoding="utf-8")
+            expected = before.replace('"url_concurrency": 1', '"url_concurrency": 2', 1)
+            if after != expected:
+                raise AssertionError(
+                    "the saved file is not the original with that one change"
+                )
+            run.shot(page, "edit-config-saved")
+            # Someone edits the file behind the page
+            config.write_text(
+                after.replace('"url_concurrency": 2', '"url_concurrency": 3', 1),
+                encoding="utf-8",
+            )
+            again = area.input_value()
+            area.fill(again.replace('"enabled": false', '"enabled": true', 1))
+            page.locator(".config-review-btn").click()
+            with page.expect_response(
+                lambda r: (
+                    r.url.endswith("/api/settings/config") and r.request.method == "PUT"
+                )
+            ) as refused:
+                page.get_by_role("button", name="Save config").click()
+            failure = page.locator(".config-failure")
+            failure.wait_for(timeout=10000)
+            if (
+                refused.value.status != 409
+                or "The file changed since you opened it" not in (failure.inner_text())
+            ):
+                raise AssertionError(
+                    f"stale save answered {refused.value.status}: {failure.inner_text()!r}"
+                )
+            run.shot(page, "edit-config-stale")
+            with page.expect_response(lambda r: r.url.endswith("/api/settings/config")):
+                failure.get_by_role("button", name="Load current file").click()
+            _wait(
+                page,
+                lambda: (
+                    '"url_concurrency": 3' in page.locator("#config-text").input_value()
+                ),
+                timeout=10,
+                what="the current file",
+            )
+            return (
+                "secrets masked in the file's own text; broken JSON named by line and "
+                "column with Review off; the diff showed 1 → 2; Save wrote exactly that "
+                "change (keys kept on disk) and said a restart is needed; a file "
+                "changed behind the page answered 409 and Load current file read it"
+            )
+
+        run.step(page, "edit-config", edit_config)
+
         # 16. Settings → Access token → Regenerate token: this tab keeps the
         # new token (shown once, with its link and QR code); the old token,
         # another tab holding it and its tickets stop working (contract v1.11)
@@ -2986,6 +3486,11 @@ def main(argv: list[str] | None = None) -> int:
         help="browser engine (webkit is Safari's; install it with playwright install)",
     )
     parser.add_argument(
+        "--axe",
+        type=Path,
+        help="axe.min.js (axe-core): check every screenshot's page, fail on a violation",
+    )
+    parser.add_argument(
         "--theme",
         choices=("light", "dark"),
         default="light",
@@ -2993,14 +3498,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
+    global AXE_SOURCE
+    if args.axe is not None:
+        AXE_SOURCE = args.axe.read_text(encoding="utf-8")
     _, llm_port = _serve(_FakeLLM)
     _, pages_port = _serve(_Pages)
-    global SITE_ASSETS
-    assets = _serve_https(
-        _SiteAssets, Path(tempfile.mkdtemp(prefix="markitai-e2e-tls-"))
-    )
+    global SITE_ASSETS, SITE_SPKI
+    scratch = Path(tempfile.mkdtemp(prefix="markitai-e2e-"))
+    assets = _serve_https(_SiteAssets, scratch / "tls")
     if assets is not None:
         SITE_ASSETS = f"https://127.0.0.1:{assets[1]}"
+        SITE_SPKI = assets[2]
     results: dict[str, Any] = {
         "widths": {},
         "bundle": None,
@@ -3008,7 +3516,6 @@ def main(argv: list[str] | None = None) -> int:
         "theme": args.theme,
     }
     interrupted: BaseException | None = None
-    scratch = Path(tempfile.mkdtemp(prefix="markitai-e2e-"))
     try:
         inputs = make_inputs(scratch / "inputs", pages_port)
         for width in (int(w) for w in args.widths.split(",")):
@@ -3046,6 +3553,7 @@ def main(argv: list[str] | None = None) -> int:
                         errors=run.errors,
                         api_calls=len(run.api),
                         navigation_cancels=run.navigation_cancels,
+                        axe_checked=run.axe_checked,
                     )
             except Exception as error:  # noqa: BLE001 - recorded; the next width runs
                 entry["errors"].append(
@@ -3107,6 +3615,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         for error in data["errors"]:
             lines.append(f"| {width} | error | **FAIL** | {error} | |")
+        if data.get("axe_checked"):
+            lines.append(
+                f"| {width} | axe | ok | axe-core checked {data['axe_checked']} "
+                "screenshots' pages (violations would be listed as errors above) | |"
+            )
         if data.get("navigation_cancels"):
             lines.append(
                 f"| {width} | cancelled | ok | requests a navigation cancelled "
