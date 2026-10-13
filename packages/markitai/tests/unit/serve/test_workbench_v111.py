@@ -48,9 +48,10 @@ PAGE = (
     '<body><h1>Fetched</h1><img src="/remote.png"><a href="next">next</a></body></html>'
 )
 META = '<meta http-equiv="x-dns-prefetch-control" content="off">'
-# Contract v1.12 section 7, exactly
+# Contract v1.13 section 7, exactly
 VIEW_POLICY = (
-    "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; "
+    "sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox; "
+    "default-src 'none'; "
     "img-src https: data:; style-src https: 'unsafe-inline'; "
     "font-src https: data:; media-src https:; "
     "form-action 'none'; frame-ancestors 'self'"
@@ -407,10 +408,17 @@ class TestKeptWebPage:
             for name, *values in (part.split() for part in SERVED.split(";"))
         }
         # No script: none is allowed, and the sandbox grants neither scripts,
-        # forms nor the frame an origin of its own
+        # forms nor top navigation; the frame shares the workbench's origin
+        # only so the workbench's own script can read it (v1.13)
         assert directives["default-src"] == ["'none'"]
-        assert not {"script-src", "script-src-elem", "connect-src"} & set(directives)
+        assert not {
+            "script-src",
+            "script-src-elem",
+            "script-src-attr",
+            "connect-src",
+        } & set(directives)
         assert directives["sandbox"] == [
+            "allow-same-origin",
             "allow-popups",
             "allow-popups-to-escape-sandbox",
         ]
