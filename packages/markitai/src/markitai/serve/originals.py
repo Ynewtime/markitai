@@ -226,13 +226,20 @@ def kept_original(job: Job, item: JobItem) -> tuple[Path, str] | None:
     return snapshot, f"{item_base_name(item) or 'page'}.html"
 
 
-#: The policy of a framed HTML original (contract v1.12): the site's own
+#: The policy of a framed HTML original (contract v1.13): the site's own
 #: pictures, style sheets, fonts and media load over HTTPS (relative
 #: addresses resolve to the site through the inserted ``<base>``); no script
-#: runs, no form is sent, the sandbox gives the frame no origin of its own,
-#: links open outside the frame, and only the workbench may frame it.
+#: runs, no form is sent, links open outside the frame, and only the
+#: workbench may frame it. The frame shares the workbench's origin
+#: (``allow-same-origin``) so the workbench's own script can read its blocks
+#: and link them with the Markdown; that matters only to script, and the
+#: page runs none: there is no ``allow-scripts`` and no ``script-src``, so
+#: ``default-src 'none'`` refuses every script, inline handler and
+#: ``javascript:`` URL; no ``allow-forms`` (and ``form-action 'none'``) and
+#: no ``allow-top-navigation``. Never add any of those.
 VIEW_POLICY = (
-    "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; "
+    "sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox; "
+    "default-src 'none'; "
     "img-src https: data:; style-src https: 'unsafe-inline'; "
     "font-src https: data:; media-src https:; "
     "form-action 'none'; frame-ancestors 'self'"
