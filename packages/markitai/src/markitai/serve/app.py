@@ -4641,8 +4641,9 @@ def create_app(
         """The kept HTML original for the workbench's sandboxed frame.
 
         One insertion (no DNS prefetching, a base that opens links outside
-        the frame) and a policy under which the page runs no script, sends
-        no form and loads nothing (contract v1.11 section 7).
+        the frame) and a policy under which the page runs no script and
+        sends no form; its pictures, style sheets, fonts and media load
+        over HTTPS (contract v1.12 section 7).
         """
         job = _get_job(request, job_id)
         item = _get_item(job, item_id)

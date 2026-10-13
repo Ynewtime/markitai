@@ -226,12 +226,15 @@ def kept_original(job: Job, item: JobItem) -> tuple[Path, str] | None:
     return snapshot, f"{item_base_name(item) or 'page'}.html"
 
 
-#: The policy of a framed HTML original: no script, no request leaves the
-#: page (styles inline, pictures and fonts only as data), links open outside
-#: the frame, and only the workbench may frame it.
+#: The policy of a framed HTML original (contract v1.12): the site's own
+#: pictures, style sheets, fonts and media load over HTTPS (relative
+#: addresses resolve to the site through the inserted ``<base>``); no script
+#: runs, no form is sent, the sandbox gives the frame no origin of its own,
+#: links open outside the frame, and only the workbench may frame it.
 VIEW_POLICY = (
     "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; "
-    "style-src 'unsafe-inline'; img-src data:; font-src data:; "
+    "img-src https: data:; style-src https: 'unsafe-inline'; "
+    "font-src https: data:; media-src https:; "
     "form-action 'none'; frame-ancestors 'self'"
 )
 _HTML_WHITESPACE = " \t\n\r\x0c"
