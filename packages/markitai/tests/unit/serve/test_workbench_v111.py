@@ -300,7 +300,7 @@ def test_tickets_can_all_be_revoked() -> None:
     ticket = tickets.issue("/api/history/archive")
     assert ticket is not None
     tickets.clear()
-    assert not tickets.redeem(ticket, "/api/history/archive")
+    assert tickets.redeem(ticket, "/api/history/archive") == (False, None)
 
 
 # ----------------------------------------------------------------------- 7

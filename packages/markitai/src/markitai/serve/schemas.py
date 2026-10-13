@@ -316,6 +316,18 @@ class CapabilitiesFeatures(BaseModel):
     item_assets: bool  # contract v1.6: GET .../items/{item_id}/assets/{relpath}
     item_archive: bool  # contract v1.11: GET .../items/{item_id}/archive
     token_regenerate: bool  # v1.11: POST /api/access-token/regenerate (not --no-auth)
+    user_tokens: bool  # v1.13: /api/access-tokens and access levels (not --no-auth)
+    config_edit: bool  # v1.13: GET/PUT /api/settings/config
+    batch_delete: bool  # v1.13: POST /api/history/delete
+
+
+class CapabilitiesAccess(BaseModel):
+    """Who is asking (contract v1.13)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["admin", "user"]
+    label: str | None = None  # a user token's name
 
 
 class CloudflareCapability(BaseModel):
@@ -375,6 +387,7 @@ class Capabilities(BaseModel):
     limits: CapabilitiesLimits
     features: CapabilitiesFeatures
     remote_services: RemoteServices
+    access: CapabilitiesAccess
 
 
 class LLMDeployment(BaseModel):
@@ -744,6 +757,75 @@ class RegeneratedToken(BaseModel):
     network_url: str | None  # http://<network address>:<port>/#token=<token>
     persistent: bool  # survives a restart (Python: never, it lives in memory)
     startup_variable: str | None  # "MARKITAI_SERVE_TOKEN" when it set the token
+
+
+class AccessTokenEntry(BaseModel):
+    """One user token as ``GET /api/access-tokens`` lists it (never the token)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str  # u_ + 12 hex digits
+    label: str
+    hint: str  # the token's last 4 characters
+    created_at: str
+    last_used_at: str | None  # kept in memory only: null after a restart
+
+
+class AccessTokenList(BaseModel):
+    """Response of ``GET /api/access-tokens``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tokens: list[AccessTokenEntry]  # oldest first
+
+
+class CreatedAccessToken(AccessTokenEntry):
+    """Response of ``POST /api/access-tokens``: the only time ``token`` is sent."""
+
+    token: str  # mku_ + 64 hex digits
+
+
+class BatchDeleteEntry(BaseModel):
+    """One entry's outcome in ``POST /api/history/delete``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    item_id: str | None  # None: the whole job
+    ok: bool
+    reason: str | None = None  # what the single route would answer
+    detail: str | None = None
+
+
+class BatchDeleteResult(BaseModel):
+    """Response of ``POST /api/history/delete``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deleted: int
+    failed: int
+    results: list[BatchDeleteEntry]  # request order
+
+
+class ConfigDocument(BaseModel):
+    """Response of ``GET /api/settings/config``: the file's text, secrets masked."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    origin: str
+    exists: bool
+    revision: str  # "sha256:<hex of the file's bytes>" or "absent"
+    text: str | None  # null when the file cannot be shown (see problem)
+    masked: int
+    problem: str | None
+    read_only: bool
+
+
+class SavedConfigDocument(ConfigDocument):
+    """Response of ``PUT /api/settings/config``."""
+
+    restart_required: bool  # something outside llm.model_list/providers changed
 
 
 class DownloadTicket(BaseModel):

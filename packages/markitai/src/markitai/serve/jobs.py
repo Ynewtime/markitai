@@ -28,6 +28,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from markitai.notices import merge_item_warnings
+from markitai.serve.access import valid_id
 from markitai.serve.schemas import JobOptions
 from markitai.utils.clock import now_iso
 
@@ -310,6 +311,10 @@ class Job:
     retry_pending: set[str] = field(default_factory=set, repr=False)
     # What the submission is called in the list (a folder or URL list name)
     label: str | None = None
+    # The id of the user token that created the job (contract v1.13); None
+    # for the admin's, an anonymous caller's or a CLI-recorded job. Saved in
+    # meta.json, never sent in an answer.
+    owner: str | None = None
     # POST .../cancel: original items still waiting for a slot never start
     stop_requested: bool = False
     # Tasks of the initial run's items still waiting for a conversion slot;
@@ -396,8 +401,13 @@ class JobRegistry:
         # of waiting for their job, so they never hold the shutdown open.
         self.closing = False
 
-    def create_job(self, options: dict[str, Any], cfg: MarkitaiConfig) -> Job:
-        """Create a job with fresh uploads/out directories on disk."""
+    def create_job(
+        self, options: dict[str, Any], cfg: MarkitaiConfig, owner: str | None = None
+    ) -> Job:
+        """Create a job with fresh uploads/out directories on disk.
+
+        *owner* is the id of the user token that asked (None: the admin).
+        """
         job_id = uuid.uuid4().hex[:12]
         job_dir = self.jobs_root / job_id
         job = Job(
@@ -406,6 +416,7 @@ class JobRegistry:
             created_at=now_iso(),
             options=options,
             cfg=cfg,
+            owner=owner,
         )
         job.uploads_dir.mkdir(parents=True, exist_ok=True)
         job.out_dir.mkdir(parents=True, exist_ok=True)
@@ -651,23 +662,23 @@ def write_job_meta(job: Job, *, refresh_size: bool = True) -> None:
 
     if refresh_size:
         job.dir_size_bytes = job_dir_size(job.job_dir)
-    atomic_write_json(
-        job.job_dir / META_FILENAME,
-        {
-            "job_id": job.job_id,
-            "created_at": job.created_at,
-            "finished_at": job.finished_at,
-            "status": job.status,
-            "options": job.options,
-            "dir_size_bytes": job.dir_size_bytes,
-            "version": 2,
-            "label": job.label,
-            "items": [
-                {**item.to_payload(), "options": item.options or job.options}
-                for item in job.items
-            ],
-        },
-    )
+    meta: dict[str, Any] = {
+        "job_id": job.job_id,
+        "created_at": job.created_at,
+        "finished_at": job.finished_at,
+        "status": job.status,
+        "options": job.options,
+        "dir_size_bytes": job.dir_size_bytes,
+        "version": 2,
+        "label": job.label,
+        "items": [
+            {**item.to_payload(), "options": item.options or job.options}
+            for item in job.items
+        ],
+    }
+    if job.owner is not None:
+        meta["owner"] = job.owner
+    atomic_write_json(job.job_dir / META_FILENAME, meta)
 
 
 def _base_output_name(value: Any) -> str | None:
@@ -811,6 +822,9 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
             finished_at=meta.get("finished_at"),
             dir_size_bytes=raw_size if isinstance(raw_size, int) else None,
             label=raw_label[:120] if isinstance(raw_label, str) and raw_label else None,
+            # An owner that is not a user-token id is no owner: the job is
+            # then the admin's
+            owner=meta["owner"] if valid_id(meta.get("owner")) else None,
         )
         registry.jobs[job.job_id] = job
         count += 1

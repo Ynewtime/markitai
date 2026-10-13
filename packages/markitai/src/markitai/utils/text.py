@@ -33,6 +33,53 @@ def normalize_identifier_key(key: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", snake_key.lower()).strip("_")
 
 
+_SECRET_KEY_WORDS = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "cookies",
+        "credential",
+        "credentials",
+        "passwd",
+        "password",
+        "secret",
+    }
+)
+
+
+def is_secret_config_key(key: str) -> bool:
+    """Whether a config key conventionally holds secret material.
+
+    The rule ``markitai config show`` redacts with and the serve Edit config
+    page masks with: an api key in any spelling, a token, or a word naming
+    authorization, cookies, credentials, a password or a secret.
+    """
+    normalized = normalize_identifier_key(key)
+    parts = set(normalized.split("_"))
+
+    if normalized == "apikey" or normalized.endswith("_apikey"):
+        return True
+    if "api" in parts and "key" in parts:
+        return True
+    if "token" in parts:  # Deliberately does not match non-secret ``max_tokens``.
+        return True
+    return bool(parts & _SECRET_KEY_WORDS)
+
+
+def is_header_map_config_key(key: str) -> bool:
+    """Whether a config key names an HTTP header map (``extra_http_headers``)."""
+    normalized = normalize_identifier_key(key)
+    return normalized == "extra_http_headers" or normalized.endswith(
+        "_extra_http_headers"
+    )
+
+
+def is_api_base_config_key(key: str) -> bool:
+    """Whether a config key names an endpoint address (``api_base``)."""
+    normalized = normalize_identifier_key(key)
+    return normalized == "api_base" or normalized.endswith("_api_base")
+
+
 def image_ref_pattern(name: str) -> str:
     """Regex matching an image reference to *name*, encoded or raw.
 
