@@ -630,7 +630,10 @@ pub fn run() -> i32 {
         Some(Command::Mcp) => crate::signals::Owned::Interrupt,
         _ => crate::signals::Owned::None,
     });
-    let code = match execute(&cli) {
+    let outcome = execute(&cli);
+    // An interrupt that killed the runtime under this run owns its outcome.
+    crate::signals::yield_to_handler();
+    let code = match outcome {
         Ok(code) => code,
         Err((code, message)) => {
             logging::fatal(&message);

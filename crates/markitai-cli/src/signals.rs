@@ -11,6 +11,32 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
 
+/// The exit status of a handler that has begun to end the process, 0 before.
+/// It kills the external runtimes before it exits, and the coordinator then
+/// sees its runtime fail; [`yield_to_handler`] keeps that failure from ending
+/// the process first, with its own status (1 instead of 130 on Windows, where
+/// the handler also waits for the runtime's files to close).
+static EXITING: AtomicI32 = AtomicI32::new(0);
+
+/// Record that this handler ends the process with `code`, before it kills
+/// anything. Async-signal-safe.
+#[cfg(any(unix, windows))]
+fn begin_exit(code: i32) {
+    EXITING.store(code, Ordering::Release);
+}
+
+/// Return unless a handler has begun to end the process; otherwise leave the
+/// exit to it, whose status reports the interrupt or termination, and wait.
+/// Called by the coordinator before it reports the outcome or exits.
+pub(crate) fn yield_to_handler() {
+    if EXITING.load(Ordering::Acquire) != 0 {
+        // The handler ends the process; parking may return spuriously.
+        loop {
+            std::thread::park();
+        }
+    }
+}
+
 /// Whether a terminal status line (`app::progress`) is on screen. A handler
 /// that is about to end the process erases it first, so the shell prompt does
 /// not start behind a half-written status.
@@ -49,6 +75,7 @@ extern "C" fn interrupt(signal: libc::c_int) {
         // A second explicit interrupt forces termination without running
         // cleanup. External runtimes live in their own process groups, beyond
         // the terminal's reach, so kill them first (async-signal-safe).
+        begin_exit(128 + signal);
         markitai_core::terminate_child_process_groups();
         erase_status_line();
         unsafe { libc::_exit(128 + signal) }
@@ -59,6 +86,7 @@ extern "C" fn interrupt(signal: libc::c_int) {
 /// with its default action, as if no handler had been installed.
 #[cfg(unix)]
 extern "C" fn fatal(signal: libc::c_int) {
+    begin_exit(128 + signal);
     markitai_core::terminate_child_process_groups();
     erase_status_line();
     unsafe {
@@ -279,7 +307,7 @@ fn respond(event: Event, owners: Owners, recorded: &AtomicI32) -> Response {
 
 #[cfg(windows)]
 mod console {
-    use super::{Event, INTERRUPTED, Owners, Response};
+    use super::{Event, INTERRUPTED, Owners, Response, begin_exit};
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, Ordering};
     use windows_sys::Win32::Foundation::{FALSE, TRUE};
@@ -333,6 +361,7 @@ mod console {
     /// Kill the external runtime trees, erase the status line and end the
     /// process at once, running no other cleanup (Unix `_exit`).
     fn exit_now(code: i32) -> ! {
+        begin_exit(code);
         markitai_core::terminate_child_process_groups();
         super::erase_status_line();
         unsafe {
