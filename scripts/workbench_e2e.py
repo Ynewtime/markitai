@@ -350,15 +350,21 @@ class _FakeLLM(BaseHTTPRequestHandler):
         )
 
 
-#: Paths the page server was asked for: the framed page (contract v1.11)
-#: must load nothing from the site and run no script
+#: Paths the page server was asked for: the framed page (contract v1.12)
+#: runs no script and loads nothing over plain HTTP
 PAGE_REQUESTS: list[str] = []
+#: The site's files over HTTPS (``https://127.0.0.1:<port>``, a self-signed
+#: certificate the browser is told to accept): the framed page loads them.
+#: Empty when no certificate could be made (no ``cryptography``).
+SITE_ASSETS = ""
+ASSET_REQUESTS: list[str] = []
 
 
 class _Pages(BaseHTTPRequestHandler):
     """``/page/<n>.html`` answers at once, ``/slow/[<dir>/…]<n>.html`` after
     a pause. Each page carries an inline style, a script (it would ask for
-    ``/script-ran``) and a picture and style sheet from the site."""
+    ``/script-ran``), a picture and style sheet from the site over HTTP, and
+    another picture and style sheet from it over HTTPS (:data:`SITE_ASSETS`)."""
 
     def log_message(self, *args: Any) -> None:
         pass
@@ -381,7 +387,13 @@ class _Pages(BaseHTTPRequestHandler):
             '<link rel="stylesheet" href="/site.css"></head><body><article>'
             '<script>document.body.dataset.ran="yes";fetch("/script-ran")</script>'
             '<img src="/remote.png" alt="Remote picture">'
-            f"<h1>Page {match.group(2)}</h1><p>A local page for the workbench end-to-end run. "
+            + (
+                f'<link rel="stylesheet" href="{SITE_ASSETS}/site.css">'
+                f'<img src="{SITE_ASSETS}/site.png" alt="Site picture">'
+                if SITE_ASSETS
+                else ""
+            )
+            + f"<h1>Page {match.group(2)}</h1><p>A local page for the workbench end-to-end run. "
             "It has a paragraph, a list and a table so the Markdown has some structure.</p>"
             "<ul><li>First point</li><li>Second point</li></ul>"
             f"<table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody>{rows}</tbody></table>"
@@ -408,6 +420,103 @@ class _LocalServer(ThreadingHTTPServer):
 
 def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, int]:
     server = _LocalServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, server.server_address[1]
+
+
+class _SiteAssets(BaseHTTPRequestHandler):
+    """The site's picture (``/site.png``) and style sheet (``/site.css``)."""
+
+    @staticmethod
+    def _png() -> bytes:
+        """A 4 × 4 green PNG."""
+        import struct
+        import zlib
+
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            body = kind + data
+            return (
+                struct.pack(">I", len(data))
+                + body
+                + struct.pack(">I", zlib.crc32(body))
+            )
+
+        rows = b"".join(b"\x00" + b"\x00\x78\x00" * 4 for _ in range(4))
+        header = struct.pack(">IIBBBBB", 4, 4, 8, 2, 0, 0, 0)
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(rows))
+            + chunk(b"IEND", b"")
+        )
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def do_GET(self) -> None:
+        ASSET_REQUESTS.append(self.path)
+        body, kind = {
+            "/site.png": (self._png(), "image/png"),
+            "/site.css": (b"article{border-top:6px solid rgb(0, 120, 0)}", "text/css"),
+        }.get(self.path, (b"", ""))
+        self.send_response(200 if kind else 404)
+        if kind:
+            self.send_header("content-type", kind)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def _serve_https(
+    handler: type[BaseHTTPRequestHandler], directory: Path
+) -> tuple[ThreadingHTTPServer, int] | None:
+    """*handler* over HTTPS on 127.0.0.1 with a fresh self-signed certificate."""
+    import datetime
+    import ssl
+
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+    except ImportError:
+        return None
+    import ipaddress
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    now = datetime.datetime.now(datetime.UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+            ),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    cert_file, key_file = directory / "site.crt", directory / "site.key"
+    cert_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(cert_file, key_file)
+    server = _LocalServer(("127.0.0.1", 0), handler)
+    server.socket = tls.wrap_socket(server.socket, server_side=True)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, server.server_address[1]
@@ -1216,6 +1325,8 @@ def browse(
             device_scale_factor=2 if phone else 1,
             accept_downloads=True,
             color_scheme=theme,
+            # The site's HTTPS files have a self-signed certificate
+            ignore_https_errors=True,
         )
         page = context.new_page()
         page.on("pageerror", run.page_error)
@@ -1550,13 +1661,15 @@ def browse(
         run.step(page, "peek-arrows", arrows)
 
         # 6c. A web page's original is the page the server fetched, framed:
-        # its inline style drawn, its script never run, nothing loaded from
-        # the site (contract v1.11 section 7)
+        # its inline style drawn and the site's HTTPS picture and style sheet
+        # loaded, its script never run, nothing loaded over plain HTTP
+        # (contract v1.12 section 7)
         def compare_page() -> str:
             row = _items(page).filter(has_text=re.compile("alpha", re.IGNORECASE)).first
             row.click()
             _peek(page).wait_for()
             asked = len(PAGE_REQUESTS)
+            assets_asked = len(ASSET_REQUESTS)
             before = len(run.api)
             _show_tab(page, "Compare")
             _wait(
@@ -1584,8 +1697,25 @@ def browse(
             if colour != "rgb(200, 0, 0)":
                 raise AssertionError(f"the page's own style not drawn: {colour}")
             ran = frame.locator("body").get_attribute("data-ran")
-            picture = frame.locator("img").evaluate("img => img.naturalWidth")
             page.wait_for_timeout(1000)
+            picture = frame.locator('img[alt="Remote picture"]').evaluate(
+                "img => img.naturalWidth"
+            )
+            site = "no HTTPS site files (no cryptography)"
+            if SITE_ASSETS:
+                site_picture = frame.locator('img[alt="Site picture"]').evaluate(
+                    "img => img.naturalWidth"
+                )
+                rule = frame.locator("article").evaluate(
+                    "a => getComputedStyle(a).borderTopColor"
+                )
+                loaded = sorted(set(ASSET_REQUESTS[assets_asked:]))
+                if site_picture != 4 or rule != "rgb(0, 120, 0)":
+                    raise AssertionError(
+                        f"the site's HTTPS files did not load: picture width "
+                        f"{site_picture}, style sheet colour {rule}, asked {loaded}"
+                    )
+                site = f"the site's HTTPS picture and style sheet loaded ({loaded})"
             fetched = [
                 path
                 for path in PAGE_REQUESTS[asked:]
@@ -1604,8 +1734,8 @@ def browse(
             run.shot(page, "peek-compare-page")
             note = (
                 f"Compare frames the fetched page (sandbox {sandbox!r}, ticket "
-                f"URL): '{title}' in its own red, no script ran, nothing loaded "
-                "from the site"
+                f"URL): '{title}' in its own red, {site}, no script ran, nothing "
+                "loaded over plain HTTP"
             )
             if not phone and link.count() == 0:
                 raise AssertionError("no Open the page link")
@@ -2865,6 +2995,12 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     _, llm_port = _serve(_FakeLLM)
     _, pages_port = _serve(_Pages)
+    global SITE_ASSETS
+    assets = _serve_https(
+        _SiteAssets, Path(tempfile.mkdtemp(prefix="markitai-e2e-tls-"))
+    )
+    if assets is not None:
+        SITE_ASSETS = f"https://127.0.0.1:{assets[1]}"
     results: dict[str, Any] = {
         "widths": {},
         "bundle": None,
