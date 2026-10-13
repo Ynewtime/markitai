@@ -87,3 +87,29 @@ export function parseFrontMatter(block: string | null): FrontMatter | null {
   if (listKey !== null) assign(listKey, lists.get(listKey) ?? []);
   return result;
 }
+
+const sameWords = (text: string) =>
+  text
+    .replace(/[*_`~]|<[^>]*>|\\(?=[^\s])/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+/** The document's first `#` heading, when the body opens with one (ATX or setext). */
+export function openingHeading(body: string): string | null {
+  const lines = body.replace(/^\s*\n/, "").split("\n", 2);
+  const first = lines[0] ?? "";
+  const atx = /^ {0,3}#(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/.exec(first);
+  if (atx) return atx[1] ?? "";
+  if (first.trim() && /^ {0,3}=+[ \t]*$/.test(lines[1] ?? "")) return first.trim();
+  return null;
+}
+
+/** What the card above a rendered document shows: no title when the document
+ * opens with the same heading; null when nothing is left to show. */
+export function cardFacts(front: FrontMatter | null, body: string): FrontMatter | null {
+  if (!front) return null;
+  const opening = openingHeading(body);
+  const shown = front.title && opening !== null && sameWords(opening) === sameWords(front.title) ? { ...front, title: null } : front;
+  return shown.title || shown.description || shown.tags.length > 0 ? shown : null;
+}

@@ -2,13 +2,9 @@
 // the viewport (above unless it does not fit), gone a few seconds after it
 // opens unless the pointer rests on it, on Escape, on a click elsewhere, or
 // when another help bubble opens. A row's bubble can also list its choices.
-// `InfoTip` is the same bubble on a small (i) inside another control (a menu
-// entry): it opens while that control has focus, on hover, or on a tap of the
-// (i), which does not reach the control.
 import type { ComponentChildren } from "preact";
 import { createPortal } from "preact/compat";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Icon } from "./icons.tsx";
 
 const AUTO_HIDE_MS = 4000;
 /** Reading time added per listed choice. */
@@ -137,7 +133,6 @@ function useBubble({
   cancelHide,
   extraMs,
   deps,
-  beside = false,
 }: {
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -149,8 +144,6 @@ function useBubble({
   cancelHide: () => void;
   extraMs: number;
   deps: unknown[];
-  /** In a menu: beside it, or under the entry, instead of over the other entries. */
-  beside?: boolean;
 }) {
   useLayoutEffect(() => {
     if (!open) return;
@@ -162,23 +155,6 @@ function useBubble({
       const gap = 8;
       const width = document.documentElement.clientWidth || window.innerWidth;
       const height = window.innerHeight;
-      // Inside a menu the bubble keeps the other entries readable: beside the
-      // menu when there is room, else under the whole entry.
-      const menu = beside ? target.closest(".menu") : null;
-      const row = beside ? target.closest("button, a") : null;
-      if (menu && row) {
-        const frame = menu.getBoundingClientRect();
-        const line = row.getBoundingClientRect();
-        card.style.maxHeight = `${Math.max(0, Math.min(cap, height - margin * 2))}px`;
-        const box = card.getBoundingClientRect();
-        const room = frame.left - gap - margin;
-        const left = room >= box.width ? frame.left - gap - box.width : Math.max(margin, Math.min(line.left, width - margin - box.width));
-        const top = room >= box.width ? line.top + (line.height - box.height) / 2 : line.bottom + gap;
-        card.style.left = `${left}px`;
-        card.style.top = `${Math.max(margin, Math.min(top, height - margin - box.height))}px`;
-        card.style.visibility = "visible";
-        return;
-      }
       const rect = target.getBoundingClientRect();
       const above = Math.max(0, rect.top - gap - margin);
       const below = Math.max(0, height - margin - rect.bottom - gap);
@@ -234,100 +210,4 @@ function useBubble({
     };
   }, [open, id, extraMs]);
 
-}
-
-/** A small (i) inside another control, with its explanation in a bubble. The
- * control names the explanation with `aria-describedby={id}`; the (i) itself is
- * hidden from assistive technology and takes no focus. */
-export function InfoTip({ id, text }: { id: string; text: string }) {
-  const anchor = useRef<HTMLSpanElement>(null);
-  const bubble = useRef<HTMLDivElement>(null);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hovered = useRef(false);
-  const [open, setOpen] = useState(false);
-  const cancelHide = () => {
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = null;
-  };
-  const hideSoon = () => {
-    cancelHide();
-    hideTimer.current = setTimeout(() => setOpen(false), 150);
-  };
-  const show = () => {
-    cancelHide();
-    window.dispatchEvent(new CustomEvent("markitai:help", { detail: id }));
-    setOpen(true);
-  };
-  useBubble({ open, setOpen, id, anchor, bubble, hovered, cap: 200, cancelHide, extraMs: 0, deps: [text], beside: true });
-  // The control it sits in shows the explanation while it has keyboard focus.
-  useEffect(() => {
-    const control = anchor.current?.parentElement?.closest<HTMLElement>("button, a, [tabindex]");
-    if (!control) return;
-    const focus = () => {
-      if (control.matches(":focus-visible")) show();
-    };
-    const blur = () => {
-      cancelHide();
-      setOpen(false);
-    };
-    control.addEventListener("focus", focus);
-    control.addEventListener("blur", blur);
-    return () => {
-      control.removeEventListener("focus", focus);
-      control.removeEventListener("blur", blur);
-    };
-  }, []);
-  useEffect(() => cancelHide, []);
-  return (
-    <>
-      <span
-        ref={anchor}
-        class={open ? "info-tip is-open" : "info-tip"}
-        aria-hidden="true"
-        // Hover is a mouse's; a touch only taps.
-        onPointerEnter={(event) => {
-          if (event.pointerType !== "mouse") return;
-          hovered.current = true;
-          show();
-        }}
-        onPointerLeave={(event) => {
-          if (event.pointerType !== "mouse") return;
-          hovered.current = false;
-          hideSoon();
-        }}
-        // A tap opens the explanation (a touch also sends the hover first, so it
-        // never closes it) and does not reach the control; a tap elsewhere closes it.
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          show();
-        }}
-      >
-        <Icon name="Info" size={14} />
-      </span>
-      <span id={id} hidden>
-        {text}
-      </span>
-      {open &&
-        createPortal(
-          <div
-            ref={bubble}
-            class="help-bubble"
-            role="tooltip"
-            onMouseEnter={() => {
-              hovered.current = true;
-              cancelHide();
-            }}
-            onMouseLeave={() => {
-              hovered.current = false;
-              hideSoon();
-            }}
-          >
-            {text}
-          </div>,
-          // Inside the window it explains (a dialog), so it is part of what assistive technology reads there.
-          anchor.current?.closest("[role=dialog]") ?? document.body,
-        )}
-    </>
-  );
 }

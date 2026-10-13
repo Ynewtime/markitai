@@ -517,9 +517,19 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         bbox[0] < bbox[2] && bbox[1] < bbox[3] && bbox[3] < 396.0,
         "{bbox:?}"
     );
-    assert_eq!(
-        server.json(&format!("{base}/pages/2/text"))["lines"],
-        json!([])
+    assert_eq!(text["images"], json!([]), "a page of text has no pictures");
+    // The scanned page has no text, only the picture it is drawn as.
+    let scanned = server.json(&format!("{base}/pages/2/text"));
+    assert_eq!(scanned["lines"], json!([]));
+    let picture: Vec<f64> = scanned["images"][0]["bbox"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{scanned}"))
+        .iter()
+        .map(|value| value.as_f64().unwrap())
+        .collect();
+    assert!(
+        picture[0] < picture[2] && picture[1] < picture[3] && picture[2] - picture[0] > 300.0,
+        "{picture:?}"
     );
     for (path, status, reason) in [
         (format!("{base}/pages/4"), 404, "page_not_found"),
@@ -993,7 +1003,7 @@ fn a_kept_html_page_is_framed_with_its_base_and_a_closed_policy() {
         ("content-type", "text/html; charset=utf-8"),
         (
             "content-security-policy",
-            "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; frame-ancestors 'self'",
+            "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'",
         ),
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "no-referrer"),

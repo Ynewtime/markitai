@@ -147,11 +147,14 @@ kept bytes with one insertion after `<head>` (else `<html>`, else the start),
 `<meta http-equiv="x-dns-prefetch-control" content="off">` and
 `<base href="<the item's URL>" target="_blank">` (an upload gets no `href`),
 under `Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox;
-default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:;
-form-action 'none'; frame-ancestors 'self'`, with `nosniff`,
-`Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off` and
-`Cache-Control: no-store`: it runs no script, sends no form and loads nothing
-from the site, and only this service's own pages may frame it. Other kinds are 404
+default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline';
+font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'`,
+with `nosniff`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off` and
+`Cache-Control: no-store`: it runs no script and sends no form, loads only the
+site's pictures, style sheets, fonts and media over HTTPS (relative addresses
+resolve to the site through the `<base>`), sends no referrer, has no origin of
+its own (the sandbox withholds `allow-same-origin`), so nothing in it reaches the
+service, and only this service's own pages may frame it. Other kinds are 404
 `original_unavailable`, a page over 10 MiB 413 `result_too_large`. It is opened
 with a download ticket, since a frame cannot send the header; the static pages'
 policy allows `frame-src 'self'` for it.
@@ -167,7 +170,9 @@ PNG (always for TIFF and HEIC/HEIF), or screenshot `n`. Pages carry
 `Cache-Control: private, max-age=86400` and an ETag, and recently drawn ones are
 kept in memory (32 MiB). `…/original/pages/{n}/text` returns a PDF page's text
 as up to 5,000 lines in reading order, each a run of text on one baseline, with
-`bbox` `[x0, y0, x1, y1]` in points from the page's top-left corner. At most
+`bbox` `[x0, y0, x1, y1]` in points from the page's top-left corner, and
+`images`, the boxes its pictures are drawn in (same frame, drawing order, at
+most 500, clipped to the page, none under 4 points on a side). At most
 two pages are drawn at a time; another request gets 429 `render_busy` with
 `Retry-After`. Errors: 404 `original_unavailable`, 404 `page_not_found`, 422
 `invalid_page_request` (a page number or width that is not a whole number) and

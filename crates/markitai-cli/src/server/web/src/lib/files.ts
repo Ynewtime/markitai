@@ -129,8 +129,8 @@ export async function walkEntries(
 
 export const oversized = (files: File[]): File[] => files.filter((file) => file.size > MAX_FILE_BYTES);
 
-/** What a chosen set of files is, when it should wait for Convert: a folder, a
- * URL list, or several files. A single file returns null and converts at once. */
+/** What a chosen set of files is called while it waits for Convert: a folder, a
+ * URL list, or several files (null for a single file, which needs no name). */
 export function stagedBatch(files: File[], folder: boolean): StagedSubmission | null {
   // A folder is named for the folder, even when a list sits inside it: that list
   // is one of its files, not the submission.
@@ -146,4 +146,34 @@ export function stagedBatch(files: File[], folder: boolean): StagedSubmission | 
   }
   if (files.length < 2) return null;
   return { files, label: "", kind: "files" };
+}
+
+const sameFile = (left: File, right: File) =>
+  relativePath(left) === relativePath(right) && left.size === right.size && left.lastModified === right.lastModified;
+
+/** Files chosen again join what already waits for Convert (the same file once), up to
+ * `limit`; the batch keeps its name only while it is one folder or one list. */
+export function addStaged(current: StagedSubmission | null, chosen: File[], folder: boolean, limit: number): { staged: StagedSubmission | null; dropped: number } {
+  const files = current ? [...current.files] : [];
+  let dropped = 0;
+  for (const file of chosen) {
+    if (files.some((kept) => sameFile(kept, file))) continue;
+    if (files.length >= limit) dropped++;
+    else files.push(file);
+  }
+  if (!files.length) return { staged: null, dropped };
+  if (current && files.length === current.files.length) return { staged: current, dropped };
+  const named = stagedBatch(chosen, folder);
+  const kind = current && current.files.length ? (named && named.kind === current.kind && named.label === current.label ? current.kind : "files") : (named?.kind ?? "files");
+  const label = kind === "files" ? "" : current && current.files.length ? current.label : (named?.label ?? "");
+  return { staged: { files, label, kind }, dropped };
+}
+
+/** The batch without one of its files; null once nothing is left. */
+export function removeStaged(current: StagedSubmission, file: File): StagedSubmission | null {
+  const files = current.files.filter((kept) => kept !== file);
+  if (!files.length) return null;
+  // A URL list taken out leaves plain files.
+  const kind = current.kind === "urls" && !files.some((kept) => /\.urls$/i.test(relativePath(kept))) ? "files" : current.kind;
+  return { files, label: kind === "files" ? "" : current.label, kind };
 }

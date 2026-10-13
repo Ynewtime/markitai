@@ -86,6 +86,25 @@ fn png(image: &RgbImage) -> Result<Vec<u8>> {
 /// other within an em joined into a line, in reading order, at most
 /// [`MAX_LINES`]. A scanned page without a text layer has none.
 pub fn pdf_page_text(bytes: &[u8], page: usize, size: PageSize) -> Result<Vec<TextLine>> {
+    pdf_page_layout(bytes, page, size).map(|layout| layout.lines)
+}
+
+/// Pictures a page's answer lists at most.
+pub const MAX_IMAGES: usize = 500;
+/// A picture smaller than this on either side (points) is a rule or a dot.
+const MIN_IMAGE_SIDE: f64 = 4.;
+
+/// What a page shows where: its text lines (as [`pdf_page_text`]) and the
+/// boxes its pictures are drawn in, both `[x0, y0, x1, y1]` in points from
+/// the page's top-left corner, the pictures in drawing order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageLayout {
+    pub lines: Vec<TextLine>,
+    pub images: Vec<[f64; 4]>,
+}
+
+/// The text lines and picture boxes of page `page` of a PDF whose page box is `size`.
+pub fn pdf_page_layout(bytes: &[u8], page: usize, size: PageSize) -> Result<PageLayout> {
     let number = u32::try_from(page).map_err(|_| failure("page number is out of range"))?;
     let items = pdf_inspector::extract_text_with_positions_mem_in_frame(
         bytes,
@@ -93,7 +112,7 @@ pub fn pdf_page_text(bytes: &[u8], page: usize, size: PageSize) -> Result<Vec<Te
         pdf_inspector::PositionFrame::Display,
     )
     .map_err(|error| failure(&error.to_string()))?;
-    Ok(lines(
+    let lines = lines(
         items
             .iter()
             .filter(|item| {
@@ -109,7 +128,38 @@ pub fn pdf_page_text(bytes: &[u8], page: usize, size: PageSize) -> Result<Vec<Te
                 upright: item.rotation.abs() < 1. || item.rotation > 359.,
             }),
         size,
-    ))
+    );
+    let images = items
+        .iter()
+        .filter(|item| {
+            item.page == number && matches!(item.item_type, pdf_inspector::types::ItemType::Image)
+        })
+        .filter_map(|item| {
+            let (x, y) = (f64::from(item.x), f64::from(item.y));
+            let (width, height) = (f64::from(item.width), f64::from(item.height));
+            image_box(x, y, width, height, size)
+        })
+        .take(MAX_IMAGES)
+        .collect();
+    Ok(PageLayout { lines, images })
+}
+
+/// A picture's box from its corner and size in y-up page points, in the
+/// top-left frame and clipped to the page; none when it is not finite, is a
+/// rule or a dot, or lies outside the page.
+fn image_box(x: f64, y: f64, width: f64, height: f64, size: PageSize) -> Option<[f64; 4]> {
+    if ![x, y, width, height].iter().all(|value| value.is_finite()) {
+        return None;
+    }
+    let (left, right) = (x.min(x + width).max(0.), x.max(x + width).min(size.width));
+    let (bottom, top) = (
+        y.min(y + height).max(0.),
+        y.max(y + height).min(size.height),
+    );
+    if right - left < MIN_IMAGE_SIDE || top - bottom < MIN_IMAGE_SIDE {
+        return None;
+    }
+    Some([left, size.height - top, right, size.height - bottom])
 }
 
 /// A positioned text run: `y` is its baseline (bottom edge) from the page's
@@ -346,6 +396,30 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_box_is_measured_from_the_top_left_and_clipped_to_the_page() {
+        let size = PageSize {
+            width: 600.,
+            height: 800.,
+        };
+        assert_eq!(
+            image_box(40., 700., 120., 60., size),
+            Some([40., 40., 160., 100.])
+        );
+        // A flipped placement has a negative size; one over the edge is clipped.
+        assert_eq!(
+            image_box(160., 760., -120., -60., size),
+            Some([40., 40., 160., 100.])
+        );
+        assert_eq!(
+            image_box(550., -20., 100., 40., size),
+            Some([550., 780., 600., 800.])
+        );
+        assert_eq!(image_box(40., 700., 300., 1., size), None, "a rule");
+        assert_eq!(image_box(700., 100., 50., 50., size), None, "off the page");
+        assert_eq!(image_box(f64::NAN, 100., 50., 50., size), None);
+    }
+
+    #[test]
     fn pdf_page_text_is_positioned_from_the_top_left() {
         let lines = pdf_page_text(MIXED, 1, LETTER).unwrap();
         let heading = lines
@@ -363,8 +437,18 @@ mod tests {
             .position(|line| line.text.contains("Every paragraph remains"))
             .unwrap();
         assert!(lines[later].bbox[1] > y1);
-        // The scanned page has no text layer of its own.
-        assert!(pdf_page_text(MIXED, 2, LETTER).unwrap().is_empty());
+        // The scanned page has no text layer of its own, only its picture.
+        let scanned = pdf_page_layout(MIXED, 2, LETTER).unwrap();
+        assert!(scanned.lines.is_empty());
+        let [x0, y0, x1, y1] = *scanned
+            .images
+            .first()
+            .unwrap_or_else(|| panic!("{scanned:?}"));
+        assert!(
+            x0 < x1 && y0 < y1 && x1 - x0 > LETTER.width / 2.,
+            "{scanned:?}"
+        );
+        assert!(pdf_page_layout(MIXED, 1, LETTER).unwrap().lines == lines);
     }
 
     #[test]

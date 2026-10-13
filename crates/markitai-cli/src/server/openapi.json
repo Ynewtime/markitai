@@ -304,7 +304,7 @@
         "tags": ["jobs"],
         "operationId": "viewOriginalPage",
         "summary": "A kept HTML original, for a sandboxed frame of the workbench",
-        "description": "Only for `html` originals (404 `original_unavailable` otherwise); over 10 MiB: 413 `result_too_large`. The stored bytes as UTF-8 text with one insertion right after the first `<head>` start tag, else after the first `<html>` start tag, else at the start after a leading doctype: `<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">` and `<base href=\"<the item's URL>\" target=\"_blank\">` for a URL item (`<base target=\"_blank\">` for an upload). Sent with `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; frame-ancestors 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`, `Cache-Control: no-store` and `Content-Disposition: inline`: no script runs and nothing is fetched. A frame cannot send `Authorization`, so its path may be named by a download ticket.",
+        "description": "Only for `html` originals (404 `original_unavailable` otherwise); over 10 MiB: 413 `result_too_large`. The stored bytes as UTF-8 text with one insertion right after the first `<head>` start tag, else after the first `<html>` start tag, else at the start after a leading doctype: `<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">` and `<base href=\"<the item's URL>\" target=\"_blank\">` for a URL item (`<base target=\"_blank\">` for an upload). Sent with `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`, `Cache-Control: no-store` and `Content-Disposition: inline`: no script runs, no form is sent, and only the site's pictures, style sheets, fonts and media are fetched, over HTTPS. A frame cannot send `Authorization`, so its path may be named by a download ticket.",
         "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
         "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
         "responses": {
@@ -341,8 +341,8 @@
       "get": {
         "tags": ["jobs"],
         "operationId": "getOriginalPageText",
-        "summary": "A PDF page's text as positioned lines",
-        "description": "Only for `pdf` originals (404 `original_unavailable` otherwise). Text runs on one baseline that follow each other within an em form a line, so a table row may be several lines, one per cell. Lines are in reading order, at most 5000, with boxes in points from the page's top-left corner. Drawn under the same two-at-a-time limit as page images (429 `render_busy`).",
+        "summary": "A PDF page's text as positioned lines, and its pictures' boxes",
+        "description": "Only for `pdf` originals (404 `original_unavailable` otherwise). Text runs on one baseline that follow each other within an em form a line, so a table row may be several lines, one per cell. Lines are in reading order, at most 5000, with boxes in points from the page's top-left corner. `images` lists the boxes the page's pictures are drawn in (same frame, drawing order, at most 500, clipped to the page; none under 4 points on a side). Drawn under the same two-at-a-time limit as page images (429 `render_busy`).",
         "parameters": [
           { "$ref": "#/components/parameters/JobId" },
           { "$ref": "#/components/parameters/ItemId" },
@@ -888,7 +888,8 @@
           "page": { "type": "integer" },
           "width": { "type": "number", "description": "Points; the descriptor's box of this page" },
           "height": { "type": "number" },
-          "lines": { "type": "array", "items": { "type": "object", "required": ["text", "bbox"], "properties": { "text": { "type": "string" }, "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } }
+          "lines": { "type": "array", "items": { "type": "object", "required": ["text", "bbox"], "properties": { "text": { "type": "string" }, "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } },
+          "images": { "type": "array", "description": "The boxes the page's pictures are drawn in, in drawing order; absent from a server that does not report them", "items": { "type": "object", "required": ["bbox"], "properties": { "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } }
         }
       },
       "Artifact": {

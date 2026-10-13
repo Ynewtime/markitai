@@ -3,9 +3,10 @@
 // conversion's page screenshots); page images load as they scroll into view,
 // fetched with the header token. Hovering a heading or table on either side
 // outlines its counterpart: PDF pages are matched through their text layer,
-// HTML by element. A web page's kept snapshot is shown as the page itself, in
-// a sandboxed frame that runs nothing and loads nothing from the site, with its
-// screenshot as the other view. On phones the original sits above the Markdown.
+// HTML by element. A web page opens on its screenshot when the conversion took
+// one; its other view is the kept snapshot in a sandboxed frame that runs no
+// script and loads only the site's pictures, styles and fonts. On phones the
+// original sits above the Markdown.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ApiError, downloadTicket, fetchBlob, fetchPageText, fetchText, originalPagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
@@ -13,7 +14,7 @@ import type { OriginalDescriptor } from "../api/types.ts";
 import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { locate, norm, pairElements, targetsOf, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
+import { locate, norm, pairElements, TARGET_SELECTOR, targetsOf, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
 import { download } from "../lib/download.ts";
 import { fmtBytes } from "../lib/format.ts";
 import { loadLibraries } from "../lib/markdown.ts";
@@ -61,8 +62,10 @@ export function CompareView({
   const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
   // A web page kept as HTML: the page itself, or its screenshot when one was taken.
   const framed = url !== null && descriptor?.kind === "html" && typeof descriptor.view === "string";
-  const [snapView, setSnapView] = useState<"page" | "shot">("page");
-  useEffect(() => setSnapView("page"), [item.key]);
+  // The screenshot looks exactly like the page, so it is the first view when there is one.
+  const [chosenView, setSnapView] = useState<"page" | "shot" | null>(null);
+  useEffect(() => setSnapView(null), [item.key]);
+  const snapView = chosenView ?? (descriptor && descriptor.page_count > 0 ? "shot" : "page");
 
   useEffect(() => setHover(null), [item.key]);
 
@@ -72,25 +75,33 @@ export function CompareView({
   }, []);
 
   const ordinals = useMemo(() => {
-    const counters = { heading: 0, table: 0 };
+    const counters = { heading: 0, table: 0, block: 0, image: 0 };
     return new Map(targets.map(({ target }) => [target.id, ++counters[target.kind]]));
   }, [targets]);
+  // A document has many blocks: look them up by id and by element.
+  const byId = useMemo(() => new Map(targets.map((entry) => [entry.target.id, entry])), [targets]);
+  const byElement = useMemo(() => new Map(targets.map((entry) => [entry.element as Element, entry])), [targets]);
   const linkOf = (id: string): Linked | null => {
-    const entry = targets.find(({ target }) => target.id === id);
+    const entry = byId.get(id);
     return entry ? { id, kind: entry.target.kind, ordinal: ordinals.get(id) ?? 1 } : null;
   };
 
-  // Markdown side: the hovered heading or table (its scrolling frame, so the outline is not clipped).
+  // Markdown side: the hovered block (a table's scrolling frame, so the outline is not clipped).
   useEffect(() => {
-    for (const { element, target } of targets) (element.closest(".table-scroll") ?? element).classList.toggle("is-linked", hover?.id === target.id);
-  }, [hover, targets]);
+    const entry = hover ? byId.get(hover.id) : undefined;
+    if (!entry) return;
+    const element = entry.element.closest(".table-scroll") ?? entry.element;
+    element.classList.add("is-linked");
+    return () => element.classList.remove("is-linked");
+  }, [hover, byId]);
   const onMarkdownOver = (event: MouseEvent) => {
-    const element = (event.target as Element | null)?.closest?.("h1, h2, h3, h4, h5, h6, table");
-    const entry = element ? targets.find((candidate) => candidate.element === element) : undefined;
+    // The innermost block under the pointer: a paragraph inside a list item is its own.
+    const element = (event.target as Element | null)?.closest?.(TARGET_SELECTOR);
+    const entry = element ? byElement.get(element) : undefined;
     setHover(entry ? linkOf(entry.target.id) : null);
   };
   const reveal = (id: string) => {
-    const entry = targets.find(({ target }) => target.id === id);
+    const entry = byId.get(id);
     const element = entry?.element;
     if (!element) return;
     const pane = element.closest(".pane");
@@ -165,7 +176,7 @@ function OriginalHeader({
       <span class="orig-label">{t.original}</span>
       {views && (
         <span class="seg orig-views" role="group" aria-label={t.originalViews}>
-          {(["page", "shot"] as const).map((value) => (
+          {(["shot", "page"] as const).map((value) => (
             <button key={value} type="button" class={views.value === value ? "is-on" : undefined} aria-pressed={views.value === value} onClick={() => views.onChange(value)}>
               {value === "page" ? t.originalPage : t.originalScreenshot}
             </button>
@@ -189,7 +200,8 @@ function OriginalHeader({
           <Icon name="DownloadSimple" size={15} />
         </button>
       )}
-      {url && descriptor !== null && descriptor.kind !== "none" && (
+      {/* The one "Open the page" while Compare is open; a page not kept offers it in the body. */}
+      {url && descriptor?.kind !== "none" && (
         <a class="icon-btn" href={url} target="_blank" rel="noopener noreferrer" aria-label={`${t.openPage} ${t.opensNewTab}`} title={t.openPage}>
           <Icon name="ArrowSquareOut" size={15} />
         </a>
@@ -198,9 +210,10 @@ function OriginalHeader({
   );
 }
 
-/** A web page as the server fetched it, in a frame that runs no script, sends no
- * form and loads nothing from the site (the server's own CSP for this route);
- * a frame cannot send the token, so it opens with a single-use ticket. */
+/** A web page as the server fetched it, in a frame that runs no script and sends
+ * no form, with no origin of its own; it loads only the site's pictures, style
+ * sheets and fonts (the server's own CSP for this route). A frame cannot send
+ * the token, so it opens with a single-use ticket. */
 function PageFrame({
   t,
   item,
@@ -387,7 +400,7 @@ function Pages({
       for (let attempt = 0; ; attempt++) {
         try {
           const text = await fetchPageText(item.jobId, item.itemId, page, controller.signal);
-          return { page: text.page, lines: text.lines };
+          return { page: text.page, lines: text.lines, images: text.images?.map((image) => image.bbox) };
         } catch (error) {
           if (controller.signal.aborted || !(error instanceof ApiError && error.status === 429) || attempt >= RENDER_RETRIES) return { page, lines: [] };
           await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
@@ -427,7 +440,7 @@ function Pages({
       width: `${((box[2] - box[0]) / size.width) * 100}%`,
       height: `${((box[3] - box[1]) / size.height) * 100}%`,
     });
-    const counters = { heading: 0, table: 0 };
+    const counters = { heading: 0, table: 0, block: 0, image: 0 };
     return targets.map(({ target }) => {
       const ordinal = ++counters[target.kind];
       const spot = located.get(target.id);
@@ -441,7 +454,7 @@ function Pages({
           onMouseEnter={() => onHover(target.id)}
           onMouseLeave={() => onHover(null)}
         >
-          {on && <span class="omark-label">{target.kind === "table" ? t.tableN(ordinal) : t.headingMark}</span>}
+          {on && (target.kind === "heading" || target.kind === "table") && <span class="omark-label">{target.kind === "table" ? t.tableN(ordinal) : t.headingMark}</span>}
         </span>
       );
     });

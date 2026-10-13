@@ -1,12 +1,14 @@
-// Choose models from a provider's catalogue: search, select what is visible,
-// add an identifier by hand, and set the routing group and weight (all in plain
-// sight, on the grid of the connection's key and address). Models
+// Choose models from a provider's catalogue, in an inset panel whose head holds
+// the search and Select all: search, select what is visible, add an identifier
+// by hand, and set the routing group and weight (all in plain sight, on the grid
+// of the connection's key and address). Models
 // already configured with the same group and endpoint cannot be added twice.
 // The selection count sits with the dialog's pinned actions.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Deployment, ModelCandidate } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { manualModelId, sameEndpoint } from "../lib/models.ts";
+import { Icon } from "./icons.tsx";
 
 export function ModelPicker({
   t,
@@ -112,33 +114,41 @@ export function ModelPicker({
 
   return (
     <div class="picker">
-      {/* Nothing to search or select in bulk when every ID is typed by hand. */}
-      <div class="picker-tools" hidden={manualOnly}>
-        <input type="search" value={query} placeholder={t.searchModels} aria-label={t.searchModels} onInput={(event) => setQuery(event.currentTarget.value)} />
-        <label class="check-line">
-          <input ref={selectAll} type="checkbox" checked={allChosen} disabled={!visible.length} onChange={toggleVisible} />
-          {t.selectAll}
-        </label>
-      </div>
-      <div class="picker-list" role="group" aria-label={t.modelsAvailable}>
-        {visible.map((candidate) => {
-          const done = configured(candidate.model);
-          const removed = done && dropped.has(candidate.model);
-          return (
-            <label key={candidate.model} class={removed ? "picker-option is-removed" : "picker-option"}>
-              {/* The tick states what this connection keeps: a model it already
-                  routes comes in ticked, and unticking it schedules a removal. */}
-              <input type="checkbox" checked={chosen(candidate.model)} onChange={() => toggle(candidate.model)} />
-              <span class="picker-option-main">
-                <span>{candidate.label}</span>
-                <span class="picker-id">{candidate.model}</span>
-              </span>
-              {candidate.supports_vision && <span class="mini-pill">{t.visionTag}</span>}
-              {done && <span class={removed ? "mini-pill is-removed" : "mini-pill"}>{removed ? t.willRemove : t.alreadyConfigured}</span>}
+      <div class="picker-panel">
+        {/* Nothing to search or select in bulk when every ID is typed by hand. */}
+        <div class="picker-tools" hidden={manualOnly}>
+          <span class="picker-search">
+            <Icon name="MagnifyingGlass" size={14} />
+            <input type="search" value={query} placeholder={t.searchModels} aria-label={t.searchModels} onInput={(event) => setQuery(event.currentTarget.value)} />
+          </span>
+          <div class="picker-bar">
+            <label class="check-line">
+              <input ref={selectAll} type="checkbox" checked={allChosen} disabled={!visible.length} onChange={toggleVisible} />
+              {t.selectAll}
             </label>
-          );
-        })}
-        {visible.length === 0 && <p class="picker-note">{manualOnly && !needle ? t.manualModelsOnly : t.noModelsFound}</p>}
+            <span class="picker-total">{t.pickerShown(visible.length, all.length)}</span>
+          </div>
+        </div>
+        <div class="picker-list" role="group" aria-label={t.modelsAvailable}>
+          {visible.map((candidate) => {
+            const done = configured(candidate.model);
+            const removed = done && dropped.has(candidate.model);
+            return (
+              <label key={candidate.model} class={removed ? "picker-option is-removed" : "picker-option"}>
+                {/* The tick states what this connection keeps: a model it already
+                    routes comes in ticked, and unticking it schedules a removal. */}
+                <input type="checkbox" checked={chosen(candidate.model)} onChange={() => toggle(candidate.model)} />
+                <span class="picker-option-main">
+                  <span>{candidate.label}</span>
+                  <span class="picker-id">{candidate.model}</span>
+                </span>
+                {candidate.supports_vision && <span class="mini-pill">{t.visionTag}</span>}
+                {done && <span class={removed ? "mini-pill is-removed" : "mini-pill"}>{removed ? t.willRemove : t.alreadyConfigured}</span>}
+              </label>
+            );
+          })}
+          {visible.length === 0 && <p class="picker-note">{manualOnly && !needle ? t.manualModelsOnly : t.noModelsFound}</p>}
+        </div>
       </div>
       {/* Model IDs by hand and the routing settings, in plain sight on the same grid as the key and address. */}
       <section class="picker-extra" aria-labelledby="picker-extra-title">

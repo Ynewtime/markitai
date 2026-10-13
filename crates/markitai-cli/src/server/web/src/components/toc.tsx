@@ -19,7 +19,7 @@ function TocList({ entries, active, onPick, listRef }: { entries: TocEntry[]; ac
             title={entry.text}
             onClick={() => onPick(entry.index)}
           >
-            {entry.text}
+            <span class="toc-text">{entry.text}</span>
           </button>
         </li>
       ))}

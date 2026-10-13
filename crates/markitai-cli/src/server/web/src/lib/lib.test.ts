@@ -240,11 +240,11 @@ test("dropped folders are walked in order, in batches, bounded and with unreadab
   assert.equal(single.folder, false);
 });
 
-test("a batch waits for Convert, a single file does not, and names say what it is", () => {
+test("a staged batch's name says what it is; a single file needs none", () => {
   const file = (path: string) => Object.assign(new File(["x"], path.split("/").pop() ?? path), { markitaiPath: path });
-  // One file, chosen with the Files entry: convert at once.
+  // One file, chosen with the Files entry: no batch name.
   assert.equal(stagedBatch([file("a.md")], false), null);
-  // Several files, or any folder, wait.
+  // Several files, or any folder, are a batch.
   const several = stagedBatch([file("a.md"), file("b.md")], false);
   assert.equal(several?.kind, "files");
   assert.equal(several?.files.length, 2);

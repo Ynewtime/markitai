@@ -25,7 +25,7 @@ import type { ResultDocument } from "../hooks/use-result-document.ts";
 import { compareLines, foldRows, type Comparison, type DiffRow } from "../lib/diff.ts";
 import { download, interceptDownload } from "../lib/download.ts";
 import { basename, fmtBytes, localeTag } from "../lib/format.ts";
-import { parseFrontMatter } from "../lib/frontmatter.ts";
+import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
 import {
   type DocumentPlan,
   type Heading,
@@ -210,7 +210,8 @@ export function MarkdownView({
   const [opened, setOpened] = useState<ReadonlySet<number>>(new Set());
 
   const split = useMemo(() => (markdown === null ? null : splitFrontmatter(markdown)), [markdown]);
-  const front = useMemo(() => parseFrontMatter(split?.frontmatter ?? null), [split]);
+  // The card leaves out a title the document repeats as its first heading.
+  const front = useMemo(() => cardFacts(parseFrontMatter(split?.frontmatter ?? null), split?.body ?? ""), [split]);
   const notices = useMemo(() => (compact ? [] : groupNotices(item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))), [compact, item.warnings, item.key, item.name]);
 
   // ---- Rendered: the first chunk at once, the rest a few per frame
@@ -691,7 +692,7 @@ export function MarkdownView({
                   </ul>
                 </details>
               )}
-              {front && (front.title || front.description || front.tags.length > 0) && <FrontCard front={front} />}
+              {front && <FrontCard front={front} />}
               <div ref={body} class="doc-body" onClick={onDocumentLink} onAuxClick={onDocumentLink} />
               {Object.entries(expanding).map(([key, from]) => {
                 const index = Number(key);

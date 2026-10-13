@@ -21,7 +21,7 @@ import { FileName } from "./file-name.tsx";
 import { Icon } from "./icons.tsx";
 import { ActionError, type ActionFailure, type ActSet } from "./inspector.tsx";
 import { MarkdownView, type RenderedState, type Tab } from "./markdown-view.tsx";
-import { readFurniture, storeFurniture } from "./pdf-settings.tsx";
+import { PdfExportCard, readFurniture, storeFurniture } from "./pdf-settings.tsx";
 
 export type PeekTab = "details" | "preview" | "compare";
 
@@ -72,6 +72,11 @@ export function Peek(props: PeekProps) {
   const frame = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Record<PeekTab, HTMLButtonElement | null>>({ details: null, preview: null, compare: null });
   const [tools, setTools] = useState<DocTools | null>(null);
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement | null>(null);
+  const menuAnchor = useCallback(() => menuButton.current, []);
+  const closePdf = useCallback(() => setPdfOpen(false), []);
+  useEffect(() => setPdfOpen(false), [item?.key, tools === null]);
   const previewable = item !== null && item.status === "done" && item.output !== null && !item.skipped;
   const tabs: PeekTab[] = previewable ? (compareAvailable ? ["details", "preview", "compare"] : ["details", "preview"]) : ["details"];
   const tab = tabs.includes(props.tab) ? props.tab : "details";
@@ -156,11 +161,12 @@ export function Peek(props: PeekProps) {
     ...(tools
       ? [
           { key: "copy", label: t.copy, icon: "Copy" as const, run: tools.copy, disabled: !tools.ready },
-          { key: "pdf", label: t.exportPdf, icon: "FilePdf" as const, run: tools.exportPdf, disabled: !tools.ready },
-          { key: "furniture", label: t.pdfCustomHeaderFooter, run: tools.toggleFurniture, checked: tools.furniture, note: t.pdfPrintDialogHint },
+          // Export PDF asks about the header and footer first, then prints.
+          { key: "pdf", label: t.exportPdfAsk, icon: "FilePdf" as const, run: () => setPdfOpen(true), disabled: !tools.ready },
         ]
       : []),
-    ...(url ? [{ key: "page", label: t.openPage, icon: "ArrowSquareOut" as const, run: () => undefined, href: url, hint: t.opensNewTab }] : []),
+    // Compare's header opens the page itself; elsewhere "⋯" does.
+    ...(url && tab !== "compare" ? [{ key: "page", label: t.openPage, icon: "ArrowSquareOut" as const, run: () => undefined, href: url, hint: t.opensNewTab }] : []),
     ...(acts?.more ?? []).map((act) => ({ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled })),
   ];
   const openFiles = () => {
@@ -216,7 +222,10 @@ export function Peek(props: PeekProps) {
             {act.label}
           </button>
         ))}
-        <ActionMenu label={t.moreActions} actions={menu} danger={acts?.danger ?? undefined} plain />
+        <ActionMenu label={t.moreActions} actions={menu} danger={acts?.danger ?? undefined} plain triggerRef={menuButton} />
+        {pdfOpen && tools && (
+          <PdfExportCard t={t} anchor={menuAnchor} furniture={tools.furniture} onToggle={tools.toggleFurniture} onPrint={tools.exportPdf} onClose={closePdf} />
+        )}
         {!phone && (
           <button type="button" class="icon-btn" aria-pressed={full} aria-label={t.peekFullScreen} title={`${full ? t.peekExitFullScreen : t.peekFullScreen} (F)`} onClick={toggleFull}>
             <Icon name={full ? "ArrowsInSimple" : "ArrowsOutSimple"} size={15} />

@@ -36,11 +36,13 @@ to six rows), Options, Upload (files) and Folder on the left, Convert on the
 right, and the options drawer, which ends with the equivalent CLI command line.
 On a phone the composer is lighter: the tools are bare 32 px icons (each keeps
 its name for assistive technology and as a tooltip) and Convert is a square arrow.
-The latest three submissions follow, each one click from its details. One file
-starts a job at once; a folder, several files or a `.urls` list waits for
-Convert as one staged line (`sample-folder · 43 files`) that can be removed,
-and is sent together with any typed URLs as one job whose name is the folder or
-list. A `.urls` list becomes one URL item per entry (`#` lines and blank lines
+The latest three submissions follow, each one click from its details. Files
+chosen with Upload or Folder, or dropped on the page, never start a job by
+themselves: they wait above the URL field in a staged list (a folder or list
+named with its count and size and Remove all, then one row per file with its
+own remove button; choosing more adds to it, the same file once) until Convert
+sends them together with any typed URLs as one job, whose name is the folder or
+list when it is only that. A `.urls` list becomes one URL item per entry (`#` lines and blank lines
 skipped, `https://example.com/report  Report` naming the output).
 
 **Conversions** (`/jobs`) states what the list adds up to ("18 of 21 converted,
@@ -97,10 +99,10 @@ files wait on Convert); typing URLs is Convert's job.
   price and links to how to add one, and other warnings group by their wording
   with a count. Each keeps its full original text behind Details.
 
-**Preview** is the window's second tab; its "⋯" adds Copy, Export PDF and its
-header-and-footer choice (what it means is behind the (i) at the end of that
-entry: hover or focus on a computer, tap on a phone), and Open the page for a
-URL. **Files** lists the original first (the upload, or the page as the server
+**Preview** is the window's second tab; its "⋯" adds Copy and Export PDF…,
+which opens a small card with the one choice it asks (Markitai's own header and
+footer, explained under it) and Print…, and Open the page for a URL (on Compare
+the page opens from the Original header instead, so it is offered once). **Files** lists the original first (the upload, or the page as the server
 fetched it), then every file of the result, each with its own download, their
 count and size, and Download all (.zip) at the bottom right: one ZIP of the
 item's files and its original (servers without the item ZIP zip a one-item
@@ -113,7 +115,8 @@ tab row. Where they do not fit (a phone) they become one button naming the view
 and version on screen, whose menu holds the views and versions. Each keeps its reading
 column (820 px at most) centred in the window. Rendered starts with
 the conversion's notices (collapsed to one line) and a front-matter card (title,
-description, tags). Tables over 500 rows show their first 500 rows under a
+description, tags; no title when the document opens with the same `#` heading,
+and no card when nothing else is left). Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
 showing all of them adds the rest in steps of 1,000 so the page keeps answering,
 and the download and Source always hold every row. Numeric columns align right
@@ -134,7 +137,8 @@ versions line by line (Myers' algorithm, bounded so a document changed
 everywhere is refused rather than freezing the page) and folds unchanged
 stretches into "Show N unchanged lines". A document with four or more headings
 gets its **contents**: its top three heading levels (a lone title does not count
-as a level) beside the document on a wide window, marking the section being
+as a level; each entry is the heading's plain words, without inline HTML tags or
+private-use glyphs, on two lines at most) beside the document on a wide window, marking the section being
 read as it scrolls; a click goes to the heading. The contents button beside
 Base | LLM hides or shows them (remembered in this browser); on a phone or a
 narrow window a round button over the document's corner opens them as a sheet.
@@ -143,16 +147,19 @@ Export PDF waits for the whole document and every picture before it prints.
 **Compare** puts the original beside the Markdown: a PDF's pages (drawn by the
 server, loaded as they scroll into view), an uploaded image, an uploaded HTML
 file (sanitized: no scripts, styles, frames, forms, links or remote images), a
-text file, or the page screenshots a conversion saved. A web page shows as the
-server fetched it, in a sandboxed frame served by the item's own route: it runs
-no script, sends no form and loads nothing from the site (its inline styles
-stay, its pictures and stylesheets do not; links open in a new tab), with Page |
-Screenshot when a screenshot was taken too and Open the page in the header.
-Live frames of the real address are not used: most sites refuse them, and they
-would send the reader's requests to the site.
-Hovering a heading or a table on either side outlines it on both, in the one
-accent colour; PDF positions come from the page's text layer, HTML by matching
-elements. An original that cannot be shown (a DOCX, a page the server did not
+text file, or the page screenshots a conversion saved. A web page opens on its
+screenshot when the conversion took one (it looks exactly like the page); Page
+shows the page as the server fetched it, in a sandboxed frame served by the
+item's own route, with the site's own pictures, style sheets and fonts (over
+HTTPS) but none of its scripts, no form and no origin of its own, so nothing in
+it can reach the workbench (links open in a new tab). Open the page sits in the
+Original header. Live frames of the real address are not used: most sites
+refuse them. Hovering a heading, table, paragraph, list item, code block or
+picture on either side outlines it on both, in the one accent colour. PDF
+positions come from the page's text layer, and a picture's from where its page
+draws pictures (when the page draws as many as the Markdown places on it, and
+the server reports them); an HTML original pairs its headings and tables, a text
+file its headings. An original that cannot be shown (a DOCX, a page the server did not
 keep) says why and offers its download.
 
 **On phones** the window fills the screen, over the tab bar: back, previous and

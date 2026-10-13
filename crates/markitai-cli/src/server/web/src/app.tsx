@@ -29,7 +29,7 @@ import { apiErrorText } from "./i18n/errors.ts";
 import { LANG_TAGS } from "./i18n/locale.ts";
 import { isFailed, jobKey, submissions, type Filter, type LabelWords } from "./lib/conversions.ts";
 import { download } from "./lib/download.ts";
-import { oversized, stagedBatch, type StagedSubmission, type Walked } from "./lib/files.ts";
+import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked } from "./lib/files.ts";
 import { basename, fmtBytes } from "./lib/format.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
@@ -284,39 +284,36 @@ export function App() {
     if (conversions.submitError instanceof ApiError && conversions.submitError.reason === "llm_unavailable") refreshCaps();
   }, [conversions.submitError, refreshCaps]);
 
+  // Chosen, picked or dropped files wait for Convert, beside any URLs typed; the
+  // staged list shows them, each with its own remove button.
+  const stagedRef = useRef(staged);
+  stagedRef.current = staged;
   const submitFiles = useCallback(
     (files: File[], folder?: { hidden: number; unreadable: number; truncated: boolean; folder?: boolean; name?: string }) => {
       dismiss("input");
       conversionsRef.current.clearSubmitError();
       const notes: string[] = [];
-      let chosen = files;
       if (folder && files.length === 0) {
         note({ id: "input", tone: "warning", text: t.dropEmptyFolder });
         return;
       }
-      if (chosen.length > maxItems) {
-        notes.push(t.dropTruncated(maxItems, chosen.length));
-        chosen = chosen.slice(0, maxItems);
-      } else if (folder?.truncated) notes.push(t.dropLimit(chosen.length));
-      if (folder?.hidden) notes.push(t.folderHidden(folder.hidden));
-      if (folder?.unreadable) notes.push(t.folderUnreadable(folder.unreadable));
-      if (notes.length) note({ id: "drop", tone: "warning", text: notes.join(" · ") });
-      const large = oversized(chosen);
+      const large = oversized(files);
       if (large.length) {
         note({ id: "input", tone: "error", text: t.filesTooLarge(large.map((file) => `${file.name} (${fmtBytes(file.size)})`).join(", ")) });
         return;
       }
-      // A folder, several files or a `.urls` list waits for Convert; one file starts at once.
-      const batch = stagedBatch(chosen, folder?.folder === true);
-      if (batch) {
-        setStaged(batch);
-        // The staged line and its Convert button live on the Convert page.
-        if (routeRef.current.view !== "convert") navigate({ view: "convert" });
-        return;
-      }
-      void send(chosen, []);
+      const { staged: next, dropped } = addStaged(stagedRef.current, files, folder?.folder === true, maxItems);
+      if (dropped) notes.push(t.dropTruncated(maxItems, (next?.files.length ?? 0) + dropped));
+      else if (folder?.truncated) notes.push(t.dropLimit(files.length));
+      if (folder?.hidden) notes.push(t.folderHidden(folder.hidden));
+      if (folder?.unreadable) notes.push(t.folderUnreadable(folder.unreadable));
+      if (notes.length) note({ id: "drop", tone: "warning", text: notes.join(" · ") });
+      stagedRef.current = next;
+      setStaged(next);
+      // The staged list and its Convert button live on the Convert page.
+      if (routeRef.current.view !== "convert") navigate({ view: "convert" });
     },
-    [maxItems, send, t, note, dismiss, navigate],
+    [maxItems, t, note, dismiss, navigate],
   );
   const submitFolder = useCallback((files: File[], hidden: number) => submitFiles(files, { hidden, unreadable: 0, truncated: false, folder: true }), [submitFiles]);
   const submitWalked = useCallback((walked: Walked) => submitFiles(walked.files, walked), [submitFiles]);
@@ -558,6 +555,7 @@ export function App() {
           busy={submitting || cloudflare.pending !== null}
           staged={staged}
           onClearStaged={() => setStaged(null)}
+          onRemoveStaged={(file) => setStaged((current) => (current ? removeStaged(current, file) : null))}
           tools={tools}
         />
       )}

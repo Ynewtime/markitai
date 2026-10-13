@@ -527,10 +527,11 @@ pub(super) async fn file(
 
 /// The largest HTML original `view` frames.
 const MAX_VIEW: u64 = 10 * 1024 * 1024;
-/// The policy of a framed HTML original: no script, no request leaves the
-/// page (styles inline, images and fonts only as data), links open outside
-/// the frame, and only the workbench may frame it.
-const VIEW_POLICY: &str = "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; frame-ancestors 'self'";
+/// The policy of a framed HTML original: no script and no form; the site's
+/// own pictures, style sheets, fonts and media load over HTTPS (inline styles
+/// and data URLs too), nothing else is fetched; the frame has no origin of its
+/// own, links open outside it, and only the workbench may frame it.
+const VIEW_POLICY: &str = "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'";
 
 /// HTML-attribute escaping of `&`, `<`, `>`, `"` and `'`.
 fn attribute(value: &str) -> String {
@@ -856,14 +857,24 @@ pub(super) async fn page_text(
             return Err(no_page());
         }
         let size = pdf.page_size(number).map_err(render_failed)?;
-        let lines = preview::pdf_page_text(&bytes, number, size).map_err(render_failed)?;
-        let lines: Vec<Value> = lines
+        let layout = preview::pdf_page_layout(&bytes, number, size).map_err(render_failed)?;
+        let lines: Vec<Value> = layout
+            .lines
             .into_iter()
             .map(|line| json!({"text":line.text,"bbox":line.bbox}))
             .collect();
-        serde_json::to_vec(
-            &json!({"page":number,"width":size.width,"height":size.height,"lines":lines}),
-        )
+        let images: Vec<Value> = layout
+            .images
+            .into_iter()
+            .map(|bbox| json!({"bbox":bbox}))
+            .collect();
+        serde_json::to_vec(&json!({
+            "page": number,
+            "width": size.width,
+            "height": size.height,
+            "lines": lines,
+            "images": images,
+        }))
         .map_err(ApiError::internal)
     })
     .await

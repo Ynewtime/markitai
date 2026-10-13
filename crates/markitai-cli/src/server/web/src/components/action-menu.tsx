@@ -1,12 +1,10 @@
 // A "⋯" button with the actions that do not fit beside it: a menu that the
 // arrow keys walk, Escape and a click elsewhere close, and that opens upward
 // from a bar pinned to the bottom of the screen. A destructive entry asks
-// first, in a confirmation anchored to the "⋯" button. A setting's explanation
-// sits behind a small (i) at the end of its entry.
+// first, in a confirmation anchored to the "⋯" button.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { IconName } from "./icon-paths.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
-import { InfoTip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 
 export interface MenuAction {
@@ -15,10 +13,6 @@ export interface MenuAction {
   icon?: IconName;
   run: () => void;
   disabled?: boolean;
-  /** A setting that the entry turns on and off; the menu stays open. */
-  checked?: boolean;
-  /** What the setting means, behind an (i) at the end of the entry. */
-  note?: string;
   /** An external page: the entry is a link that opens it in a new tab. */
   href?: string;
   /** Words read after the label by assistive technology (e.g. "opens in a new tab"). */
@@ -43,6 +37,7 @@ export function ActionMenu({
   up = false,
   disabled = false,
   plain = false,
+  triggerRef,
 }: {
   label: string;
   actions: MenuAction[];
@@ -52,6 +47,8 @@ export function ActionMenu({
   disabled?: boolean;
   /** A bare icon among a window's other icon buttons, instead of a framed one. */
   plain?: boolean;
+  /** Shares the "⋯" button, for a card that an entry opens beside it. */
+  triggerRef?: { current: HTMLButtonElement | null };
 }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -94,7 +91,10 @@ export function ActionMenu({
   return (
     <span ref={root} class="menu-wrap action-menu" onKeyDown={onKeyDown}>
       <button
-        ref={trigger}
+        ref={(node) => {
+          trigger.current = node;
+          if (triggerRef) triggerRef.current = node;
+        }}
         type="button"
         class={plain ? "icon-btn" : "btn btn-icon"}
         aria-haspopup="menu"
@@ -117,23 +117,6 @@ export function ActionMenu({
                   {action.label}
                   {action.hint && <span class="sr-only"> {action.hint}</span>}
                 </a>
-              ) : action.checked !== undefined ? (
-                <button
-                  key={action.key}
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={action.checked}
-                  aria-describedby={action.note ? `menu-note-${action.key}` : undefined}
-                  tabIndex={-1}
-                  disabled={action.disabled}
-                  onClick={action.run}
-                >
-                  <span class="menu-check" aria-hidden="true">
-                    {action.checked && <Icon name="Check" size={13} />}
-                  </span>
-                  {action.label}
-                  {action.note && <InfoTip id={`menu-note-${action.key}`} text={action.note} />}
-                </button>
               ) : (
                 <button key={action.key} type="button" role="menuitem" tabIndex={-1} disabled={action.disabled} onClick={() => choose(action.run)}>
                   {mark}

@@ -1,21 +1,29 @@
-// Where a heading or table of the Markdown sits in its original. PDF pages
-// report positioned text lines; a heading is the line (or two) that reads the
-// same, a table is the run of lines from its header cells to its last row.
-// Elements are matched in document order, each search starting after the
-// previous match, so a repeated heading finds its own occurrence.
+// Where a heading, table or other block of the Markdown sits in its original.
+// PDF pages report positioned text lines; a heading is the line (or two) that
+// reads the same, a table is the run of lines from its header cells to its last
+// row, a paragraph, list item or code block is the run of lines (or the part
+// of a line) that spells its text, and a picture is the box its page draws it in
+// (the page's pictures in reading order, when the page has as many as the
+// Markdown places on it). Elements are matched in document order, each
+// search starting after the previous match, so a repeated heading finds its own
+// occurrence.
 
 export type Box = [number, number, number, number];
 
 export interface PageLines {
   page: number;
   lines: { text: string; bbox: Box }[];
+  /** Where the page's pictures are drawn (servers that report them). */
+  images?: Box[];
 }
 
 export interface Target {
   id: string;
-  kind: "heading" | "table";
+  kind: "heading" | "table" | "block" | "image";
   /** Heading text, or a table's header cells. */
   text: string[];
+  /** A picture's page. */
+  page?: number;
   /** A table's last row cells. */
   last?: string[];
 }
@@ -25,9 +33,17 @@ export interface Located {
   box: Box;
 }
 
-/** Letters and digits only, lower case, compatibility forms folded (full-width digits, ligatures). */
+/** CJK radicals that NFKC leaves alone, as the characters they stand for: an
+ * extracted PDF's text sometimes spells 人民币 with the radical ⺠ (U+2EA0). */
+const RADICALS: Record<string, string> = { "\u2EA0": "民", "\u2EB0": "纟", "\u2EC4": "西", "\u2EC5": "见", "\u2EC6": "角", "\u2EC8": "讠", "\u2EC9": "贝", "\u2ECB": "车", "\u2ED0": "钅", "\u2ED3": "长", "\u2ED4": "门", "\u2ED8": "青", "\u2ED9": "韦", "\u2EDA": "页", "\u2EDB": "风", "\u2EDC": "飞", "\u2EDD": "食", "\u2EE0": "饣", "\u2EE2": "马", "\u2EE5": "鱼", "\u2EE6": "鸟", "\u2EE7": "卤", "\u2EE8": "麦", "\u2EE9": "黄", "\u2EEA": "黾", "\u2EEC": "齐", "\u2EEE": "齿", "\u2EF0": "龙" };
+
+/** Letters and digits only, lower case, compatibility forms folded (full-width digits, ligatures, Kangxi radicals). */
 export function norm(text: string): string {
-  return text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  return text
+    .normalize("NFKC")
+    .replace(/[\u2E80-\u2EFF]/g, (radical) => RADICALS[radical] ?? radical)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function union(boxes: Box[]): Box {
@@ -119,11 +135,89 @@ function findTable(pages: PageLines[], header: string[], last: string[], from: C
   return null;
 }
 
+/** Lines a block is looked for ahead of the previous match (blocks do not wrap around). */
+const BLOCK_REACH = 240;
+
+/** The part of a line from `start` to `end` (of `length` letters and digits), by proportion. */
+function part(box: Box, start: number, end: number, length: number): Box {
+  if (length <= 0 || (start <= 0 && end >= length)) return box;
+  const width = box[2] - box[0];
+  return [box[0] + (width * start) / length, box[1], box[0] + (width * end) / length, box[3]];
+}
+
+/** A block of text: the run of lines that spells it, starting in a line and possibly ending in one. */
+function findBlock(pages: PageLines[], wanted: string, from: Cursor): { at: Cursor; end: Cursor; box: Box } | null {
+  if (wanted.length < 2) return null;
+  const probe = wanted.slice(0, Math.min(wanted.length, 6));
+  let seen = 0;
+  for (let pageIndex = from.pageIndex; pageIndex < pages.length && seen < BLOCK_REACH; pageIndex++) {
+    const lines = pages[pageIndex]?.lines ?? [];
+    for (let line = pageIndex === from.pageIndex ? from.line : 0; line < lines.length && seen < BLOCK_REACH; line++, seen++) {
+      const text = norm(lines[line]?.text ?? "");
+      // A short block is a line of its own; a longer one may start or sit inside a line.
+      if (wanted.length < 4) {
+        if (text === wanted) return { at: { pageIndex, line }, end: { pageIndex, line }, box: lines[line]?.bbox as Box };
+        continue;
+      }
+      for (let start = text.indexOf(probe); start >= 0; start = text.indexOf(probe, start + 1)) {
+        const rest = text.slice(start);
+        const box = lines[line]?.bbox as Box;
+        if (rest.startsWith(wanted)) {
+          return { at: { pageIndex, line }, end: { pageIndex, line }, box: part(box, start, start + wanted.length, text.length) };
+        }
+        if (!wanted.startsWith(rest)) continue;
+        const boxes = [part(box, start, text.length, text.length)];
+        let read = rest.length;
+        let next = line + 1;
+        let last = line;
+        while (read < wanted.length && next < lines.length) {
+          const more = norm(lines[next]?.text ?? "");
+          if (!more) {
+            next++;
+            continue;
+          }
+          const remaining = wanted.slice(read);
+          if (remaining.startsWith(more)) {
+            boxes.push(lines[next]?.bbox as Box);
+            read += more.length;
+          } else if (more.startsWith(remaining)) {
+            boxes.push(part(lines[next]?.bbox as Box, 0, remaining.length, more.length));
+            read = wanted.length;
+          } else break;
+          last = next++;
+        }
+        // Whole, or nearly; or cut by the page's end (it goes on over the page).
+        if (read >= wanted.length * 0.85 || (next >= lines.length && read >= Math.min(wanted.length, 12))) {
+          return { at: { pageIndex, line }, end: { pageIndex, line: last }, box: union(boxes) };
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /** Locate every target that can be found; the rest are absent from the map. */
 export function locate(pages: PageLines[], targets: Target[]): Map<string, Located> {
   const found = new Map<string, Located>();
+  // Pictures: the Markdown's pictures of a page, in order, are the page's own in reading order.
+  const pictures = new Map<number, Target[]>();
+  for (const target of targets) if (target.kind === "image" && target.page) pictures.set(target.page, [...(pictures.get(target.page) ?? []), target]);
+  for (const [page, wanted] of pictures) {
+    const boxes = [...(pages.find((layer) => layer.page === page)?.images ?? [])].sort((a, b) => (Math.abs(a[1] - b[1]) > 4 ? a[1] - b[1] : a[0] - b[0]));
+    if (boxes.length !== wanted.length) continue;
+    for (const [index, target] of wanted.entries()) found.set(target.id, { page, box: boxes[index] as Box });
+  }
   let cursor: Cursor = { pageIndex: 0, line: 0 };
   for (const target of targets) {
+    if (target.kind === "image") continue;
+    if (target.kind === "block") {
+      const match = findBlock(pages, norm(target.text.join(" ")), cursor);
+      if (!match) continue;
+      found.set(target.id, { page: pages[match.at.pageIndex]?.page ?? 1, box: match.box });
+      // The next block may start in the same line.
+      cursor = match.end.line > match.at.line ? match.end : match.at;
+      continue;
+    }
     const match =
       target.kind === "heading"
         ? findHeading(pages, norm(target.text.join(" ")), cursor)
@@ -135,12 +229,25 @@ export function locate(pages: PageLines[], targets: Target[]): Map<string, Locat
   return found;
 }
 
-/** Headings and tables of a rendered Markdown body, in document order, with stable ids. */
+/** The elements Compare links: headings, tables and the text blocks between them. */
+export const TARGET_SELECTOR = "h1, h2, h3, h4, h5, h6, table, p, li, pre, dt, dd, img[data-page]";
+/** What a list item says itself, without the lists, paragraphs and code it holds (those are their own blocks). */
+const OWN_SKIP = new Set(["UL", "OL", "P", "PRE", "TABLE", "BLOCKQUOTE", "DL"]);
+
+function ownText(element: Element): string {
+  let text = "";
+  for (const node of element.childNodes) {
+    if (node.nodeType === 3) text += node.textContent ?? "";
+    else if (node.nodeType === 1 && !OWN_SKIP.has((node as Element).tagName)) text += node.textContent ?? "";
+  }
+  return text;
+}
+
+/** Headings, tables and text blocks of a rendered Markdown body, in document order, with stable ids. */
 export function targetsOf(root: ParentNode): { element: HTMLElement; target: Target }[] {
   const result: { element: HTMLElement; target: Target }[] = [];
   let index = 0;
-  for (const element of root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6, table")) {
-    const id = `t${index++}`;
+  for (const element of root.querySelectorAll<HTMLElement>(TARGET_SELECTOR)) {
     if (element.tagName === "TABLE") {
       const table = element as HTMLTableElement;
       const head = table.tHead?.rows[0] ?? table.rows[0];
@@ -149,13 +256,21 @@ export function targetsOf(root: ParentNode): { element: HTMLElement; target: Tar
       result.push({
         element,
         target: {
-          id,
+          id: `t${index++}`,
           kind: "table",
           text: head ? [...head.cells].map((cell) => cell.textContent ?? "") : [],
           last: lastRow ? [...lastRow.cells].map((cell) => cell.textContent ?? "") : [],
         },
       });
-    } else result.push({ element, target: { id, kind: "heading", text: [element.textContent ?? ""] } });
+    } else if (/^H[1-6]$/.test(element.tagName)) result.push({ element, target: { id: `t${index++}`, kind: "heading", text: [element.textContent ?? ""] } });
+    else if (element.tagName === "IMG") result.push({ element, target: { id: `t${index++}`, kind: "image", text: [], page: Number(element.dataset.page) } });
+    else {
+      // A block inside a table is part of the table; one without words (a picture) has nothing to find.
+      if (element.closest("table")) continue;
+      const text = element.tagName === "LI" ? ownText(element) : (element.textContent ?? "");
+      if (norm(text).length < 2) continue;
+      result.push({ element, target: { id: `t${index++}`, kind: "block", text: [text] } });
+    }
   }
   return result;
 }
@@ -168,6 +283,7 @@ export function pairElements(markdown: { element: HTMLElement; target: Target }[
   let headingFrom = 0;
   let tableIndex = 0;
   for (const { target } of markdown) {
+    if (target.kind === "block" || target.kind === "image") continue;
     if (target.kind === "table") {
       const table = tables[tableIndex++];
       if (table) pairs.set(target.id, table);

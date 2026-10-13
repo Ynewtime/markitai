@@ -964,7 +964,8 @@ export function ModelsSettings({
           )
         )}
 
-        <div class="settings-body">
+        {/* A provider's page is a few sections: they take more room between them. */}
+        <div class={adding && provider !== null ? "settings-body is-sections" : "settings-body"}>
           {settings === null ? (
             <p class={loadError ? "line-error" : "dialog-dim"}>{loadError ? describe(loadError).text : t.loading}</p>
           ) : adding ? (

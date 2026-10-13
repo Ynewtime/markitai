@@ -179,7 +179,7 @@ export function extendPlan(plan: DocumentPlan, tokens: TokenList, { first = FIRS
     const target = plan.chunks.length === 0 ? first : size;
     const chapter = token.type === "heading" && (token.depth ?? 6) <= 2;
     if (length >= target || (chapter && length >= target / 2)) close();
-    if (token.type === "heading") plan.headings.push({ depth: token.depth ?? 1, text: plainText(token).trim(), chunk: plan.chunks.length });
+    if (token.type === "heading") plan.headings.push({ depth: token.depth ?? 1, text: headingLabel(token), chunk: plan.chunks.length });
     current.push(token);
     length += token.raw.length;
   }
@@ -270,6 +270,20 @@ export function plainText(token: Token): string {
   if (token.tokens?.length) return token.tokens.map(plainText).join("");
   if (token.type === "image") return "";
   return (token.text ?? "").replace(/&(amp|lt|gt|quot|#39);/g, (_, name: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[name] ?? "");
+}
+
+// Private-use code points (an extracted font's own glyphs) draw as empty boxes.
+const PRIVATE_USE = /[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}\uFFFD]/gu;
+
+/** A heading as the contents list it: its words as drawn, without inline HTML
+ * tags, private-use glyphs or runs of white space. */
+export function headingLabel(token: Token): string {
+  const words = (part: Token): string => {
+    if (part.tokens?.length) return part.tokens.map(words).join("");
+    if (part.type === "html") return " ";
+    return plainText(part);
+  };
+  return words(token).replace(PRIVATE_USE, " ").replace(/\s+/g, " ").trim();
 }
 
 function countTables(token: Token): number {
@@ -413,6 +427,15 @@ function pinDrawings(fragment: DocumentFragment): void {
   }
 }
 
+/** The page a PDF's extracted picture came from: Markitai's Rust converter
+ * writes `![Image on page 3](…)`, the Python one names the file
+ * `<name>.pdf-0003-01.png`; null for any other picture. */
+export function pdfImagePage(alt: string, path: string): number | null {
+  const found = /^Image on page (\d{1,5})$/.exec(alt.trim()) ?? /\.pdf-(\d{1,5})-\d+\.[a-z0-9]+$/i.exec(path);
+  const page = found ? Number(found[1]) : 0;
+  return page >= 1 ? page : null;
+}
+
 /** Pin every reference to the result's own files; everything else is inert.
  * Tables are named among `numbering.total` from `numbering.offset` on (a chunk
  * of a longer document); returns how many tables the fragment holds. */
@@ -433,6 +456,9 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext, numb
       } else image.setAttribute("src", url);
       image.setAttribute("loading", "lazy");
       image.setAttribute("referrerpolicy", "no-referrer");
+      // A PDF's picture names its page: Compare finds it there.
+      const page = pdfImagePage(alt, path);
+      if (page !== null) image.setAttribute("data-page", String(page));
       // A caption beside the picture that says exactly its alt text (an e-book's
       // figure: `![Fig. 2](…)Fig. 2`) is read once: the picture becomes decorative.
       const block = typeof image.closest === "function" ? image.closest("p, li, td, th") : null;

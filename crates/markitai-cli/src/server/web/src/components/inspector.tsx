@@ -14,7 +14,7 @@ import { itemErrorText, persistenceText } from "../i18n/errors.ts";
 import { counts, isFailed, isStopped, presetOf, submissionLabel, type ConvJob, type LabelWords } from "../lib/conversions.ts";
 import { costState, fmtUsd, itemCost, totalCost, type CostState } from "../lib/cost.ts";
 import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, timestampMs } from "../lib/format.ts";
-import { parseFrontMatter } from "../lib/frontmatter.ts";
+import { cardFacts, parseFrontMatter, type FrontMatter } from "../lib/frontmatter.ts";
 import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
@@ -235,7 +235,7 @@ function Excerpt({ ctx, item }: { ctx: InspectorContext; item: SessionItem }) {
     };
   }, [key]);
   const split = useMemo(() => (result ? splitFrontmatter(result.markdown) : null), [result]);
-  const front = useMemo(() => parseFrontMatter(split?.frontmatter ?? null), [split]);
+  const front = useMemo(() => cardFacts(parseFrontMatter(split?.frontmatter ?? null), split?.body ?? ""), [split]);
   useEffect(() => {
     const target = body.current;
     if (!target || !split || !result) return;
@@ -285,14 +285,14 @@ function Excerpt({ ctx, item }: { ctx: InspectorContext; item: SessionItem }) {
   if (!result || !split) return <Skeleton label={t.loading} kind="list" />;
   return (
     <div class="excerpt">
-      {front && (front.title || front.description || front.tags.length > 0) && <FrontCard front={front} compact />}
+      {front && <FrontCard front={front} compact />}
       {/* A picture of the result's start: nothing in it is read or reached by the keyboard. */}
       <div ref={body} class="doc-body excerpt-body" aria-hidden="true" inert />
     </div>
   );
 }
 
-export function FrontCard({ front, compact = false }: { front: NonNullable<ReturnType<typeof parseFrontMatter>>; compact?: boolean }) {
+export function FrontCard({ front, compact = false }: { front: FrontMatter; compact?: boolean }) {
   return (
     <div class={compact ? "front-card is-compact" : "front-card"}>
       {front.title && <p class="front-title">{front.title}</p>}

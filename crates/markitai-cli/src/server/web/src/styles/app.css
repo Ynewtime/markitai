@@ -1878,25 +1878,6 @@ kbd {
 .menu-check + * {
   min-width: 0;
 }
-/* a setting's (i): its explanation opens in a bubble; a tap does not toggle the setting */
-.info-tip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  margin: 0 -6px 0 auto;
-  border-radius: var(--r-xs);
-  color: var(--text-3);
-  cursor: help;
-}
-.info-tip:hover,
-.info-tip.is-open {
-  color: var(--text-1);
-  background: var(--row-hover);
-}
-
 /* a document's notices and front matter, above its body */
 .doc-notices {
   margin-bottom: 16px;
@@ -2242,6 +2223,9 @@ kbd {
 .settings-head {
   margin-bottom: 12px;
 }
+.settings-page:has(.is-sections) > .settings-head {
+  margin-bottom: 24px;
+}
 .settings-head .crumbs {
   flex-wrap: wrap;
   font-family: var(--font-sans);
@@ -2254,11 +2238,20 @@ kbd {
   color: var(--text-1);
   outline: none;
 }
+/* In a trail the page's own name is the last part: bold, at the trail's size. */
+.settings-head .crumbs:has(button) {
+  font-size: var(--text-md);
+}
+.settings-head .crumbs button ~ h1 {
+  font-size: inherit;
+  font-weight: 600;
+  letter-spacing: 0;
+}
 .settings-page .group-title {
   font-family: var(--font-sans);
-  font-size: var(--text-sm);
+  font-size: var(--text-ui);
   font-weight: 600;
-  color: var(--text-2);
+  color: var(--text-1);
 }
 .settings-page .settings-summary > span {
   font-family: var(--font-sans);
@@ -2267,6 +2260,14 @@ kbd {
 .settings-body {
   display: grid;
   gap: 16px;
+}
+/* A provider's page: Connection, Available models with its list, Model ID and
+   routing; a section starts 32 px below the one before, its parts 16 px apart. */
+.settings-body.is-sections {
+  gap: 16px;
+}
+.settings-body.is-sections > .provider-detail:not(:first-child) {
+  margin-top: 16px;
 }
 .settings-status {
   display: flex;
@@ -2373,9 +2374,9 @@ kbd {
   font-size: var(--text-sm);
   color: var(--text-2);
 }
-/* Access token: one column, the status line, then the field with Save attached and one hint. */
+/* Access token: the settings pages' own centred column; the status line, then
+   the field with Save attached and one hint. */
 .settings-body.access {
-  max-width: 480px;
   gap: 20px;
 }
 .access-state {
@@ -2493,6 +2494,7 @@ kbd {
   width: 100%;
   height: 32px;
   padding: 0 10px;
+  font-size: var(--text-base);
   border: 1px solid var(--hairline-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -2677,31 +2679,88 @@ kbd {
 .url-field {
   min-width: 0;
 }
-/* A batch waiting for Convert: a folder, several files or a URL list. */
-.staged-row {
+/* Files waiting for Convert: a head with the batch's name, count, size and
+   Remove all, then one row per file, scrolling after about five. */
+.staged {
+  margin: 2px 2px 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-2);
+}
+.staged-head {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 7px 10px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-sm);
+  min-height: 34px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--hairline);
   background: var(--strip);
-  color: var(--text-2);
 }
-.staged-name {
+.staged-title {
   min-width: 0;
   overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  font-weight: 600;
   color: var(--text-1);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.staged-count {
+.staged-count,
+.staged-size {
   flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.staged-clear-all {
+  flex: none;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.staged-clear-all:hover {
+  background: var(--sel-strong);
+  color: var(--text-1);
+}
+.staged-list {
+  max-height: 172px;
+  padding: 2px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) transparent;
+}
+.staged-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 6px 0 10px;
+}
+.staged-file + .staged-file {
+  border-top: 1px solid var(--hairline);
+}
+.staged-file > svg {
+  flex: none;
+  color: var(--text-3);
+}
+.staged-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.staged-more {
+  padding: 6px 10px 6px 32px;
+  font-size: var(--text-xs);
   color: var(--text-3);
 }
 .staged-clear {
@@ -2709,9 +2768,8 @@ kbd {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  margin-left: auto;
+  width: 24px;
+  height: 24px;
   border: 1px solid transparent;
   border-radius: var(--r-xs);
   background: none;
@@ -3427,8 +3485,7 @@ kbd {
   white-space: nowrap;
   transition: color var(--dur-fast) ease;
 }
-.settings-summary,
-.picker-tools {
+.settings-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3738,7 +3795,7 @@ kbd {
 .provider-detail {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 .provider-detail-head {
   display: flex;
@@ -3762,7 +3819,7 @@ kbd {
 }
 .provider-detail-copy p {
   max-width: 56ch;
-  margin-top: 5px;
+  margin-top: 4px;
   font-size: var(--text-sm);
   line-height: 1.55;
   color: var(--text-3);
@@ -3786,6 +3843,7 @@ kbd {
 .connection {
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 .connection > .line-error {
   margin-top: 10px;
@@ -3797,7 +3855,7 @@ kbd {
 }
 .conn-row {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr) auto;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-height: 44px;
@@ -3805,7 +3863,6 @@ kbd {
   border-bottom: 1px solid var(--hairline);
 }
 .conn-label {
-  font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-3);
 }
@@ -3981,36 +4038,96 @@ input[type="password"],
 .picker {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 32px;
 }
-.picker-tools > input {
-  max-width: 320px;
+/* The catalogue: an inset panel with its own frame and scroll; its head holds
+   the search and Select all, whose box lines up with the rows' boxes. */
+.picker-panel {
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+.picker-tools {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--strip);
+}
+.picker-tools[hidden] {
+  display: none;
+}
+.picker-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.picker-search > svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.picker-search > input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 32px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: var(--text-base);
+  color: var(--text-1);
+}
+.picker-search > input:focus {
+  border-color: var(--text-3);
+  outline: none;
+}
+.picker-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+}
+.picker-total {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
 }
 .check-line {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   font-family: var(--font-sans);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--text-2);
   white-space: nowrap;
+  cursor: pointer;
 }
-/* about four and a half rows, so the list visibly continues */
+/* about five and a half rows, so the list visibly continues */
 .picker-list {
-  max-height: 240px;
+  max-height: 280px;
   overflow-y: auto;
-  border-top: 1px solid var(--hairline);
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--hairline-strong) transparent;
 }
 .picker-option {
   display: flex;
   align-items: center;
-  gap: 9px;
-  min-height: 48px;
-  padding: 8px 10px;
+  gap: 10px;
+  min-height: 50px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--hairline);
   cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+.picker-option:last-child {
+  border-bottom: 0;
+}
+.picker-option:hover {
+  background: var(--row-hover);
 }
 /* Unticked but still routed: the row stays readable and says what Save does. */
 .picker-option.is-removed .picker-option-main > span:first-child {
@@ -4032,7 +4149,7 @@ input[type="password"],
 }
 .picker-id {
   overflow: hidden;
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
   color: var(--text-3);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4050,8 +4167,7 @@ input[type="password"],
    grid of the connection's key and address. */
 .picker-extra {
   display: grid;
-  gap: 10px;
-  margin-top: 8px;
+  gap: 12px;
 }
 .picker-extra .field-grid {
   row-gap: 14px;
@@ -4169,6 +4285,11 @@ input[type="password"],
   content-visibility: auto;
   contain-intrinsic-size: auto 600px;
 }
+/* A chunk clips what it paints to its own box: the one holding Compare's
+   outline (2 px, 4 px out) is on screen anyway, and paints it whole. */
+.doc-chunk:has(.is-linked) {
+  content-visibility: visible;
+}
 
 /* Contents: the document's headings beside it; the entry being read is marked. */
 .toc {
@@ -4199,7 +4320,7 @@ input[type="password"],
 }
 .toc-link {
   position: relative;
-  display: -webkit-box;
+  display: block;
   width: 100%;
   padding: 4px 10px 4px 12px;
   border-radius: var(--r-xs);
@@ -4207,11 +4328,16 @@ input[type="password"],
   line-height: 1.45;
   color: var(--text-3);
   text-align: left;
+  transition: color var(--dur-fast) ease;
+}
+/* A button ignores line clamping, so its text clamps itself: two lines at most. */
+.toc-text {
+  display: -webkit-box;
   overflow: hidden;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  transition: color var(--dur-fast) ease;
+  line-clamp: 2;
 }
 .toc-item.is-l0 .toc-link {
   font-weight: 500;
@@ -4766,28 +4892,43 @@ input[type="password"],
   color: var(--text-3);
 }
 
+/* Export PDF: the one choice it asks, then Print. */
 .pdf-card {
-  gap: 12px;
-  width: min(300px, calc(100vw - 24px));
-  padding: 14px 16px 12px;
+  width: min(340px, calc(100vw - 24px));
+  padding: 14px 16px 14px;
 }
 .pdf-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-block: -6px -4px;
+  margin: -4px -6px 10px 0;
+}
+.pdf-card-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .pdf-card-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  font-size: var(--text-base);
+  color: var(--text-1);
+  cursor: pointer;
 }
 .pdf-card-hint {
-  padding-top: 10px;
-  border-top: 1px solid var(--hairline);
+  max-width: 34em;
   color: var(--text-3);
+}
+.pdf-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
 }
 
 .crash {
@@ -5354,13 +5495,13 @@ input[type="password"],
   .provider-item {
     height: 44px;
   }
-  .picker-tools,
-  .provider-detail-head {
+  /* A text button takes its own row; the reload icon stays beside the heading. */
+  .provider-detail-head:has(> .btn) {
     flex-direction: column;
     align-items: stretch;
   }
-  .picker-tools > input {
-    max-width: none;
+  .picker-search > input {
+    height: 36px;
   }
   .provider-detail-head .btn {
     width: 100%;
