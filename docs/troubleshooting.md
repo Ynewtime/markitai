@@ -13,7 +13,7 @@ checks for scripts. Add `-c FILE` to check a particular configuration.
 | 1 | A single input failed, or a runtime error such as a missing input file or model |
 | 2 | Usage error (unknown option, missing `-c`, `--json` without `-o`, nonterminal interactive mode), or a provider Batch job still pending |
 | 10 | A directory or `.urls` batch finished with at least one failed item |
-| 130 / 143 | Unix interruption by Ctrl-C / SIGTERM |
+| 130 / 143 | Interrupted by Ctrl-C (also Ctrl-Break on Windows) / terminated by SIGTERM (closing the console on Windows) |
 
 Usage errors are printed on stderr only; `--json` prints its JSON document only
 after arguments are accepted. Failed batch items are listed in the JSON output

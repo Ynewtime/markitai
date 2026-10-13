@@ -20,5 +20,7 @@ mod sort;
 mod task;
 mod term;
 fn main() {
-    std::process::exit(app::run());
+    let code = app::run();
+    signals::yield_to_handler();
+    std::process::exit(code);
 }

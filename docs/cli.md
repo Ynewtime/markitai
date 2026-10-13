@@ -176,7 +176,7 @@ MARKITAI_LANG=zh markitai doctor
 只列本次已经结束的条目，未启动项不会凭空出现在 `items`，也不应把它当全历史。
 
 退出码：0 成功或正常跳过；1 单项/运行错误；2 用法错误或供应商 Batch 尚未完成；
-10 普通批量有失败项；130/143 Unix 中断。参数错误只有 stderr，没有 JSON envelope。
+10 普通批量有失败项；130 中断（Ctrl-C，Windows 也含 Ctrl-Break）；143 终止（SIGTERM，Windows 为关闭控制台）。参数错误只有 stderr，没有 JSON envelope。
 
 ## 明确的迁移缺口
 
