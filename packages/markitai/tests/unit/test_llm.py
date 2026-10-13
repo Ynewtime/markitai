@@ -380,6 +380,19 @@ class TestFormatLLMOutput:
         assert "title: Test" in result
         assert "---\n\n# Content" in result
 
+    def test_headings_lose_tags_and_glyphs(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """A model keeping a PDF's <sup> tags or icon glyphs in a heading."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        result = processor.format_llm_output(
+            "#  \uf043\uf020<sup>会员享有的主要权利</sup>\n\n正文<sup>1</sup>",
+            "title: Test",
+        )
+
+        assert result.endswith("---\n\n# 会员享有的主要权利\n\n正文<sup>1</sup>")
+
     def test_strip_existing_markers(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):

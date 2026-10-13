@@ -2207,9 +2207,11 @@ class DocumentEnhancer:
         # Clean markdown content
         markdown = _strip_leaked_markdown_boundaries(markdown)
         markdown = self._remove_uncommented_screenshots(markdown)
+        from markitai.converter.pdf_markdown import plain_headings
         from markitai.utils.markdown_quality import normalize_markdown
 
-        markdown = normalize_markdown(markdown).rstrip()
+        # A model may keep a source's <sup> tags or icon glyphs in a heading
+        markdown = normalize_markdown(plain_headings(markdown)).rstrip()
 
         return f"---\n{frontmatter}\n---\n\n{markdown}"
 
