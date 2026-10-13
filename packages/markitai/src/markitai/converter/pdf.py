@@ -29,6 +29,7 @@ from markitai.converter.base import (
     append_screenshot_comments,
     register_converter,
 )
+from markitai.converter.pdf_markdown import repair_pages
 from markitai.converter.pdf_parallel import map_page_runs, to_markdown_chunks
 from markitai.converter.pdf_tables import restore_flattened_tables
 from markitai.image import ImageProcessor
@@ -755,6 +756,10 @@ class PdfConverter(BaseConverter):
                     reference_images.extend(page_references)
                 page_numbers.append(page_num)
                 page_texts.append(page_text)
+
+            # Symbol-font glyphs mapped, headings plain text, body lines the
+            # layout model took for headings back in their paragraphs
+            page_texts = repair_pages(input_path, page_numbers, page_texts)
 
             # Strip running headers/footers repeated across page boundaries
             page_texts, stripped_lines = strip_repeated_page_lines(page_texts)
@@ -1814,7 +1819,16 @@ class PdfConverter(BaseConverter):
             if isinstance(chunk, dict):
                 text, refs = self._demote_reference_picture_blocks(chunk, page_num)
                 reference_images.extend(refs)
-            texts[page_num - 1] = text.strip()
+            texts[page_num - 1] = text
+        pages_read = sorted(texts)
+        repaired = repair_pages(
+            input_path,
+            [page + 1 for page in pages_read],
+            [texts[p] for p in pages_read],
+        )
+        texts = {
+            page: text.strip() for page, text in zip(pages_read, repaired, strict=True)
+        }
         return texts, reference_images
 
     def _ocr_native_page_pictures(
@@ -1989,8 +2003,11 @@ class PdfConverter(BaseConverter):
             ]
             # This text goes to the LLM: hidden-text sanitization (warn or
             # remove) as on the other paths.
-            page_texts = self._sanitize_hidden_text(
+            page_texts = repair_pages(
                 input_path, page_numbers, [_chunk_text(chunk) for chunk in chunks]
+            )
+            page_texts = self._sanitize_hidden_text(
+                input_path, page_numbers, page_texts
             )
             extracted_text = "\n\n".join(
                 f"{page_marker(page_num)}\n\n{page_text}"
