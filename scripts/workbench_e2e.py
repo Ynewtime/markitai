@@ -36,7 +36,8 @@ screenshots every state:
     Settings → Access token and its own tab (only its conversions, "Admin
     token needed" on the settings pages), Settings → Edit config (secrets
     masked, the JSON check, Review changes, Save writing exactly that change,
-    a file changed behind the page refused as stale), and Settings → Access
+    a file changed behind the page refused as stale; a CRLF file without a
+    final line break saved with only the changed line different), and Settings → Access
     token → Regenerate (the old token refused, another tab holding it too).
     With ``--axe axe.min.js`` axe-core checks every screenshot's page (the
     page's own policy kept) and a violation fails the run
@@ -3382,6 +3383,77 @@ def browse(
             )
 
         run.step(page, "edit-config", edit_config)
+
+        # 15e. A config file written on Windows: CRLF breaks and no final line
+        # break. The page edits with LF breaks and Save puts the file's own
+        # back, so one changed value changes only its line (contract v1.13
+        # clarification, 2026-10-14)
+        def edit_config_crlf() -> str:
+            crlf = config.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+            crlf = crlf.rstrip(b"\r\n")
+            if b'"url_concurrency": 3' not in crlf:
+                raise AssertionError("the file is not as the previous step left it")
+            config.write_bytes(crlf)
+            with page.expect_response(
+                lambda r: (
+                    r.url.endswith("/api/settings/config") and r.request.method == "GET"
+                )
+            ) as read:
+                _open(page, lambda: page.goto(f"{base}/settings/config"))
+            sent = read.value.json()["text"]
+            if "\r\n" not in sent or sent.endswith("\n"):
+                raise AssertionError("GET did not send the file's own line breaks")
+            area = page.locator("#config-text")
+            area.wait_for(timeout=15000)
+            page.locator(".config-note").filter(
+                has_text="This file uses CRLF line endings; saving keeps them."
+            ).first.wait_for(timeout=5000)
+            shown = area.input_value()
+            area.fill(shown.replace('"url_concurrency": 3', '"url_concurrency": 4', 1))
+            check = page.locator("#config-check")
+            _wait(
+                page,
+                lambda: check.inner_text().strip() == "Valid JSON · unsaved changes",
+                timeout=5,
+                what="the JSON check to pass",
+            )
+            page.locator(".config-review-btn").click()
+            diff = page.locator(".config-diff")
+            diff.wait_for(timeout=5000)
+            changed = diff.evaluate(
+                "d => [...d.querySelectorAll('.diff-line.is-del .diff-text, "
+                ".diff-line.is-add .diff-text')].map((e) => e.textContent.trim())"
+            )
+            if changed != ['"url_concurrency": 3', '"url_concurrency": 4']:
+                raise AssertionError(f"Review shows {changed}")
+            run.shot(page, "edit-config-crlf-diff")
+            with page.expect_response(
+                lambda r: (
+                    r.url.endswith("/api/settings/config") and r.request.method == "PUT"
+                )
+            ) as answered:
+                page.get_by_role("button", name="Save config").click()
+            if answered.value.status != 200:
+                raise AssertionError(f"save answered {answered.value.status}")
+            page.locator(".config-note.is-done").first.wait_for(timeout=10000)
+            after = config.read_bytes()
+            expected = crlf.replace(b'"url_concurrency": 3', b'"url_concurrency": 4', 1)
+            if after != expected:
+                lone = after.replace(b"\r\n", b"").count(b"\n")
+                raise AssertionError(
+                    f"the saved file differs beyond that line ({lone} LF breaks, "
+                    f"ends with {after[-4:]!r})"
+                )
+            run.shot(page, "edit-config-crlf-saved")
+            breaks = crlf.count(b"\r\n")
+            return (
+                f"a CRLF file without a final break ({breaks} breaks): GET "
+                "sent its breaks, the page said it keeps CRLF, Review showed only 3 → 4, "
+                "and Save wrote the original bytes with that one line changed, still "
+                "CRLF and still without a final break"
+            )
+
+        run.step(page, "edit-config-crlf", edit_config_crlf)
 
         # 16. Settings → Access token → Regenerate token: this tab keeps the
         # new token (shown once, with its link and QR code); the old token,
