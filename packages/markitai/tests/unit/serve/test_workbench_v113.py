@@ -962,6 +962,58 @@ class TestConfigRoutes:
         if sys.platform != "win32":
             assert (tmp_path / "config.json").stat().st_mode & 0o777 == 0o600
 
+    @pytest.mark.parametrize(
+        "final", ["\r\n", ""], ids=["final-break", "no-final-break"]
+    )
+    async def test_a_crlf_file_round_trips_byte_for_byte(
+        self, tmp_path: Path, final: str
+    ) -> None:
+        # Written on Windows: CRLF line breaks (contract v1.13 clarification)
+        text = SERVED_CONFIG.rstrip("\n").replace("\n", "\r\n") + final
+        stored = text.encode()
+        async with _client(_config_app(tmp_path, text)) as client:
+            shown = (await client.get("/api/settings/config")).json()
+            unchanged = await client.put(
+                "/api/settings/config",
+                json={"expected_revision": shown["revision"], "text": shown["text"]},
+            )
+            after_unchanged = (tmp_path / "config.json").read_bytes()
+            edited = shown["text"].replace('"concurrency": 2', '"concurrency": 3')
+            changed = await client.put(
+                "/api/settings/config",
+                json={
+                    "expected_revision": unchanged.json()["revision"],
+                    "text": edited,
+                },
+            )
+            after_changed = (tmp_path / "config.json").read_bytes()
+        # GET sends the file's own breaks, the key masked
+        assert shown["revision"] == config_editor.revision(stored)
+        assert shown["text"] == text.replace("sk-invented-0000aaaa1111", "sk…1111")
+        assert "\r\n" in shown["text"]
+        # An unchanged PUT writes identical bytes and keeps the revision
+        assert unchanged.status_code == 200, unchanged.text
+        assert after_unchanged == stored
+        assert unchanged.json()["revision"] == shown["revision"]
+        assert unchanged.json()["restart_required"] is False
+        # One changed value changes only its line; the breaks and the
+        # (missing) final break stay as they were
+        assert changed.status_code == 200, changed.text
+        before_lines = stored.split(b"\r\n")
+        after_lines = after_changed.split(b"\r\n")
+        assert len(after_lines) == len(before_lines)
+        differing = [
+            (old, new)
+            for old, new in zip(before_lines, after_lines, strict=True)
+            if old != new
+        ]
+        assert differing == [
+            (b'  "batch": {"concurrency": 2}', b'  "batch": {"concurrency": 3}')
+        ]
+        assert b"\n" not in after_changed.replace(b"\r\n", b"")
+        assert after_changed.endswith(b"}" + final.encode())
+        assert b"sk-invented-0000aaaa1111" in after_changed
+
     async def test_saved_exactly_as_sent(self, tmp_path: Path) -> None:
         async with _client(_config_app(tmp_path)) as client:
             shown = (await client.get("/api/settings/config")).json()
