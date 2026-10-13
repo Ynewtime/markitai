@@ -757,6 +757,10 @@ export const ja: Dict = {
   configUnreadableText: (problem: string) => `テキストエディターで修正してから、このページを再読み込みしてください。${problem}`,
   configReadOnly: "このセッションのモデル設定はコマンドラインから指定されているため、ここでは保存できません。テキストエディターで編集し、それらのオプションなしで再起動してください。",
   configMasked: (n: number) => `${n} 個のシークレットを伏せて表示しています（sk…7890 など）。伏せた値をそのまま残すと元の値を保持します。新しい値か env: 参照を入力すると置き換えます。`,
+  configEndings: (name: string) => `このファイルの改行コードは ${name} です。保存しても変わりません。`,
+  configEndingsMixed: (counts: { crlf: number; lf: number; cr: number }, newline: string) =>
+    `このファイルには複数の改行コードが混在しています（${[counts.crlf && `CRLF ${counts.crlf} 行`, counts.lf && `LF ${counts.lf} 行`, counts.cr && `CR ${counts.cr} 行`].filter(Boolean).join("、")}）。保存時は各行の改行コードを保ちます。変更した行は元の改行コードのまま、新しい行には最も多い ${newline} を使います。`,
+  configBom: "このファイルはバイトオーダーマーク（BOM）で始まります。保存しても保持されます。",
   configEditorLabel: "設定（JSON）",
   configValid: "正しい JSON です",
   configValidChanged: "正しい JSON です · 未保存の変更あり",

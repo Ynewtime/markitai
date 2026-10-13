@@ -5,12 +5,15 @@
 // them with the revision they were made against (a file changed meanwhile is
 // refused, as every settings write is). The server refuses a configuration it
 // cannot use and says why; the model list applies at once, the rest at restart.
+// The textarea knows only LF, so the page edits the text with LF line breaks and
+// sends it back with the file's own (CRLF on Windows), keeping its BOM.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ApiError, fetchConfigDocument, saveConfigDocument } from "../api/client.ts";
 import type { ConfigDocument } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { compareLines, foldRows } from "../lib/diff.ts";
 import { jsonProblem } from "../lib/config-text.ts";
+import { editorText, fileText, textLayout } from "../lib/line-endings.ts";
 import { Icon } from "./icons.tsx";
 import { DiffRows } from "./markdown-view.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -44,7 +47,7 @@ export function ConfigSettings({
     fetchConfigDocument().then(
       (value) => {
         setDoc(value);
-        setText(value.text ?? "");
+        setText(editorText(value.text ?? ""));
         setStage("edit");
         setFailure(null);
       },
@@ -53,7 +56,10 @@ export function ConfigSettings({
   };
   useEffect(load, []);
 
-  const original = doc?.text ?? "";
+  // The file's text as the server sent it; the editor's text has LF breaks only.
+  const raw = doc?.text ?? "";
+  const original = useMemo(() => editorText(raw), [raw]);
+  const layout = useMemo(() => textLayout(raw), [raw]);
   const changed = doc !== null && text !== original;
   // Checked as it is typed, a moment after the last key.
   const [problem, setProblem] = useState<string | null>(null);
@@ -71,9 +77,9 @@ export function ConfigSettings({
     setSaving(true);
     setFailure(null);
     try {
-      const next = await saveConfigDocument(doc.revision, text);
+      const next = await saveConfigDocument(doc.revision, fileText(raw, text));
       setDoc(next);
-      setText(next.text ?? "");
+      setText(editorText(next.text ?? ""));
       setStage("edit");
       setOpened(new Set());
       setSaved({ restart: next.restart_required === true });
@@ -133,6 +139,9 @@ export function ConfigSettings({
       <div class="settings-body">
         {doc.read_only && <p class="config-note is-warn">{t.configReadOnly}</p>}
         {doc.masked > 0 && <p class="config-note">{t.configMasked(doc.masked)}</p>}
+        {(layout.kind === "crlf" || layout.kind === "cr") && <p class="config-note">{t.configEndings(layout.kind === "crlf" ? "CRLF" : "CR")}</p>}
+        {layout.kind === "mixed" && <p class="config-note">{t.configEndingsMixed(layout.counts, layout.newline === "\r\n" ? "CRLF" : layout.newline === "\n" ? "LF" : "CR")}</p>}
+        {layout.bom && <p class="config-note">{t.configBom}</p>}
         {saved && !changed && (
           <p class="config-note is-done" role="status">
             <Icon name="Check" size={14} />

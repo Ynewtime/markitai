@@ -189,7 +189,12 @@ place as the stored literal; a masked value anywhere else is 422
 reference). The result must pass the same validation as at startup (422
 `invalid_config` with its message), and is saved like the other settings
 changes (below), exactly as written: the sent text, byte for byte, with only the
-kept masked values put back. The models and providers apply at once; the answer is the GET
+kept masked values put back. Line endings are part of the text: GET sends a
+CRLF file with CRLF, and PUT writes whatever endings it is sent (the workbench
+edits with LF, as a browser text box does, and sends each line back with the
+file's own ending, so an unchanged line stays byte for byte). A file that
+starts with a byte order mark is not readable configuration (null `text`, with
+`problem`). The models and providers apply at once; the answer is the GET
 shape for the new file plus `restart_required`, true when anything else changed,
 which the service reads at its next start.
 
