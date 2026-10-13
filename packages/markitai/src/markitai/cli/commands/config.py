@@ -25,7 +25,12 @@ from markitai.cli.console import get_console
 from markitai.cli.framework import root_config_options
 from markitai.cli.i18n import t
 from markitai.config import ConfigManager, MarkitaiConfig
-from markitai.utils.text import normalize_identifier_key
+from markitai.utils.text import (
+    is_api_base_config_key,
+    is_header_map_config_key,
+    is_secret_config_key,
+    normalize_identifier_key,
+)
 
 console = get_console()
 
@@ -33,32 +38,6 @@ console = get_console()
 _MISSING = object()
 
 _REDACTED = "[REDACTED]"
-
-
-def _is_sensitive_config_key(key: str) -> bool:
-    """Return whether a config key conventionally contains secret material."""
-    normalized = normalize_identifier_key(key)
-    parts = set(normalized.split("_"))
-
-    if normalized == "apikey" or normalized.endswith("_apikey"):
-        return True
-    if "api" in parts and "key" in parts:
-        return True
-    if "token" in parts:  # Deliberately does not match non-secret ``max_tokens``.
-        return True
-    return bool(
-        parts
-        & {
-            "authorization",
-            "cookie",
-            "cookies",
-            "credential",
-            "credentials",
-            "passwd",
-            "password",
-            "secret",
-        }
-    )
 
 
 def _safe_api_base_origin(value: Any) -> Any:
@@ -99,12 +78,11 @@ def _redact_named_field(name: str, value: Any) -> tuple[bool, Any]:
     as a secret; a suffix match also covers nested fields such as
     ``llm.custom_api_base`` that the section walker used to pass through.
     """
-    normalized = normalize_identifier_key(name)
-    if normalized == "extra_http_headers" or normalized.endswith("_extra_http_headers"):
+    if is_header_map_config_key(name):
         return True, _redact_header_values(value)
-    if normalized == "api_base" or normalized.endswith("_api_base"):
+    if is_api_base_config_key(name):
         return True, _safe_api_base_origin(value)
-    if _is_sensitive_config_key(name):
+    if is_secret_config_key(name):
         if isinstance(value, str) and value.startswith("env:"):
             return True, value
         return True, _REDACTED
@@ -137,7 +115,7 @@ def _redact_value_for_key(key: str, value: Any) -> Any:
     ancestors = key.split(".")[:-1]
     for ancestor in ancestors:
         normalized = normalize_identifier_key(ancestor)
-        if normalized == "extra_http_headers" or _is_sensitive_config_key(ancestor):
+        if normalized == "extra_http_headers" or is_secret_config_key(ancestor):
             return _REDACTED
     handled, result = _redact_named_field(key, value)
     return result if handled else _redact_config_secrets(value)

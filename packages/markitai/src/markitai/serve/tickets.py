@@ -6,7 +6,9 @@ therefore first asks ``POST /api/download-tickets`` for a ticket: a random
 value that admits exactly one GET of exactly one download path within a
 minute. The ticket rides in the URL instead of the access token; once used or
 expired it is worthless, so a URL kept in the browser's download list or
-history grants nothing. Only the SHA-256 of a ticket is held.
+history grants nothing. Only the SHA-256 of a ticket is held. A ticket acts
+as the caller it was issued to: a user token's ticket sees only that user's
+jobs and dies with the token.
 """
 
 from __future__ import annotations
@@ -72,10 +74,14 @@ class DownloadTickets:
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._lock = threading.Lock()
-        self._tickets: dict[bytes, tuple[str, float]] = {}
+        # digest -> (path, expiry, the user token id it was issued to)
+        self._tickets: dict[bytes, tuple[str, float, str | None]] = {}
 
-    def issue(self, path: str) -> str | None:
-        """A new ticket for *path*, or None when too many are outstanding."""
+    def issue(self, path: str, user: str | None = None) -> str | None:
+        """A new ticket for *path*, or None when too many are outstanding.
+
+        *user* is the id of the user token that asked (None: the admin).
+        """
         now = self._clock()
         with self._lock:
             self._tickets = {
@@ -86,7 +92,7 @@ class DownloadTickets:
             if len(self._tickets) >= CAPACITY:
                 return None
             ticket = secrets.token_hex(32)
-            self._tickets[_digest(ticket)] = (path, now + LIFETIME_S)
+            self._tickets[_digest(ticket)] = (path, now + LIFETIME_S, user)
         return ticket
 
     def clear(self) -> None:
@@ -94,8 +100,17 @@ class DownloadTickets:
         with self._lock:
             self._tickets.clear()
 
-    def redeem(self, ticket: str, path: str) -> bool:
-        """Spend *ticket* on a GET of *path*.
+    def revoke_user(self, user: str) -> None:
+        """Revoke the outstanding tickets of the user token *user*."""
+        with self._lock:
+            self._tickets = {
+                digest: entry
+                for digest, entry in self._tickets.items()
+                if entry[2] != user
+            }
+
+    def redeem(self, ticket: str, path: str) -> tuple[bool, str | None]:
+        """Spend *ticket* on a GET of *path*: (valid, the user it was issued to).
 
         A ticket presented for another path is spent as well: it was
         disclosed, so it must not stay usable.
@@ -104,8 +119,9 @@ class DownloadTickets:
         with self._lock:
             entry = self._tickets.pop(_digest(ticket), None)
         if entry is None:
-            return False
-        issued_path, expires = entry
-        return expires > now and secrets.compare_digest(
+            return False, None
+        issued_path, expires, user = entry
+        valid = expires > now and secrets.compare_digest(
             issued_path.encode(), path.encode()
         )
+        return valid, user

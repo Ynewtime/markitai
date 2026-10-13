@@ -11,6 +11,7 @@ import pytest
 
 from markitai.constants import MAX_DOCUMENT_SIZE, MAX_STATE_FILE_SIZE
 from markitai.security import (
+    atomic_write_bytes,
     atomic_write_json,
     atomic_write_text,
     check_symlink_safety,
@@ -110,6 +111,28 @@ class TestAtomicWriteText:
         atomic_write_text(test_file, content)
 
         assert test_file.read_text() == content
+
+
+class TestAtomicWriteBytes:
+    def test_writes_the_bytes_exactly(self, tmp_path: Path) -> None:
+        target = tmp_path / "sub" / "config.json"
+        data = '{\r\n  "a": "é"\n}'.encode()
+        atomic_write_bytes(target, data, private=True)
+        assert target.read_bytes() == data
+        if sys.platform != "win32":
+            assert target.stat().st_mode & 0o777 == 0o600
+
+    def test_a_failing_last_check_leaves_the_file_alone(self, tmp_path: Path) -> None:
+        target = tmp_path / "config.json"
+        target.write_bytes(b"old")
+
+        def refuse() -> None:
+            raise RuntimeError("changed meanwhile")
+
+        with pytest.raises(RuntimeError):
+            atomic_write_bytes(target, b"new", before_replace=refuse)
+        assert target.read_bytes() == b"old"
+        assert not list(tmp_path.glob(".config.json.*.tmp"))
 
 
 class TestAtomicWriteJson:

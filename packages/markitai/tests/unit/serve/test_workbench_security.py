@@ -185,7 +185,8 @@ class TestDownloadTickets:
             ticket = await _ticket(client, "/api/history/archive")
         stored = app.state.download_tickets._tickets
         assert len(stored) == 1
-        (digest, (path, _expires)), *_ = stored.items()
+        (digest, (path, _expires, user)), *_ = stored.items()
+        assert user is None  # the admin's
         assert ticket.encode() not in digest and ticket not in path
         assert len(digest) == 32
 

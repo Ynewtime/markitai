@@ -164,7 +164,12 @@ class TestCapabilitiesAndRoot:
             "item_assets": True,
             "item_archive": True,
             "token_regenerate": False,
+            "user_tokens": False,
+            "config_edit": True,
+            "batch_delete": True,
         }
+        # Loopback without a token is the admin (no user tokens without one)
+        assert data["access"] == {"role": "admin", "label": None}
         # Loopback is trusted: Cloudflare's state is reported, not hidden
         assert data["remote_services"]["cloudflare"]["reason"] in (
             "not_configured",

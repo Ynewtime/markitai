@@ -36,7 +36,8 @@ from markitai import __version__
 from markitai.constants import PROVIDER_API_KEY_ENV
 from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, PENDING_BATCH_SKIP_REASON
-from markitai.serve import model_test, new_access_token
+from markitai.serve import config_editor, model_test, new_access_token
+from markitai.serve.access import AccessTokens, clean_label, looks_like_user_token
 from markitai.serve.artifacts import (
     item_asset_files,
     markdown_pair,
@@ -88,8 +89,12 @@ from markitai.serve.originals import (
 from markitai.serve.originals import describe as describe_original
 from markitai.serve.originals import media_type_of as original_media_type
 from markitai.serve.schemas import (
+    AccessTokenList,
+    BatchDeleteResult,
     CancelResponse,
     Capabilities,
+    ConfigDocument,
+    CreatedAccessToken,
     CreateJobResponse,
     DetectedModel,
     DownloadTicket,
@@ -114,6 +119,7 @@ from markitai.serve.schemas import (
     ProviderConnectionList,
     RegeneratedToken,
     RootInfo,
+    SavedConfigDocument,
 )
 from markitai.serve.tickets import LIFETIME_S as TICKET_LIFETIME_S
 from markitai.serve.tickets import DownloadTickets, downloadable
@@ -165,6 +171,7 @@ MAX_URL_LIST_BYTES = 1024 * 1024
 _TICKET_BODY_LIMIT = 8 * 1024
 _TOKEN_REGENERATE_PATH = "/api/access-token/regenerate"  # nosec B105 - a route
 _TOKEN_REGENERATE_BODY_LIMIT = 1024
+_ACCESS_TOKEN_BODY_LIMIT = 1024
 # Pages drawn for the Compare view at the same time at most.
 _PAGE_RENDER_SLOTS = 2
 
@@ -516,23 +523,147 @@ def _token_digest(token: str) -> bytes:
     return hashlib.sha256(token.encode("utf-8", "surrogatepass")).digest()
 
 
-class _TokenAuthMiddleware:
-    """Reject non-loopback API requests that do not present the serve token.
+@dataclass(frozen=True)
+class Caller:
+    """Who an API request acts for (contract v1.13 access levels).
 
-    A token regenerated away is refused from every peer. Loopback peers
-    stay trusted without a token (the CLI, tests and
+    ``admin``: the server token, or a loopback client presenting no token
+    (Python's rule). ``user``: a user token created in the workbench; it
+    sees only the jobs it created and never the settings. ``anonymous``: a
+    client of a ``--no-auth`` server that is not loopback (it may not reach
+    the settings or submit URLs, as before).
+    """
+
+    role: Literal["admin", "user", "anonymous"]
+    user_id: str | None = None
+    label: str | None = None
+
+    def sees(self, job: Job) -> bool:
+        """Whether this caller may see *job*: a user sees only its own."""
+        return self.user_id is None or job.owner == self.user_id
+
+
+ADMIN = Caller("admin")
+ANONYMOUS = Caller("anonymous")
+_CALLER_KEY = "markitai_caller"
+
+#: The routes only the admin may use (403 ``settings_forbidden`` otherwise).
+_ACCESS_TOKENS_PATH = "/api/access-tokens"  # nosec B105 - a route
+
+
+def _admin_path(path: str) -> bool:
+    return path.startswith(("/api/settings/", _ACCESS_TOKENS_PATH + "/")) or path in (
+        _TOKEN_REGENERATE_PATH,
+        _ACCESS_TOKENS_PATH,
+    )
+
+
+def _path_job(method: str, path: str) -> str | None:
+    """The job a route names in its path, as the raw segment.
+
+    ``/api/jobs/{job_id}…`` and ``DELETE /api/history/{job_id}``.
+    """
+    rest = path.removeprefix("/api/jobs/")
+    if rest != path:
+        return rest.split("/", 1)[0]
+    rest = path.removeprefix("/api/history/")
+    if rest != path and method == "DELETE" and "/" not in rest:
+        return rest
+    return None
+
+
+def _loopback_only_detail(path: str) -> str:
+    """Why an admin route refused an untrusted peer of a ``--no-auth`` server."""
+    if path == _TOKEN_REGENERATE_PATH:
+        return "the access token can be regenerated on loopback only"
+    if path.startswith("/api/settings/llm"):
+        return "LLM settings are available on loopback only"
+    if path.startswith("/api/settings/"):
+        return "settings are available on loopback only"
+    return "access tokens are available on loopback only"
+
+
+#: Entries one batch deletion takes at most, and its body at most.
+_MAX_BATCH_DELETE = 1000
+_BATCH_DELETE_BODY_LIMIT = 256 * 1024
+
+
+def _delete_entries(body: object) -> list[tuple[str, str | None]]:
+    """A batch deletion's entries in order, ``(job_id, None)`` for a job.
+
+    Anything else than the contract's body is 422 ``invalid_delete_request``.
+    """
+
+    def refused(detail: str) -> ApiError:
+        return ApiError(422, "invalid_delete_request", detail)
+
+    if not isinstance(body, dict):
+        raise refused("the body must be a JSON object with jobs and/or items")
+    unknown = next((key for key in body if key not in ("jobs", "items")), None)
+    if unknown is not None:
+        raise refused(f"unknown field '{unknown}'; supported fields: jobs, items")
+    jobs = body.get("jobs", [])
+    items = body.get("items", [])
+    for name, value in (("jobs", jobs), ("items", items)):
+        if not isinstance(value, list):
+            raise refused(f"{name} must be an array")
+    count = len(jobs) + len(items)
+    if count == 0:
+        raise refused("name at least one job or item")
+    if count > _MAX_BATCH_DELETE:
+        raise refused(
+            f"{count} entries; one request deletes at most {_MAX_BATCH_DELETE}"
+        )
+    entries: list[tuple[str, str | None]] = []
+    for job in jobs:
+        if not isinstance(job, str):
+            raise refused("jobs must be an array of job ids")
+        entries.append((job, None))
+    for item in items:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"job_id", "item_id"}
+            or not isinstance(item["job_id"], str)
+            or not isinstance(item["item_id"], str)
+        ):
+            raise refused("items must be an array of {job_id, item_id} objects")
+        entries.append((item["job_id"], item["item_id"]))
+    return entries
+
+
+def _settings_forbidden_response() -> JSONResponse:
+    return error_response(
+        403,
+        "settings_forbidden",
+        "settings access requires the admin token",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+class _TokenAuthMiddleware:
+    """Resolve the caller of every API request, and refuse the unknown.
+
+    Once per request: the server token makes the admin; a user token (by
+    its digest) makes that user, from any peer; a loopback peer presenting
+    no token is the admin (Python's rule: the CLI, tests and
     ``--record-history`` tooling on the operator's machine keep working
-    unchanged), except on the LLM settings routes, which
-    ``protect_local_settings`` gates on the token for every peer. The static
-    app shell stays reachable so a browser can load the UI from the tokened
-    URL — only ``/api/`` carries anything worth protecting. A ``token`` of
-    None disables the gate entirely (``--no-auth``): remote peers then may
-    not submit URLs at all (``_guard_fetch_targets``) nor reach the settings
-    (the loopback-only settings middleware).
+    unchanged). Anything else on ``/api/`` is 401, as is a token
+    regenerated away or a user token that is not (or no longer) known, even
+    from loopback. The LLM settings additionally need the admin token from
+    every peer (``protect_local_settings``). The static app shell stays
+    reachable so a browser can load the UI from the tokened URL — only
+    ``/api/`` carries anything worth protecting. A ``token`` of None
+    disables the gate (``--no-auth``): loopback is then the admin, everyone
+    else anonymous (no URLs, no settings).
+
+    A user is refused the admin routes (403 ``settings_forbidden``) and
+    never learns of another's job: every ``/api/jobs/{job_id}…`` route of a
+    job it did not create is 404 ``job_not_found``.
 
     A ``?ticket=`` (see :mod:`markitai.serve.tickets`) stands in for the
-    token on exactly one GET of the path it was issued for; presenting it
-    spends it, and a wrong, spent or expired one is refused for every peer.
+    token on exactly one GET of the path it was issued for, as the caller it
+    was issued to; presenting it spends it, and a wrong, spent or expired
+    one (or one of a revoked user) is refused for every peer.
 
     The token is read through *token_source* on every request: the
     workbench can regenerate it (``POST /api/access-token/regenerate``).
@@ -544,30 +675,64 @@ class _TokenAuthMiddleware:
         token_source: Callable[[], str | None],
         tickets: DownloadTickets,
         revoked: set[bytes],
+        access: AccessTokens,
+        registry_source: Callable[[], JobRegistry | None],
     ) -> None:
         self.app = app
         self.token_source = token_source
         self.tickets = tickets
         self.revoked = revoked
+        self.access = access
+        self.registry_source = registry_source
 
-    def _presents_revoked(self, scope: Any) -> bool:
+    def _caller(self, scope: Any, token: str) -> Caller | None:
+        presented = [
+            value
+            for value in (_scope_bearer_token(scope), _scope_query_token(scope))
+            if value is not None
+        ]
+        if any(
+            secrets.compare_digest(value.encode(), token.encode())
+            for value in presented
+        ):
+            return ADMIN
+        for value in presented:
+            user = self.access.authenticate(value)
+            if user is not None:
+                return Caller("user", user_id=user[0], label=user[1])
+        return None
+
+    def _presents_refused(self, scope: Any) -> bool:
+        """A token regenerated away, or a user token not (or no longer) known."""
         return any(
-            presented is not None and _token_digest(presented) in self.revoked
+            presented is not None
+            and (
+                _token_digest(presented) in self.revoked
+                or looks_like_user_token(presented)
+            )
             for presented in (_scope_bearer_token(scope), _scope_query_token(scope))
         )
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        token = self.token_source() if scope["type"] == "http" else None
-        if (
-            token is not None
-            and scope.get("path", "").startswith("/api/")
-            and not _scope_presents_token(scope, token)
-        ):
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/api/"):
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        method = scope.get("method", "").upper()
+        token = self.token_source()
+        caller: Caller | None
+        if token is None:
+            caller = ADMIN if _is_loopback_scope(scope) else ANONYMOUS
+        else:
+            caller = self._caller(scope, token)
+        if caller is None:
             ticket = _scope_query_param(scope, "ticket")
             if ticket is not None:
-                if not (
-                    self.tickets.redeem(ticket, _scope_raw_path(scope))
-                    and scope.get("method", "").upper() == "GET"
+                valid, user = self.tickets.redeem(ticket, _scope_raw_path(scope))
+                if (
+                    not valid
+                    or method != "GET"
+                    or (user is not None and not self.access.exists(user))
                 ):
                     response = error_response(
                         401,
@@ -577,13 +742,32 @@ class _TokenAuthMiddleware:
                     )
                     await response(scope, receive, send)
                     return
-            elif not _is_loopback_scope(scope) or self._presents_revoked(scope):
+                caller = Caller("user", user_id=user) if user is not None else ADMIN
+            elif not _is_loopback_scope(scope) or self._presents_refused(scope):
                 # Loopback may come without a token (or with a stale one from
-                # an earlier run), but never with one regenerated away: the
-                # other tabs and devices must sign in again
+                # an earlier run), but never with one regenerated away or a
+                # revoked user's: those must sign in again
                 response = error_response(401, "token_required", _AUTH_REQUIRED_DETAIL)
                 await response(scope, receive, send)
                 return
+            else:
+                caller = ADMIN
+        if caller.user_id is not None:
+            if _admin_path(path):
+                await _settings_forbidden_response()(scope, receive, send)
+                return
+            job_id = _path_job(method, path)
+            registry = self.registry_source()
+            job = (
+                registry.get(job_id)
+                if job_id is not None and registry is not None
+                else None
+            )
+            if job is not None and not caller.sees(job):
+                response = error_response(404, "job_not_found", "job not found")
+                await response(scope, receive, send)
+                return
+        scope.setdefault("state", {})[_CALLER_KEY] = caller
         await self.app(scope, receive, send)
 
 
@@ -595,6 +779,12 @@ class _TokenAuthMiddleware:
 def _state(request: Request) -> ServeState:
     """Return the ServeState initialized by the lifespan."""
     return request.app.state.markitai
+
+
+def _caller(request: Request) -> Caller:
+    """Who *request* acts for, as the token middleware resolved it."""
+    caller = request.scope.get("state", {}).get(_CALLER_KEY)
+    return caller if isinstance(caller, Caller) else ANONYMOUS
 
 
 def _is_loopback_peer(request: Request) -> bool:
@@ -612,10 +802,11 @@ def _is_trusted_request(request: Request) -> bool:
 
     Token-bearing remote peers get the loopback trust model: they may submit
     URLs, private and credentialed ones included, and use the settings
-    routes. With token auth disabled (``--no-auth``) only loopback is
-    trusted.
+    routes. A user token's holder is authenticated too, so it may submit
+    URLs (the settings stay the admin's). With token auth disabled
+    (``--no-auth``) only loopback is trusted.
     """
-    if _is_loopback_peer(request):
+    if _is_loopback_peer(request) or _caller(request).role == "user":
         return True
     token = request.app.state.serve_token
     return token is not None and _scope_presents_token(request.scope, token)
@@ -686,10 +877,11 @@ async def _guard_fetch_targets(request: Request, urls: Sequence[str]) -> None:
 def _get_job(request: Request, job_id: str) -> Job:
     """Return the job with *job_id* or raise 404.
 
-    A job past history retention is gone even before the sweep removes it.
+    A job past history retention is gone even before the sweep removes it,
+    and a user token's caller never sees a job it did not create.
     """
     job = _state(request).registry.get(job_id)
-    if job is None or job_expired(job):
+    if job is None or job_expired(job) or not _caller(request).sees(job):
         raise ApiError(404, "job_not_found", "job not found")
     return job
 
@@ -1163,6 +1355,130 @@ def _shown_base(sent: str | None, stored: Any) -> bool:
         "invalid_settings_request",
         "api_base is masked; send the whole new address, or leave api_base out "
         "to keep the saved one.",
+    )
+
+
+_CONFIG_TEXT_LIMIT = 1024 * 1024
+_CONFIG_BODY_LIMIT = 3 * 512 * 1024
+
+
+def _config_too_large() -> ApiError:
+    return ApiError(413, "config_too_large", "the configuration text exceeds 1 MiB")
+
+
+def _read_config_bytes(path: Path) -> bytes | None:
+    """The config file's bytes, or None when there is none."""
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        logger.error("[Serve] Reading {} failed: {}", path, type(e).__name__)
+        raise ApiError(
+            500,
+            "settings_io_failed",
+            f"failed to read config file: {type(e).__name__}",
+        ) from None
+
+
+def _invalid_config(detail: str) -> ApiError:
+    return ApiError(422, "invalid_config", detail)
+
+
+def _validation_words(error: ValidationError) -> str:
+    """A validator's refusal as ``loc: message`` parts (never the values)."""
+    parts = [
+        f"{'.'.join(str(part) for part in item['loc']) or 'config'}: {item['msg']}"
+        for item in error.errors()[:5]
+    ]
+    more = len(error.errors()) - len(parts)
+    return "; ".join(parts) + (f"; and {more} more" if more > 0 else "")
+
+
+def _replace_config_file(
+    path: Path, expected_revision: str, text: str
+) -> tuple[bytes, dict[str, Any] | None, dict[str, Any]]:
+    """``PUT /api/settings/config``'s file work, under the settings lock.
+
+    Returns the saved bytes, the old configuration (None when the stored file
+    could not be read as a JSON object) and the new one.
+    """
+    from markitai.config import MarkitaiConfig
+    from markitai.security import atomic_write_bytes
+
+    original = _read_config_bytes(path)
+    current = config_editor.revision(original)
+    if expected_revision != current:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "stale_revision", "current_revision": current},
+        )
+    try:
+        parsed = config_editor.parse(text)
+    except json.JSONDecodeError as e:
+        raise _invalid_config(config_editor.position(e)) from None
+    if not isinstance(parsed, dict):
+        raise _invalid_config("the configuration must be a JSON object")
+    current_text = config_editor.current_object_text(original)
+    old: dict[str, Any] | None = (
+        {}
+        if original is None
+        else json.loads(current_text)
+        if current_text is not None
+        else None
+    )
+    try:
+        saved_text = config_editor.unmask(text, current_text)
+    except ValueError as e:
+        raise _invalid_config(str(e)) from None
+    document = json.loads(saved_text)
+    try:
+        MarkitaiConfig.model_validate(document)
+    except ValidationError as e:
+        raise _invalid_config(_validation_words(e)) from None
+    saved = saved_text.encode("utf-8", "surrogatepass")
+
+    def unchanged_since_read() -> None:
+        # The file may have been edited by hand since it was read
+        now = _read_config_bytes(path)
+        if now != original:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "config_changed",
+                    "current_revision": config_editor.revision(now),
+                },
+            )
+
+    try:
+        # The configuration can hold literal API keys: keep it owner-only
+        atomic_write_bytes(
+            path, saved, private=True, before_replace=unchanged_since_read
+        )
+    except OSError as e:
+        logger.error("[Serve] Writing {} failed: {}", path, type(e).__name__)
+        raise ApiError(
+            500,
+            "settings_io_failed",
+            f"failed to update config file: {type(e).__name__}",
+        ) from None
+    return saved, old, document
+
+
+def _apply_config_models(state: ServeState, document: dict[str, Any]) -> None:
+    """Run with the model list and connections of a saved configuration."""
+    from markitai.config import MarkitaiConfig
+
+    llm = MarkitaiConfig.model_validate(document).llm
+    models = list(llm.model_list)
+    providers = list(llm.providers)
+    state.configured_models = models
+    state.configured_providers = providers
+    state.settings_revision = _document_settings_revision(document, models, providers)
+    state.config.llm.providers = providers
+    state.config.llm.model_list = _effective_models(models, state.detected_models)
+    state.llm_source = (
+        "config" if models else "detected" if state.detected_models else "none"
     )
 
 
@@ -2388,15 +2704,28 @@ def _initial_settings_revision(
 ) -> str:
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-        llm = data.get("llm") if isinstance(data, dict) else None
-        entries = llm.get("model_list") if isinstance(llm, dict) else None
-        raw_providers = llm.get("providers") if isinstance(llm, dict) else None
-        if isinstance(entries, list):
-            return _settings_revision(
-                entries, raw_providers if isinstance(raw_providers, list) else []
-            )
     except (OSError, ValueError):
-        pass
+        data = None
+    return _document_settings_revision(data, models, providers)
+
+
+def _document_settings_revision(
+    data: object,
+    models: list[ModelConfig],
+    providers: list[LLMProviderConfig],
+) -> str:
+    """The settings revision of a config file's parsed *data*.
+
+    Its own model list and connections when it has a model list, else
+    *models* and *providers* (what the server runs with).
+    """
+    llm = data.get("llm") if isinstance(data, dict) else None
+    entries = llm.get("model_list") if isinstance(llm, dict) else None
+    raw_providers = llm.get("providers") if isinstance(llm, dict) else None
+    if isinstance(entries, list):
+        return _settings_revision(
+            entries, raw_providers if isinstance(raw_providers, list) else []
+        )
     return _settings_revision(
         [_model_to_raw(model) for model in models],
         [provider.model_dump(mode="json", exclude_none=True) for provider in providers],
@@ -2450,6 +2779,7 @@ def create_app(
     token: str | None = None,
     network_origin: Callable[[], str | None] | None = None,
     token_variable: str | None = None,
+    access_path: Path | None = None,
 ) -> FastAPI:
     """Create the markitai serve FastAPI application.
 
@@ -2480,6 +2810,8 @@ def create_app(
             else None; a regenerated token's sign-in link is built on it.
         token_variable: The environment variable that set *token* at
             startup (``MARKITAI_SERVE_TOKEN``), or None when it was generated.
+        access_path: Where the user tokens' digests are kept. Defaults to
+            ``access.json`` beside the jobs root (``~/.markitai/serve/``).
     """
 
     @asynccontextmanager
@@ -2614,6 +2946,13 @@ def create_app(
     app.state.token_generation = 0
     # Digests of the tokens regenerated away: refused even from loopback
     app.state.revoked_tokens = set()
+    access = AccessTokens(
+        access_path
+        if access_path is not None
+        else (jobs_root if jobs_root is not None else DEFAULT_JOBS_ROOT).parent
+        / "access.json"
+    )
+    app.state.access_tokens = access
     app.add_middleware(_BodyLimitMiddleware)
     app.add_middleware(
         _HostGuardMiddleware,
@@ -2704,10 +3043,12 @@ def create_app(
     @app.middleware("http")
     async def protect_local_settings(request: Request, call_next: Any) -> Response:
         path = request.url.path
-        if path.startswith("/api/settings/llm") or path == _TOKEN_REGENERATE_PATH:
-            # These routes read and write provider keys, so with token auth
-            # on they need the token from every peer: any local process, or a
-            # page on another localhost origin, is a loopback peer too.
+        if _admin_path(path):
+            # These routes read and write provider keys and the access
+            # tokens, so with token auth on they need the admin token from
+            # every peer: any local process, or a page on another localhost
+            # origin, is a loopback peer too. (A user token never gets here:
+            # the token middleware refuses it with 403.)
             serve_token = request.app.state.serve_token
             if serve_token is not None and not _scope_presents_token(
                 request.scope, serve_token
@@ -2722,9 +3063,7 @@ def create_app(
                 return error_response(
                     403,
                     "settings_forbidden",
-                    "LLM settings are available on loopback only"
-                    if path != _TOKEN_REGENERATE_PATH
-                    else "the access token can be regenerated on loopback only",
+                    _loopback_only_detail(path),
                     headers={"Cache-Control": "no-store"},
                 )
             response = await call_next(request)
@@ -2746,6 +3085,10 @@ def create_app(
         token_source=lambda: app.state.serve_token,
         tickets=tickets,
         revoked=app.state.revoked_tokens,
+        access=access,
+        registry_source=lambda: (
+            app.state.markitai.registry if hasattr(app.state, "markitai") else None
+        ),
     )
     # Outermost: compresses whatever the inner layers answer
     app.add_middleware(_CompressionMiddleware)
@@ -2757,6 +3100,7 @@ def create_app(
         from markitai.config import PRESET_NAMES, get_preset
 
         state = _state(request)
+        caller = _caller(request)
         effective = _effective_models(state.configured_models, state.detected_models)
         routable = any(_is_deployment_routable(model) for model in effective)
         return {
@@ -2797,7 +3141,16 @@ def create_app(
                 "item_assets": True,
                 "item_archive": True,
                 "token_regenerate": request.app.state.serve_token is not None,
+                "user_tokens": request.app.state.serve_token is not None,
+                "config_edit": True,
+                "batch_delete": True,
             },
+            # Anonymous callers may not use the settings, so they are users
+            "access": (
+                {"role": "admin"}
+                if caller.role == "admin"
+                else {"role": "user", "label": caller.label}
+            ),
             "remote_services": {
                 "cloudflare": _cloudflare_capability(
                     state.config, trusted=_is_trusted_request(request)
@@ -3833,6 +4186,81 @@ def create_app(
             backfill_ids=True,
         )
 
+    # ------------------------------------------------------- edit config
+
+    def _config_view(state: ServeState, data: bytes | None) -> dict[str, Any]:
+        return config_editor.view(
+            _display_config_path(state.config_path),
+            state.config_origin,
+            data,
+            # No session overrides of the model list exist in Python's serve
+            read_only=False,
+        )
+
+    @app.get("/api/settings/config", response_model=ConfigDocument)
+    async def get_config_document(request: Request) -> dict[str, Any]:
+        """The configuration file as text, each secret masked (contract §8)."""
+        state = _state(request)
+        async with state.settings_lock:
+            data = await asyncio.to_thread(_read_config_bytes, state.config_path)
+        return _config_view(state, data)
+
+    @app.put("/api/settings/config", response_model=SavedConfigDocument)
+    async def put_config_document(request: Request) -> dict[str, Any]:
+        """Replace the configuration file with the text the page sends.
+
+        Body exactly ``{expected_revision, text}``. Each masked value kept
+        where the GET sent it gets the stored literal back; the result must
+        validate as the server's configuration, and is then saved exactly as
+        sent (the diff the page showed is what is written). The model list
+        and connections apply at once; ``restart_required`` says whether
+        anything else changed.
+        """
+        state = _state(request)
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > _CONFIG_BODY_LIMIT:
+                raise _config_too_large()
+        shape = ApiError(
+            422,
+            "invalid_settings_request",
+            'send a JSON body {"expected_revision": string, "text": string}',
+        )
+        content_type = request.headers.get("content-type", "")
+        if content_type.split(";", 1)[0].strip().lower() != "application/json":
+            raise shape
+        try:
+            body = json.loads(bytes(data))
+        except ValueError:
+            raise shape from None
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"expected_revision", "text"}
+            or not isinstance(body["expected_revision"], str)
+            or not isinstance(body["text"], str)
+        ):
+            raise shape
+        text: str = body["text"]
+        if len(text.encode("utf-8", "surrogatepass")) > _CONFIG_TEXT_LIMIT:
+            raise _config_too_large()
+        async with state.settings_lock:
+            saved, old, document = await asyncio.to_thread(
+                _replace_config_file,
+                state.config_path,
+                body["expected_revision"],
+                text,
+            )
+            _apply_config_models(state, document)
+        logger.info(
+            "[Serve] Configuration file {} saved from the web workbench",
+            _display_config_path(state.config_path),
+        )
+        return {
+            **_config_view(state, saved),
+            "restart_required": config_editor.restart_required(old, document),
+        }
+
     @app.post("/api/settings/llm/config/open", status_code=204)
     async def open_llm_config(request: Request) -> None:
         """Open the config file the settings routes write in the host's editor.
@@ -3968,7 +4396,9 @@ def create_app(
         _require_model(state, opts)
 
         cfg = _build_job_config(state.config, opts)
-        job = state.registry.create_job(options=_saved_options(opts), cfg=cfg)
+        job = state.registry.create_job(
+            options=_saved_options(opts), cfg=cfg, owner=_caller(request).user_id
+        )
         job.public_network_only = not trusted
         job.label = job_label
         cfg.output.dir = str(job.out_dir)
@@ -4259,6 +4689,10 @@ def create_app(
         owns (``serve.artifacts``) go with it; files a remaining sibling
         also claims are kept.
         """
+        await _delete_item(request, job_id, item_id)
+
+    async def _delete_item(request: Request, job_id: str, item_id: str) -> None:
+        """``DELETE /api/jobs/{job_id}/items/{item_id}``'s work (also batched)."""
         state = _state(request)
         job = _get_job(request, job_id)
         async with job.delete_lock:
@@ -4825,8 +5259,13 @@ def create_app(
             raise invalid from None
         if not downloadable(body.path):
             raise invalid
+        caller = _caller(request)
+        # A user may name only its own jobs
+        named_job = _path_job("GET", body.path)
+        if caller.user_id is not None and named_job is not None:
+            _get_job(request, named_job)
         tickets: DownloadTickets = request.app.state.download_tickets
-        ticket = tickets.issue(body.path)
+        ticket = tickets.issue(body.path, user=caller.user_id)
         if ticket is None:
             raise ApiError(
                 429,
@@ -4904,6 +5343,72 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    # -------------------------------------------------------- user tokens
+
+    def _require_auth(request: Request) -> None:
+        if request.app.state.serve_token is None:
+            raise ApiError(
+                409,
+                "token_disabled",
+                "the server runs without an access token (--no-auth); user "
+                "tokens are unavailable",
+            )
+
+    @app.get(_ACCESS_TOKENS_PATH, response_model=AccessTokenList)
+    async def list_access_tokens(request: Request) -> JSONResponse:
+        """The user tokens, oldest first (never the tokens themselves)."""
+        _require_auth(request)
+        return JSONResponse(access.list(), headers={"Cache-Control": "no-store"})
+
+    @app.post(_ACCESS_TOKENS_PATH, status_code=201, response_model=CreatedAccessToken)
+    async def create_access_token(request: Request) -> JSONResponse:
+        """A new user token named by ``{"label": …}``, returned this once."""
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > _ACCESS_TOKEN_BODY_LIMIT:
+                raise ApiError(413, "request_too_large", "request exceeds 1 KiB")
+        _require_auth(request)
+        try:
+            body = json.loads(bytes(data))
+        except ValueError:
+            body = None
+        if (
+            not isinstance(body, dict)
+            or list(body) != ["label"]
+            or not isinstance(body["label"], str)
+        ):
+            raise ApiError(422, "invalid_json", 'send a JSON body {"label": "…"}')
+        label = clean_label(body["label"])
+        if label is None:
+            raise ApiError(
+                422,
+                "invalid_label",
+                "label must be plain text of 1 to 60 characters",
+            )
+        created = await asyncio.to_thread(access.create, label)
+        logger.info('[Serve] Access token "{}" created from the web workbench.', label)
+        return JSONResponse(
+            created, status_code=201, headers={"Cache-Control": "no-store"}
+        )
+
+    @app.delete(_ACCESS_TOKENS_PATH + "/{token_id}", status_code=204)
+    async def revoke_access_token(request: Request, token_id: str) -> Response:
+        """Revoke a user token: it stops working at once.
+
+        Requests presenting it are 401, its download tickets are refused and
+        open event streams end (their clients reconnect with the token they
+        hold, so only this one's are refused).
+        """
+        _require_auth(request)
+        label = await asyncio.to_thread(access.revoke, token_id)
+        tickets: DownloadTickets = request.app.state.download_tickets
+        tickets.revoke_user(token_id)
+        request.app.state.token_generation += 1
+        _state(request).registry.end_streams()
+        logger.info('[Serve] Access token "{}" revoked from the web workbench.', label)
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
     # -------------------------------------------------------------- history
 
     @app.get(
@@ -4928,11 +5433,12 @@ def create_app(
         rehydrate_jobs(registry, state.config)
         # The registry already dedupes archived vs this-process terminal jobs:
         # a job finished in this process is one entry, and startup rehydrate
-        # never overwrites a live registry entry.
+        # never overwrites a live registry entry. A user sees only its own.
+        caller = _caller(request)
         jobs = [
             job
             for job in registry.jobs.values()
-            if job.status != "running" and not job_expired(job)
+            if job.status != "running" and not job_expired(job) and caller.sees(job)
         ]
 
         def entry(job: Job) -> dict[str, Any]:
@@ -4974,13 +5480,17 @@ def create_app(
 
     @app.get("/api/history/archive")
     async def get_history_archive(request: Request) -> FileResponse:
-        """Download every completed job, including rehydrated history."""
+        """Download every completed job, including rehydrated history.
+
+        A user's archive holds only its own jobs.
+        """
         registry = _state(request).registry
+        caller = _caller(request)
         jobs = sorted(
             (
                 job
                 for job in registry.jobs.values()
-                if job.status != "running" and not job_expired(job)
+                if job.status != "running" and not job_expired(job) and caller.sees(job)
             ),
             key=lambda job: _created_instant(job.created_at),
         )
@@ -5025,8 +5535,62 @@ def create_app(
             background=BackgroundTask(archive_path.unlink, missing_ok=True),
         )
 
+    @app.post("/api/history/delete", response_model=BatchDeleteResult)
+    async def delete_history_batch(request: Request) -> JSONResponse:
+        """Delete several jobs and items in one request (contract v1.13 §6.8).
+
+        Body exactly ``{jobs?: [job_id], items?: [{job_id, item_id}]}``, 1 to
+        1000 entries in all. Each entry, in order (``jobs``, then ``items``),
+        does exactly what ``DELETE /api/history/{job_id}`` or ``DELETE
+        /api/jobs/{job_id}/items/{item_id}`` does, a user's only on its own
+        jobs; nothing is rolled back. 200 with every entry's outcome.
+        """
+        content_type = request.headers.get("content-type", "")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > _BATCH_DELETE_BODY_LIMIT:
+                raise ApiError(413, "request_too_large", "request exceeds 256 KiB")
+        if content_type.split(";", 1)[0].strip().lower() != "application/json":
+            raise ApiError(
+                422, "json_required", "a batch deletion must use application/json"
+            )
+        try:
+            body = json.loads(bytes(data))
+        except ValueError:
+            raise ApiError(
+                422, "invalid_json", "the request is not valid JSON"
+            ) from None
+        entries = _delete_entries(body)
+        results: list[dict[str, Any]] = []
+        for job_id, item_id in entries:
+            result: dict[str, Any] = {"job_id": job_id, "item_id": item_id}
+            try:
+                if item_id is None:
+                    await _delete_job(request, job_id)
+                else:
+                    await _delete_item(request, job_id, item_id)
+            except ApiError as e:
+                result.update(ok=False, reason=e.reason, detail=e.detail)
+            else:
+                result["ok"] = True
+            results.append(result)
+        deleted = sum(result["ok"] for result in results)
+        return JSONResponse(
+            {
+                "deleted": deleted,
+                "failed": len(results) - deleted,
+                "results": results,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.delete("/api/history/{job_id}", status_code=204)
     async def delete_history_job(request: Request, job_id: str) -> None:
+        await _delete_job(request, job_id)
+
+    async def _delete_job(request: Request, job_id: str) -> None:
+        """``DELETE /api/history/{job_id}``'s work (also batched)."""
         registry = _state(request).registry
         job = _get_job(request, job_id)
         async with job.delete_lock:

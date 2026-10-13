@@ -103,6 +103,11 @@ SHAPES: dict[str, dict[str, F]] = {
         "limits": F("@Limits"),
         "remote_services": opt("@RemoteServices", nullable=False),
         "features": opt("@Features", nullable=False),
+        "access": opt("@Access", nullable=False),
+    },
+    "Access": {
+        "role": F(frozenset({"admin", "user"})),
+        "label": opt("str"),
     },
     "CapabilitiesLLM": {
         "configured": opt("bool", nullable=False),
@@ -143,6 +148,9 @@ SHAPES: dict[str, dict[str, F]] = {
             "item_assets",
             "item_archive",
             "token_regenerate",
+            "user_tokens",
+            "config_edit",
+            "batch_delete",
         )
     },
     "PresetFeatures": {
@@ -243,6 +251,55 @@ SHAPES: dict[str, dict[str, F]] = {
         "network_url": null("str"),
         "persistent": F("bool"),
         "startup_variable": null("str"),
+    },
+    "AccessToken": {
+        "id": F("str"),
+        "label": F("str"),
+        "hint": F("str"),
+        "created_at": F("str"),
+        "last_used_at": null("str"),
+    },
+    "AccessTokenList": {"tokens": F(["@AccessToken"])},
+    "CreatedAccessToken": {
+        "id": F("str"),
+        "label": F("str"),
+        "hint": F("str"),
+        "created_at": F("str"),
+        "last_used_at": null("str"),
+        "token": F("str"),
+    },
+    "BatchDeleteEntry": {
+        "job_id": F("str"),
+        "item_id": null("str"),
+        "ok": F("bool"),
+        "reason": opt("str"),
+        "detail": opt("str"),
+    },
+    "BatchDeleteResult": {
+        "deleted": F("int"),
+        "failed": F("int"),
+        "results": F(["@BatchDeleteEntry"]),
+    },
+    "ConfigDocument": {
+        "path": F("str"),
+        "origin": F("str"),
+        "exists": F("bool"),
+        "revision": F("str"),
+        "text": null("str"),
+        "masked": F("int"),
+        "problem": null("str"),
+        "read_only": F("bool"),
+    },
+    "SavedConfigDocument": {
+        "path": F("str"),
+        "origin": F("str"),
+        "exists": F("bool"),
+        "revision": F("str"),
+        "text": null("str"),
+        "masked": F("int"),
+        "problem": null("str"),
+        "read_only": F("bool"),
+        "restart_required": F("bool"),
     },
     "PageBox": {"width": F("num"), "height": F("num")},
     "OriginalDescriptor": {
@@ -668,8 +725,10 @@ class TestCapabilities:
         assert data["implementation"] == "python"
         assert data["docs_url"].startswith("https://")
         assert data["source_url"] == "https://github.com/Ynewtime/markitai"
-        # Without a token (--no-auth) there is none to regenerate
+        # Without a token (--no-auth) there is none to regenerate, and no
+        # user tokens
         assert data["features"].pop("token_regenerate") is False
+        assert data["features"].pop("user_tokens") is False
         assert all(data["features"].values())
         assert data["limits"]["history_retention_days"] == 7
         for preset in data["presets"]:

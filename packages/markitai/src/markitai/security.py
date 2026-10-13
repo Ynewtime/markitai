@@ -189,6 +189,48 @@ def atomic_write_text(
         raise
 
 
+def atomic_write_bytes(
+    path: Path,
+    data: bytes,
+    *,
+    private: bool = False,
+    before_replace: Callable[[], None] | None = None,
+) -> None:
+    """Write *data* to *path* exactly (no newline translation), atomically.
+
+    Staged in a temp file beside *path*, then renamed over it.
+    *before_replace* runs after the data is staged and before the rename; an
+    exception from it leaves *path* untouched (a last race check).
+    """
+    path = Path(path)
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(suffix=".tmp", prefix=f".{path.name}.", dir=parent)
+    fd_closed = False
+    try:
+        _apply_mode(tmp_path, path, private)
+        with os.fdopen(fd, "wb") as f:
+            fd_closed = True  # fdopen takes ownership of fd
+            f.write(data)
+        if before_replace is not None:
+            before_replace()
+        _replace_with_retry(tmp_path, path)
+    except BaseException:
+        if not fd_closed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        for _ in range(_WINDOWS_RETRY_COUNT if sys.platform == "win32" else 1):
+            try:
+                os.unlink(tmp_path)
+                break
+            except OSError:
+                if sys.platform == "win32":
+                    time.sleep(_WINDOWS_RETRY_DELAY)
+        raise
+
+
 def atomic_write_json(
     path: Path,
     obj: Any,
