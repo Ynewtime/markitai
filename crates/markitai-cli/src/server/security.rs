@@ -15,7 +15,57 @@ use std::{
 #[derive(Clone, Copy)]
 pub(super) struct Trusted(pub bool);
 
-fn equal_secret(left: &[u8], right: &[u8]) -> bool {
+/// Who an API request acts for, resolved once by [`guard`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Principal {
+    /// The server token, or a loopback client of a `--no-auth` server.
+    Admin,
+    /// A user token created in the workbench.
+    User { id: String, label: String },
+    /// A client of a `--no-auth` server that is not loopback.
+    Anonymous,
+}
+
+impl Principal {
+    /// The user token's id, for a user.
+    pub(super) fn user(&self) -> Option<&str> {
+        match self {
+            Self::User { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+    /// Whether this caller may see `job`: a user sees only its own jobs.
+    pub(super) fn sees(&self, job: &super::jobs::Job) -> bool {
+        self.user()
+            .is_none_or(|id| job.owner.as_deref() == Some(id))
+    }
+    /// The registered job `id` if this caller may see it, else `job_not_found`.
+    pub(super) fn job(&self, state: &State, id: &str) -> ApiResult<Arc<super::jobs::Job>> {
+        let job = super::jobs::get(state, id)?;
+        if self.sees(&job) {
+            Ok(job)
+        } else {
+            Err(super::jobs::not_found())
+        }
+    }
+}
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Principal {
+    type Rejection = std::convert::Infallible;
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _: &S,
+    ) -> Result<Self, Self::Rejection> {
+        // The guard always sets it; without the guard nothing is restricted.
+        Ok(parts
+            .extensions
+            .get::<Self>()
+            .cloned()
+            .unwrap_or(Self::Anonymous))
+    }
+}
+
+pub(super) fn equal_secret(left: &[u8], right: &[u8]) -> bool {
     let mut difference = left.len() ^ right.len();
     for (index, byte) in right.iter().enumerate() {
         difference |= usize::from(left.get(index).copied().unwrap_or(0) ^ byte);
@@ -76,7 +126,7 @@ pub(super) async fn guard(
     request: Request,
     next: Next,
 ) -> Response {
-    let private = settings_path(request.uri().path()) || request.uri().path() == REGENERATE;
+    let private = admin_path(request.uri().path());
     let mut response = guard_inner(state, request, next).await;
     if private {
         response.headers_mut().insert(
@@ -87,12 +137,34 @@ pub(super) async fn guard(
     response
 }
 
+/// Every settings route, present or future.
 fn settings_path(path: &str) -> bool {
-    path == "/api/settings/llm" || path.starts_with("/api/settings/llm/")
+    path == "/api/settings" || path.starts_with("/api/settings/")
 }
 
-/// The route that replaces the access token; trusted like the settings.
+/// The route that replaces the access token; admin only like the settings.
 const REGENERATE: &str = "/api/access-token/regenerate";
+
+/// The user-token routes; admin only like the settings.
+fn tokens_path(path: &str) -> bool {
+    path == "/api/access-tokens" || path.starts_with("/api/access-tokens/")
+}
+
+/// Routes only an admin may use.
+fn admin_path(path: &str) -> bool {
+    settings_path(path) || path == REGENERATE || tokens_path(path)
+}
+
+/// The job a route names in its path: `/api/jobs/{job_id}…`, and
+/// `DELETE /api/history/{job_id}`, as the raw segment. Job ids are 12
+/// lowercase hex digits, so a percent-encoded segment never names a job.
+fn path_job<'a>(method: &axum::http::Method, path: &'a str) -> Option<&'a str> {
+    if let Some(rest) = path.strip_prefix("/api/jobs/") {
+        return Some(rest.split('/').next().unwrap_or(rest));
+    }
+    let rest = path.strip_prefix("/api/history/")?;
+    (method == axum::http::Method::DELETE && !rest.contains('/')).then_some(rest)
+}
 
 /// A fresh access token: 64 hexadecimal characters from two random UUIDs.
 pub(super) fn new_token() -> String {
@@ -111,7 +183,7 @@ pub(super) async fn regenerate(
     ExtractState(state): ExtractState<Arc<State>>,
     request: Request,
 ) -> ApiResult<Response> {
-    let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
+    let admin = request.extensions().get::<Principal>() == Some(&Principal::Admin);
     let bytes = axum::body::to_bytes(request.into_body(), 1024)
         .await
         .map_err(|_| ApiError::new(413, "request_too_large", "request exceeds 1 KiB"))?;
@@ -123,7 +195,7 @@ pub(super) async fn regenerate(
     if !state.auth_enabled() {
         return Err(token_disabled());
     }
-    if !trusted {
+    if !admin {
         return Err(settings_forbidden());
     }
     if !empty {
@@ -219,36 +291,57 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
     };
     let query = parameter("token");
     let token = state.token();
-    let mut authenticated = token.as_ref().is_some_and(|token| {
-        [header.as_deref(), query.as_deref()]
-            .into_iter()
-            .flatten()
+    let presented: Vec<&str> = [header.as_deref(), query.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect();
+    // The admin token first, then the stored user-token digests. Without an
+    // admin token (`--no-auth`) there are no tokens at all.
+    let mut principal = token.as_ref().and_then(|token| {
+        if presented
+            .iter()
             .any(|value| equal_secret(value.as_bytes(), token.as_bytes()))
+        {
+            return Some(Principal::Admin);
+        }
+        presented.iter().find_map(|value| {
+            state
+                .access
+                .authenticate(value)
+                .map(|(id, label)| Principal::User { id, label })
+        })
     });
     let api = request.uri().path().starts_with("/api/");
     // A download ticket stands in for the token on exactly one GET of the path
-    // it was issued for (see `tickets`); any other use spends it for nothing.
+    // it was issued for (see `tickets`), for the caller it was issued to; any
+    // other use spends it for nothing.
     if api
         && token.is_some()
-        && !authenticated
+        && principal.is_none()
         && let Some(ticket) = parameter("ticket")
     {
         let redeemed =
             state
                 .tickets
                 .redeem(&ticket, request.uri().path(), std::time::Instant::now());
-        if redeemed && request.method() == axum::http::Method::GET {
-            authenticated = true;
-        } else {
-            return ApiError::new(
-                401,
-                "ticket_invalid",
-                "download ticket is invalid, expired, already used or issued for another path",
-            )
-            .into_response();
+        match redeemed {
+            Some(issuer)
+                if request.method() == axum::http::Method::GET
+                    && issuer.user().is_none_or(|id| state.access.exists(id)) =>
+            {
+                principal = Some(issuer);
+            }
+            _ => {
+                return ApiError::new(
+                    401,
+                    "ticket_invalid",
+                    "download ticket is invalid, expired, already used or issued for another path",
+                )
+                .into_response();
+            }
         }
     }
-    if api && token.is_some() && !authenticated {
+    if api && token.is_some() && principal.is_none() {
         return ApiError::new(
             401,
             "token_required",
@@ -290,10 +383,22 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
             .into_response();
         }
     }
-    let trusted = authenticated || (token.is_none() && loopback);
+    let principal = principal.unwrap_or(if token.is_none() && loopback {
+        Principal::Admin
+    } else {
+        Principal::Anonymous
+    });
+    let trusted = principal != Principal::Anonymous;
     let path = request.uri().path();
-    if (settings_path(path) || path == REGENERATE) && !trusted {
+    if admin_path(path) && principal != Principal::Admin {
         return settings_forbidden().into_response();
+    }
+    // A user sees only its own jobs; any other is not there for it.
+    if principal.user().is_some()
+        && let Some(id) = path_job(request.method(), path)
+        && principal.job(&state, id).is_err()
+    {
+        return super::jobs::not_found().into_response();
     }
     if request
         .headers()
@@ -306,6 +411,7 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
             .into_response();
     }
     request.extensions_mut().insert(Trusted(trusted));
+    request.extensions_mut().insert(principal);
     next.run(request).await
 }
 
@@ -378,6 +484,7 @@ mod router_tests {
             allowed_hosts: HashSet::from(["trusted.example".into()]),
             tickets: Default::default(),
             previews: Default::default(),
+            access: super::super::access::Access::load(root.join("access.json")),
         });
         Router::new()
             .route(
@@ -529,7 +636,8 @@ mod router_tests {
         let response = open.oneshot(invalid_host).await.unwrap();
         assert_eq!(response.status().as_u16(), 400);
         assert_eq!(response.headers()["cache-control"], "no-store");
-        assert!(!settings_path("/api/settings/llm-other"));
+        assert!(!settings_path("/api/settings-other"));
+        assert!(settings_path("/api/settings/config"));
     }
 
     #[tokio::test]

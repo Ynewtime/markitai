@@ -159,7 +159,7 @@ impl Drop for Server {
     }
 }
 
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; font-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: https:; font-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 fn security_headers(headers: &HashMap<String, String>, path: &str) {
     assert_eq!(headers["cache-control"], "no-cache", "{path}");
@@ -174,7 +174,7 @@ fn the_workbench_shell_is_served_at_home_and_workspace_addresses() {
     let directory = tempfile::tempdir().unwrap();
     let server = Server::start(directory.path());
     let index = include_bytes!("../src/server/web/dist/index.html").as_slice();
-    for path in ["/", "/jobs"] {
+    for path in ["/", "/jobs", "/settings/access", "/settings/config"] {
         let (status, headers, html) = server.request("GET", path, None);
         assert_eq!(status, 200, "{path}");
         assert_eq!(headers["content-type"], "text/html; charset=utf-8");

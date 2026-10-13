@@ -1589,3 +1589,224 @@ fn a_python_keyless_placeholder_reads_as_no_key() {
     assert_eq!(credentials["api_key_masked"], Value::Null);
     assert_eq!(credentials["api_key_source"], Value::Null);
 }
+
+fn edit_fixture() -> Value {
+    let mut value = fixture();
+    value["fetch"] = json!({"playwright":{"extra_http_headers":{"X-Trace":"trace-header-value"}},
+        "cloudflare":{"api_token":"env:FIXTURE_TOKEN"}});
+    value["batch"] = json!({"concurrency":2});
+    value
+}
+fn refused(result: ApiResult<Value>) -> (u16, &'static str, String) {
+    let error = result.err().unwrap();
+    (error.status.as_u16(), error.reason, error.detail)
+}
+#[test]
+fn config_edit_masks_secrets_and_a_round_trip_keeps_them() {
+    let (_dir, store) = setup(edit_fixture());
+    let view = ok(store.config_view());
+    let text = view["text"].as_str().unwrap().to_owned();
+    for secret in [
+        "fixture-secret",
+        "user:pass",
+        "hidden",
+        "trace-header-value",
+    ] {
+        assert!(!text.contains(secret), "{secret} in {text}");
+    }
+    // The key, the address and the header; the env: reference stays.
+    assert_eq!(view["masked"], 3);
+    assert!(text.contains("env:FIXTURE_TOKEN"));
+    assert!(text.ends_with('}'));
+    assert_eq!(
+        (
+            view["exists"].clone(),
+            view["origin"].clone(),
+            view["read_only"].clone()
+        ),
+        (json!(true), json!("explicit"), json!(false))
+    );
+    let revision = view["revision"].as_str().unwrap().to_owned();
+    assert!(revision.starts_with("sha256:") && revision.len() == 71);
+
+    // Unchanged masked values come back; a changed batch needs a restart.
+    let mut edited: Value = serde_json::from_str(&text).unwrap();
+    edited["batch"]["concurrency"] = json!(3);
+    let answer = ok(store.replace_config(&revision, &edited.to_string()));
+    assert_eq!(answer["restart_required"], true);
+    let mut expected = edit_fixture();
+    expected["batch"]["concurrency"] = json!(3);
+    assert_eq!(saved(&store), expected);
+    assert_ne!(answer["revision"], json!(revision));
+    assert_eq!(answer["masked"], 3);
+
+    // A model change alone applies at once and needs no restart.
+    let mut edited: Value = serde_json::from_str(answer["text"].as_str().unwrap()).unwrap();
+    edited["llm"]["model_list"][0]["litellm_params"]["model"] = json!("openai/edited");
+    edited["llm"]["model_list"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"model_name":"second","litellm_params":{"model":"openai/second","api_key":"second-secret-value"}}));
+    let answer =
+        ok(store.replace_config(answer["revision"].as_str().unwrap(), &edited.to_string()));
+    assert_eq!(answer["restart_required"], false);
+    assert_eq!(answer["masked"], 4);
+    let models: Vec<_> = store.view()["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["model"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(models, ["openai/edited", "openai/second"]);
+    assert_eq!(
+        store.snapshot()["llm"]["model_list"][1]["litellm_params"]["api_key"],
+        "second-secret-value"
+    );
+    let raw = saved(&store);
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_key"],
+        "fixture-secret"
+    );
+    assert_eq!(
+        raw["llm"]["model_list"][0]["litellm_params"]["api_base"],
+        "https://user:pass@example.test/custom?token=hidden"
+    );
+    assert_eq!(
+        store.view()["revision"],
+        json!(identity::revision(
+            raw["llm"]["model_list"].as_array().unwrap(),
+            &[]
+        ))
+    );
+}
+#[test]
+fn config_edit_refuses_stale_invalid_and_moved_masked_text() {
+    let (_dir, store) = setup(edit_fixture());
+    let view = ok(store.config_view());
+    let revision = view["revision"].as_str().unwrap().to_owned();
+    let text = view["text"].as_str().unwrap().to_owned();
+    let original = fs::read(&store.source.path).unwrap();
+    assert_eq!(
+        refused(store.replace_config("sha256:0", &text)).1,
+        "stale_revision"
+    );
+    let (status, reason, detail) = refused(store.replace_config(&revision, "{\n  \"a\": 1,\n}"));
+    assert_eq!((status, reason), (422, "invalid_config"));
+    assert!(detail.starts_with("line 3, column 1: "), "{detail}");
+    assert_eq!(
+        refused(store.replace_config(&revision, "[]")).2,
+        "the configuration must be a JSON object"
+    );
+    let (status, reason, detail) =
+        refused(store.replace_config(&revision, r#"{"batch":{"concurrency":0}}"#));
+    assert_eq!((status, reason), (422, "invalid_config"));
+    assert!(detail.contains("concurrency"), "{detail}");
+    let (status, reason, detail) =
+        refused(store.replace_config(&revision, r#"{"llm":{"model_list":[{"model_name":"x"}]}}"#));
+    assert_eq!((status, reason), (422, "invalid_config"), "{detail}");
+    let mut moved: Value = serde_json::from_str(&text).unwrap();
+    moved["fetch"]["cloudflare"]["api_token"] =
+        moved["llm"]["model_list"][0]["litellm_params"]["api_key"].clone();
+    assert_eq!(
+        refused(store.replace_config(&revision, &moved.to_string())).2,
+        "/fetch/cloudflare/api_token: a masked value can only be kept where it was; type the full value or an env: reference"
+    );
+    assert_eq!(fs::read(&store.source.path).unwrap(), original);
+    assert_eq!(current(&store), store.view()["revision"].as_str().unwrap());
+}
+#[test]
+fn config_edit_is_refused_under_session_overrides_and_handles_missing_or_broken_files() {
+    let (dir, store) = setup(edit_fixture());
+    let blocked = Store::new(
+        store.snapshot().as_ref().clone(),
+        SettingsSource {
+            path: store.source.path.clone(),
+            origin: "explicit".into(),
+            overrides: Some(json!({"llm":{"model_list":[]}})),
+        },
+    )
+    .unwrap_or_else(|e| panic!("{}", e.detail));
+    let view = ok(blocked.config_view());
+    assert_eq!(view["read_only"], true);
+    assert_eq!(
+        refused(blocked.replace_config(view["revision"].as_str().unwrap(), "{}")).1,
+        "settings_read_only"
+    );
+    // No file: an empty document, created by the first save.
+    let absent = Store::new(
+        markitai_core::config::normalize(&json!({})).unwrap(),
+        SettingsSource {
+            path: dir.path().join("new/config.json"),
+            origin: "default".into(),
+            overrides: None,
+        },
+    )
+    .unwrap_or_else(|e| panic!("{}", e.detail));
+    let view = ok(absent.config_view());
+    assert_eq!(
+        (
+            view["exists"].clone(),
+            view["revision"].clone(),
+            view["text"].clone()
+        ),
+        (json!(false), json!("absent"), json!("{}\n"))
+    );
+    let answer = ok(absent.replace_config("absent", r#"{"batch":{"concurrency":4}}"#));
+    assert_eq!(answer["exists"], true);
+    assert_eq!(answer["restart_required"], true);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("new/config.json")).unwrap(),
+        r#"{"batch":{"concurrency":4}}"#
+    );
+    // A broken file is shown as a problem and can be replaced.
+    fs::write(&store.source.path, "{\"llm\": ").unwrap();
+    let view = ok(store.config_view());
+    assert_eq!(view["text"], Value::Null);
+    assert!(
+        view["problem"]
+            .as_str()
+            .unwrap()
+            .starts_with("line 1, column 8: ")
+    );
+    let answer = ok(store.replace_config(view["revision"].as_str().unwrap(), "{}"));
+    assert_eq!(answer["restart_required"], true);
+    assert_eq!(answer["text"], "{}");
+}
+#[test]
+fn config_edit_keeps_the_files_own_layout_and_saves_exactly_what_was_sent() {
+    // Keys out of order, tabs, odd spacing and no trailing newline.
+    let file = "{\n\t\"llm\" : {\"model_list\":[ {\"model_name\":\"default\",\n\t\t\"litellm_params\":{\"model\":\"openai/first\",  \"api_key\":\"layout-secret-0001\"}} ],\n\t\"enabled\":false},\n  \"batch\":{ \"concurrency\" : 2 },\n\"fetch\":{\"playwright\":{\"extra_http_headers\":{\"X-Trace\":\"layout-header-value\"}}}}";
+    let (_dir, store) = setup(json!({}));
+    fs::write(&store.source.path, file).unwrap();
+    let view = ok(store.config_view());
+    let text = view["text"].as_str().unwrap().to_owned();
+    assert_eq!(
+        text,
+        file.replace("\"layout-secret-0001\"", "\"la\u{2026}0001\"")
+            .replace("\"layout-header-value\"", "\"la\u{2026}alue\"")
+    );
+    assert_eq!(view["masked"], 2);
+    // The user changes the batch and adds a model in their own layout.
+    let sent = text.replace("\"concurrency\" : 2", "\"concurrency\" : 3").replace(
+        "} ],",
+        "},\n\t\t{\"model_name\":\"default\",\"litellm_params\":{\"model\":\"openai/second\"}} ],",
+    );
+    let answer = ok(store.replace_config(view["revision"].as_str().unwrap(), &sent));
+    let expected = sent
+        .replace("\"la\u{2026}0001\"", "\"layout-secret-0001\"")
+        .replace("\"la\u{2026}alue\"", "\"layout-header-value\"");
+    assert_eq!(fs::read_to_string(&store.source.path).unwrap(), expected);
+    assert_eq!(answer["restart_required"], true);
+    assert_eq!(answer["text"], json!(sent));
+    assert_eq!(
+        answer["revision"],
+        json!(editor::revision(Some(expected.as_bytes())))
+    );
+    let models: Vec<_> = store.view()["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["model"].clone())
+        .collect();
+    assert_eq!(models, [json!("openai/first"), json!("openai/second")]);
+}

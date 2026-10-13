@@ -661,10 +661,11 @@ pub(super) async fn job_archive(
 }
 pub(super) async fn history_archive(
     ExtractState(state): ExtractState<Arc<State>>,
+    principal: super::security::Principal,
 ) -> ApiResult<Response> {
     http::refresh(&state).await?;
     let mut jobs = http::registered_jobs(&state);
-    jobs.retain(|job| job.data.lock().unwrap().status == "done");
+    jobs.retain(|job| principal.sees(job) && job.data.lock().unwrap().status == "done");
     crate::sort::by_key(&mut jobs, |job| {
         super::types::instant(&job.data.lock().unwrap().created_at)
     });

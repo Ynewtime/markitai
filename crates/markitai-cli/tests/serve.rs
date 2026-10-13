@@ -1111,3 +1111,6 @@ mod assets;
 
 #[path = "serve/token.rs"]
 mod token;
+
+#[path = "serve/access.rs"]
+mod access;

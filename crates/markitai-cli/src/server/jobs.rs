@@ -33,6 +33,9 @@ pub(super) struct JobData {
     pub transactions: Vec<String>,
     /// What the submission is called in the history list, if it was named.
     pub label: Option<String>,
+    /// The user token that created the job; `None` for an admin's, an
+    /// anonymous caller's or an older job. Never sent by the API.
+    pub owner: Option<String>,
 }
 impl JobData {
     pub fn progress(&self) -> Value {
@@ -191,12 +194,15 @@ pub(super) struct Job {
     pub events: broadcast::Sender<(&'static str, Value)>,
     /// Set by a stop request; original items still waiting for a slot are not dispatched.
     pub stop: watch::Sender<bool>,
+    /// `JobData::owner`, which never changes.
+    pub owner: Option<String>,
 }
 impl Job {
     pub fn new(folder: PathBuf, data: JobData) -> Self {
         let (events, _) = broadcast::channel(128);
         let (stop, _) = watch::channel(false);
         Self {
+            owner: data.owner.clone(),
             folder,
             data: Mutex::new(data),
             access: Mutex::new(()),
@@ -268,7 +274,11 @@ pub(super) fn reserve_outputs(items: &[Item]) -> HashMap<String, String> {
 pub(super) fn get(state: &State, id: &str) -> ApiResult<Arc<Job>> {
     let job = state.jobs.lock().unwrap().get(id).cloned();
     job.filter(|job| !super::retention::expired(job, std::time::SystemTime::now()))
-        .ok_or_else(|| ApiError::new(404, "job_not_found", "job not found"))
+        .ok_or_else(not_found)
+}
+/// A job that does not exist, or that the caller may not see.
+pub(super) fn not_found() -> ApiError {
+    ApiError::new(404, "job_not_found", "job not found")
 }
 
 async fn convert_one(
@@ -525,6 +535,7 @@ mod pricing_tests {
             item_options: HashMap::new(),
             transactions: Vec::new(),
             label: None,
+            owner: None,
         };
         let history = data.history();
         assert_eq!(history["cost_usd"], 0.5);
@@ -553,6 +564,7 @@ mod pricing_tests {
             item_options: HashMap::new(),
             transactions: Vec::new(),
             label: None,
+            owner: None,
         }
     }
     #[test]

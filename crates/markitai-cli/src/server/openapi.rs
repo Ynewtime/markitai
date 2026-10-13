@@ -176,6 +176,7 @@ mod tests {
             .map(|value| value.as_str().unwrap())
             .collect();
         let sources = [
+            include_str!("access.rs"),
             include_str!("http.rs"),
             include_str!("files.rs"),
             include_str!("jobs.rs"),
@@ -187,6 +188,7 @@ mod tests {
             include_str!("types.rs"),
             include_str!("providers.rs"),
             include_str!("settings.rs"),
+            include_str!("settings/editor.rs"),
             include_str!("settings/handlers.rs"),
             include_str!("settings/identity.rs"),
             include_str!("settings/model.rs"),
@@ -274,7 +276,13 @@ mod tests {
             .map(|value| value.as_str().unwrap())
             .collect();
         assert_eq!(properties, required);
-        for feature in ["item_archive", "token_regenerate"] {
+        for feature in [
+            "item_archive",
+            "token_regenerate",
+            "user_tokens",
+            "config_edit",
+            "batch_delete",
+        ] {
             assert!(properties.contains(feature), "{feature}");
         }
     }

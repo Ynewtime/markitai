@@ -39,8 +39,11 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    the seven-day history retention (`limits`), and, for clients shared with other
    backends, `implementation: "rust"`, `docs_url`, `source_url` and `features` (`cancel`,
    `download_tickets`, `url_lists`, `history_items`, `original`,
-   `result_excerpt`, `job_labels`, `item_assets`, `item_archive`, all true, and
-   `token_regenerate`, true unless `--no-auth`).
+   `result_excerpt`, `job_labels`, `item_assets`, `item_archive`, `config_edit`,
+   `batch_delete`, all true, and `token_regenerate` and `user_tokens`, true unless
+   `--no-auth`), and `access`: `{"role": "admin"}` for the server token (or a
+   loopback client with `--no-auth`), `{"role": "user", "label": …}` for a user
+   token, `{"role": "user"}` for another `--no-auth` client.
 2. `POST /api/jobs` accepts form fields `urls` (a JSON array), `options` (a JSON
    object) and `label`, plus repeated multipart `files`. `label` names the
    submission in history (a folder or `.urls` file name): plain text without
@@ -146,15 +149,18 @@ pixels; at most 2,000), `page_count`, `text_layer` (PDF only) and, for `html`,
 kept bytes with one insertion after `<head>` (else `<html>`, else the start),
 `<meta http-equiv="x-dns-prefetch-control" content="off">` and
 `<base href="<the item's URL>" target="_blank">` (an upload gets no `href`),
-under `Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox;
+under `Content-Security-Policy: sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox;
 default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline';
 font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'`,
 with `nosniff`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off` and
-`Cache-Control: no-store`: it runs no script and sends no form, loads only the
-site's pictures, style sheets, fonts and media over HTTPS (relative addresses
-resolve to the site through the `<base>`), sends no referrer, has no origin of
-its own (the sandbox withholds `allow-same-origin`), so nothing in it reaches the
-service, and only this service's own pages may frame it. Other kinds are 404
+`Cache-Control: no-store`: it runs no script (there is no `allow-scripts` and no
+`script-src`, so `default-src 'none'` refuses every script, inline handler and
+`javascript:` URL) and sends no form, loads only the site's pictures, style
+sheets, fonts and media over HTTPS (relative addresses resolve to the site
+through the `<base>`), sends no referrer, and only this service's own pages may
+frame it. The frame keeps the service's origin (`allow-same-origin`) so the
+workbench can read the page it shows; since nothing in it can run, nothing in it
+reaches the service. The page is sent as kept, not rewritten. Other kinds are 404
 `original_unavailable`, a page over 10 MiB 413 `result_too_large`. It is opened
 with a download ticket, since a frame cannot send the header; the static pages'
 policy allows `frame-src 'self'` for it.
@@ -432,6 +438,19 @@ whole job. Deleting while any job work runs returns 409; repeated deletion retur
 references and bounded converter filename suffixes. Arbitrary filename substrings
 do not grant ownership.
 
+`POST /api/history/delete` deletes several saved jobs and items in one request:
+a JSON body `{"jobs": [job_id, …], "items": [{"job_id", "item_id"}, …]}` with
+only those keys and 1 to 1,000 entries in all (else 422
+`invalid_delete_request`; not JSON 422 `json_required` or `invalid_json`; over
+256 KiB 413 `request_too_large`). Each entry is handled on its own, in order
+(jobs, then items), exactly as `DELETE /api/history/{job_id}` and
+`DELETE /api/jobs/{job_id}/items/{item_id}` would (deleting a job's last item
+deletes the job), and the answer is 200 `{"deleted", "failed", "results"}` with
+one `{job_id, item_id, ok, reason?, detail?}` per entry in that order (`item_id`
+null for a job; `reason` and `detail` are what the single route would answer,
+such as `job_not_found`, `item_not_found` or `job_running`). Deletion is final;
+entries that succeeded are not rolled back when others fail.
+
 ## History and persistence
 
 Only one `serve` process may use a given `MARKITAI_HOME` at a time. A private
@@ -554,10 +573,44 @@ network address with the new token when the server listens on all interfaces;
 `startup_variable` is `MARKITAI_SERVE_TOKEN` when that set the token) and prints
 `Access token regenerated from the web workbench; other tabs and devices must
 sign in again.` The new token lives in memory: a restart uses
-`MARKITAI_SERVE_TOKEN` again, or makes a new one. With `--no-auth` it is 409
-`token_disabled`.
+`MARKITAI_SERVE_TOKEN` again, or makes a new one. User tokens are kept. With
+`--no-auth` it is 409 `token_disabled`.
 
-All model settings endpoints require the token by default. With `--no-auth`,
+### Access levels and user tokens
+
+The server token is the **admin** token. An admin can create **user** tokens in
+the workbench (Settings → Access token) for other people or devices:
+`POST /api/access-tokens` with `{"label": …}` (trimmed, 1 to 60 characters
+without control characters, else 422 `invalid_label`; at most 50 tokens, else 409
+`token_limit`) answers 201 `{"id", "label", "hint", "created_at",
+"last_used_at": null, "token"}`, the only answer that ever carries the token
+(`mku_` and 64 hex characters; `hint` is its last four). `GET /api/access-tokens`
+lists `{"tokens": [{"id", "label", "hint", "created_at", "last_used_at"}]}`,
+oldest first, and `DELETE /api/access-tokens/{id}` revokes one at once (204;
+unknown 404 `token_not_found`): its next request is 401 `token_required`, its
+download tickets are refused and its open event streams end. The server prints
+`Access token "<label>" created from the web workbench.` or `… revoked …`, never
+the token. These routes, `POST /api/access-token/regenerate` and every
+`/api/settings/` route are admin only: a user token gets 403
+`settings_forbidden`; with `--no-auth` there are no tokens and the token routes
+answer 409 `token_disabled`. All their answers carry `Cache-Control: no-store`.
+
+A user token reaches every other route, URL conversion included, but sees only
+the jobs it created: any other job is 404 `job_not_found` on every job route,
+in `DELETE /api/history/{job_id}`, a batch deletion and a download-ticket
+request, and `GET /api/history` (with or without `include=items`) and the
+history archive list only its own jobs. Admins see every job; a revoked user's
+jobs stay, for admins. The job's owner is saved in its `meta.json` and never
+sent by the API.
+
+Only each user token's SHA-256 is kept, in `MARKITAI_HOME/serve/access.json`
+(`{"version": 1, "tokens": [{"id", "label", "sha256", "hint", "created_at"}]}`,
+owner-only, replaced atomically), so user tokens survive restarts and admin-token
+regeneration; `last_used_at` is kept in memory only. A file that cannot be read
+is left alone (with one warning, and no user token works) until an admin creates
+or revokes a token.
+
+All settings endpoints require the admin token by default. With `--no-auth`,
 only direct loopback peers without forwarding headers can access settings. Every settings response, including rejected requests,
 carries `Cache-Control: no-store`. Static UI bootstrap remains accessible under
 the Host policy so a remote user can enter a service token. Browser launch places

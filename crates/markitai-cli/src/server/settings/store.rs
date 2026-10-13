@@ -1,5 +1,5 @@
 use super::{
-    ApiError, ApiResult, SettingsSource, failure, identity, invalid, missing, model, views,
+    ApiError, ApiResult, SettingsSource, editor, failure, identity, invalid, missing, model, views,
 };
 use serde_json::{Value, json};
 use std::{
@@ -326,13 +326,94 @@ impl Store {
         }
         Ok(self.source.path.clone())
     }
+    /// The configuration file for the Edit config page, secrets masked.
+    pub(super) fn config_view(&self) -> ApiResult<Value> {
+        let _data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let bytes = read(&self.source.path)?;
+        Ok(editor::view(
+            &views::display_path(&self.source),
+            &self.source.origin,
+            bytes.as_deref(),
+            self.read_only,
+        ))
+    }
+    /// Replace the configuration file with `text` (masked values kept in
+    /// place are put back), if the file is still at `expected`; the models
+    /// and providers apply at once, the rest at the next start.
+    pub(super) fn replace_config(&self, expected: &str, text: &str) -> ApiResult<Value> {
+        if self.read_only {
+            return Err(read_only());
+        }
+        let refused = |detail: String| ApiError::new(422, "invalid_config", detail);
+        let mut data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let original = read(&self.source.path)?;
+        let current = editor::revision(original.as_deref());
+        if expected != current {
+            return Err(ApiError::structured(
+                409,
+                "stale_revision",
+                json!({"code":"stale_revision","current_revision":current}),
+            ));
+        }
+        let parsed: Value =
+            serde_json::from_str(text).map_err(|error| refused(editor::position(&error)))?;
+        if !parsed.is_object() {
+            return Err(refused("the configuration must be a JSON object".into()));
+        }
+        // The current file's text when it is a JSON object; `None` otherwise:
+        // then there is nothing to put back.
+        let current_text = match &original {
+            None => None,
+            Some(bytes) => std::str::from_utf8(bytes).ok().filter(|text| {
+                serde_json::from_str::<Value>(text).is_ok_and(|value| value.is_object())
+            }),
+        };
+        let old = match &original {
+            None => Some(json!({})),
+            Some(_) => current_text.and_then(|text| serde_json::from_str::<Value>(text).ok()),
+        };
+        // Saved exactly as sent, with the kept masked literals put back.
+        let saved = editor::unmask(text, current_text).map_err(refused)?;
+        let document: Value = serde_json::from_str(&saved).map_err(|_| failure())?;
+        let mut merged = document.clone();
+        if let Some(overrides) = self.source.overrides.clone() {
+            markitai_core::config::merge(&mut merged, overrides);
+        }
+        let base = markitai_core::config::normalize(&merged)
+            .map_err(|error| refused(error.to_string()))?;
+        // As `Store::new` reads a file.
+        let models = list(&document, "model_list")
+            .unwrap_or_else(|| list(&base, "model_list").unwrap_or_default());
+        let providers = list(&document, "providers")
+            .unwrap_or_else(|| list(&base, "providers").unwrap_or_default());
+        let detected = if models.is_empty() {
+            markitai_core::provider_management::automatic_deployments()
+        } else {
+            Vec::new()
+        };
+        let next = build(&data.cfg, &models, &providers, &detected).map_err(refused)?;
+        let bytes = saved.into_bytes();
+        let durable = save_bytes(&self.source.path, &bytes, original.as_deref())?;
+        data.cfg = Arc::new(next);
+        data.revision = identity::revision(&models, &providers);
+        data.models = models;
+        data.providers = providers;
+        data.detected = detected;
+        if !durable {
+            return Err(durability_unknown());
+        }
+        let mut view = editor::view(
+            &views::display_path(&self.source),
+            &self.source.origin,
+            Some(&bytes),
+            self.read_only,
+        );
+        view["restart_required"] = json!(editor::restart_required(old.as_ref(), &document));
+        Ok(view)
+    }
     pub(super) fn mutate(&self, command: Mutation) -> ApiResult<Value> {
         if self.read_only {
-            return Err(ApiError::new(
-                409,
-                "settings_read_only",
-                "Session model/provider overrides are active; edit the selected configuration file and restart without those overrides",
-            ));
+            return Err(read_only());
         }
         let mut data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let original = read(&self.source.path)?;
@@ -419,14 +500,24 @@ impl Store {
         data.models = models;
         data.providers = providers;
         if !durable {
-            return Err(ApiError::new(
-                500,
-                "settings_durability_unknown",
-                "Configuration was written and activated, but directory durability could not be confirmed; reload settings before another change",
-            ));
+            return Err(durability_unknown());
         }
         Ok(views::payload(&data, &self.source))
     }
+}
+fn read_only() -> ApiError {
+    ApiError::new(
+        409,
+        "settings_read_only",
+        "Session model/provider overrides are active; edit the selected configuration file and restart without those overrides",
+    )
+}
+fn durability_unknown() -> ApiError {
+    ApiError::new(
+        500,
+        "settings_durability_unknown",
+        "Configuration was written and activated, but directory durability could not be confirmed; reload settings before another change",
+    )
 }
 pub(in crate::server) fn load_base(source: &SettingsSource) -> ApiResult<Value> {
     let bytes = read(&source.path)?;
@@ -445,6 +536,16 @@ fn runtime(
     providers: &[Value],
     detected: &[Value],
 ) -> ApiResult<Value> {
+    build(base, models, providers, detected)
+        .map_err(|_| invalid("invalid model/provider configuration"))
+}
+/// `base` with these models and providers in effect; else why not.
+fn build(
+    base: &Value,
+    models: &[Value],
+    providers: &[Value],
+    detected: &[Value],
+) -> Result<Value, String> {
     let mut cfg = base.clone();
     let mut seen = std::collections::HashSet::new();
     let mut effective = Vec::new();
@@ -460,8 +561,7 @@ fn runtime(
     }
     cfg["llm"]["model_list"] = json!(effective);
     cfg["llm"]["providers"] = json!(providers);
-    markitai_core::config::normalize(&cfg)
-        .map_err(|_| invalid("invalid model/provider configuration"))
+    markitai_core::config::normalize(&cfg).map_err(|error| error.to_string())
 }
 fn connection(data: &Data, id: &str, deployment: Option<&str>) -> ApiResult<Value> {
     if id.starts_with("env:") {
@@ -513,6 +613,14 @@ fn save(path: &Path, value: &Value, original: Option<&[u8]>) -> ApiResult<bool> 
         markitai_core::platform::sync_directory,
     )
 }
+fn save_bytes(path: &Path, bytes: &[u8], original: Option<&[u8]>) -> ApiResult<bool> {
+    save_bytes_with_sync(
+        path,
+        bytes,
+        original,
+        markitai_core::platform::sync_directory,
+    )
+}
 fn save_with_sync(
     path: &Path,
     value: &Value,
@@ -521,7 +629,17 @@ fn save_with_sync(
 ) -> ApiResult<bool> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|_| failure())?;
     bytes.push(b'\n');
-    let staged = markitai_core::config::stage_file(path, &bytes).map_err(|error| {
+    save_bytes_with_sync(path, &bytes, original, sync)
+}
+/// Replace the file at `path` with `bytes` if it still holds `original`;
+/// whether the directory is known to be durable.
+fn save_bytes_with_sync(
+    path: &Path,
+    bytes: &[u8],
+    original: Option<&[u8]>,
+    sync: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> ApiResult<bool> {
+    let staged = markitai_core::config::stage_file(path, bytes).map_err(|error| {
         if error.kind() == std::io::ErrorKind::FileTooLarge {
             ApiError::new(422, "config_too_large", "configuration exceeds 8 MiB limit")
         } else {

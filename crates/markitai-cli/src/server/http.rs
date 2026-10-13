@@ -1,7 +1,7 @@
 use super::{
     State,
     jobs::{self, Job, JobData},
-    security::Trusted,
+    security::{Principal, Trusted},
     store,
     types::{
         ApiError, ApiResult, Item, JobOptions, MAX_ITEMS, MAX_LABEL, MAX_UPLOAD, instant, now,
@@ -47,6 +47,12 @@ pub(super) async fn capabilities(
     request: Request,
 ) -> Json<Value> {
     let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
+    // Anonymous callers may not use the settings, so they are users here.
+    let access = match request.extensions().get::<Principal>() {
+        Some(Principal::Admin) => json!({"role":"admin"}),
+        Some(Principal::User { label, .. }) => json!({"role":"user","label":label}),
+        _ => json!({"role":"user"}),
+    };
     let cfg = state.settings.snapshot();
     let llm = markitai_core::llm_capabilities(&cfg);
     // Do not even resolve credentials for an untrusted caller.
@@ -72,9 +78,11 @@ pub(super) async fn capabilities(
         "preset_options":options,
         "extras":{"browser":markitai_core::browser_available(),"svg":true},
         "limits":{"max_job_items":MAX_ITEMS,"history_retention_days":super::retention::DAYS},
+        "access":access,
         "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
             "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
-            "item_archive":true,"token_regenerate":state.auth_enabled()},
+            "item_archive":true,"token_regenerate":state.auth_enabled(),
+            "user_tokens":state.auth_enabled(),"config_edit":true,"batch_delete":true},
     }))
 }
 
@@ -177,6 +185,11 @@ pub(super) async fn create(
         ));
     }
     let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
+    let owner = request
+        .extensions()
+        .get::<Principal>()
+        .and_then(Principal::user)
+        .map(str::to_owned);
     let stage = tempfile::Builder::new()
         .prefix(".upload-")
         .tempdir_in(&state.root)
@@ -402,6 +415,7 @@ pub(super) async fn create(
         item_options,
         transactions: Vec::new(),
         label,
+        owner,
     };
     let publication_state = state.clone();
     let job = crate::task::blocking(move || {
@@ -650,6 +664,7 @@ pub(super) struct HistoryQuery {
 }
 pub(super) async fn history(
     ExtractState(state): ExtractState<Arc<State>>,
+    principal: Principal,
     query: Result<Query<HistoryQuery>, QueryRejection>,
 ) -> ApiResult<Json<Value>> {
     // Anything but `include=items` keeps the plain summaries.
@@ -660,6 +675,7 @@ pub(super) async fn history(
     refresh(&state).await?;
     let mut entries = registered_jobs(&state)
         .iter()
+        .filter(|job| principal.sees(job))
         .filter_map(|job| {
             let data = job.data.lock().unwrap();
             (data.status == "done").then(|| {
@@ -680,11 +696,141 @@ pub(super) async fn delete(
     ExtractState(state): ExtractState<Arc<State>>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    delete_job(state, id).await
+}
+
+/// `DELETE /api/history/{job_id}`'s work; the guard has checked the caller
+/// may see the job.
+pub(super) async fn delete_job(state: Arc<State>, id: String) -> ApiResult<StatusCode> {
     let job = jobs::get(&state, &id)?;
-    let state = state.clone();
     crate::task::blocking(move || remove_registered(job, &state.jobs, &id))
         .await
         .map_err(ApiError::internal)?
+}
+
+/// Entries one batch deletion takes at most.
+const MAX_DELETE: usize = 1000;
+/// A batch deletion body at most.
+const MAX_DELETE_BODY: usize = 256 * 1024;
+
+/// `POST /api/history/delete` with `{"jobs": [...], "items": [{job_id,
+/// item_id}]}`: each entry deleted on its own, in order (jobs, then items),
+/// exactly as its single route would; the answer reports every entry.
+pub(super) async fn delete_many(
+    ExtractState(state): ExtractState<Arc<State>>,
+    principal: Principal,
+    request: Request,
+) -> ApiResult<Response> {
+    let json = request
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"));
+    let bytes = axum::body::to_bytes(request.into_body(), MAX_DELETE_BODY)
+        .await
+        .map_err(|_| ApiError::new(413, "request_too_large", "request exceeds 256 KiB"))?;
+    if !json {
+        return Err(ApiError::new(
+            422,
+            "json_required",
+            "a batch deletion must use application/json",
+        ));
+    }
+    let body: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| ApiError::new(422, "invalid_json", "the request is not valid JSON"))?;
+    let entries = delete_entries(&body)
+        .map_err(|detail| ApiError::new(422, "invalid_delete_request", detail))?;
+    let mut results = Vec::with_capacity(entries.len());
+    let mut deleted = 0;
+    for (job_id, item_id) in entries {
+        // A user's jobs are always registered; others see every job, as the
+        // single routes (one of which rescans the history) decide.
+        let visible = match principal.user() {
+            Some(_) => principal.job(&state, &job_id).map(drop),
+            None => Ok(()),
+        };
+        let outcome = match visible {
+            Err(error) => Err(error),
+            Ok(()) => match &item_id {
+                None => delete_job(state.clone(), job_id.clone()).await,
+                Some(item_id) => {
+                    super::rerun::delete_item(state.clone(), job_id.clone(), item_id.clone()).await
+                }
+            },
+        };
+        let mut result = json!({"job_id":job_id,"item_id":item_id,"ok":outcome.is_ok()});
+        match outcome {
+            Ok(_) => deleted += 1,
+            Err(error) => {
+                result["reason"] = json!(error.reason);
+                result["detail"] = json!(error.detail);
+            }
+        }
+        results.push(result);
+    }
+    let failed = results.len() - deleted;
+    let mut response =
+        Json(json!({"deleted":deleted,"failed":failed,"results":results})).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
+/// A batch deletion's entries in order, `(job_id, None)` for a job; else what
+/// is wrong with the body.
+fn delete_entries(body: &Value) -> Result<Vec<(String, Option<String>)>, String> {
+    let object = body
+        .as_object()
+        .ok_or("the body must be a JSON object with jobs and/or items")?;
+    if let Some(key) = object
+        .keys()
+        .find(|key| !["jobs", "items"].contains(&key.as_str()))
+    {
+        return Err(format!(
+            "unknown field '{key}'; supported fields: jobs, items"
+        ));
+    }
+    let list = |name: &str| -> Result<&[Value], String> {
+        match object.get(name) {
+            None => Ok(&[]),
+            Some(value) => value
+                .as_array()
+                .map(Vec::as_slice)
+                .ok_or_else(|| format!("{name} must be an array")),
+        }
+    };
+    let (jobs, items) = (list("jobs")?, list("items")?);
+    let count = jobs.len() + items.len();
+    if count == 0 {
+        return Err("name at least one job or item".into());
+    }
+    if count > MAX_DELETE {
+        return Err(format!(
+            "{count} entries; one request deletes at most {MAX_DELETE}"
+        ));
+    }
+    let mut entries = Vec::with_capacity(count);
+    for job in jobs {
+        let job = job.as_str().ok_or("jobs must be an array of job ids")?;
+        entries.push((job.to_owned(), None));
+    }
+    for item in items {
+        let fields = item
+            .as_object()
+            .filter(|fields| {
+                fields.len() == 2 && fields.keys().all(|key| key == "job_id" || key == "item_id")
+            })
+            .ok_or("items must be an array of {job_id, item_id} objects")?;
+        let (Some(job), Some(item)) = (fields["job_id"].as_str(), fields["item_id"].as_str())
+        else {
+            return Err("items must be an array of {job_id, item_id} objects".into());
+        };
+        entries.push((job.to_owned(), Some(item.to_owned())));
+    }
+    Ok(entries)
 }
 
 fn remove_registered(
@@ -740,6 +886,7 @@ mod deletion_tests {
             item_options: HashMap::new(),
             transactions: Vec::new(),
             label: None,
+            owner: None,
         };
         let first = Arc::new(Job::new(folder.clone(), data.clone()));
         let stale = first.clone();
@@ -818,6 +965,7 @@ mod error_code_tests {
             allowed_hosts: HashSet::new(),
             tickets: Default::default(),
             previews: Default::default(),
+            access: super::super::access::Access::load(root.join("access.json")),
         });
         let router = Router::new()
             .route("/api/jobs", post(create))

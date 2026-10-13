@@ -529,9 +529,13 @@ pub(super) async fn file(
 const MAX_VIEW: u64 = 10 * 1024 * 1024;
 /// The policy of a framed HTML original: no script and no form; the site's
 /// own pictures, style sheets, fonts and media load over HTTPS (inline styles
-/// and data URLs too), nothing else is fetched; the frame has no origin of its
-/// own, links open outside it, and only the workbench may frame it.
-const VIEW_POLICY: &str = "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'";
+/// and data URLs too), nothing else is fetched; links open outside it, and
+/// only the workbench may frame it. The frame keeps the workbench's origin
+/// (`allow-same-origin`, so the workbench can read the page it shows), which
+/// is safe only because nothing in it can run: there is no `allow-scripts`
+/// and no `script-src`, so `default-src 'none'` refuses every script, inline
+/// handler and `javascript:` URL.
+const VIEW_POLICY: &str = "sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'";
 
 /// HTML-attribute escaping of `&`, `<`, `>`, `"` and `'`.
 fn attribute(value: &str) -> String {

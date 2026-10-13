@@ -197,6 +197,8 @@ export interface Capabilities {
   /** This backend's source repository, for the sidebar's link. */
   source_url?: string;
   features?: Features;
+  /** v1.13: who is asking. Absent = an older backend, where one token does everything (admin). */
+  access?: { role: "admin" | "user"; label?: string };
 }
 
 /** What a backend implements beyond the base job API; absent or false hides it. */
@@ -214,6 +216,43 @@ export interface Features {
   item_archive?: boolean;
   /** v1.11: POST /api/access-token/regenerate replaces the server's access token. */
   token_regenerate?: boolean;
+  /** v1.13: /api/access-tokens (user tokens an admin creates and revokes). */
+  user_tokens?: boolean;
+  /** v1.13: GET/PUT /api/settings/config (the admin's config.json editor). */
+  config_edit?: boolean;
+  /** v1.13: POST /api/history/delete (several conversions in one request). */
+  batch_delete?: boolean;
+}
+
+/** v1.13: a user token as the admin's list shows it; `token` only in the answer that created it. */
+export interface UserToken {
+  id: string;
+  label: string;
+  hint: string;
+  created_at: string;
+  last_used_at: string | null;
+  token?: string;
+}
+
+/** v1.13: `POST /api/history/delete`. */
+export interface BatchDeleteResult {
+  deleted: number;
+  failed: number;
+  results: { job_id: string; item_id: string | null; ok: boolean; reason?: string; detail?: string }[];
+}
+
+/** v1.13: `GET`/`PUT /api/settings/config`. */
+export interface ConfigDocument {
+  path: string;
+  origin: string;
+  exists: boolean;
+  revision: string;
+  text: string | null;
+  masked: number;
+  problem: string | null;
+  read_only: boolean;
+  /** PUT only: something outside the model list changed, read when the server starts. */
+  restart_required?: boolean;
 }
 
 /** v1.11: `POST /api/access-token/regenerate`. */

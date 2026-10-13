@@ -7,6 +7,7 @@
 //! nothing. Only the SHA-256 of a ticket is held.
 use super::{
     State,
+    security::Principal,
     types::{ApiError, ApiResult},
 };
 use axum::{
@@ -30,8 +31,9 @@ const MAX_PATH: usize = 4096;
 /// A request body at most: one path of `MAX_PATH` bytes, with room for JSON.
 const MAX_BODY: usize = 2 * MAX_PATH;
 
+/// Each ticket's path, expiry and the caller it was issued to.
 #[derive(Default)]
-pub(super) struct Tickets(Mutex<HashMap<[u8; 32], (String, Instant)>>);
+pub(super) struct Tickets(Mutex<HashMap<[u8; 32], (String, Instant, Principal)>>);
 
 fn digest(ticket: &str) -> [u8; 32] {
     Sha256::digest(ticket.as_bytes()).into()
@@ -85,10 +87,11 @@ pub(super) fn downloadable(path: &str) -> bool {
 }
 
 impl Tickets {
-    /// Issue a ticket for `path`, or refuse when too many are outstanding.
-    pub(super) fn issue(&self, path: &str, now: Instant) -> ApiResult<String> {
+    /// Issue a ticket for `path` to `issuer`, or refuse when too many are
+    /// outstanding.
+    pub(super) fn issue(&self, path: &str, issuer: Principal, now: Instant) -> ApiResult<String> {
         let mut tickets = self.0.lock().unwrap();
-        tickets.retain(|_, (_, expires)| *expires > now);
+        tickets.retain(|_, (_, expires, _)| *expires > now);
         if tickets.len() >= CAPACITY {
             return Err(ApiError::new(
                 429,
@@ -101,7 +104,7 @@ impl Tickets {
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
         );
-        tickets.insert(digest(&ticket), (path.to_owned(), now + LIFETIME));
+        tickets.insert(digest(&ticket), (path.to_owned(), now + LIFETIME, issuer));
         Ok(ticket)
     }
 
@@ -110,13 +113,20 @@ impl Tickets {
         self.0.lock().unwrap().clear();
     }
 
-    /// Spend a ticket on a GET of `path`. A ticket presented for another path
-    /// is spent as well: it was disclosed, so it must not stay usable.
-    pub(super) fn redeem(&self, ticket: &str, path: &str, now: Instant) -> bool {
-        let Some((issued, expires)) = self.0.lock().unwrap().remove(&digest(ticket)) else {
-            return false;
-        };
-        expires > now && issued == path
+    /// Revoke the outstanding tickets of the user token `id` (it was revoked).
+    pub(super) fn revoke_user(&self, id: &str) {
+        self.0
+            .lock()
+            .unwrap()
+            .retain(|_, (_, _, issuer)| issuer.user() != Some(id));
+    }
+
+    /// Spend a ticket on a GET of `path`; the caller it was issued to, if it
+    /// is valid. A ticket presented for another path is spent as well: it
+    /// was disclosed, so it must not stay usable.
+    pub(super) fn redeem(&self, ticket: &str, path: &str, now: Instant) -> Option<Principal> {
+        let (issued, expires, issuer) = self.0.lock().unwrap().remove(&digest(ticket))?;
+        (expires > now && issued == path).then_some(issuer)
     }
 }
 
@@ -132,6 +142,11 @@ pub(super) async fn issue(
             "a download ticket needs a JSON body {\"path\": …} naming a job file, a job archive, an item's archive or original, or the history archive",
         )
     };
+    let issuer = request
+        .extensions()
+        .get::<Principal>()
+        .cloned()
+        .unwrap_or(Principal::Anonymous);
     // The service's body limit admits uploads; this body names one path.
     let (parts, body) = request.into_parts();
     let bytes = axum::body::to_bytes(body, MAX_BODY).await.map_err(|_| {
@@ -153,7 +168,15 @@ pub(super) async fn issue(
         .and_then(Value::as_str)
         .filter(|path| downloadable(path))
         .ok_or_else(invalid)?;
-    let ticket = state.tickets.issue(path, Instant::now())?;
+    // A user may name only its own jobs.
+    if issuer.user().is_some()
+        && let Some(job) = path
+            .strip_prefix("/api/jobs/")
+            .and_then(|rest| rest.split('/').next())
+    {
+        issuer.job(&state, job)?;
+    }
+    let ticket = state.tickets.issue(path, issuer, Instant::now())?;
     Ok((
         StatusCode::CREATED,
         Json(
@@ -232,20 +255,24 @@ mod tests {
         let tickets = Tickets::default();
         let now = Instant::now();
         let path = "/api/jobs/0123456789ab/archive";
-        let ticket = tickets.issue(path, now).unwrap();
+        let ticket = tickets.issue(path, Principal::Admin, now).unwrap();
         assert_eq!(ticket.len(), 64);
         assert!(ticket.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert!(tickets.redeem(&ticket, path, now));
-        assert!(!tickets.redeem(&ticket, path, now), "single use");
+        assert_eq!(tickets.redeem(&ticket, path, now), Some(Principal::Admin));
+        assert!(tickets.redeem(&ticket, path, now).is_none(), "single use");
 
         // Presented for another path, the ticket is spent and refused.
-        let ticket = tickets.issue(path, now).unwrap();
-        assert!(!tickets.redeem(&ticket, "/api/history/archive", now));
-        assert!(!tickets.redeem(&ticket, path, now));
+        let ticket = tickets.issue(path, Principal::Admin, now).unwrap();
+        assert!(
+            tickets
+                .redeem(&ticket, "/api/history/archive", now)
+                .is_none()
+        );
+        assert!(tickets.redeem(&ticket, path, now).is_none());
 
-        let ticket = tickets.issue(path, now).unwrap();
-        assert!(!tickets.redeem(&ticket, path, now + LIFETIME));
-        assert!(!tickets.redeem("not-issued", path, now));
+        let ticket = tickets.issue(path, Principal::Admin, now).unwrap();
+        assert!(tickets.redeem(&ticket, path, now + LIFETIME).is_none());
+        assert!(tickets.redeem("not-issued", path, now).is_none());
         // Only the digest is held.
         assert!(
             !tickets
@@ -262,11 +289,32 @@ mod tests {
         let tickets = Tickets::default();
         let now = Instant::now();
         let path = "/api/jobs/0123456789ab/items/i1/archive";
-        let ticket = tickets.issue(path, now).unwrap();
+        let ticket = tickets.issue(path, Principal::Admin, now).unwrap();
         tickets.clear();
-        assert!(!tickets.redeem(&ticket, path, now));
-        let ticket = tickets.issue(path, now).unwrap();
-        assert!(tickets.redeem(&ticket, path, now));
+        assert!(tickets.redeem(&ticket, path, now).is_none());
+        let ticket = tickets.issue(path, Principal::Admin, now).unwrap();
+        assert_eq!(tickets.redeem(&ticket, path, now), Some(Principal::Admin));
+    }
+
+    #[test]
+    fn a_ticket_carries_its_issuer_and_revoking_a_user_spends_only_its_tickets() {
+        let tickets = Tickets::default();
+        let now = Instant::now();
+        let path = "/api/jobs/0123456789ab/archive";
+        let user = |id: &str| Principal::User {
+            id: id.into(),
+            label: "Laptop".into(),
+        };
+        let first = tickets.issue(path, user("u_000000000001"), now).unwrap();
+        let second = tickets.issue(path, user("u_000000000002"), now).unwrap();
+        let admin = tickets.issue(path, Principal::Admin, now).unwrap();
+        tickets.revoke_user("u_000000000001");
+        assert!(tickets.redeem(&first, path, now).is_none());
+        assert_eq!(
+            tickets.redeem(&second, path, now),
+            Some(user("u_000000000002"))
+        );
+        assert_eq!(tickets.redeem(&admin, path, now), Some(Principal::Admin));
     }
 
     #[test]
@@ -274,14 +322,19 @@ mod tests {
         let tickets = Tickets::default();
         let now = Instant::now();
         for _ in 0..CAPACITY {
-            tickets.issue("/api/history/archive", now).unwrap();
+            tickets
+                .issue("/api/history/archive", Principal::Admin, now)
+                .unwrap();
         }
-        let refused = tickets.issue("/api/history/archive", now).unwrap_err();
+        let refused = tickets
+            .issue("/api/history/archive", Principal::Admin, now)
+            .unwrap_err();
         assert_eq!(refused.status.as_u16(), 429);
         assert!(
             tickets
                 .issue(
                     "/api/history/archive",
+                    Principal::Admin,
                     now + LIFETIME + Duration::from_secs(1)
                 )
                 .is_ok()

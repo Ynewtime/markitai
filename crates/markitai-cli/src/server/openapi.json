@@ -4,7 +4,7 @@
     "title": "Markitai service API",
     "version": "set from the build when served",
     "summary": "Convert files and URLs to Markdown, manage saved jobs and model settings.",
-    "description": "The REST API of `markitai serve`. By default every API client, including loopback clients, sends the startup token as `Authorization: Bearer` (preferred) or `?token=`. Anonymous access in the security alternatives applies only when started with `--no-auth`; settings and URL conversion then remain restricted to direct loopback peers without forwarding headers. Designated downloads can use a single-use ticket. Every error body is `{detail, code, reason}`; present text by `reason`, then `code`. See docs/serve.md, docs/service-settings.md and docs/provider-management.md for the contracts this document summarizes.",
+    "description": "The REST API of `markitai serve`. By default every API client, including loopback clients, sends the startup token as `Authorization: Bearer` (preferred) or `?token=`. Anonymous access in the security alternatives applies only when started with `--no-auth`; settings and URL conversion then remain restricted to direct loopback peers without forwarding headers. An admin may create user tokens (`/api/access-tokens`): a user token admits every route except the settings and the token routes (403 `settings_forbidden`), and its holder sees only the jobs it created (any other job is 404 `job_not_found`). Designated downloads can use a single-use ticket. Every error body is `{detail, code, reason}`; present text by `reason`, then `code`. See docs/serve.md, docs/service-settings.md and docs/provider-management.md for the contracts this document summarizes.",
     "license": { "name": "MIT", "identifier": "MIT" }
   },
   "servers": [{ "url": "/", "description": "The service that serves this document" }],
@@ -13,7 +13,7 @@
     { "name": "service", "description": "Capabilities, this document and download tickets" },
     { "name": "jobs", "description": "Conversion jobs, their items, events and files" },
     { "name": "history", "description": "Saved jobs" },
-    { "name": "settings", "description": "Saved model deployments and provider connections; token required by default, direct loopback only with --no-auth" },
+    { "name": "settings", "description": "Saved model deployments, provider connections and the configuration file; the admin token required by default (a user token is refused), direct loopback only with --no-auth" },
     { "name": "providers", "description": "Provider detection, model discovery and connection tests; token required by default, direct loopback only with --no-auth" }
   ],
   "paths": {
@@ -63,7 +63,7 @@
         "tags": ["service"],
         "operationId": "regenerateAccessToken",
         "summary": "Replace the access token; other tabs and devices must sign in again",
-        "description": "Trusted like the settings: the current token is required (403 `settings_forbidden` otherwise), and a server started with `--no-auth` has no token to replace (409 `token_disabled`). The body is empty or `{}`. Generates a new 64-character token, replaces the old one at once (it is refused with 401 from then on), revokes every outstanding download ticket and ends every open event stream. The token lives in memory only: a restart takes `MARKITAI_SERVE_TOKEN` or a fresh random token again. The answer carries `Cache-Control: no-store`.",
+        "description": "Trusted like the settings: the current token is required (403 `settings_forbidden` otherwise), and a server started with `--no-auth` has no token to replace (409 `token_disabled`). The body is empty or `{}`. Generates a new 64-character token, replaces the old one at once (it is refused with 401 from then on), revokes every outstanding download ticket and ends every open event stream. The token lives in memory only: a restart takes `MARKITAI_SERVE_TOKEN` or a fresh random token again. User tokens are kept. Admin only: a user token is refused with 403 `settings_forbidden`. The answer carries `Cache-Control: no-store`.",
         "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
         "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
         "responses": {
@@ -72,6 +72,56 @@
           "403": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" },
           "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/access-tokens": {
+      "get": {
+        "tags": ["service"],
+        "operationId": "listAccessTokens",
+        "summary": "The user tokens, oldest first, without the tokens themselves",
+        "description": "Admin only (a user token: 403 `settings_forbidden`); a server started with `--no-auth` has no tokens (409 `token_disabled`). `last_used_at` is kept in memory only: null after a restart until the token is used. `Cache-Control: no-store`.",
+        "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
+        "responses": {
+          "200": { "description": "User tokens", "content": { "application/json": { "schema": { "type": "object", "required": ["tokens"], "properties": { "tokens": { "type": "array", "items": { "$ref": "#/components/schemas/UserToken" } } } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["service"],
+        "operationId": "createAccessToken",
+        "summary": "Create a user token; the only answer that ever carries it",
+        "description": "Body exactly `{\"label\": string}` (else 422 `invalid_json`; over 1 KiB: 413 `request_too_large`). The label is trimmed and must be 1 to 60 characters without control characters (422 `invalid_label`). At most 50 tokens (409 `token_limit`). The token is `mku_` and 64 lowercase hex characters; the server keeps only its SHA-256 (in `MARKITAI_HOME/serve/access.json`), so it survives restarts and admin-token regeneration. A file that cannot be saved: 500 `settings_io_failed`, nothing changes. Admin only; `--no-auth`: 409 `token_disabled`. `Cache-Control: no-store`.",
+        "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["label"], "additionalProperties": false, "properties": { "label": { "type": "string", "minLength": 1, "maxLength": 60 } } } } } },
+        "responses": {
+          "201": { "description": "The new token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreatedUserToken" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/access-tokens/{id}": {
+      "delete": {
+        "tags": ["service"],
+        "operationId": "revokeAccessToken",
+        "summary": "Revoke a user token at once",
+        "description": "From then on the token's requests are 401 `token_required`, its outstanding download tickets are refused and its open event streams end (every stream ends and reconnects with its own token). Its jobs stay, visible to admins only. Unknown id: 404 `token_not_found`. Admin only; `--no-auth`: 409 `token_disabled`. `Cache-Control: no-store`.",
+        "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "description": "The token's id (`u_` and 12 hex characters)", "schema": { "type": "string" } }],
+        "responses": {
+          "204": { "description": "Revoked" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -304,7 +354,7 @@
         "tags": ["jobs"],
         "operationId": "viewOriginalPage",
         "summary": "A kept HTML original, for a sandboxed frame of the workbench",
-        "description": "Only for `html` originals (404 `original_unavailable` otherwise); over 10 MiB: 413 `result_too_large`. The stored bytes as UTF-8 text with one insertion right after the first `<head>` start tag, else after the first `<html>` start tag, else at the start after a leading doctype: `<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">` and `<base href=\"<the item's URL>\" target=\"_blank\">` for a URL item (`<base target=\"_blank\">` for an upload). Sent with `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`, `Cache-Control: no-store` and `Content-Disposition: inline`: no script runs, no form is sent, and only the site's pictures, style sheets, fonts and media are fetched, over HTTPS. A frame cannot send `Authorization`, so its path may be named by a download ticket.",
+        "description": "Only for `html` originals (404 `original_unavailable` otherwise); over 10 MiB: 413 `result_too_large`. The stored bytes as UTF-8 text with one insertion right after the first `<head>` start tag, else after the first `<html>` start tag, else at the start after a leading doctype: `<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">` and `<base href=\"<the item's URL>\" target=\"_blank\">` for a URL item (`<base target=\"_blank\">` for an upload). Sent with `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`, `Cache-Control: no-store` and `Content-Disposition: inline`: the frame keeps the service's origin (so the workbench can read the page it shows), but no script runs (no `allow-scripts`, no `script-src`: `default-src 'none'` refuses every script, inline handler and `javascript:` URL), no form is sent, and only the site's pictures, style sheets, fonts and media are fetched, over HTTPS. A frame cannot send `Authorization`, so its path may be named by a download ticket.",
         "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
         "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
         "responses": {
@@ -395,7 +445,7 @@
         "tags": ["history"],
         "operationId": "listHistory",
         "summary": "Saved jobs, newest first, including jobs other local processes added",
-        "description": "Only finished jobs within their retention: a job is deleted 7 days after its `finished_at` (or, without one, its folder's modification time), at server start and hourly; running jobs and jobs with queued retries are never expired.",
+        "description": "A user token lists only the jobs it created. Only finished jobs within their retention: a job is deleted 7 days after its `finished_at` (or, without one, its folder's modification time), at server start and hourly; running jobs and jobs with queued retries are never expired.",
         "parameters": [
           { "name": "include", "in": "query", "required": false, "description": "`items` adds each job's `options` and its full item list, as the job snapshot shows them, to its entry. Other values are ignored.", "schema": { "type": "string", "enum": ["items"] } }
         ],
@@ -410,12 +460,28 @@
         "tags": ["history"],
         "operationId": "downloadHistoryArchive",
         "summary": "Download every completed saved job as one ZIP",
+        "description": "A user token gets only the jobs it created; none: 404 `history_empty`.",
         "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
         "responses": {
           "200": { "description": "ZIP archive", "content": { "application/zip": { "schema": { "type": "string", "contentMediaType": "application/zip" } } } },
           "401": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
           "413": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/history/delete": {
+      "post": {
+        "tags": ["history"],
+        "operationId": "deleteHistoryBatch",
+        "summary": "Delete several saved jobs and items in one request",
+        "description": "Body `{jobs?: string[], items?: {job_id, item_id}[]}` with exactly those keys and 1 to 1000 entries in all (else 422 `invalid_delete_request`); not `application/json`: 422 `json_required`; not JSON: 422 `invalid_json`; over 256 KiB: 413 `request_too_large`. Each entry is handled on its own, in order (`jobs`, then `items`), exactly as `DELETE /api/history/{job_id}` and `DELETE /api/jobs/{job_id}/items/{item_id}` handle it (deleting a job's last item deletes the job); a job the caller may not see is `job_not_found`. Deleting is final: there is no rollback of the entries that succeeded. `Cache-Control: no-store`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "properties": { "jobs": { "type": "array", "items": { "type": "string" } }, "items": { "type": "array", "items": { "type": "object", "required": ["job_id", "item_id"], "additionalProperties": false, "properties": { "job_id": { "type": "string" }, "item_id": { "type": "string" } } } } } } } } },
+        "responses": {
+          "200": { "description": "Every entry's outcome", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BatchDeleteResult" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -555,6 +621,36 @@
         }
       }
     },
+    "/api/settings/config": {
+      "get": {
+        "tags": ["settings"],
+        "operationId": "getConfigFile",
+        "summary": "The configuration file as text, every secret masked",
+        "description": "A string is masked when its key is one `markitai config show` redacts (any key naming an API key, token, secret, password, credential, cookie or authorization, and every string beneath one), or when it is a value of an `extra_http_headers` object, unless it starts with `env:`: it becomes its masked form (`sk…7890`). An `api_base` (or `*_api_base`) loses its userinfo and secret query values. `text` is the file's own text, layout and key order unchanged, with only each masked string literal replaced (`{}` when there is no file; null, with `problem`, when the file is not UTF-8 text or not a JSON object). `Cache-Control: no-store`.",
+        "responses": {
+          "200": { "description": "The file", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfigDocument" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["settings"],
+        "operationId": "replaceConfigFile",
+        "summary": "Replace the configuration file",
+        "description": "Body exactly `{expected_revision, text}` (else 422 `invalid_settings_request`); `text` over 1 MiB or a body over 1.5 MiB: 413 `config_too_large`. Session model/provider overrides active: 409 `settings_read_only`. `expected_revision` not the file's current revision: 409 with `detail` `{code: \"stale_revision\", current_revision}`. `text` must be a JSON object (422 `invalid_config`, `line L, column C: …` for a parse error). A masked value sent back unchanged at the position GET sent it is put back in place as the stored literal; a masked value anywhere else is refused (422 `invalid_config`, naming its JSON pointer). The result must be a valid configuration (422 `invalid_config` with the validation message). Saved atomically like the other settings changes (409 `config_changed` when the file changed meanwhile; 500 `settings_durability_unknown`); the file is saved exactly as written (the sent text byte for byte, with only the kept masked values put back). The models and providers apply at once; `restart_required` is true when anything else changed, which is read at the next start. `Cache-Control: no-store`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expected_revision", "text"], "additionalProperties": false, "properties": { "expected_revision": { "type": "string" }, "text": { "type": "string" } } } } } },
+        "responses": {
+          "200": { "description": "The saved file", "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/ConfigDocument" }], "required": ["restart_required"], "properties": { "restart_required": { "type": "boolean" } } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/settings/llm/detected": {
       "get": {
         "tags": ["providers"],
@@ -637,7 +733,7 @@
           "reason": {
             "type": "string",
             "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
-            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_config", "invalid_delete_request", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_limit", "token_not_found", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
           }
         }
       },
@@ -655,13 +751,14 @@
           "presets": { "type": "array", "items": { "type": "string" } },
           "preset_options": { "type": "object", "additionalProperties": { "type": "object", "properties": { "llm": { "type": "boolean" }, "ocr": { "type": "boolean" }, "alt": { "type": "boolean" }, "desc": { "type": "boolean" }, "screenshot": { "type": "boolean" } } } },
           "extras": { "type": "object", "properties": { "browser": { "type": "boolean" }, "svg": { "type": "boolean" } } },
-          "limits": { "type": "object", "properties": { "max_job_items": { "type": "integer" }, "history_retention_days": { "type": ["integer", "null"], "description": "Days a finished job is kept; null when it is kept until deleted" } } }
+          "limits": { "type": "object", "properties": { "max_job_items": { "type": "integer" }, "history_retention_days": { "type": ["integer", "null"], "description": "Days a finished job is kept; null when it is kept until deleted" } } },
+          "access": { "type": "object", "required": ["role"], "description": "Who is asking: `admin` (the server token, or a loopback client with --no-auth) or `user` (a user token, with its `label`; an anonymous --no-auth client is a `user` without one)", "properties": { "role": { "type": "string", "enum": ["admin", "user"] }, "label": { "type": "string" } } }
         }
       },
       "Features": {
         "type": "object",
         "description": "What this service implements beyond the base job API, for a client shared with other backends",
-        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate"],
+        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete"],
         "properties": {
           "cancel": { "type": "boolean", "description": "POST /api/jobs/{job_id}/cancel" },
           "download_tickets": { "type": "boolean", "description": "POST /api/download-tickets" },
@@ -672,7 +769,10 @@
           "job_labels": { "type": "boolean", "description": "`label` on POST /api/jobs, echoed in snapshots and history" },
           "item_assets": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}" },
           "item_archive": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/archive" },
-          "token_regenerate": { "type": "boolean", "description": "POST /api/access-token/regenerate; false when the server runs without a token (--no-auth)" }
+          "token_regenerate": { "type": "boolean", "description": "POST /api/access-token/regenerate; false when the server runs without a token (--no-auth)" },
+          "user_tokens": { "type": "boolean", "description": "/api/access-tokens; false when the server runs without a token (--no-auth)" },
+          "config_edit": { "type": "boolean", "description": "GET and PUT /api/settings/config" },
+          "batch_delete": { "type": "boolean", "description": "POST /api/history/delete" }
         }
       },
       "CloudflareCapabilities": {
@@ -713,6 +813,59 @@
           "ticket": { "type": "string", "description": "64 hexadecimal characters" },
           "url": { "type": "string", "description": "The path with `?ticket=`; open it once" },
           "expires_in": { "type": "integer", "description": "Seconds the ticket stays valid", "examples": [60] }
+        }
+      },
+      "UserToken": {
+        "type": "object",
+        "required": ["id", "label", "hint", "created_at", "last_used_at"],
+        "properties": {
+          "id": { "type": "string", "description": "`u_` and 12 hex characters" },
+          "label": { "type": "string" },
+          "hint": { "type": "string", "description": "The token's last 4 characters" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "last_used_at": { "type": ["string", "null"], "format": "date-time", "description": "Kept in memory only; null until used since the server started" }
+        }
+      },
+      "CreatedUserToken": {
+        "allOf": [{ "$ref": "#/components/schemas/UserToken" }],
+        "required": ["token"],
+        "properties": { "token": { "type": "string", "description": "`mku_` and 64 lowercase hex characters; shown this once" } }
+      },
+      "BatchDeleteResult": {
+        "type": "object",
+        "required": ["deleted", "failed", "results"],
+        "properties": {
+          "deleted": { "type": "integer", "description": "Entries that succeeded" },
+          "failed": { "type": "integer", "description": "Entries that did not" },
+          "results": {
+            "type": "array",
+            "description": "One per entry, in request order (jobs, then items)",
+            "items": {
+              "type": "object",
+              "required": ["job_id", "item_id", "ok"],
+              "properties": {
+                "job_id": { "type": "string" },
+                "item_id": { "type": ["string", "null"], "description": "null for a job entry" },
+                "ok": { "type": "boolean" },
+                "reason": { "type": "string", "description": "What the single route would answer, when not ok" },
+                "detail": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "ConfigDocument": {
+        "type": "object",
+        "required": ["path", "origin", "exists", "revision", "text", "masked", "problem", "read_only"],
+        "properties": {
+          "path": { "type": "string", "description": "As `SettingsView.config_path`" },
+          "origin": { "type": "string", "description": "As `SettingsView.config_origin`" },
+          "exists": { "type": "boolean" },
+          "revision": { "type": "string", "description": "`sha256:` and the hex SHA-256 of the file's bytes; `absent` when there is no file" },
+          "text": { "type": ["string", "null"], "description": "The file's own text with every secret string literal masked; `{}` when absent; null when the file is not UTF-8 text or not a JSON object" },
+          "masked": { "type": "integer", "description": "How many values are masked" },
+          "problem": { "type": ["string", "null"], "description": "Why `text` is null (`line 3, column 9: expected ...`)" },
+          "read_only": { "type": "boolean", "description": "Session model/provider overrides are active; saving is refused" }
         }
       },
       "RegeneratedToken": {
