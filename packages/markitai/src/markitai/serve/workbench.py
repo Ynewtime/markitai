@@ -42,11 +42,12 @@ APP_PATHS = (
     "/settings/models",
     "/settings/appearance",
     "/settings/access",
+    "/settings/config",
 )
 
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
-    "img-src 'self' blob:; font-src 'self'; frame-src 'self'; object-src 'none'; "
+    "img-src 'self' blob: https:; font-src 'self'; frame-src 'self'; object-src 'none'; "
     "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 )
 
