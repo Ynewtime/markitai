@@ -182,6 +182,7 @@ mod tests {
             item_options: HashMap::new(),
             transactions: Vec::new(),
             label: None,
+            owner: None,
         };
         store::persist(&folder, &data).unwrap();
         Arc::new(Job::new(folder, data))

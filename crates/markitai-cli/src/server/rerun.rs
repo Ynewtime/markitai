@@ -553,6 +553,16 @@ pub(super) async fn delete(
     ExtractState(state): ExtractState<Arc<State>>,
     Path((id, item_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
+    delete_item(state, id, item_id).await
+}
+
+/// `DELETE /api/jobs/{job_id}/items/{item_id}`'s work; deleting a job's last
+/// item deletes the job. The guard has checked the caller may see the job.
+pub(super) async fn delete_item(
+    state: Arc<State>,
+    id: String,
+    item_id: String,
+) -> ApiResult<StatusCode> {
     let job = http::registered(&state, &id).await?;
     crate::task::blocking(move || {
         let _access = job.access.lock().unwrap();

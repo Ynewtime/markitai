@@ -10,14 +10,15 @@ runtime, CDN or external font, and the page makes no request to another origin.
 
 A **sidebar** frames every view: Convert and Conversions (with the number of
 conversions and a pulsing dot while something converts), the Settings sections
-(Models, Appearance, Access token), and Docs, GitHub and the
+(Appearance, Models, Access token, Edit config; a user token sees Appearance
+only, see [Access token](#access-token)), and Docs, GitHub and the
 version at the bottom. Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
 keyboard focus, and the choice is remembered in this browser. On phones the
 sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
-Settings); Settings there is one list (Models, Appearance, Access token, Docs,
+Settings); Settings there is one list (the same sections, Docs,
 GitHub) with the version centred below it. Every view is an address (`/`, `/jobs`, `/settings/models`,
-`/settings/appearance`, `/settings/access`), so reloads, Back and new tabs keep
+`/settings/appearance`, `/settings/access`, `/settings/config`), so reloads, Back and new tabs keep
 it. Any other address opens the workbench (with status 404) on "Page not found",
 with the way to Convert and Conversions. On a wide window every page is one
 column centred between the sidebar and the window's edge (Convert 800 px, the
@@ -63,9 +64,28 @@ files wait on Convert); typing URLs is Convert's job.
   (what was submitted: `report-materials`, `14 files`, `3 web pages`; the preset;
   the time) with its items under it, indented, so a submission of one item is one
   row at the outer edge. It is
-  an ARIA tree with no controls inside rows: Up and Down move, Right and Left
-  open and close a submission, Home and End jump, and a click, Enter or Space
-  opens the conversion's window.
+  an ARIA tree: Up and Down move, Right and Left open and close a submission,
+  Home and End jump, and a click or Enter opens the conversion's window. A box
+  at the left edge of every row and submission header (one column; a header's
+  box stands for its items and shows a dash while only some are checked) selects
+  conversions to delete together: the rows carry `aria-checked`, Space checks
+  the focused row, Shift (with Space or a click) extends from the last one,
+  Ctrl/⌘+A checks every listed row, Escape clears and Delete asks. A bar at the
+  bottom of the window then says how many are checked, with Select all, Clear and
+  Delete; Delete asks first ("Delete 3 conversions? Their Markdown, pictures and
+  kept originals are deleted too.") and one notice reports the result, naming
+  what could not be deleted. Items still converting cannot be checked. On a
+  phone the boxes appear in Select mode (beside the filters; a tap then checks a
+  row, Done leaves). The server deletes them in one request
+  (`POST /api/history/delete`), or, on a backend without it, the page asks for
+  each, four at a time. A submission's chevron sits in the status marks'
+  column, so the header and a lone conversion below it share one left edge.
+- **Names** of files, pages and folders are shown decoded wherever the page
+  shows them (rows, the window's title, Details, Files, download names the page
+  sets): `20260314-%E5%B1%B1%E9%97%B4.md` reads `20260314-山间.md`. Only valid
+  UTF-8 escapes are decoded; separators (`%2F`, `%5C`, `?`, `#`, `%`), controls
+  and invisible or direction-changing marks stay escaped, and links and the
+  names the server keeps are unchanged.
 - The **peek window** opens over the dimmed list: previous and next with the
   position (`8 of 14`), the name (all on one centre line with the buttons; a
   long name gives up its middle at about 34 characters and shows in full on
@@ -151,14 +171,22 @@ text file, or the page screenshots a conversion saved. A web page opens on its
 screenshot when the conversion took one (it looks exactly like the page); Page
 shows the page as the server fetched it, in a sandboxed frame served by the
 item's own route, with the site's own pictures, style sheets and fonts (over
-HTTPS) but none of its scripts, no form and no origin of its own, so nothing in
-it can reach the workbench (links open in a new tab). Open the page sits in the
-Original header. Live frames of the real address are not used: most sites
+HTTPS) but none of its scripts and no form, so nothing in it can reach the
+workbench (links open in a new tab). The frame keeps the server's origin, so
+the workbench can read the page it shows; its policy still refuses every script,
+inline handler and `javascript:` URL (see [serve](serve.md#originals-for-compare)).
+Its blocks pair with the Markdown's by their words (headings, paragraphs, list
+items, code, table cells and captions, in order; pictures by address), and the
+outline is a style the workbench adds to the frame. Open the page sits in the
+Original header, with an (i) that says what the frame shows; a web page's
+header has no download button (the kept page is in Files). Live frames of the real address are not used: most sites
 refuse them. Hovering a heading, table, paragraph, list item, code block or
 picture on either side outlines it on both, in the one accent colour. PDF
 positions come from the page's text layer, and a picture's from where its page
 draws pictures (when the page draws as many as the Markdown places on it, and
-the server reports them); an HTML original pairs its headings and tables, a text
+the server reports them); a framed web page pairs by words as above (a backend
+whose frame policy is still opaque shows the page without outlines); an
+uploaded HTML original pairs its headings and tables, a text
 file its headings. An original that cannot be shown (a DOCX, a page the server did not
 keep) says why and offers its download.
 
@@ -228,8 +256,8 @@ names in a muted line, at its own endpoint, and takes no key either (a saved
 connection offers no Add key; a key a config entry still holds can be removed).
 A saved subscription offers no key or address. Bedrock keeps its optional key
 and address. A backend that sends
-no provider `group` gets the common eight by name and everything else under All. Appearance (its page is titled Appearance and language) chooses English, 中文 or 日本語 and the
-theme (Auto, Light, Dark); Access token says whether this tab is signed in
+no provider `group` gets the common eight by name and everything else under All. Appearance (its page is titled Appearance and language, first in the list) chooses English, 中文 or 日本語 and the
+theme (Auto, Light, Dark); for a user token it also says which token the tab uses, with Use another token and Sign out. Edit config (admin) shows the configuration file the Models page names as its source, on the terminal surface: secrets masked (a masked value left where it is keeps the stored secret), the JSON checked as it is typed with the line and column of a mistake, Review changes as a line diff, then Save config, sent with the revision the edit started from (a file changed meanwhile offers Load current file; a configuration the server cannot use is refused with its reason). The model list applies at once; other settings after a restart, which the page says. Access token says whether this tab is signed in
 (with Sign out of this tab beside it, which forgets the token here only),
 Regenerate token (below), and Use another token, one field with Save; a token is
 kept in this tab only.
@@ -308,8 +336,11 @@ shown. The sanitized fragment never contains scripts, styles, forms, frames or
 embedded media. Images and attachment links must resolve to an exact entry of the
 result's own artifact list (an image whose folder does not match, such as an
 e-book's own `../Images/x.png`, resolves by file name to the one listed image of
-that name); only raster images are shown, and anything else (an external or SVG
-image) becomes a labelled placeholder. Images are read from the item's own asset
+that name); only raster images are shown. A picture on the web (an absolute
+`https://` address without user information, as a fetched page's Markdown has)
+loads from its site lazily and without a referrer, and becomes the labelled
+placeholder only if it fails to load; any other image (`http:`, `data:`, SVG)
+becomes the placeholder. Images are read from the item's own asset
 route (`GET /api/jobs/{job}/items/{item}/assets/{relpath}`, inline, that item's
 raster images only) when the server offers it, otherwise from the file route. Other links keep only
 http(s)/mailto targets and open in a new tab without referrer; a link left
@@ -354,7 +385,8 @@ URL the page requests or shows carries it:
   another content type) is final, and no event after `close()`.
 - With a token, preview images and Compare's page images are fetched with the
   header and shown through `blob:` object URLs, which the policy already allows
-  (`img-src 'self' blob:`) and which are released when the view changes; Export
+  (`img-src 'self' blob: https:`: the page's own and `blob:` pictures, and
+  remote pictures over HTTPS only; `http:` and `data:` pictures are refused) and which are released when the view changes; Export
   PDF waits for them. An image that cannot be fetched becomes the labelled
   placeholder.
 - Download links (Files, file links inside the rendered document) point at the
@@ -384,6 +416,17 @@ with a link and its QR code to sign in on another device (the server's network
 address when it listens on the network). Rust keeps the new token until the
 server stops; at the next start it uses `MARKITAI_SERVE_TOKEN` again when that is
 set, or makes a new one.
+User tokens are kept when the server's token is regenerated. The server's
+token is the admin's; on servers that offer user tokens an admin can create
+labelled tokens for other people or devices and revoke them, and a user token
+reaches everything but the settings (including Edit config) and the token
+routes, and sees only its own conversions (see
+[access levels](serve.md#access-levels-and-user-tokens)).
+Access token (admin) lists them (name, the token's last four characters,
+created or last used, Revoke with a confirmation) and creates one from a name,
+showing it once with Copy, a sign-in link and its QR code. A user token sees
+Appearance only among the settings (an admin page says "Admin token needed"),
+and actions that would open Models (Add a model) are not offered to it.
 After a server restart that generates a new token, reopen its new launch link
 or use Enter token. `--no-auth` explicitly disables API token enforcement; only
 direct loopback clients without forwarding headers receive the additional trust

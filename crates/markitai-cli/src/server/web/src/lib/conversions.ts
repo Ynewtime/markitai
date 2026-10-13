@@ -3,7 +3,7 @@
 // submission of several is a header (what was submitted, preset, time) with
 // its items under it. Pure functions only.
 import type { JobOptions, JobStatus, Pricing } from "../api/types.ts";
-import { timestampMs } from "./format.ts";
+import { readable, timestampMs } from "./format.ts";
 import { rowWarnings } from "./notices.ts";
 import { isActive, type SessionItem } from "./session.ts";
 
@@ -45,7 +45,7 @@ export function itemMatches(item: SessionItem, filter: Filter, needle: string): 
   if (filter === "failed" && !isFailed(item)) return false;
   if (filter === "notices" && !hasNotices(item)) return false;
   if (!needle) return true;
-  return item.name.toLowerCase().includes(needle);
+  return item.name.toLowerCase().includes(needle) || readable(item.name).toLowerCase().includes(needle);
 }
 
 function activity(job: ConvJob, items: SessionItem[]): number {

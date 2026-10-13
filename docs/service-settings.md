@@ -161,6 +161,38 @@ With explicit `--no-auth`, only a direct loopback peer without forwarding header
 may access settings; remote settings access remains blocked. Host and Origin checks still apply. Config open affects the
 server host, not a remote client's machine; a missing file returns 404.
 
+## Edit config
+
+The admin can edit the selected file as text (the workbench's Settings → Edit
+config). `GET /api/settings/config` answers `{"path", "origin", "exists",
+"revision", "text", "masked", "problem", "read_only"}`: `revision` is `sha256:`
+and the hex SHA-256 of the file's bytes (`absent` without a file), and `text` is
+the file's own text, layout and key order unchanged (`{}` without a file; null,
+with `problem` such as `line 3, column 9: expected …`, when the file is not UTF-8
+text or not a JSON object), with only each secret's string literal replaced by
+its masked form: a string under a key `markitai config
+show` redacts (API keys, tokens, secrets, passwords, credentials, cookies,
+authorization, and every string beneath such a key) or a value of an
+`extra_http_headers` object becomes `sk…7890`, unless it is an
+`env:` reference, and an `api_base` loses its userinfo and secret query values.
+`masked` counts them.
+
+`PUT /api/settings/config` takes exactly `{"expected_revision", "text"}` (else
+422 `invalid_settings_request`; `text` over 1 MiB or a body over 1.5 MiB 413
+`config_too_large`). It is refused with 409 `settings_read_only` under session
+model/provider overrides, and with 409 `detail.code = "stale_revision"` (and
+`detail.current_revision`) when the file changed since it was read. `text` must
+be a JSON object (422 `invalid_config`, a parse error as `line L, column C: …`).
+A masked value sent back unchanged at the position GET sent it is put back in
+place as the stored literal; a masked value anywhere else is 422
+`invalid_config` naming its JSON pointer (type the full value or an `env:`
+reference). The result must pass the same validation as at startup (422
+`invalid_config` with its message), and is saved like the other settings
+changes (below), exactly as written: the sent text, byte for byte, with only the
+kept masked values put back. The models and providers apply at once; the answer is the GET
+shape for the new file plus `restart_required`, true when anything else changed,
+which the service reads at its next start.
+
 ## Publication and limits
 
 The service rereads the selected raw JSON inside its settings mutation lock,

@@ -13,7 +13,7 @@ import type { Dict, Locale } from "../i18n/index.ts";
 import { itemErrorText, persistenceText } from "../i18n/errors.ts";
 import { counts, isFailed, isStopped, presetOf, submissionLabel, type ConvJob, type LabelWords } from "../lib/conversions.ts";
 import { costState, fmtUsd, itemCost, totalCost, type CostState } from "../lib/cost.ts";
-import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, timestampMs } from "../lib/format.ts";
+import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, readable, timestampMs } from "../lib/format.ts";
 import { cardFacts, parseFrontMatter, type FrontMatter } from "../lib/frontmatter.ts";
 import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
@@ -113,6 +113,8 @@ export interface InspectorContext {
   compare: boolean;
   cancel: boolean;
   retentionDays: number | null;
+  /** The token may open Models (v1.13: not a user token). */
+  admin: boolean;
   docsUrl: string;
   busy: ReadonlySet<string>;
   labelWords: LabelWords;
@@ -251,7 +253,7 @@ function Excerpt({ ctx, item }: { ctx: InspectorContext; item: SessionItem }) {
       imageURL: (path) => (hasToken() ? null : imagePath(item.jobId, item.itemId, path)),
       fileURL: (path) => filePath(item.jobId, path),
       placeholder,
-      fallbackAlt: t.figureFrom(item.name),
+      fallbackAlt: t.figureFrom(readable(item.name)),
       tableLabel: t.tableAria,
       codeLabel: t.codeAria,
     }).then(
@@ -343,10 +345,10 @@ export function itemActs(ctx: InspectorContext, item: SessionItem, actions: Item
   if (previewable && item.output) shown.push({ key: "download", label: t.downloadShort, icon: "DownloadSimple", run: () => actions.download(item, item.output as string) });
   else if (retryable && !noModel && !imageOnly)
     shown.push({ key: "retry", label: t.retryPlainVerb, icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retry(item) });
-  if (noModel && retryable) {
+  if (noModel && retryable && ctx.admin) {
     shown.push({ key: "models", label: t.addModelAction, primary: true, run: actions.openModels });
     more.push({ key: "plain", label: t.retryPlain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retryPlain(item) });
-  }
+  } else if (noModel && retryable) shown.push({ key: "plain", label: t.retryPlain, icon: "ArrowCounterClockwise", primary: true, disabled: busy, run: () => actions.retryPlain(item) });
   if (imageOnly && retryable) shown.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
   if (previewable && !item.llmEnhanced && item.retryable && ctx.llmReady) more.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
   if (previewable && retryable === false && item.retryable) more.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retry(item) });
@@ -354,7 +356,7 @@ export function itemActs(ctx: InspectorContext, item: SessionItem, actions: Item
     item.status !== "running" && item.status !== "queued"
       ? {
           label: t.deleteAction,
-          title: t.deleteItemTitle(item.name),
+          title: t.deleteItemTitle(readable(item.name)),
           description: t.deleteItemDescription,
           confirmLabel: t.deletePermanently,
           cancelLabel: t.cancel,
@@ -422,7 +424,7 @@ export function ItemInspector({
         {!peek && (
           <h2 id={headingId} class="insp-title">
             <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />
-            <span class="insp-name">{item.name}</span>
+            <span class="insp-name">{readable(item.name)}</span>
           </h2>
         )}
         <p class={failed ? "insp-line is-error" : "insp-line"}>
@@ -432,7 +434,7 @@ export function ItemInspector({
       </header>
       {job?.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
       {!ctx.llmReady && item.status === "done" && !item.llmEnhanced && !item.skipped && (
-        <ConditionLine tone="info" text={t.noModelLine} action={{ label: t.configureModels, run: actions.openModels }} />
+        <ConditionLine tone="info" text={t.noModelLine} action={ctx.admin ? { label: t.configureModels, run: actions.openModels } : undefined} />
       )}
       {problem && (
         <div class={failed ? "problem is-error" : "problem is-retained"}>
@@ -457,11 +459,11 @@ export function ItemInspector({
         <dd>
           {url ? (
             <a class="text-link fact-link" href={url} target="_blank" rel="noopener noreferrer">
-              {url}
+              {readable(url)}
               <span class="sr-only"> {t.opensNewTab}</span>
             </a>
           ) : (
-            <span class="fact-name">{item.name}</span>
+            <span class="fact-name">{readable(item.name)}</span>
           )}
           {item.sizeBytes !== null && <span class="fact-dim"> {fmtBytes(item.sizeBytes)}</span>}
         </dd>
@@ -646,7 +648,7 @@ export function JobInspector({
             {items.filter(isFailed).slice(0, 8).map((item) => (
               <li key={item.key}>
                 <button type="button" class="failure-link" onClick={() => actions.select(item.key)}>
-                  <span class="failure-name">{item.name}</span>
+                  <span class="failure-name">{readable(item.name)}</span>
                   <span class="failure-why">{itemErrorText(locale, { error: item.error, error_code: item.errorCode, kind: item.kind }).text}</span>
                 </button>
               </li>

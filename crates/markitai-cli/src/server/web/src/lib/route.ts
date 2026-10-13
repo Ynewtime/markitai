@@ -2,8 +2,10 @@
 // the page, so reloads, Back and new tabs keep it; the selected conversion and
 // the open preview ride in the query (`?sel=<job>/<item>&view=preview`).
 
-export type Section = "models" | "appearance" | "access";
-export const SECTIONS: Section[] = ["models", "appearance", "access"];
+export type Section = "appearance" | "models" | "access" | "config";
+export const SECTIONS: Section[] = ["appearance", "models", "access", "config"];
+/** Sections only the admin token opens (v1.13); a user token sees Appearance only. */
+export const ADMIN_SECTIONS: ReadonlySet<Section> = new Set(["models", "access", "config"]);
 
 export type Route =
   | { view: "convert" }
@@ -18,7 +20,7 @@ export function parseRoute(pathname: string): Route {
   if (path === "/" || path === "/index.html") return { view: "convert" };
   if (path === "/jobs") return { view: "jobs" };
   if (path === "/settings") return { view: "settings", section: null };
-  const section = /^\/settings\/(models|appearance|access)$/.exec(path)?.[1] as Section | undefined;
+  const section = /^\/settings\/(models|appearance|access|config)$/.exec(path)?.[1] as Section | undefined;
   if (section) return { view: "settings", section };
   return { view: "missing", path };
 }

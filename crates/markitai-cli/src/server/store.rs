@@ -307,6 +307,9 @@ pub(super) fn persist(folder: &Path, data: &JobData) -> std::io::Result<()> {
     if let Some(label) = &data.label {
         meta["label"] = json!(label);
     }
+    if let Some(owner) = &data.owner {
+        meta["owner"] = json!(owner);
+    }
     let mut temporary = tempfile::NamedTempFile::new_in(folder)?;
     #[cfg(unix)]
     {
@@ -536,6 +539,12 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
             .as_str()
             .and_then(super::types::label)
             .flatten(),
+        // An owner that is not a user-token id is no owner: the job is then
+        // an admin's, which no user sees.
+        owner: value["owner"]
+            .as_str()
+            .filter(|owner| super::access::valid_id(owner))
+            .map(str::to_owned),
     };
     if interrupted {
         data.finished_at = Some(now());
@@ -705,6 +714,7 @@ mod recovery_tests {
             item_options: HashMap::new(),
             transactions: Vec::new(),
             label: None,
+            owner: None,
         };
         persist(&folder, &data).unwrap();
         let known = Mutex::new(HashMap::new());
@@ -763,6 +773,7 @@ mod recovery_tests {
                 item_options: HashMap::new(),
                 transactions: Vec::new(),
                 label: None,
+                owner: None,
             };
             persist(&folder, &data).unwrap();
             folder

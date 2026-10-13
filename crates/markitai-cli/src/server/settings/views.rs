@@ -124,7 +124,12 @@ fn deployment(entry: &Value, index: usize, persisted: bool) -> Value {
     json!({"deployment_id":identity::id(entry,index),"routing_group":entry["model_name"].as_str().unwrap_or("default"),"model":params["model"],"weight":params["weight"].as_u64().unwrap_or(1),"api_key_configured":!local&&model::real_key(params["api_key"].as_str()),"api_base_configured":!local&&nonempty(&params["api_base"]),"api_base":if local{None}else{origin(params["api_base"].as_str())},"persisted":persisted})
 }
 pub(super) fn payload(data: &Data, source: &SettingsSource) -> Value {
-    let path = std::env::var_os("HOME")
+    let path = display_path(source);
+    json!({"configured":!data.models.is_empty(),"routable":routable(data),"source":if !data.models.is_empty(){"config"}else if !data.detected.is_empty(){"detected"}else{"none"},"config_path":path,"config_origin":source.origin,"revision":data.revision,"deployments":data.models.iter().enumerate().map(|(index,entry)|deployment(entry,index,true)).collect::<Vec<_>>(),"detected":data.detected.iter().enumerate().map(|(index,entry)|deployment(entry,index,false)).collect::<Vec<_>>()})
+}
+/// The configuration file's path as the settings show it (`~/…` under home).
+pub(super) fn display_path(source: &SettingsSource) -> String {
+    std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .and_then(|home| {
             source
@@ -133,8 +138,7 @@ pub(super) fn payload(data: &Data, source: &SettingsSource) -> Value {
                 .ok()
                 .map(|rest| format!("~/{}", rest.display()))
         })
-        .unwrap_or_else(|| source.path.to_string_lossy().into_owned());
-    json!({"configured":!data.models.is_empty(),"routable":routable(data),"source":if !data.models.is_empty(){"config"}else if !data.detected.is_empty(){"detected"}else{"none"},"config_path":path,"config_origin":source.origin,"revision":data.revision,"deployments":data.models.iter().enumerate().map(|(index,entry)|deployment(entry,index,true)).collect::<Vec<_>>(),"detected":data.detected.iter().enumerate().map(|(index,entry)|deployment(entry,index,false)).collect::<Vec<_>>()})
+        .unwrap_or_else(|| source.path.to_string_lossy().into_owned())
 }
 /// How a saved connection authenticates, when the environment supplies its
 /// key: `env:VAR` for a key that is an `env:VAR` reference, or for a

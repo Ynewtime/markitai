@@ -933,7 +933,12 @@ main:focus {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 12px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+}
+/* the status sentence and the filters were one 16px step apart: the head gets
+   the room a page title has above its first section */
+.conv-head {
+  margin-bottom: 24px;
 }
 .search {
   display: flex;
@@ -1054,6 +1059,115 @@ main:focus {
 .row.is-child {
   padding-left: 24px;
 }
+
+/* Selection for deleting several: a box at every row's left edge, the same
+   column for submissions and their members (members keep their 16px indent
+   after it). */
+.row.has-check {
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  gap: 10px;
+}
+.row.has-check.is-child {
+  grid-template-columns: 16px 34px minmax(0, 1fr) auto;
+  padding-left: 8px;
+}
+.row.has-check.is-child > .glyph {
+  justify-self: end;
+}
+.group-head.has-check {
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  gap: 10px;
+}
+.row-check {
+  position: relative;
+  display: inline-grid;
+  align-self: center;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid color-mix(in srgb, var(--text-3) 70%, var(--surface));
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--accent-contrast);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+/* a 32px target around the 16px box */
+.row-check::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+.row-check.is-on,
+.row-check.is-mixed {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.check-dash {
+  width: 8px;
+  height: 2px;
+  background: currentColor;
+}
+.row-check.is-locked {
+  border-style: dashed;
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.row.is-checked:not(.is-selected) {
+  background: var(--mark-wash);
+}
+/* the bar for what is checked: it rides the bottom of the window while the list
+   scrolls under it, and rests below a short list */
+.select-bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  margin-top: 16px;
+  padding: 6px 6px 6px 14px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: var(--shadow-pop);
+}
+.select-count {
+  margin-right: 8px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.select-link {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-ui);
+  color: color-mix(in srgb, var(--accent-contrast) 82%, var(--accent));
+}
+.select-link:disabled {
+  color: color-mix(in srgb, var(--accent-contrast) 62%, var(--accent));
+  cursor: default;
+}
+.select-bar .select-delete {
+  margin-left: auto;
+}
+.select-bar .select-delete:not(:disabled) {
+  border-color: transparent;
+  background: var(--danger-fill);
+  color: var(--danger-on-fill);
+}
+.select-bar .select-delete:disabled {
+  background: color-mix(in srgb, var(--accent-contrast) 14%, var(--accent));
+  color: color-mix(in srgb, var(--accent-contrast) 62%, var(--accent));
+  border-color: transparent;
+}
+.select-link:focus-visible,
+.select-bar .select-delete:focus-visible {
+  outline: 2px solid var(--accent-contrast);
+  outline-offset: 1px;
+}
 .row-name {
   display: flex;
   align-items: center;
@@ -1095,18 +1209,23 @@ main:focus {
 }
 .group-head {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 6px;
-  padding: 14px 8px 6px 4px;
+  gap: 8px;
+  padding: 14px 8px 6px;
   border-bottom: 1px solid var(--hairline);
   font-size: var(--text-sm);
   color: var(--text-3);
   cursor: pointer;
 }
+/* the chevron sits in the status glyphs' column: one left edge with a lone
+   conversion's mark below it */
 .group-caret {
-  display: inline-flex;
+  display: inline-grid;
   align-self: center;
+  place-items: center;
+  width: 18px;
+  height: 18px;
   color: var(--text-3);
 }
 .group-label {
@@ -2205,11 +2324,11 @@ kbd {
   border: 0;
   background: #fff;
 }
-.orig-caption {
-  flex: none;
-  padding: 6px 16px;
-  border-top: 1px solid var(--hairline);
-  font-size: var(--text-xs);
+/* the (i) beside "Original": what the framed page is; it sits by the label, not with the actions */
+.orig-head .info-tip {
+  width: 24px;
+  height: 24px;
+  margin-left: -6px;
   color: var(--text-3);
 }
 
@@ -5101,6 +5220,17 @@ input[type="password"],
   .btn-primary:not(:disabled):hover {
     background: var(--accent-hover);
   }
+  .select-link:not(:disabled):hover {
+    background: color-mix(in srgb, var(--accent-contrast) 12%, var(--accent));
+    color: var(--accent-contrast);
+  }
+  .select-bar .select-delete:not(:disabled):hover {
+    background: var(--danger-fill-hover);
+    color: var(--danger-on-fill);
+  }
+  .row-check:not(.is-locked):hover {
+    border-color: var(--text-1);
+  }
   .btn-danger:not(:disabled):hover {
     border-color: var(--err);
     background: color-mix(in srgb, var(--err) 7%, var(--surface));
@@ -5346,6 +5476,25 @@ input[type="password"],
   }
   .row {
     min-height: 44px;
+  }
+  /* Select mode on a phone: the bar sits over the tab bar's top edge, and the
+     list leaves room for it under its last row */
+  .select-bar {
+    position: fixed;
+    right: 12px;
+    bottom: calc(var(--strips-bottom) + 10px);
+    left: 12px;
+    margin: 0;
+  }
+  .select-bar .select-link {
+    height: 36px;
+  }
+  .conv-list.is-selecting {
+    margin-bottom: 76px;
+  }
+  .toolbar .select-mode-btn {
+    height: 34px;
+    margin-left: auto;
   }
   .nm.has-host .mid-host {
     display: none;
@@ -5756,4 +5905,175 @@ input[type="password"],
     max-height: 195mm;
     object-fit: contain;
   }
+}
+
+/* ------------------------------------------------------ access levels (v1.13) */
+
+/* a user token's Access row on Appearance: two buttons on the right */
+.setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.token-create {
+  display: grid;
+  gap: 6px;
+}
+.token-empty {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+/* the admin's user tokens: name, the token's last characters, when, Revoke */
+.token-list {
+  border-top: 1px solid var(--hairline);
+}
+.token-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 0 4px 2px;
+  border-bottom: 1px solid var(--hairline);
+}
+.token-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 550;
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-hint {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.token-when {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+@media screen and (max-width: 760px) {
+  .token-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+    padding: 8px 0;
+  }
+  .token-hint {
+    grid-row: 2;
+  }
+  .token-when {
+    grid-row: 2;
+    grid-column: 1;
+    margin-left: 52px;
+  }
+  .token-list li > :last-child {
+    grid-row: 1 / 3;
+    grid-column: 2;
+  }
+}
+
+/* Edit config: the file as text on the terminal surface the CLI box and Source use */
+.config-path {
+  margin-top: 4px;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.config-path code {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+.config-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.config-note.is-warn {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--warn-wash);
+  color: var(--text-1);
+}
+.config-note.is-done > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--success);
+}
+.config-editor {
+  display: grid;
+  gap: 8px;
+}
+.config-editor textarea {
+  width: 100%;
+  min-height: min(62vh, 640px);
+  padding: 14px 16px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--r-sm);
+  background: var(--t-bg);
+  color: var(--t-text);
+  caret-color: var(--t-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+}
+.config-editor textarea:focus-visible {
+  outline: 2px solid var(--text-1);
+  outline-offset: 2px;
+}
+.config-editor textarea[aria-invalid="true"] {
+  border-color: var(--err);
+}
+.config-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.config-check > svg {
+  flex: none;
+  color: var(--success);
+}
+.config-check.is-error {
+  color: var(--err);
+}
+.config-check.is-error > svg {
+  color: var(--err);
+}
+.config-review .group-title:focus {
+  outline: none;
+}
+.config-diff {
+  max-width: none;
+  max-height: min(62vh, 640px);
+  padding: 4px 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  overflow: auto;
+}
+.config-failure {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+.config-detail {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }

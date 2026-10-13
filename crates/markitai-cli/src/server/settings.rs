@@ -1,4 +1,5 @@
 //! Persistent service settings. Network operations consume a detached configuration snapshot.
+mod editor;
 mod handlers;
 mod identity;
 mod model;

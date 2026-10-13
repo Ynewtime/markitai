@@ -427,6 +427,29 @@ function pinDrawings(fragment: DocumentFragment): void {
   }
 }
 
+/** An absolute https address without user information, as the page may load it; else null. */
+export function remotePicture(source: string): string | null {
+  if (!/^https:\/\//i.test(source.trim())) return null;
+  try {
+    const url = new URL(source.trim());
+    return url.protocol === "https:" && !url.username && !url.password && url.hostname ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A remote picture that cannot load becomes its labelled placeholder (one
+ * listener for every rendered document, as error events do not bubble). */
+export function swapFailedPicture(event: Event): void {
+  const image = event.target as HTMLImageElement | null;
+  if (!image || image.tagName !== "IMG" || !image.hasAttribute("data-remote")) return;
+  const span = image.ownerDocument.createElement("span");
+  span.className = "img-blocked";
+  span.textContent = image.getAttribute("data-fallback") || image.alt;
+  image.replaceWith(span);
+}
+if (typeof document !== "undefined") document.addEventListener("error", swapFailedPicture, true);
+
 /** The page a PDF's extracted picture came from: Markitai's Rust converter
  * writes `![Image on page 3](…)`, the Python one names the file
  * `<name>.pdf-0003-01.png`; null for any other picture. */
@@ -464,6 +487,18 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext, numb
       const block = typeof image.closest === "function" ? image.closest("p, li, td, th") : null;
       if (alt && block?.textContent?.trim() === alt.trim()) image.setAttribute("alt", "");
       else if (!alt) image.setAttribute("alt", context.fallbackAlt);
+    } else if (remotePicture(source)) {
+      // A picture on the web (a fetched page's own): loaded from its site as the
+      // page's policy allows (https only), without a referrer, when it comes near
+      // the view; the placeholder takes its place only if it fails to load.
+      image.setAttribute("src", remotePicture(source) as string);
+      image.setAttribute("loading", "lazy");
+      image.setAttribute("decoding", "async");
+      image.setAttribute("referrerpolicy", "no-referrer");
+      image.setAttribute("data-remote", "");
+      image.setAttribute("data-fallback", context.placeholder(alt));
+      image.removeAttribute("srcset");
+      if (!alt) image.setAttribute("alt", context.fallbackAlt);
     } else {
       const span = doc.createElement("span");
       span.className = "img-blocked";

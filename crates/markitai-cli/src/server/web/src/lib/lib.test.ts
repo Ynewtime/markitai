@@ -308,13 +308,16 @@ test("rendered images and file links carry no token; with one, images wait to be
   const render = (imageURL: (path: string) => string | null) => {
     const image = fakeElement("img", { src: "assets/a.png", alt: "" });
     const external = fakeElement("img", { src: "https://example.com/x.png" });
+    const plainHttp = fakeElement("img", { src: "http://example.com/y.png", alt: "y" });
+    const dataUrl = fakeElement("img", { src: "data:image/png;base64,AAAA" });
+    const userinfo = fakeElement("img", { src: "https://user:pw@example.com/z.png" });
     const link = fakeElement("a", { href: "assets/a.png" });
     // A link the sanitizer emptied (it had a `javascript:` address).
     const bare = fakeElement("a", {});
     const blank = fakeElement("a", { href: " " });
     const fragment = {
       ownerDocument: { createElement: (tag: string) => fakeElement(tag) },
-      querySelectorAll: (selector: string) => (selector === "img" ? [image, external] : selector === "a" ? [link, bare, blank] : []),
+      querySelectorAll: (selector: string) => (selector === "img" ? [image, external, plainHttp, dataUrl, userinfo] : selector === "a" ? [link, bare, blank] : []),
     };
     rewrite(fragment as never, {
       documentPath: "doc.md",
@@ -326,12 +329,19 @@ test("rendered images and file links carry no token; with one, images wait to be
       tableLabel: "table",
       codeLabel: "code",
     });
-    return { image, external, link, bare, blank };
+    return { image, external, plainHttp, dataUrl, userinfo, link, bare, blank };
   };
   const plain = render((path) => `/api/jobs/j/files/${path}`);
   assert.equal(plain.image.getAttribute("src"), "/api/jobs/j/files/assets/a.png");
   assert.equal(plain.image.getAttribute("data-artifact-src"), null);
-  assert.ok(plain.external.replacedBy, "external images stay blocked");
+  // v1.13: a picture on the web over https shows (lazy, no referrer, its placeholder kept for a failed load);
+  // http, data: and addresses with user information stay placeholders.
+  assert.equal(plain.external.replacedBy, null, "https pictures stay");
+  assert.equal(plain.external.getAttribute("src"), "https://example.com/x.png");
+  assert.equal(plain.external.getAttribute("loading"), "lazy");
+  assert.equal(plain.external.getAttribute("referrerpolicy"), "no-referrer");
+  assert.equal(plain.external.getAttribute("data-fallback"), "[]");
+  for (const blocked of [plain.plainHttp, plain.dataUrl, plain.userinfo]) assert.ok(blocked.replacedBy, "http, data: and userinfo pictures stay blocked");
   assert.equal(plain.link.getAttribute("href"), "/api/jobs/j/files/assets/a.png");
   assert.equal(plain.link.getAttribute("data-artifact"), "assets/a.png");
   for (const empty of [plain.bare, plain.blank]) {

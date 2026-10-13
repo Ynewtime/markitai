@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; font-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: https:; font-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 /// One embedded file. `gzip` marks bytes stored compressed.
 struct Asset {
@@ -215,6 +215,7 @@ pub(super) fn routes() -> Router<Arc<State>> {
         .route("/settings/models", route(&INDEX))
         .route("/settings/appearance", route(&INDEX))
         .route("/settings/access", route(&INDEX))
+        .route("/settings/config", route(&INDEX))
         .route("/ui/app.js", route(&APP_JS))
         .route("/ui/app.css", route(&APP_CSS))
         .route("/ui/boot.js", route(&BOOT_JS))
@@ -434,6 +435,7 @@ mod tests {
             item_options: HashMap::new(),
             transactions: Vec::new(),
             label: None,
+            owner: None,
         };
         full.status = "done".into();
         full.models = vec!["m".into()];
@@ -487,7 +489,7 @@ mod tests {
             );
         }
         // Nested llm fields must not be mistaken for top-level capabilities.
-        assert_eq!(interface("Capabilities").len(), 11);
+        assert_eq!(interface("Capabilities").len(), 12);
         assert_eq!(interface("CloudflareCapability").len(), 6);
     }
 }

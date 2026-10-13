@@ -6,6 +6,8 @@
 // every 20 s) and on demand.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
+  ApiError,
+  batchDelete,
   createJob,
   deleteHistoryJob,
   deleteItem as deleteJobItem,
@@ -89,10 +91,38 @@ export interface ConversionsApi {
   enhance(item: SessionItem, options: JobOptions): Promise<unknown>;
   removeItem(item: SessionItem): Promise<unknown>;
   removeJob(jobId: string): Promise<unknown>;
+  /** Delete whole submissions and single items at once; each one succeeds or fails on its own. */
+  removeMany(jobIds: string[], items: SessionItem[]): Promise<RemoveManyResult>;
   stop(jobIds: string[]): Promise<{ stopping: number; error: unknown }>;
   refresh(): Promise<void>;
   retryRestore(): Promise<number>;
   clearSubmitError(): void;
+}
+
+export interface RemoveManyResult {
+  /** Conversions (items) removed, counting those that were already gone. */
+  removed: number;
+  /** What could not be deleted: the item (or the submission's first item) and why. */
+  failed: { item: SessionItem; error: unknown }[];
+}
+
+/** Single deletions at once when the backend has no batch route. */
+const DELETE_WORKERS = 4;
+/** Entries per batch request (the backends accept up to 1000). */
+const BATCH_LIMIT = 1000;
+
+/** Run `work` over `entries`, at most `limit` at a time, in order of start. */
+export async function bounded<T, R>(entries: T[], limit: number, work: (entry: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(entries.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < entries.length) {
+      const index = next++;
+      results[index] = await work(entries[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, entries.length) }, worker));
+  return results;
 }
 
 /** Connectivity checks are owned by the app; a broken stream asks for one. */
@@ -391,6 +421,89 @@ export function useConversions(
     [forgetJob],
   );
 
+  const removeMany = useCallback(
+    async (jobIds: string[], chosen: SessionItem[]): Promise<RemoveManyResult> => {
+      const all = itemsRef.current;
+      const firstOf = (jobId: string) => all.find((item) => item.jobId === jobId);
+      const gone = (error: unknown) => error instanceof ApiError && error.status === 404;
+      const jobOutcome: { jobId: string; error: unknown }[] = [];
+      const itemOutcome: { item: SessionItem; error: unknown }[] = [];
+      if (features?.batch_delete === true) {
+        const entries = [...jobIds.map((jobId) => ({ jobId })), ...chosen.map((item) => ({ item }))];
+        for (let start = 0; start < entries.length; start += BATCH_LIMIT) {
+          const slice = entries.slice(start, start + BATCH_LIMIT);
+          const jobs = slice.flatMap((entry) => ("jobId" in entry ? [entry.jobId] : []));
+          const singles = slice.flatMap((entry) => ("item" in entry ? [entry.item] : []));
+          try {
+            const answer = await batchDelete(
+              jobs,
+              singles.map((item) => ({ job_id: item.jobId, item_id: item.itemId })),
+            );
+            answer.results.forEach((result, index) => {
+              // Already gone counts as deleted, as the single routes' 404 does.
+              const missing = result.reason === "job_not_found" || result.reason === "item_not_found";
+              const error = result.ok || missing ? null : new ApiError(409, { detail: result.detail ?? "", code: "conflict", reason: result.reason ?? null });
+              if (index < jobs.length) jobOutcome.push({ jobId: jobs[index] as string, error });
+              else itemOutcome.push({ item: singles[index - jobs.length] as SessionItem, error });
+            });
+          } catch (error) {
+            for (const jobId of jobs) jobOutcome.push({ jobId, error });
+            for (const item of singles) itemOutcome.push({ item, error });
+          }
+        }
+      } else {
+        const settle = async (run: () => Promise<unknown>) => {
+          try {
+            await run();
+            return null;
+          } catch (error) {
+            return gone(error) ? null : error;
+          }
+        };
+        const jobErrors = await bounded(jobIds, DELETE_WORKERS, (jobId) => settle(() => deleteHistoryJob(jobId)));
+        jobIds.forEach((jobId, index) => jobOutcome.push({ jobId, error: jobErrors[index] }));
+        // Items of one submission one after another: the service locks the submission per deletion.
+        const byJob = new Map<string, SessionItem[]>();
+        for (const item of chosen) byJob.set(item.jobId, [...(byJob.get(item.jobId) ?? []), item]);
+        const itemErrors = await bounded([...byJob.values()], DELETE_WORKERS, async (group) => {
+          const errors: unknown[] = [];
+          for (const item of group) errors.push(await settle(() => deleteJobItem(item.jobId, item.itemId)));
+          return errors;
+        });
+        [...byJob.values()].forEach((group, index) => group.forEach((item, position) => itemOutcome.push({ item, error: itemErrors[index]?.[position] ?? null })));
+      }
+      let removed = 0;
+      const failed: RemoveManyResult["failed"] = [];
+      const deletedJobs = new Set<string>();
+      const deletedItems = new Set<string>();
+      for (const { jobId, error } of jobOutcome) {
+        const members = all.filter((item) => item.jobId === jobId);
+        if (error === null) {
+          deletedJobs.add(jobId);
+          removed += members.length;
+        } else {
+          const first = firstOf(jobId);
+          if (first) failed.push({ item: first, error });
+        }
+      }
+      for (const { item, error } of itemOutcome) {
+        if (error === null) {
+          deletedItems.add(item.key);
+          removed += 1;
+        } else failed.push({ item, error });
+      }
+      setItems((previous) => previous.filter((item) => !deletedItems.has(item.key) && !deletedJobs.has(item.jobId)));
+      // A submission whose every item went is gone too.
+      const emptied = new Set(deletedJobs);
+      for (const jobId of new Set(chosen.map((item) => item.jobId))) {
+        if (!all.some((item) => item.jobId === jobId && !deletedItems.has(item.key))) emptied.add(jobId);
+      }
+      for (const jobId of emptied) forgetJob(jobId);
+      return { removed, failed };
+    },
+    [features, forgetJob],
+  );
+
   /** Stop the original items still waiting for a slot. A 409 means nothing waits any more. */
   const stop = useCallback(async (jobIds: string[]) => {
     let stopping = 0;
@@ -490,6 +603,7 @@ export function useConversions(
     enhance: (item, options) => rerun(item, "enhance", options),
     removeItem,
     removeJob,
+    removeMany,
     stop,
     refresh,
     retryRestore,

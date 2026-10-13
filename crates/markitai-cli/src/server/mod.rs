@@ -13,6 +13,7 @@ macro_rules! api_routes {
     };
 }
 
+mod access;
 mod files;
 mod http;
 mod jobs;
@@ -78,6 +79,8 @@ struct State {
     allowed_hosts: HashSet<String>,
     tickets: tickets::Tickets,
     previews: original::Previews,
+    /// The user tokens (`serve/access.json`).
+    access: access::Access,
 }
 
 api_routes! {
@@ -85,6 +88,9 @@ api_routes! {
     get "/api/openapi.json" => openapi::document;
     post "/api/download-tickets" => tickets::issue;
     post "/api/access-token/regenerate" => security::regenerate;
+    get "/api/access-tokens" => access::list;
+    post "/api/access-tokens" => access::create;
+    delete "/api/access-tokens/{id}" => access::revoke;
     post "/api/jobs" => http::create;
     get "/api/jobs/{job_id}" => http::snapshot;
     get "/api/jobs/{job_id}/events" => http::events;
@@ -104,6 +110,7 @@ api_routes! {
     get "/api/history" => http::history;
     get "/api/history/archive" => files::history_archive;
     delete "/api/history/{job_id}" => http::delete;
+    post "/api/history/delete" => http::delete_many;
 }
 
 impl State {
@@ -141,7 +148,8 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
 }
 
 async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Result<(), String> {
-    let root = markitai_core::config::home().join("serve/jobs");
+    let serve_home = markitai_core::config::home().join("serve");
+    let root = serve_home.join("jobs");
     let service_lock = store::service_lock(&root).map_err(|e| e.to_string())?;
     store::clean_uploads(&root, &service_lock).map_err(|e| e.to_string())?;
     let (shutdown, _) = watch::channel(false);
@@ -179,6 +187,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         allowed_hosts,
         tickets: tickets::Tickets::default(),
         previews: original::Previews::default(),
+        access: access::Access::load(serve_home.join("access.json")),
     });
     store::rehydrate(&state.root, &state.jobs).map_err(|e| e.to_string())?;
     // Under the lifetime lock: no other server sweeps this history.

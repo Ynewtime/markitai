@@ -3,7 +3,9 @@
 // events (`markitai:offline`, `markitai:online`, `markitai:unauthorized`).
 import { bearer, serviceURL } from "./token.ts";
 import type {
+  BatchDeleteResult,
   Capabilities,
+  ConfigDocument,
   CreateJobResponse,
   Deployment,
   DiscoveryResult,
@@ -19,6 +21,7 @@ import type {
   ProviderCard,
   ProviderCredentials,
   SettingsView,
+  UserToken,
 } from "./types.ts";
 
 /** A refused request. `reason` (or a settings conflict's `detail.code`) is the
@@ -348,6 +351,17 @@ export async function deleteHistoryJob(job: string): Promise<boolean> {
     throw error;
   }
 }
+
+/** v1.13: several conversions in one request; each entry succeeds or fails on its own. */
+export const batchDelete = (jobs: string[], items: { job_id: string; item_id: string }[]) =>
+  json<BatchDeleteResult>("/api/history/delete", { method: "POST", body: { jobs, items } });
+
+export const fetchUserTokens = () => json<{ tokens: UserToken[] }>("/api/access-tokens").then((value) => value.tokens ?? []);
+export const createUserToken = (label: string) => json<UserToken>("/api/access-tokens", { method: "POST", body: { label } });
+export const revokeUserToken = (id: string) => json<null>(`/api/access-tokens/${enc(id)}`, { method: "DELETE" });
+export const fetchConfigDocument = () => json<ConfigDocument>("/api/settings/config");
+export const saveConfigDocument = (revision: string, text: string) =>
+  json<ConfigDocument>("/api/settings/config", { method: "PUT", body: { expected_revision: revision, text } });
 
 const settings = "/api/settings/llm";
 export const fetchSettings = () => json<SettingsView>(settings);

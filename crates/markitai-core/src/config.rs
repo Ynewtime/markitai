@@ -462,9 +462,28 @@ fn sensitive_key(key: &str) -> bool {
         })
 }
 
+/// Whether a configuration key names a secret: the rule [`redact`] (and
+/// `markitai config show`) hides values by.
+pub fn secret_key(key: &str) -> bool {
+    sensitive_key(key)
+}
+
+/// Whether a configuration key names an `extra_http_headers` object, whose
+/// values [`redact`] hides whatever their header names.
+pub fn header_map_key(key: &str) -> bool {
+    let key = normalized_key(key);
+    key == "extra_http_headers" || key.ends_with("_extra_http_headers")
+}
+
+/// Whether a configuration key names an endpoint address (`api_base`,
+/// `*_api_base`), which [`redact`] shows without its credentials.
+pub fn api_base_key(key: &str) -> bool {
+    let key = normalized_key(key);
+    key == "api_base" || key.ends_with("_api_base")
+}
+
 fn redact_named(key: &str, value: &Value) -> Option<Value> {
-    let key_normalized = normalized_key(key);
-    if key_normalized == "extra_http_headers" || key_normalized.ends_with("_extra_http_headers") {
+    if header_map_key(key) {
         return Some(match value.as_object() {
             Some(headers) => object(headers.keys().map(|key| (key.clone(), json!(REDACTED)))),
             None => json!(REDACTED),
@@ -473,7 +492,7 @@ fn redact_named(key: &str, value: &Value) -> Option<Value> {
     let environment_reference = value
         .as_str()
         .is_some_and(|value| value.starts_with("env:"));
-    if key_normalized == "api_base" || key_normalized.ends_with("_api_base") {
+    if api_base_key(key) {
         if environment_reference {
             return Some(value.clone());
         }

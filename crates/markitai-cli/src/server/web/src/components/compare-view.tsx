@@ -5,8 +5,11 @@
 // outlines its counterpart: PDF pages are matched through their text layer,
 // HTML by element. A web page opens on its screenshot when the conversion took
 // one; its other view is the kept snapshot in a sandboxed frame that runs no
-// script and loads only the site's pictures, styles and fonts. On phones the
-// original sits above the Markdown.
+// script and loads only the site's pictures, styles and fonts. The frame shares
+// the workbench's origin (it still runs nothing: no `allow-scripts`, and its
+// policy has no script source), so the workbench reads its blocks, pairs them
+// with the Markdown's by their words and outlines them with a style of its own.
+// On phones the original sits above the Markdown.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ApiError, downloadTicket, fetchBlob, fetchPageText, fetchText, originalPagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
@@ -14,11 +17,12 @@ import type { OriginalDescriptor } from "../api/types.ts";
 import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { locate, norm, pairElements, TARGET_SELECTOR, targetsOf, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
+import { locate, norm, pageBlocks, pairBlocks, pairElements, TARGET_SELECTOR, targetsOf, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
 import { download } from "../lib/download.ts";
-import { fmtBytes } from "../lib/format.ts";
+import { fmtBytes, readable } from "../lib/format.ts";
 import { loadLibraries } from "../lib/markdown.ts";
 import type { SessionItem } from "../lib/session.ts";
+import { HelpTooltip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { Skeleton } from "./skeleton.tsx";
 import { MarkdownView, type Tab } from "./markdown-view.tsx";
@@ -119,6 +123,7 @@ export function CompareView({
         descriptor={descriptor}
         url={url}
         views={framed && descriptor.page_count > 0 ? { value: snapView, onChange: setSnapView } : null}
+        framed={framed}
       />
       {error ? (
         <p class="pane-note line-error">{describe(error).text}</p>
@@ -128,7 +133,19 @@ export function CompareView({
         snapView === "shot" ? (
           <Pages t={t} item={item} descriptor={descriptor} targets={[]} hover={null} onHover={() => undefined} />
         ) : (
-          <PageFrame t={t} item={item} view={descriptor.view as string} describe={describe} onFailed={descriptor.page_count > 0 ? () => setSnapView("shot") : null} />
+          <PageFrame
+            t={t}
+            item={item}
+            view={descriptor.view as string}
+            describe={describe}
+            onFailed={descriptor.page_count > 0 ? () => setSnapView("shot") : null}
+            targets={targets}
+            hover={hover}
+            onHover={(id) => {
+              setHover(id ? linkOf(id) : null);
+              if (id) reveal(id);
+            }}
+          />
         )
       ) : (
         <OriginalBody
@@ -162,18 +179,22 @@ function OriginalHeader({
   descriptor,
   url,
   views,
+  framed,
 }: {
   t: Dict;
   item: SessionItem;
   descriptor: OriginalDescriptor | null;
   url: string | null;
   views: { value: "page" | "shot"; onChange: (value: "page" | "shot") => void } | null;
+  /** A web page's kept snapshot: the page itself is the original, so no download here (Files keeps it). */
+  framed: boolean;
 }) {
   const [failed, setFailed] = useState(false);
-  const fetchable = descriptor?.download;
+  const fetchable = framed ? null : descriptor?.download;
   return (
     <div class="orig-head">
       <span class="orig-label">{t.original}</span>
+      {framed && <InfoTip label={t.originalPageInfo} text={t.originalPageNote} />}
       {views && (
         <span class="seg orig-views" role="group" aria-label={t.originalViews}>
           {(["shot", "page"] as const).map((value) => (
@@ -191,7 +212,7 @@ function OriginalHeader({
           aria-label={t.downloadOriginal}
           title={failed ? t.downloadFailed : t.downloadOriginal}
           onClick={() =>
-            void download(fetchable, descriptor?.name.split("/").pop() || item.name).then(
+            void download(fetchable, readable(descriptor?.name.split("/").pop() || item.name)).then(
               () => setFailed(false),
               () => setFailed(true),
             )
@@ -211,28 +232,39 @@ function OriginalHeader({
 }
 
 /** A web page as the server fetched it, in a frame that runs no script and sends
- * no form, with no origin of its own; it loads only the site's pictures, style
- * sheets and fonts (the server's own CSP for this route). A frame cannot send
- * the token, so it opens with a single-use ticket. */
+ * no form; it loads only the site's pictures, style sheets and fonts (the
+ * server's own CSP for this route). The frame is same-origin with the workbench
+ * so the workbench can read it: hovering a block on either side outlines its
+ * counterpart, drawn by a style the workbench puts in the frame. A frame cannot
+ * send the token, so it opens with a single-use ticket. */
 function PageFrame({
   t,
   item,
   view,
   describe,
   onFailed,
+  targets,
+  hover,
+  onHover,
 }: {
   t: Dict;
   item: SessionItem;
   view: string;
   describe: (error: unknown) => { text: string; detail: string };
   onFailed: (() => void) | null;
+  targets: { element: HTMLElement; target: Target }[];
+  hover: Linked | null;
+  onHover: (id: string | null) => void;
 }) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [page, setPage] = useState<Document | null>(null);
   useEffect(() => {
     let stale = false;
     setSrc(null);
     setError(null);
+    setPage(null);
     (hasToken() ? downloadTicket(view) : Promise.resolve(view)).then(
       (value) => !stale && setSrc(value),
       (reason: unknown) => {
@@ -245,6 +277,68 @@ function PageFrame({
       stale = true;
     };
   }, [item.key, view]);
+  // The page's blocks paired with the Markdown's; an empty map when the frame cannot be read.
+  const pairs = useMemo(() => {
+    if (!page?.body) return new Map<string, Element>();
+    const blocks = pageBlocks(page.body);
+    const found = pairBlocks(
+      targets.map((entry) => entry.target),
+      blocks.map((entry) => entry.block),
+    );
+    return new Map([...found].map(([id, index]) => [id, blocks[index]?.element as Element]));
+  }, [page, targets]);
+  const reverse = useMemo(() => new Map([...pairs].map(([id, element]) => [element, id])), [pairs]);
+  // Pointer over the page: the innermost paired block under it.
+  const reverseRef = useRef(reverse);
+  reverseRef.current = reverse;
+  const onHoverRef = useRef(onHover);
+  onHoverRef.current = onHover;
+  useEffect(() => {
+    if (!page) return;
+    const over = (event: Event) => {
+      for (let node = event.target as Element | null; node && node !== page.body; node = node.parentElement) {
+        const id = reverseRef.current.get(node);
+        if (id) return onHoverRef.current(id);
+      }
+      onHoverRef.current(null);
+    };
+    const leave = () => onHoverRef.current(null);
+    page.addEventListener("mouseover", over);
+    page.documentElement.addEventListener("mouseleave", leave);
+    return () => {
+      page.removeEventListener("mouseover", over);
+      page.documentElement.removeEventListener("mouseleave", leave);
+    };
+  }, [page]);
+  // The outline: an attribute on the paired block and the workbench's style for it, scrolled into the frame's view.
+  useEffect(() => {
+    const element = hover ? pairs.get(hover.id) : undefined;
+    if (!page || !element) return;
+    element.setAttribute(LINKED, "");
+    const view = page.defaultView;
+    const box = element.getBoundingClientRect();
+    if (view && (box.top < 0 || box.bottom > view.innerHeight)) {
+      view.scrollTo({ top: view.scrollY + box.top - Math.max(16, (view.innerHeight - box.height) / 2), behavior: "smooth" });
+    }
+    return () => element.removeAttribute(LINKED);
+  }, [hover, pairs, page]);
+  const onLoad = () => {
+    let doc: Document | null = null;
+    try {
+      doc = frame.current?.contentDocument ?? null;
+    } catch {
+      doc = null;
+    }
+    // A backend still on the opaque frame (v1.12) gives no document: the page shows, unlinked.
+    if (!doc?.head || !doc.body) return setPage(null);
+    if (!doc.getElementById(STYLE_ID)) {
+      const style = doc.createElement("style");
+      style.id = STYLE_ID;
+      style.textContent = FRAME_STYLE;
+      doc.head.append(style);
+    }
+    setPage(doc);
+  };
   if (error) return <p class="pane-note line-error">{describe(error).text}</p>;
   return (
     <div class="orig-frame-wrap">
@@ -252,17 +346,36 @@ function PageFrame({
         <p class="pane-note">{t.loading}</p>
       ) : (
         <iframe
+          ref={frame}
           class="orig-frame"
           src={src}
           title={t.originalPageTitle}
-          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
           referrerpolicy="no-referrer"
+          onLoad={onLoad}
         />
       )}
-      <p class="orig-caption">{t.originalPageNote}</p>
     </div>
   );
 }
+
+/** A small (i) in a header whose bubble says what the view shows. */
+function InfoTip({ label, text }: { label: string; text: string }) {
+  return (
+    <HelpTooltip text={text}>
+      {(describedBy) => (
+        <button type="button" class="icon-btn info-tip" aria-label={label} aria-describedby={describedBy}>
+          <Icon name="Info" size={15} />
+        </button>
+      )}
+    </HelpTooltip>
+  );
+}
+
+/** The outline the workbench draws in a framed page (the Markdown side's mark colour). */
+const LINKED = "data-markitai-linked";
+const STYLE_ID = "markitai-compare-style";
+const FRAME_STYLE = `[${LINKED}]{outline:2px solid #7c3aed!important;outline-offset:3px!important;border-radius:3px;background-color:rgb(124 58 237 / 0.08)!important;transition:outline-color 120ms ease}@media (prefers-reduced-motion:reduce){[${LINKED}]{transition:none}}`;
 
 function OriginalBody({
   t,
@@ -295,7 +408,7 @@ function OriginalBody({
       return (
         <div class="orig-none">
           <Icon name="FileText" size={28} />
-          <p>{t.originalUnavailable(descriptor.reason ?? "", item.name)}</p>
+          <p>{t.originalUnavailable(descriptor.reason ?? "", readable(item.name))}</p>
           {url && (
             <a class="btn btn-sm" href={url} target="_blank" rel="noopener noreferrer">
               <Icon name="ArrowSquareOut" size={14} />

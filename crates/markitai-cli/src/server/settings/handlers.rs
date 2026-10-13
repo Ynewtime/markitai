@@ -22,6 +22,8 @@ api_routes! {
     patch "/api/settings/llm/providers/{id}" => update_provider;
     delete "/api/settings/llm/providers/{id}" => delete_provider;
     post "/api/settings/llm/config/open" => open;
+    get "/api/settings/config" => config_view;
+    put "/api/settings/config" => config_replace;
 }
 
 pub(in crate::server) fn routes() -> Router<Arc<State>> {
@@ -190,4 +192,69 @@ async fn open(ExtractState(state): ExtractState<Arc<State>>) -> ApiResult<Status
     })
     .await
     .map_err(|_| super::failure())?
+}
+
+/// `text` at most.
+const MAX_CONFIG_TEXT: usize = 1024 * 1024;
+/// A `PUT /api/settings/config` body at most.
+const MAX_CONFIG_BODY: usize = 3 * 512 * 1024;
+
+fn too_large() -> super::ApiError {
+    super::ApiError::new(
+        413,
+        "config_too_large",
+        "the configuration text exceeds 1 MiB",
+    )
+}
+
+/// `GET /api/settings/config`: the configuration file, secrets masked.
+async fn config_view(ExtractState(state): ExtractState<Arc<State>>) -> ApiResult<Json<Value>> {
+    crate::task::blocking(move || state.settings.config_view())
+        .await
+        .map_err(|_| super::failure())?
+        .map(Json)
+}
+
+/// `PUT /api/settings/config` with `{expected_revision, text}`.
+async fn config_replace(
+    ExtractState(state): ExtractState<Arc<State>>,
+    request: axum::extract::Request,
+) -> ApiResult<Json<Value>> {
+    let json = request
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"));
+    let bytes = axum::body::to_bytes(request.into_body(), MAX_CONFIG_BODY)
+        .await
+        .map_err(|_| too_large())?;
+    let shape = || invalid("send a JSON body {\"expected_revision\": string, \"text\": string}");
+    if !json {
+        return Err(shape());
+    }
+    let body: Value = serde_json::from_slice(&bytes).map_err(|_| shape())?;
+    let fields = body
+        .as_object()
+        .filter(|fields| {
+            fields.len() == 2
+                && fields
+                    .keys()
+                    .all(|key| key == "expected_revision" || key == "text")
+        })
+        .ok_or_else(shape)?;
+    let (Some(expected), Some(text)) = (
+        fields["expected_revision"].as_str(),
+        fields["text"].as_str(),
+    ) else {
+        return Err(shape());
+    };
+    if text.len() > MAX_CONFIG_TEXT {
+        return Err(too_large());
+    }
+    let (expected, text) = (expected.to_owned(), text.to_owned());
+    crate::task::blocking(move || state.settings.replace_config(&expected, &text))
+        .await
+        .map_err(|_| super::failure())?
+        .map(Json)
 }
