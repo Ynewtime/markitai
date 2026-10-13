@@ -4,8 +4,9 @@
   and its kept original.
 - A web page's original is the page the server fetched (section 7): kept as
   ``snapshots/<item_id>.html``, described as ``html`` with ``view``, served
-  for the UI's sandboxed frame by ``…/original/view``; the page's own policy
-  allows ``frame-src 'self'``.
+  for the UI's sandboxed frame by ``…/original/view`` (v1.12: under a policy
+  that loads the site's pictures, style sheets, fonts and media over HTTPS
+  and runs no script); the page's own policy allows ``frame-src 'self'``.
 - ``POST /api/access-token/regenerate`` (section 2,
   ``features.token_regenerate``): the old token, its tickets and its event
   streams stop working at once.
@@ -47,9 +48,11 @@ PAGE = (
     '<body><h1>Fetched</h1><img src="/remote.png"><a href="next">next</a></body></html>'
 )
 META = '<meta http-equiv="x-dns-prefetch-control" content="off">'
+# Contract v1.12 section 7, exactly
 VIEW_POLICY = (
     "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; "
-    "style-src 'unsafe-inline'; img-src data:; font-src data:; "
+    "img-src https: data:; style-src https: 'unsafe-inline'; "
+    "font-src https: data:; media-src https:; "
     "form-action 'none'; frame-ancestors 'self'"
 )
 
@@ -394,6 +397,31 @@ class TestKeptWebPage:
         assert "x-frame-options" not in view.headers
         snapshots = list((tmp_path / "jobs" / job_id / "snapshots").iterdir())
         assert [path.name for path in snapshots] == [f"{item['item_id']}.html"]
+
+    def test_the_frame_loads_the_sites_files_and_runs_no_script(self) -> None:
+        from markitai.serve.originals import VIEW_POLICY as SERVED
+
+        assert SERVED == VIEW_POLICY
+        directives = {
+            name: values
+            for name, *values in (part.split() for part in SERVED.split(";"))
+        }
+        # No script: none is allowed, and the sandbox grants neither scripts,
+        # forms nor the frame an origin of its own
+        assert directives["default-src"] == ["'none'"]
+        assert not {"script-src", "script-src-elem", "connect-src"} & set(directives)
+        assert directives["sandbox"] == [
+            "allow-popups",
+            "allow-popups-to-escape-sandbox",
+        ]
+        assert directives["form-action"] == ["'none'"]
+        assert directives["frame-ancestors"] == ["'self'"]
+        # The page's pictures, style sheets, fonts and media, over HTTPS only
+        assert directives["img-src"] == ["https:", "data:"]
+        assert directives["style-src"] == ["https:", "'unsafe-inline'"]
+        assert directives["font-src"] == ["https:", "data:"]
+        assert directives["media-src"] == ["https:"]
+        assert "http:" not in SERVED and "*" not in SERVED
 
     async def test_an_uploaded_page_is_framed_with_a_bare_base(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
