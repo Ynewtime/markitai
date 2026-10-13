@@ -97,7 +97,9 @@ class _LocalServer(ThreadingHTTPServer):
 
     def server_bind(self) -> None:
         socketserver.TCPServer.server_bind(self)
-        self.server_name, self.server_port = self.server_address[:2]
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
 
 
 def _playwright_browsers(home: Path) -> Path:
@@ -317,7 +319,7 @@ def probe(out: Path | None = None, *, control: bool = False) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     from loguru import logger
 
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--out", type=Path, help="write the result as JSON here")
     parser.add_argument(
         "--control",
