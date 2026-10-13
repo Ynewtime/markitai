@@ -722,6 +722,10 @@ export const zh: Dict = {
   configUnreadableText: (problem) => `请在文本编辑器中修正后重新加载此页面。${problem}`,
   configReadOnly: "本次会话的模型设置来自命令行参数，因此无法在此保存。请在文本编辑器中修改，并在不带这些参数时重启。",
   configMasked: (n) => `${n} 个密钥以掩码显示（如 sk…7890）。保持掩码值原样即保留原密钥；输入新值或 env: 引用即可替换。`,
+  configEndings: (name) => `此文件使用 ${name} 换行符，保存时保留。`,
+  configEndingsMixed: (counts, newline) =>
+    `此文件混用了多种换行符（${[counts.crlf && `${counts.crlf} 行 CRLF`, counts.lf && `${counts.lf} 行 LF`, counts.cr && `${counts.cr} 行 CR`].filter(Boolean).join("、")}）。保存时每行保留原有的换行符；修改过的行沿用原来的，新增的行使用最常见的 ${newline}。`,
+  configBom: "此文件以字节顺序标记（BOM）开头，保存时保留。",
   configEditorLabel: "配置（JSON）",
   configValid: "JSON 有效",
   configValidChanged: "JSON 有效 · 有未保存的修改",

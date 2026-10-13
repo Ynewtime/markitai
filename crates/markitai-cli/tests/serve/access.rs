@@ -780,3 +780,101 @@ fn the_config_file_is_edited_over_http_with_secrets_masked() {
     assert_eq!(reply.json()["restart_required"], true);
     server.stop();
 }
+
+/// Windows writes `config.json` with CRLF. The server sends the file's own
+/// text and saves exactly what it is sent, so a page that sends the file's
+/// endings back (the workbench does) changes only the lines it edited.
+#[test]
+fn a_crlf_config_file_round_trips_byte_for_byte() {
+    let temp = tempfile::tempdir().unwrap();
+    configure(temp.path());
+    let path = temp.path().join("config.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["llm"]["model_list"] = json!([{"model_name":"default","litellm_params":{
+        "model":"openai/first","api_key":"sk-fixture-1234"}}]);
+    let original = serde_json::to_string_pretty(&config)
+        .unwrap()
+        .replace('\n', "\r\n")
+        + "\r\n";
+    std::fs::write(&path, &original).unwrap();
+    let server = start(temp.path());
+    let get = || call(&server, "GET", "/api/settings/config", ADMIN, None).json();
+    let put = |revision: &Value, text: &str| {
+        call(
+            &server,
+            "PUT",
+            "/api/settings/config",
+            ADMIN,
+            Some(json!({"expected_revision":revision,"text":text})),
+        )
+    };
+
+    // GET sends the CRLF text (a secret masked); sending it back unchanged
+    // writes the same bytes.
+    let view = get();
+    let text = view["text"].as_str().unwrap().to_owned();
+    assert_eq!(view["masked"], 1);
+    assert!(!text.contains("fixture-1234"));
+    assert_eq!(text.matches("\r\n").count(), text.matches('\n').count());
+    assert!(text.ends_with("}\r\n"));
+    let reply = put(&view["revision"], &text);
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    assert_eq!(reply.json()["revision"], view["revision"]);
+    assert_eq!(reply.json()["restart_required"], false);
+
+    // One changed value: only that line differs, every ending stays CRLF.
+    let edited = text.replace("\"openai/first\"", "\"openai/second\"");
+    assert_ne!(edited, text);
+    let reply = put(&view["revision"], &edited);
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        saved,
+        original.replace("\"openai/first\"", "\"openai/second\"")
+    );
+    let (before, after): (Vec<_>, Vec<_>) = (
+        original.split("\r\n").collect(),
+        saved.split("\r\n").collect(),
+    );
+    assert_eq!(before.len(), after.len());
+    let changed: Vec<_> = before
+        .iter()
+        .zip(&after)
+        .filter(|(old, new)| old != new)
+        .map(|(_, new)| *new)
+        .collect();
+    assert_eq!(changed, ["          \"model\": \"openai/second\""]);
+    assert_eq!(saved.matches("\r\n").count(), saved.matches('\n').count());
+
+    // Without a final line break, the file stays without one.
+    let view = get();
+    let bare = view["text"]
+        .as_str()
+        .unwrap()
+        .trim_end_matches("\r\n")
+        .to_owned();
+    let reply = put(&view["revision"], &bare);
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.ends_with('}') && saved.contains("sk-fixture-1234"));
+    let view = get();
+    let reply = put(&view["revision"], view["text"].as_str().unwrap());
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+
+    // A byte order mark makes the file unreadable as configuration for both
+    // backends: the page gets no text to edit and the file is left alone.
+    let marked = format!("\u{feff}{saved}");
+    std::fs::write(&path, &marked).unwrap();
+    let view = get();
+    assert_eq!(view["text"], Value::Null);
+    assert!(
+        view["problem"]
+            .as_str()
+            .is_some_and(|problem| problem.starts_with("line 1, column 1")),
+        "{view}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), marked);
+    server.stop();
+}

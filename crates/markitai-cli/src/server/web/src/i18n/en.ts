@@ -757,6 +757,10 @@ export const en = {
   configUnreadableText: (problem: string) => `Fix it in a text editor, then reload this page. ${problem}`,
   configReadOnly: "Model settings for this session come from the command line, so this file cannot be saved here. Edit it in a text editor and restart without those options.",
   configMasked: (n: number) => `${n} ${plural(n, "secret is", "secrets are")} shown masked (like sk…7890). Leave a masked value where it is to keep it; type a new value or an env: reference to replace it.`,
+  configEndings: (name: string) => `This file uses ${name} line endings; saving keeps them.`,
+  configEndingsMixed: (counts: { crlf: number; lf: number; cr: number }, newline: string) =>
+    `This file mixes line endings (${[counts.crlf && `${counts.crlf} CRLF`, counts.lf && `${counts.lf} LF`, counts.cr && `${counts.cr} CR`].filter(Boolean).join(", ")}). Saving keeps each line's own; a changed line keeps the one it had, a new line gets ${newline}, the most common.`,
+  configBom: "The file starts with a byte order mark (BOM); saving keeps it.",
   configEditorLabel: "Configuration (JSON)",
   configValid: "Valid JSON",
   configValidChanged: "Valid JSON · unsaved changes",
