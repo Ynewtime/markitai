@@ -29,6 +29,7 @@ from markitai.converter.base import (
     append_screenshot_comments,
     register_converter,
 )
+from markitai.converter.pdf_layout_boxes import clean_layout_chunks
 from markitai.converter.pdf_markdown import repair_pages
 from markitai.converter.pdf_parallel import map_page_runs, to_markdown_chunks
 from markitai.converter.pdf_tables import restore_flattened_tables
@@ -743,6 +744,9 @@ class PdfConverter(BaseConverter):
             # Merge page chunks and add page markers for proper splitting
             # Format: <!-- Page number: N --> (consistent with Slide number format)
             # Ensure blank line after marker for proper markdown formatting
+            # Page headers/footers the layout model found (when they repeat or
+            # are page numbers) out; lines it cropped into pictures back as text
+            page_results = clean_layout_chunks(input_path, list(page_results))
             page_numbers: list[int] = []
             page_texts: list[str] = []
             reference_images: list[dict[str, Any]] = []
