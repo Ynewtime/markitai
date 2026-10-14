@@ -21,6 +21,8 @@ REQUIRED_FILES = {
     "markitai/serve/workbench/ui/boot.js",
     "markitai/serve/workbench/ui/app.css",
     "markitai/serve/workbench/ui/logo.svg",
+    # Block boxes of a page's screenshots (contract v1.14), run as shipped
+    "markitai/serve/workbench/capture/page-blocks.js",
     # Prices of models the pinned LiteLLM does not list (markitai.model_catalog)
     "markitai/litellm_rows.json",
     # Provider groups and brand-mark keys (markitai.serve.provider_catalog)
