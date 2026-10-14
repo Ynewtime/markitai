@@ -402,13 +402,14 @@ class TestKeptWebPage:
             f"{item['item_id']}.capture.json",
             f"{item['item_id']}.html",
         ]
-        # "Fetchednext": under 80 characters, so a blank page to the UI
+        # "Fetchednext": under 80 characters, but it shows a picture, so it
+        # is content (v1.14 "Blank pages")
         assert descriptor["capture"] == {
             "page": {
-                "state": "empty",
+                "state": "ok",
                 "text_length": 11,
                 "title": "A page",
-                "reason": "blank",
+                "reason": None,
             },
             "screenshot": None,
         }
