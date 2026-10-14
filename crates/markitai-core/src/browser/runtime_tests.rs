@@ -181,6 +181,10 @@ impl Site {
                         }
                     }else if request.path=="/refused" {
                         status=403;format!("<html><body><h1>Access refused</h1><p>{}</p><script>window.x=1;</script></body></html>","This page explains in many words why the request was refused. ".repeat(8)).into_bytes()
+                    }else if request.path=="/tall" {
+                        // 500 blocks of 100 CSS pixels: 50 000 pixels.
+                        let blocks:String=(1..=500).map(|n|format!("<section style='height:100px;margin:0'><h2 style='margin:0'>Block {n}</h2></section>")).collect();
+                        format!("<html><head><title> An invented   tall page </title></head><body style='margin:0'>{blocks}</body></html>").into_bytes()
                     }else if request.path=="/hang" {
                         b"<html><script>while(true){}</script></html>".to_vec()
                     }else if request.path=="/language" {
@@ -621,7 +625,7 @@ fn x_pages_are_requested_in_english_unless_the_caller_chooses_a_language() {
     let page = match fetch_page(
         &site.url("/language"),
         &cfg,
-        false,
+        Shots::None,
         &url,
         &options,
         lease.browser(),
@@ -643,6 +647,80 @@ fn x_pages_are_requested_in_english_unless_the_caller_chooses_a_language() {
     assert!(!page.contains("HeadlessChrome"), "{page}");
     assert!(page.contains("Language: en-US"), "{page}");
     assert!(page.contains("Month: January"), "{page}");
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn a_runtime_that_keeps_compare_screenshots_cuts_them_at_twenty_tiles() {
+    if isolated("a_runtime_that_keeps_compare_screenshots_cuts_them_at_twenty_tiles") {
+        return;
+    }
+    assert!(available());
+    let site = Site::new();
+    let mut cfg = config(false);
+    cfg["screenshot"]["tile_height"] = json!(2000);
+    let page = |runtime: &BrowserRuntime, screenshot: bool| {
+        fetch_with_runtime(&site.url("/tall"), &cfg, screenshot, Some(runtime))
+            .unwrap()
+            .page()
+    };
+    // A runtime that keeps none takes none.
+    let plain = BrowserRuntime::new(1).unwrap();
+    let loaded = page(&plain, false);
+    assert!(loaded.view.is_none() && loaded.screenshots.is_empty());
+    let runtime = BrowserRuntime::new(1)
+        .unwrap()
+        .keeping_compare_screenshots();
+    let loaded = page(&runtime, false);
+    assert!(loaded.screenshots.is_empty());
+    let view = loaded.view.expect("compare screenshots");
+    // Twenty tiles of 2000 pixels, or as many as 50 million pixels allow.
+    let blocks: Value = serde_json::from_slice(&view.blocks.expect("blocks")).unwrap();
+    let width = blocks["width"].as_u64().unwrap();
+    let height = 40_000u64.min(50_000_000 / width);
+    assert_eq!(blocks["height"], height);
+    assert_eq!(view.compare.len(), 20);
+    for (index, tile) in view.compare.iter().enumerate() {
+        let image = image::load_from_memory(tile).unwrap();
+        assert_eq!(u64::from(image.width()), width);
+        let expected = if index == 19 {
+            height - 19 * 2000
+        } else {
+            2000
+        };
+        assert_eq!(u64::from(image.height()), expected, "tile {index}");
+    }
+    let headings: Vec<&Value> = blocks["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|block| block["tag"] == "h2")
+        .collect();
+    // The blocks that start above the cut; the rest are not shown.
+    let shown = height.div_ceil(100) as usize;
+    assert_eq!(headings.len(), shown);
+    assert_eq!(headings[shown - 1]["text"], format!("Block {shown}"));
+    assert_eq!(headings[shown - 1]["bbox"][1], (shown as f64 - 1.0) * 100.0);
+    assert_eq!(
+        view.quality,
+        crate::page_capture::CaptureQuality {
+            state: crate::page_capture::CaptureState::Ok,
+            // "Block 1" … "Block 500", one space or line apart.
+            text_length: (1..=500)
+                .map(|n: u32| 6 + n.to_string().len() as u64)
+                .sum::<u64>()
+                + 499,
+            title: Some("An invented tall page".into()),
+            reason: None,
+        }
+    );
+    // Screenshots the conversion asked for are its own, all of the page.
+    let loaded = page(&runtime, true);
+    let view = loaded.view.expect("screenshots");
+    assert!(view.compare.is_empty());
+    assert_eq!(loaded.screenshots.len(), 25);
+    let blocks: Value = serde_json::from_slice(&view.blocks.unwrap()).unwrap();
+    assert_eq!(blocks["height"], 50_000);
 }
 
 #[test]

@@ -436,8 +436,13 @@ pub(crate) struct FetchOutcome {
     pub cache_hit: bool,
     pub screenshots: Vec<Asset>,
     /// The HTML this process converted the page content from (static or
-    /// browser fetch), when it is at most [`MAX_KEPT_HTML`] bytes.
+    /// browser fetch), when it is at most [`MAX_KEPT_HTML`] bytes; or the
+    /// DOM of the browser that took the screenshots when nothing else was.
     pub html: Option<String>,
+    /// The address `html` was read from.
+    pub html_url: Option<String>,
+    /// What the browser showed when it took the page's screenshots.
+    pub view: Option<browser::ShotView>,
 }
 
 /// The largest page HTML an outcome keeps for a caller's snapshot.
@@ -857,6 +862,16 @@ fn attach_screenshot(
     match browser::fetch_with_runtime(source, cfg, true, runtime) {
         Ok(browser::BrowserResponse::Page(page)) => {
             outcome.screenshots = page.screenshots;
+            outcome.view = page.view;
+            // The text came from elsewhere; the page this browser loaded
+            // stands in when no other HTML was kept, so the kept page and
+            // the screenshots show the same load.
+            if outcome.html.is_none()
+                && let Some(html) = kept(page.html)
+            {
+                outcome.html = Some(html);
+                outcome.html_url = Some(page.final_url);
+            }
             outcome.content.warnings_mut().extend(page.warnings);
         }
         Ok(browser::BrowserResponse::Pdf(_)) if visual_only(cfg) => {
@@ -909,6 +924,8 @@ fn browser_response_outcome(
             cache_hit: false,
             screenshots: Vec::new(),
             html: None,
+            html_url: None,
+            view: None,
         }),
     }
 }
@@ -959,6 +976,8 @@ fn browser_outcome(page: browser::BrowserPage, cfg: &Value) -> Result<FetchOutco
         cache_hit: false,
         screenshots: page.screenshots,
         html: kept(page.html),
+        html_url: Some(page.final_url),
+        view: page.view,
     })
 }
 
@@ -1061,6 +1080,8 @@ fn fetch_static(
                 cache_hit: true,
                 screenshots: Vec::new(),
                 html: None,
+                html_url: None,
+                view: None,
             });
         }
         entry => entry,
@@ -1090,6 +1111,8 @@ fn fetch_static(
                     cache_hit: true,
                     screenshots: Vec::new(),
                     html: None,
+                    html_url: None,
+                    view: None,
                 });
             }
             // A failed status, unreadable body or unusable extracted page takes
@@ -1109,6 +1132,7 @@ fn fetch_static(
         )?,
     };
     follow_meta_refresh(&client, &mut page, defer_pdf(cfg))?;
+    let html_url = page.html.as_ref().map(|_| page.final_url.clone());
     if let Some(cache) = cache {
         if page.cache_eligible
             && let FetchContent::Document(document) = &page.content
@@ -1142,6 +1166,8 @@ fn fetch_static(
         cache_hit: false,
         screenshots: Vec::new(),
         html: page.html,
+        html_url,
+        view: None,
     })
 }
 
@@ -1192,6 +1218,19 @@ fn html_rejection(url: &Url, html: &str) -> Option<&'static str> {
     sites::Shown::html(url, html)
         .notice()
         .and_then(notice_failure)
+}
+
+/// What a page's markup shows in place of its content, as the workbench
+/// names it: `verification` or `login` for a known site's page, `challenge`
+/// for a bot check, `javascript` for a page that only asks for JavaScript.
+pub(crate) fn shown_instead(url: &Url, html: &str) -> Option<&'static str> {
+    let shown = sites::Shown::html(url, html);
+    match shown.site_refusal().or_else(|| shown.notice())? {
+        sites::Refusal::Verification(_) => Some("verification"),
+        sites::Refusal::Login(_) => Some("login"),
+        sites::Refusal::Challenge => Some("challenge"),
+        sites::Refusal::JavaScript => Some("javascript"),
+    }
 }
 
 /// What a challenge or a JavaScript notice reads as for a local reader.
@@ -1355,6 +1394,8 @@ fn probe_pdf(
             cache_hit: false,
             screenshots: Vec::new(),
             html: None,
+            html_url: None,
+            view: None,
         }),
         false,
     ))
@@ -1731,6 +1772,7 @@ mod tests {
             final_url: "https://example.test/section/current?token=private-value&view=full".into(),
             title: "Result".into(),
             screenshots: Vec::new(),
+            view: None,
             warnings: Vec::new(),
         };
         let mut result = browser_outcome(page, &cfg).unwrap();

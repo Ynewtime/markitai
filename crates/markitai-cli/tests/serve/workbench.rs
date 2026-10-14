@@ -469,7 +469,8 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         descriptor,
         json!({"kind":"pdf","name":"report.pdf","media_type":"application/pdf","size":PDF.len(),
             "download":format!("{base}/file"),"view":null,"page_count":3,"text_layer":true,"reason":null,
-            "pages":[{"width":612.0,"height":792.0},{"width":612.0,"height":792.0},{"width":612.0,"height":792.0}]})
+            "pages":[{"width":612.0,"height":792.0},{"width":612.0,"height":792.0},{"width":612.0,"height":792.0}],
+            "capture":null,"blocks":null})
     );
     let file = server.request("GET", &format!("{base}/file"), &[], &[]);
     assert_eq!((file.status, file.body.as_slice()), (200, PDF));
@@ -765,7 +766,8 @@ fn a_url_item_keeps_its_page_and_a_cli_record_keeps_nothing() {
     assert_eq!(
         none,
         json!({"kind":"none","name":"report.pdf","media_type":null,"size":null,"download":null,
-            "view":null,"pages":[],"page_count":0,"text_layer":false,"reason":"not_kept"})
+            "view":null,"pages":[],"page_count":0,"text_layer":false,"reason":"not_kept",
+            "capture":null,"blocks":null})
     );
     for rest in ["file", "pages/1", "pages/1/text"] {
         let reply = server.request(

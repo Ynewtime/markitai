@@ -293,6 +293,7 @@ fn authenticated_response_classification_keeps_pdf_memory_and_html_output_contra
         final_url: "https://example.test/private-page".into(),
         title: "Private page".into(),
         screenshots: Vec::new(),
+        view: None,
         warnings: Vec::new(),
     });
     assert!(matches!(

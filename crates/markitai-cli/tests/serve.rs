@@ -1106,6 +1106,9 @@ mod gates;
 #[path = "serve/workbench.rs"]
 mod workbench;
 
+#[path = "serve/capture.rs"]
+mod capture;
+
 #[path = "serve/assets.rs"]
 mod assets;
 

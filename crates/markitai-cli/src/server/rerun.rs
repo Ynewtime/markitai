@@ -269,8 +269,9 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                     .to_string_lossy()
                     .into_owned()
             };
-            let browser_runtime =
-                markitai_core::BrowserRuntime::new(1).map_err(ApiError::internal)?;
+            let browser_runtime = markitai_core::BrowserRuntime::new(1)
+                .map_err(ApiError::internal)?
+                .keeping_compare_screenshots();
             let explicit = work.explicit.as_deref();
             let options = markitai_core::ConvertOptions {
                 output_dir: Some(out.clone()),
@@ -284,19 +285,27 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 // A rerun publishes into its job folder.
                 stdout_assets: None,
             };
-            // A URL's new page snapshot replaces the old one with the result.
-            let page = super::original::snapshot_name(&work.prior.item_id)
-                .filter(|_| work.prior.kind == "url");
-            let staged = page
-                .as_ref()
-                .map(|page| stage.path().join("snapshots").join(page));
-            let attempt = match &staged {
-                Some(staged) => {
-                    create_private_dir(&stage.path().join("snapshots"))
-                        .map_err(ApiError::internal)?;
-                    markitai_core::convert_with_html_snapshot(&source, options, context, staged)
-                }
-                None => markitai_core::convert_with_context_detailed(&source, options, context),
+            // A URL's newly kept page, its screenshots' blocks and compare
+            // screenshots replace the old ones with the result.
+            let kept =
+                work.prior.kind == "url" && super::snapshots::names(&work.prior.item_id).is_some();
+            let staged = stage.path().join("snapshots");
+            let attempt = if kept {
+                create_private_dir(&staged).map_err(ApiError::internal)?;
+                let mut capture = markitai_core::page_capture::PageCapture::default();
+                let attempt = markitai_core::convert_with_page_capture(
+                    &source,
+                    options,
+                    context,
+                    &mut capture,
+                );
+                let screenshots = attempt
+                    .as_ref()
+                    .is_ok_and(|result| !result.screenshots.is_empty());
+                super::snapshots::keep(&staged, &work.prior.item_id, &capture, screenshots);
+                attempt
+            } else {
+                markitai_core::convert_with_context_detailed(&source, options, context)
             };
             let converted = match attempt {
                 Ok(result) => {
@@ -407,13 +416,19 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             } else {
                 Vec::new()
             };
-            if let (Some(page), Some(staged)) = (&page, &staged) {
-                let name = format!("snapshots/{page}");
-                if staged.is_file() {
-                    retained.push((name, staged.clone()));
-                } else if store::safe_file(&worker.folder.join("snapshots"), page).is_ok() {
-                    // The new result was not converted from HTML here.
-                    removals.push(name);
+            if kept {
+                // What the new attempt kept replaces the old files; an old
+                // file it did not keep again goes (a page not converted from
+                // HTML here, fewer compare screenshots).
+                let fresh = super::snapshots::files(stage.path(), &work.prior.item_id);
+                for name in super::snapshots::files(&worker.folder, &work.prior.item_id) {
+                    if !fresh.contains(&name) {
+                        removals.push(name);
+                    }
+                }
+                for name in fresh {
+                    let path = stage.path().join(&name);
+                    retained.push((name, path));
                 }
             }
             let published = transaction::publish(
@@ -436,6 +451,9 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 }
             };
             data.transactions.push(id);
+            if kept {
+                super::snapshots::prune(&worker.folder, &work.prior.item_id);
+            }
             let assets = converted
                 .assets
                 .iter()
@@ -621,11 +639,8 @@ pub(super) async fn delete_item(
         if store::safe_file(&job.folder, "archive.zip").is_ok() {
             removals.push("archive.zip".into());
         }
-        if let Some(snapshot) = super::original::snapshot_name(&item_id)
-            && store::safe_file(&job.folder.join("snapshots"), &snapshot).is_ok()
-        {
-            removals.push(format!("snapshots/{snapshot}"));
-        }
+        // Its kept page, page qualities, block boxes and compare screenshots.
+        removals.extend(super::snapshots::files(&job.folder, &item_id));
         let prior = data.clone();
         let stage = transaction::stage(&job.folder).map_err(ApiError::internal)?;
         let staged = stage.path().join("out");
@@ -670,6 +685,7 @@ pub(super) async fn delete_item(
             return Err(ApiError::internal(error));
         }
         transaction::committed(&job.folder, &mut data);
+        super::snapshots::prune(&job.folder, &item_id);
         let progress = data.progress();
         *job.data.lock().unwrap() = data;
         let _ = job.events.send(("job", progress));

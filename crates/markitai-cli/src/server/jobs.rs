@@ -336,11 +336,11 @@ async fn convert_one(
     };
     let mut cfg = cfg;
     cfg["output"]["filename"] = json!(format!("{base}.md"));
-    // A URL item keeps the HTML it was converted from, for Compare.
+    // A URL item keeps the page it was converted from, for Compare.
     let snapshots = job.folder.join("snapshots");
-    let snapshot = super::original::snapshot_name(&item.item_id)
+    let kept_id = super::snapshots::names(&item.item_id)
         .filter(|_| item.kind == "url")
-        .map(|name| snapshots.join(name));
+        .map(|_| item.item_id.clone());
     let result = crate::task::blocking(move || {
         let _permit = permit;
         let options = markitai_core::ConvertOptions {
@@ -355,9 +355,20 @@ async fn convert_one(
             // Jobs always publish into their own folder.
             stdout_assets: None,
         };
-        match snapshot.filter(|_| create_private_dir(&snapshots).is_ok()) {
-            Some(snapshot) => {
-                markitai_core::convert_with_html_snapshot(&target, options, context, &snapshot)
+        match kept_id.filter(|_| create_private_dir(&snapshots).is_ok()) {
+            Some(item_id) => {
+                let mut capture = markitai_core::page_capture::PageCapture::default();
+                let result = markitai_core::convert_with_page_capture(
+                    &target,
+                    options,
+                    context,
+                    &mut capture,
+                );
+                let screenshots = result
+                    .as_ref()
+                    .is_ok_and(|result| !result.screenshots.is_empty());
+                super::snapshots::keep(&snapshots, &item_id, &capture, screenshots);
+                result
             }
             None => markitai_core::convert_with_context_detailed(&target, options, context),
         }
@@ -430,8 +441,12 @@ pub(super) fn start(state: Arc<State>, job: Arc<Job>, cfg: Value) -> ApiResult<(
     let concurrency = cfg["llm"]["concurrency"].as_u64().unwrap_or(10).max(1) as usize;
     let runtime =
         Arc::new(markitai_core::LlmRuntime::new(concurrency).map_err(ApiError::internal)?);
-    let browser_runtime =
-        Arc::new(markitai_core::BrowserRuntime::new(8).map_err(ApiError::internal)?);
+    // Pages the browser loads also keep compare screenshots for Compare.
+    let browser_runtime = Arc::new(
+        markitai_core::BrowserRuntime::new(8)
+            .map_err(ApiError::internal)?
+            .keeping_compare_screenshots(),
+    );
     let _ = job.runtime.set(runtime.clone());
     let count = job.data.lock().unwrap().items.len();
     job.active.fetch_add(count, Ordering::SeqCst);

@@ -37,6 +37,8 @@ fn stub(markdown: &str) -> FetchOutcome {
         cache_hit: false,
         screenshots: Vec::new(),
         html: None,
+        html_url: None,
+        view: None,
     }
 }
 
@@ -567,6 +569,7 @@ fn a_verification_page_the_browser_rendered_is_a_failure_not_a_page() {
         final_url: "https://www.reddit.com/r/IAmA/comments/z1c9z/x/?js_challenge=1&jsc_token=abc".into(),
         title: "Reddit - Prove your humanity".into(),
         screenshots: Vec::new(),
+        view: None,
         warnings: Vec::new(),
     };
     let Error::Fetch(message) = browser_outcome(challenge, &cfg).err().unwrap() else {
@@ -582,6 +585,7 @@ fn a_verification_page_the_browser_rendered_is_a_failure_not_a_page() {
         final_url: "https://example.test/essay".into(),
         title: "Essay".into(),
         screenshots: Vec::new(),
+        view: None,
         warnings: Vec::new(),
     };
     assert!(

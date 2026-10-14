@@ -325,7 +325,7 @@
         "tags": ["jobs"],
         "operationId": "describeOriginal",
         "summary": "What the Compare view can show of the item's source",
-        "description": "Chooses, in order: a kept upload of a PDF (`pdf`), of a raster image (`image`: png, jpeg, gif, webp, avif, bmp, tiff, heic/heif), of HTML (`html`) or of a text format (`text`: md, markdown, txt, csv, tsv, json, xml, yaml, yml, log); a URL item's kept page snapshot (`html`); the item's page screenshots (`screenshots`); otherwise `none` with a `reason`. Page boxes come from the PDF's pages or the image headers (HEIF and AVIF are decoded); no page is drawn. Every original response carries `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`.",
+        "description": "Chooses, in order: a kept upload of a PDF (`pdf`), of a raster image (`image`: png, jpeg, gif, webp, avif, bmp, tiff, heic/heif), of HTML (`html`) or of a text format (`text`: md, markdown, txt, csv, tsv, json, xml, yaml, yml, log); a URL item's kept page snapshot (`html`); the item's page screenshots, else a URL item's compare screenshots (`screenshots`); otherwise `none` with a `reason`. Page boxes come from the PDF's pages or the image headers (HEIF and AVIF are decoded); no page is drawn. Every original response carries `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`.",
         "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
         "responses": {
           "200": { "description": "Descriptor", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OriginalDescriptor" } } } },
@@ -365,12 +365,26 @@
         }
       }
     },
+    "/api/jobs/{job_id}/items/{item_id}/original/blocks": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "getOriginalBlocks",
+        "summary": "Where the item's screenshots show its page's blocks",
+        "description": "Kept when a browser took the page's screenshots (the conversion's own, else its compare screenshots), read in the page as they were taken; the descriptor's `blocks` names this path when the item has them and its `pages` are those screenshots. The screenshots are the page cut from its top, in `pages` order, covering `width` × `height` CSS pixels; a screenshot `w` pixels wide shows `w / width` pixels per CSS pixel. Sent as `application/json` with `Cache-Control: no-store` and the headers of every original response. 404 `original_unavailable` when none are kept.",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "Block boxes", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ShotBlocks" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}": {
       "get": {
         "tags": ["jobs"],
         "operationId": "getOriginalPage",
         "summary": "One page of the original as an image",
-        "description": "`pdf`: page `n` drawn on white, `width` pixels wide (narrower when the 32-megapixel limit requires). `image` (`n` = 1): the stored image when browsers show its type (png, jpeg, gif, webp, avif, bmp) and it is not wider than `width`, otherwise a PNG scaled to `width`. `screenshots`, or `html` for a URL item whose conversion also saved page screenshots: screenshot `n`, scaled to a PNG when wider than `width`. At most two pages are drawn at a time; another request is refused with 429 `render_busy` and `Retry-After`. Responses carry `Cache-Control: private, max-age=86400` and an ETag (answered with 304), and drawn pages are kept briefly in memory.",
+        "description": "`pdf`: page `n` drawn on white, `width` pixels wide (narrower when the 32-megapixel limit requires). `image` (`n` = 1): the stored image when browsers show its type (png, jpeg, gif, webp, avif, bmp) and it is not wider than `width`, otherwise a PNG scaled to `width`. `screenshots`, or `html` for a URL item whose conversion also saved page screenshots: screenshot `n` (the conversion's own screenshots, else the item's compare screenshots), scaled to a PNG when wider than `width`. At most two pages are drawn at a time; another request is refused with 429 `render_busy` and `Retry-After`. Responses carry `Cache-Control: private, max-age=86400` and an ETag (answered with 304), and drawn pages are kept briefly in memory.",
         "parameters": [
           { "$ref": "#/components/parameters/JobId" },
           { "$ref": "#/components/parameters/ItemId" },
@@ -1028,10 +1042,58 @@
           "size": { "type": ["integer", "null"], "description": "Bytes of the stored original" },
           "download": { "type": ["string", "null"], "description": "API path of the stored original bytes (also a download ticket path); null when none is kept" },
           "view": { "type": ["string", "null"], "description": "API path of the page for a sandboxed frame (`…/original/view`, also a download ticket path) when `kind` is `html`; else null" },
-          "pages": { "type": "array", "description": "Page boxes, in order, at most 2000: points of the visible page box after rotation for a PDF, pixels for an image or screenshot; for a URL item's `html` page, its page screenshots when the conversion saved any (a fallback view); else empty for html, text and none", "items": { "type": "object", "required": ["width", "height"], "properties": { "width": { "type": "number" }, "height": { "type": "number" } } } },
+          "pages": { "type": "array", "description": "Page boxes, in order, at most 2000: points of the visible page box after rotation for a PDF, pixels for an image or screenshot; for a URL item's `html` page, its page screenshots when the conversion saved any, else the compare screenshots a browser that loaded the page took (a fallback view; not result files, never sent to a model); else empty for html, text and none", "items": { "type": "object", "required": ["width", "height"], "properties": { "width": { "type": "number" }, "height": { "type": "number" } } } },
           "page_count": { "type": "integer", "description": "PDF pages, 1 for an image, the number of screenshots (also for a URL item's `html` page that has them), else 0" },
           "text_layer": { "type": "boolean", "description": "`…/pages/{n}/text` answers (PDF only)" },
-          "reason": { "type": ["string", "null"], "enum": [null, "not_kept", "unsupported_format", "too_large", "render_unavailable"], "description": "Why `kind` is `none`: no original kept (a CLI-recorded job, a URL page not converted from HTML here, or a removed upload), a format without a browser view and no screenshots, or a PDF or image this build cannot open" }
+          "reason": { "type": ["string", "null"], "enum": [null, "not_kept", "unsupported_format", "too_large", "render_unavailable"], "description": "Why `kind` is `none`: no original kept (a CLI-recorded job, a URL page not converted from HTML here, or a removed upload), a format without a browser view and no screenshots, or a PDF or image this build cannot open" },
+          "capture": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["page", "screenshot"],
+                "properties": {
+                  "page": { "oneOf": [{ "$ref": "#/components/schemas/CaptureQuality" }, { "type": "null" }], "description": "The kept page as a frame without scripts shows it; null when no page is kept" },
+                  "screenshot": { "oneOf": [{ "$ref": "#/components/schemas/CaptureQuality" }, { "type": "null" }], "description": "The page in the browser that took its screenshots, when they were taken; null when none are kept or the job predates the record" }
+                }
+              },
+              { "type": "null" }
+            ],
+            "description": "v1.14, URL items: how usable each kept view was when it was captured; null for an upload. A job without a record (older or Python jobs) has its kept page judged when asked and no screenshot quality."
+          },
+          "blocks": { "type": ["string", "null"], "description": "v1.14: API path of `…/original/blocks` when the item keeps its screenshots' block boxes and `pages` are those screenshots; else null" }
+        }
+      },
+      "CaptureQuality": {
+        "type": "object",
+        "required": ["state", "text_length", "title", "reason"],
+        "properties": {
+          "state": { "type": "string", "enum": ["ok", "empty", "challenge"], "description": "`challenge`: a verification, captcha, bot check or login page instead of the content; `empty`: a page that only asks for JavaScript, or under 80 characters of text; else `ok`" },
+          "text_length": { "type": "integer", "description": "Unicode characters of the visible text, white space runs counted as one and the ends trimmed, at most 1 000 000" },
+          "title": { "type": ["string", "null"], "description": "The document's title, white space collapsed, at most 200 characters; null when it has none" },
+          "reason": { "type": ["string", "null"], "enum": [null, "challenge", "verification", "login", "javascript", "blank"], "description": "Why it is not `ok`; null when it is" }
+        }
+      },
+      "ShotBlocks": {
+        "type": "object",
+        "required": ["version", "width", "height", "blocks"],
+        "properties": {
+          "version": { "type": "integer", "enum": [1] },
+          "width": { "type": "number", "description": "CSS pixels of the area the screenshots cover" },
+          "height": { "type": "number" },
+          "blocks": {
+            "type": "array",
+            "description": "Headings, paragraphs, list items, code, definitions, cells, quotes, captions, tables, pictures, and div/section/article for the words they hold directly; document order, at most 5000, none that starts below `height`",
+            "items": {
+              "type": "object",
+              "required": ["tag", "text", "bbox"],
+              "properties": {
+                "tag": { "type": "string" },
+                "text": { "type": "string", "description": "White space collapsed, at most 2000 characters; a picture's alt text" },
+                "src": { "type": "string", "description": "A picture's address" },
+                "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in CSS pixels from the page's top-left corner" }
+              }
+            }
+          }
         }
       },
       "PageText": {

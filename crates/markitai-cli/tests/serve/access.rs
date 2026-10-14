@@ -267,6 +267,16 @@ fn a_user_token_is_shown_once_kept_as_a_digest_and_sees_only_its_own_jobs() {
             "{path}"
         );
     }
+    // Their item's block boxes are as hidden; the admin is told none are kept.
+    let blocks = format!("/api/jobs/{theirs}/items/i1/original/blocks");
+    assert_eq!(
+        reason(&call(&server, "GET", &blocks, &user, None)),
+        (404, json!("job_not_found"))
+    );
+    assert_eq!(
+        reason(&call(&server, "GET", &blocks, ADMIN, None)),
+        (404, json!("original_unavailable"))
+    );
     for (method, path) in [
         ("POST", format!("/api/jobs/{theirs}/cancel")),
         ("POST", format!("/api/jobs/{theirs}/items/i1/retry")),

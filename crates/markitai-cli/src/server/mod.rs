@@ -26,6 +26,7 @@ mod retention;
 mod security;
 mod settings;
 mod sidecar;
+mod snapshots;
 mod startup;
 mod store;
 mod tickets;
@@ -102,6 +103,7 @@ api_routes! {
     get "/api/jobs/{job_id}/items/{item_id}/original" => original::descriptor;
     get "/api/jobs/{job_id}/items/{item_id}/original/file" => original::file;
     get "/api/jobs/{job_id}/items/{item_id}/original/view" => original::view;
+    get "/api/jobs/{job_id}/items/{item_id}/original/blocks" => original::blocks;
     get "/api/jobs/{job_id}/items/{item_id}/archive" => files::item_archive;
     get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}" => original::page_image;
     get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text" => original::page_text;
