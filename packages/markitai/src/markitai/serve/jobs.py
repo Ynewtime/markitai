@@ -1082,10 +1082,11 @@ async def process_url_item(
         from markitai.notices import user_notice
         from markitai.utils.url_redaction import redact_url
 
-        # Compare then offers the address to open instead of a stand-in page
+        # Compare then says why and offers the address to open instead of a
+        # stand-in page
         user_notice(
-            "[URL] No copy or screenshot of {} was kept: {}; open the page "
-            "itself to compare",
+            "[URL] No usable copy or screenshot of {} was kept: {}; open the "
+            "page itself to compare",
             redact_url(url),
             PROBLEM_TEXT.get(result.page_problem, result.page_problem),
         )
@@ -1163,6 +1164,22 @@ def _mark_cancelled(item: JobItem, *, stopped: bool) -> None:
     item.finished_at = now_iso()
 
 
+def _keep_page_capture(
+    job: Job, item: JobItem, page_html: str | None, sink: Any
+) -> None:
+    """Keep what a URL item's standing result left of its page.
+
+    Only a result that stands replaces the kept files: a failed rerun (an
+    enhance without an enhanced result included) keeps the old ones, and so
+    does a result that loaded no page (a page-cache hit, a remote reader).
+    """
+    from markitai.serve.originals import capture_to_keep, item_url, keep_capture
+
+    kept = capture_to_keep(job, item, page_html, sink, item_url(item) or "")
+    if kept is not None:
+        keep_capture(job, item, kept)
+
+
 async def _run_item(
     registry: JobRegistry,
     job: Job,
@@ -1180,6 +1197,7 @@ async def _run_item(
     item.warnings = []
     registry.publish_item(job, item)
     start = time.perf_counter()
+    sink: Any = None
     try:
         # Per-item capture: items of one job convert concurrently, and each
         # gathered item runs in its own task (its own context copy).
@@ -1191,14 +1209,25 @@ async def _run_item(
                     )
                 else:
                     assert url_ctx is not None
-                    result = await process_url_item(
-                        str(item.source),
-                        cfg,
-                        job.out_dir,
-                        shared_processor,
-                        url_ctx,
-                        output_name=item.output_name,
+                    from markitai.page_capture import CAPTURE, CaptureSink
+
+                    # What the browser shows of the page, for Compare
+                    sink = CaptureSink(
+                        tile_height=cfg.screenshot.tile_height
+                        or cfg.screenshot.max_height
                     )
+                    token = CAPTURE.set(sink)
+                    try:
+                        result = await process_url_item(
+                            str(item.source),
+                            cfg,
+                            job.out_dir,
+                            shared_processor,
+                            url_ctx,
+                            output_name=item.output_name,
+                        )
+                    finally:
+                        CAPTURE.reset(token)
             finally:
                 item.warnings = list(notices)
     except asyncio.CancelledError:
@@ -1233,14 +1262,10 @@ async def _run_item(
                 else "LLM enhancement did not produce an enhanced Markdown result"
             )
             result.error_code = "enhancement_failed"
-    if result.success and result.page_html is not None and item.kind == "url":
-        from markitai.serve.originals import keep_page_snapshot
-
-        # Only a result that stands replaces the kept page: a failed rerun
-        # (an enhance without an enhanced result included) keeps the old one
-        await asyncio.to_thread(keep_page_snapshot, job, item, result.page_html)
     item.duration_ms = int((time.perf_counter() - start) * 1000)
     _apply_result(job, item, result)
+    if item.kind == "url" and item.status == "done" and not item.skipped:
+        await asyncio.to_thread(_keep_page_capture, job, item, result.page_html, sink)
     item.finished_at = now_iso()
     registry.publish_item(job, item)
     registry.publish_job(job)

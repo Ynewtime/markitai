@@ -10,14 +10,23 @@ Originals are the uploads a job keeps under ``uploads/`` and, for a URL item,
 the page the server fetched, kept under ``snapshots/<item_id>.html`` (contract
 v1.11 section 7) beside the page screenshots the conversion saved. A
 CLI-recorded job keeps no originals at all.
+
+A URL item also keeps, in ``snapshots/`` (contract v1.14): how usable the page
+and its screenshots were when they were captured (``<item_id>.capture.json``),
+where the screenshots show the page's blocks (``<item_id>.blocks.json``) and,
+when the conversion saved no screenshots of its own but a browser loaded the
+page, compare screenshots (``<item_id>.shots/<n>.jpg``). None of them is a
+result file: not listed in a result, not archived, never sent to a model.
 """
 
 from __future__ import annotations
 
 import io
+import json
 import mimetypes
 import os
 import re
+import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +42,11 @@ if TYPE_CHECKING:
 #: A URL item's fetched page is kept up to this size, and framed up to it
 MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024
 SNAPSHOTS_DIR = "snapshots"
+#: Compare screenshots an item keeps at most
+MAX_COMPARE_SHOTS = 20
+#: The largest ``capture.json`` read
+MAX_CAPTURE_RECORD = 64 * 1024
+CAPTURE_STATES = frozenset({"ok", "empty", "challenge"})
 
 PDF_EXTENSIONS = frozenset({".pdf"})
 #: Raster images the Compare view shows as one page.
@@ -130,9 +144,16 @@ class Original:
     text_layer: bool = False
     reason: str | None = None
     screenshots: list[Path] = field(default_factory=list)
+    #: URL items: ``{"page": …, "screenshot": …}`` (contract v1.14)
+    capture: dict[str, Any] | None = None
+    #: The screenshots' block boxes, when they belong to ``screenshots``
+    blocks: Path | None = None
 
     def descriptor(
-        self, download: str | None, view: str | None = None
+        self,
+        download: str | None,
+        view: str | None = None,
+        blocks: str | None = None,
     ) -> dict[str, Any]:
         return {
             "kind": self.kind,
@@ -148,6 +169,8 @@ class Original:
             "page_count": self.page_count,
             "text_layer": self.text_layer,
             "reason": self.reason,
+            "capture": self.capture,
+            "blocks": blocks if self.blocks is not None else None,
         }
 
 
@@ -171,20 +194,115 @@ def kept_upload(job: Job, item: JobItem) -> Path | None:
     return upload
 
 
-def page_snapshot_path(job: Job, item: JobItem) -> Path | None:
-    """Where a URL item's fetched page is kept (None for any other item)."""
+def _kept_name(item: JobItem, suffix: str) -> str | None:
+    """``<item_id><suffix>`` inside ``snapshots/`` for a URL item whose ID
+    is a plain name (an ID read back from disk may be anything)."""
     item_id = item.item_id
     if item.kind != "url" or not item_id.isalnum() or not item_id.isascii():
         return None
-    return job.job_dir / SNAPSHOTS_DIR / f"{item_id}.html"
+    return f"{item_id}{suffix}"
+
+
+def page_snapshot_path(job: Job, item: JobItem) -> Path | None:
+    """Where a URL item's fetched page is kept (None for any other item)."""
+    name = _kept_name(item, ".html")
+    return None if name is None else job.job_dir / SNAPSHOTS_DIR / name
+
+
+def capture_record_path(job: Job, item: JobItem) -> Path | None:
+    """Where a URL item's capture qualities are kept."""
+    name = _kept_name(item, ".capture.json")
+    return None if name is None else job.job_dir / SNAPSHOTS_DIR / name
+
+
+def blocks_path(job: Job, item: JobItem) -> Path | None:
+    """Where a URL item's screenshot block boxes are kept."""
+    name = _kept_name(item, ".blocks.json")
+    return None if name is None else job.job_dir / SNAPSHOTS_DIR / name
+
+
+def compare_shots_dir(job: Job, item: JobItem) -> Path | None:
+    """Where a URL item's compare screenshots are kept."""
+    name = _kept_name(item, ".shots")
+    return None if name is None else job.job_dir / SNAPSHOTS_DIR / name
+
+
+def _plain_file(path: Path | None) -> Path | None:
+    if path is None or path.is_symlink() or not path.is_file():
+        return None
+    return path
 
 
 def kept_snapshot(job: Job, item: JobItem) -> Path | None:
     """The URL item's kept page, when there is one."""
-    path = page_snapshot_path(job, item)
-    if path is None or path.is_symlink() or not path.is_file():
-        return None
-    return path
+    return _plain_file(page_snapshot_path(job, item))
+
+
+def kept_blocks(job: Job, item: JobItem) -> Path | None:
+    """The URL item's kept block boxes, when there are some."""
+    return _plain_file(blocks_path(job, item))
+
+
+def compare_shots(job: Job, item: JobItem) -> list[Path]:
+    """The item's compare screenshots in order (``1.jpg``, ``2.jpg``, … up
+    to the first gap)."""
+    folder = compare_shots_dir(job, item)
+    if folder is None or folder.is_symlink() or not folder.is_dir():
+        return []
+    shots: list[Path] = []
+    for number in range(1, MAX_COMPARE_SHOTS + 1):
+        shot = _plain_file(folder / f"{number}.jpg")
+        if shot is None:
+            break
+        shots.append(shot)
+    return shots
+
+
+def kept_capture_files(job: Job, item: JobItem) -> list[Path]:
+    """Every file a URL item keeps in ``snapshots/``, for deleting it."""
+    found = [
+        path
+        for path in (
+            page_snapshot_path(job, item),
+            capture_record_path(job, item),
+            blocks_path(job, item),
+        )
+        if _plain_file(path) is not None
+    ]
+    folder = compare_shots_dir(job, item)
+    if folder is not None and not folder.is_symlink() and folder.is_dir():
+        found.extend(path for path in folder.iterdir() if _plain_file(path))
+    return [path for path in found if path is not None]
+
+
+def remove_empty_shots_dir(job: Job, item: JobItem) -> None:
+    """Remove the item's compare screenshot folder once it is empty."""
+    folder = compare_shots_dir(job, item)
+    if folder is not None and not folder.is_symlink():
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
+
+
+def _private_dir(path: Path) -> None:
+    path.mkdir(mode=0o700, exist_ok=True)
+
+
+def _write_private(path: Path, data: bytes) -> bool:
+    """Write *data* to *path* readable by the owner only, atomically: a
+    reader never sees half a file, and a failure leaves none."""
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    except OSError:
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
+    return True
 
 
 def keep_page_snapshot(job: Job, item: JobItem, html: str) -> bool:
@@ -198,16 +316,232 @@ def keep_page_snapshot(job: Job, item: JobItem, html: str) -> bool:
     data = html.encode("utf-8", "replace")
     if path is None or len(data) > MAX_SNAPSHOT_BYTES:
         return False
-    tmp = path.with_name(f".{path.stem}.{uuid.uuid4().hex}.tmp")
     try:
-        path.parent.mkdir(exist_ok=True)
-        tmp.write_bytes(data)
-        os.replace(tmp, path)
+        _private_dir(path.parent)
     except OSError:
         return False
-    finally:
-        tmp.unlink(missing_ok=True)
-    return True
+    return _write_private(path, data)
+
+
+@dataclass
+class KeptCapture:
+    """What one conversion left of a URL item's page, to keep with it."""
+
+    html: str | None = None
+    page: dict[str, Any] | None = None
+    screenshot: dict[str, Any] | None = None
+    blocks: bytes | None = None
+    compare: list[bytes] = field(default_factory=list)
+
+
+def capture_to_keep(
+    job: Job,
+    item: JobItem,
+    page_html: str | None,
+    sink: Any,
+    url: str,
+) -> KeptCapture | None:
+    """What to keep of a standing result's page load (None: nothing new).
+
+    The page is the HTML the content came from, else a page the browser
+    set aside as a verification or blank page (so Compare can say what the
+    site showed); the screenshot view counts only when its screenshots are
+    the item's own, or compare screenshots taken because it has none.
+    """
+    from markitai.page_capture import MAX_BLOCKS_BYTES, page_quality
+
+    kept = KeptCapture()
+    if page_html is not None:
+        if len(page_html.encode("utf-8", "replace")) <= MAX_SNAPSHOT_BYTES:
+            kept.html = page_html
+            kept.page = page_quality(url, page_html)
+    elif sink is not None and sink.refused is not None:
+        kept.html, kept.page = sink.refused
+    view = sink.view if sink is not None else None
+    if view is not None:
+        own = item_screenshots(job, item)
+        if view.screenshots:
+            matched = bool(own) and [p.resolve() for p in own] == [
+                Path(p).resolve() for p in view.screenshots
+            ]
+        else:
+            matched = not own and bool(view.compare)
+            kept.compare = list(view.compare[:MAX_COMPARE_SHOTS]) if matched else []
+        if matched:
+            kept.screenshot = view.quality
+            if view.blocks is not None and len(view.blocks) <= MAX_BLOCKS_BYTES:
+                kept.blocks = view.blocks
+    if kept.html is None and kept.screenshot is None:
+        return None
+    return kept
+
+
+def keep_capture(job: Job, item: JobItem, kept: KeptCapture) -> None:
+    """Keep *kept* as the URL item's page files, replacing all older ones.
+
+    Each file is written on its own (one that cannot be written is only
+    missing); a file the new capture does not have goes. Compare
+    screenshots are written to a new folder first and moved in whole: a gap
+    would misplace the tiles after it.
+    """
+    import shutil
+
+    html_path = page_snapshot_path(job, item)
+    record_path = capture_record_path(job, item)
+    boxes_path = blocks_path(job, item)
+    shots_path = compare_shots_dir(job, item)
+    if None in (html_path, record_path, boxes_path, shots_path):
+        return
+    assert html_path and record_path and boxes_path and shots_path
+    folder = html_path.parent
+    try:
+        _private_dir(folder)
+    except OSError:
+        return
+    written: set[Path] = set()
+    if kept.html is not None and keep_page_snapshot(job, item, kept.html):
+        written.add(html_path)
+    shots = False
+    if kept.compare:
+        staging = folder / f".{shots_path.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            staging.mkdir(mode=0o700)
+            for number, data in enumerate(kept.compare, start=1):
+                if not _write_private(staging / f"{number}.jpg", data):
+                    raise OSError("compare screenshot not written")
+            if shots_path.is_symlink() or shots_path.is_file():
+                shots_path.unlink()
+            elif shots_path.is_dir():
+                shutil.rmtree(shots_path)
+            os.replace(staging, shots_path)
+            shots = True
+        except OSError:
+            shutil.rmtree(staging, ignore_errors=True)
+    # The screenshot verdict and boxes go with screenshots that are kept:
+    # the item's own, or the compare ones just written
+    shown = kept.screenshot is not None and (shots or not kept.compare)
+    screenshot = kept.screenshot if shown else None
+    if shown and kept.blocks is not None and _write_private(boxes_path, kept.blocks):
+        written.add(boxes_path)
+    if kept.page is not None or screenshot is not None:
+        record = {"version": 1, "page": kept.page, "screenshot": screenshot}
+        if _write_private(record_path, json.dumps(record).encode()):
+            written.add(record_path)
+    for path in (html_path, record_path, boxes_path):
+        if path not in written:
+            path.unlink(missing_ok=True)
+    if not shots and not shots_path.is_symlink() and shots_path.is_dir():
+        shutil.rmtree(shots_path, ignore_errors=True)
+
+
+def _quality(value: Any) -> dict[str, Any] | None:
+    """A recorded ``CaptureQuality``, or None when it is not one."""
+    if not isinstance(value, dict) or value.get("state") not in CAPTURE_STATES:
+        return None
+    length = value.get("text_length")
+    title, reason = value.get("title"), value.get("reason")
+    if not isinstance(length, int) or isinstance(length, bool) or length < 0:
+        return None
+    if not (title is None or isinstance(title, str)):
+        return None
+    if not (reason is None or isinstance(reason, str)):
+        return None
+    return {
+        "state": value["state"],
+        "text_length": length,
+        "title": title,
+        "reason": reason,
+    }
+
+
+def recorded_capture(
+    job: Job, item: JobItem
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None] | None:
+    """``capture.json``'s ``(page, screenshot)``; None without a usable one."""
+    path = _plain_file(capture_record_path(job, item))
+    if path is None:
+        return None
+    try:
+        with path.open("rb") as fh:
+            data = fh.read(MAX_CAPTURE_RECORD + 1)
+        record = json.loads(data) if len(data) <= MAX_CAPTURE_RECORD else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("version") != 1:
+        return None
+    page, screenshot = record.get("page"), record.get("screenshot")
+    if (page is not None and _quality(page) is None) or (
+        screenshot is not None and _quality(screenshot) is None
+    ):
+        return None
+    return _quality(page), _quality(screenshot)
+
+
+_judged_pages: dict[tuple[str, int, int], dict[str, Any]] = {}
+_judged_lock = threading.Lock()
+
+
+def judged_page(path: Path, url: str) -> dict[str, Any] | None:
+    """An older job's kept page judged now (cached while it is unchanged)."""
+    from markitai.page_capture import page_quality
+
+    try:
+        stat = path.stat()
+        key = (str(path), stat.st_mtime_ns, stat.st_size)
+        with _judged_lock:
+            if key in _judged_pages:
+                return _judged_pages[key]
+        if stat.st_size > MAX_SNAPSHOT_BYTES:
+            return None
+        quality = page_quality(url, path.read_bytes().decode("utf-8", "replace"))
+    except OSError:
+        return None
+    with _judged_lock:
+        if len(_judged_pages) >= 256:
+            _judged_pages.pop(next(iter(_judged_pages)))
+        _judged_pages[key] = quality
+    return quality
+
+
+def item_url(item: JobItem) -> str | None:
+    """A URL item's address: its source, or for a job read back from disk
+    (which keeps no source) its name."""
+    if item.kind != "url":
+        return None
+    if isinstance(item.source, str) and item.source:
+        return item.source
+    return item.name or None
+
+
+def capture_of(job: Job, item: JobItem, snapshot: Path | None) -> dict[str, Any]:
+    """A URL item's ``capture`` (contract v1.14): as recorded, else its kept
+    page judged now (an older job) and no screenshot verdict."""
+    recorded = recorded_capture(job, item)
+    if recorded is not None:
+        page, screenshot = recorded
+        return {"page": page, "screenshot": screenshot}
+    page = None
+    if snapshot is not None:
+        page = judged_page(snapshot, item_url(item) or "")
+    return {"page": page, "screenshot": None}
+
+
+def _blocks_fit(path: Path, pages: list[tuple[float, float]]) -> bool:
+    """Whether kept block boxes cover the screenshots listed as *pages*:
+    their width, and their heights stacked (tiles cut from the top)."""
+    try:
+        with path.open("rb") as fh:
+            head = json.loads(fh.read(MAX_CAPTURE_RECORD * 64 + 1))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(head, dict) or head.get("version") != 1 or not pages:
+        return False
+    width, height = head.get("width"), head.get("height")
+    if not isinstance(width, int | float) or not isinstance(height, int | float):
+        return False
+    return abs(max(w for w, _ in pages) - width) <= 2 and (
+        abs(sum(h for _, h in pages) - height) <= 2 * len(pages)
+    )
 
 
 def kept_original(job: Job, item: JobItem) -> tuple[Path, str] | None:
@@ -418,19 +752,25 @@ def describe(
             return _with_screenshots(base, screenshots, boxes)
         base.reason = base.reason or "unsupported_format"
         return base
-    screenshots = item_screenshots(job, item)
+    # A URL item's pages: its own screenshots, else its compare screenshots
+    screenshots = item_screenshots(job, item) or compare_shots(job, item)
     snapshot = kept_snapshot(job, item)
     if snapshot is not None:
         # The page as fetched, with its screenshots as its pages
-        page = _with_screenshots(
+        original = _with_screenshots(
             Original(kind="html", name=item.name), screenshots, boxes
         )
-        page.kind, page.path = "html", snapshot
-        page.media_type, page.size = "text/html", snapshot.stat().st_size
-        return page
-    original = Original(kind="none", name=item.name, reason="not_kept")
-    if screenshots:
-        return _with_screenshots(original, screenshots, boxes)
+        original.kind, original.path = "html", snapshot
+        original.media_type, original.size = "text/html", snapshot.stat().st_size
+    else:
+        original = Original(kind="none", name=item.name, reason="not_kept")
+        if screenshots:
+            original = _with_screenshots(original, screenshots, boxes)
+    if item.kind == "url" and boxes:
+        original.capture = capture_of(job, item, snapshot)
+        kept = kept_blocks(job, item) if screenshots else None
+        if kept is not None and _blocks_fit(kept, original.pages):
+            original.blocks = kept
     return original
 
 

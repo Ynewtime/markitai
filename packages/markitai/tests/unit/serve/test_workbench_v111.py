@@ -396,8 +396,23 @@ class TestKeptWebPage:
         assert view.headers["cache-control"] == "no-store"
         assert view.headers["content-disposition"] == "inline"
         assert "x-frame-options" not in view.headers
-        snapshots = list((tmp_path / "jobs" / job_id / "snapshots").iterdir())
-        assert [path.name for path in snapshots] == [f"{item['item_id']}.html"]
+        snapshots = (tmp_path / "jobs" / job_id / "snapshots").iterdir()
+        # The page and how it reads (v1.14)
+        assert sorted(path.name for path in snapshots) == [
+            f"{item['item_id']}.capture.json",
+            f"{item['item_id']}.html",
+        ]
+        # "Fetchednext": under 80 characters, so a blank page to the UI
+        assert descriptor["capture"] == {
+            "page": {
+                "state": "empty",
+                "text_length": 11,
+                "title": "A page",
+                "reason": "blank",
+            },
+            "screenshot": None,
+        }
+        assert descriptor["blocks"] is None
 
     def test_the_frame_loads_the_sites_files_and_runs_no_script(self) -> None:
         from markitai.serve.originals import VIEW_POLICY as SERVED
@@ -518,10 +533,18 @@ class TestKeptWebPage:
         async with _client(_make_app(tmp_path)) as client:
             job_id = await _job(client, urls=[URL, "https://example.test/other"])
             snapshots = tmp_path / "jobs" / job_id / "snapshots"
-            assert sorted(p.name for p in snapshots.iterdir()) == ["i1.html", "i2.html"]
+            assert sorted(p.name for p in snapshots.iterdir()) == [
+                "i1.capture.json",
+                "i1.html",
+                "i2.capture.json",
+                "i2.html",
+            ]
             deleted = await client.delete(f"/api/jobs/{job_id}/items/i1")
         assert deleted.status_code == 204
-        assert [p.name for p in snapshots.iterdir()] == ["i2.html"]
+        assert sorted(p.name for p in snapshots.iterdir()) == [
+            "i2.capture.json",
+            "i2.html",
+        ]
 
 
 async def test_a_url_conversion_reports_the_page_it_read(

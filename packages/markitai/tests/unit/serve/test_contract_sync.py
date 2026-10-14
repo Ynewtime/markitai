@@ -51,6 +51,8 @@ COMPONENTS: dict[str, str] = {
     "SavedConfigDocument": "SavedConfigDocument",
     "PageBox": "PageBox",
     "OriginalDescriptor": "OriginalDescriptor",
+    "PageCapture": "PageCaptureQualities",
+    "CaptureQuality": "CaptureQuality",
     "PageTextLine": "PageTextLine",
     "PageText": "PageText",
     "ProviderCard": "ProviderConnection",

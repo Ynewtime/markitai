@@ -847,6 +847,27 @@ class PageBox(BaseModel):
     height: float
 
 
+class CaptureQuality(BaseModel):
+    """How usable a URL item's kept page or screenshot was when captured."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["ok", "empty", "challenge"]
+    text_length: int  # visible text, white-space runs as one, at most 1 000 000
+    title: str | None  # at most 200 characters
+    # challenge | verification | login | javascript | blank; None when ok
+    reason: str | None
+
+
+class PageCaptureQualities(BaseModel):
+    """A URL item's ``capture`` (contract v1.14 section 7)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: CaptureQuality | None
+    screenshot: CaptureQuality | None
+
+
 class OriginalDescriptor(BaseModel):
     """Response of ``GET /api/jobs/{job_id}/items/{item_id}/original``."""
 
@@ -863,6 +884,10 @@ class OriginalDescriptor(BaseModel):
     text_layer: bool
     # not_kept | unsupported_format | too_large | render_unavailable
     reason: str | None
+    # URL items (v1.14): how usable each kept view was; null for uploads
+    capture: PageCaptureQualities | None = None
+    # v1.14: API path of .../original/blocks when the screenshots have boxes
+    blocks: str | None = None
 
 
 class PageTextLine(BaseModel):

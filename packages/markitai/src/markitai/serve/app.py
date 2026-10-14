@@ -34,6 +34,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from markitai import __version__
 from markitai.constants import PROVIDER_API_KEY_ENV
+from markitai.page_capture import MAX_BLOCKS_BYTES
 from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, PENDING_BATCH_SKIP_REASON
 from markitai.serve import config_editor, model_test, new_access_token
@@ -78,11 +79,14 @@ from markitai.serve.originals import (
     RenderError,
     clamp_width,
     framed_page,
+    item_url,
+    kept_blocks,
+    kept_capture_files,
     kept_original,
     kept_upload,
-    page_snapshot_path,
     pdf_page_text,
     pdf_pages,
+    remove_empty_shots_dir,
     render_image,
     render_pdf_page,
 )
@@ -2644,9 +2648,8 @@ def _item_owned_files(job: Job, item: JobItem) -> list[Path]:
         upload = (uploads_dir / item.name).resolve()
         if upload.is_relative_to(uploads_dir) and upload != uploads_dir:
             owned.append(upload)
-    snapshot = page_snapshot_path(job, item)
-    if snapshot is not None:
-        owned.append(snapshot)
+    # Its kept page, capture record, block boxes and compare screenshots
+    owned.extend(kept_capture_files(job, item))
     return sorted(owned)
 
 
@@ -4715,6 +4718,7 @@ def create_app(
             doomed = await asyncio.to_thread(_item_owned_files, job, item)
             job.items.remove(item)
             await asyncio.to_thread(_unlink_all, [*doomed, job.job_dir / "archive.zip"])
+            await asyncio.to_thread(remove_empty_shots_dir, job, item)
             await asyncio.to_thread(write_job_meta, job)
             state.registry.publish_job(job)
             logger.info("[Serve] Job {} item {} deleted", job_id, item_id)
@@ -5006,6 +5010,9 @@ def create_app(
     def _original_view_path(job: Job, item: JobItem) -> str:
         return f"/api/jobs/{job.job_id}/items/{item.item_id}/original/view"
 
+    def _original_blocks_path(job: Job, item: JobItem) -> str:
+        return f"/api/jobs/{job.job_id}/items/{item.item_id}/original/blocks"
+
     async def _describe(
         request: Request, job: Job, item: JobItem, *, boxes: bool
     ) -> Original:
@@ -5040,7 +5047,38 @@ def create_app(
         item = _get_item(job, item_id)
         original = await _describe(request, job, item, boxes=True)
         return original.descriptor(
-            _original_paths(job, item), _original_view_path(job, item)
+            _original_paths(job, item),
+            _original_view_path(job, item),
+            _original_blocks_path(job, item),
+        )
+
+    @app.get("/api/jobs/{job_id}/items/{item_id}/original/blocks")
+    async def get_item_original_blocks(
+        request: Request, job_id: str, item_id: str
+    ) -> Response:
+        """Where the page's blocks are drawn on its screenshots, as recorded
+        when the browser took them (contract v1.14 section 7)."""
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        unavailable = ApiError(404, "original_unavailable", "no block boxes are kept")
+        path = kept_blocks(job, item)
+        if path is None:
+            raise unavailable
+
+        def read() -> bytes:
+            with path.open("rb") as fh:
+                return fh.read(MAX_BLOCKS_BYTES + 1)
+
+        try:
+            data = await asyncio.to_thread(read)
+        except OSError:
+            raise unavailable from None
+        if len(data) > MAX_BLOCKS_BYTES:
+            raise unavailable
+        return Response(
+            content=data,
+            media_type="application/json",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
         )
 
     @app.get("/api/jobs/{job_id}/items/{item_id}/original/file")
@@ -5104,10 +5142,8 @@ def create_app(
             raise unavailable from None
         if len(data) > MAX_SNAPSHOT_BYTES:
             raise too_large
-        page = framed_page(
-            data.decode("utf-8", "replace"),
-            str(item.source) if item.kind == "url" else None,
-        )
+        # A job read back from disk keeps no source: the URL is its name
+        page = framed_page(data.decode("utf-8", "replace"), item_url(item))
         return Response(
             content=page.encode("utf-8"),
             headers={
