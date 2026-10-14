@@ -835,6 +835,16 @@ the text PyMuPDF reads, and a page with a run of undecodable Identity-H text
 keeps its Latin lines; the other 228 PDFs of the local corpora convert
 byte-identically.
 
+A text layer that names a CJK radical for the ideograph its glyph draws reads as
+that ideograph: Chrome's "Save as PDF" writes `使⽤` and `右下⻆` (U+2F64 KANGXI
+RADICAL USE, U+2EC6 from CJK Radicals Supplement) for 使用 and 右下角, which look
+alike but do not search, sort or match. The Markdown and the title of every PDF
+path (with or without OCR, screenshots or the LLM, which reads them) fold the
+Kangxi Radicals (U+2F00–U+2FD5) by NFKC and the supplement forms that stand for
+one ideograph (U+2E9F, U+2EF3 by NFKC, then the 28 forms of the workbench's
+Compare table) to those ideographs; component shapes such as `⺁` and `⺌` stay.
+Other formats are left as they are. Python markitai 1.2.1 uses the same mapping.
+
 ## Images and remaining work
 
 Executed embedded raster images retain their existing extraction path and are
