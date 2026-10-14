@@ -12,13 +12,11 @@ from markitai.converter.markitdown_ext import _convert
     "content,encoding",
     [
         ("Name,Value\nExample,42\n", "utf-8"),
-        ('Name,Value\n"Line\nbreak","a,b"\n', "utf-8"),
         ("a,b\n1\n2,3,4\n", "utf-8"),
         ("名字,数值\n示例,42\n", "utf-16"),
         ("Name,Value\ncafé,42\n", "cp1252"),
         ("Name,Value\r\n例子,42\r\n", "utf-8-sig"),
         ("", "utf-8"),
-        ("a|b,c\n d , e \n\n", "utf-8"),
     ],
 )
 def test_csv_keeps_reference_output(tmp_path, content, encoding):
@@ -29,6 +27,29 @@ def test_csv_keeps_reference_output(tmp_path, content, encoding):
     assert converter is not None
     actual = converter.convert(path)
     assert actual.markdown == expected.markdown
+
+
+@pytest.mark.parametrize(
+    "content,markdown",
+    [
+        # MarkItDown writes these cells as they are: the newline splits the
+        # row, the "|" adds a column
+        (
+            'Name,Value\n"Line\nbreak","a,b"\n',
+            "| Name | Value |\n| --- | --- |\n| Line<br>break | a,b |",
+        ),
+        (
+            "a|b,c\n d , e \n\n",
+            "| a\\|b | c |\n| --- | --- |\n| d | e |\n|  |  |",
+        ),
+    ],
+)
+def test_csv_cells_stay_on_their_row(tmp_path, content, markdown):
+    path = tmp_path / "table.csv"
+    path.write_text(content, encoding="utf-8", newline="")
+    converter = get_converter(path)
+    assert converter is not None
+    assert converter.convert(path).markdown == markdown
 
 
 @pytest.mark.parametrize(

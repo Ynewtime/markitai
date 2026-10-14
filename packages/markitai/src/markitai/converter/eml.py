@@ -112,6 +112,9 @@ def _html_to_markdown(html: str, source: str) -> str:
 
     from markitdown import MarkItDown, StreamInfo
 
+    from markitai.converter._patches import apply_markitdown_cell_patches
+
+    apply_markitdown_cell_patches()
     result = MarkItDown().convert_stream(
         io.BytesIO(html.encode("utf-8")),
         stream_info=StreamInfo(extension=".html", mimetype="text/html"),

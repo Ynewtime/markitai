@@ -2,7 +2,9 @@
 
 PPTX tables are rendered through this, with Markdownify's default whitespace
 and escaping rules for plain-text cells (it was the spreadsheet renderer's
-table writer before spreadsheets got their own, :mod:`sheet_tables`).
+table writer before spreadsheets got their own, :mod:`sheet_tables`). A
+``<br>`` in a cell is a line break, written as ``<br>`` (see
+:mod:`markitai.webextract.table_cells`).
 """
 
 from __future__ import annotations
@@ -11,6 +13,8 @@ import re
 import sys
 from html.parser import HTMLParser
 from typing import Any
+
+from markitai.webextract.table_cells import CELL_BREAK, markdown_cell
 
 _NEWLINE_WHITESPACE = re.compile(r"[\t \r\n]*[\r\n][\t \r\n]*")
 _HORIZONTAL_WHITESPACE = re.compile(r"[\t ]+")
@@ -48,6 +52,8 @@ class _HtmlTable(HTMLParser):
             self.cells = []
         elif tag in {"th", "td"}:
             self.data = []
+        elif tag == "br" and self.data is not None:
+            self.data.append(CELL_BREAK)
 
     def handle_data(self, data: str) -> None:
         if self.data is not None:
@@ -61,7 +67,7 @@ class _HtmlTable(HTMLParser):
                 text = text.replace("*", r"\*").replace("_", r"\_")
             else:
                 text = self.renderer.escape(text, {tag})
-            self.cells.append(" " + text.strip().replace("\n", " ") + " |")
+            self.cells.append(" " + markdown_cell(text) + " |")
             self.data = None
         elif tag == "tr":
             self.rows.append("|" + "".join(self.cells))

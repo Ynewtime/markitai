@@ -2055,6 +2055,9 @@ def _html_to_markdown(html: str) -> str:
 
         from markitdown import MarkItDown, StreamInfo
 
+        from markitai.converter._patches import apply_markitdown_cell_patches
+
+        apply_markitdown_cell_patches()
         md = MarkItDown()
         # MarkItDown uses convert_stream for in-memory content
         stream = io.BytesIO(html.encode("utf-8"))

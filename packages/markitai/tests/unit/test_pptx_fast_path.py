@@ -56,9 +56,16 @@ def rich_deck(tmp_path, fixtures_dir):
     return path
 
 
+def _reference(path):
+    """MarkItDown's output, except the one cell break it writes as a space."""
+    reference = OfficeConverter().convert(path).markdown
+    assert "| Line break |" in reference
+    return reference.replace("| Line break |", "| Line<br>break |")
+
+
 def test_rich_pptx_keeps_reference_output(rich_deck):
     actual = PptxConverter().convert(rich_deck).markdown
-    assert actual == OfficeConverter().convert(rich_deck).markdown
+    assert actual == _reference(rich_deck)
     for text in [
         "Speaker notes",
         "Chart",
@@ -166,4 +173,4 @@ def test_svg_picture_without_raster_fallback(rich_deck, tmp_path):
     deck.save(path)
     actual = PptxConverter().convert(path).markdown
     assert "data:image/svg+xml;base64," in actual
-    assert actual == OfficeConverter().convert(path).markdown
+    assert actual == _reference(path)

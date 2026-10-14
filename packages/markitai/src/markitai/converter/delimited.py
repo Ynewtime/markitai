@@ -20,6 +20,7 @@ from markitai.converter.base import (
     conversion_failed,
     register_converter,
 )
+from markitai.webextract.table_cells import text_cell
 
 # csv defaults to 128 KB per field; a pathological file would otherwise raise
 # instead of converting.
@@ -27,8 +28,8 @@ _MAX_FIELD_BYTES = 4 * 1024 * 1024
 
 
 def escape_cell(value: str) -> str:
-    """Make one cell safe inside a Markdown table row."""
-    return value.replace("|", "\\|").replace("\n", "<br>").replace("\r", "").strip()
+    """Make one cell safe inside a Markdown table row (see :func:`text_cell`)."""
+    return text_cell(value)
 
 
 def render_markdown_table(rows: list[list[str]]) -> str:

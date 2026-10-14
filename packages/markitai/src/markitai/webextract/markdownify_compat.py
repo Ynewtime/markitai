@@ -16,6 +16,8 @@ from urllib.parse import quote, unquote, urlparse, urlunparse
 import markdownify
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.table_cells import CELL_BREAK, markdown_cell
+
 
 class _MarkdownTag(Tag):
     """Avoid allocating a general query for Markdownify's per-tag pre check.
@@ -44,13 +46,56 @@ def parse_markdown_html(
     return BeautifulSoup(markup, features, **kwargs)
 
 
-class CompatibleMarkdownConverter(markdownify.MarkdownConverter):
+# Markdownify's own rules, called by name from TableCellLines (untyped there)
+_MARKDOWNIFY: Any = markdownify.MarkdownConverter
+
+
+def _in_cell(parent_tags: set[str]) -> bool:
+    return "td" in parent_tags or "th" in parent_tags
+
+
+class TableCellLines:
+    """A table cell's lines joined with ``<br>``, the row kept on one line.
+
+    Markdownify writes a ``<br>``, ``<p>`` or ``<div>`` inside a cell as a
+    space and leaves a U+2028 or vertical tab in its text as is (which ends
+    the table in a GFM renderer). These rules mark the breaks with
+    :data:`CELL_BREAK` and write each cell through :func:`markdown_cell`.
+    They call ``MarkdownConverter``'s own rules by name, so the same
+    functions also serve MarkItDown's converter class
+    (:func:`markitai.converter._patches.apply_markitdown_cell_patches`).
+    """
+
+    def convert_br(self: Any, el: Any, text: str, parent_tags: set[str]) -> str:
+        if _in_cell(parent_tags):
+            return CELL_BREAK + text
+        return _MARKDOWNIFY.convert_br(self, el, text, parent_tags)
+
+    def convert_p(self: Any, el: Any, text: str, parent_tags: set[str]) -> str:
+        if _in_cell(parent_tags):
+            return CELL_BREAK + text.strip() + CELL_BREAK
+        return _MARKDOWNIFY.convert_p(self, el, text, parent_tags)
+
+    def convert_div(self: Any, el: Any, text: str, parent_tags: set[str]) -> str:
+        if _in_cell(parent_tags):
+            return CELL_BREAK + text.strip() + CELL_BREAK
+        return _MARKDOWNIFY.convert_div(self, el, text, parent_tags)
+
+    def convert_td(self: Any, el: Any, text: str, parent_tags: set[str]) -> str:
+        return _MARKDOWNIFY.convert_td(self, el, markdown_cell(text), parent_tags)
+
+    def convert_th(self: Any, el: Any, text: str, parent_tags: set[str]) -> str:
+        return _MARKDOWNIFY.convert_th(self, el, markdown_cell(text), parent_tags)
+
+
+class CompatibleMarkdownConverter(TableCellLines, markdownify.MarkdownConverter):
     """A custom version of markdownify's MarkdownConverter. Changes include:
 
     - Altering the default heading style to use '#', '##', etc.
     - Removing javascript hyperlinks.
     - Truncating images with large data:uri sources.
     - Ensuring URIs are properly escaped, and do not conflict with Markdown syntax
+    - Line breaks inside table cells written as ``<br>`` (:class:`TableCellLines`)
     """
 
     options: dict[str, Any]

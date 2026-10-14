@@ -14,6 +14,7 @@ from typing import Any, cast
 
 from markitai.converter.base import ConvertResult
 from markitai.converter.structured_text import _normalize
+from markitai.webextract.table_cells import text_cell
 
 
 class ShapePositions:
@@ -130,7 +131,8 @@ def _table(table: Any) -> str:
     for index, row in enumerate(table.rows):
         tag = "th" if index == 0 else "td"
         cells = "".join(
-            f"<{tag}>{html.escape(cell.text)}</{tag}>" for cell in row.cells
+            f"<{tag}>{'<br>'.join(map(html.escape, cell.text.splitlines()))}</{tag}>"
+            for cell in row.cells
         )
         rows.append(f"<tr>{cells}</tr>")
     if not rows:
@@ -152,7 +154,10 @@ def _chart(chart: Any) -> str:
         rows = [["Category", *(item.name for item in series)]]
         for index, name in enumerate(categories):
             rows.append([name, *(v[index] if index < len(v) else None for v in values)])
-        lines = ["| " + " | ".join(map(str, row)) + " |" for row in rows]
+        lines = [
+            "| " + " | ".join(text_cell(str(value)) for value in row) + " |"
+            for row in rows
+        ]
         separator = "|" + "|".join(["---"] * len(rows[0])) + "|"
         return heading + "\n\n" + "\n".join([lines[0], separator, *lines[1:]])
     except ValueError as exc:
