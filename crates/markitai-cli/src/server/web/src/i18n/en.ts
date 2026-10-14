@@ -662,12 +662,14 @@ export const en = {
   frontLabel: "Front matter",
   frontTags: (n: number) => plural(n, "1 tag", `${n} tags`),
   originalShotNote: "Screenshot taken when the page was fetched. Hover a block to find it on the picture.",
-  pageNotKept: (state: "empty" | "challenge" | "ok" | null): string =>
+  pageNotKept: (state: "empty" | "challenge" | "ok" | null, reason: string | null = null): string =>
     state === "challenge"
       ? "The site showed a verification check instead of the page, so it couldn't be kept as it looked."
-      : state === "empty"
-        ? "The page was blank when it was fetched (the site builds it with scripts), so it couldn't be kept as it looked."
-        : "The page couldn't be kept as it looked.",
+      : state === "empty" && reason === "javascript"
+        ? "The page only asked for JavaScript when it was fetched, so it couldn't be kept as it looked."
+        : state === "empty"
+          ? "The page was blank when it was fetched (almost no text and no pictures), so it couldn't be kept as it looked."
+          : "The page couldn't be kept as it looked.",
   pageOf: (page: number, total: number) => `Page ${page} of ${total}`,
   pageImage: (page: number) => `Page ${page} of the original`,
   pageUnavailable: "This page could not be drawn",

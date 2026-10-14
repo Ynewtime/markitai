@@ -628,12 +628,14 @@ export const zh: Dict = {
   frontLabel: "文档信息",
   frontTags: (n) => `${n} 个标签`,
   originalShotNote: "抓取网页时截取的画面。悬停某个段落即可在截图上找到它。",
-  pageNotKept: (state) =>
+  pageNotKept: (state, reason = null) =>
     state === "challenge"
       ? "抓取时网站显示的是验证页面，而不是网页本身，因此未能按原样保留。"
-      : state === "empty"
-        ? "抓取时网页是空白的（站点用脚本生成内容），因此未能按原样保留。"
-        : "网页未能按原样保留。",
+      : state === "empty" && reason === "javascript"
+        ? "抓取时网页只显示了启用 JavaScript 的提示，因此未能按原样保留。"
+        : state === "empty"
+          ? "抓取时网页是空白的（几乎没有文字，也没有图片），因此未能按原样保留。"
+          : "网页未能按原样保留。",
   pageOf: (page: number, total: number) => `第 ${page} 页，共 ${total} 页`,
   pageImage: (page: number) => `原件第 ${page} 页`,
   pageUnavailable: "无法绘制此页",

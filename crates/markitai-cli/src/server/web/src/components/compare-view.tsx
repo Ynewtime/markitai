@@ -184,13 +184,13 @@ function usePaired(onPaired: (ids: ReadonlySet<string>) => void, ids: Iterable<s
   useEffect(() => () => onPaired(NONE), []);
 }
 
-/** A web page whose kept copy is not the page (a check page, a blank page built by script) and
+/** A web page whose kept copy is not the page (a check page, a blank page, a JavaScript notice) and
  * that has no usable screenshot: say so, and open the page itself. */
 function PageNotKept({ t, url, failed }: { t: Dict; url: string; failed: CaptureQuality | null }) {
   return (
     <div class="orig-none">
       <Icon name="Globe" size={28} />
-      <p>{t.pageNotKept(failed?.state ?? null)}</p>
+      <p>{t.pageNotKept(failed?.state ?? null, failed?.reason ?? null)}</p>
       <a class="btn btn-sm" href={url} target="_blank" rel="noopener noreferrer">
         <Icon name="ArrowSquareOut" size={14} />
         {t.openPage}

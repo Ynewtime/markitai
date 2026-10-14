@@ -150,7 +150,8 @@ reason}` or null when that view was not kept. `state` is `challenge` when the pa
 was a verification, captcha, bot check or login page in place of the content
 (`reason` `challenge`, `verification` or `login`, from the same site rules the
 fetch uses), `empty` when it only asked for JavaScript (`javascript`) or showed
-fewer than 80 characters of text (`blank`), else `ok`; `text_length` counts the
+fewer than 80 characters of text and no picture, video or audio player
+(`blank`; a picture with a one-line caption is `ok`), else `ok`; `text_length` counts the
 visible text with white space runs as one (the kept page as a frame without
 scripts shows it, `<noscript>` included; the screenshots as the browser showed
 them), `title` is the page's title (at most 200 characters). A job saved before

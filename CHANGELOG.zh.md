@@ -3,7 +3,7 @@
 ## [1.3.0]
 
 ### 新增
-- `markitai serve` 记录网页在抓取时的样子：原件描述的 `capture` 分别说明保留的网页和它的截图显示的是正文、空白页（或只要求启用 JavaScript），还是代替正文的验证、验证码或登录页（`{state, text_length, title, reason}`）；`GET …/original/blocks` 给出浏览器截图时网页各段落所在的方框（描述中的 `blocks`）。服务任务中由浏览器载入的网页，即使没有要求截图，也会保存对照用截图（JPEG 分块，存于任务旁，最多 20 块，不属于结果，也不会发送给模型）。工作台契约 v1.14。
+- `markitai serve` 记录网页在抓取时的样子：原件描述的 `capture` 分别说明保留的网页和它的截图显示的是正文（图片或播放器配一句说明也算）、空白页（或只要求启用 JavaScript），还是代替正文的验证、验证码或登录页（`{state, text_length, title, reason}`）；`GET …/original/blocks` 给出浏览器截图时网页各段落所在的方框（描述中的 `blocks`）。服务任务中由浏览器载入的网页，即使没有要求截图，也会保存对照用截图（JPEG 分块，存于任务旁，最多 20 块，不属于结果，也不会发送给模型）。工作台契约 v1.14。
 - 工作台的「对照」也能把 Markdown 与网页截图关联：悬停某个段落会在截图上标出它（反之亦然），位置来自服务器记录的方框。
 - `markitai serve` 新增访问级别与「编辑配置」。服务器令牌即管理员令牌；管理员可在工作台创建带标签的用户令牌（`GET`/`POST /api/access-tokens`、`DELETE /api/access-tokens/{id}`；最多 50 个，每个只显示一次，服务端只在 `MARKITAI_HOME/serve/access.json` 中保存其 SHA-256，因此重启和重新生成令牌后仍然有效）。用户令牌可使用设置与令牌路由之外的全部接口（这两类返回 403 `settings_forbidden`），且只能看到自己创建的任务（其他任务一律 404 `job_not_found`，历史、归档、下载凭证和删除也是如此）；吊销后，其请求、下载凭证和事件流立即失效。`GET`/`PUT /api/settings/config` 按配置文件原有文本显示（所有密钥已遮蔽），并按原样保存编辑后的文本（工作台按文件原有的换行符回传，因此 Windows 上的 CRLF 文件仍为 CRLF，「查看更改」只显示真正的修改，未改动的行逐字节不变；原位置保留的遮蔽值会还原为已存的密钥；修订号过期返回 409，无效配置返回 422 `invalid_config`），模型与服务商立即生效，其余设置通过 `restart_required` 提示需重启。能力信息新增 `access`（`role`、`label`）、`features.user_tokens` 和 `features.config_edit`。
 - `POST /api/history/delete` 可在一次请求中删除多个已保存的任务和条目（`{jobs, items}`，共 1 至 1,000 项），每项都与对应的单项路由处理方式完全相同，并按顺序返回每项的结果（`features.batch_delete`）。

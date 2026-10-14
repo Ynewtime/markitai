@@ -18,3 +18,17 @@ test("a toast's lead and its text are joined in the language's own punctuation",
   // English toasts that carry a lead and a detail in one string use sentences, not "·".
   for (const text of [en.restoreFailed, en.draftKept]) assert.match(text, /^[^·]+\. [A-Z][^·]+\.$/);
 });
+
+test("a page that could not be kept says why in words that hold for every page", () => {
+  for (const dict of [en, zh, ja]) {
+    const blank = dict.pageNotKept("empty", "blank");
+    const notice = dict.pageNotKept("empty", "javascript");
+    // A blank page is not said to be built by script: a short page may be one picture and a caption.
+    assert.equal(/script|脚本|スクリプト/i.test(blank), false);
+    assert.match(notice, /JavaScript/);
+    assert.notEqual(blank, notice);
+    // A backend that sends no reason reads as blank.
+    assert.equal(dict.pageNotKept("empty", null), blank);
+    assert.notEqual(dict.pageNotKept("challenge", "challenge"), blank);
+  }
+});
