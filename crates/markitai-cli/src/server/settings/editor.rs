@@ -269,7 +269,7 @@ fn replaced(text: &str, mut replacements: Vec<(Range<usize>, String)>) -> String
 }
 
 /// The file's text with each secret literal masked, and how many.
-fn mask(text: &str) -> (String, usize) {
+pub(super) fn mask(text: &str) -> (String, usize) {
     let replacements: Vec<_> = secrets(text)
         .into_values()
         .map(|(span, _, shown)| (span, Value::String(shown).to_string()))

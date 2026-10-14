@@ -37,7 +37,10 @@ credential-presence flags, a sanitized API origin, `persisted` and, on saved row
 `model_info.share: "shared"` in the entry and lets user tokens' conversions use
 the model, `private` removes it (see
 [users' own models](serve.md#users-own-models-and-shared-models)). Users' own
-models live outside this file under `/api/me/models`, with the same shapes. A routing group
+models live outside this file under `/api/me/models`, with the same shapes; a
+user's own weight for a shared model, its test of one and its Edit config
+(`/api/me/config`) change only the user's file, never this one or the admin's
+routing. A routing group
 may contain multiple deployments. Legacy name-based changes return 409 when the
 name is ambiguous. New deployments receive UUID identities; the first v2 mutation
 also assigns persistent identities to legacy entries.

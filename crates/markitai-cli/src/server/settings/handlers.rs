@@ -234,6 +234,16 @@ async fn config_replace(
     ExtractState(state): ExtractState<Arc<State>>,
     request: axum::extract::Request,
 ) -> ApiResult<Json<Value>> {
+    let (expected, text) = config_body(request).await?;
+    crate::task::blocking(move || state.settings.replace_config(&expected, &text))
+        .await
+        .map_err(|_| super::failure())?
+        .map(Json)
+}
+
+/// The `{expected_revision, text}` body of a config PUT (the admin's and a
+/// user's), within the size limits.
+pub(super) async fn config_body(request: axum::extract::Request) -> ApiResult<(String, String)> {
     let json = request
         .headers()
         .get("content-type")
@@ -266,9 +276,5 @@ async fn config_replace(
     if text.len() > MAX_CONFIG_TEXT {
         return Err(too_large());
     }
-    let (expected, text) = (expected.to_owned(), text.to_owned());
-    crate::task::blocking(move || state.settings.replace_config(&expected, &text))
-        .await
-        .map_err(|_| super::failure())?
-        .map(Json)
+    Ok((expected.to_owned(), text.to_owned()))
 }

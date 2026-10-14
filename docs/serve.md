@@ -676,9 +676,21 @@ enhancements route to one pool: its own models, then the shared ones (weight
 above 0, one routing group, no fallbacks), from the current settings on every
 request. With neither, a request for model processing is 422 `llm_unavailable`
 and conversions run without models. `GET /api/me/models` lists the shared
-models as `{id, model, provider, weight}` only: no user answer carries a shared
-model's key, address or connection, and a failure names the model without its
-host. A revoked user's jobs route to the shared models only.
+models as `{id, model, provider, weight, default_weight}` only: no user answer
+carries a shared model's key, address or connection, and a failure names the
+model without its host. A revoked user's jobs route to the shared models only.
+
+A user may give a shared model a weight of its own with
+`PATCH /api/me/models/shared/{id}` `{expected_revision, weight}` (`weight` is the
+user's, `default_weight` the admin's; 0 turns it off for that user only, null or
+the admin's weight goes back to the admin's), kept in its own file. `POST
+/api/me/models/test` with `{shared_id}` tests a shared model on the server with
+the admin's connection and answers only whether it passed and the failure's
+`reason` (one at a time and 6 a minute per user, else 429 `provider_busy` with
+`Retry-After`). `GET`/`PUT /api/me/config` is the user's Edit config: a JSON
+document of its own `models`, `providers` and the `shared` weights, secrets
+masked as in the admin's editor, saved through the same rules
+(`features.user_config`).
 
 All settings endpoints require the admin token by default. With `--no-auth`,
 only direct loopback peers without forwarding headers can access settings. Every settings response, including rejected requests,

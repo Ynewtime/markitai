@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: https:; font-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: https:; media-src https:; font-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 /// One embedded file. `gzip` marks bytes stored compressed.
 struct Asset {
@@ -489,7 +489,7 @@ mod tests {
             );
         }
         // Nested llm fields must not be mistaken for top-level capabilities.
-        assert_eq!(interface("Capabilities").len(), 12);
+        assert_eq!(interface("Capabilities").len(), 13);
         assert_eq!(interface("CloudflareCapability").len(), 6);
     }
 }

@@ -199,6 +199,19 @@ export interface Capabilities {
   features?: Features;
   /** v1.13: who is asking. Absent = an older backend, where one token does everything (admin). */
   access?: { role: "admin" | "user"; label?: string };
+  /** v1.16: which build answers, for the sidebar's version line. */
+  build?: BuildInfo;
+}
+
+/** v1.16: the backend's build: its version, the commit it was built from and when. */
+export interface BuildInfo {
+  version: string;
+  /** Short commit hash; null when unknown (a source archive). */
+  commit: string | null;
+  /** RFC 3339; null when unknown. */
+  built_at: string | null;
+  /** Built from a tree with uncommitted changes. */
+  dirty?: boolean;
 }
 
 /** What a backend implements beyond the base job API; absent or false hides it. */
@@ -224,6 +237,8 @@ export interface Features {
   batch_delete?: boolean;
   /** v1.15: /api/me/models (a user token's own models) and `share` on the admin's models. */
   user_models?: boolean;
+  /** v1.16: GET/PUT /api/me/config (a user token's own models file as text). */
+  user_config?: boolean;
 }
 
 /** v1.13: a user token as the admin's list shows it; `token` only in the answer that created it. */
@@ -247,7 +262,8 @@ export interface BatchDeleteResult {
 
 /** v1.13: `GET`/`PUT /api/settings/config`. */
 export interface ConfigDocument {
-  path: string;
+  /** v1.16: null for a user's own models document (`/api/me/config`), which is not a file of the server's. */
+  path: string | null;
   origin: string;
   exists: boolean;
   revision: string;
@@ -343,7 +359,11 @@ export interface SharedModel {
   id: string;
   model: string;
   provider: string;
+  /** This user's weight for it (v1.16: the user's own when set, else the admin's); 0 = off for this user. */
   weight: number;
+  /** v1.16: the admin's weight, which `weight` follows until the user sets another. Absent = an older backend:
+   * the user can neither weigh nor test shared models. */
+  default_weight?: number;
 }
 
 export interface ProviderCard {

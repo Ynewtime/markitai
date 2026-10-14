@@ -77,6 +77,7 @@ pub(super) async fn capabilities(
         .collect();
     Json(json!({
         "version":markitai_core::VERSION,
+        "build":build(),
         "implementation":"rust",
         "docs_url":DOCS_URL,
         "source_url":SOURCE_URL,
@@ -91,8 +92,22 @@ pub(super) async fn capabilities(
             "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
             "item_archive":true,"token_regenerate":state.auth_enabled(),
             "user_tokens":state.auth_enabled(),"config_edit":true,"batch_delete":true,
-            "user_models":state.auth_enabled()},
+            "user_models":state.auth_enabled(),"user_config":state.auth_enabled()},
     }))
+}
+
+/// Which build answers: the version, the commit it was built from (`null`
+/// outside a checkout), when it was built (RFC 3339 UTC; `null` without a
+/// clock) and whether the worktree differed from that commit.
+fn build() -> Value {
+    use markitai_core::build_info;
+    let commit = (build_info::COMMIT != "unknown").then_some(build_info::COMMIT);
+    let built_at = Some(build_info::epoch())
+        .filter(|epoch| *epoch != 0)
+        .and_then(|epoch| chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0))
+        .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    json!({"version":markitai_core::VERSION,"commit":commit,"built_at":built_at,
+        "dirty":build_info::DIRTY == "1"})
 }
 
 const DOCS_URL: &str = "https://github.com/Ynewtime/markitai-rust/blob/main/docs/index.md";

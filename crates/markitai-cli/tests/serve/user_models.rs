@@ -519,11 +519,13 @@ fn shared_models_serve_users_at_once_and_revoked_users_lose_their_own() {
     let view = ok(&server, "GET", "/api/me/models", &b, None);
     assert_eq!(
         view["shared"],
-        json!([{"id":shared_id,"model":"openai/fake-model","provider":"custom","weight":1}])
+        json!([{"id":shared_id,"model":"openai/fake-model","provider":"custom","weight":1,"default_weight":1}])
     );
+    let mut fields = keys(&view["shared"][0]);
+    fields.sort();
     assert_eq!(
-        keys(&view["shared"][0]),
-        ["id", "model", "provider", "weight"]
+        fields,
+        ["default_weight", "id", "model", "provider", "weight"]
     );
     assert_eq!(view["routable"], true);
     assert_eq!(view["configured"], false);
@@ -691,4 +693,826 @@ fn shared_models_serve_users_at_once_and_revoked_users_lose_their_own() {
     assert!(!text.contains(&host), "{text}");
     restarted.stop();
     assert!(received(&sentinel).is_empty());
+}
+
+/// A model server that answers every request with `status` and an error
+/// whose words name where it is; records each Authorization header.
+struct Failing {
+    port: u16,
+    requests: Arc<Mutex<Vec<String>>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+impl Failing {
+    fn start(status: u16) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (seen, stopping) = (requests.clone(), stop.clone());
+        let thread = std::thread::spawn(move || {
+            while !stopping.load(Ordering::SeqCst) {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream.set_read_timeout(Some(WAIT)).unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut start = String::new();
+                reader.read_line(&mut start).unwrap();
+                let (mut length, mut authorization) = (0, String::new());
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap();
+                        } else if name.eq_ignore_ascii_case("authorization") {
+                            authorization = value.trim().to_owned();
+                        }
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                seen.lock().unwrap().push(authorization);
+                let answer = json!({"error":{"message":format!("provider-words: no such thing at 127.0.0.1:{port}"),
+                    "type":"fixture_error","code":"fixture_code"}})
+                .to_string();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                    answer.len()
+                );
+            }
+        });
+        Self {
+            port,
+            requests,
+            stop,
+            thread: Some(thread),
+        }
+    }
+    fn received(&self) -> Vec<String> {
+        std::mem::take(&mut *self.requests.lock().unwrap())
+    }
+}
+impl Drop for Failing {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// An admin model entry with its own connection, shared or private.
+fn admin_model(id: &str, model: &str, base: &str, weight: u64, shared: bool) -> (Value, Value) {
+    let connection = format!("{id}-connection");
+    let mut info = json!({"id":id,"provider_id":connection});
+    if shared {
+        info["share"] = json!("shared");
+    }
+    (
+        json!({"model_name":"default","litellm_params":{"model":model,"api_key":ADMIN_KEY,
+            "api_base":base,"weight":weight,"use_environment_credentials":false},"model_info":info}),
+        json!({"id":connection,"provider":"custom","api_key":ADMIN_KEY,"api_base":base,
+            "use_environment_credentials":false}),
+    )
+}
+
+/// The admin's configuration file with `models` (entry, connection) saved.
+fn save_admin_models(root: &Path, models: Vec<(Value, Value)>) {
+    configure(root);
+    let path = root.join("config.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let (entries, connections): (Vec<_>, Vec<_>) = models.into_iter().unzip();
+    config["llm"]["model_list"] = json!(entries);
+    config["llm"]["providers"] = json!(connections);
+    std::fs::write(&path, config.to_string()).unwrap();
+}
+fn base(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/v1")
+}
+fn patch_shared(server: &Server, token: &str, id: &str, body: Value) -> Reply {
+    call(
+        server,
+        "PATCH",
+        &format!("/api/me/models/shared/{id}"),
+        token,
+        Some(body),
+    )
+}
+
+#[test]
+fn users_weigh_shared_models_for_themselves_only() {
+    let sentinel = Endpoint::start();
+    let first = Endpoint::start();
+    let second = Endpoint::start();
+    let temp = tempfile::tempdir().unwrap();
+    save_admin_models(
+        temp.path(),
+        vec![
+            admin_model("s-one", "openai/fake-model", &base(first.port), 1, true),
+            admin_model("s-two", "openai/second-model", &base(second.port), 2, true),
+        ],
+    );
+    let server = start(temp.path(), &sentinel);
+    let (a_id, a) = user(&server, "Laptop A");
+    let (_, b) = user(&server, "Laptop B");
+    let view = ok(&server, "GET", "/api/me/models", &a, None);
+    assert_eq!(
+        view["shared"],
+        json!([
+            {"id":"s-one","model":"openai/fake-model","provider":"custom","weight":1,"default_weight":1},
+            {"id":"s-two","model":"openai/second-model","provider":"custom","weight":2,"default_weight":2}
+        ])
+    );
+    let original = view["revision"].clone();
+
+    // Refusals change nothing.
+    let reply = patch_shared(
+        &server,
+        &a,
+        "no-such-model",
+        json!({"expected_revision":original,"weight":3}),
+    );
+    assert_eq!(reason(&reply), (404, json!("settings_entry_missing")));
+    let reply = patch_shared(
+        &server,
+        &a,
+        "s-two",
+        json!({"expected_revision":"stale","weight":3}),
+    );
+    assert_eq!(reply.status, 409);
+    assert_eq!(
+        reply.json()["detail"],
+        json!({"code":"stale_revision","current_revision":original})
+    );
+    for body in [
+        json!({"expected_revision":original}),
+        json!({"weight":3}),
+        json!({"expected_revision":original,"weight":3,"share":"shared"}),
+        json!({"expected_revision":original,"weight":"3"}),
+        json!({"expected_revision":original,"weight":-1}),
+        json!({"expected_revision":original,"weight":1.5}),
+        json!({"expected_revision":7,"weight":3}),
+        json!([]),
+    ] {
+        let reply = patch_shared(&server, &a, "s-two", body.clone());
+        assert_eq!(
+            reason(&reply),
+            (422, json!("invalid_settings_request")),
+            "{body}: {}",
+            reply.text()
+        );
+    }
+    let authorization = format!("Bearer {a}");
+    let reply = server.request(
+        "PATCH",
+        "/api/me/models/shared/s-two",
+        &[("Authorization", authorization.as_str())],
+        b"{}",
+    );
+    assert_eq!(reason(&reply), (422, json!("json_required")));
+    let reply = server.request(
+        "PATCH",
+        "/api/me/models/shared/s-two",
+        &[
+            ("Authorization", authorization.as_str()),
+            ("Content-Type", "application/json"),
+        ],
+        b"{not json",
+    );
+    assert_eq!(reason(&reply), (422, json!("invalid_json")));
+    let reply = patch_shared(
+        &server,
+        ADMIN,
+        "s-two",
+        json!({"expected_revision":original,"weight":0}),
+    );
+    assert_eq!(reason(&reply), (403, json!("user_token_required")));
+    assert_eq!(reply.headers["cache-control"], "no-store");
+    assert_eq!(revision(&server, "/api/me/models", &a), original);
+    let file = temp
+        .path()
+        .join(format!("home/serve/user-models/{a_id}.json"));
+    assert!(!file.exists());
+
+    // 0: off for A only, still listed; A's conversions reach the first only.
+    let reply = patch_shared(
+        &server,
+        &a,
+        "s-two",
+        json!({"expected_revision":original,"weight":0}),
+    );
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    assert_eq!(reply.headers["cache-control"], "no-store");
+    let view = reply.json();
+    assert_eq!(view["shared"][1]["weight"], 0);
+    assert_eq!(view["shared"][1]["default_weight"], 2);
+    assert_ne!(view["revision"], original);
+    assert_eq!(view["routable"], true);
+    let saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(saved["shared_weights"], json!({"s-two":0}));
+    assert_eq!(saved["version"], 1);
+    assert_eq!(
+        ok(&server, "GET", "/api/capabilities", &a, None)["llm"]["models"],
+        json!(["openai/fake-model"])
+    );
+    assert_eq!(
+        ok(&server, "GET", "/api/capabilities", &b, None)["llm"]["models"],
+        json!(["openai/fake-model", "openai/second-model"])
+    );
+    let b_view = ok(&server, "GET", "/api/me/models", &b, None);
+    assert_eq!(b_view["shared"][1]["weight"], 2);
+    for _ in 0..3 {
+        converted(&server, &a);
+    }
+    assert_eq!(received(&first).len(), 3);
+    assert!(received(&second).is_empty());
+    // Both off: A's pool is empty, B's is not.
+    let revision_a = view["revision"].clone();
+    let view = ok(
+        &server,
+        "PATCH",
+        "/api/me/models/shared/s-one",
+        &a,
+        Some(json!({"expected_revision":revision_a,"weight":0})),
+    );
+    assert_eq!(view["routable"], false);
+    let reply = submit(&server, &a, &[("notes.md", NOTES)], json!({"llm":true}));
+    assert_eq!(reason(&reply), (422, json!("llm_unavailable")));
+    assert_eq!(
+        ok(&server, "GET", "/api/capabilities", &b, None)["llm"]["routable"],
+        true
+    );
+    // The admin's view and weights are its own.
+    let settings = ok(&server, "GET", "/api/settings/llm", ADMIN, None);
+    let weights: Vec<_> = settings["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["weight"].clone())
+        .collect();
+    assert_eq!(weights, [json!(1), json!(2)]);
+
+    // An override kept while the model is private comes back with it.
+    let share = |id: &str, value: &str| {
+        let revision_admin = revision(&server, "/api/settings/llm", ADMIN);
+        ok(
+            &server,
+            "PATCH",
+            &format!("/api/settings/llm/deployments/{id}"),
+            ADMIN,
+            Some(json!({"expected_revision":revision_admin,"share":value})),
+        );
+    };
+    share("s-one", "private");
+    let view = ok(&server, "GET", "/api/me/models", &a, None);
+    assert_eq!(view["shared"].as_array().unwrap().len(), 1);
+    let reply = patch_shared(
+        &server,
+        &a,
+        "s-one",
+        json!({"expected_revision":view["revision"],"weight":4}),
+    );
+    assert_eq!(reason(&reply), (404, json!("settings_entry_missing")));
+    share("s-one", "shared");
+    let view = ok(&server, "GET", "/api/me/models", &a, None);
+    assert_eq!(view["shared"][0]["weight"], 0);
+
+    // The admin's weight, or null, removes the override; with none left the
+    // revision is the one before any.
+    let view = ok(
+        &server,
+        "PATCH",
+        "/api/me/models/shared/s-one",
+        &a,
+        Some(json!({"expected_revision":view["revision"],"weight":1})),
+    );
+    assert_eq!(view["shared"][0]["weight"], 1);
+    let view = ok(
+        &server,
+        "PATCH",
+        "/api/me/models/shared/s-two",
+        &a,
+        Some(json!({"expected_revision":view["revision"],"weight":null})),
+    );
+    assert_eq!(view["shared"][1]["weight"], 2);
+    assert_eq!(view["revision"], original);
+    let saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert!(saved.get("shared_weights").is_none(), "{saved}");
+    // Unchanged: no write, same revision.
+    let bytes = std::fs::read(&file).unwrap();
+    let view = ok(
+        &server,
+        "PATCH",
+        "/api/me/models/shared/s-two",
+        &a,
+        Some(json!({"expected_revision":original,"weight":2})),
+    );
+    assert_eq!(view["revision"], original);
+    assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    // A heavier weight for one is its own.
+    let view = ok(
+        &server,
+        "PATCH",
+        "/api/me/models/shared/s-one",
+        &a,
+        Some(json!({"expected_revision":original,"weight":9})),
+    );
+    assert_eq!(view["shared"][0]["weight"], 9);
+    assert_eq!(view["shared"][0]["default_weight"], 1);
+    assert_eq!(
+        ok(&server, "GET", "/api/me/models", &b, None)["shared"][0]["weight"],
+        1
+    );
+    server.stop();
+    assert!(received(&sentinel).is_empty());
+}
+
+#[test]
+fn a_user_tests_a_shared_model_without_learning_where_it_is() {
+    let sentinel = Endpoint::start();
+    let working = Endpoint::start();
+    let (rejected, unknown, broken) = (
+        Failing::start(401),
+        Failing::start(404),
+        Failing::start(500),
+    );
+    let refused = {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let temp = tempfile::tempdir().unwrap();
+    // A shared model without a key, whose provider's key variable is unset.
+    let (keyless, _) = admin_model("s-keyless", "deepseek/fixture-chat", "", 1, true);
+    let mut keyless = keyless;
+    let params = keyless["litellm_params"].as_object_mut().unwrap();
+    params.remove("api_key");
+    params.remove("api_base");
+    params.insert("use_environment_credentials".into(), json!(true));
+    keyless["model_info"]
+        .as_object_mut()
+        .unwrap()
+        .remove("provider_id");
+    let mut models = vec![
+        admin_model("s-ok", "openai/fake-model", &base(working.port), 1, true),
+        admin_model("s-401", "openai/fake-model", &base(rejected.port), 1, true),
+        admin_model("s-404", "openai/fake-model", &base(unknown.port), 1, true),
+        admin_model("s-500", "openai/fake-model", &base(broken.port), 1, true),
+        admin_model("s-refused", "openai/fake-model", &base(refused), 1, true),
+        admin_model(
+            "private",
+            "openai/fake-model",
+            &base(working.port),
+            1,
+            false,
+        ),
+        admin_model("s-off", "openai/fake-model", &base(working.port), 0, true),
+    ];
+    save_admin_models(temp.path(), std::mem::take(&mut models));
+    {
+        let path = temp.path().join("config.json");
+        let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        config["llm"]["model_list"]
+            .as_array_mut()
+            .unwrap()
+            .push(keyless);
+        std::fs::write(&path, config.to_string()).unwrap();
+    }
+    let server = start(temp.path(), &sentinel);
+    let (_, a) = user(&server, "Laptop A");
+    let (_, b) = user(&server, "Laptop B");
+    let test =
+        |token: &str, body: Value| call(&server, "POST", "/api/me/models/test", token, Some(body));
+
+    // Refused before anything is sent, and not counted.
+    for body in [
+        json!({"shared_id":"s-ok","model":"openai/fake-model"}),
+        json!({"shared_id":"s-ok","deployment_id":"s-ok"}),
+        json!({"shared_id":5}),
+        json!({"shared_id":"no-such-model"}),
+        json!({"shared_id":"private"}),
+        json!({"shared_id":"s-off"}),
+        json!({"deployment_id":"s-ok"}),
+    ] {
+        let reply = test(&a, body.clone());
+        assert_eq!(
+            reason(&reply),
+            (422, json!("invalid_settings_request")),
+            "{body}: {}",
+            reply.text()
+        );
+    }
+    assert_eq!(
+        test(&a, json!({"shared_id":"no-such-model"})).json()["detail"],
+        "deployment not found"
+    );
+    let reply = test(ADMIN, json!({"shared_id":"s-ok"}));
+    assert_eq!(reason(&reply), (403, json!("user_token_required")));
+    assert!(received(&working).is_empty());
+
+    // Six tests: one passes, five fail, each saying only why.
+    let failed = "The shared model did not pass its test; ask the admin to check it";
+    let mut answers = Vec::new();
+    for (id, expected) in [
+        ("s-ok", json!({"ok":true,"detail":"Model test passed"})),
+        (
+            "s-401",
+            json!({"ok":false,"reason":"key_rejected","detail":failed}),
+        ),
+        (
+            "s-404",
+            json!({"ok":false,"reason":"model_not_found","detail":failed}),
+        ),
+        (
+            "s-500",
+            json!({"ok":false,"reason":"provider_error","detail":failed}),
+        ),
+        (
+            "s-refused",
+            json!({"ok":false,"reason":"network","detail":failed}),
+        ),
+        (
+            "s-keyless",
+            json!({"ok":false,"reason":"no_key","detail":failed}),
+        ),
+    ] {
+        let reply = test(&a, json!({"shared_id":id}));
+        assert_eq!(reply.status, 200, "{id}: {}", reply.text());
+        assert_eq!(reply.headers["cache-control"], "no-store");
+        assert_eq!(reply.json(), expected, "{id}");
+        answers.push(reply.text());
+    }
+    // The admin's key paid, sent where the admin serves each model.
+    assert_eq!(received(&working), [format!("Bearer {ADMIN_KEY}")]);
+    for endpoint in [&rejected, &unknown, &broken] {
+        assert_eq!(endpoint.received(), [format!("Bearer {ADMIN_KEY}")]);
+    }
+    for answer in &answers {
+        for hidden in [
+            ADMIN_KEY.to_owned(),
+            "127.0.0.1".to_owned(),
+            "localhost".to_owned(),
+            "provider-words".to_owned(),
+            "fixture_code".to_owned(),
+            "DEEPSEEK_API_KEY".to_owned(),
+            "key_variable".to_owned(),
+            working.port.to_string(),
+            rejected.port.to_string(),
+            unknown.port.to_string(),
+            broken.port.to_string(),
+            refused.to_string(),
+        ] {
+            assert!(!answer.contains(&hidden), "{hidden} in {answer}");
+        }
+    }
+
+    // A seventh within the minute waits, and nothing is sent; B is not held
+    // to A's bound.
+    let reply = test(&a, json!({"shared_id":"s-ok"}));
+    assert_eq!(reason(&reply), (429, json!("provider_busy")));
+    let wait: u64 = reply.headers["retry-after"].parse().unwrap();
+    assert!((1..=60).contains(&wait), "{wait}");
+    assert!(received(&working).is_empty());
+    let reply = test(&b, json!({"shared_id":"s-ok"}));
+    assert_eq!(
+        reply.json(),
+        json!({"ok":true,"detail":"Model test passed"})
+    );
+    assert_eq!(received(&working), [format!("Bearer {ADMIN_KEY}")]);
+    server.stop();
+    assert!(received(&sentinel).is_empty());
+}
+
+fn config_put(server: &Server, token: &str, expected: &Value, text: &str) -> Reply {
+    call(
+        server,
+        "PUT",
+        "/api/me/config",
+        token,
+        Some(json!({"expected_revision":expected,"text":text})),
+    )
+}
+/// `text` (a document) with `change` applied, pretty-printed as the page
+/// would send it back; masked values stay where they were.
+fn edited(text: &str, change: impl FnOnce(&mut Value)) -> String {
+    let mut document: Value = serde_json::from_str(text).unwrap();
+    change(&mut document);
+    serde_json::to_string_pretty(&document).unwrap() + "\n"
+}
+
+#[test]
+fn a_users_edit_config_is_its_own_models_file() {
+    let sentinel = Endpoint::start();
+    let shared = Endpoint::start();
+    let temp = tempfile::tempdir().unwrap();
+    save_admin_models(
+        temp.path(),
+        vec![admin_model(
+            "s-one",
+            "openai/fake-model",
+            &base(shared.port),
+            1,
+            true,
+        )],
+    );
+    let server = start(temp.path(), &sentinel);
+    let (a_id, a) = user(&server, "Laptop A");
+    let (_, b) = user(&server, "Laptop B");
+    let features = &ok(&server, "GET", "/api/capabilities", &a, None)["features"];
+    assert_eq!(features["user_config"], true);
+    for (method, body) in [
+        ("GET", None),
+        (
+            "PUT",
+            Some(json!({"expected_revision":"absent","text":"{}"})),
+        ),
+    ] {
+        let reply = call(&server, method, "/api/me/config", ADMIN, body);
+        assert_eq!(reason(&reply), (403, json!("user_token_required")));
+        assert_eq!(reply.headers["cache-control"], "no-store");
+    }
+
+    // Nothing saved yet: the shared model only, in the fixed layout.
+    let reply = call(&server, "GET", "/api/me/config", &a, None);
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    assert_eq!(reply.headers["cache-control"], "no-store");
+    let document = reply.json();
+    assert_eq!(
+        document,
+        json!({"path":null,"origin":"user","exists":false,
+            "revision":revision(&server, "/api/me/models", &a),
+            "text":"{\n  \"models\": [],\n  \"providers\": [],\n  \"shared\": [\n    {\n      \"id\": \"s-one\",\n      \"model\": \"openai/fake-model\",\n      \"weight\": 1\n    }\n  ]\n}\n",
+            "masked":0,"problem":null,"read_only":false})
+    );
+
+    // A's model: its key masked in the model and its connection.
+    let reply = add(
+        &server,
+        &a,
+        json!([{"model_name":"default","model":"openai/own-model","api_key":USER_A_KEY}]),
+    );
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let document = ok(&server, "GET", "/api/me/config", &a, None);
+    assert_eq!(document["exists"], true);
+    assert_eq!(document["masked"], 2);
+    assert_eq!(
+        document["revision"],
+        revision(&server, "/api/me/models", &a)
+    );
+    let text = document["text"].as_str().unwrap().to_owned();
+    assert!(
+        !text.contains(USER_A_KEY) && text.contains("us…-key"),
+        "{text}"
+    );
+    let file = temp
+        .path()
+        .join(format!("home/serve/user-models/{a_id}.json"));
+    let bytes = std::fs::read(&file).unwrap();
+
+    // Unchanged: nothing written, same revision.
+    let reply = config_put(&server, &a, &document["revision"], &text);
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let saved = reply.json();
+    assert_eq!(saved["restart_required"], false);
+    assert_eq!(saved["revision"], document["revision"]);
+    assert_eq!(saved["text"], document["text"]);
+    assert_eq!(std::fs::read(&file).unwrap(), bytes);
+
+    // Refusals, each before anything is saved.
+    let current = document["revision"].clone();
+    let refusals: Vec<(String, (u16, &str), Option<&str>)> = vec![
+        (
+            "{\n  \"models\": [\n}".into(),
+            (422, "invalid_config"),
+            Some("line 3, column 1: "),
+        ),
+        ("[]".into(), (422, "invalid_config"), None),
+        (
+            edited(&text, |d| d["llm"] = json!({})),
+            (422, "invalid_config"),
+            Some("llm is not part of your models file"),
+        ),
+        (
+            edited(&text, |d| d["models"] = json!({})),
+            (422, "invalid_config"),
+            Some("models must be a list"),
+        ),
+        (
+            edited(&text, |d| d["shared"][0]["id"] = json!("s-unknown")),
+            (422, "invalid_config"),
+            Some("s-unknown is not a model the admin shares"),
+        ),
+        (
+            edited(&text, |d| d["shared"][0]["weight"] = json!("heavy")),
+            (422, "invalid_config"),
+            None,
+        ),
+        (
+            edited(&text, |d| {
+                let mut copy = d["models"][0].clone();
+                copy["litellm_params"]["api_key"] = json!(USER_B_KEY);
+                d["models"].as_array_mut().unwrap().push(copy);
+            }),
+            (422, "invalid_config"),
+            Some("is used twice"),
+        ),
+        (
+            // A kept mask moved to another model.
+            edited(&text, |d| {
+                let mut copy = d["models"][0].clone();
+                copy["model_info"] = json!({});
+                d["models"].as_array_mut().unwrap().push(copy);
+            }),
+            (422, "invalid_config"),
+            Some("/models/1/litellm_params/api_key: a masked value"),
+        ),
+        (
+            edited(&text, |d| {
+                d["models"][0]["litellm_params"]["model"] = json!("claude-agent/sonnet")
+            }),
+            (422, "server_credentials"),
+            None,
+        ),
+        (
+            edited(&text, |d| {
+                d["models"] =
+                    json!([{"model_name":"default","litellm_params":{"model":"openai/no-key"}}]);
+                d["providers"] = json!([]);
+            }),
+            (422, "key_or_address_required"),
+            None,
+        ),
+        (
+            edited(&text, |d| {
+                d["models"] = json!([{"model_name":"default","litellm_params":{"model":"openai/x",
+                    "api_key":USER_A_KEY,"api_base":"http://localhost:9/v1"}}]);
+            }),
+            (422, "server_address"),
+            None,
+        ),
+        (
+            edited(&text, |d| {
+                d["models"] = json!([{"model_name":"default","litellm_params":{"model":"openai/x",
+                    "api_key":"env:OPENAI_API_KEY"}}]);
+            }),
+            (422, "invalid_settings_request"),
+            None,
+        ),
+        (
+            edited(&text, |d| {
+                d["models"] = json!(
+                    (0..51)
+                        .map(|index| json!({"model_name":"default",
+                    "litellm_params":{"model":format!("openai/m{index}"),"api_key":USER_A_KEY}}))
+                        .collect::<Vec<_>>()
+                );
+            }),
+            (409, "model_limit"),
+            None,
+        ),
+    ];
+    for (sent, expected, detail) in refusals {
+        let reply = config_put(&server, &a, &current, &sent);
+        assert_eq!(
+            reason(&reply),
+            (expected.0, json!(expected.1)),
+            "{sent}: {}",
+            reply.text()
+        );
+        if let Some(detail) = detail {
+            let shown = reply.json()["detail"].as_str().unwrap().to_owned();
+            assert!(shown.contains(detail), "{shown}");
+        }
+    }
+    let reply = config_put(&server, &a, &json!("stale"), &text);
+    assert_eq!(reply.status, 409);
+    assert_eq!(
+        reply.json()["detail"],
+        json!({"code":"stale_revision","current_revision":current})
+    );
+    let reply = call(
+        &server,
+        "PUT",
+        "/api/me/config",
+        &a,
+        Some(json!({"expected_revision":current,"text":text,"extra":1})),
+    );
+    assert_eq!(reason(&reply), (422, json!("invalid_settings_request")));
+    let large = format!("{{\"models\":[],\"pad\":\"{}\"}}", "x".repeat(1024 * 1024));
+    let reply = config_put(&server, &a, &current, &large);
+    assert_eq!(reason(&reply), (413, json!("config_too_large")));
+    assert_eq!(std::fs::read(&file).unwrap(), bytes);
+
+    // Edited in place: the kept key comes back, a weight of its own, a new
+    // model gets an id.
+    let sent = edited(&text, |d| {
+        d["models"][0]["model_name"] = json!("renamed");
+        d["shared"][0]["weight"] = json!(3);
+        d["shared"][0]["default_weight"] = json!(99);
+        d["models"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"model_name":"default",
+            "litellm_params":{"model":"openai/second-own","api_key":USER_B_KEY,"weight":0}}));
+    });
+    let reply = config_put(&server, &a, &current, &sent);
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let saved = reply.json();
+    assert_eq!(saved["restart_required"], false);
+    assert_eq!(saved["masked"], 3);
+    let view = ok(&server, "GET", "/api/me/models", &a, None);
+    assert_eq!(saved["revision"], view["revision"]);
+    assert_eq!(view["shared"][0]["weight"], 3);
+    assert_eq!(view["shared"][0]["default_weight"], 1);
+    assert_eq!(view["deployments"][0]["routing_group"], "renamed");
+    let second = view["deployments"][1]["deployment_id"].as_str().unwrap();
+    assert!(!second.starts_with("legacy-"), "{second}");
+    let stored: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(stored["models"][0]["litellm_params"]["api_key"], USER_A_KEY);
+    assert_eq!(stored["shared_weights"], json!({"s-one":3}));
+    for entry in stored["models"].as_array().unwrap() {
+        assert_eq!(
+            entry["litellm_params"]["use_environment_credentials"],
+            false
+        );
+    }
+    // The shared entry left out: the admin's weight again.
+    let text = saved["text"].as_str().unwrap().to_owned();
+    let sent = edited(&text, |d| d["shared"] = json!([]));
+    let saved = config_put(&server, &a, &saved["revision"], &sent).json();
+    assert_eq!(
+        ok(&server, "GET", "/api/me/models", &a, None)["shared"][0]["weight"],
+        1
+    );
+    assert!(saved["text"].as_str().unwrap().contains("\"weight\": 1"));
+    let stored: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert!(stored.get("shared_weights").is_none(), "{stored}");
+
+    // B's document is B's own; the admin's file holds no user's key.
+    let other = ok(&server, "GET", "/api/me/config", &b, None);
+    assert_eq!(other["exists"], false);
+    assert!(
+        other["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("{\n  \"models\": [],")
+    );
+    let config = std::fs::read_to_string(temp.path().join("config.json")).unwrap();
+    assert!(!config.contains(USER_A_KEY) && !config.contains(USER_B_KEY));
+    server.stop();
+    assert!(received(&sentinel).is_empty());
+}
+
+#[test]
+fn capabilities_name_the_build_for_every_caller() {
+    let sentinel = Endpoint::start();
+    let temp = tempfile::tempdir().unwrap();
+    let server = start(temp.path(), &sentinel);
+    let (_, a) = user(&server, "Laptop A");
+    for token in [ADMIN, a.as_str()] {
+        let capabilities = ok(&server, "GET", "/api/capabilities", token, None);
+        let build = &capabilities["build"];
+        let mut fields = keys(build);
+        fields.sort();
+        assert_eq!(fields, ["built_at", "commit", "dirty", "version"]);
+        assert_eq!(build["version"], capabilities["version"]);
+        assert!(build["dirty"].is_boolean());
+        match &build["commit"] {
+            Value::Null => {}
+            Value::String(commit) => assert!(
+                commit.len() >= 4 && commit.bytes().all(|b| b.is_ascii_hexdigit()),
+                "{commit}"
+            ),
+            other => panic!("commit {other}"),
+        }
+        match &build["built_at"] {
+            Value::Null => {}
+            Value::String(at) => {
+                assert!(at.ends_with('Z'), "{at}");
+                chrono::DateTime::parse_from_rfc3339(at).unwrap();
+            }
+            other => panic!("built_at {other}"),
+        }
+        assert_eq!(capabilities["features"]["user_config"], true);
+    }
+    server.stop();
+    // Without tokens there is no user and no user's Edit config.
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let capabilities = server.json("/api/capabilities");
+    assert_eq!(capabilities["features"]["user_config"], false);
+    assert!(capabilities["build"].is_object());
+    server.stop();
 }

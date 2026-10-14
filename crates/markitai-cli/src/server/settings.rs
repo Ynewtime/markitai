@@ -6,6 +6,7 @@ mod me;
 mod model;
 mod pool;
 mod store;
+mod user_config;
 mod users;
 mod views;
 
