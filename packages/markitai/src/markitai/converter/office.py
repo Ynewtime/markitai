@@ -781,7 +781,8 @@ class PptxConverter(OfficeConverter):
 class XlsxConverter(OfficeConverter):
     """Converter for XLSX (Excel) documents.
 
-    Reads each sheet with openpyxl; ambiguous values retain pandas formatting.
+    Reads each sheet with openpyxl; cells keep their text (no pandas NaN or
+    ``Unnamed`` headers) and merged title rows become paragraphs.
     """
 
     supported_formats = [FileFormat.XLSX]
@@ -807,10 +808,22 @@ class XlsxConverter(OfficeConverter):
 class XlsConverter(OfficeConverter):
     """Converter for legacy XLS (Excel 97-2003) documents.
 
-    Uses MarkItDown directly (via xlrd) - cross-platform, no Office
-    application or LibreOffice involved. Cell content is identical to
-    upgrading through Excel first (verified live); embedded images and
-    charts are not extracted, matching the XLSX path.
+    Reads cells with xlrd - cross-platform, no Office application or
+    LibreOffice involved - and lays sheets out like the XLSX path (banner
+    rows, empty cells empty). Embedded images and charts are not extracted.
     """
 
     supported_formats = [FileFormat.XLS]
+
+    def convert(
+        self, input_path: Path, output_dir: Path | None = None
+    ) -> ConvertResult:
+        if self._markitdown is not None:
+            return self._convert_with_markitdown(Path(input_path))
+        from markitai.converter.xlsx import convert_xls
+
+        path = Path(input_path)
+        try:
+            return convert_xls(path)
+        except Exception:  # xlrd.XLRDError and friends: not a readable XLS
+            return self._convert_with_markitdown(path)

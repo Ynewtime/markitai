@@ -23,6 +23,7 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.converter.delimited import render_markdown_table
+from markitai.converter.sheet_tables import Spans, sheet_markdown
 
 _TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0"
 _TABLE_NS = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -110,8 +111,13 @@ def _cell_text(cell: ElementTree.Element) -> str:
     return " ".join(block for block in blocks if block)
 
 
-def _table_rows(table: ElementTree.Element) -> list[list[str]]:
-    """Read a table into a rectangular matrix, trailing blanks trimmed."""
+def _table_rows(
+    table: ElementTree.Element, spans: Spans | None = None
+) -> list[list[str]]:
+    """Read a table into a rectangular matrix, trailing blanks trimmed.
+
+    ``spans`` collects (row, column) -> column span for merged cells.
+    """
     # Runs of blank cells/rows keep their full width, but are only emitted
     # once a value follows: the trailing filler runs spreadsheets write
     # (thousands wide) never get expanded.
@@ -121,6 +127,7 @@ def _table_rows(table: ElementTree.Element) -> list[list[str]]:
         if _local(element.tag) != "table-row":
             continue
         cells: list[str] = []
+        merged: dict[int, int] = {}
         blank_cells = 0
         for cell in element:
             if _local(cell.tag) not in {"table-cell", "covered-table-cell"}:
@@ -132,11 +139,18 @@ def _table_rows(table: ElementTree.Element) -> list[list[str]]:
                 continue
             cells.extend([""] * blank_cells)
             blank_cells = 0
+            span = _repeat_count(cell, "number-columns-spanned")
+            if span > 1:
+                merged[len(cells)] = span
             cells.extend([text] * repeat)
         repeat_rows = _repeat_count(element, "number-rows-repeated")
         if not any(cells):
             blank_rows += repeat_rows
             continue
+        if spans is not None:
+            for row in range(repeat_rows):
+                for column, span in merged.items():
+                    spans[(len(rows) + blank_rows + row, column)] = span
         rows.extend([[] for _ in range(blank_rows)])
         blank_rows = 0
         rows.extend([cells] * repeat_rows)
@@ -261,7 +275,8 @@ class OdsConverter(BaseConverter):
         blocks: list[str] = []
         for element in root.iter(f"{{{_TABLE_NS}}}table"):
             name = element.get(f"{{{_TABLE_NS}}}name", "").strip()
-            table = render_markdown_table(_table_rows(element))
+            spans: Spans = {}
+            table = sheet_markdown(_table_rows(element, spans), spans)
             if not table:
                 continue
             if name:
