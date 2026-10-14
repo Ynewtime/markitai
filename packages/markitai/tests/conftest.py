@@ -150,6 +150,20 @@ def _no_pdf_worker_processes(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def _x_posts_use_the_default_browser(monkeypatch: pytest.MonkeyPatch):
+    """Keep X posts on the browser a test mocks.
+
+    The default ``X_CAPTURE = "direct"`` launches a second, real Chromium for
+    x.com; a test that mocks only the default browser would then reach the
+    network wherever Chromium is installed. Tests of the direct path set it
+    back themselves.
+    """
+    from markitai import fetch_playwright
+
+    monkeypatch.setattr(fetch_playwright, "X_CAPTURE", "embed")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point ``Path.home()`` at a temp dir so no test reads the developer's
     real ``~/.markitai``.
