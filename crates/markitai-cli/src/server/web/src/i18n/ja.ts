@@ -543,6 +543,7 @@ export const ja: Dict = {
   filterNotices: "お知らせあり",
   dismiss: "閉じる",
   toastDetails: "詳細",
+  toastLead: "。",
   downloadFailedFile: "ダウンロードに失敗しました",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
   nFiles: (n: number) => `${n} 個のファイル`,

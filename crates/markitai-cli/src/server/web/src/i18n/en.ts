@@ -142,7 +142,7 @@ export const en = {
   dropLimit: (kept: number) => `Only the first ${kept} files were added (job limit)`,
   folderHidden: (n: number) => `${n} hidden or system ${plural(n, "file", "files")} skipped`,
   folderUnreadable: (n: number) => `${n} ${plural(n, "item", "items")} could not be read`,
-  restoreFailed: "Could not restore this task · the server did not answer",
+  restoreFailed: "Could not restore this task. The server did not answer.",
   restoreRetry: "Retry restore",
   badUrl: (value: string) => `Not a web address · ${value}`,
   badScheme: (value: string) => `Only http:// and https:// addresses can be converted · ${value}`,
@@ -447,7 +447,7 @@ export const en = {
   saved: "Saved",
   settingsConflict: "Settings were changed in another window · your draft is kept",
   useCurrentRevision: "Use current revision",
-  draftKept: "Draft kept · submit again when ready",
+  draftKept: "Draft kept. Submit again when ready.",
   originLabel: (origin: string) =>
     (
       ({
@@ -545,6 +545,8 @@ export const en = {
   filterNotices: "Notices",
   dismiss: "Dismiss",
   toastDetails: "Details",
+  /** Between a notice's lead and the rest ("Retry failed. The upload is gone."). */
+  toastLead: ". ",
   downloadFailedFile: "Download failed",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
   nFiles: (n: number) => (n === 1 ? "1 file" : `${n} files`),

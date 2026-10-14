@@ -512,6 +512,7 @@ export const zh: Dict = {
   filterNotices: "有提示",
   dismiss: "关闭",
   toastDetails: "详细信息",
+  toastLead: "。",
   downloadFailedFile: "下载失败",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
   nFiles: (n: number) => `${n} 个文件`,

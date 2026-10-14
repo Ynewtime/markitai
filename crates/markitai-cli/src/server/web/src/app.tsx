@@ -11,7 +11,7 @@ import { ConversionsPage } from "./components/conversions-page.tsx";
 import { ConvertPage } from "./components/convert-page.tsx";
 import { DropOverlay } from "./components/drop-overlay.tsx";
 import { MAX_NOTES, NoticeStack, type Note } from "./components/notes.tsx";
-import { onToast } from "./lib/toast.ts";
+import { onToast, withLead } from "./lib/toast.ts";
 import { OptionsPanel } from "./components/options-panel.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
 import { ConfigSettings } from "./components/settings-config.tsx";
@@ -363,7 +363,7 @@ export function App() {
     (key: string, failure: string, error?: unknown) => {
       const words = error === undefined ? { text: "", detail: "" } : describe(error);
       const [first = "", ...rest] = words.text.split(/(?<=[.!?。！？])\s*/);
-      const text = first ? `${failure} · ${first}` : failure;
+      const text = withLead(failure, first, dicts[localeRef.current].toastLead);
       const detail = [rest.join(" ").trim(), words.detail].filter(Boolean).join("\n");
       note({ id: `action:${key}`, tone: "error", text, ...(detail ? { detail } : {}) });
     },
@@ -468,7 +468,7 @@ export function App() {
       void download(path, name, features?.download_tickets === true).catch((error: unknown) => {
         if (key) return failAction(key, dicts[localeRef.current].downloadFailed, error);
         const [first = ""] = describe(error).text.split(/(?<=[.!?。！？])\s*/);
-        note({ tone: "error", text: first ? `${dicts[localeRef.current].downloadFailed} · ${first}` : dicts[localeRef.current].downloadFailed });
+        note({ tone: "error", text: withLead(dicts[localeRef.current].downloadFailed, first, dicts[localeRef.current].toastLead) });
       });
     },
     [features, describe, note, clearFailure, failAction],
@@ -482,7 +482,7 @@ export function App() {
       if (result.error && key.startsWith("job:")) failAction(key, dicts[localeRef.current].stopRemaining, result.error);
       else if (result.error) {
         const [first = ""] = describe(result.error).text.split(/(?<=[.!?。！？])\s*/);
-        note({ tone: "error", text: first ? `${dicts[localeRef.current].stopFailed} · ${first}` : dicts[localeRef.current].stopFailed });
+        note({ tone: "error", text: withLead(dicts[localeRef.current].stopFailed, first, dicts[localeRef.current].toastLead) });
       } else if (result.stopping > 0) announce(dicts[localeRef.current].stopRequested(result.stopping));
     },
     [describe, note, announce, clearFailure, failAction],
@@ -834,7 +834,7 @@ export function App() {
           }}
         />
       )}
-      <NoticeStack label={t.notificationsLabel} closeLabel={t.dismiss} detailsLabel={t.toastDetails} notes={stack} onDismiss={dismiss} />
+      <NoticeStack label={t.notificationsLabel} closeLabel={t.dismiss} detailsLabel={t.toastDetails} lead={t.toastLead} notes={stack} onDismiss={dismiss} />
       <DropOverlay
         label={t.dropToConvert}
         suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || (route.view === "jobs" && listState.selected !== null)}

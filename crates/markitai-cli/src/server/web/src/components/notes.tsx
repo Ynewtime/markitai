@@ -7,6 +7,7 @@
 // pressed or focused; errors stay until closed. A swipe down dismisses one.
 // Lasting conditions are not notices: they live beside what they affect.
 import { useEffect, useRef, useState } from "preact/hooks";
+import { withLead } from "../lib/toast.ts";
 import { Icon } from "./icons.tsx";
 
 export interface Note {
@@ -27,7 +28,7 @@ const STAY_MS = 5000;
 const LEAVE_MS = 140;
 const MARK: Record<Note["tone"], string> = { error: "✕", warning: "!", success: "✓" };
 
-function Toast({ note, closeLabel, detailsLabel, onDismiss }: { note: Note; closeLabel: string; detailsLabel: string; onDismiss: (id: string) => void }) {
+function Toast({ note, closeLabel, detailsLabel, lead, onDismiss }: { note: Note; closeLabel: string; detailsLabel: string; lead: string; onDismiss: (id: string) => void }) {
   const [held, setHeld] = useState({ pointer: false, focus: false, press: false });
   const [leaving, setLeaving] = useState(false);
   const start = useRef<number | null>(null);
@@ -73,7 +74,7 @@ function Toast({ note, closeLabel, detailsLabel, onDismiss }: { note: Note; clos
       </span>
       <div class="toast-copy">
         <p class="toast-text">
-          {note.title && <strong>{note.title} · </strong>}
+          {note.title && <strong>{note.text ? `${note.title}${lead}` : note.title}</strong>}
           {note.text}
         </p>
         {note.detail && (
@@ -100,7 +101,7 @@ function Toast({ note, closeLabel, detailsLabel, onDismiss }: { note: Note; clos
 /** The stack, and two live regions that read every new notice (errors at once,
  * the others politely). The regions are always in the page, apart from the
  * stack, so its visual order (newest last) never decides what is read. */
-export function NoticeStack({ label, closeLabel, detailsLabel, notes, onDismiss }: { label: string; closeLabel: string; detailsLabel: string; notes: Note[]; onDismiss: (id: string) => void }) {
+export function NoticeStack({ label, closeLabel, detailsLabel, lead, notes, onDismiss }: { label: string; closeLabel: string; detailsLabel: string; lead: string; notes: Note[]; onDismiss: (id: string) => void }) {
   const [said, setSaid] = useState({ alert: "", status: "" });
   const heard = useRef(new Set<string>());
   useEffect(() => {
@@ -109,10 +110,10 @@ export function NoticeStack({ label, closeLabel, detailsLabel, notes, onDismiss 
       if (heard.current.has(key)) continue;
       heard.current.add(key);
       const channel = note.tone === "error" ? "alert" : "status";
-      const text = note.title ? `${note.title}. ${note.text}` : note.text;
+      const text = note.title ? withLead(note.title, note.text, lead) : note.text;
       setSaid((state) => ({ ...state, [channel]: state[channel] === text ? `${text} ` : text }));
     }
-  }, [notes]);
+  }, [notes, lead]);
   const shown = notes.slice(-MAX_NOTES);
   return (
     <>
@@ -120,7 +121,7 @@ export function NoticeStack({ label, closeLabel, detailsLabel, notes, onDismiss 
         <section class="toasts" aria-label={label}>
           <ul>
             {shown.map((note) => (
-              <Toast key={note.id} note={note} closeLabel={closeLabel} detailsLabel={detailsLabel} onDismiss={onDismiss} />
+              <Toast key={note.id} note={note} closeLabel={closeLabel} detailsLabel={detailsLabel} lead={lead} onDismiss={onDismiss} />
             ))}
           </ul>
         </section>
