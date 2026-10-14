@@ -77,5 +77,3 @@ def html_table_markdown(html: str) -> str:
     parser.feed(html)
     parser.close()
     return "\n".join(parser.rows).strip()
-
-
