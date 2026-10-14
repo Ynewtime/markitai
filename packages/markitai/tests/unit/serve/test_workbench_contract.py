@@ -151,6 +151,7 @@ SHAPES: dict[str, dict[str, F]] = {
             "user_tokens",
             "config_edit",
             "batch_delete",
+            "user_models",
         )
     },
     "PresetFeatures": {
@@ -259,7 +260,15 @@ SHAPES: dict[str, dict[str, F]] = {
         "created_at": F("str"),
         "last_used_at": null("str"),
     },
-    "AccessTokenList": {"tokens": F(["@AccessToken"])},
+    "ListedAccessToken": {
+        "id": F("str"),
+        "label": F("str"),
+        "hint": F("str"),
+        "created_at": F("str"),
+        "last_used_at": null("str"),
+        "model_count": F("int"),
+    },
+    "AccessTokenList": {"tokens": F(["@ListedAccessToken"])},
     "CreatedAccessToken": {
         "id": F("str"),
         "label": F("str"),
@@ -379,6 +388,24 @@ SHAPES: dict[str, dict[str, F]] = {
         "api_base": null("str"),
         "api_base_placeholder": null("str"),
     },
+    "SharedModel": {
+        "id": F("str"),
+        "model": F("str"),
+        "provider": F("str"),
+        "weight": F("int"),
+    },
+    "UserModelsView": {
+        "configured": F("bool"),
+        "routable": F("bool"),
+        "source": F(frozenset({"user"})),
+        "config_path": null("str"),
+        "config_origin": F(frozenset({"user"})),
+        "revision": F("str"),
+        "deployments": F(["obj"]),
+        "detected": F(["obj"]),
+        "shared": F(["@SharedModel"]),
+        "limit": F("int"),
+    },
     "SettingsView": {
         "configured": F("bool"),
         "routable": F("bool"),
@@ -400,6 +427,7 @@ REASONS: dict[int, set[str]] = {
         "settings_forbidden",
         "remote_url_forbidden",
         "remote_processing_forbidden",
+        "user_token_required",
     },
     404: {
         "route_not_found",
@@ -429,6 +457,7 @@ REASONS: dict[int, set[str]] = {
         "ambiguous_legacy_model_name",
         "settings_read_only",
         "job_id_collision",
+        "model_limit",
     },
     413: {
         "request_too_large",
@@ -468,6 +497,9 @@ REASONS: dict[int, set[str]] = {
         "invalid_page_request",
         "invalid_label",
         "invalid_max_bytes",
+        "server_credentials",
+        "key_or_address_required",
+        "server_address",
     },
     429: {"too_many_tickets", "provider_busy", "render_busy"},
     500: {"internal_error", "settings_io_failed", "settings_durability_unknown"},
@@ -756,6 +788,7 @@ class TestCapabilities:
         # user tokens
         assert data["features"].pop("token_regenerate") is False
         assert data["features"].pop("user_tokens") is False
+        assert data["features"].pop("user_models") is False
         assert all(data["features"].values())
         assert data["limits"]["history_retention_days"] == 7
         for preset in data["presets"]:
@@ -763,6 +796,7 @@ class TestCapabilities:
         async with _client(_make_app(tmp_path, token="secret-token")) as client:
             data = (await client.get("/api/capabilities")).json()
         assert data["features"]["token_regenerate"] is True
+        assert data["features"]["user_models"] is True
 
     async def test_cloudflare_state_is_hidden_from_untrusted_callers(
         self, tmp_path: Path

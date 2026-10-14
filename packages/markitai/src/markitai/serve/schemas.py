@@ -185,6 +185,16 @@ class LLMModelUpdate(BaseModel):
     api_base: str | None = None
     weight: int | None = Field(default=None, ge=0)
     expected_revision: str | None = None
+    # v1.15: whether user tokens' conversions may use the admin's model
+    # (stored as model_info.share; the user routes refuse it)
+    share: Literal["private", "shared"] | None = None
+
+    @field_validator("share")
+    @classmethod
+    def _share_not_null(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("share must be 'private' or 'shared'")
+        return value
 
     @field_validator("model_name", "model")
     @classmethod
@@ -319,6 +329,7 @@ class CapabilitiesFeatures(BaseModel):
     user_tokens: bool  # v1.13: /api/access-tokens and access levels (not --no-auth)
     config_edit: bool  # v1.13: GET/PUT /api/settings/config
     batch_delete: bool  # v1.13: POST /api/history/delete
+    user_models: bool  # v1.15: /api/me/models* and `share` (not --no-auth)
 
 
 class CapabilitiesAccess(BaseModel):
@@ -403,6 +414,9 @@ class LLMDeployment(BaseModel):
     api_base_configured: bool
     api_base: str | None  # sanitized scheme + host + port only
     persisted: bool
+    # v1.15: the configuration file's rows only (absent for detected rows
+    # and a user's own)
+    share: Literal["private", "shared"] | None = None
 
 
 class LLMSettingsPayload(BaseModel):
@@ -418,6 +432,35 @@ class LLMSettingsPayload(BaseModel):
     revision: str
     deployments: list[LLMDeployment]
     detected: list[LLMDeployment]
+
+
+class SharedModel(BaseModel):
+    """An admin's shared model as a user sees it (contract v1.15): nothing
+    else, ever (no key, mask, address, host, group or connection)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str  # the admin's deployment id (display only; no route takes it)
+    model: str
+    provider: str  # the connection's provider; "custom" = OpenAI-compatible
+    weight: int
+
+
+class UserModelsView(BaseModel):
+    """Response of ``GET /api/me/models`` and every user model write."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    configured: bool  # the user has models of its own
+    routable: bool  # its pool (own + shared) can serve a conversion now
+    source: Literal["user"]
+    config_path: None
+    config_origin: Literal["user"]
+    revision: str  # over its own models and connections
+    deployments: list[LLMDeployment]  # its own, without `share`
+    detected: list[LLMDeployment]  # always empty
+    shared: list[SharedModel]  # the admin's shared models with weight > 0
+    limit: int  # its own models at most (50)
 
 
 class LLMProviderCredentials(BaseModel):
@@ -771,12 +814,18 @@ class AccessTokenEntry(BaseModel):
     last_used_at: str | None  # kept in memory only: null after a restart
 
 
+class ListedAccessToken(AccessTokenEntry):
+    """One user token in ``GET /api/access-tokens`` (v1.15: with its models)."""
+
+    model_count: int  # the user's own models (never which)
+
+
 class AccessTokenList(BaseModel):
     """Response of ``GET /api/access-tokens``."""
 
     model_config = ConfigDict(extra="forbid")
 
-    tokens: list[AccessTokenEntry]  # oldest first
+    tokens: list[ListedAccessToken]  # oldest first
 
 
 class CreatedAccessToken(AccessTokenEntry):

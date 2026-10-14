@@ -283,6 +283,10 @@ class ModelInfo(BaseModel):
     supports_vision: bool | None = None
     max_tokens: int | None = None
     max_input_tokens: int | None = None
+    share: Any = Field(
+        default=None,
+        description='markitai serve: "shared" lets user tokens\' conversions use this model (its key and address stay on the server); absent or any other value keeps it private.',
+    )
 
 
 class ModelConfig(BaseModel):

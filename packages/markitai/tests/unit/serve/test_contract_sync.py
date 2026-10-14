@@ -42,7 +42,7 @@ COMPONENTS: dict[str, str] = {
     "DownloadTicket": "DownloadTicket",
     "RegeneratedToken": "RegeneratedToken",
     "Access": "CapabilitiesAccess",
-    "AccessToken": "AccessTokenEntry",
+    "ListedAccessToken": "ListedAccessToken",
     "AccessTokenList": "AccessTokenList",
     "CreatedAccessToken": "CreatedAccessToken",
     "BatchDeleteEntry": "BatchDeleteEntry",
@@ -58,6 +58,8 @@ COMPONENTS: dict[str, str] = {
     "ProviderCard": "ProviderConnection",
     "ProviderCredentials": "LLMProviderCredentials",
     "SettingsView": "LLMSettingsPayload",
+    "SharedModel": "SharedModel",
+    "UserModelsView": "UserModelsView",
 }
 
 #: Contract fields only the Rust server sends (the UI treats them as optional).
@@ -174,6 +176,16 @@ class TestRoutes:
             ("/api/settings/llm/providers/{provider_id}", "patch"),
             ("/api/settings/llm/providers/{provider_id}", "delete"),
             ("/api/settings/llm/config/open", "post"),
+            ("/api/me/models", "get"),
+            ("/api/me/models/providers", "get"),
+            ("/api/me/models/providers/{provider_id}/credentials", "get"),
+            ("/api/me/models/model-discovery", "post"),
+            ("/api/me/models/test", "post"),
+            ("/api/me/models/deployments/batch", "post"),
+            ("/api/me/models/deployments/{deployment_id}", "patch"),
+            ("/api/me/models/deployments/{deployment_id}", "delete"),
+            ("/api/me/models/providers/{provider_id}", "patch"),
+            ("/api/me/models/providers/{provider_id}", "delete"),
         ],
     )
     def test_route_exists(self, openapi: dict, path: str, method: str) -> None:

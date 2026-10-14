@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -37,7 +37,7 @@ from markitai.constants import PROVIDER_API_KEY_ENV
 from markitai.page_capture import MAX_BLOCKS_BYTES
 from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, PENDING_BATCH_SKIP_REASON
-from markitai.serve import config_editor, model_test, new_access_token
+from markitai.serve import config_editor, model_test, new_access_token, user_models
 from markitai.serve.access import AccessTokens, clean_label, looks_like_user_token
 from markitai.serve.artifacts import (
     item_asset_files,
@@ -124,6 +124,7 @@ from markitai.serve.schemas import (
     RegeneratedToken,
     RootInfo,
     SavedConfigDocument,
+    UserModelsView,
 )
 from markitai.serve.tickets import LIFETIME_S as TICKET_LIFETIME_S
 from markitai.serve.tickets import DownloadTickets, downloadable
@@ -141,8 +142,13 @@ from markitai.utils.url_redaction import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
+    from typing import TypeAlias
 
     from markitai.config import LLMProviderConfig, MarkitaiConfig, ModelConfig
+
+    #: One settings write's change of the raw model list and connections
+    #: (the connections in place), given the backfill's legacy-id → UUID map
+    _Mutation: TypeAlias = Callable[[list[Any], list[Any], dict[str, str]], list[Any]]
 
 DEFAULT_JOBS_ROOT = DEFAULT_SERVE_JOBS_ROOT
 DEFAULT_CONFIG_PATH = Path.home() / ".markitai" / "config.json"
@@ -219,6 +225,34 @@ class ServeState:
     settings_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # The loop the app runs on, for request_shutdown() from a signal handler.
     loop: asyncio.AbstractEventLoop | None = None
+
+
+class _ModelLists(Protocol):
+    """The models and connections a settings route works on: the
+    configuration file's (``ServeState``, the admin's) or a user token's own
+    (:class:`_UserScope`)."""
+
+    configured_models: list[ModelConfig]
+    configured_providers: list[LLMProviderConfig]
+    detected_models: list[ModelConfig]
+
+
+@dataclass
+class _UserScope:
+    """A user token's own models and connections, parsed (contract v1.15)."""
+
+    configured_models: list[ModelConfig]
+    configured_providers: list[LLMProviderConfig]
+    detected_models: list[ModelConfig] = field(default_factory=list)
+
+    @classmethod
+    def of(cls, lists: user_models.Lists) -> _UserScope:
+        from markitai.config import LLMProviderConfig, ModelConfig
+
+        return cls(
+            [ModelConfig.model_validate(entry) for entry in lists.models],
+            [LLMProviderConfig.model_validate(entry) for entry in lists.providers],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1146,18 +1180,32 @@ def _llm_routable(state: ServeState) -> bool:
     return any(_is_deployment_routable(model) for model in effective)
 
 
-def _require_model(state: ServeState, opts: JobOptions) -> None:
+@dataclass
+class _Conversion:
+    """What a conversion runs with: the admin's configuration, or a user
+    token's pool (its own models, then the shared ones; contract v1.15)."""
+
+    config: MarkitaiConfig
+    routable: bool
+    user: bool = False
+    hidden_hosts: tuple[str, ...] = ()
+
+
+def _require_model(conversion: _Conversion, opts: JobOptions) -> None:
     """Refuse a request for model processing when no model can serve it.
 
     Before any job exists: the alternative is converting without the model
     the user asked for and reporting success.
     """
-    if _requests_llm(opts, state.config) and not _llm_routable(state):
+    if _requests_llm(opts, conversion.config) and not conversion.routable:
         raise ApiError(
             422,
             "llm_unavailable",
             "this request needs a model, but none is available; add a model in "
-            "Settings, or set MODEL and a provider API key",
+            "Settings → Models"
+            if conversion.user
+            else "this request needs a model, but none is available; add a model "
+            "in Settings, or set MODEL and a provider API key",
         )
 
 
@@ -1615,12 +1663,14 @@ def _sanitized_api_origin(api_base: str | None) -> str | None:
 
 
 def _deployment_view(
-    model: ModelConfig, index: int, *, persisted: bool
+    model: ModelConfig, index: int, *, persisted: bool, share: bool = False
 ) -> dict[str, Any]:
+    """One deployment as the settings show it; *share* adds whether the
+    admin shares it (the configuration file's rows, contract v1.15)."""
     from markitai.providers import is_local_provider_model
 
     local = is_local_provider_model(model.litellm_params.model)
-    return {
+    shown: dict[str, Any] = {
         "deployment_id": _deployment_id(model, index),
         "routing_group": model.model_name,
         "model": model.litellm_params.model,
@@ -1633,6 +1683,9 @@ def _deployment_view(
         ),
         "persisted": persisted,
     }
+    if share:
+        shown["share"] = "shared" if user_models.is_shared(model) else "private"
+    return shown
 
 
 def _effective_models(
@@ -1687,7 +1740,7 @@ def _llm_settings_payload(state: ServeState) -> dict[str, Any]:
         "config_origin": state.config_origin,
         "revision": state.settings_revision,
         "deployments": [
-            _deployment_view(model, index, persisted=True)
+            _deployment_view(model, index, persisted=True, share=True)
             for index, model in enumerate(state.configured_models)
         ],
         "detected": [
@@ -2165,7 +2218,7 @@ def _refuse_keyless_move(
     )
 
 
-def _configured_credential_pairs(state: ServeState) -> frozenset[CredentialPair]:
+def _configured_credential_pairs(state: _ModelLists) -> frozenset[CredentialPair]:
     """Every ``(api_key, api_base)`` pair already present in the saved config."""
     return frozenset(
         [
@@ -2303,8 +2356,178 @@ def _environment_key(
     return f"env:{variable}"
 
 
+def _configured_cards(
+    models: list[ModelConfig],
+    saved_providers: list[LLMProviderConfig],
+    local_connections: set[str],
+    *,
+    environment: bool = True,
+) -> tuple[list[dict[str, Any]], list[tuple[str, bool]]]:
+    """The ``configured`` provider cards of saved connections and of models
+    with credentials of their own, each with whether it is aimed at its
+    provider's own endpoint, in order (one provider, one saved row: the
+    page folds an environment card into such a card). *environment* False
+    (a user's cards) never names the server's key variables.
+    """
+    from markitai.providers import is_local_provider_model
+    from markitai.providers.discovery import provider_label
+
+    cards: list[dict[str, Any]] = []
+    own_endpoints: list[tuple[str, bool]] = []
+    for saved in saved_providers:
+        model_count = sum(
+            model.model_info is not None and model.model_info.provider_id == saved.id
+            for model in models
+        )
+        cards.append(
+            {
+                "id": f"provider:{saved.id}",
+                "provider_id": saved.id,
+                "provider": saved.provider,
+                "label": provider_label(saved.provider),
+                "kind": "configured",
+                "status": "ready"
+                if saved.api_key is not None or saved.api_base is not None
+                else "needs_credentials",
+                "source": "config",
+                "api_key_configured": bool(_real_key(saved.api_key)),
+                "api_base_configured": bool(saved.api_base),
+                "api_base": _sanitized_api_origin(
+                    saved.api_base or provider_default_api_base(saved.provider)
+                ),
+                "model_count": model_count,
+                "supports_discovery": True,
+                **(
+                    _card_credential(saved.provider, saved.api_key)
+                    if environment
+                    else {}
+                ),
+            }
+        )
+        own_endpoints.append(
+            (saved.provider, _own_endpoint(saved.provider, saved.api_base))
+        )
+
+    seen_configured_connections: set[tuple[str, str | None, str | None]] = set()
+    explicit_by_id = {provider.id for provider in saved_providers}
+    explicit_connections = {
+        (provider.provider, provider.api_base, provider.api_key)
+        for provider in saved_providers
+    }
+    for index, model in enumerate(models):
+        params = model.litellm_params
+        provider = params.model.split("/", 1)[0].lower()
+        connection = (provider, params.api_base, params.api_key)
+        linked = model.model_info.provider_id if model.model_info else None
+        if is_local_provider_model(params.model):
+            continue
+        if linked in explicit_by_id or connection in explicit_connections:
+            continue
+        if connection in seen_configured_connections:
+            continue
+        seen_configured_connections.add(connection)
+        if provider in local_connections and params.api_base is None:
+            continue
+        deployment_id = _deployment_id(model, index)
+        model_count = sum(
+            (
+                candidate.litellm_params.model.split("/", 1)[0].lower(),
+                candidate.litellm_params.api_base,
+                candidate.litellm_params.api_key,
+            )
+            == connection
+            for candidate in models
+        )
+        cards.append(
+            {
+                "id": f"provider:legacy:{deployment_id}",
+                "provider_id": f"legacy:{deployment_id}",
+                "deployment_id": deployment_id,
+                "provider": provider,
+                "label": provider_label(provider),
+                "kind": "configured",
+                "status": "ready" if params.weight > 0 else "disabled",
+                "source": "config",
+                "api_key_configured": bool(_real_key(params.api_key)),
+                "api_base_configured": bool(params.api_base),
+                "api_base": _sanitized_api_origin(
+                    params.api_base or provider_default_api_base(provider)
+                ),
+                "model_count": model_count,
+                "supports_discovery": True,
+                **(_card_credential(provider, params.api_key) if environment else {}),
+            }
+        )
+        own_endpoints.append((provider, _own_endpoint(provider, params.api_base)))
+    return cards, own_endpoints
+
+
+def _user_provider_cards(
+    scope: _ModelLists, routable: frozenset[str]
+) -> list[dict[str, Any]]:
+    """A user's provider cards (contract v1.15): the built-in cards a user
+    may use (no subscription, no cloud login, no environment card) and its
+    own ``configured`` cards; no card names a key variable, and a provider
+    whose documented address is the server's own machine has none."""
+    from markitai.providers import is_local_provider_model
+    from markitai.providers.connectable import BUILT_IN, CONNECTABLE, installed
+    from markitai.providers.discovery import provider_label
+    from markitai.serve.provider_catalog import annotate_card, card_facts
+
+    def user_base(provider: str) -> str | None:
+        base = user_models.default_base(provider)
+        return None if base is None or user_models.server_machine(base) else base
+
+    taken = {provider.provider for provider in scope.configured_providers} | {
+        model.litellm_params.model.split("/", 1)[0].lower()
+        for model in scope.configured_models
+    }
+    cards: list[dict[str, Any]] = []
+    for row in CONNECTABLE:
+        name = row.provider
+        if (
+            name in user_models.SERVER_LOGIN
+            or is_local_provider_model(f"{name}/")
+            or not installed(row)
+            or not (name in BUILT_IN or name in routable or name == "custom")
+        ):
+            continue
+        if name not in ("openai", "custom") and name in taken:
+            continue
+        local = row.key_optional and not row.cloud and user_base(name) is not None
+        cards.append(
+            {
+                "id": f"common:{name}",
+                "provider": name,
+                "label": provider_label(name),
+                "kind": "common",
+                "status": "unknown" if local else "needs_credentials",
+                "source": "built_in",
+                "supports_discovery": row.discovery != "manual",
+            }
+        )
+    configured, _own = _configured_cards(
+        scope.configured_models, scope.configured_providers, set(), environment=False
+    )
+    cards.extend(configured)
+    for card in cards:
+        provider = str(card["provider"])
+        card_facts(annotate_card(card))
+        card.pop("credential", None)
+        card["key_variable"] = None
+        card["default_base"] = user_base(provider)
+        if provider in ("bedrock", "bedrock_mantle"):
+            # A user's Bedrock connection needs its own key
+            card["key_optional"] = False
+    return cards
+
+
 def _credentials_view(
-    provider: str, api_key: str | None, api_base: str | None
+    provider: str,
+    api_key: str | None,
+    api_base: str | None,
+    *,
+    environment: bool = True,
 ) -> dict[str, str | None]:
     """One connection's editable values, as the credentials route shows them.
 
@@ -2312,10 +2535,26 @@ def _credentials_view(
     by the server's own key variable when one is set: it shows as
     ``env:<VARIABLE>`` with ``api_key_source: environment`` (Rust's
     ``credentials``), the key its conversions and model tests carry, rather
-    than "Not set".
+    than "Not set". A user's connection (*environment* False) never shows
+    the environment: its key is its own or none, ``api_key_source`` is null
+    and a default address on the server's own machine is no placeholder.
     """
     shown = api_key
     source = None
+    if not environment:
+        placeholder = provider_default_api_base(provider)
+        if placeholder is not None and user_models.server_machine(placeholder):
+            placeholder = None
+        masked = _mask_api_key(
+            api_key if not (api_key or "").startswith("env:") else None
+        )
+        return {
+            "api_key": masked,
+            "api_key_masked": masked,
+            "api_key_source": None,
+            "api_base": _masked_base(api_base),
+            "api_base_placeholder": placeholder,
+        }
     if not api_key:
         variable = _environment_key_variable(provider)
         if variable is not None:
@@ -2349,7 +2588,7 @@ def _reject_rebound_credentials(
 
 
 def _fill_stored_credentials(
-    state: ServeState, body: LLMSettingsUpdate
+    state: _ModelLists, body: LLMSettingsUpdate
 ) -> LLMSettingsUpdate:
     """Fill a keyless probe body with the stored credentials for its model.
 
@@ -2368,7 +2607,7 @@ def _fill_stored_credentials(
         return body
     stored = [
         m.litellm_params
-        for m in state.config.llm.model_list
+        for m in _effective_models(state.configured_models, state.detected_models)
         if m.litellm_params.model == body.model
     ]
     if body.api_base is not None:
@@ -2389,7 +2628,7 @@ def _fill_stored_credentials(
 
 
 def _configured_deployment_by_id(
-    state: ServeState, deployment_id: str
+    state: _ModelLists, deployment_id: str
 ) -> ModelConfig | None:
     return next(
         (
@@ -2402,7 +2641,7 @@ def _configured_deployment_by_id(
 
 
 def _stored_probe_body(
-    state: ServeState, *, deployment_id: str | None, model_name: str | None
+    state: _ModelLists, *, deployment_id: str | None, model_name: str | None
 ) -> LLMSettingsUpdate:
     """Build an ad-hoc probe body from a persisted deployment reference."""
     candidates: list[ModelConfig]
@@ -2895,6 +3134,8 @@ def create_app(
         )
         state.loop = asyncio.get_running_loop()
         app.state.markitai = state
+        # Models of tokens revoked while a deletion was interrupted
+        await asyncio.to_thread(users.sweep, access.exists)
         restored = rehydrate_jobs(state.registry, cfg)
         if restored:
             logger.info("[Serve] Rehydrated {} archived job(s)", restored)
@@ -2956,6 +3197,9 @@ def create_app(
         / "access.json"
     )
     app.state.access_tokens = access
+    # A user token's own models, beside access.json (contract v1.15)
+    users = user_models.UserModels(access.path.parent / "user-models")
+    app.state.user_models = users
     app.add_middleware(_BodyLimitMiddleware)
     app.add_middleware(
         _HostGuardMiddleware,
@@ -2994,7 +3238,7 @@ def create_app(
         path = request.url.path
         if any(error.get("type") == "json_invalid" for error in errors):
             reason = "invalid_json"
-        elif path.startswith("/api/settings/llm"):
+        elif path.startswith(("/api/settings/llm", "/api/me/models")):
             reason = "invalid_settings_request"
         elif path.endswith("/retry"):
             reason = "invalid_retry_body"
@@ -3072,6 +3316,11 @@ def create_app(
             response = await call_next(request)
             response.headers["Cache-Control"] = "no-store"
             return response
+        if path.startswith("/api/me/"):
+            # A user's own models and their keys' masks: never cached
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
         return await call_next(request)
 
     # Added after the middlewares above so it runs outermost: a remote peer
@@ -3096,6 +3345,40 @@ def create_app(
     # Outermost: compresses whatever the inner layers answer
     app.add_middleware(_CompressionMiddleware)
 
+    # ---------------------------------------------------------- conversions
+
+    def conversion_for(state: ServeState, owner: str | None) -> _Conversion:
+        """What a conversion of *owner* (a user token id; None: the admin)
+        runs with. Blocking for a user: its file may be read."""
+        if owner is None:
+            return _Conversion(state.config, _llm_routable(state))
+        pool = user_models.build_pool(
+            state.config,
+            users.lists(owner),
+            state.configured_models,
+            state.configured_providers,
+        )
+        return _Conversion(
+            pool.config,
+            any(_is_deployment_routable(model) for model in pool.models),
+            user=True,
+            hidden_hosts=pool.hidden_hosts,
+        )
+
+    async def conversion_of(state: ServeState, owner: str | None) -> _Conversion:
+        if owner is None:
+            return conversion_for(state, None)
+        return await asyncio.to_thread(conversion_for, state, owner)
+
+    def job_config(conversion: _Conversion, opts: JobOptions) -> MarkitaiConfig:
+        cfg = _build_job_config(conversion.config, opts)
+        if conversion.user and not cfg.llm.model_list:
+            # No pool: no model processing of any kind, whatever was asked
+            cfg.llm.enabled = False
+            cfg.image.alt_enabled = False
+            cfg.image.desc_enabled = False
+        return cfg
+
     # ------------------------------------------------------------------ API
 
     @app.get("/api/capabilities", response_model=Capabilities)
@@ -3104,19 +3387,33 @@ def create_app(
 
         state = _state(request)
         caller = _caller(request)
-        effective = _effective_models(state.configured_models, state.detected_models)
-        routable = any(_is_deployment_routable(model) for model in effective)
+        if caller.user_id is not None:
+            # A user's conversions route over its pool only (contract v1.15)
+            conversion = await conversion_of(state, caller.user_id)
+            models = [m.litellm_params.model for m in conversion.config.llm.model_list]
+            llm = {
+                "configured": bool(models),
+                "routable": conversion.routable,
+                "effective": conversion.routable,
+                "models": models,
+            }
+        else:
+            effective = _effective_models(
+                state.configured_models, state.detected_models
+            )
+            routable = any(_is_deployment_routable(model) for model in effective)
+            llm = {
+                "configured": bool(state.configured_models),
+                "routable": routable,
+                "effective": routable,
+                "models": [model.litellm_params.model for model in effective],
+            }
         return {
             "version": __version__,
             "implementation": "python",
             "docs_url": DOCS_URL,
             "source_url": SOURCE_URL,
-            "llm": {
-                "configured": bool(state.configured_models),
-                "routable": routable,
-                "effective": routable,
-                "models": [model.litellm_params.model for model in effective],
-            },
+            "llm": llm,
             "presets": list(PRESET_NAMES),
             "preset_options": {
                 name: preset.model_dump()
@@ -3147,6 +3444,7 @@ def create_app(
                 "user_tokens": request.app.state.serve_token is not None,
                 "config_edit": True,
                 "batch_delete": True,
+                "user_models": request.app.state.serve_token is not None,
             },
             # Anonymous callers may not use the settings, so they are users
             "access": (
@@ -3161,7 +3459,12 @@ def create_app(
             },
         }
 
-    @app.get("/api/settings/llm", response_model=LLMSettingsPayload)
+    @app.get(
+        "/api/settings/llm",
+        response_model=LLMSettingsPayload,
+        # `share` only on the configuration file's rows
+        response_model_exclude_unset=True,
+    )
     async def get_llm_settings(request: Request) -> dict[str, Any]:
         return _llm_settings_payload(_state(request))
 
@@ -3184,7 +3487,6 @@ def create_app(
         from markitai.providers.connectable import BUILT_IN, routable_providers
         from markitai.providers.discovery import (
             detect_provider_connections,
-            provider_label,
         )
         from markitai.serve.provider_catalog import annotate_card, card_facts
 
@@ -3227,91 +3529,10 @@ def create_app(
             if card.get("kind") in {"local_cli", "oauth"}
         }
 
-        # Each configured card and whether it is aimed at its provider's own
-        # endpoint, in order (one provider, one saved row: the page folds an
-        # environment card into such a card)
-        own_endpoints: list[tuple[str, bool]] = []
-        for saved in state.configured_providers:
-            model_count = sum(
-                model.model_info is not None
-                and model.model_info.provider_id == saved.id
-                for model in state.configured_models
-            )
-            providers.append(
-                {
-                    "id": f"provider:{saved.id}",
-                    "provider_id": saved.id,
-                    "provider": saved.provider,
-                    "label": provider_label(saved.provider),
-                    "kind": "configured",
-                    "status": "ready"
-                    if saved.api_key is not None or saved.api_base is not None
-                    else "needs_credentials",
-                    "source": "config",
-                    "api_key_configured": bool(_real_key(saved.api_key)),
-                    "api_base_configured": bool(saved.api_base),
-                    "api_base": _sanitized_api_origin(
-                        saved.api_base or provider_default_api_base(saved.provider)
-                    ),
-                    "model_count": model_count,
-                    "supports_discovery": True,
-                    **_card_credential(saved.provider, saved.api_key),
-                }
-            )
-            own_endpoints.append(
-                (saved.provider, _own_endpoint(saved.provider, saved.api_base))
-            )
-
-        seen_configured_connections: set[tuple[str, str | None, str | None]] = set()
-        explicit_connections = {
-            (provider.provider, provider.api_base, provider.api_key)
-            for provider in state.configured_providers
-        }
-        for index, model in enumerate(state.configured_models):
-            params = model.litellm_params
-            provider = params.model.split("/", 1)[0].lower()
-            connection = (provider, params.api_base, params.api_key)
-            linked = model.model_info.provider_id if model.model_info else None
-            if is_local_provider_model(params.model):
-                continue
-            if linked in explicit_by_id or connection in explicit_connections:
-                continue
-            if connection in seen_configured_connections:
-                continue
-            seen_configured_connections.add(connection)
-            if provider in local_connections and params.api_base is None:
-                continue
-            deployment_id = _deployment_id(model, index)
-            model_count = sum(
-                (
-                    candidate.litellm_params.model.split("/", 1)[0].lower(),
-                    candidate.litellm_params.api_base,
-                    candidate.litellm_params.api_key,
-                )
-                == connection
-                for candidate in state.configured_models
-            )
-            providers.append(
-                {
-                    "id": f"provider:legacy:{deployment_id}",
-                    "provider_id": f"legacy:{deployment_id}",
-                    "deployment_id": deployment_id,
-                    "provider": provider,
-                    "label": provider_label(provider),
-                    "kind": "configured",
-                    "status": "ready" if params.weight > 0 else "disabled",
-                    "source": "config",
-                    "api_key_configured": bool(_real_key(params.api_key)),
-                    "api_base_configured": bool(params.api_base),
-                    "api_base": _sanitized_api_origin(
-                        params.api_base or provider_default_api_base(provider)
-                    ),
-                    "model_count": model_count,
-                    "supports_discovery": True,
-                    **_card_credential(provider, params.api_key),
-                }
-            )
-            own_endpoints.append((provider, _own_endpoint(provider, params.api_base)))
+        configured_cards, own_endpoints = _configured_cards(
+            state.configured_models, state.configured_providers, local_connections
+        )
+        providers.extend(configured_cards)
         # A connection that already authenticates with a variable stands
         # for its environment card: one at the provider's own endpoint
         # naming it in `credential`, or a saved connection storing it as its
@@ -3357,7 +3578,12 @@ def create_app(
         userinfo and secret parameters; sent back as shown, it keeps the
         stored one (``_shown_base``).
         """
-        state = _state(request)
+        return connection_credentials(_state(request), provider_id)
+
+    def connection_credentials(
+        state: _ModelLists, provider_id: str, *, environment: bool = True
+    ) -> dict[str, str | None]:
+        """The credentials route's answer for one connection of *state*'s."""
         saved = next(
             (
                 provider
@@ -3371,7 +3597,9 @@ def create_app(
             # default) so re-saving after only a key edit does not pin the
             # default as an explicit override; the default is offered
             # separately for the editor's placeholder.
-            return _credentials_view(saved.provider, saved.api_key, saved.api_base)
+            return _credentials_view(
+                saved.provider, saved.api_key, saved.api_base, environment=environment
+            )
 
         deployment_id = (
             provider_id.removeprefix("legacy:")
@@ -3388,6 +3616,7 @@ def create_app(
                 legacy.litellm_params.model.split("/", 1)[0].lower(),
                 legacy.litellm_params.api_key,
                 legacy.litellm_params.api_base,
+                environment=environment,
             )
 
         raise ApiError(
@@ -3408,10 +3637,21 @@ def create_app(
     async def discover_llm_models(
         request: Request, body: LLMModelDiscoveryRequest
     ) -> dict[str, Any]:
+        return await discover(_state(request), body)
+
+    async def discover(
+        state: _ModelLists, body: LLMModelDiscoveryRequest, *, user: bool = False
+    ) -> dict[str, Any]:
+        """A model discovery over *state*'s connections; *user* holds it to
+        a user's rules and never lets the server's environment serve it."""
         from markitai.config import resolve_env_value
         from markitai.providers.discovery import discover_models
 
-        state = _state(request)
+        if user:
+            if body.provider_id is not None and body.provider_id.startswith("env:"):
+                raise user_models.environment_credentials()
+            if body.provider.strip().lower() in user_models.SERVER_LOGIN:
+                raise user_models.server_credentials()
         # An environment card's id names its provider (env:openai)
         environment_key = (
             _environment_key(
@@ -3499,6 +3739,46 @@ def create_app(
             client_key=body.api_key,
             configured=_configured_credential_pairs(state),
         )
+        if user:
+            # A user's own key or address only, never the server's machine
+            if any(
+                isinstance(value, str) and value.strip().startswith("env:")
+                for value in (raw_key, raw_base)
+            ):
+                raise user_models.environment_credentials()
+            if provider in user_models.SERVER_LOGIN or (
+                provider in ("bedrock", "bedrock_mantle")
+                and not user_models.real_key(raw_key)
+            ):
+                raise user_models.server_credentials()
+            user_models.check_address(
+                provider, raw_base if isinstance(raw_base, str) and raw_base else None
+            )
+            if not user_models.real_key(raw_key):
+                if not raw_base:
+                    # Nothing is sent: the provider would get no key, or
+                    # LiteLLM the server's own
+                    return {
+                        "provider": provider,
+                        "status": "unavailable",
+                        "source": "live_api",
+                        "authoritative": False,
+                        "cached": False,
+                        "stale": False,
+                        "models": [],
+                        "detail": "This model needs an API key, and none is set",
+                        "reason": "no_key",
+                    }
+                raw_key = NO_KEY
+            return user_models.answer(
+                await discover_models(
+                    body.provider,
+                    api_key=raw_key,
+                    api_base=raw_base,
+                    refresh=body.refresh,
+                    key_variable=None,
+                )
+            )
         api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
         api_base = resolve_env_value(raw_base, strict=False) if raw_base else None
         key_variable = (
@@ -3610,10 +3890,12 @@ def create_app(
         return _llm_settings_payload(state)
 
     def raw_deployment(
-        state: ServeState,
+        state: _ModelLists,
         body: LLMModelCreate,
         providers: list[Any],
         models: list[Any],
+        *,
+        user: bool = False,
     ) -> dict[str, Any]:
         credential_source = (
             _configured_deployment_by_id(state, body.credential_deployment_id)
@@ -3695,10 +3977,11 @@ def create_app(
             _reject_rebound_credentials(fallback_key, fallback_base, body.api_base)
         api_key = body.api_key if body.api_key is not None else fallback_key
         api_base = body.api_base if body.api_base is not None else fallback_base
-        if new_connection:
+        if new_connection and (not user or user_models.real_key(api_key)):
             # A new connection left on the provider's default: where
             # LiteLLM's own default is another host (or api.openai.com), the
-            # documented address the card showed is stored with it
+            # documented address the card showed is stored with it. A user's
+            # keyless model must name an address of its own instead.
             from markitai.providers.connectable import pinned_base
 
             api_base = api_base or pinned_base(provider_name)
@@ -3769,6 +4052,16 @@ def create_app(
                 params["api_base"] = body.api_base
         if "weight" in body.model_fields_set and body.weight is not None:
             params["weight"] = body.weight
+        if "share" in body.model_fields_set:
+            # The admin's: stored in the entry, so Edit config shows it
+            info = entry.get("model_info")
+            if not isinstance(info, dict):
+                info = {}
+                entry["model_info"] = info
+            if body.share == "shared":
+                info["share"] = "shared"
+            else:
+                info.pop("share", None)
         if "api_key" in body.model_fields_set or base_set:
             model = params.get("model")
             provider = model.split("/", 1)[0].lower() if isinstance(model, str) else ""
@@ -3791,7 +4084,12 @@ def create_app(
         )
         entry["litellm_params"] = params
 
-    @app.post("/api/settings/llm/models", response_model=LLMSettingsPayload)
+    @app.post(
+        "/api/settings/llm/models",
+        response_model=LLMSettingsPayload,
+        # `share` only on the configuration file's rows
+        response_model_exclude_unset=True,
+    )
     async def add_llm_model(request: Request, body: LLMModelCreate) -> dict[str, Any]:
         state = _state(request)
 
@@ -3807,7 +4105,12 @@ def create_app(
         logger.info("[Serve] LLM model added: {} ({})", body.model_name, body.model)
         return payload
 
-    @app.put("/api/settings/llm/models/{model_name}", response_model=LLMSettingsPayload)
+    @app.put(
+        "/api/settings/llm/models/{model_name}",
+        response_model=LLMSettingsPayload,
+        # `share` only on the configuration file's rows
+        response_model_exclude_unset=True,
+    )
     async def update_llm_model(
         request: Request, model_name: str, body: LLMModelUpdate
     ) -> dict[str, Any]:
@@ -3841,7 +4144,10 @@ def create_app(
         return payload
 
     @app.delete(
-        "/api/settings/llm/models/{model_name}", response_model=LLMSettingsPayload
+        "/api/settings/llm/models/{model_name}",
+        response_model=LLMSettingsPayload,
+        # `share` only on the configuration file's rows
+        response_model_exclude_unset=True,
     )
     async def delete_llm_model(request: Request, model_name: str) -> dict[str, Any]:
         def mutate(
@@ -3870,25 +4176,36 @@ def create_app(
         logger.info("[Serve] LLM model deleted through legacy route: {}", model_name)
         return payload
 
-    @app.post("/api/settings/llm/deployments/batch", response_model=LLMSettingsPayload)
+    @app.post(
+        "/api/settings/llm/deployments/batch",
+        response_model=LLMSettingsPayload,
+        # `share` only on the configuration file's rows
+        response_model_exclude_unset=True,
+    )
     async def add_llm_deployments_batch(
         request: Request, body: LLMDeploymentBatch
     ) -> dict[str, Any]:
         state = _state(request)
+        return await _apply_model_list_mutation(
+            state,
+            add_deployments(state, body),
+            expected_revision=body.expected_revision,
+            backfill_ids=True,
+        )
 
+    def add_deployments(
+        state: _ModelLists, body: LLMDeploymentBatch, *, user: bool = False
+    ) -> _Mutation:
         def mutate(
             entries: list[Any], providers: list[Any], _legacy_mapping: dict[str, str]
         ) -> list[Any]:
             for deployment in body.deployments:
-                entries.append(raw_deployment(state, deployment, providers, entries))
+                entries.append(
+                    raw_deployment(state, deployment, providers, entries, user=user)
+                )
             return entries
 
-        return await _apply_model_list_mutation(
-            state,
-            mutate,
-            expected_revision=body.expected_revision,
-            backfill_ids=True,
-        )
+        return mutate
 
     @app.patch(
         "/api/settings/llm/deployments/{deployment_id}",
@@ -3901,7 +4218,17 @@ def create_app(
             raise ApiError(
                 422, "invalid_settings_request", "expected_revision is required"
             )
-        configured = _configured_credential_pairs(_state(request))
+        return await _apply_model_list_mutation(
+            _state(request),
+            update_deployment(_state(request), deployment_id, body),
+            expected_revision=body.expected_revision,
+            backfill_ids=True,
+        )
+
+    def update_deployment(
+        state: _ModelLists, deployment_id: str, body: LLMModelUpdate
+    ) -> _Mutation:
+        configured = _configured_credential_pairs(state)
 
         def mutate(
             entries: list[Any], _providers: list[Any], legacy_mapping: dict[str, str]
@@ -3919,12 +4246,7 @@ def create_app(
             update_raw_deployment(entry, body, configured)
             return entries
 
-        return await _apply_model_list_mutation(
-            _state(request),
-            mutate,
-            expected_revision=body.expected_revision,
-            backfill_ids=True,
-        )
+        return mutate
 
     @app.delete(
         "/api/settings/llm/deployments/{deployment_id}",
@@ -3933,6 +4255,14 @@ def create_app(
     async def delete_llm_deployment(
         request: Request, deployment_id: str, expected_revision: str
     ) -> dict[str, Any]:
+        return await _apply_model_list_mutation(
+            _state(request),
+            delete_deployment(deployment_id),
+            expected_revision=expected_revision,
+            backfill_ids=True,
+        )
+
+    def delete_deployment(deployment_id: str) -> _Mutation:
         def mutate(
             entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
         ) -> list[Any]:
@@ -3949,12 +4279,7 @@ def create_app(
             _preserve_raw_deployment_provider(entry, entries, providers)
             return [candidate for candidate in entries if candidate is not entry]
 
-        return await _apply_model_list_mutation(
-            _state(request),
-            mutate,
-            expected_revision=expected_revision,
-            backfill_ids=True,
-        )
+        return mutate
 
     def locate_raw_provider(
         entries: list[Any],
@@ -3973,12 +4298,25 @@ def create_app(
         return target, legacy_entry
 
     @app.patch(
-        "/api/settings/llm/providers/{provider_id}", response_model=LLMSettingsPayload
+        "/api/settings/llm/providers/{provider_id}",
+        response_model=LLMSettingsPayload,
+        # `share` only on the configuration file's rows
+        response_model_exclude_unset=True,
     )
     async def update_llm_provider(
         request: Request, provider_id: str, body: LLMProviderUpdate
     ) -> dict[str, Any]:
-        configured = _configured_credential_pairs(_state(request))
+        return await _apply_model_list_mutation(
+            _state(request),
+            update_provider(_state(request), provider_id, body),
+            expected_revision=body.expected_revision,
+            backfill_ids=True,
+        )
+
+    def update_provider(
+        state: _ModelLists, provider_id: str, body: LLMProviderUpdate
+    ) -> _Mutation:
+        configured = _configured_credential_pairs(state)
 
         def mutate(
             entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
@@ -4102,19 +4440,25 @@ def create_app(
                 _link_raw_model_to_provider(entry, saved_id)
             return entries
 
-        return await _apply_model_list_mutation(
-            _state(request),
-            mutate,
-            expected_revision=body.expected_revision,
-            backfill_ids=True,
-        )
+        return mutate
 
     @app.delete(
-        "/api/settings/llm/providers/{provider_id}", response_model=LLMSettingsPayload
+        "/api/settings/llm/providers/{provider_id}",
+        response_model=LLMSettingsPayload,
+        # `share` only on the configuration file's rows
+        response_model_exclude_unset=True,
     )
     async def delete_llm_provider(
         request: Request, provider_id: str, expected_revision: str
     ) -> dict[str, Any]:
+        return await _apply_model_list_mutation(
+            _state(request),
+            delete_provider(provider_id),
+            expected_revision=expected_revision,
+            backfill_ids=True,
+        )
+
+    def delete_provider(provider_id: str) -> _Mutation:
         def mutate(
             entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
         ) -> list[Any]:
@@ -4182,11 +4526,244 @@ def create_app(
                     remaining.append(entry)
             return remaining
 
-        return await _apply_model_list_mutation(
-            _state(request),
-            mutate,
+        return mutate
+
+    # ------------------------------------------------- a user's own models
+
+    def user_caller(request: Request) -> str:
+        """The user token a ``/api/me/models`` request acts for; anyone else
+        is refused (contract v1.15)."""
+        caller = _caller(request)
+        if caller.role != "user" or caller.user_id is None:
+            raise user_models.user_token_required()
+        return caller.user_id
+
+    def user_view(
+        state: ServeState, user_id: str, lists: user_models.Lists
+    ) -> dict[str, Any]:
+        """``UserModelsView``: the user's own models, and of the admin's
+        shared ones only what they are. Blocking (LiteLLM may route a bare
+        model name)."""
+        scope = _UserScope.of(lists)
+        conversion = conversion_for(state, user_id)
+        return {
+            "configured": bool(lists.models),
+            "routable": conversion.routable,
+            "source": "user",
+            "config_path": None,
+            "config_origin": "user",
+            "revision": _settings_revision(lists.models, lists.providers),
+            "deployments": [
+                _deployment_view(model, index, persisted=True)
+                for index, model in enumerate(scope.configured_models)
+            ],
+            "detected": [],
+            "shared": [
+                {
+                    "id": _deployment_id(model, index),
+                    "model": model.litellm_params.model,
+                    "provider": user_models.connection_provider(
+                        model, state.configured_providers
+                    ),
+                    "weight": model.litellm_params.weight,
+                }
+                for index, model in user_models.shared_models(state.configured_models)
+            ],
+            "limit": user_models.LIMIT,
+        }
+
+    async def user_scope(user_id: str) -> _UserScope:
+        return _UserScope.of(await asyncio.to_thread(users.lists, user_id))
+
+    async def apply_user_mutation(
+        request: Request,
+        make: Callable[[_ModelLists], _Mutation],
+        *,
+        expected_revision: str,
+    ) -> dict[str, Any]:
+        """Run one write on the user's own lists with the settings' own
+        operation (*make*), then the user rules, then save them."""
+        user_id = user_caller(request)
+        state = _state(request)
+
+        def change(lists: user_models.Lists) -> None:
+            current = _settings_revision(lists.models, lists.providers)
+            if expected_revision != current:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "stale_revision", "current_revision": current},
+                )
+            legacy_mapping = _backfill_raw_deployment_ids(lists.models)
+            mutate = make(_UserScope.of(lists))
+            lists.models = mutate(lists.models, lists.providers, legacy_mapping)
+            user_models.check(lists)
+            try:
+                _UserScope.of(lists)
+            except ValidationError as e:
+                raise ApiError(
+                    422, "invalid_settings_request", _validation_words(e)
+                ) from None
+
+        def write() -> dict[str, Any]:
+            lists = users.write(user_id, lambda: access.exists(user_id), change)
+            return user_view(state, user_id, lists)
+
+        return await asyncio.to_thread(write)
+
+    @app.get(
+        "/api/me/models",
+        response_model=UserModelsView,
+        response_model_exclude_unset=True,
+    )
+    async def get_user_models(request: Request) -> dict[str, Any]:
+        user_id = user_caller(request)
+        state = _state(request)
+
+        def view() -> dict[str, Any]:
+            return user_view(state, user_id, users.lists(user_id))
+
+        return await asyncio.to_thread(view)
+
+    @app.get(
+        "/api/me/models/providers",
+        response_model=ProviderConnectionList,
+        response_model_exclude_unset=True,
+    )
+    async def get_user_providers(
+        request: Request, refresh: bool = False
+    ) -> dict[str, Any]:
+        """Built-in cards a user may use, and its own connections: never an
+        environment card or the server's key variables."""
+        from markitai.providers.connectable import routable_providers
+
+        del refresh  # computed on every request, as the admin's list is
+        scope = await user_scope(user_caller(request))
+        routable = await asyncio.to_thread(routable_providers)
+        return {"providers": _user_provider_cards(scope, routable)}
+
+    @app.get(
+        "/api/me/models/providers/{provider_id}/credentials",
+        response_model=LLMProviderCredentials,
+        response_model_exclude_unset=True,
+    )
+    async def get_user_provider_credentials(
+        request: Request, provider_id: str
+    ) -> dict[str, str | None]:
+        scope = await user_scope(user_caller(request))
+        return connection_credentials(scope, provider_id, environment=False)
+
+    @app.post(
+        "/api/me/models/model-discovery",
+        response_model=ModelDiscoveryResult,
+        response_model_exclude_unset=True,
+    )
+    async def discover_user_models(
+        request: Request, body: LLMModelDiscoveryRequest
+    ) -> dict[str, Any]:
+        scope = await user_scope(user_caller(request))
+        return await discover(scope, body, user=True)
+
+    @app.post(
+        "/api/me/models/test",
+        response_model=LLMTestResult,
+        response_model_exclude_none=True,
+    )
+    async def test_user_model(
+        request: Request, body: LLMSettingsUpdate
+    ) -> dict[str, Any]:
+        scope = await user_scope(user_caller(request))
+        return await probe(scope, body, user=True)
+
+    @app.post(
+        "/api/me/models/deployments/batch",
+        response_model=UserModelsView,
+        response_model_exclude_unset=True,
+    )
+    async def add_user_models(
+        request: Request, body: LLMDeploymentBatch
+    ) -> dict[str, Any]:
+        user_caller(request)
+        # What a request names is refused before anything changes
+        for deployment in body.deployments:
+            await asyncio.to_thread(
+                user_models.precheck,
+                deployment.model,
+                deployment.provider,
+                deployment.credential_provider_id,
+            )
+        return await apply_user_mutation(
+            request,
+            lambda scope: add_deployments(scope, body, user=True),
+            expected_revision=body.expected_revision,
+        )
+
+    @app.patch(
+        "/api/me/models/deployments/{deployment_id}",
+        response_model=UserModelsView,
+        response_model_exclude_unset=True,
+    )
+    async def update_user_model(
+        request: Request, deployment_id: str, body: LLMModelUpdate
+    ) -> dict[str, Any]:
+        user_caller(request)
+        if "share" in body.model_fields_set:
+            raise ApiError(
+                422,
+                "invalid_settings_request",
+                "unknown field 'share': sharing is the admin's",
+            )
+        if body.expected_revision is None:
+            raise ApiError(
+                422, "invalid_settings_request", "expected_revision is required"
+            )
+        if body.model is not None:
+            await asyncio.to_thread(user_models.precheck, body.model)
+        return await apply_user_mutation(
+            request,
+            lambda scope: update_deployment(scope, deployment_id, body),
+            expected_revision=body.expected_revision,
+        )
+
+    @app.delete(
+        "/api/me/models/deployments/{deployment_id}",
+        response_model=UserModelsView,
+        response_model_exclude_unset=True,
+    )
+    async def delete_user_model(
+        request: Request, deployment_id: str, expected_revision: str
+    ) -> dict[str, Any]:
+        return await apply_user_mutation(
+            request,
+            lambda _scope: delete_deployment(deployment_id),
             expected_revision=expected_revision,
-            backfill_ids=True,
+        )
+
+    @app.patch(
+        "/api/me/models/providers/{provider_id}",
+        response_model=UserModelsView,
+        response_model_exclude_unset=True,
+    )
+    async def update_user_provider(
+        request: Request, provider_id: str, body: LLMProviderUpdate
+    ) -> dict[str, Any]:
+        return await apply_user_mutation(
+            request,
+            lambda scope: update_provider(scope, provider_id, body),
+            expected_revision=body.expected_revision,
+        )
+
+    @app.delete(
+        "/api/me/models/providers/{provider_id}",
+        response_model=UserModelsView,
+        response_model_exclude_unset=True,
+    )
+    async def delete_user_provider(
+        request: Request, provider_id: str, expected_revision: str
+    ) -> dict[str, Any]:
+        return await apply_user_mutation(
+            request,
+            lambda _scope: delete_provider(provider_id),
+            expected_revision=expected_revision,
         )
 
     # ------------------------------------------------------- edit config
@@ -4294,9 +4871,18 @@ def create_app(
     async def test_llm_settings(
         request: Request, body: LLMSettingsUpdate
     ) -> dict[str, Any]:
+        return await probe(_state(request), body)
+
+    async def probe(
+        state: _ModelLists, body: LLMSettingsUpdate, *, user: bool = False
+    ) -> dict[str, Any]:
+        """Test one of *state*'s deployments, or a draft; *user* holds it to
+        a user's rules, before anything is sent."""
+        if user and body.model is not None:
+            await asyncio.to_thread(user_models.precheck, body.model)
         if body.deployment_id is not None or body.model_name is not None:
             body = _stored_probe_body(
-                _state(request),
+                state,
                 deployment_id=body.deployment_id,
                 model_name=body.model_name,
             )
@@ -4305,12 +4891,12 @@ def create_app(
                 body.api_key,
                 body.api_base,
                 client_key=body.api_key,
-                configured=_configured_credential_pairs(_state(request)),
+                configured=_configured_credential_pairs(state),
             )
             asked_base = body.api_base
             # An address the caller names; a stored one is the owner's
             _refuse_ambient_login_address(body.model, asked_base)
-            body = _fill_stored_credentials(_state(request), body)
+            body = _fill_stored_credentials(state, body)
             if asked_base is not None:
                 # An address the caller names is tested with the placeholder
                 # rather than the server's own key variable
@@ -4321,18 +4907,25 @@ def create_app(
                         )
                     }
                 )
+        if user:
+            provider = await asyncio.to_thread(user_models.route_provider, body.model)
+            user_models.check_connection(provider, body.api_key, body.api_base)
+            if not user_models.real_key(body.api_key):
+                body = body.model_copy(update={"api_key": NO_KEY})
         if body.model is not None:
             lacking = model_test.missing_key(body.model, body.api_key, body.api_base)
             if lacking is not None:
                 # Nothing is sent: LiteLLM would send the request without a
                 # key, and the provider's 401 reads like a wrong key
-                return model_test.missing_key_failure(lacking).answer()
+                failure = model_test.missing_key_failure(lacking).answer()
+                return user_models.answer(failure) if user else failure
         try:
             detail = await asyncio.wait_for(
                 _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S
             )
         except Exception as e:  # must never 500: ok flags the result
-            return _probe_failure(e, body)
+            failure = _probe_failure(e, body)
+            return user_models.answer(failure) if user else failure
         return {"ok": True, "detail": detail}
 
     @app.post("/api/jobs", status_code=201, response_model=CreateJobResponse)
@@ -4395,13 +4988,17 @@ def create_app(
         trusted = _is_trusted_request(request)
         _check_remote_processing(state, opts, trusted=trusted)
         # Without a routable model every item would fail or silently skip the
-        # model the user asked for: refuse before anything is stored.
-        _require_model(state, opts)
+        # model the user asked for: refuse before anything is stored. A
+        # user's conversions route over its own pool (contract v1.15).
+        owner = _caller(request).user_id
+        conversion = await conversion_of(state, owner)
+        _require_model(conversion, opts)
 
-        cfg = _build_job_config(state.config, opts)
+        cfg = job_config(conversion, opts)
         job = state.registry.create_job(
-            options=_saved_options(opts), cfg=cfg, owner=_caller(request).user_id
+            options=_saved_options(opts), cfg=cfg, owner=owner
         )
+        job.hidden_hosts = conversion.hidden_hosts
         job.public_network_only = not trusted
         job.label = job_label
         cfg.output.dir = str(job.out_dir)
@@ -4606,18 +5203,24 @@ def create_app(
 
         trusted = _is_trusted_request(request)
         _check_remote_processing(state, opts, trusted=trusted)
+        # A user's job reruns over that user's pool, whoever asks (a revoked
+        # user's: the shared models only)
+        conversion = await conversion_of(state, job.owner)
         # Options inherited from the item were the caller's earlier choice;
         # a retry that names model processing now needs a model now.
         if explicit_options and operation == "retry":
-            _require_model(state, opts)
-        cfg = _build_job_config(state.config, opts)
-        if operation == "enhance" and (not cfg.llm.enabled or not _llm_routable(state)):
+            _require_model(conversion, opts)
+        cfg = job_config(conversion, opts)
+        if operation == "enhance" and (not cfg.llm.enabled or not conversion.routable):
             raise ApiError(
                 409,
                 "llm_unavailable",
                 "LLM enhancement is unavailable; enable a routable LLM first",
             )
         job.public_network_only = job.public_network_only or not trusted
+        job.hidden_hosts = tuple(
+            dict.fromkeys((*job.hidden_hosts, *conversion.hidden_hosts))
+        )
         cfg.output.dir = str(job.out_dir)
         # The rerun reuses the job's out_dir, so it would otherwise hit
         # on_conflict against its own prior output (rename → duplicate
@@ -5394,7 +5997,16 @@ def create_app(
     async def list_access_tokens(request: Request) -> JSONResponse:
         """The user tokens, oldest first (never the tokens themselves)."""
         _require_auth(request)
-        return JSONResponse(access.list(), headers={"Cache-Control": "no-store"})
+
+        def listed() -> dict[str, Any]:
+            tokens = access.list()
+            for token in tokens["tokens"]:
+                token["model_count"] = users.count(token["id"])
+            return tokens
+
+        return JSONResponse(
+            await asyncio.to_thread(listed), headers={"Cache-Control": "no-store"}
+        )
 
     @app.post(_ACCESS_TOKENS_PATH, status_code=201, response_model=CreatedAccessToken)
     async def create_access_token(request: Request) -> JSONResponse:
@@ -5442,7 +6054,29 @@ def create_app(
         tickets.revoke_user(token_id)
         request.app.state.token_generation += 1
         _state(request).registry.end_streams()
-        logger.info('[Serve] Access token "{}" revoked from the web workbench.', label)
+        # Its own models go with it (a write racing this finds it gone);
+        # conversions already running finish with the models they started with
+        try:
+            count = await asyncio.to_thread(users.delete, token_id)
+        except OSError as e:
+            count = 0
+            logger.warning(
+                "[Serve] Could not delete the models of a revoked access token "
+                "({}); the next start deletes them.",
+                type(e).__name__,
+            )
+        if count:
+            logger.info(
+                '[Serve] Access token "{}" revoked from the web workbench; {}.',
+                label,
+                "its 1 model was deleted"
+                if count == 1
+                else f"its {count} models were deleted",
+            )
+        else:
+            logger.info(
+                '[Serve] Access token "{}" revoked from the web workbench.', label
+            )
         return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     # -------------------------------------------------------------- history
