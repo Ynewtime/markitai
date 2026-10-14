@@ -286,7 +286,8 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 stdout_assets: None,
             };
             // A URL's newly kept page, its screenshots' blocks and compare
-            // screenshots replace the old ones with the result.
+            // screenshots replace the old ones with the result, when the
+            // attempt kept any.
             let kept =
                 work.prior.kind == "url" && super::snapshots::names(&work.prior.item_id).is_some();
             let staged = stage.path().join("snapshots");
@@ -419,11 +420,15 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             if kept {
                 // What the new attempt kept replaces the old files; an old
                 // file it did not keep again goes (a page not converted from
-                // HTML here, fewer compare screenshots).
+                // HTML here, fewer compare screenshots). An attempt that
+                // loaded no page (a fetch-cache hit, a remote reader) kept
+                // nothing, and the old files stay: the cache is on by default.
                 let fresh = super::snapshots::files(stage.path(), &work.prior.item_id);
-                for name in super::snapshots::files(&worker.folder, &work.prior.item_id) {
-                    if !fresh.contains(&name) {
-                        removals.push(name);
+                if !fresh.is_empty() {
+                    for name in super::snapshots::files(&worker.folder, &work.prior.item_id) {
+                        if !fresh.contains(&name) {
+                            removals.push(name);
+                        }
                     }
                 }
                 for name in fresh {

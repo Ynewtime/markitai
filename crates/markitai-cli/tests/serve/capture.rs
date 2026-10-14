@@ -301,6 +301,66 @@ fn an_older_job_has_its_kept_page_judged_when_asked() {
     server.stop();
 }
 
+#[test]
+fn a_retry_that_loads_no_page_keeps_the_kept_files() {
+    let origin = Origin::start();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    configure(root);
+    // The fetch cache on, as serve has it by default.
+    let path = root.join("config.json");
+    let mut cfg: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    cfg["cache"] = json!({"enabled": true, "global_dir": root.join("cache")});
+    std::fs::write(&path, cfg.to_string()).unwrap();
+    let server = Server::start(root);
+    let id = server.submit(
+        &[],
+        json!([origin.url("/cached")]),
+        json!({"strategy":"static"}),
+    )["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    server.done(&id);
+    let folder = server.jobdir(&id);
+    plant_shots(&folder, "i1", 2);
+    let before = snapshot_files(&folder);
+    assert_eq!(
+        before,
+        [
+            "i1.blocks.json",
+            "i1.capture.json",
+            "i1.html",
+            "i1.shots/1.jpg",
+            "i1.shots/2.jpg"
+        ]
+    );
+    let html = std::fs::read(folder.join("snapshots/i1.html")).unwrap();
+    let loads = origin.entered.load(Ordering::SeqCst);
+    // The retry reads the cached text: no page is loaded, nothing is kept
+    // anew, and the old files stay.
+    let reply = server.request(
+        "POST",
+        &format!("/api/jobs/{id}/items/i1/retry"),
+        &[("Content-Type", "application/json")],
+        b"{}",
+    );
+    assert_eq!(reply.status, 202, "{}", reply.text());
+    server.done(&id);
+    assert_eq!(origin.entered.load(Ordering::SeqCst), loads);
+    let item = &server.json(&format!("/api/jobs/{id}"))["items"][0];
+    assert_eq!(item["status"], "done", "{item}");
+    assert_eq!(snapshot_files(&folder), before);
+    assert_eq!(
+        std::fs::read(folder.join("snapshots/i1.html")).unwrap(),
+        html
+    );
+    let original = server.json(&format!("/api/jobs/{id}/items/i1/original"));
+    assert_eq!(original["page_count"], 2, "{original}");
+    assert_eq!(original["capture"]["page"]["title"], "Local page");
+    server.stop();
+}
+
 /// Chromium for a test: `MARKITAI_BROWSER_EXECUTABLE`, else Playwright's
 /// cache (`PLAYWRIGHT_BROWSERS_PATH`, else `~/.cache/ms-playwright`).
 fn chromium() -> Option<PathBuf> {

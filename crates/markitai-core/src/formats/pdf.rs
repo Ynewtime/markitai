@@ -28,6 +28,8 @@ mod placement;
 #[cfg(test)]
 #[path = "pdf/policy_tests.rs"]
 mod policy_tests;
+#[path = "pdf/radicals.rs"]
+mod radicals;
 #[path = "pdf/running.rs"]
 mod running;
 #[path = "pdf/sanitize.rs"]
@@ -893,7 +895,14 @@ impl PdfPages {
                 document.warnings.join(" ")
             )));
         }
+        // A text layer that names radicals for ideographs (Chrome's PDFs:
+        // 使⽤, 右下⻆) reads as the ideographs, in the Markdown and the
+        // title the output and the LLM read.
         document.markdown = sections.join("\n\n");
+        radicals::fold_in_place(&mut document.markdown);
+        if let Some(serde_json::Value::String(title)) = document.metadata.get_mut("title") {
+            radicals::fold_in_place(title);
+        }
         // Chart crops already occupy their original text band.
         if appended_images {
             document
@@ -2907,6 +2916,107 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(message.contains("suspected_garbled_text"), "{message}");
+    }
+
+    /// A page of `lines` in an Identity-H Type0 font whose ToUnicode CMap
+    /// names each glyph's character, as Chrome's "Save as PDF" writes them,
+    /// with `title` as its Info title.
+    fn to_unicode_pdf(lines: &[&str], title: &str) -> Vec<u8> {
+        let mut glyphs: Vec<char> = lines.iter().flat_map(|line| line.chars()).collect();
+        glyphs.sort_unstable();
+        glyphs.dedup();
+        let cid = |c: char| glyphs.binary_search(&c).unwrap() + 1;
+        let mut cmap = String::from(
+            "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n\
+             /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n\
+             /CMapName /Adobe-Identity-UCS def /CMapType 2 def\n\
+             1 begincodespacerange <0000> <FFFF> endcodespacerange\n",
+        );
+        cmap.push_str(&format!("{} beginbfchar\n", glyphs.len()));
+        for &c in &glyphs {
+            let unit: String = c
+                .encode_utf16(&mut [0; 2])
+                .iter()
+                .map(|unit| format!("{unit:04X}"))
+                .collect();
+            cmap.push_str(&format!("<{:04X}> <{unit}>\n", cid(c)));
+        }
+        cmap.push_str("endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end\n");
+        let mut pdf = lopdf::Document::with_version("1.4");
+        let to_unicode = pdf.add_object(lopdf::Stream::new(dictionary! {}, cmap.into_bytes()));
+        let descendant = pdf.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "CIDFontType2", "BaseFont" => "NotoSansSC",
+            "CIDSystemInfo" => dictionary! {
+                "Registry" => Object::string_literal("Adobe"),
+                "Ordering" => Object::string_literal("Identity"),
+                "Supplement" => 0,
+            },
+            "DW" => 1000,
+        });
+        let font = pdf.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type0", "BaseFont" => "NotoSansSC",
+            "Encoding" => "Identity-H",
+            "DescendantFonts" => vec![Object::Reference(descendant)],
+            "ToUnicode" => to_unicode,
+        });
+        let mut content = String::new();
+        for (index, line) in lines.iter().enumerate() {
+            let hex: String = line.chars().map(|c| format!("{:04X}", cid(c))).collect();
+            let y = 740 - 24 * index;
+            content.push_str(&format!("BT /F1 14 Tf 72 {y} Td <{hex}> Tj ET\n"));
+        }
+        let contents = pdf.add_object(lopdf::Stream::new(dictionary! {}, content.into_bytes()));
+        let tree = pdf.new_object_id();
+        let page = pdf.add_object(dictionary! {
+            "Type" => "Page", "Parent" => tree, "Contents" => contents,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        });
+        pdf.objects.insert(
+            tree,
+            dictionary! { "Type" => "Pages", "Count" => 1, "Kids" => vec![page.into()] }.into(),
+        );
+        let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        pdf.trailer.set("Root", catalog);
+        let info = pdf.add_object(dictionary! {
+            "Title" => Object::String(utf16_title(title), lopdf::StringFormat::Hexadecimal),
+        });
+        pdf.trailer.set("Info", info);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// A PDF text string in UTF-16BE with its byte order mark.
+    fn utf16_title(text: &str) -> Vec<u8> {
+        let mut bytes = vec![0xFE, 0xFF];
+        bytes.extend(utf16(text));
+        bytes
+    }
+
+    #[test]
+    fn radical_code_points_in_a_text_layer_read_as_their_ideographs() {
+        // Chrome names 用 and 角 by U+2F64 (Kangxi) and U+2EC6 (supplement);
+        // the shape ⺁ (U+2E81) stands for no character and stays.
+        let lines = [
+            "选择你要使\u{2F64}的服务器",
+            "在控制台右下\u{2EC6}点击启动按钮",
+            "偏旁\u{2E81}不变",
+        ];
+        let document = extract(&to_unicode_pdf(&lines, "使\u{2F64}指南")).unwrap();
+        for line in [
+            "选择你要使用的服务器",
+            "在控制台右下角点击启动按钮",
+            "偏旁\u{2E81}不变",
+        ] {
+            assert!(document.markdown.contains(line), "{}", document.markdown);
+        }
+        assert!(
+            !document.markdown.contains(['\u{2F64}', '\u{2EC6}']),
+            "{}",
+            document.markdown
+        );
+        assert_eq!(document.metadata["title"], "使用指南");
     }
 
     #[test]

@@ -700,7 +700,8 @@ impl<'a> Shown<'a> {
     pub(super) fn notice(&self) -> Option<Refusal> {
         let text = self.text.to_lowercase();
         let title = self.title.to_lowercase();
-        let short = text.len() <= 2000;
+        // Characters, not bytes: a CJK check page is three bytes a character.
+        let short = text.chars().nth(NOTICE_CHARS).is_none();
         let instruction = CHALLENGE_TEXT.iter().any(|phrase| text.starts_with(phrase));
         let challenge_title = CHALLENGE_TITLES
             .iter()
@@ -723,6 +724,10 @@ impl<'a> Shown<'a> {
         .then_some(Refusal::JavaScript)
     }
 }
+
+/// The characters (Unicode scalar values) of a challenge or JavaScript
+/// notice's lower-cased text at most.
+const NOTICE_CHARS: usize = 2000;
 
 /// Zhihu's security check title, `安全验证 - 知乎`, and not a question that
 /// starts with the same words.
@@ -1031,6 +1036,26 @@ mod tests {
             what_works(&example)
                 .starts_with("the site turns automated readers away; open the page")
         );
+    }
+
+    #[test]
+    fn a_notice_is_at_most_2000_characters_not_bytes() {
+        let example = Url::parse("https://example.test/").unwrap();
+        // 1000 CJK characters are 3000 bytes of UTF-8.
+        let page = |chars: usize| {
+            let text: String = "智能验证检测中".chars().cycle().take(chars).collect();
+            format!("<html><head><title>验证</title></head><body><p>{text}</p></body></html>")
+        };
+        for chars in [1000, 2000] {
+            assert!(
+                matches!(
+                    Shown::html(&example, &page(chars)).notice(),
+                    Some(Refusal::Challenge)
+                ),
+                "{chars}"
+            );
+        }
+        assert!(Shown::html(&example, &page(2001)).notice().is_none());
     }
 
     #[test]
