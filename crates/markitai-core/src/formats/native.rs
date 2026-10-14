@@ -1071,8 +1071,10 @@ impl Renderer<'_> {
                         // once.
                         let repeats = parts
                             .iter()
-                            .take_while(|part| matches!(part, SheetPart::Banner(text)
-                                if previous_heading && last_heading == *text))
+                            .take_while(|part| {
+                                matches!(part, SheetPart::Banner(text)
+                                if previous_heading && last_heading == *text)
+                            })
                             .count();
                         parts.drain(..repeats);
                         lifted_title = matches!(parts.first(), Some(SheetPart::Banner(_)));
@@ -2070,8 +2072,16 @@ mod tests {
              | Kitchen | 08:00 | Start urns | Bring spare fuses |\n| Stage |  | Sound check |  |{afternoon}"
         );
         for (extension, bytes, expected) in [
-            ("xlsx", &include_bytes!("native/fixtures/day-plan.xlsx")[..], full.clone()),
-            ("ods", &include_bytes!("native/fixtures/day-plan.ods")[..], format!("{full}\n")),
+            (
+                "xlsx",
+                &include_bytes!("native/fixtures/day-plan.xlsx")[..],
+                full.clone(),
+            ),
+            (
+                "ods",
+                &include_bytes!("native/fixtures/day-plan.ods")[..],
+                format!("{full}\n"),
+            ),
             (
                 "xls",
                 &include_bytes!("native/fixtures/day-plan.xls")[..],
@@ -2085,7 +2095,9 @@ mod tests {
             assert_eq!(doc.markdown, expected, "{extension}");
             // No merge is left in a table.
             assert!(
-                !doc.warnings.iter().any(|warning| warning.contains("Merged")),
+                !doc.warnings
+                    .iter()
+                    .any(|warning| warning.contains("Merged")),
                 "{extension}: {:?}",
                 doc.warnings
             );
