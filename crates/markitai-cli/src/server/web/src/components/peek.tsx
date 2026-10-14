@@ -115,10 +115,21 @@ export function Peek(props: PeekProps) {
       } else if (element.clientWidth >= needed.current) setCompactBar(false);
     };
     check();
-    const observer = new ResizeObserver(check);
+    // Switching between tabs and the compact switch resizes what is observed
+    // (and renews this observer), so a size change is judged in the next
+    // frame, never inside the observer's own pass: WebKit reports that as a
+    // loop with undelivered notifications.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(check);
+    });
     observer.observe(element);
     if (slot) observer.observe(slot);
-    return () => observer.disconnect();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, [compactBar, slot, tab]);
 
   // Keys that work anywhere in the window.
