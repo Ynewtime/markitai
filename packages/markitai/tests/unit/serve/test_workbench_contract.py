@@ -104,6 +104,13 @@ SHAPES: dict[str, dict[str, F]] = {
         "remote_services": opt("@RemoteServices", nullable=False),
         "features": opt("@Features", nullable=False),
         "access": opt("@Access", nullable=False),
+        "build": opt("@BuildInfo", nullable=False),
+    },
+    "BuildInfo": {
+        "version": F("str"),
+        "commit": null("str"),
+        "built_at": null("str"),
+        "dirty": F("bool"),
     },
     "Access": {
         "role": F(frozenset({"admin", "user"})),
@@ -152,6 +159,7 @@ SHAPES: dict[str, dict[str, F]] = {
             "config_edit",
             "batch_delete",
             "user_models",
+            "user_config",
         )
     },
     "PresetFeatures": {
@@ -290,7 +298,7 @@ SHAPES: dict[str, dict[str, F]] = {
         "results": F(["@BatchDeleteEntry"]),
     },
     "ConfigDocument": {
-        "path": F("str"),
+        "path": null("str"),
         "origin": F("str"),
         "exists": F("bool"),
         "revision": F("str"),
@@ -300,7 +308,7 @@ SHAPES: dict[str, dict[str, F]] = {
         "read_only": F("bool"),
     },
     "SavedConfigDocument": {
-        "path": F("str"),
+        "path": null("str"),
         "origin": F("str"),
         "exists": F("bool"),
         "revision": F("str"),
@@ -393,6 +401,7 @@ SHAPES: dict[str, dict[str, F]] = {
         "model": F("str"),
         "provider": F("str"),
         "weight": F("int"),
+        "default_weight": F("int"),
     },
     "UserModelsView": {
         "configured": F("bool"),
@@ -789,7 +798,9 @@ class TestCapabilities:
         assert data["features"].pop("token_regenerate") is False
         assert data["features"].pop("user_tokens") is False
         assert data["features"].pop("user_models") is False
+        assert data["features"].pop("user_config") is False
         assert all(data["features"].values())
+        assert data["build"]["version"] == data["version"]
         assert data["limits"]["history_retention_days"] == 7
         for preset in data["presets"]:
             check_shape("PresetFeatures", data["preset_options"][preset])
@@ -797,6 +808,7 @@ class TestCapabilities:
             data = (await client.get("/api/capabilities")).json()
         assert data["features"]["token_regenerate"] is True
         assert data["features"]["user_models"] is True
+        assert data["features"]["user_config"] is True
 
     async def test_cloudflare_state_is_hidden_from_untrusted_callers(
         self, tmp_path: Path

@@ -168,6 +168,7 @@ class TestCapabilitiesAndRoot:
             "config_edit": True,
             "batch_delete": True,
             "user_models": False,
+            "user_config": False,
         }
         # Loopback without a token is the admin (no user tokens without one)
         assert data["access"] == {"role": "admin", "label": None}

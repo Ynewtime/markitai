@@ -42,6 +42,7 @@ COMPONENTS: dict[str, str] = {
     "DownloadTicket": "DownloadTicket",
     "RegeneratedToken": "RegeneratedToken",
     "Access": "CapabilitiesAccess",
+    "BuildInfo": "BuildInfo",
     "ListedAccessToken": "ListedAccessToken",
     "AccessTokenList": "AccessTokenList",
     "CreatedAccessToken": "CreatedAccessToken",

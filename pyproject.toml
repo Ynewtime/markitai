@@ -113,6 +113,7 @@ source_modules = [
     "markitai.api",
     "markitai.mcp",
     "markitai.batch",
+    "markitai.build_info",
     "markitai.config",
     "markitai.constants",
     "markitai.converter",

@@ -399,6 +399,11 @@ def _why(response: httpx.Response) -> tuple[int, str]:
 @pytest.fixture
 def no_network(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """Every model test or discovery that would send a request, recorded."""
+    return record_network(monkeypatch)
+
+
+def record_network(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Record, instead of sending, every model test or discovery."""
     sent: list[Any] = []
 
     async def probe(body: Any) -> str:
@@ -926,6 +931,7 @@ async def test_the_admin_shares_a_model_and_a_user_sees_only_what_it_is(
             "model": "openai/fake-model",
             "provider": "custom",
             "weight": 1,
+            "default_weight": 1,
         }
     ]
     assert (mine["routable"], mine["configured"]) == (True, False)

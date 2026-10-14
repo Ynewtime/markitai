@@ -33,11 +33,18 @@ from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from markitai import __version__
+from markitai.build_info import build_identity
 from markitai.constants import PROVIDER_API_KEY_ENV
 from markitai.page_capture import MAX_BLOCKS_BYTES
 from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, PENDING_BATCH_SKIP_REASON
-from markitai.serve import config_editor, model_test, new_access_token, user_models
+from markitai.serve import (
+    config_editor,
+    model_test,
+    new_access_token,
+    user_config,
+    user_models,
+)
 from markitai.serve.access import AccessTokens, clean_label, looks_like_user_token
 from markitai.serve.artifacts import (
     item_asset_files,
@@ -125,6 +132,7 @@ from markitai.serve.schemas import (
     RootInfo,
     SavedConfigDocument,
     UserModelsView,
+    UserModelTest,
 )
 from markitai.serve.tickets import LIFETIME_S as TICKET_LIFETIME_S
 from markitai.serve.tickets import DownloadTickets, downloadable
@@ -1447,6 +1455,64 @@ def _validation_words(error: ValidationError) -> str:
     return "; ".join(parts) + (f"; and {more} more" if more > 0 else "")
 
 
+async def _config_body(request: Request) -> tuple[str, str]:
+    """The ``{expected_revision, text}`` body of a config PUT (the admin's
+    and a user's), within the size limits."""
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > _CONFIG_BODY_LIMIT:
+            raise _config_too_large()
+    shape = ApiError(
+        422,
+        "invalid_settings_request",
+        'send a JSON body {"expected_revision": string, "text": string}',
+    )
+    content_type = request.headers.get("content-type", "")
+    if content_type.split(";", 1)[0].strip().lower() != "application/json":
+        raise shape
+    try:
+        body = json.loads(bytes(data))
+    except ValueError:
+        raise shape from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"expected_revision", "text"}
+        or not isinstance(body["expected_revision"], str)
+        or not isinstance(body["text"], str)
+    ):
+        raise shape
+    text: str = body["text"]
+    if len(text.encode("utf-8", "surrogatepass")) > _CONFIG_TEXT_LIMIT:
+        raise _config_too_large()
+    return body["expected_revision"], text
+
+
+#: A body of PATCH /api/me/models/shared/{id} at most
+_SHARED_WEIGHT_BODY_LIMIT = 64 * 1024
+
+#: The one sentence a failed test of a shared model says, whatever failed
+SHARED_TEST_FAILED = "The shared model did not pass its test; ask the admin to check it"
+
+
+async def _json_body(request: Request, limit: int) -> Any:
+    """A JSON request body of at most *limit* bytes: 413 above, 422
+    ``json_required`` for another content type, ``invalid_json`` when it
+    does not parse."""
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > limit:
+            raise ApiError(413, "request_too_large", "the request is too large")
+    content_type = request.headers.get("content-type", "")
+    if content_type.split(";", 1)[0].strip().lower() != "application/json":
+        raise ApiError(422, "json_required", "send the body as application/json")
+    try:
+        return json.loads(bytes(data))
+    except ValueError:
+        raise ApiError(422, "invalid_json", "the request is not valid JSON") from None
+
+
 def _replace_config_file(
     path: Path, expected_revision: str, text: str
 ) -> tuple[bytes, dict[str, Any] | None, dict[str, Any]]:
@@ -1571,6 +1637,26 @@ def _settings_revision(models: list[Any], providers: list[Any]) -> str:
     """Return a canonical revision for models and saved provider connections."""
     canonical = json.dumps(
         {"models": models, "providers": providers},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _user_revision(lists: user_models.Lists) -> str:
+    """A user's revision: :func:`_settings_revision` while it overrides no
+    shared model's weight (so revisions from before overrides stay valid),
+    else the same digest over its models, connections and overrides
+    (contract v1.16)."""
+    if not lists.shared_weights:
+        return _settings_revision(lists.models, lists.providers)
+    canonical = json.dumps(
+        {
+            "models": lists.models,
+            "providers": lists.providers,
+            "shared_weights": lists.shared_weights,
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -3410,6 +3496,8 @@ def create_app(
             }
         return {
             "version": __version__,
+            # The first call may run git (a source checkout): off the loop
+            "build": await asyncio.to_thread(build_identity),
             "implementation": "python",
             "docs_url": DOCS_URL,
             "source_url": SOURCE_URL,
@@ -3445,6 +3533,7 @@ def create_app(
                 "config_edit": True,
                 "batch_delete": True,
                 "user_models": request.app.state.serve_token is not None,
+                "user_config": request.app.state.serve_token is not None,
             },
             # Anonymous callers may not use the settings, so they are users
             "access": (
@@ -4538,6 +4627,18 @@ def create_app(
             raise user_models.user_token_required()
         return caller.user_id
 
+    def shared_now(state: ServeState) -> list[user_models.Shared]:
+        """The admin's models users see now (shared, weight above 0)."""
+        return user_models.shared_list(
+            state.configured_models, state.configured_providers
+        )
+
+    def stale(current: str) -> HTTPException:
+        return HTTPException(
+            status_code=409,
+            detail={"code": "stale_revision", "current_revision": current},
+        )
+
     def user_view(
         state: ServeState, user_id: str, lists: user_models.Lists
     ) -> dict[str, Any]:
@@ -4552,22 +4653,23 @@ def create_app(
             "source": "user",
             "config_path": None,
             "config_origin": "user",
-            "revision": _settings_revision(lists.models, lists.providers),
+            "revision": _user_revision(lists),
             "deployments": [
                 _deployment_view(model, index, persisted=True)
                 for index, model in enumerate(scope.configured_models)
             ],
             "detected": [],
+            # What a shared model is, never its key, address or connection:
+            # the user's weight for it and the admin's
             "shared": [
                 {
-                    "id": _deployment_id(model, index),
-                    "model": model.litellm_params.model,
-                    "provider": user_models.connection_provider(
-                        model, state.configured_providers
-                    ),
-                    "weight": model.litellm_params.weight,
+                    "id": shared.id,
+                    "model": shared.model,
+                    "provider": shared.provider,
+                    "weight": user_models.effective_weight(lists, shared),
+                    "default_weight": shared.weight,
                 }
-                for index, model in user_models.shared_models(state.configured_models)
+                for shared in shared_now(state)
             ],
             "limit": user_models.LIMIT,
         }
@@ -4587,12 +4689,9 @@ def create_app(
         state = _state(request)
 
         def change(lists: user_models.Lists) -> None:
-            current = _settings_revision(lists.models, lists.providers)
+            current = _user_revision(lists)
             if expected_revision != current:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "stale_revision", "current_revision": current},
-                )
+                raise stale(current)
             legacy_mapping = _backfill_raw_deployment_ids(lists.models)
             mutate = make(_UserScope.of(lists))
             lists.models = mutate(lists.models, lists.providers, legacy_mapping)
@@ -4668,11 +4767,51 @@ def create_app(
         response_model=LLMTestResult,
         response_model_exclude_none=True,
     )
-    async def test_user_model(
-        request: Request, body: LLMSettingsUpdate
+    async def test_user_model(request: Request, body: UserModelTest) -> dict[str, Any]:
+        user_id = user_caller(request)
+        if body.shared_id is not None:
+            return await shared_probe(_state(request), user_id, body.shared_id)
+        scope = await user_scope(user_id)
+        draft = LLMSettingsUpdate.model_validate(
+            body.model_dump(exclude={"shared_id"}, exclude_unset=True)
+        )
+        return await probe(scope, draft, user=True)
+
+    async def shared_probe(
+        state: ServeState, user_id: str, shared_id: str
     ) -> dict[str, Any]:
-        scope = await user_scope(user_caller(request))
-        return await probe(scope, body, user=True)
+        """Test a model the admin shares on the server, as the admin's own
+        test of it runs (its key, connection and address), one at a time and
+        a few a minute per user (the admin's key pays); the answer says only
+        whether it passed and the test's reason (contract v1.16)."""
+        if all(shared.id != shared_id for shared in shared_now(state)):
+            raise ApiError(422, "invalid_settings_request", "deployment not found")
+        wait = users.begin_test(user_id)
+        if wait is not None:
+            raise ApiError(
+                429,
+                "provider_busy",
+                "you can test a shared model once at a time and "
+                f"{user_models.SHARED_TESTS_PER_MINUTE} times a minute; try "
+                "again shortly",
+                headers={"Retry-After": str(wait)},
+            )
+        try:
+            answer = await probe(state, LLMSettingsUpdate(deployment_id=shared_id))
+        except (ApiError, HTTPException):
+            # Refused before anything was sent (invalid_provider_request,
+            # provider_unavailable, ...): a failed test, in the same words
+            answer = {"ok": False, "reason": "provider_error"}
+        finally:
+            users.end_test(user_id)
+        if answer.get("ok") is True:
+            return {"ok": True, "detail": "Model test passed"}
+        reason = answer.get("reason")
+        return {
+            "ok": False,
+            "reason": reason if reason in model_test.REASONS else "provider_error",
+            "detail": SHARED_TEST_FAILED,
+        }
 
     @app.post(
         "/api/me/models/deployments/batch",
@@ -4766,6 +4905,143 @@ def create_app(
             expected_revision=expected_revision,
         )
 
+    @app.patch(
+        "/api/me/models/shared/{shared_id}",
+        response_model=UserModelsView,
+        response_model_exclude_unset=True,
+    )
+    async def update_user_shared_weight(
+        request: Request, shared_id: str
+    ) -> dict[str, Any]:
+        """The user's own weight for a model the admin shares (contract
+        v1.16): body exactly ``{expected_revision, weight}``, ``weight`` a
+        whole number or null (null, or the admin's weight: follow the admin;
+        0: off for this user only)."""
+        user_id = user_caller(request)
+        state = _state(request)
+        body = await _json_body(request, _SHARED_WEIGHT_BODY_LIMIT)
+        shape = ApiError(
+            422,
+            "invalid_settings_request",
+            'send exactly {"expected_revision": string, "weight": integer or null}',
+        )
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"expected_revision", "weight"}
+            or not isinstance(body["expected_revision"], str)
+        ):
+            raise shape
+        weight = body["weight"]
+        if weight is not None and not user_models.valid_weight(weight):
+            raise ApiError(
+                422, "invalid_settings_request", "weight must be a nonnegative integer"
+            )
+        expected: str = body["expected_revision"]
+
+        def write() -> dict[str, Any]:
+            target = next(
+                (shared for shared in shared_now(state) if shared.id == shared_id),
+                None,
+            )
+            if target is None:
+                raise ApiError(
+                    404,
+                    "settings_entry_missing",
+                    "That shared model is no longer shared. Refresh the list.",
+                )
+
+            def change(lists: user_models.Lists) -> None:
+                current = _user_revision(lists)
+                if expected != current:
+                    raise stale(current)
+                user_models.set_weight(lists, target, weight)
+
+            lists = users.write(user_id, lambda: access.exists(user_id), change)
+            return user_view(state, user_id, lists)
+
+        return await asyncio.to_thread(write)
+
+    # ------------------------------------------------ a user's edit config
+
+    def user_config_view(state: ServeState, user_id: str) -> dict[str, Any]:
+        """A user's Edit config document. Blocking: its file may be read."""
+        lists = users.lists(user_id)
+        return user_config.view(
+            lists,
+            shared_now(state),
+            exists=users.exists(user_id),
+            revision=_user_revision(lists),
+        )
+
+    @app.get("/api/me/config", response_model=ConfigDocument)
+    async def get_user_config(request: Request) -> dict[str, Any]:
+        """A user's own models file as one document the server writes, every
+        secret masked (contract v1.16); never the server's config.json."""
+        user_id = user_caller(request)
+        state = _state(request)
+        return await asyncio.to_thread(user_config_view, state, user_id)
+
+    @app.put("/api/me/config", response_model=SavedConfigDocument)
+    async def put_user_config(request: Request) -> dict[str, Any]:
+        """Replace a user's own models from its document: the revision, the
+        kept masks, the document's shape, then the rules of the Models
+        routes, saved through the user's lock and atomic write."""
+        user_id = user_caller(request)
+        state = _state(request)
+        expected, text = await _config_body(request)
+
+        def change(lists: user_models.Lists) -> None:
+            current = _user_revision(lists)
+            if expected != current:
+                raise stale(current)
+            try:
+                config_editor.parse(text)
+            except json.JSONDecodeError as e:
+                raise user_config.refused(config_editor.position(e)) from None
+            except ValueError as e:
+                raise user_config.refused(str(e)) from None
+            shared = shared_now(state)
+            try:
+                saved = config_editor.unmask(text, user_config.document(lists, shared))
+            except ValueError as e:
+                raise user_config.refused(str(e)) from None
+            parsed = user_config.parse(json.loads(saved), lists, shared)
+            for entry in parsed.models:
+                info = entry.get("model_info")
+                user_models.precheck(
+                    entry["litellm_params"]["model"],
+                    None,
+                    info.get("provider_id") if isinstance(info, dict) else None,
+                )
+            user_models.check(parsed)
+            _backfill_raw_deployment_ids(parsed.models)
+            user_config.unique(
+                "models",
+                [
+                    entry["model_info"].get("id")
+                    for entry in parsed.models
+                    if isinstance(entry.get("model_info"), dict)
+                ],
+            )
+            user_config.unique(
+                "providers", [connection["id"] for connection in parsed.providers]
+            )
+            # The pool must build from it
+            try:
+                scope = _UserScope.of(parsed)
+            except ValidationError as e:
+                raise user_config.refused(_validation_words(e)) from None
+            del scope
+            lists.models = parsed.models
+            lists.providers = parsed.providers
+            lists.shared_weights = parsed.shared_weights
+
+        def write() -> dict[str, Any]:
+            users.write(user_id, lambda: access.exists(user_id), change)
+            return {**user_config_view(state, user_id), "restart_required": False}
+
+        return await asyncio.to_thread(write)
+
     # ------------------------------------------------------- edit config
 
     def _config_view(state: ServeState, data: bytes | None) -> dict[str, Any]:
@@ -4797,38 +5073,12 @@ def create_app(
         anything else changed.
         """
         state = _state(request)
-        data = bytearray()
-        async for chunk in request.stream():
-            data += chunk
-            if len(data) > _CONFIG_BODY_LIMIT:
-                raise _config_too_large()
-        shape = ApiError(
-            422,
-            "invalid_settings_request",
-            'send a JSON body {"expected_revision": string, "text": string}',
-        )
-        content_type = request.headers.get("content-type", "")
-        if content_type.split(";", 1)[0].strip().lower() != "application/json":
-            raise shape
-        try:
-            body = json.loads(bytes(data))
-        except ValueError:
-            raise shape from None
-        if (
-            not isinstance(body, dict)
-            or set(body) != {"expected_revision", "text"}
-            or not isinstance(body["expected_revision"], str)
-            or not isinstance(body["text"], str)
-        ):
-            raise shape
-        text: str = body["text"]
-        if len(text.encode("utf-8", "surrogatepass")) > _CONFIG_TEXT_LIMIT:
-            raise _config_too_large()
+        expected, text = await _config_body(request)
         async with state.settings_lock:
             saved, old, document = await asyncio.to_thread(
                 _replace_config_file,
                 state.config_path,
-                body["expected_revision"],
+                expected,
                 text,
             )
             _apply_config_models(state, document)
