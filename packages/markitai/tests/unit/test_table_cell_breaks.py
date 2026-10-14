@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from markitai.converter.base import get_converter
-from markitai.webextract.table_cells import CELL_BREAK, markdown_cell, text_cell
+from markitai.webextract.table_cells import (
+    CELL_BREAK,
+    markdown_cell,
+    parser_safe_breaks,
+    text_cell,
+)
 
 # Every line break str.splitlines knows, plus the Windows pair
 BREAKS = ["\n", "\r\n", "\r", "\u2028", "\u2029", "\v", "\x85", "\f"]
@@ -37,6 +42,15 @@ def test_text_cell_collapses_runs_trims_edges_and_escapes():
     assert text_cell("write <BR/> on tags") == "write &lt;BR/&gt; on tags"
     assert text_cell("") == ""
     assert text_cell("\n\n") == ""
+
+
+def test_parser_safe_breaks_writes_dropped_controls_as_line_separators():
+    assert (
+        parser_safe_breaks("a\vb\fc\x1cd\x1de\x1ef")
+        == "a\u2028b\u2028c\u2028d\u2028e\u2028f"
+    )
+    plain = "<td>a\r\nb\x85c\u2028d\te</td>"
+    assert parser_safe_breaks(plain) is plain
 
 
 def test_markdown_cell_breaks_on_marks_and_separators():
@@ -123,20 +137,68 @@ def test_html_cells():
     assert _rows(CompatibleMarkdownConverter().convert(HTML_TABLE)) == HTML_ROWS
 
 
-def test_html_file_cells(tmp_path):
+def _html_page(table: str) -> str:
+    return (
+        "<html><head><title>Garden club work plan</title></head><body>\n"
+        "<h1>Garden club work plan</h1>\n<p>Our spring tasks for the community"
+        " beds, agreed at the March meeting of the club.</p>\n"
+        f"{table}\n<p>Thank you to every volunteer who signed up for a"
+        " shift this season.</p>\n</body></html>\n"
+    )
+
+
+# A line break in the HTML source of a cell is whitespace, as a browser shows
+# it: one space, never words run together, whatever the file's line endings
+SWEEP_ROW = "<tr><td>Sweep</td><td>Sweep\npath\r\nedges</td></tr></tbody>"
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_html_file_cells(tmp_path, newline):
+    """The file is written byte for byte (``newline=newline``); with CRLF
+    line endings the cell's own CRLF becomes CR CR LF."""
     path = tmp_path / "plan.html"
-    path.write_text(
-        "<html><head><title>Garden club work plan</title></head><body>"
-        "<h1>Garden club work plan</h1><p>Our spring tasks for the community"
-        " beds, agreed at the March meeting of the club.</p>"
-        f"{HTML_TABLE}<p>Thank you to every volunteer who signed up for a"
-        " shift this season.</p></body></html>",
-        encoding="utf-8",
+    with path.open("w", encoding="utf-8", newline=newline) as handle:
+        handle.write(_html_page(HTML_TABLE.replace("</tbody>", SWEEP_ROW)))
+    converter = get_converter(path)
+    assert converter is not None
+
+    assert _rows(converter.convert(path).markdown) == [
+        *HTML_ROWS,
+        "| Sweep | Sweep path edges |",
+    ]
+
+
+def test_no_html_parser_sees_a_break_old_libxml2_deletes(tmp_path, monkeypatch):
+    """libxml2 before 2.14 (lxml's Windows wheels) deletes a vertical tab, form
+    feed or file/group/record separator from HTML text, which ran "bag\vtwine"
+    together; every parse gets them as U+2028 instead, so no parser or
+    libxml2 version decides the output."""
+    import bs4
+
+    import markitai.webextract.dom as dom
+    import markitai.webextract.markdownify_compat as compat
+
+    seen: list[str] = []
+
+    class Recording(bs4.BeautifulSoup):
+        def __init__(self, markup="", *args, **kwargs):
+            if isinstance(markup, str):
+                seen.append(markup)
+            super().__init__(markup, *args, **kwargs)
+
+    monkeypatch.setattr(dom, "BeautifulSoup", Recording)
+    monkeypatch.setattr(compat, "BeautifulSoup", Recording)
+    path = tmp_path / "plan.html"
+    path.write_bytes(
+        _html_page(HTML_TABLE.replace("\u2028", "\f\x1c\x1d\x1e")).encode()
     )
     converter = get_converter(path)
     assert converter is not None
 
-    assert _rows(converter.convert(path).markdown) == HTML_ROWS
+    rows = _rows(converter.convert(path).markdown)
+    assert "| Rake leaves | Rake<br>bag<br>twine |" in rows
+    assert seen
+    assert not any(ch in markup for markup in seen for ch in "\v\f\x1c\x1d\x1e")
 
 
 def test_markitdown_renderer_cells(tmp_path):

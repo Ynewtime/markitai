@@ -63,3 +63,20 @@ def markdown_cell(text: str) -> str:
         (part.replace("\n", " ") for part in _RENDERED_BREAK.split(text)),
         lambda line: _literal_br(_UNESCAPED_PIPE.sub(r"\\|", line)),
     )
+
+
+# Line breaks a parser may delete: libxml2 before 2.14 (the one lxml bundles
+# in its Windows wheels) drops C0 controls from HTML text, so "bag\vtwine"
+# became "bagtwine" there while 2.14 keeps the tab. U+2028 survives every
+# parser and is the same kind of break to every rule after parsing.
+_PARSER_DROPPED_BREAK = re.compile("[\v\f\x1c-\x1e]")
+
+
+def parser_safe_breaks(html: str) -> str:
+    """*html* with each vertical tab, form feed and file, group or record
+    separator written as U+2028, so that a cell's line break (or the
+    whitespace between two words) reads the same whatever parser and
+    libxml2 version reads it."""
+    if not _PARSER_DROPPED_BREAK.search(html):
+        return html
+    return _PARSER_DROPPED_BREAK.sub("\u2028", html)
