@@ -243,6 +243,13 @@ _RENDERED_DOM_SCRIPT = """() => {
   };
 }"""
 
+#: How an X post's page is captured: ``"direct"`` loads x.com in Chromium's
+#: new headless mode with the browser's user agent minus "HeadlessChrome"
+#: (x.com refuses the headless shell Playwright launches by default with
+#: HTTP 403); ``"embed"`` keeps the default browser, which falls back to the
+#: embedded-post page below. Either way a refused x.com falls back to it.
+X_CAPTURE = "direct"
+
 #: X's embedded-post page renders a post without signing in when x.com
 #: itself refuses a browser (HTTP 403 for a signed-out headless visit).
 _X_EMBED_URL = "https://platform.twitter.com/embed/Tweet.html?id={id}&dnt=true"
@@ -779,6 +786,10 @@ class PlaywrightRenderer:
         self._playwright: Any = None
         self._browser: Any = None
         self._lock = asyncio.Lock()
+        # Chromium in the new headless mode, for x.com (see X_CAPTURE); False
+        # once it could not be launched
+        self._new_headless: Any = None
+        self._new_headless_agent: str | None = None
 
         # Session cache (domain-persistent mode)
         self._context_cache: dict[str, CachedContext] = {}
@@ -819,7 +830,8 @@ class PlaywrightRenderer:
             if self._browser is not None:
                 return self._browser
 
-            self._playwright = await async_playwright().start()
+            if self._playwright is None:
+                self._playwright = await async_playwright().start()
             launch_options: dict[str, Any] = {"headless": True}
             if self.proxy:
                 launch_options["proxy"] = {
@@ -830,8 +842,9 @@ class PlaywrightRenderer:
             try:
                 self._browser = await self._playwright.chromium.launch(**launch_options)
             except Exception as e:
-                await self._playwright.stop()
-                self._playwright = None
+                if not self._new_headless:
+                    await self._playwright.stop()
+                    self._playwright = None
                 from markitai.utils.guidance import (
                     playwright_browser_missing_error,
                 )
@@ -841,6 +854,56 @@ class PlaywrightRenderer:
                     + playwright_browser_missing_error()
                 )
             return self._browser
+
+    async def _ensure_new_headless(self) -> tuple[Any, str] | None:
+        """Chromium in the new headless mode and a user agent without
+        "HeadlessChrome", or None when that build cannot be launched (an
+        install of the headless shell alone)."""
+        if self._new_headless is False:
+            return None
+        if self._new_headless is not None and self._new_headless_agent:
+            return self._new_headless, self._new_headless_agent
+        from playwright.async_api import (
+            async_playwright,  # pyright: ignore[reportMissingImports]
+        )
+
+        async with self._lock:
+            if self._playwright is None:
+                try:
+                    self._playwright = await async_playwright().start()
+                except Exception as e:  # _ensure_browser reports it
+                    logger.debug("[Playwright] Could not start: {}", e)
+                    return None
+            if self._new_headless is None:
+                launch_options: dict[str, Any] = {
+                    "headless": True,
+                    "channel": "chromium",
+                }
+                if self.proxy:
+                    launch_options["proxy"] = {
+                        "server": self.proxy,
+                        "bypass": chromium_proxy_bypass(self.proxy_bypass),
+                    }
+                browser = None
+                try:
+                    browser = await self._playwright.chromium.launch(**launch_options)
+                    page = await browser.new_page()
+                    agent = str(await page.evaluate("navigator.userAgent"))
+                    await page.close()
+                except Exception as e:
+                    logger.debug("[Playwright] New headless mode unavailable: {}", e)
+                    self._new_headless = False
+                    if browser is not None:
+                        try:
+                            await browser.close()
+                        except Exception:  # already gone
+                            pass
+                    return None
+                self._new_headless = browser
+                self._new_headless_agent = agent.replace("HeadlessChrome/", "Chrome/")
+            if self._new_headless is False or not self._new_headless_agent:
+                return None
+            return self._new_headless, self._new_headless_agent
 
     async def _get_or_create_cached_context(
         self, session_key: str, ctx_options: dict[str, Any]
@@ -983,7 +1046,15 @@ class PlaywrightRenderer:
             context = await self._get_or_create_cached_context(session_key, ctx_options)
             should_close_context = False
         else:
-            browser = await self._ensure_browser()
+            browser = None
+            # The public-network guard below applies to this context too
+            if X_CAPTURE == "direct" and is_x_post_url(url):
+                direct = await self._ensure_new_headless()
+                if direct is not None:
+                    browser, agent = direct
+                    ctx_options.setdefault("user_agent", agent)
+            if browser is None:
+                browser = await self._ensure_browser()
             context = await browser.new_context(**ctx_options)
             should_close_context = True
 
@@ -1431,6 +1502,10 @@ class PlaywrightRenderer:
                     logger.debug("[Playwright] Context close failed: {}", e)
             self._context_cache.clear()
 
+            if self._new_headless:
+                await self._new_headless.close()
+            self._new_headless = None
+            self._new_headless_agent = None
             if self._browser:
                 await self._browser.close()
                 self._browser = None

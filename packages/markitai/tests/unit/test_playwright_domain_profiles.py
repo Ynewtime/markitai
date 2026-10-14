@@ -97,7 +97,7 @@ def test_builtin_profiles_applied_for_x_com() -> None:
     assert overrides.get("skip_auto_scroll") is True
     # Matches both the 2026 DOM (data-tweet-id) and the legacy markup
     assert overrides.get("wait_for_selector") == (
-        'article[data-tweet-id], [data-testid="tweet"]'
+        'article[data-tweet-id], [data-testid="tweet"], main article'
     )
 
 
@@ -114,7 +114,7 @@ def test_user_profile_overrides_builtin() -> None:
     assert overrides.get("extra_wait_ms") == 2000
     assert overrides["skip_auto_scroll"] is True
     assert overrides["wait_for_selector"] == (
-        'article[data-tweet-id], [data-testid="tweet"]'
+        'article[data-tweet-id], [data-testid="tweet"], main article'
     )
 
 

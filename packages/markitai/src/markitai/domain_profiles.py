@@ -24,7 +24,9 @@ def resolve_domain_profile(
 
 
 _X_COM_PROFILE = DomainProfileConfig(
-    wait_for_selector='article[data-tweet-id], [data-testid="tweet"]',
+    # The 2026 DOM's tweet is a bare <article> (no data-* marks since
+    # 2026-10); the older forms are kept for cached or regional variants
+    wait_for_selector='article[data-tweet-id], [data-testid="tweet"], main article',
     wait_for="domcontentloaded",
     extra_wait_ms=500,
     skip_auto_scroll=True,
