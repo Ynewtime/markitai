@@ -375,6 +375,51 @@ def clean_residual_placeholders(content: str) -> str:
     return content
 
 
+_TABLE_DELIMITER_ROW = re.compile(r"^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$")
+_FENCE_OPEN = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+
+
+def drop_stray_table_delimiters(content: str) -> str:
+    """Remove delimiter rows (``| --- | --- |``) a table already has.
+
+    A pipe table has exactly one delimiter row, right after its header. A
+    model rewriting a table sometimes repeats it, and the repeat renders as
+    a data row of dashes. Lines inside fenced code are left alone.
+    """
+    if "---" not in content or "|" not in content:
+        return content
+    lines = content.split("\n")
+    kept: list[str] = []
+    fence: str | None = None
+    row = -1  # index of the current line within its table block; -1 outside
+    for line in lines:
+        opener = _FENCE_OPEN.match(line)
+        if fence is not None:
+            if (
+                opener
+                and opener.group(1)[0] == fence[0]
+                and len(opener.group(1)) >= len(fence)
+            ):
+                fence = None
+            kept.append(line)
+            continue
+        if opener:
+            fence = opener.group(1)
+            row = -1
+            kept.append(line)
+            continue
+        if not line.lstrip().startswith("|"):
+            row = -1
+            kept.append(line)
+            continue
+        row += 1
+        if row >= 2 and _TABLE_DELIMITER_ROW.match(line):
+            row -= 1
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def normalize_markdown_whitespace(content: str) -> str:
     """Normalize whitespace in markdown content.
 
