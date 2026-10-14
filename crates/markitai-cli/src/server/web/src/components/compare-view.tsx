@@ -11,13 +11,13 @@
 // with the Markdown's by their words and outlines them with a style of its own.
 // On phones the original sits above the Markdown.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, downloadTicket, fetchBlob, fetchPageText, fetchText, originalPagePath } from "../api/client.ts";
+import { ApiError, downloadTicket, fetchBlob, fetchPageText, fetchShotBlocks, fetchText, originalPagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
-import type { OriginalDescriptor } from "../api/types.ts";
+import type { CaptureQuality, OriginalDescriptor } from "../api/types.ts";
 import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { locate, norm, pageBlocks, pairBlocks, pairElements, TARGET_SELECTOR, targetsOf, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
+import { locate, norm, onShots, pageBlocks, pairBlocks, pairElements, shotBlocks, TARGET_SELECTOR, targetsOf, webViews, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
 import { download } from "../lib/download.ts";
 import { fmtBytes, readable } from "../lib/format.ts";
 import { loadLibraries } from "../lib/markdown.ts";
@@ -62,16 +62,20 @@ export function CompareView({
   const [tab, setTab] = useState<Tab>("rendered");
   const [targets, setTargets] = useState<{ element: HTMLElement; target: Target }[]>([]);
   const [hover, setHover] = useState<Linked | null>(null);
+  // The blocks the original can show: only those are outlined when the Markdown is hovered.
+  const [paired, setPaired] = useState<ReadonlySet<string>>(NONE);
   const markdownRoot = useRef<HTMLElement | null>(null);
   const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
-  // A web page kept as HTML: the page itself, or its screenshot when one was taken.
-  const framed = url !== null && descriptor?.kind === "html" && typeof descriptor.view === "string";
-  // The screenshot looks exactly like the page, so it is the first view when there is one.
+  // A web page: its kept page, its screenshots, or neither when what was kept is not the page
+  // (a check page, a blank page built by script).
+  const web = useMemo(() => (url !== null && descriptor ? webViews(descriptor) : null), [url, descriptor]);
+  const webPage = web !== null && (web.page || web.shot || web.failed !== null);
   const [chosenView, setSnapView] = useState<"page" | "shot" | null>(null);
   useEffect(() => setSnapView(null), [item.key]);
-  const snapView = chosenView ?? (descriptor && descriptor.page_count > 0 ? "shot" : "page");
+  // The page itself first (it links block by block and shows what the site serves), else its screenshot.
+  const snapView = web && chosenView && web[chosenView] ? chosenView : web?.page ? "page" : web?.shot ? "shot" : null;
 
-  useEffect(() => setHover(null), [item.key]);
+  useEffect(() => setHover(null), [item.key, snapView]);
 
   const onRendered = useCallback((root: HTMLElement | null) => {
     markdownRoot.current = root;
@@ -102,7 +106,8 @@ export function CompareView({
     // The innermost block under the pointer: a paragraph inside a list item is its own.
     const element = (event.target as Element | null)?.closest?.(TARGET_SELECTOR);
     const entry = element ? byElement.get(element) : undefined;
-    setHover(entry ? linkOf(entry.target.id) : null);
+    // A block the original cannot show is not outlined: there is nothing to compare it with.
+    setHover(entry && paired.has(entry.target.id) ? linkOf(entry.target.id) : null);
   };
   const reveal = (id: string) => {
     const entry = byId.get(id);
@@ -114,6 +119,10 @@ export function CompareView({
     const frame = pane.getBoundingClientRect();
     if (box.top < frame.top || box.bottom > frame.bottom) element.scrollIntoView({ block: "center", behavior: "smooth" });
   };
+  const onOriginalHover = (id: string | null) => {
+    setHover(id ? linkOf(id) : null);
+    if (id) reveal(id);
+  };
 
   const original = (
     <div class="orig">
@@ -122,44 +131,34 @@ export function CompareView({
         item={item}
         descriptor={descriptor}
         url={url}
-        views={framed && descriptor.page_count > 0 ? { value: snapView, onChange: setSnapView } : null}
-        framed={framed}
+        views={web?.page && web.shot && snapView ? { value: snapView, onChange: setSnapView } : null}
+        framed={webPage}
+        shot={snapView === "shot"}
       />
       {error ? (
         <p class="pane-note line-error">{describe(error).text}</p>
       ) : descriptor === null ? (
         <Skeleton label={t.loading} kind="page" />
-      ) : framed ? (
+      ) : webPage && url ? (
         snapView === "shot" ? (
-          <Pages t={t} item={item} descriptor={descriptor} targets={[]} hover={null} onHover={() => undefined} />
-        ) : (
+          <Pages t={t} item={item} descriptor={descriptor} targets={targets} hover={hover} onHover={onOriginalHover} onPaired={setPaired} />
+        ) : snapView === "page" ? (
           <PageFrame
             t={t}
             item={item}
             view={descriptor.view as string}
             describe={describe}
-            onFailed={descriptor.page_count > 0 ? () => setSnapView("shot") : null}
+            onFailed={web?.shot ? () => setSnapView("shot") : null}
             targets={targets}
             hover={hover}
-            onHover={(id) => {
-              setHover(id ? linkOf(id) : null);
-              if (id) reveal(id);
-            }}
+            onHover={onOriginalHover}
+            onPaired={setPaired}
           />
+        ) : (
+          <PageNotKept t={t} url={url} failed={web?.failed ?? null} />
         )
       ) : (
-        <OriginalBody
-          t={t}
-          item={item}
-          descriptor={descriptor}
-          targets={targets}
-          hover={hover}
-          describe={describe}
-          onHover={(id) => {
-            setHover(id ? linkOf(id) : null);
-            if (id) reveal(id);
-          }}
-        />
+        <OriginalBody t={t} item={item} descriptor={descriptor} targets={targets} hover={hover} describe={describe} onHover={onOriginalHover} onPaired={setPaired} />
       )}
     </div>
   );
@@ -173,6 +172,32 @@ export function CompareView({
   );
 }
 
+const NONE: ReadonlySet<string> = new Set();
+
+/** Reports, while it is shown, which of the Markdown's blocks an original view can show. */
+function usePaired(onPaired: (ids: ReadonlySet<string>) => void, ids: Iterable<string>, key: unknown) {
+  useEffect(() => {
+    onPaired(new Set(ids));
+  }, [key]);
+  useEffect(() => () => onPaired(NONE), []);
+}
+
+/** A web page whose kept copy is not the page (a check page, a blank page built by script) and
+ * that has no usable screenshot: say so, and open the page itself. */
+function PageNotKept({ t, url, failed }: { t: Dict; url: string; failed: CaptureQuality | null }) {
+  return (
+    <div class="orig-none">
+      <Icon name="Globe" size={28} />
+      <p>{t.pageNotKept(failed?.state ?? null)}</p>
+      <a class="btn btn-sm" href={url} target="_blank" rel="noopener noreferrer">
+        <Icon name="ArrowSquareOut" size={14} />
+        {t.openPage}
+        <span class="sr-only"> {t.opensNewTab}</span>
+      </a>
+    </div>
+  );
+}
+
 function OriginalHeader({
   t,
   item,
@@ -180,21 +205,24 @@ function OriginalHeader({
   url,
   views,
   framed,
+  shot,
 }: {
   t: Dict;
   item: SessionItem;
   descriptor: OriginalDescriptor | null;
   url: string | null;
   views: { value: "page" | "shot"; onChange: (value: "page" | "shot") => void } | null;
-  /** A web page's kept snapshot: the page itself is the original, so no download here (Files keeps it). */
+  /** A web page: the page itself is the original, so no download here (Files keeps it). */
   framed: boolean;
+  /** Its screenshot is shown. */
+  shot: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const fetchable = framed ? null : descriptor?.download;
   return (
     <div class="orig-head">
       <span class="orig-label">{t.original}</span>
-      {framed && <InfoTip label={t.originalPageInfo} text={t.originalPageNote} />}
+      {framed && <InfoTip label={t.originalPageInfo} text={shot ? t.originalShotNote : t.originalPageNote} />}
       {views && (
         <span class="seg orig-views" role="group" aria-label={t.originalViews}>
           {(["shot", "page"] as const).map((value) => (
@@ -246,6 +274,7 @@ function PageFrame({
   targets,
   hover,
   onHover,
+  onPaired,
 }: {
   t: Dict;
   item: SessionItem;
@@ -255,6 +284,7 @@ function PageFrame({
   targets: { element: HTMLElement; target: Target }[];
   hover: Linked | null;
   onHover: (id: string | null) => void;
+  onPaired: (ids: ReadonlySet<string>) => void;
 }) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -287,29 +317,43 @@ function PageFrame({
     );
     return new Map([...found].map(([id, index]) => [id, blocks[index]?.element as Element]));
   }, [page, targets]);
+  usePaired(onPaired, pairs.keys(), pairs);
   const reverse = useMemo(() => new Map([...pairs].map(([id, element]) => [element, id])), [pairs]);
-  // Pointer over the page: the innermost paired block under it.
+  // Pointer over the page: the innermost paired block under it. Read from the page's own
+  // :hover while the pointer is over the frame: WebKit (Safari) runs no listener in a page
+  // that may run no script, not even one the workbench adds, so events cannot carry it.
   const reverseRef = useRef(reverse);
   reverseRef.current = reverse;
   const onHoverRef = useRef(onHover);
   onHoverRef.current = onHover;
-  useEffect(() => {
-    if (!page) return;
-    const over = (event: Event) => {
-      for (let node = event.target as Element | null; node && node !== page.body; node = node.parentElement) {
-        const id = reverseRef.current.get(node);
-        if (id) return onHoverRef.current(id);
-      }
-      onHoverRef.current(null);
+  const watch = useRef<{ timer: number; id: string | null } | null>(null);
+  const stopWatching = useCallback(() => {
+    if (!watch.current) return;
+    clearInterval(watch.current.timer);
+    const had = watch.current.id;
+    watch.current = null;
+    if (had) onHoverRef.current(null);
+  }, []);
+  const startWatching = useCallback(() => {
+    if (!page || watch.current) return;
+    const state = { timer: 0, id: null as string | null };
+    const read = () => {
+      const hovered = page.querySelectorAll(":hover");
+      let id: string | null = null;
+      for (let index = hovered.length - 1; index >= 0 && id === null; index--) id = reverseRef.current.get(hovered[index] as Element) ?? null;
+      if (id === state.id) return;
+      state.id = id;
+      onHoverRef.current(id);
     };
-    const leave = () => onHoverRef.current(null);
-    page.addEventListener("mouseover", over);
-    page.documentElement.addEventListener("mouseleave", leave);
-    return () => {
-      page.removeEventListener("mouseover", over);
-      page.documentElement.removeEventListener("mouseleave", leave);
-    };
+    state.timer = window.setInterval(read, HOVER_POLL_MS);
+    watch.current = state;
+    read();
   }, [page]);
+  useEffect(() => {
+    // The page arrived under a pointer that is already over the frame.
+    if (page && frame.current?.matches(":hover")) startWatching();
+    return stopWatching;
+  }, [page, startWatching, stopWatching]);
   // The outline: an attribute on the paired block and the workbench's style for it, scrolled into the frame's view.
   useEffect(() => {
     const element = hover ? pairs.get(hover.id) : undefined;
@@ -322,22 +366,40 @@ function PageFrame({
     }
     return () => element.removeAttribute(LINKED);
   }, [hover, pairs, page]);
-  const onLoad = () => {
+  // The page is read as soon as it is parsed, not at its load event: a page that runs no script
+  // loads every picture at once (lazy loading needs script), and on a slow or filtered network the
+  // load event comes late or never, which left the page unlinked.
+  const attach = useCallback((): boolean => {
     let doc: Document | null = null;
     try {
       doc = frame.current?.contentDocument ?? null;
     } catch {
-      doc = null;
+      // A backend still on the opaque frame (v1.12) gives no document: the page shows, unlinked.
+      return true;
     }
-    // A backend still on the opaque frame (v1.12) gives no document: the page shows, unlinked.
-    if (!doc?.head || !doc.body) return setPage(null);
+    if (!doc || doc.URL === "about:blank" || doc.readyState === "loading" || !doc.head || !doc.body) return false;
     if (!doc.getElementById(STYLE_ID)) {
       const style = doc.createElement("style");
       style.id = STYLE_ID;
       style.textContent = FRAME_STYLE;
       doc.head.append(style);
     }
-    setPage(doc);
+    setPage((current) => (current === doc ? current : doc));
+    return true;
+  }, []);
+  useEffect(() => {
+    if (src === null) return;
+    let timer = 0;
+    const started = Date.now();
+    const poll = () => {
+      if (attach() || Date.now() - started > ATTACH_MS) return;
+      timer = window.setTimeout(poll, 50);
+    };
+    poll();
+    return () => clearTimeout(timer);
+  }, [src, attach]);
+  const onLoad = () => {
+    if (!attach()) setPage(null);
   };
   if (error) return <p class="pane-note line-error">{describe(error).text}</p>;
   return (
@@ -353,6 +415,8 @@ function PageFrame({
           sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
           referrerpolicy="no-referrer"
           onLoad={onLoad}
+          onMouseEnter={startWatching}
+          onMouseLeave={stopWatching}
         />
       )}
     </div>
@@ -372,6 +436,11 @@ function InfoTip({ label, text }: { label: string; text: string }) {
   );
 }
 
+/** How often the hovered block of a framed page is read while the pointer is over it. */
+const HOVER_POLL_MS = 60;
+/** How long a framed page is waited for before it is left unlinked until its load event. */
+const ATTACH_MS = 60_000;
+
 /** The outline the workbench draws in a framed page (the Markdown side's mark colour). */
 const LINKED = "data-markitai-linked";
 const STYLE_ID = "markitai-compare-style";
@@ -385,6 +454,7 @@ function OriginalBody({
   hover,
   describe,
   onHover,
+  onPaired,
 }: {
   t: Dict;
   item: SessionItem;
@@ -393,16 +463,17 @@ function OriginalBody({
   hover: Linked | null;
   describe: (error: unknown) => { text: string; detail: string };
   onHover: (id: string | null) => void;
+  onPaired: (ids: ReadonlySet<string>) => void;
 }) {
   switch (descriptor.kind) {
     case "pdf":
     case "image":
     case "screenshots":
-      return <Pages t={t} item={item} descriptor={descriptor} targets={targets} hover={hover} onHover={onHover} />;
+      return <Pages t={t} item={item} descriptor={descriptor} targets={targets} hover={hover} onHover={onHover} onPaired={onPaired} />;
     case "html":
-      return <HtmlOriginal t={t} descriptor={descriptor} targets={targets} hover={hover} describe={describe} onHover={onHover} />;
+      return <HtmlOriginal t={t} descriptor={descriptor} targets={targets} hover={hover} describe={describe} onHover={onHover} onPaired={onPaired} />;
     case "text":
-      return <TextOriginal t={t} descriptor={descriptor} targets={targets} hover={hover} describe={describe} onHover={onHover} />;
+      return <TextOriginal t={t} descriptor={descriptor} targets={targets} hover={hover} describe={describe} onHover={onHover} onPaired={onPaired} />;
     default: {
       const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
       return (
@@ -430,6 +501,7 @@ function Pages({
   targets,
   hover,
   onHover,
+  onPaired,
 }: {
   t: Dict;
   item: SessionItem;
@@ -437,6 +509,7 @@ function Pages({
   targets: { element: HTMLElement; target: Target }[];
   hover: Linked | null;
   onHover: (id: string | null) => void;
+  onPaired: (ids: ReadonlySet<string>) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [urls, setUrls] = useState<Record<number, string>>({});
@@ -499,10 +572,43 @@ function Pages({
     };
   }, [item.key, descriptor]);
 
+  usePaired(onPaired, located.keys(), located);
+
+  // A web page's screenshots: the boxes its blocks had when they were taken (v1.14), paired like the page's own.
+  useEffect(() => {
+    const path = descriptor.kind === "pdf" ? null : descriptor.blocks;
+    if (!path || !targets.length) {
+      if (descriptor.kind !== "pdf") setLocated(new Map());
+      return;
+    }
+    let stale = false;
+    fetchShotBlocks(path).then(
+      (shot) => {
+        if (stale || !Array.isArray(shot?.blocks)) return;
+        const found = pairBlocks(
+          targets.map((entry) => entry.target),
+          shotBlocks(shot.blocks),
+        );
+        const spots = new Map<string, Located>();
+        for (const [id, index] of found) {
+          const box = shot.blocks[index]?.bbox;
+          const spot = box ? onShots(box, shot.width, pages) : null;
+          if (spot && spot.box[2] > spot.box[0] && spot.box[3] > spot.box[1]) spots.set(id, spot);
+        }
+        setLocated(spots);
+      },
+      // Without the boxes the screenshots show unlinked.
+      () => !stale && setLocated(new Map()),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [item.key, descriptor, targets]);
+
   // Text layers for matching: the first pages, read once per item.
   useEffect(() => {
     if (descriptor.kind !== "pdf" || !descriptor.text_layer || !targets.length) {
-      setLocated(new Map());
+      if (descriptor.kind === "pdf") setLocated(new Map());
       return;
     }
     const controller = new AbortController();
@@ -613,6 +719,7 @@ function HtmlOriginal({
   hover,
   describe,
   onHover,
+  onPaired,
 }: {
   t: Dict;
   descriptor: OriginalDescriptor;
@@ -620,6 +727,7 @@ function HtmlOriginal({
   hover: Linked | null;
   describe: (error: unknown) => { text: string; detail: string };
   onHover: (id: string | null) => void;
+  onPaired: (ids: ReadonlySet<string>) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<"loading" | "ready" | { error: unknown }>("loading");
@@ -677,6 +785,7 @@ function HtmlOriginal({
       if (box.top < frame.top || box.bottom > frame.bottom) element.scrollIntoView({ block: "center", behavior: "smooth" });
     }
   }, [hover, pairs]);
+  usePaired(onPaired, pairs.keys(), pairs);
   const reverse = useMemo(() => new Map([...pairs].map(([id, element]) => [element, id])), [pairs]);
   return (
     <div
@@ -703,6 +812,7 @@ function TextOriginal({
   hover,
   describe,
   onHover,
+  onPaired,
 }: {
   t: Dict;
   descriptor: OriginalDescriptor;
@@ -710,6 +820,7 @@ function TextOriginal({
   hover: Linked | null;
   describe: (error: unknown) => { text: string; detail: string };
   onHover: (id: string | null) => void;
+  onPaired: (ids: ReadonlySet<string>) => void;
 }) {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -742,6 +853,7 @@ function TextOriginal({
     }
     return map;
   }, [lines, targets]);
+  usePaired(onPaired, lineOf.keys(), lineOf);
   const byLine = useMemo(() => new Map([...lineOf].map(([id, line]) => [line, id])), [lineOf]);
   const hot = hover ? lineOf.get(hover.id) : undefined;
   useEffect(() => {

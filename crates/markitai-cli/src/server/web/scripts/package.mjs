@@ -1,6 +1,8 @@
 // Package the built workbench for another backend (Python markitai vendors it):
 // a reproducible tar.gz holding index.html, every file served under /ui/ (the
-// built bundle, the vendored modules and font) and their licences, plus a
+// built bundle, the vendored modules and font) and their licences, the script a
+// backend evaluates in a page when it takes the page's screenshots
+// (capture/page-blocks.js, contract v1.14; not served to browsers), plus a
 // manifest with the source commit, each file's size and SHA-256, the build
 // command, the Content Security Policy and the paths that serve the page.
 //
@@ -32,7 +34,8 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const git = (...command) => execFileSync("git", command, { cwd: root, encoding: "utf8" }).trim();
 
 execFileSync(process.execPath, ["build.mjs", "--check"], { cwd: web, stdio: "inherit" });
-const dirty = git("status", "--porcelain", "--", "crates/markitai-cli/src/server/web", "vendor/web");
+const capture = "crates/markitai-core/src/browser/page_blocks.js";
+const dirty = git("status", "--porcelain", "--", "crates/markitai-cli/src/server/web", "vendor/web", capture);
 if (dirty && !args.includes("--allow-dirty")) {
   console.error(`uncommitted workbench changes; commit them first:\n${dirty}`);
   process.exit(1);
@@ -55,6 +58,8 @@ files.set("ui/purify.js", readFileSync(join(vendor, "purify.js")));
 for (const subset of ["latin", "latin-ext", "cyrillic", "cyrillic-ext", "greek", "greek-ext", "vietnamese"]) {
   files.set(`ui/inter-${subset}-wght.woff2`, readFileSync(join(vendor, `inter-${subset}-wght-normal.woff2`)));
 }
+// The backends' block reader: Rust compiles it in; Python evaluates this copy.
+files.set("capture/page-blocks.js", readFileSync(join(root, capture)));
 for (const name of ["marked-LICENSE", "DOMPurify-LICENSE", "Inter-OFL.txt", "phosphor-LICENSE", "lobehub-icons-LICENSE", "preact-LICENSE"]) {
   files.set(`LICENSES/${name}`, readFileSync(join(vendor, name)));
 }
@@ -75,13 +80,15 @@ const manifest = {
     node: process.version,
   },
   serve: {
-    page_paths: ["/", "/jobs", "/settings", "/settings/models", "/settings/appearance", "/settings/access"],
+    page_paths: ["/", "/jobs", "/settings", "/settings/models", "/settings/appearance", "/settings/access", "/settings/config"],
     asset_prefix: "/ui/",
     content_security_policy: csp,
     headers: { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-cache" },
     gzip_twins: [...files.keys()].filter((name) => name.endsWith(".gz")).map((name) => name.slice(3, -3)),
-    api_contract: "API-CONTRACT.md version 1.1",
+    api_contract: "API-CONTRACT.md version 1.14",
   },
+  // Evaluated in a page when its screenshots are taken; its result is GET …/original/blocks (v1.14).
+  capture: { page_blocks: "capture/page-blocks.js" },
   files: Object.fromEntries([...files].map(([name, bytes]) => [name, { bytes: bytes.length, sha256: sha256(bytes) }])),
 };
 const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);

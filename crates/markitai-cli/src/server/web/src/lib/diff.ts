@@ -172,3 +172,112 @@ export function foldRows(rows: DiffRow[], context = 3): DiffSegment[] {
   if (shown.length) segments.push({ kind: "rows", rows: shown });
   return segments;
 }
+
+/** One side of a side-by-side row: a line of one text, or nothing (the other side has more lines). */
+export interface SideCell {
+  type: "ctx" | "add" | "del";
+  no: number;
+  text: string;
+  /** Changed lines paired with a line of the other side: the line in parts, the changed parts marked. */
+  parts?: WordPart[];
+}
+export interface SideRow {
+  left: SideCell | null;
+  right: SideCell | null;
+}
+export interface WordPart {
+  text: string;
+  changed: boolean;
+}
+
+/** Side by side: unchanged lines on both sides, and in each change its removed lines beside its
+ * added ones, first with first; a pair of lines also gets the words that changed between them. */
+export function sideBySide(rows: DiffRow[]): SideRow[] {
+  const out: SideRow[] = [];
+  let index = 0;
+  while (index < rows.length) {
+    const row = rows[index] as DiffRow;
+    if (row.type === "ctx") {
+      out.push({ left: { type: "ctx", no: row.aNo ?? 0, text: row.text }, right: { type: "ctx", no: row.bNo ?? 0, text: row.text } });
+      index++;
+      continue;
+    }
+    const removed: DiffRow[] = [];
+    const added: DiffRow[] = [];
+    while (index < rows.length && (rows[index] as DiffRow).type === "del") removed.push(rows[index++] as DiffRow);
+    while (index < rows.length && (rows[index] as DiffRow).type === "add") added.push(rows[index++] as DiffRow);
+    for (let line = 0; line < Math.max(removed.length, added.length); line++) {
+      const a = removed[line];
+      const b = added[line];
+      const words = a && b ? wordDiff(a.text, b.text) : null;
+      out.push({
+        left: a ? { type: "del", no: a.aNo ?? 0, text: a.text, ...(words ? { parts: words.a } : {}) } : null,
+        right: b ? { type: "add", no: b.bNo ?? 0, text: b.text, ...(words ? { parts: words.b } : {}) } : null,
+      });
+    }
+  }
+  return out;
+}
+
+/** Words, runs of white space, single CJK characters and single marks: what a changed line is compared in. */
+const TOKEN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[\p{L}\p{N}_]+|\s+|[^\s\p{L}\p{N}_]/gu;
+/** Lines longer than this, in tokens, are marked whole. */
+const WORD_TOKENS = 2000;
+
+/** The parts of two lines that differ, word by word; null when the lines share too little for that to
+ * help (then the whole lines read as changed) or are too long to compare quickly. */
+export function wordDiff(a: string, b: string): { a: WordPart[]; b: WordPart[] } | null {
+  const left = a.match(TOKEN) ?? [];
+  const right = b.match(TOKEN) ?? [];
+  if (!left.length || !right.length || left.length + right.length > WORD_TOKENS) return null;
+  const ids = new Map<string, number>();
+  const intern = (tokens: string[]) =>
+    Int32Array.from(tokens, (token) => {
+      let id = ids.get(token);
+      if (id === undefined) ids.set(token, (id = ids.size));
+      return id;
+    });
+  const ops = editScript(intern(left), intern(right), 4_000_000);
+  if (ops === null) return null;
+  const outA: WordPart[] = [];
+  const outB: WordPart[] = [];
+  const push = (out: WordPart[], text: string, changed: boolean) => {
+    const last = out[out.length - 1];
+    if (last && last.changed === changed) last.text += text;
+    else out.push({ text, changed });
+  };
+  let x = 0;
+  let y = 0;
+  let same = 0;
+  for (const op of ops) {
+    if (op === 0) {
+      const token = left[x++] as string;
+      y++;
+      if (token.trim()) same += token.length;
+      push(outA, token, false);
+      push(outB, token, false);
+    } else if (op === 1) push(outA, left[x++] as string, true);
+    else push(outB, right[y++] as string, true);
+  }
+  // Two lines with little in common are a replacement: marking every word of both helps no one.
+  const visible = Math.max(a.replace(/\s+/g, "").length, b.replace(/\s+/g, "").length);
+  if (visible && same / visible < 0.3) return null;
+  // White space between two changed words reads as part of the change.
+  for (const out of [outA, outB]) {
+    for (let index = 1; index < out.length - 1; index++) {
+      const part = out[index] as WordPart;
+      if (!part.changed && !part.text.trim() && out[index - 1]?.changed && out[index + 1]?.changed) part.changed = true;
+    }
+  }
+  return { a: merge(outA), b: merge(outB) };
+}
+
+function merge(parts: WordPart[]): WordPart[] {
+  const out: WordPart[] = [];
+  for (const part of parts) {
+    const last = out[out.length - 1];
+    if (last && last.changed === part.changed) last.text += part.text;
+    else out.push({ ...part });
+  }
+  return out;
+}

@@ -23,6 +23,8 @@ export const ja: Dict = {
   convert: "変換",
   options: "オプション",
   cliAria: "CLI コマンド",
+  cliPathsInfo: "ファイルのパスについて",
+  cliPathsNote: "これらのファイルがあるフォルダーで実行してください。ブラウザーからはファイルのフルパスがわかりません。",
   browse: "アップロード",
   newConversion: "新しい変換",
   uploadFiles: "ファイルをアップロード",
@@ -540,6 +542,7 @@ export const ja: Dict = {
   filterByName: "名前で絞り込み",
   filterNotices: "お知らせあり",
   dismiss: "閉じる",
+  toastDetails: "詳細",
   downloadFailedFile: "ダウンロードに失敗しました",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
   nFiles: (n: number) => `${n} 個のファイル`,
@@ -654,6 +657,15 @@ export const ja: Dict = {
   originalScreenshot: "スクリーンショット",
   originalPageTitle: "サーバーが取得したページ",
   originalPageNote: "取得時のページです。サイトの画像とスタイルを表示し、スクリプトは実行しません。",
+  frontLabel: "フロントマター",
+  frontTags: (n) => `タグ ${n} 件`,
+  originalShotNote: "ページを取得したときに撮った画面です。段落にポインタを置くと画像上の位置がわかります。",
+  pageNotKept: (state) =>
+    state === "challenge"
+      ? "取得時にサイトがページではなく確認画面を表示したため、見たままに保存できませんでした。"
+      : state === "empty"
+        ? "取得時のページが空白でした（サイトがスクリプトで内容を作るため）。見たままに保存できませんでした。"
+        : "ページを見たままに保存できませんでした。",
   pageOf: (page: number, total: number) => `${page} / ${total} ページ`,
   pageImage: (page: number) => `原本の ${page} ページ目`,
   pageUnavailable: "このページを描画できませんでした",
@@ -682,7 +694,6 @@ export const ja: Dict = {
   accessRefused: "サーバーがこのタブのトークンを拒否しました。",
   accessRefusedHint: "新しいトークンを貼り付けてください。",
   accessExplain: "markitai serve が表示したリンクのトークンを貼り付けてください。",
-  replaceToken: "新しいトークンを貼り付けると置き換わります。",
   signOutTab: "このタブからサインアウト",
   signOutTabHint: "このタブのトークンだけを消去します。サーバーと他のタブはそのままです。",
   regenerateTitle: "トークンを再生成",
@@ -703,7 +714,6 @@ export const ja: Dict = {
   copyLink: "リンクをコピー",
   tokenUntilRestart: "サーバーが停止するまで有効です。次回の起動時に新しいトークンが作られます。",
   tokenUntilRestartVariable: (variable: string) => `サーバーが停止するまで有効です。次回の起動時は再び ${variable} を使います。新しいトークンを使い続けるには ${variable} を変更してください。`,
-  useOtherToken: "別のトークンを使う",
   done: "完了",
   tokenSaved: "トークンを保存しました。",
 

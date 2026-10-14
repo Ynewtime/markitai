@@ -8,6 +8,8 @@
 // search starting after the previous match, so a repeated heading finds its own
 // occurrence.
 
+import type { CaptureQuality, OriginalDescriptor } from "../api/types.ts";
+
 export type Box = [number, number, number, number];
 
 export interface PageLines {
@@ -316,6 +318,47 @@ export interface PageBlock {
   text: string;
   /** A picture's resolved address. */
   src?: string;
+  /** A picture too small to stand for one of the Markdown's (an icon, an avatar). */
+  small?: boolean;
+}
+
+/** Pictures narrower or lower than this (CSS pixels) are a page's furniture, not its content. */
+const SMALL_PICTURE = 48;
+
+/** A picture's size as the page states it, when it does. */
+function statedSmall(element: Element): boolean {
+  const width = Number(element.getAttribute("width"));
+  const height = Number(element.getAttribute("height"));
+  return (width > 0 && width < SMALL_PICTURE) || (height > 0 && height < SMALL_PICTURE);
+}
+
+/** Blocks read in the page when its screenshots were taken (contract v1.14 `…/original/blocks`). */
+export function shotBlocks(blocks: { tag: string; text: string; src?: string; bbox: Box }[]): PageBlock[] {
+  return blocks.map(({ tag, text, src, bbox }) => {
+    const small = tag === "img" && (bbox[2] - bbox[0] < SMALL_PICTURE || bbox[3] - bbox[1] < SMALL_PICTURE);
+    return { tag, text, ...(src !== undefined ? { src } : {}), ...(small ? { small } : {}) };
+  });
+}
+
+/** One box of the page (CSS pixels) on the screenshots it was cut into, top to bottom: the
+ * screenshot it starts on and the box there, in that screenshot's pixels, clipped to it. */
+export function onShots(box: Box, pageWidth: number, shots: { width: number; height: number }[]): Located | null {
+  const first = shots[0];
+  if (!first || pageWidth <= 0) return null;
+  const scale = first.width / pageWidth;
+  let top = 0;
+  for (const [index, shot] of shots.entries()) {
+    const bottom = top + shot.height;
+    const y0 = box[1] * scale;
+    if (y0 < bottom) {
+      return {
+        page: index + 1,
+        box: [box[0] * scale, Math.max(0, y0 - top), Math.min(shot.width, box[2] * scale), Math.min(shot.height, box[3] * scale - top)],
+      };
+    }
+    top = bottom;
+  }
+  return null;
 }
 
 /** The frame's elements a block of the Markdown can stand for, in document order. */
@@ -330,7 +373,9 @@ export function pageBlocks(root: ParentNode, limit = 20_000): { element: Element
     if (result.length >= limit) break;
     const tag = element.tagName.toLowerCase();
     if (tag === "img") {
-      result.push({ element, block: { tag, text: element.getAttribute("alt") ?? "", src: (element as HTMLImageElement).src || element.getAttribute("src") || "" } });
+      const block: PageBlock = { tag, text: element.getAttribute("alt") ?? "", src: (element as HTMLImageElement).src || element.getAttribute("src") || "" };
+      if (statedSmall(element)) block.small = true;
+      result.push({ element, block });
       continue;
     }
     // Text in a hidden part of the page (menus, templates) is no match for what the reader sees.
@@ -388,16 +433,19 @@ export function pairBlocks(targets: Target[], blocks: PageBlock[]): Map<string, 
       // The same words; for a heading a heading first.
       if (heading) found = search((index) => HEADING.test(blocks[index]?.tag ?? "") && words[index] === wanted);
       if (found < 0) found = search((index) => words[index] === wanted);
-      // The smallest block that holds them (the page wraps a paragraph with more).
+      // The smallest block that holds them (the page wraps a paragraph with more, or sets two of
+      // the Markdown's list items in one paragraph): it may hold a block paired before, but not
+      // a whole article around a few words.
       if (found < 0 && wanted.length >= 6) {
         let best = -1;
+        const most = wanted.length * 4 + 400;
         for (const [from, to] of [
-          [cursor, blocks.length],
-          [0, cursor],
+          [Math.max(0, cursor - 1), blocks.length],
+          [0, Math.max(0, cursor - 1)],
         ] as const) {
           for (let index = from; index < to; index++) {
             const text = words[index] ?? "";
-            if (used.has(index) || text.length < wanted.length || !text.includes(wanted)) continue;
+            if (text.length < wanted.length || text.length > most || !text.includes(wanted)) continue;
             if (best < 0 || text.length < (words[best] ?? "").length) best = index;
             if (text.length < wanted.length * 1.5) break;
           }
@@ -413,5 +461,47 @@ export function pairBlocks(targets: Target[], blocks: PageBlock[]): Map<string, 
     if (target.kind !== "table") used.add(found);
     if (found >= cursor) cursor = found + 1;
   }
+  // Pictures the Markdown names otherwise (a downloaded copy, a description a model wrote): the
+  // page's own pictures, in order, between the blocks paired before and after them.
+  const anchor = (from: number, step: number): number | undefined => {
+    for (let index = from; index >= 0 && index < targets.length; index += step) {
+      const target = targets[index] as Target;
+      const at = target.kind === "table" ? undefined : pairs.get(target.id);
+      if (at !== undefined) return at;
+    }
+    return undefined;
+  };
+  for (const [position, target] of targets.entries()) {
+    if (target.kind !== "image" || pairs.has(target.id)) continue;
+    const low = anchor(position - 1, -1) ?? -1;
+    const high = anchor(position + 1, 1) ?? blocks.length;
+    for (let index = low + 1; index < high; index++) {
+      const block = blocks[index];
+      if (block?.tag !== "img" || block.small || used.has(index)) continue;
+      pairs.set(target.id, index);
+      used.add(index);
+      break;
+    }
+  }
   return pairs;
+}
+
+/** What a web page's Compare can show (contract v1.14 `capture`): the kept page, its screenshots, or
+ * neither; `failed` says why nothing usable was kept (a check page, a blank page) when that is known. */
+export interface WebViews {
+  page: boolean;
+  shot: boolean;
+  failed: CaptureQuality | null;
+}
+
+const usable = (quality: CaptureQuality | null | undefined) => !quality || quality.state === "ok";
+
+export function webViews(descriptor: Pick<OriginalDescriptor, "kind" | "view" | "page_count" | "capture">): WebViews {
+  const kept = descriptor.kind === "html" && typeof descriptor.view === "string";
+  const shots = descriptor.page_count > 0 && (descriptor.kind === "html" || descriptor.kind === "screenshots");
+  const page = kept && usable(descriptor.capture?.page);
+  const shot = shots && usable(descriptor.capture?.screenshot);
+  const quality = descriptor.capture ?? null;
+  const failed = page || shot ? null : ((kept && !usable(quality?.page) ? quality?.page : null) ?? (shots && !usable(quality?.screenshot) ? quality?.screenshot : null) ?? null);
+  return { page, shot, failed };
 }

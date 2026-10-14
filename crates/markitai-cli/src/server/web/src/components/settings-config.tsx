@@ -14,6 +14,7 @@ import type { Dict } from "../i18n/index.ts";
 import { compareLines, foldRows } from "../lib/diff.ts";
 import { jsonProblem } from "../lib/config-text.ts";
 import { editorText, fileText, textLayout } from "../lib/line-endings.ts";
+import { toast } from "../lib/toast.ts";
 import { Icon } from "./icons.tsx";
 import { DiffRows } from "./markdown-view.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -22,12 +23,10 @@ type Stage = "edit" | "review";
 
 export function ConfigSettings({
   t,
-  announce,
   describe,
   onSaved,
 }: {
   t: Dict;
-  announce: (message: string) => void;
   describe: (error: unknown) => { text: string; detail: string };
   onSaved: () => void;
 }) {
@@ -37,7 +36,6 @@ export function ConfigSettings({
   const [stage, setStage] = useState<Stage>("edit");
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<{ text: string; detail: string; stale: boolean } | null>(null);
-  const [saved, setSaved] = useState<{ restart: boolean } | null>(null);
   const [opened, setOpened] = useState<Set<number>>(() => new Set());
   const editor = useRef<HTMLTextAreaElement>(null);
   const reviewHeading = useRef<HTMLHeadingElement>(null);
@@ -82,8 +80,8 @@ export function ConfigSettings({
       setText(editorText(next.text ?? ""));
       setStage("edit");
       setOpened(new Set());
-      setSaved({ restart: next.restart_required === true });
-      announce(t.configSaved);
+      // The toast stack reads it out; a restart it needs is said with it.
+      toast({ id: "config-saved", tone: next.restart_required === true ? "warning" : "success", text: next.restart_required === true ? t.configSavedRestart : t.configSaved });
       onSaved();
     } catch (error) {
       const stale = error instanceof ApiError && error.status === 409 && (error.reason === "stale_revision" || error.reason === "config_changed");
@@ -142,12 +140,6 @@ export function ConfigSettings({
         {(layout.kind === "crlf" || layout.kind === "cr") && <p class="config-note">{t.configEndings(layout.kind === "crlf" ? "CRLF" : "CR")}</p>}
         {layout.kind === "mixed" && <p class="config-note">{t.configEndingsMixed(layout.counts, layout.newline === "\r\n" ? "CRLF" : layout.newline === "\n" ? "LF" : "CR")}</p>}
         {layout.bom && <p class="config-note">{t.configBom}</p>}
-        {saved && !changed && (
-          <p class="config-note is-done" role="status">
-            <Icon name="Check" size={14} />
-            <span>{saved.restart ? t.configSavedRestart : t.configSaved}</span>
-          </p>
-        )}
         {stage === "edit" ? (
           <div class="config-editor">
             <label class="sr-only" for="config-text">
@@ -166,7 +158,6 @@ export function ConfigSettings({
               aria-describedby="config-check"
               onInput={(event) => {
                 setText(event.currentTarget.value);
-                setSaved(null);
                 setFailure(null);
               }}
             />

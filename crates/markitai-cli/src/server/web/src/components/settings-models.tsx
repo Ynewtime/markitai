@@ -40,6 +40,7 @@ import { ModelPicker } from "./model-picker.tsx";
 import { loadBrandMarks } from "./brand-icon.tsx";
 import { manageable, providerLabel, ProviderPicker } from "./provider-picker.tsx";
 import { StateBlock } from "./state-block.tsx";
+import { dismissToast, toast } from "../lib/toast.ts";
 
 type Described = { text: string; detail: string };
 
@@ -90,15 +91,8 @@ function Secret({
   );
 }
 
-interface TestNote {
-  tone: "success" | "error";
-  title: string;
-  message: string;
-  detail?: string;
-  /** A failed test's category, its model and the provider's own words. */
-  failure?: TestFailure;
-  model?: string;
-}
+/** One model test notice at a time: a new test replaces the last one's. */
+const TEST_TOAST = "model-test";
 
 export function ModelsSettings({
   t,
@@ -124,7 +118,6 @@ export function ModelsSettings({
   const [revision, setRevision] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [listError, setListError] = useState<Described | null>(null);
-  const [listNote, setListNote] = useState<string | null>(null);
 
   const refreshProviders = useCallback(async (refresh = false): Promise<ProviderCard[] | null> => {
     try {
@@ -162,7 +155,6 @@ export function ModelsSettings({
     setRevision(view.revision);
     setConflict(false);
     setListError(null);
-    setListNote(null);
     onSaved();
   };
 
@@ -171,7 +163,6 @@ export function ModelsSettings({
 
   /** A failed write. A revision conflict reloads the lists but keeps the draft and its revision. */
   const fail = async (error: unknown) => {
-    setListNote(null);
     if (error instanceof CredentialInputError) {
       setListError({ text: credentialText(error), detail: "" });
       return;
@@ -192,7 +183,6 @@ export function ModelsSettings({
 
   // ---- model rows: test, edit, delete, save detected
   const [tests, setTests] = useState<Record<string, "busy" | "ok" | "fail">>({});
-  const [testNote, setTestNote] = useState<TestNote | null>(null);
   /** The last failed test of each model, shown under it until it is tested again. */
   const [failures, setFailures] = useState<Record<string, TestFailure>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -212,25 +202,29 @@ export function ModelsSettings({
   };
   const runTest = async (deployment: Deployment) => {
     const id = deployment.deployment_id;
-    clearTimeout(timers.current.note);
-    setTestNote(null);
+    dismissToast(TEST_TOAST);
     setFailures(({ [id]: _, ...rest }) => rest);
     setTests((previous) => ({ ...previous, [id]: "busy" }));
     try {
       const result = await probeModel({ deployment_id: id });
       settle(id, result.ok ? "ok" : "fail");
       if (result.ok) {
-        setTestNote({ tone: "success", title: t.modelTestPassed, message: t.modelTestReady(deployment.model) });
-        timers.current.note = setTimeout(() => setTestNote(null), 3000);
+        toast({ id: TEST_TOAST, tone: "success", title: t.modelTestPassed, text: t.modelTestReady(deployment.model) });
       } else {
         const failure = testFailure(result);
         setFailures((previous) => ({ ...previous, [id]: failure }));
-        setTestNote({ tone: "error", title: t.testFailTitle(failure.reason), message: t.testFailHint(failure.reason, failure.variable, deployment.model), failure, model: deployment.model });
+        toast({
+          id: TEST_TOAST,
+          tone: "error",
+          title: `${t.testFailTitle(failure.reason)} · ${t.testFailFor(deployment.model)}`,
+          text: t.testFailHint(failure.reason, failure.variable, deployment.model),
+          ...(failure.detail ? { detail: failure.detail } : {}),
+        });
       }
     } catch (error) {
       settle(id, "fail");
       const text = describe(error);
-      setTestNote({ tone: "error", title: t.modelTestFailed, message: text.text, detail: text.detail });
+      toast({ id: TEST_TOAST, tone: "error", title: t.modelTestFailed, text: text.text, ...(text.detail ? { detail: text.detail } : {}) });
     }
   };
 
@@ -645,7 +639,7 @@ export function ModelsSettings({
 
   const label = provider ? providerLabel(t, provider) : "";
 
-  const status = (listError || listNote) && (
+  const status = listError && (
     <>
       {listError && (
         <p class="line-error dialog-error" role="alert" title={listError.detail || undefined}>
@@ -660,18 +654,13 @@ export function ModelsSettings({
                   if (settings) setRevision(settings.revision);
                   setConflict(false);
                   setListError(null);
-                  setListNote(t.draftKept);
+                  toast({ tone: "success", text: t.draftKept });
                 }}
               >
                 {t.useCurrentRevision}
               </button>
             </>
           )}
-        </p>
-      )}
-      {listNote && (
-        <p class="line-note" role="status">
-          {listNote}
         </p>
       )}
     </>
@@ -917,53 +906,6 @@ export function ModelsSettings({
             )}
           </nav>
         </div>
-        {testNote?.failure ? (
-          <div class="test-failure" role="alert">
-            <Icon name="WarningCircle" size={16} />
-            <div class="test-failure-copy">
-              <p class="test-failure-title">
-                <strong>{testNote.title}</strong>
-                {testNote.model && <span class="test-failure-model">{t.testFailFor(testNote.model)}</span>}
-              </p>
-              <p>{testNote.message}</p>
-              {testNote.failure.detail && (
-                <details class="test-failure-detail">
-                  <summary>{t.testFailDetail}</summary>
-                  <p>{testNote.failure.detail}</p>
-                </details>
-              )}
-            </div>
-            <button
-              type="button"
-              class="icon-btn"
-              aria-label={t.dismiss}
-              title={t.dismiss}
-              onClick={() => {
-                clearTimeout(timers.current.note);
-                setTestNote(null);
-              }}
-            >
-              <Icon name="X" size={14} />
-            </button>
-          </div>
-        ) : (
-          testNote && (
-            <p class={testNote.tone === "error" ? "settings-status line-error" : "settings-status line-note"} role={testNote.tone === "error" ? "alert" : "status"} title={testNote.detail || undefined}>
-              <strong>{testNote.title}</strong> · {testNote.message}
-              <button
-                type="button"
-                class="text-link"
-                onClick={() => {
-                  clearTimeout(timers.current.note);
-                  setTestNote(null);
-                }}
-              >
-                {t.dismiss}
-              </button>
-            </p>
-          )
-        )}
-
         {/* A provider's page is a few sections: they take more room between them. */}
         <div class={adding && provider !== null ? "settings-body is-sections" : "settings-body"}>
           {settings === null ? (

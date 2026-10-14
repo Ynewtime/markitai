@@ -11,6 +11,7 @@ import { ConversionsPage } from "./components/conversions-page.tsx";
 import { ConvertPage } from "./components/convert-page.tsx";
 import { DropOverlay } from "./components/drop-overlay.tsx";
 import { MAX_NOTES, NoticeStack, type Note } from "./components/notes.tsx";
+import { onToast } from "./lib/toast.ts";
 import { OptionsPanel } from "./components/options-panel.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
 import { ConfigSettings } from "./components/settings-config.tsx";
@@ -20,7 +21,7 @@ import type { PanelState } from "./components/conversions-page.tsx";
 import { StateBlock } from "./components/state-block.tsx";
 import { TokenDialog } from "./components/token-dialog.tsx";
 import { UrlInput } from "./components/url-input.tsx";
-import type { ActionFailure, InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
+import type { InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
 import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
 import { useConnectivity } from "./hooks/use-connectivity.ts";
 import { useConversions } from "./hooks/use-conversions.ts";
@@ -34,7 +35,7 @@ import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked 
 import { basename, displayName, fmtBytes } from "./lib/format.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
-import { ADMIN_SECTIONS, listQuery, parseListState, parseRoute, routePath, type PaneMode, type Route, type Section } from "./lib/route.ts";
+import { ADMIN_SECTIONS, listQuery, OPEN_MODE, parseListState, parseRoute, routePath, type PaneMode, type Route, type Section } from "./lib/route.ts";
 import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
 import { parseUrls } from "./lib/urls.ts";
 
@@ -80,6 +81,16 @@ export function App() {
     return id;
   }, []);
   const dismiss = useCallback((id: string) => setNotes((previous) => previous.filter((entry) => entry.id !== id)), []);
+  // Notices raised by any page (a model test, a saved file) join the same stack.
+  useEffect(
+    () =>
+      onToast((next) => {
+        if ((next as { dismiss?: boolean }).dismiss) {
+          if (next.id) dismiss(next.id);
+        } else note(next);
+      }),
+    [note, dismiss],
+  );
 
   // ---- service capabilities
   const [caps, setCaps] = useState<Capabilities | null>(null);
@@ -168,7 +179,7 @@ export function App() {
     const path = routePath(next);
     if (location.pathname !== path || location.search) history.pushState(null, "", path);
     setRoute(next);
-    if (next.view !== "jobs") setListState({ selected: null, mode: "inspector" });
+    if (next.view !== "jobs") setListState({ selected: null, mode: OPEN_MODE });
     requestAnimationFrame(() => document.getElementById("main")?.focus({ preventScroll: true }));
   }, []);
   useEffect(() => {
@@ -346,20 +357,19 @@ export function App() {
     [maxItems, send, staged, t, note, dismiss],
   );
 
-  // ---- a failed action on one conversion: one line in its inspector (no
-  // notice), until the action is tried again or another conversion is chosen
-  const [actionFailure, setActionFailure] = useState<ActionFailure | null>(null);
+  // ---- a failed action on one conversion: an error toast (it stays until closed),
+  // replaced when the action is tried again
   const failAction = useCallback(
     (key: string, failure: string, error?: unknown) => {
       const words = error === undefined ? { text: "", detail: "" } : describe(error);
       const [first = "", ...rest] = words.text.split(/(?<=[.!?。！？])\s*/);
       const text = first ? `${failure} · ${first}` : failure;
-      setActionFailure({ key, text, detail: [rest.join(" ").trim(), words.detail].filter(Boolean).join("\n") });
-      announce(text);
+      const detail = [rest.join(" ").trim(), words.detail].filter(Boolean).join("\n");
+      note({ id: `action:${key}`, tone: "error", text, ...(detail ? { detail } : {}) });
     },
-    [describe, announce],
+    [describe, note],
   );
-  const clearFailure = useCallback((key: string) => setActionFailure((previous) => (previous?.key === key ? null : previous)), []);
+  const clearFailure = useCallback((key: string) => dismiss(`action:${key}`), [dismiss]);
 
   // ---- item actions
   const requestItem = useCallback(
@@ -422,7 +432,7 @@ export function App() {
       const error = await requestItem(item, () => conversionsRef.current.removeItem(item), dicts[localeRef.current].deleteFailed);
       if (error !== null) return false;
       announce(dicts[localeRef.current].histDeleted(item.name));
-      updateList({ selected: null, mode: "inspector" });
+      updateList({ selected: null, mode: OPEN_MODE });
       return true;
     },
     openModels: () => navigate({ view: "settings", section: "models" }),
@@ -488,10 +498,10 @@ export function App() {
         failAction(`job:${jobId}`, dicts[localeRef.current].deleteFailed, error);
         return false;
       }
-      updateList({ selected: null, mode: "inspector" });
+      updateList({ selected: null, mode: OPEN_MODE });
       return true;
     },
-    select: (key) => updateList({ selected: key, mode: "inspector" }),
+    select: (key) => updateList({ selected: key, mode: OPEN_MODE }),
   };
 
   // Announce a newly settled item once (not on reloads or restored jobs).
@@ -545,6 +555,7 @@ export function App() {
       llmReady={llmReady}
       cloudflare={caps?.remote_services?.cloudflare}
       urls={urls}
+      staged={staged?.files ?? []}
       announce={announce}
       busy={submitting || cloudflare.pending !== null}
       onChange={setComposer}
@@ -580,7 +591,7 @@ export function App() {
     busy,
     labelWords,
     describe,
-    failure: actionFailure,
+    failure: null,
   };
   const waiting = waitingJobs(conversions.items, conversions.jobs);
   const retryable = conversions.items.filter((item) => (isFailed(item) || item.skipReason === "user_stopped") && canRetry(item));
@@ -589,7 +600,6 @@ export function App() {
   // overview; when it came with the address (a bookmark, a shared link), a
   // notice says why the page shows something else.
   const selected = listState.selected;
-  useEffect(() => setActionFailure((previous) => (previous && previous.key !== selected ? null : previous)), [selected]);
   const linked = useRef(listState.selected);
   const [gone, setGone] = useState(false);
   useEffect(() => {
@@ -597,7 +607,7 @@ export function App() {
     if (selected === null || !conversions.loaded) return;
     const exists = selected.startsWith("job:") ? selected.slice(4) in conversions.jobs : conversions.items.some((item) => item.key === selected);
     if (exists || conversions.restoreFailed.size > 0) return;
-    updateList({ selected: null, mode: "inspector" });
+    updateList({ selected: null, mode: OPEN_MODE });
     if (selected === linked.current) setGone(true);
     linked.current = null;
   }, [selected, conversions.items, conversions.jobs, conversions.loaded]);
@@ -648,7 +658,7 @@ export function App() {
           onRetry: () => void retryItems(conversions.items, "all:retry"),
           onZip: () => downloadArchive("/api/history/archive", "markitai-all.zip"),
         }}
-        onSelect={(key) => updateList({ selected: key, mode: key === null ? "inspector" : listState.mode })}
+        onSelect={(key) => updateList({ selected: key, mode: key === null ? OPEN_MODE : listState.mode })}
         onMode={(mode) => updateList({ selected, mode })}
         onNewConversion={() => navigate({ view: "convert" })}
         onCopied={() => note({ tone: "success", text: dicts[localeRef.current].copied })}
@@ -681,7 +691,7 @@ export function App() {
         onDeleteMany={async (jobIds, chosen) => {
           const words = dicts[localeRef.current];
           const { removed, failed } = await conversionsRef.current.removeMany(jobIds, chosen);
-          if (selected !== null && !isJobKey(selected) && !conversionsRef.current.items.some((item) => item.key === selected)) updateList({ selected: null, mode: "inspector" });
+          if (selected !== null && !isJobKey(selected) && !conversionsRef.current.items.some((item) => item.key === selected)) updateList({ selected: null, mode: OPEN_MODE });
           if (!failed.length) {
             announce(words.deletedMany(removed));
             note({ tone: "success", text: words.deletedMany(removed) });
@@ -730,7 +740,7 @@ export function App() {
         </div>
       ) : section === "config" ? (
         <div class="page">
-          <ConfigSettings t={t} announce={announce} describe={describe} onSaved={refreshCaps} />
+          <ConfigSettings t={t} describe={describe} onSaved={refreshCaps} />
         </div>
       ) : section === "models" ? (
         <div class="page">
@@ -742,7 +752,7 @@ export function App() {
             t={t}
             locale={locale}
             onLocale={chooseLocale}
-            userAccess={role === "user" ? { label: caps?.access?.label ?? null, onOtherToken: () => setTokenOpen(true) } : null}
+            userAccess={role === "user" ? { label: caps?.access?.label ?? null } : null}
           />
         </div>
       ) : (
@@ -775,7 +785,7 @@ export function App() {
         labelWords={labelWords}
         onOpen={(key) => {
           setRoute({ view: "jobs" });
-          updateList({ selected: key, mode: "inspector" }, true);
+          updateList({ selected: key, mode: OPEN_MODE }, true);
         }}
       />
     );
@@ -824,7 +834,7 @@ export function App() {
           }}
         />
       )}
-      <NoticeStack label={t.notificationsLabel} notes={stack} onDismiss={dismiss} />
+      <NoticeStack label={t.notificationsLabel} closeLabel={t.dismiss} detailsLabel={t.toastDetails} notes={stack} onDismiss={dismiss} />
       <DropOverlay
         label={t.dropToConvert}
         suspended={tokenOpen || cloudflare.pending !== null || route.view === "settings" || (route.view === "jobs" && listState.selected !== null)}

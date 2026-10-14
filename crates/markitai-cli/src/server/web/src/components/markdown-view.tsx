@@ -22,7 +22,7 @@ import { hasToken } from "../api/token.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
-import { compareLines, foldRows, type Comparison, type DiffRow } from "../lib/diff.ts";
+import { compareLines, foldRows, sideBySide, type Comparison, type DiffRow, type SideCell, type SideRow } from "../lib/diff.ts";
 import { download, interceptDownload } from "../lib/download.ts";
 import { basename, fmtBytes, localeTag, readable } from "../lib/format.ts";
 import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
@@ -68,6 +68,11 @@ export interface RenderedState {
 
 /** Work per slice while the rest of a document is drawn; then the page answers again. */
 const SLICE_MS = 10;
+/** The reading line, below the pane's top: the heading at or above it is the one being read (a
+ * heading the contents scrolls to sits 12 px below the top). */
+const SPY_LINE = 32;
+/** What the reader does to scroll (any of these ends the contents' pin). */
+const UNPIN_EVENTS = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
 /** Contents beside the document from this window width; below, a sheet. */
 const TOC_WIDE = 900;
 const TOC_KEY = "markitai.toc";
@@ -203,6 +208,8 @@ export function MarkdownView({
   const headingEls = useRef<(HTMLElement | null)[]>([]);
   const [headings, setHeadings] = useState<Heading[]>([]);
   const [reading, setReading] = useState(0);
+  /** The heading chosen in the contents, kept marked until the reader scrolls. */
+  const pinned = useRef<number | null>(null);
   const [wide, setWide] = useState(true);
   const [tocOpen, setTocOpen] = useState(readTocOpen);
   const [sheet, setSheet] = useState(false);
@@ -230,6 +237,7 @@ export function MarkdownView({
     setRenderError(null);
     setExpanding({});
     setReading(0);
+    pinned.current = null;
     const key = `${resultKey(item)}|${item.itemId}|${path}|${locale}|${hasToken() ? "header" : "url"}`;
     const placeholder = (alt: string) => t.imagePlaceholder(alt || t.imageUnavailable);
     const context: RenderContext = {
@@ -243,16 +251,18 @@ export function MarkdownView({
       tableLabel: t.tableAria,
       codeLabel: t.codeAria,
     };
-    // The section being read: the last heading above a line near the pane's top. The
+    // The section being read: the last heading at or above the top of the reading area. The
     // chunk at that line is found by its box (a chunk off screen is never laid out for this),
-    // then only that chunk's headings are measured.
+    // then only that chunk's headings are measured. After a jump from the contents the chosen
+    // entry stays marked until the reader scrolls (pictures loading below it move the rest).
     let frame = 0;
     const locate = () => {
       frame = 0;
+      if (pinned.current !== null) return setReading(pinned.current);
       const scroller = pane.current;
       const nodes = drawn?.nodes ?? [];
       if (!scroller || !drawn || !nodes.length) return;
-      const line = scroller.getBoundingClientRect().top + Math.min(160, scroller.clientHeight / 4);
+      const line = scroller.getBoundingClientRect().top + SPY_LINE;
       let low = 0;
       let high = nodes.length - 1;
       let at = 0;
@@ -274,8 +284,13 @@ export function MarkdownView({
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(locate);
     };
+    // The reader's own scrolling (wheel, touch, keys, the scroll bar) ends a jump's pin.
+    const unpin = () => {
+      pinned.current = null;
+    };
     const spying = !compact ? pane.current : null;
     spying?.addEventListener("scroll", onScroll, { passive: true });
+    for (const kind of UNPIN_EVENTS) spying?.addEventListener(kind, unpin, { passive: true });
     const highlight = (root: HTMLElement) => {
       if (!root.querySelector("pre > code")) return;
       loadHighlighter().then(
@@ -418,6 +433,7 @@ export function MarkdownView({
       drawUpTo.current = () => undefined;
       for (const stop of stops) stop();
       spying?.removeEventListener("scroll", onScroll);
+      for (const kind of UNPIN_EVENTS) spying?.removeEventListener(kind, unpin);
       cancelAnimationFrame(frame);
       if (drawn && complete) {
         drawn.scroll = pane.current?.scrollTop ?? 0;
@@ -457,6 +473,7 @@ export function MarkdownView({
     const place = () => {
       scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 12;
     };
+    pinned.current = index;
     place();
     // Chunks above it are laid out once they come near; put it back at the top if they moved it.
     requestAnimationFrame(() => requestAnimationFrame(place));
@@ -600,7 +617,11 @@ export function MarkdownView({
   };
   const words = new Intl.NumberFormat(localeTag(locale));
 
-  const versioned = pair !== null && (active === "rendered" || active === "source");
+  // Diff compares both versions: the switch stays, with both on; choosing one shows it rendered.
+  const versioned = pair !== null && (active === "rendered" || active === "source" || active === "diff");
+  const comparing = active === "diff";
+  // Wide panes show the two versions side by side; narrow ones, one column of changes.
+  const sideBySideDiff = wide;
   const contentsToggle = entries.length > 0 && wide && active === "rendered";
   const tabLabels: Record<Tab, string> = { rendered: t.rendered, source: t.source, diff: t.diffTab, files: t.filesTab };
   // Rendered | Source | Diff | Files with Base | LLM: in the window's tab row when it lends one (barHost).
@@ -629,7 +650,16 @@ export function MarkdownView({
           {versioned && (
             <span class="seg" role="group" aria-label={t.versionAria}>
               {(["base", "llm"] as const).map((value) => (
-                <button key={value} type="button" class={shown === value ? "is-on" : undefined} aria-pressed={shown === value} onClick={() => doc.setVersion(value)}>
+                <button
+                  key={value}
+                  type="button"
+                  class={comparing || shown === value ? "is-on" : undefined}
+                  aria-pressed={comparing || shown === value}
+                  onClick={() => {
+                    doc.setVersion(value);
+                    if (comparing) onTab("rendered");
+                  }}
+                >
                   {value === "base" ? t.baseTag : t.llmTag}
                 </button>
               ))}
@@ -648,7 +678,7 @@ export function MarkdownView({
       onView={onTab}
       versions={pair ? [{ value: "base", label: t.baseTag }, { value: "llm", label: t.llmTag }] : []}
       versionLabel={t.versionAria}
-      version={versioned ? shown : null}
+      version={versioned && !comparing ? shown : null}
       onVersion={(value) => doc.setVersion(value as "base" | "llm")}
       contents={contentsToggle ? { label: t.tocTitle, on: tocOpen, toggle: toggleToc } : null}
     />
@@ -692,7 +722,7 @@ export function MarkdownView({
                   </ul>
                 </details>
               )}
-              {front && <FrontCard front={front} />}
+              {front && <FrontCard t={t} front={front} />}
               <div ref={body} class="doc-body" onClick={onDocumentLink} onAuxClick={onDocumentLink} />
               {Object.entries(expanding).map(([key, from]) => {
                 const index = Number(key);
@@ -733,14 +763,14 @@ export function MarkdownView({
           ) : diff.kind === "too-large" ? (
             <p class="pane-note">{t.diffTooLarge}</p>
           ) : (
-            <div class="diff" aria-label={t.diffAria}>
+            <div class={sideBySideDiff ? "diff is-split" : "diff"} aria-label={t.diffAria}>
               <p class="doc-meta diff-meta">
                 {basename(pair.base)} → {basename(pair.llm)} · +{diff.added} -{diff.removed}
                 {diff.added === 0 && diff.removed === 0 && ` · ${t.diffSame}`}
               </p>
               {foldRows(diff.rows).map((segment, index) =>
                 segment.kind === "rows" || opened.has(index) ? (
-                  <DiffRows key={index} rows={segment.rows} />
+                  sideBySideDiff ? <DiffSplit key={index} rows={segment.rows} marks={{ add: t.diffAdded, del: t.diffRemoved }} /> : <DiffRows key={index} rows={segment.rows} />
                 ) : (
                   <button key={index} type="button" class="diff-fold" onClick={() => setOpened((previous) => new Set(previous).add(index))}>
                     <Icon name="CaretDown" size={13} />
@@ -865,6 +895,43 @@ function SourceText({ label, frontmatter, body }: { label: string; frontmatter: 
         </span>
       ))}
     </pre>
+  );
+}
+
+/** The diff side by side: the base on the left, the LLM version on the right, a change's lines
+ * beside each other with the words that changed marked; blocks of rows the browser skips off screen. */
+function DiffSplit({ rows, marks }: { rows: DiffRow[]; marks: { add: string; del: string } }) {
+  const sides = useMemo(() => sideBySide(rows), [rows]);
+  const blocks: SideRow[][] = [];
+  for (let index = 0; index < sides.length; index += BLOCK_LINES) blocks.push(sides.slice(index, index + BLOCK_LINES));
+  const cell = (side: SideCell | null, which: "a" | "b") =>
+    side === null ? (
+      <span class={`dsplit-cell is-${which} is-empty`} aria-hidden="true">
+        <span class="diff-no" />
+        <span class="diff-text" />
+      </span>
+    ) : (
+      <span class={side.type === "ctx" ? `dsplit-cell is-${which}` : `dsplit-cell is-${which} is-${side.type}`}>
+        <span class="diff-no" aria-hidden="true">
+          {side.no}
+        </span>
+        {side.type !== "ctx" && <span class="sr-only">{side.type === "add" ? marks.add : marks.del} </span>}
+        <span class="diff-text">{side.parts ? side.parts.map((part, index) => (part.changed ? <mark key={index}>{part.text}</mark> : part.text)) : side.text}</span>
+      </span>
+    );
+  return (
+    <>
+      {blocks.map((block, index) => (
+        <div key={index} class="diff-block">
+          {block.map((row, line) => (
+            <div key={line} class="dsplit-row">
+              {cell(row.left, "a")}
+              {cell(row.right, "b")}
+            </div>
+          ))}
+        </div>
+      ))}
+    </>
   );
 }
 

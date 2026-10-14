@@ -114,7 +114,9 @@ export function HelpTooltip({
               </dl>
             ) : null}
           </div>,
-          document.body,
+          // Inside the page's main landmark (a bubble outside every landmark is content no
+          // landmark holds); the bubble is fixed to the viewport either way.
+          anchor.current?.closest("main") ?? document.body,
         )}
     </span>
   );

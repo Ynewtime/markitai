@@ -198,9 +198,12 @@ test("views and the list selection are real addresses", () => {
   assert.equal(routePath({ view: "missing", path: "/anything" }), "/anything");
   assert.equal(routePath({ view: "settings", section: "access" }), "/settings/access");
   assert.deepEqual(parseListState("?sel=0123456789ab/i3&view=compare"), { selected: "0123456789ab/i3", mode: "compare" });
-  assert.deepEqual(parseListState("?sel=job:0123456789ab"), { selected: "job:0123456789ab", mode: "inspector" });
-  assert.deepEqual(parseListState("?sel=../../x&view=other"), { selected: null, mode: "inspector" });
-  assert.equal(listQuery({ selected: "a/i1", mode: "preview" }), "?sel=a%2Fi1&view=preview");
+  // A conversion opens on its Preview; Details has its own address.
+  assert.deepEqual(parseListState("?sel=job:0123456789ab"), { selected: "job:0123456789ab", mode: "preview" });
+  assert.deepEqual(parseListState("?sel=0123456789ab/i3&view=details"), { selected: "0123456789ab/i3", mode: "inspector" });
+  assert.deepEqual(parseListState("?sel=../../x&view=other"), { selected: null, mode: "preview" });
+  assert.equal(listQuery({ selected: "a/i1", mode: "preview" }), "?sel=a%2Fi1");
+  assert.equal(listQuery({ selected: "a/i1", mode: "inspector" }), "?sel=a%2Fi1&view=details");
   assert.equal(listQuery({ selected: null, mode: "preview" }), "");
 });
 

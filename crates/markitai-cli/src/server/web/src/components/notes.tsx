@@ -1,16 +1,20 @@
-// Transient notices as minimal strips at the bottom: on a phone full width,
-// directly above the tab bar (or an open sheet's action bar); on a wide screen a
-// 380 px stack at the bottom right. Newest at the bottom, at most three. Each is
-// one sentence with a mark (✕ error, ! warning, ✓ done) and at most one text
-// action; it leaves after 4 s (6 s for an error), but not while it is pressed,
-// hovered or focused, and a swipe down dismisses it. Lasting conditions are not
-// notices: they live in the inspector of what they affect, or in a panel.
+// Transient notices as toast cards in one stack at the bottom of the window: on a
+// wide screen at the bottom right, on a phone centred directly above the tab bar
+// (or the selection bar). Newest at the bottom, at most three; they never move
+// the page. Each is a sentence with a mark (✕ error, ! warning, ✓ done), at most
+// one text action, folded details when there are any, and a close button. Done
+// and warning notices leave after a few seconds, but not while hovered,
+// pressed or focused; errors stay until closed. A swipe down dismisses one.
+// Lasting conditions are not notices: they live beside what they affect.
 import { useEffect, useRef, useState } from "preact/hooks";
+import { Icon } from "./icons.tsx";
 
 export interface Note {
   id: string;
   tone: "error" | "warning" | "success";
   text: string;
+  title?: string;
+  detail?: string;
   action?: { label: string; run: () => void };
   /** Busy notices (an upload) show an arrow and never leave by themselves. */
   busy?: boolean;
@@ -18,11 +22,12 @@ export interface Note {
 
 /** The most notices shown at once; a fourth removes the oldest at once. */
 export const MAX_NOTES = 3;
-const STAY: Record<Note["tone"], number> = { success: 4000, warning: 4000, error: 6000 };
+/** How long a done or warning notice stays (errors stay until closed). */
+const STAY_MS = 5000;
 const LEAVE_MS = 140;
 const MARK: Record<Note["tone"], string> = { error: "✕", warning: "!", success: "✓" };
 
-function Strip({ note, onDismiss }: { note: Note; onDismiss: (id: string) => void }) {
+function Toast({ note, closeLabel, detailsLabel, onDismiss }: { note: Note; closeLabel: string; detailsLabel: string; onDismiss: (id: string) => void }) {
   const [held, setHeld] = useState({ pointer: false, focus: false, press: false });
   const [leaving, setLeaving] = useState(false);
   const start = useRef<number | null>(null);
@@ -33,23 +38,23 @@ function Strip({ note, onDismiss }: { note: Note; onDismiss: (id: string) => voi
     setTimeout(() => onDismiss(note.id), LEAVE_MS);
   };
   useEffect(() => {
-    if (note.busy || paused || leaving) return;
-    const timer = setTimeout(leave, STAY[note.tone]);
+    if (note.busy || note.tone === "error" || paused || leaving) return;
+    const timer = setTimeout(leave, STAY_MS);
     return () => clearTimeout(timer);
   }, [note, paused, leaving]);
   return (
     <li
-      class={`note-strip is-${note.tone}${leaving ? " is-leaving" : ""}`}
+      class={`toast is-${note.tone}${leaving ? " is-leaving" : ""}`}
       onPointerEnter={() => setHeld((state) => ({ ...state, pointer: true }))}
       onPointerLeave={() => setHeld((state) => ({ ...state, pointer: false, press: false }))}
       onPointerDown={(event) => {
         start.current = event.clientY;
-        // Keep the gesture when the finger or pointer leaves the strip downwards.
-        if (!(event.target as Element).closest("button")) event.currentTarget.setPointerCapture?.(event.pointerId);
+        // Keep the gesture when the finger or pointer leaves the card downwards.
+        if (!(event.target as Element).closest("button, summary")) event.currentTarget.setPointerCapture?.(event.pointerId);
         setHeld((state) => ({ ...state, press: true }));
       }}
       onPointerUp={(event) => {
-        // A swipe down (or a drag of a strip toward the edge) dismisses it.
+        // A swipe down dismisses it.
         if (start.current !== null && event.clientY - start.current > 24) leave();
         start.current = null;
         setHeld((state) => ({ ...state, press: false }));
@@ -66,12 +71,26 @@ function Strip({ note, onDismiss }: { note: Note; onDismiss: (id: string) => voi
       <span class="note-mark" aria-hidden="true">
         {note.busy ? "↑" : MARK[note.tone]}
       </span>
-      <span class="note-text" title={note.text}>
-        {note.text}
-      </span>
+      <div class="toast-copy">
+        <p class="toast-text">
+          {note.title && <strong>{note.title} · </strong>}
+          {note.text}
+        </p>
+        {note.detail && (
+          <details class="toast-detail">
+            <summary>{detailsLabel}</summary>
+            <p>{note.detail}</p>
+          </details>
+        )}
+      </div>
       {note.action && (
         <button type="button" class="note-action" onClick={note.action.run}>
           {note.action.label}
+        </button>
+      )}
+      {!note.busy && (
+        <button type="button" class="icon-btn toast-close" aria-label={closeLabel} title={closeLabel} onClick={leave}>
+          <Icon name="X" size={14} />
         </button>
       )}
     </li>
@@ -81,7 +100,7 @@ function Strip({ note, onDismiss }: { note: Note; onDismiss: (id: string) => voi
 /** The stack, and two live regions that read every new notice (errors at once,
  * the others politely). The regions are always in the page, apart from the
  * stack, so its visual order (newest last) never decides what is read. */
-export function NoticeStack({ label, notes, onDismiss }: { label: string; notes: Note[]; onDismiss: (id: string) => void }) {
+export function NoticeStack({ label, closeLabel, detailsLabel, notes, onDismiss }: { label: string; closeLabel: string; detailsLabel: string; notes: Note[]; onDismiss: (id: string) => void }) {
   const [said, setSaid] = useState({ alert: "", status: "" });
   const heard = useRef(new Set<string>());
   useEffect(() => {
@@ -90,17 +109,18 @@ export function NoticeStack({ label, notes, onDismiss }: { label: string; notes:
       if (heard.current.has(key)) continue;
       heard.current.add(key);
       const channel = note.tone === "error" ? "alert" : "status";
-      setSaid((state) => ({ ...state, [channel]: state[channel] === note.text ? `${note.text} ` : note.text }));
+      const text = note.title ? `${note.title}. ${note.text}` : note.text;
+      setSaid((state) => ({ ...state, [channel]: state[channel] === text ? `${text} ` : text }));
     }
   }, [notes]);
   const shown = notes.slice(-MAX_NOTES);
   return (
     <>
       {shown.length > 0 && (
-        <section class="note-strips" aria-label={label}>
+        <section class="toasts" aria-label={label}>
           <ul>
             {shown.map((note) => (
-              <Strip key={note.id} note={note} onDismiss={onDismiss} />
+              <Toast key={note.id} note={note} closeLabel={closeLabel} detailsLabel={detailsLabel} onDismiss={onDismiss} />
             ))}
           </ul>
         </section>

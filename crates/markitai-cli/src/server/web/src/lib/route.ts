@@ -33,6 +33,8 @@ export function routePath(route: Route): string {
 }
 
 export type PaneMode = "inspector" | "preview" | "compare";
+/** A conversion opens on its Preview (Details for a submission, or a conversion without a result). */
+export const OPEN_MODE: PaneMode = "preview";
 
 export interface ListState {
   selected: string | null;
@@ -45,14 +47,14 @@ export function parseListState(search: string): ListState {
   const view = params.get("view");
   return {
     selected: selected && /^(?:job:)?[\w-]{1,64}(?:\/[\w-]{1,64})?$/.test(selected) ? selected : null,
-    mode: view === "preview" || view === "compare" ? view : "inspector",
+    mode: view === "details" ? "inspector" : view === "compare" ? "compare" : OPEN_MODE,
   };
 }
 
 export function listQuery(state: ListState): string {
   const params = new URLSearchParams();
   if (state.selected) params.set("sel", state.selected);
-  if (state.selected && state.mode !== "inspector") params.set("view", state.mode);
+  if (state.selected && state.mode !== OPEN_MODE) params.set("view", state.mode === "inspector" ? "details" : state.mode);
   const text = params.toString();
   return text ? `?${text}` : "";
 }

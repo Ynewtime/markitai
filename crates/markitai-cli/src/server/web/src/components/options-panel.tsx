@@ -6,7 +6,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { CloudflareCapability, ConversionBackend, FetchStrategy, OutputProfile, Preset } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { cloudflareReason } from "../lib/cloudflare.ts";
-import { cliCommand } from "../lib/cli.ts";
+import { cliCommand, stagedPaths } from "../lib/cli.ts";
 import { copyText } from "../lib/clipboard.ts";
 import {
   applyPreset,
@@ -147,6 +147,7 @@ export function OptionsPanel({
   llmReady,
   cloudflare,
   urls,
+  staged = [],
   announce,
   source,
   heading,
@@ -162,6 +163,8 @@ export function OptionsPanel({
   llmReady: boolean;
   cloudflare?: CloudflareCapability;
   urls: string[];
+  /** Files waiting for Convert: the command names them relative to their folder. */
+  staged?: File[];
   announce: (message: string) => void;
   /** The URL line, given the tools for its bottom row. */
   source: (tools: ComponentChildren) => ComponentChildren;
@@ -250,7 +253,8 @@ export function OptionsPanel({
     noCompress: { label: t.advNoCompress, text: t.helpCompress },
   } satisfies Record<string, HelpItem>;
   const remoteNotice = effective.strategy === "defuddle" ? t.noticeDefuddle : effective.strategy === "jina" ? t.noticeJina : null;
-  const command = cliCommand(urls, { ...effective, preset: shownPreset }, presets);
+  const paths = stagedPaths(staged);
+  const command = cliCommand([...paths, ...urls], { ...effective, preset: shownPreset }, presets);
   const copy = () => {
     void copyText(command).then((ok) => {
       setCopied(ok ? "copied" : "failed");
@@ -474,9 +478,20 @@ export function OptionsPanel({
                   {command}
                 </code>
               </div>
-              <button type="button" class="pill-btn" onClick={copy}>
-                {copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : t.copy}
-              </button>
+              <span class="cli-actions">
+                {paths.length > 0 && (
+                  <HelpTooltip text={t.cliPathsNote}>
+                    {(describedBy) => (
+                      <button type="button" class="icon-btn info-tip cli-info" aria-label={t.cliPathsInfo} aria-describedby={describedBy}>
+                        <Icon name="Info" size={15} />
+                      </button>
+                    )}
+                  </HelpTooltip>
+                )}
+                <button type="button" class="pill-btn" onClick={copy}>
+                  {copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : t.copy}
+                </button>
+              </span>
             </div>
           </div>
         )}
