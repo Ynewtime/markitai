@@ -82,8 +82,72 @@ async def test_http_failure_can_recover_with_enrichment_and_screenshot(
     assert result.metadata["source_frontmatter"]["word_count"] == 3
     assert result.screenshot_path == screenshot
     capture.assert_awaited_once()
-    page.wait_for_selector.assert_not_awaited()
+    # x.com refused the browser: X's embedded-post page stands in for it,
+    # and the tweet selector of the refused page is never waited for
+    assert page.goto.await_args_list[-1].args[0] == (
+        "https://platform.twitter.com/embed/Tweet.html?id=123&dnt=true"
+    )
+    page.wait_for_selector.assert_awaited_once()
+    assert page.wait_for_selector.await_args.args[0] == "article"
+    assert result.metadata["page_source"] == "x-embed"
     context.close.assert_awaited_once()
+
+
+async def test_refused_x_post_keeps_the_embedded_post_as_its_page(
+    browser_page, tmp_path
+):
+    renderer, page, _ = browser_page
+    drawn = "<!DOCTYPE html><html><body><article><p>Post text that X drew</p>"
+    drawn += "<img src='https://pbs.twimg.com/media/a.jpg'></article></body></html>"
+    page.evaluate = AsyncMock(
+        return_value={
+            "html": drawn,
+            "text": "Post text that X drew",
+            "media": 1,
+            "shadow": 0,
+        }
+    )
+    with patch.object(
+        renderer,
+        "_try_enricher_fallback_async",
+        AsyncMock(return_value=("Full tweet content", {"title": "T"}, "fxtwitter")),
+    ):
+        result = await renderer.fetch(URL)
+    assert result.html == drawn
+    assert result.metadata["page_source"] == "x-embed"
+    assert "page_problem" not in result.metadata
+
+
+async def test_refused_page_that_stays_empty_keeps_no_page_or_screenshot(
+    browser_page, tmp_path
+):
+    renderer, page, _ = browser_page
+    page.wait_for_selector.side_effect = TimeoutError("no article")
+    page.evaluate = AsyncMock(
+        return_value={
+            "html": "<html><body></body></html>",
+            "text": "",
+            "media": 0,
+            "shadow": 0,
+        }
+    )
+    with (
+        patch.object(
+            renderer,
+            "_try_enricher_fallback_async",
+            AsyncMock(return_value=("Full tweet content", {"title": "T"}, "fxtwitter")),
+        ),
+        patch("markitai.fetch_playwright._capture_screenshot", AsyncMock()) as capture,
+    ):
+        result = await renderer.fetch(
+            URL, screenshot_config=ScreenshotConfig(enabled=True), output_dir=tmp_path
+        )
+    assert result.content == "Full tweet content"
+    assert result.html is None
+    assert result.screenshot_path is None
+    assert result.metadata["page_problem"] == "blank"
+    assert "page_source" not in result.metadata
+    capture.assert_not_awaited()
 
 
 @pytest.mark.parametrize("selector_found", [False, True])

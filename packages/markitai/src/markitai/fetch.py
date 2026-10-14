@@ -443,7 +443,17 @@ def should_use_browser_for_domain(url: str, fallback_patterns: list[str]) -> boo
 
 
 def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult:
-    """Attach a separately captured screenshot without dropping existing fields."""
+    """Attach a separately captured screenshot without dropping existing fields.
+
+    The browser's page also becomes the kept page when the content strategy
+    kept none (Jina, Defuddle, Cloudflare, a cache hit), so the page and its
+    screenshot come together.
+    """
+    html = result.html
+    if html is None and not (getattr(pw_result, "metadata", None) or {}).get(
+        "page_problem"
+    ):
+        html = getattr(pw_result, "html", None)
     return FetchResult(
         content=result.content,
         strategy_used=result.strategy_used,
@@ -454,7 +464,7 @@ def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult
         cache_hit=result.cache_hit,
         screenshot_path=getattr(pw_result, "screenshot_path", None),
         screenshot_tiles=list(getattr(pw_result, "screenshot_tiles", []) or []),
-        html=result.html,
+        html=html,
     )
 
 
@@ -1170,22 +1180,40 @@ async def _capture_missing_screenshot(
         logger.warning(f"[URL] Screenshot not captured: {unavailable}")
         return result, unavailable
 
-    try:
-        logger.debug("[URL] Capturing screenshot separately via playwright")
-        pw_result = await fetch_with_playwright(
-            url,
-            **_get_playwright_fetch_kwargs(
+    # A verification page gets one more load: the first visit often sets
+    # the cookie that lets the second through. When the fetch chain's own
+    # browser attempt met one already, this capture is that retry.
+    attempts = 1 if result.metadata.get("browser_challenge") else 2
+    pw_result: Any = None
+    for attempt in range(attempts):
+        try:
+            logger.debug("[URL] Capturing screenshot separately via playwright")
+            pw_result = await fetch_with_playwright(
                 url,
-                config,
-                screenshot_config=screenshot_config,
-                output_dir=screenshot_dir,
-                renderer=renderer,
-            ),
-        )
-    except Exception as e:
-        reason = _error_reason(e)
-        logger.warning(f"[URL] Screenshot capture failed: {reason}")
-        return result, reason
+                **_get_playwright_fetch_kwargs(
+                    url,
+                    config,
+                    screenshot_config=screenshot_config,
+                    output_dir=screenshot_dir,
+                    renderer=renderer,
+                ),
+            )
+        except Exception as e:
+            reason = _error_reason(e)
+            logger.warning(f"[URL] Screenshot capture failed: {reason}")
+            return result, reason
+        problem = (pw_result.metadata or {}).get("page_problem")
+        if problem != "challenge" or attempt + 1 == attempts:
+            break
+        logger.debug("[URL] Verification page; loading {} once more", url)
+
+    problem = (pw_result.metadata or {}).get("page_problem")
+    if problem is not None:
+        from markitai.fetch_page_check import PROBLEM_TEXT
+
+        result.metadata["page_problem"] = problem
+        logger.warning(f"[URL] Screenshot not captured: {PROBLEM_TEXT[problem]}")
+        return result, PROBLEM_TEXT[problem]
 
     merged = _merge_screenshot_result(result, pw_result)
     if merged.screenshot_path is None:
@@ -1491,6 +1519,9 @@ async def _fetch_with_fallback(
         },
     )
 
+    # The browser met a verification page: a later screenshot capture is
+    # then the one retry it gets (see _capture_missing_screenshot)
+    browser_challenged = False
     for strat in strategies:
         runner = get_runner(strat)
         if runner is None:
@@ -1545,6 +1576,11 @@ async def _fetch_with_fallback(
                 is_invalid, reason = _is_invalid_content(
                     result.content, allow_short_content=_native_accepted(result)
                 )
+                if strat == "playwright" and (
+                    result.metadata.get("page_problem") == "challenge"
+                    or reason.startswith("captcha_")
+                ):
+                    browser_challenged = True
                 if is_invalid:
                     logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                     errors.append(f"{strat}: invalid content ({reason})")
@@ -1558,6 +1594,8 @@ async def _fetch_with_fallback(
                     "profile_applied": domain_profile_applied,
                 }
             )
+            if browser_challenged:
+                result.metadata["browser_challenge"] = True
             return result
 
         except JinaRateLimitError as e:

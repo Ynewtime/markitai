@@ -46,6 +46,8 @@ def _page(calls: list[str]) -> AsyncMock:
     async def evaluate(script: str):
         if "scrollTo" in script:
             calls.append("scroll")
+        elif "adoptedStyleSheets" in script:
+            calls.append("rendered")
         elif "shadowRoot" in script:
             calls.append("shadow")
         elif "querySelectorAll(sel)" in script:
@@ -87,7 +89,8 @@ class TestCaptureBeforeDomCleanup:
                 screenshot_config=ScreenshotConfig(enabled=True),
                 output_dir=tmp_path,
             )
-        assert calls == ["scroll", "screenshot", "shadow", "cleanup"]
+        # The kept copy of the page is read as drawn, before the clean-up too
+        assert calls == ["scroll", "screenshot", "rendered", "shadow", "cleanup"]
 
 
 class TestPostLoadDeadline:

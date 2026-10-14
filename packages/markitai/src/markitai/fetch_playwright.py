@@ -198,6 +198,97 @@ def clear_browser_cache() -> None:
     _browser_installed_cache = None
 
 
+#: The page as the browser drew it, for the copy ``markitai serve`` keeps.
+#: Style rules a script inserted through the CSSOM (CSS-in-JS, as on X) are
+#: not in ``page.content()``; they are written into their ``<style>``
+#: elements here, constructed style sheets are appended, and scripts are
+#: dropped (the copy is shown without them). Also measures the visible text,
+#: the media and the shadow roots for :func:`fetch_page_check.page_problem`.
+_RENDERED_DOM_SCRIPT = """() => {
+  const cssText = (sheet) => {
+    try { return Array.from(sheet.cssRules, (r) => r.cssText).join("\\n"); }
+    catch (e) { return null; }
+  };
+  const originals = Array.from(document.querySelectorAll("style"));
+  const clone = document.documentElement.cloneNode(true);
+  const copies = Array.from(clone.querySelectorAll("style"));
+  originals.forEach((style, i) => {
+    const copy = copies[i];
+    if (!copy || !style.sheet) return;
+    const text = cssText(style.sheet);
+    if (text !== null && text.length > (style.textContent || "").length) {
+      copy.textContent = text;
+    }
+  });
+  const head = clone.querySelector("head") || clone;
+  for (const sheet of document.adoptedStyleSheets || []) {
+    const text = cssText(sheet);
+    if (text) {
+      const style = document.createElement("style");
+      style.textContent = text;
+      head.appendChild(style);
+    }
+  }
+  clone.querySelectorAll("script").forEach((node) => node.remove());
+  const doctype = document.doctype ? "<!DOCTYPE " + document.doctype.name + ">" : "";
+  const body = document.body;
+  return {
+    html: doctype + clone.outerHTML,
+    text: body ? (body.innerText || "").slice(0, 4000) : "",
+    media: document.querySelectorAll(
+      "img, video, canvas, picture, iframe, embed, object"
+    ).length,
+    shadow: Array.from(document.querySelectorAll("*")).filter((e) => e.shadowRoot)
+      .length,
+  };
+}"""
+
+#: X's embedded-post page renders a post without signing in when x.com
+#: itself refuses a browser (HTTP 403 for a signed-out headless visit).
+_X_EMBED_URL = "https://platform.twitter.com/embed/Tweet.html?id={id}&dnt=true"
+_X_POST_ID = re.compile(r"/(?:status|statuses)/(\d+)")
+
+
+async def _rendered_page(
+    page: Any, deadline: Any = None
+) -> tuple[str | None, str | None]:
+    """``(rendered HTML, problem)`` of the page as it stands.
+
+    ``problem`` is :func:`fetch_page_check.page_problem`'s verdict (a
+    verification page, an empty page) or None. Never raises except for the
+    page budget running out.
+    """
+    from markitai.fetch_page_check import page_problem
+
+    try:
+        call = page.evaluate(_RENDERED_DOM_SCRIPT)
+        data = await (deadline.run(call, "rendered DOM") if deadline else call)
+    except PlaywrightPageTimeoutError:
+        raise
+    except Exception as e:
+        logger.debug("[Playwright] Rendered DOM not read: {}", e)
+        return None, None
+    if not isinstance(data, dict) or not isinstance(data.get("html"), str):
+        return None, None
+    html = data["html"]
+    problem = page_problem(
+        html,
+        text=str(data.get("text") or ""),
+        media=int(data.get("media") or 0),
+        shadow_roots=int(data.get("shadow") or 0),
+    )
+    return html, problem
+
+
+def _discard_screenshots(paths: Sequence[Path | None]) -> None:
+    for path in paths:
+        if path is not None:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError as e:
+                logger.debug("[Playwright] Could not remove {}: {}", path, e)
+
+
 def _build_auto_scroll_script(
     max_steps: int = DEFAULT_PLAYWRIGHT_AUTO_SCROLL_STEPS,
     step_delay_ms: int = DEFAULT_PLAYWRIGHT_AUTO_SCROLL_DELAY_MS,
@@ -947,16 +1038,14 @@ class PlaywrightRenderer:
                 if enriched is None:
                     raise FetchError(f"Playwright navigation returned HTTP {status}")
                 enriched.metadata["http_status"] = status
-                if needs_screenshot and screenshot_config and output_dir:
-                    (
-                        enriched.screenshot_path,
-                        enriched.screenshot_tiles,
-                        shot_error,
-                    ) = await _capture_screenshot_within(
-                        page, screenshot_config, output_dir, url, timeout_ms=timeout
-                    )
-                    if shot_error is not None:
-                        enriched.metadata["screenshot_error"] = shot_error
+                await self._capture_refused_page(
+                    page,
+                    enriched,
+                    url,
+                    timeout=timeout,
+                    screenshot_config=screenshot_config if needs_screenshot else None,
+                    output_dir=output_dir,
+                )
                 return enriched
 
             # Precise element waiting (preferred) or time-based fallback.
@@ -1053,6 +1142,22 @@ class PlaywrightRenderer:
                 )
                 deadline.extend(time.monotonic() - capture_started)
 
+            # The page as drawn, before the clean-up below changes it: the
+            # copy serve keeps. A verification page or an empty page is not
+            # the page: neither it nor its screenshot is kept.
+            rendered_html, page_problem_reason = await _rendered_page(page, deadline)
+            if page_problem_reason is not None:
+                from markitai.fetch_page_check import PROBLEM_TEXT
+
+                logger.debug(
+                    "[Playwright] {} looks like a {} page", url, page_problem_reason
+                )
+                _discard_screenshots([screenshot_path, *screenshot_tiles])
+                if screenshot_path is not None:
+                    screenshot_error = PROBLEM_TEXT[page_problem_reason]
+                screenshot_path, screenshot_tiles = None, []
+                rendered_html = None
+
             # Browser DOM normalize: flatten live shadow roots before extraction
             try:
                 shadow_script = _build_shadow_dom_normalize_script()
@@ -1077,6 +1182,8 @@ class PlaywrightRenderer:
             metadata: dict[str, Any] = {"renderer": "playwright", "wait_for": wait_for}
             if screenshot_error is not None:
                 metadata["screenshot_error"] = screenshot_error
+            if page_problem_reason is not None:
+                metadata["page_problem"] = page_problem_reason
 
             # Try native webextract FIRST to avoid redundant HTML→Markdown
             # conversion. Only fall back to _html_to_markdown if webextract
@@ -1205,7 +1312,13 @@ class PlaywrightRenderer:
                 screenshot_path=screenshot_path,
                 screenshot_tiles=screenshot_tiles,
                 metadata=metadata,
-                html=html_content,
+                # The kept page: as drawn (None for a verification or empty
+                # page), else the extraction's DOM when it could not be read
+                html=(
+                    rendered_html
+                    if rendered_html is not None or page_problem_reason
+                    else html_content
+                ),
             )
         except PlaywrightPageTimeoutError:
             timed_out = True
@@ -1217,6 +1330,61 @@ class PlaywrightRenderer:
                 close_context=should_close_context or timed_out,
                 session_key=None if should_close_context else session_key,
             )
+
+    async def _capture_refused_page(
+        self,
+        page: Any,
+        result: PlaywrightFetchResult,
+        url: str,
+        *,
+        timeout: int,
+        screenshot_config: ScreenshotConfig | None,
+        output_dir: Path | None,
+    ) -> None:
+        """Screenshot and keep what stands for a page the site refused.
+
+        The text came from an enricher. An X post is drawn by X's
+        embedded-post page, which needs no sign-in; any other refused page
+        is kept only when it is neither a verification page nor empty.
+        """
+        from markitai.webextract.enrichers.x_oembed import is_x_post_url
+
+        post = _X_POST_ID.search(url) if is_x_post_url(url) else None
+        if post is not None:
+            try:
+                # The embedded post is a 550 px card: a narrow window keeps
+                # the screenshot to the card
+                await page.set_viewport_size({"width": 600, "height": 900})
+                activity = _PageActivity(page)
+                await page.goto(
+                    _X_EMBED_URL.format(id=post.group(1)),
+                    timeout=timeout,
+                    wait_until="domcontentloaded",
+                )
+                await page.wait_for_selector("article", timeout=min(timeout, 10000))
+                await _wait_until_settled(page, activity, 2.0)
+                result.metadata["page_source"] = "x-embed"
+            except Exception as e:
+                logger.debug("[Playwright] X embedded post did not render: {}", e)
+        html, problem = await _rendered_page(page)
+        if problem is not None:
+            result.metadata["page_problem"] = problem
+            from markitai.fetch_page_check import PROBLEM_TEXT
+
+            if screenshot_config and output_dir:
+                result.metadata["screenshot_error"] = PROBLEM_TEXT[problem]
+            return
+        result.html = html
+        if screenshot_config and output_dir:
+            (
+                result.screenshot_path,
+                result.screenshot_tiles,
+                shot_error,
+            ) = await _capture_screenshot_within(
+                page, screenshot_config, output_dir, url, timeout_ms=timeout
+            )
+            if shot_error is not None:
+                result.metadata["screenshot_error"] = shot_error
 
     async def _release_page(
         self,
