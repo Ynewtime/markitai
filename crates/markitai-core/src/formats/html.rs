@@ -16,7 +16,7 @@ mod srcset;
 mod stream;
 mod svg;
 
-pub(crate) use social::canonical_status_url;
+pub(crate) use social::{canonical_status_url, status_address, video_data_scripts};
 
 use crate::{Document, Error, Result};
 use facts::{Fact, Facts};

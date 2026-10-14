@@ -312,8 +312,11 @@ or Article URL, or, for a page saved without an address, X's own column markup
 or media host) is its main post: text with links, photos (`name=orig` when the
 page names the format the photo was uploaded in, `jpg` or `png`; otherwise only
 raised to `large`, because the server-rendered page always asks for WebP and
-`orig` in a guessed format was a 404 for a 2014 photo), video posters (and a link to the file when the page has one, not
-a browser-local `blob:` handle), and the quoted post as a block quote headed
+`orig` in a guessed format was a 404 for a 2014 photo), videos as their poster
+linked to the file, `[![Video](poster)](file.mp4)` (`GIF` for an animated GIF;
+the largest `video/mp4` on `video.twimg.com` that the element or the post's
+data in the page's scripts names; the poster alone, `![Video](poster)`, when
+the page has only a browser-local `blob:` handle), and the quoted post as a block quote headed
 `**Name @handle** · date` (`YYYY-MM-DD` from the quote's timestamp or id, which
 does not shift with the reader's time zone, else the text the page shows),
 without avatars, player controls, counters, the

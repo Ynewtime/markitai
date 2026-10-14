@@ -49,7 +49,13 @@ through an explicit remote strategy or an `auto` fallback the user opted in to
 usually in one or two seconds; the `x.com` and `twitter.com` entries of the
 default `fetch.fallback_patterns` do not make it start with the browser (see
 [strategy order](#strategy-order-and-remote-fallback)). The post reader is
-described in [HTML conversion](html.md).
+described in [HTML conversion](html.md). A post the browser draws (screenshots,
+`-s playwright`) plays its videos from browser-local `blob:` addresses and has
+dropped the page data that named the files; when such a post shows a video,
+one more request reads X's server-rendered page of the post (15 seconds, 8 MiB,
+without the browser's identity, not made when a browser identity is
+configured) for the video files only, so the video is linked as on the static
+path. A failure leaves the poster alone.
 
 ## Character encodings
 

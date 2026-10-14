@@ -922,7 +922,10 @@ fn browser_outcome(page: browser::BrowserPage, cfg: &Value) -> Result<FetchOutco
         return Err(Error::Fetch(message));
     }
     let visual_only = visual_only(cfg);
-    let mut document = match formats::extract_html(&page.html, Some(&page.final_url)) {
+    let with_videos = x_video_data(&page.final_url, &page.html, cfg)
+        .map(|scripts| format!("{}{scripts}", page.html));
+    let html = with_videos.as_deref().unwrap_or(&page.html);
+    let mut document = match formats::extract_html(html, Some(&page.final_url)) {
         Err(Error::Conversion(message))
             if message == "HTML contains no extractable content"
                 && visual_only
@@ -960,6 +963,36 @@ fn browser_outcome(page: browser::BrowserPage, cfg: &Value) -> Result<FetchOutco
         screenshots: page.screenshots,
         html: kept(page.html),
     })
+}
+
+/// The video files of an X post the browser drew. Its player streams each
+/// video from a browser-local `blob:` address, and the page's scripts that
+/// named the files are gone once it has run; the post's server-rendered page,
+/// which the static strategy reads, still has them. One request for it,
+/// without the browser's identity, bounded in time and size; any failure
+/// leaves the videos as their posters.
+fn x_video_data(final_url: &str, html: &str, cfg: &Value) -> Option<String> {
+    const LIMIT: u64 = 8 * 1024 * 1024;
+    let url = Url::parse(final_url).ok()?;
+    let status = formats::status_address(&url).filter(|status| {
+        status.host_str() == Some("x.com") && status.path().contains("/status/")
+    })?;
+    if browser::identity_configured(cfg) || !html.contains("<video") || html.contains("video/mp4") {
+        return None;
+    }
+    let response = client(15)
+        .ok()?
+        .get(status)
+        .header(reqwest::header::ACCEPT, "text/html")
+        .send()
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    response.take(LIMIT).read_to_end(&mut bytes).ok()?;
+    let scripts = formats::video_data_scripts(&String::from_utf8_lossy(&bytes));
+    (!scripts.is_empty()).then_some(scripts)
 }
 
 const STATIC_ACCEPT: &str = "text/markdown, text/html;q=0.9, */*;q=0.5";
