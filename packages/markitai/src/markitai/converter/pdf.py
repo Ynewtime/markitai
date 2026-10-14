@@ -43,6 +43,7 @@ from markitai.ocr import (
     is_likely_garbled,
     is_ocr_available,
 )
+from markitai.utils.cjk_radicals import fold_cjk_radicals
 from markitai.utils.errors import MissingDependencyError
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.page_chrome import strip_repeated_page_lines
@@ -677,6 +678,14 @@ class PdfConverter(BaseConverter):
             title = _document_title(Path(input_path))
             if title:
                 result.metadata["title"] = title
+        # A text layer that names radicals for ideographs (Chrome's PDFs:
+        # 使⽤, 右下⻆) reads as the ideographs, on every path
+        if isinstance(result.markdown, str):
+            result.markdown = fold_cjk_radicals(result.markdown)
+        for key in ("title", "extracted_text"):  # the LLM paths read these
+            value = result.metadata.get(key)
+            if isinstance(value, str):
+                result.metadata[key] = fold_cjk_radicals(value)
         return result
 
     def _convert(self, input_path: Path, output_dir: Path | None) -> ConvertResult:

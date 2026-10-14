@@ -150,6 +150,7 @@
 - **浏览器加载过的每个网址条目都同时保留网页和截图。** 正文来自 Jina、Defuddle 或 Cloudflare 时，即使浏览器为截图加载过该页面，也不保留网页，对照视图只能显示截图；现在也保留浏览器的网页。保留的是浏览器绘制出的页面（在为提取文字而清理之前）：脚本插入的样式规则（CSS-in-JS）写入副本，脚本不保留。代价是网页副本的大小，几 kB 到几百 kB（一条 X 帖子：27 kB，截图 66 kB）。
 - **表格不会再多出一行分隔行。** 模型改写表格时有时会重复 `| --- | --- |` 一行，在 `.llm.md` 中显示为一行破折号数据；共用的 Markdown 清理现在会删除表格已有的分隔行（代码块之外）。
 - **文件名与内容不符时会说明实际内容。** 一个实际是 gzip 压缩的 PostScript 文件的 `.epub`，原先报错 "Malformed EPUB: File is not a zip file"；现在提示 "This is not an EPUB file: it holds gzip-compressed data, while an EPUB is a ZIP package. Check the file (it may be misnamed or still compressed)."。OpenDocument 文件同样如此。
+- **Chrome 生成的 PDF 中的中日韩文字使用正确的字符。** Chrome 的"另存为 PDF"在文字层里用部首码位表示部分汉字，Markdown 里于是出现 `使⽤`、`右下⻆`（U+2F64、U+2EC6），看起来与"使用""右下角"一样，却无法搜索、排序或匹配。现在 PDF 输出（基础与 LLM 输出，以及 LLM 路径读取的文字）会把康熙部首（U+2F00–U+2FDF）和代表单个汉字的部首补充字符转换为对应的统一汉字，映射与工作台相同（先 NFKC，再加 NFKC 不处理的 28 个部首补充字符）；⺁ 这类部件形状保持不变。
 
 ### 安全
 
