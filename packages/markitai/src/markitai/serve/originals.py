@@ -345,8 +345,12 @@ def capture_to_keep(
 
     The page is the HTML the content came from, else a page the browser
     set aside as a verification or blank page (so Compare can say what the
-    site showed); the screenshot view counts only when its screenshots are
-    the item's own, or compare screenshots taken because it has none.
+    site showed), but only for an item that keeps no page yet: a retry
+    whose browser met a check page keeps the item's earlier page and
+    screenshots (contract v1.14 "A retry that loads no page"; Rust keeps
+    nothing of such a page). The screenshot view counts only when its
+    screenshots are the item's own, or compare screenshots taken because
+    it has none.
     """
     from markitai.page_capture import MAX_BLOCKS_BYTES, page_quality
 
@@ -355,7 +359,11 @@ def capture_to_keep(
         if len(page_html.encode("utf-8", "replace")) <= MAX_SNAPSHOT_BYTES:
             kept.html = page_html
             kept.page = page_quality(url, page_html)
-    elif sink is not None and sink.refused is not None:
+    elif (
+        sink is not None
+        and sink.refused is not None
+        and not kept_capture_files(job, item)
+    ):
         kept.html, kept.page = sink.refused
     view = sink.view if sink is not None else None
     if view is not None:

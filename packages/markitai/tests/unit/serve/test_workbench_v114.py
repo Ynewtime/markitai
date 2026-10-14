@@ -432,6 +432,34 @@ class TestRetryAndDelete:
         assert unchanged == replaced
         assert own == ["i1.blocks.json", "i1.capture.json", "i1.html"]
 
+    async def test_a_retry_shown_a_check_page_keeps_the_earlier_page(
+        self, tmp_path: Path, capture: _FakeCapture
+    ) -> None:
+        """The text came from the cache and the screenshot browser met a
+        verification page: the good page and its screenshots stay."""
+        captcha = '<html><head><title>Video</title></head><body><div id="risk-captcha-app"></div></body></html>'
+        async with _client(_make_app(tmp_path)) as client:
+            job_id = await _job(client, urls=[URL])
+            before = _snapshots(tmp_path, job_id)
+            folder = tmp_path / "jobs" / job_id / "snapshots"
+            record = (folder / "i1.capture.json").read_bytes()
+            capture.html = None
+            capture.compare = []
+            capture.refused = (
+                captcha,
+                page_quality("https://www.bilibili.com/video/BV0", captcha),
+            )
+            await client.post(f"{_prefix(job_id)}/retry")
+            await _settled(client, job_id)
+            after = _snapshots(tmp_path, job_id)
+            html = (folder / "i1.html").read_text(encoding="utf-8")
+            client._transport.app.state.original_cache.clear()  # type: ignore[attr-defined]
+            descriptor = (await client.get(f"{_prefix(job_id)}/original")).json()
+        assert after == before
+        assert html == PAGE
+        assert (folder / "i1.capture.json").read_bytes() == record
+        assert descriptor["capture"]["page"]["state"] == "ok"
+
     async def test_deleting_an_item_removes_its_kept_files(
         self, tmp_path: Path, capture: _FakeCapture
     ) -> None:
