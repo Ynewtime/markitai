@@ -10,9 +10,11 @@ runtime, CDN or external font, and the page makes no request to another origin.
 
 A **sidebar** frames every view: Convert and Conversions (with the number of
 conversions and a pulsing dot while something converts), the Settings sections
-(Appearance, Models, Access token, Edit config; a user token sees Appearance
-and its own Models, see [Access token](#access-token)), and Docs, GitHub and the
-version at the bottom. Its button collapses it to a 60px icon rail; each entry
+(Appearance, Models, Access token, Edit config; a user token sees Appearance,
+its own Models and Edit config for them, see [Access token](#access-token)), and Docs, GitHub and the
+version line at the bottom: the version, the commit it was built from and the build time
+in the viewer's time zone (`1.3.0-dev 36583fe 10-14 22:48`; `-dirty` after the commit
+when it was built with uncommitted changes; the full time and zone on hover). Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
 keyboard focus, and the choice is remembered in this browser. On phones the
 sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
@@ -123,7 +125,13 @@ files wait on Convert); typing URLs is Convert's job.
   analysis failed" warnings of one document read once as "31 images kept their
   original alt text", an incomplete cost names the models without a reviewed
   price and links to how to add one, and other warnings group by their wording
-  with a count. Each keeps its full original text behind Details.
+  with a count. Page numbers read as ranges everywhere (`pages 1–12, 15, 20–31`,
+  one warning per page with the same words as one); a PDF whose pages (nearly all,
+  90 % or more) have no readable text says "This PDF is scanned: turn on OCR and
+  convert again", and one with some such pages names them with the same action. A
+  model answer a check refused says in plain words that it was not used and that
+  the converted Markdown is kept: it left out or changed too much of the document,
+  or (Python's page drift guard) it did not match the document page by page. Each keeps its full original text behind Details.
 
 **Preview** is the window's first tab; its "⋯" adds Copy and Export PDF…,
 which opens a small card with the one choice it asks (Markitai's own header and
@@ -150,7 +158,13 @@ the Details excerpt fold it the same way. Tables over 500 rows show their first 
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
 showing all of them adds the rest in steps of 1,000 so the page keeps answering,
 and the download and Source always hold every row. Numeric columns align right
-in tabular figures. Code blocks are highlighted by a 3 KB module loaded only when
+in tabular figures. A table that a line break inside a cell broke (a raw line break,
+or a Unicode line or paragraph separator, which ends a table for the parser) is
+put back together for drawing: the break becomes a line break in the cell and the
+rows after it stay in the table (Source keeps the text as written). A video written
+as a linked poster (`[![Video](poster.jpg)](https://…/clip.mp4)`) plays in place
+(`https` only, loaded only when played, no referrer, the poster when it is on the web);
+one that cannot play turns back into its link. Code blocks are highlighted by a 3 KB module loaded only when
 a preview contains code. While a result loads, Rendered, Source and Files show
 its shape in grey lines inside the same frame (with the size of a large result),
 so nothing moves when it arrives.
@@ -263,6 +277,8 @@ and an unknown address. Alone on a page the panel is 480 px wide; in a column
 column's width.
 
 **Settings** are pages. Models lists the configured models (Test, Edit, Delete;
+a model's routing weight is edited in place: click the pill, type, Enter or
+leaving the field saves, Escape cancels;
 a test's result is a toast, and a failed test says why, under the model and in its toast: no API key,
 naming the server's key variable when it is not set, key rejected, model not
 found, rate limited or out of quota, provider unreachable, no answer in time, or
@@ -420,7 +436,7 @@ URL the page requests or shows carries it:
 - With a token, preview images and Compare's page images are fetched with the
   header and shown through `blob:` object URLs, which the policy already allows
   (`img-src 'self' blob: https:`: the page's own and `blob:` pictures, and
-  remote pictures over HTTPS only; `http:` and `data:` pictures are refused) and which are released when the view changes; Export
+  remote pictures over HTTPS only; `http:` and `data:` pictures are refused; `media-src https:` lets a linked video play from its site) and which are released when the view changes; Export
   PDF waits for them. An image that cannot be fetched becomes the labelled
   placeholder.
 - Download links (Files, file links inside the rendered document) point at the
@@ -468,10 +484,17 @@ of its own, kept on the server for that token alone and used only by its own
 conversions; a model there needs the user's own API key, or the address of a
 server that takes none (not the server's own machine), and subscriptions or cloud
 logins that would sign in with the server's account are refused. Below, "Shared
-by the admin" lists the shared models read-only (model, provider, weight). A
-user's conversions route over its models and the shared ones as one group, by
-weight; with neither, the Convert page's LLM options are off and say to add a
-model in Settings → Models.
+by the admin" lists the shared models (model, provider, weight), each with Test
+(it runs on the server with the admin's settings and says only whether it passed
+and why not) and a weight of the user's own: it changes only how often that
+user's conversions pick the model (0 turns it off for them alone), and "Use the
+admin's 2" follows the admin's weight again. A user's conversions route over its
+models and the shared ones as one group, by weight; with neither, the Convert
+page's LLM options are off and say to add a model in Settings → Models. Its Edit
+config is the admin's page for its own models only: one JSON document of its
+models, their connections and its weights for the shared models (keys masked,
+kept when left as they are; Review, Save with the revision), never the server's
+configuration.
 After a server restart that generates a new token, reopen its new launch link
 or use Enter token. `--no-auth` explicitly disables API token enforcement; only
 direct loopback clients without forwarding headers receive the additional trust

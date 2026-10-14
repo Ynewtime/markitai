@@ -22,6 +22,106 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 
 const hasPipe = (line: string) => line.includes("|");
 
+/** Characters that end a line for the parser's row pattern but not for its line splitting: inside a row they
+ * end the table there and the rest of it becomes one paragraph (U+2028, U+2029). Vertical tab and NEL are a
+ * manual line break in some exports; they all read as a line break inside a cell. */
+const CELL_BREAK = /[\u2028\u2029\u000b\u0085]/g;
+
+/** The cells a table row holds: its unescaped pipes outside code spans, less the outer ones. */
+export function rowCells(line: string): number {
+  const text = line.trim();
+  let pipes = 0;
+  let code = 0;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (char === "\\") index++;
+    else if (char === "`") {
+      let run = 1;
+      while (text[index + run] === "`") run++;
+      code = code === 0 ? run : code === run ? 0 : code;
+      index += run - 1;
+    } else if (char === "|" && code === 0) pipes++;
+  }
+  const leading = text.startsWith("|") ? 1 : 0;
+  const trailing = text.length > 1 && text.endsWith("|") && !text.endsWith("\\|") ? 1 : 0;
+  return pipes - leading - trailing + 1;
+}
+
+/**
+ * A table that a line break inside a cell broke, put back together for the parser (v1.16): converters should
+ * write `<br>` there, but a raw break still reaches it. Inside a table a line separator becomes `<br>`; in a table
+ * whose rows start with `|`, a row that is still open (fewer cells than its header, or no closing `|` where the
+ * header has one) takes the lines that follow and do not start with `|` as the rest of its last cell, joined by
+ * `<br>` (one blank line between them too, when the line after it closes the row). The following rows then stay
+ * rows of the same table. Fenced code is left alone; the Source view keeps the text as written.
+ */
+export function repairTables(markdown: string): string {
+  if (!markdown.includes("|")) return markdown;
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let fence: string | null = null;
+  let changed = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] as string;
+    const opened = FENCE.exec(line);
+    if (fence !== null) {
+      out.push(line);
+      if (opened && opened[1]?.[0] === fence[0] && (opened[1]?.length ?? 0) >= fence.length) fence = null;
+      continue;
+    }
+    if (opened) {
+      fence = opened[1] ?? "```";
+      out.push(line);
+      continue;
+    }
+    const next = lines[index + 1];
+    if (!hasPipe(line) || next === undefined || !DELIMITER.test(next) || !hasPipe(next)) {
+      out.push(line);
+      continue;
+    }
+    const clean = (text: string) => {
+      const value = text.replace(CELL_BREAK, "<br>");
+      if (value !== text) changed = true;
+      return value;
+    };
+    const head = clean(line);
+    const columns = rowCells(head);
+    const leading = head.trim().startsWith("|");
+    const closing = head.trim().endsWith("|");
+    out.push(head, next);
+    let at = index + 2;
+    while (at < lines.length) {
+      let row = lines[at] as string;
+      if (row.trim() === "" || !hasPipe(row)) break;
+      row = clean(row);
+      at++;
+      if (leading) {
+        const open = () => rowCells(row) < columns || (closing && !row.trim().endsWith("|"));
+        while (open() && at < lines.length) {
+          const following = lines[at] as string;
+          if (following.trim() !== "" && !following.trimStart().startsWith("|")) {
+            row = `${row.trimEnd()}<br>${clean(following.trim())}`;
+            at++;
+            changed = true;
+            continue;
+          }
+          const after = lines[at + 1];
+          if (following.trim() === "" && after !== undefined && after.trim() !== "" && !after.trimStart().startsWith("|") && (after.trimEnd().endsWith("|") || (lines[at + 2] ?? "").trimStart().startsWith("|"))) {
+            row = `${row.trimEnd()}<br>${clean(after.trim())}`;
+            at += 2;
+            changed = true;
+            continue;
+          }
+          break;
+        }
+      }
+      out.push(row);
+    }
+    index = at - 1;
+  }
+  return changed ? out.join("\n") : markdown;
+}
+
 /** Cut every table over `limit` data rows; returns the cut Markdown and the tables, by marker index. */
 export function capTables(markdown: string, limit = ROW_LIMIT): { markdown: string; tables: CappedTable[] } {
   // Fast path: short documents cannot hold a long table.

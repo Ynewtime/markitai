@@ -602,7 +602,7 @@ export const en = {
   supportedFormats: "Supported formats",
   noticesHeading: (n: number) => (n === 1 ? "1 notice" : `${n} notices`),
   noticeKinds: (n: number) => (n === 1 ? "1 kind of notice" : `${n} kinds of notice`),
-  noticeTitle: (kind: string, count: number, models: string[], sample: string) => {
+  noticeTitle: (kind: string, count: number, models: string[], sample: string, pages: { ranges: string; count: number; total: number | null } | null = null) => {
     const list = (names: string[]) => (names.length <= 2 ? names.join(" and ") : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`);
     switch (kind) {
       case "no_model":
@@ -619,6 +619,25 @@ export const en = {
         return count === 1 ? "1 model request failed and was sent again" : `${count} model requests failed and were sent again`;
       case "deployment_skipped":
         return models.length ? `${list(models)} was skipped for this run` : "A model was skipped for this run";
+      case "answer_rejected":
+        // Python's page drift guard compares the answer with the document page by page.
+        if (/drift guard/.test(sample))
+          return count === 1
+            ? "The model's answer did not match the document page by page, so it was not used. The converted Markdown is kept as it was"
+            : `${count} model answers did not match their document page by page, so they were not used. The converted Markdown is kept as it was`;
+        return count === 1
+          ? "The model's answer was not used: it left out or changed too much of the document. The converted Markdown is kept as it was"
+          : `${count} model answers were not used: they left out or changed too much of the document. The converted Markdown is kept as it was`;
+      case "pdf_scanned":
+        return count === 1 ? "This PDF is scanned: turn on OCR and convert again" : `${count} PDFs are scanned: turn on OCR and convert them again`;
+      case "pdf_ocr_pages":
+        if (count === 1 && pages) {
+          const of = pages.total ? ` (${pages.count} of ${pages.total})` : "";
+          return pages.count === 1
+            ? `Page ${pages.ranges}${of} has no readable text: turn on OCR and convert again to read it`
+            : `Pages ${pages.ranges}${of} have no readable text: turn on OCR and convert again to read them`;
+        }
+        return `${count} PDFs have pages without readable text: turn on OCR and convert them again`;
       default:
         return sample;
     }
@@ -787,7 +806,7 @@ export const en = {
   userModelsEmptyText: "Add a model with your own API key to use LLM features in your conversions. Only your conversions use it, and its key is never shown again.",
   userModelsOwnNone: "No models of your own",
   userModelsOwn: (n: number) => `${n} ${plural(n, "model", "models")} of your own`,
-  userModelsRouting: "Your conversions use your models and the shared ones as one group, picked by weight; when one fails, another is tried. Weight 0 turns one of yours off.",
+  userModelsRouting: "Your conversions use your models and the shared ones as one group, picked by weight; when one fails, another is tried. Weight 0 turns a model off for your conversions.",
   userModelsHint: "Your own models, and the ones the admin shares",
   configAbsent: "not created yet",
   configLoadFailed: "Could not read the configuration",
@@ -818,6 +837,44 @@ export const en = {
   diffAdded: "Added",
   diffRemoved: "Removed",
   // crash surface (also read before the dictionary is available)
+  // v1.16: weights edited in place, shared models a user tunes and tests, a user's own config, the build line
+  weightLabel: "Routing weight",
+  weightShortLabel: "Weight",
+  weightEditHint: "Click to change; Enter saves, Esc cancels",
+  weightEditAria: (shown: string, model: string) => `${shown}, ${model}: change`,
+  weightFieldLabel: (model: string) => `Routing weight of ${model}`,
+  weightKeysHint: "A whole number, 0 or more. Enter saves, Esc cancels",
+  weightInvalid: "Enter a whole number, 0 or more",
+  weightSaved: (model: string, weight: number) => (weight === 0 ? `${model} is off: weight 0` : `${model}: weight ${weight}`),
+  sharedByAdminWeights: "Your conversions can use these too. Their keys stay on the server. The weights here are yours: they change only how often your conversions pick each one.",
+  sharedWeightHint: "How often your conversions pick this shared model; only yours. 0 turns it off for you",
+  sharedWeightReset: (weight: number) => `Use the admin's ${weight}`,
+  sharedWeightResetAria: (shown: string, model: string) => `${shown} for ${model}`,
+  sharedWeightResetHint: "Follow the admin's weight again, including later changes",
+  sharedOffForYou: "Off for your conversions (weight 0). Other users are not affected.",
+  sharedTestFailHint: (reason: string): string =>
+    reason === "rate_limited"
+      ? "The provider is limiting requests or its quota is used up. Try again later; if it keeps failing, tell the admin."
+      : "The test ran on the server with the admin's settings, which you cannot see or change. Tell the admin which model failed.",
+  navConfigUser: "Edit config",
+  userConfigHint: "Your models and weights, as text",
+  userConfigSubtitle: "Your models, their connections and your weights for shared models. The server's own configuration is the admin's.",
+  userConfigNote: "\"models\" and \"providers\" are your own (the same entries as a config file's llm.model_list and llm.providers). \"shared\" lists the admin's shared models: change only \"weight\" (0 turns one off for you; the admin's value follows the admin again).",
+  userConfigMasked: (n: number) => `${n} ${plural(n, "key is", "keys are")} shown masked (like us…-key). Leave a masked value where it is to keep it; type a new key to replace it.`,
+  userConfigName: "Your models",
+  userConfigEditorLabel: "Your models (JSON)",
+  userConfigUnreadable: "Your saved models could not be read. Reload the page; if it keeps happening, tell the admin.",
+  userConfigSaved: "Saved. Your next conversions use them.",
+  userConfigStale: "Your models changed since you opened this page (here or on the Models page). Load them again and make your change again.",
+  userConfigReload: "Load current models",
+  buildTitle: (parts: { version: string; commit: string | null; dirty: boolean; built: string | null }) =>
+    [
+      `Version ${parts.version}`,
+      parts.commit && `commit ${parts.commit}${parts.dirty ? ", built with uncommitted changes" : ""}`,
+      parts.built && `built ${parts.built}`,
+    ]
+      .filter(Boolean)
+      .join(" · "),
 };
 
 export type Dict = typeof en;

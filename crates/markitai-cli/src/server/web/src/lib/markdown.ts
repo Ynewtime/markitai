@@ -458,10 +458,27 @@ export function replacePicture(image: Element, text: string): HTMLSpanElement {
   return span;
 }
 
-/** A remote picture that cannot load becomes its labelled placeholder (one
- * listener for every rendered document, as error events do not bubble). */
+/** A video address the page may play: absolute `https://` without user information, naming a video file
+ * (`.mp4`, `.m4v`, `.webm`, `.mov`, `.ogv`); else null. */
+export function remoteVideo(address: string): string | null {
+  const url = remotePicture(address);
+  if (url === null) return null;
+  return /\.(mp4|m4v|webm|mov|ogv)$/i.test(new URL(url).pathname) ? url : null;
+}
+
+/** The link a played-in-place video stands for, back in its place if the video cannot play. */
+const videoLinks = new WeakMap<Element, Element>();
+
+/** A remote picture that cannot load becomes its labelled placeholder, and a video that cannot
+ * play its link (one listener for every rendered document, as error events do not bubble). */
 export function swapFailedPicture(event: Event): void {
-  const image = event.target as HTMLImageElement | null;
+  const target = event.target as HTMLElement | null;
+  if (target?.tagName === "VIDEO") {
+    const link = videoLinks.get(target);
+    if (link) target.replaceWith(link);
+    return;
+  }
+  const image = target as HTMLImageElement | null;
   if (!image || image.tagName !== "IMG" || !image.hasAttribute("data-remote")) return;
   replacePicture(image, image.getAttribute("data-fallback") || image.alt);
 }
@@ -554,6 +571,24 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext, numb
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
     link.setAttribute("referrerpolicy", "no-referrer");
+  }
+  // A video written as a linked poster (`[![Video](poster)](clip.mp4)`, both backends' form) plays in place.
+  for (const link of [...fragment.querySelectorAll("a[href]")]) {
+    const source = remoteVideo(link.getAttribute("href") ?? "");
+    const poster = link.querySelector("img");
+    if (source === null || link.textContent?.trim() || link.querySelectorAll("img, .img-blocked").length > 1) continue;
+    const video = doc.createElement("video");
+    video.setAttribute("controls", "");
+    video.setAttribute("preload", "none");
+    video.setAttribute("playsinline", "");
+    // Only a poster on the web (https), as the page's policy loads it; an item's own picture needs the token.
+    const still = poster?.hasAttribute("data-remote") ? remotePicture(poster.getAttribute("src") ?? "") : null;
+    if (still) video.setAttribute("poster", still);
+    video.setAttribute("aria-label", poster?.getAttribute("alt") || link.querySelector(".img-blocked")?.textContent || context.fallbackAlt);
+    video.setAttribute("src", source);
+    video.className = "doc-video";
+    link.replaceWith(video);
+    videoLinks.set(video, link);
   }
   // A header cell without text names nothing: it stays a plain cell in the header row.
   for (const cell of [...fragment.querySelectorAll("th")]) {

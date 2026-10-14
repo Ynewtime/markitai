@@ -568,7 +568,7 @@ export const zh: Dict = {
   supportedFormats: "支持的格式",
   noticesHeading: (n: number) => `${n} 条提示`,
   noticeKinds: (n: number) => `${n} 类提示`,
-  noticeTitle: (kind: string, count: number, models: string[], sample: string) => {
+  noticeTitle: (kind: string, count: number, models: string[], sample: string, pages: { ranges: string; count: number; total: number | null } | null = null) => {
     const list = (names: string[]) => (names.length <= 2 ? names.join("、") : `${names.slice(0, 2).join("、")} 等 ${names.length} 个`);
     switch (kind) {
       case "no_model":
@@ -585,6 +585,15 @@ export const zh: Dict = {
         return `${count} 个模型请求失败后已重新发送`;
       case "deployment_skipped":
         return models.length ? `本次运行跳过了 ${list(models)}` : "本次运行跳过了一个模型";
+      case "answer_rejected":
+        if (/drift guard/.test(sample))
+          return count === 1 ? "没有采用模型的回答：它与文档的页面逐页对不上。转换得到的 Markdown 原样保留" : `${count} 个模型回答没有采用：与文档的页面逐页对不上。转换得到的 Markdown 原样保留`;
+        return count === 1 ? "没有采用模型的回答：它删掉或改动了太多原文内容。转换得到的 Markdown 原样保留" : `${count} 个模型回答没有采用：删掉或改动了太多原文内容。转换得到的 Markdown 原样保留`;
+      case "pdf_scanned":
+        return count === 1 ? "这个 PDF 是扫描件：请开启 OCR 后重新转换" : `${count} 个 PDF 是扫描件：请开启 OCR 后重新转换`;
+      case "pdf_ocr_pages":
+        if (count === 1 && pages) return `第 ${pages.ranges} 页${pages.total ? `（共 ${pages.total} 页中的 ${pages.count} 页）` : ""}没有可读文字：开启 OCR 后重新转换即可读取`;
+        return `${count} 个 PDF 有页面没有可读文字：请开启 OCR 后重新转换`;
       default:
         return sample;
     }
@@ -750,7 +759,7 @@ export const zh: Dict = {
   userModelsEmptyText: "添加使用你自己 API 密钥的模型，即可在转换中使用 LLM 功能。只有你的转换会使用它，密钥保存后不会再显示。",
   userModelsOwnNone: "没有你自己的模型",
   userModelsOwn: (n: number) => `你自己的模型 ${n} 个`,
-  userModelsRouting: "你的转换把你的模型和共享模型作为一组，按权重选择；某个失败时会改用另一个。权重为 0 可停用你自己的模型。",
+  userModelsRouting: "你的转换把你的模型和共享模型作为一组，按权重选择；某个失败时会改用另一个。权重为 0 即对你的转换停用该模型。",
   userModelsHint: "你自己的模型，以及管理员共享的模型",
   configAbsent: "尚未创建",
   configLoadFailed: "无法读取配置",
@@ -781,4 +790,35 @@ export const zh: Dict = {
   diffAdded: "新增",
   diffRemoved: "删除",
 
+  weightLabel: "路由权重",
+  weightShortLabel: "权重",
+  weightEditHint: "点击修改；Enter 保存，Esc 取消",
+  weightEditAria: (shown, model) => `${shown}，${model}：修改`,
+  weightFieldLabel: (model) => `${model} 的路由权重`,
+  weightKeysHint: "0 或更大的整数。Enter 保存，Esc 取消",
+  weightInvalid: "请输入 0 或更大的整数",
+  weightSaved: (model, weight) => (weight === 0 ? `已停用 ${model}：权重 0` : `${model}：权重 ${weight}`),
+  sharedByAdminWeights: "你的转换也可以使用这些模型。它们的密钥留在服务器上。这里的权重只属于你：只影响你的转换选中各模型的频率。",
+  sharedWeightHint: "你的转换选中这个共享模型的频率，只对你生效。设为 0 即对你停用",
+  sharedWeightReset: (weight) => `改用管理员的 ${weight}`,
+  sharedWeightResetAria: (shown, model) => `${shown}（${model}）`,
+  sharedWeightResetHint: "重新跟随管理员的权重，包括以后的修改",
+  sharedOffForYou: "已对你的转换停用（权重 0），不影响其他用户。",
+  sharedTestFailHint: (reason) =>
+    reason === "rate_limited"
+      ? "服务商正在限制请求或额度已用完。请稍后再试；如果一直失败，请告诉管理员。"
+      : "测试在服务器上用管理员的设置运行，你无法查看或修改这些设置。请告诉管理员是哪个模型失败了。",
+  navConfigUser: "编辑配置",
+  userConfigHint: "以文本方式编辑你的模型和权重",
+  userConfigSubtitle: "你的模型、它们的连接，以及你给共享模型设的权重。服务器本身的配置属于管理员。",
+  userConfigNote: "\"models\" 和 \"providers\" 是你自己的（与配置文件的 llm.model_list、llm.providers 条目相同）。\"shared\" 列出管理员共享的模型：只改 \"weight\"（0 表示对你停用；与管理员相同的值会重新跟随管理员）。",
+  userConfigMasked: (n) => `${n} 个密钥以掩码显示（如 us…-key）。保留掩码值不动即可保留原密钥；输入新密钥即可替换。`,
+  userConfigName: "你的模型",
+  userConfigEditorLabel: "你的模型（JSON）",
+  userConfigUnreadable: "无法读取你保存的模型。请重新加载页面；如果一直这样，请告诉管理员。",
+  userConfigSaved: "已保存。之后的转换会使用它们。",
+  userConfigStale: "打开此页后你的模型已有改动（在这里或模型页）。请重新加载后再修改一次。",
+  userConfigReload: "加载当前模型",
+  buildTitle: (parts) =>
+    [`版本 ${parts.version}`, parts.commit && `提交 ${parts.commit}${parts.dirty ? "（构建时有未提交的改动）" : ""}`, parts.built && `构建于 ${parts.built}`].filter(Boolean).join(" · "),
 };

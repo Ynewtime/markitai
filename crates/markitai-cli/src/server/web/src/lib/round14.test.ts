@@ -93,7 +93,8 @@ test("Models stays an admin-guarded address while the caller is unknown, and a u
   assert.deepEqual(parseRoute("/settings/models"), { view: "settings", section: "models" });
   assert.ok(ADMIN_SECTIONS.has("models"));
   const app = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
-  assert.match(app, /userModels \? \["appearance", "models"\] : \["appearance"\]/);
+  // v1.16: a user's Edit config (its own models) joins them when the backend has it.
+  assert.match(app, /userModels\s+\? \["appearance", "models", \.\.\.\(features\?\.user_config === true \? \(\["config"\] as const\) : \[\]\)\]\s+: \["appearance"\]/);
   assert.match(app, /scope=\{role === "user" \? "user" : "admin"\}/);
   assert.match(app, /canShare=\{role === "admin" && userModels\}/);
 });

@@ -29,6 +29,7 @@ import { useMedia } from "./hooks/use-media.ts";
 import { detectLocale, dicts, loadLocale, storeLocale, type Locale } from "./i18n/index.ts";
 import { apiErrorText } from "./i18n/errors.ts";
 import { LANG_TAGS } from "./i18n/locale.ts";
+import { versionLine } from "./lib/build.ts";
 import { isFailed, isJobKey, jobKey, submissions, type Filter, type LabelWords } from "./lib/conversions.ts";
 import { download } from "./lib/download.ts";
 import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked } from "./lib/files.ts";
@@ -94,6 +95,7 @@ export function App() {
 
   // ---- service capabilities
   const [caps, setCaps] = useState<Capabilities | null>(null);
+  const versionInfo = useMemo(() => versionLine(caps), [caps]);
   const [unauthorized, setUnauthorized] = useState(false);
   const refreshCaps = useCallback(() => {
     fetchCapabilities().then(
@@ -121,7 +123,11 @@ export function App() {
   // v1.15: a user token also manages models of its own (and sees the ones the admin shares).
   const userModels = features?.user_models === true;
   const sections: Section[] =
-    role === "admin" ? ["appearance", "models", "access", ...(features?.config_edit === true ? (["config"] as const) : [])] : userModels ? ["appearance", "models"] : ["appearance"];
+    role === "admin"
+      ? ["appearance", "models", "access", ...(features?.config_edit === true ? (["config"] as const) : [])]
+      : userModels
+        ? ["appearance", "models", ...(features?.user_config === true ? (["config"] as const) : [])]
+        : ["appearance"];
   const docsUrl = caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS;
   const sourceUrl = caps?.source_url && /^https:\/\//.test(caps.source_url) ? caps.source_url : DEFAULT_SOURCE;
 
@@ -726,7 +732,7 @@ export function App() {
     page =
       section === null ? (
         <div class="page">
-          <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} sections={sections} user={role === "user"} onNavigate={navigate} />
+          <SettingsIndex t={t} version={versionInfo} docsUrl={docsUrl} sourceUrl={sourceUrl} sections={sections} user={role === "user"} onNavigate={navigate} />
         </div>
       ) : caps === null && !unauthorized && ADMIN_SECTIONS.has(section) ? (
         // Who is asking is not known yet: an admin page waits rather than ask as the wrong one.
@@ -745,7 +751,7 @@ export function App() {
         </div>
       ) : section === "config" ? (
         <div class="page">
-          <ConfigSettings t={t} describe={describe} onSaved={refreshCaps} />
+          <ConfigSettings key={role} t={t} scope={role === "user" ? "user" : "admin"} describe={describe} onSaved={refreshCaps} />
         </div>
       ) : section === "models" ? (
         <div class="page">
@@ -810,7 +816,7 @@ export function App() {
       <Shell
         t={t}
         route={route}
-        version={caps?.version ?? null}
+        version={versionInfo}
         docsUrl={docsUrl}
         sourceUrl={sourceUrl}
         active={conversions.activeCount}

@@ -7,8 +7,11 @@
 // cannot use and says why; the model list applies at once, the rest at restart.
 // The textarea knows only LF, so the page edits the text with LF line breaks and
 // sends it back with the file's own (CRLF on Windows), keeping its BOM.
+// v1.16: a user token edits its own models the same way (`/api/me/config`): a
+// document of its models, connections and weights for the shared models, never
+// the server's configuration.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, fetchConfigDocument, saveConfigDocument } from "../api/client.ts";
+import { ApiError, fetchConfigDocument, saveConfigDocument, type ConfigScope } from "../api/client.ts";
 import type { ConfigDocument } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { compareLines, foldRows } from "../lib/diff.ts";
@@ -23,13 +26,17 @@ type Stage = "edit" | "review";
 
 export function ConfigSettings({
   t,
+  scope = "admin",
   describe,
   onSaved,
 }: {
   t: Dict;
+  /** The admin's config file, or v1.16 a user token's own models. */
+  scope?: ConfigScope;
   describe: (error: unknown) => { text: string; detail: string };
   onSaved: () => void;
 }) {
+  const user = scope === "user";
   const [doc, setDoc] = useState<ConfigDocument | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [text, setText] = useState("");
@@ -42,7 +49,7 @@ export function ConfigSettings({
 
   const load = () => {
     setLoadError(null);
-    fetchConfigDocument().then(
+    fetchConfigDocument(scope).then(
       (value) => {
         setDoc(value);
         setText(editorText(value.text ?? ""));
@@ -75,13 +82,13 @@ export function ConfigSettings({
     setSaving(true);
     setFailure(null);
     try {
-      const next = await saveConfigDocument(doc.revision, fileText(raw, text));
+      const next = await saveConfigDocument(doc.revision, fileText(raw, text), scope);
       setDoc(next);
       setText(editorText(next.text ?? ""));
       setStage("edit");
       setOpened(new Set());
       // The toast stack reads it out; a restart it needs is said with it.
-      toast({ id: "config-saved", tone: next.restart_required === true ? "warning" : "success", text: next.restart_required === true ? t.configSavedRestart : t.configSaved });
+      toast({ id: "config-saved", tone: next.restart_required === true ? "warning" : "success", text: user ? t.userConfigSaved : next.restart_required === true ? t.configSavedRestart : t.configSaved });
       onSaved();
     } catch (error) {
       const stale = error instanceof ApiError && error.status === 409 && (error.reason === "stale_revision" || error.reason === "config_changed");
@@ -96,12 +103,13 @@ export function ConfigSettings({
     <div class="page-head config-head">
       <div>
         <h1 id="config-title">{t.navConfig}</h1>
-        {doc && (
+        {doc && !user && (
           <p class="config-path">
             <code>{doc.path}</code>
             {!doc.exists && <span class="config-new"> · {t.configAbsent}</span>}
           </p>
         )}
+        {user && <p class="config-path">{t.userConfigSubtitle}</p>}
       </div>
     </div>
   );
@@ -126,7 +134,7 @@ export function ConfigSettings({
     return (
       <section class="settings-page" aria-labelledby="config-title">
         {head}
-        <StateBlock icon="WarningCircle" title={t.configUnreadableTitle} text={t.configUnreadableText(doc.problem ?? "")} secondary={{ label: t.retryLoad, run: load }} tone="error" />
+        <StateBlock icon="WarningCircle" title={t.configUnreadableTitle} text={user ? t.userConfigUnreadable : t.configUnreadableText(doc.problem ?? "")} secondary={{ label: t.retryLoad, run: load }} tone="error" />
       </section>
     );
   }
@@ -135,15 +143,16 @@ export function ConfigSettings({
     <section class="settings-page config-page" aria-labelledby="config-title">
       {head}
       <div class="settings-body">
+        {user && <p class="config-note">{t.userConfigNote}</p>}
         {doc.read_only && <p class="config-note is-warn">{t.configReadOnly}</p>}
-        {doc.masked > 0 && <p class="config-note">{t.configMasked(doc.masked)}</p>}
+        {doc.masked > 0 && <p class="config-note">{user ? t.userConfigMasked(doc.masked) : t.configMasked(doc.masked)}</p>}
         {(layout.kind === "crlf" || layout.kind === "cr") && <p class="config-note">{t.configEndings(layout.kind === "crlf" ? "CRLF" : "CR")}</p>}
         {layout.kind === "mixed" && <p class="config-note">{t.configEndingsMixed(layout.counts, layout.newline === "\r\n" ? "CRLF" : layout.newline === "\n" ? "LF" : "CR")}</p>}
         {layout.bom && <p class="config-note">{t.configBom}</p>}
         {stage === "edit" ? (
           <div class="config-editor">
             <label class="sr-only" for="config-text">
-              {t.configEditorLabel}
+              {user ? t.userConfigEditorLabel : t.configEditorLabel}
             </label>
             <textarea
               ref={editor}
@@ -174,7 +183,7 @@ export function ConfigSettings({
             {diff?.kind === "rows" ? (
               <div class="diff config-diff" aria-label={t.configReviewTitle}>
                 <p class="doc-meta diff-meta">
-                  config.json · +{diff.added} -{diff.removed}
+                  {user ? t.userConfigName : "config.json"} · +{diff.added} -{diff.removed}
                 </p>
                 {foldRows(diff.rows).map((segment, index) =>
                   segment.kind === "rows" || opened.has(index) ? (
@@ -194,7 +203,7 @@ export function ConfigSettings({
         )}
         {failure && (
           <div class="config-failure" role="alert">
-            <p class="line-error">{failure.stale ? t.configStale : failure.text}</p>
+            <p class="line-error">{failure.stale ? (user ? t.userConfigStale : t.configStale) : failure.text}</p>
             {failure.detail && !failure.stale && <p class="config-detail">{failure.detail}</p>}
             {failure.stale && (
               <button type="button" class="btn btn-sm" onClick={load}>
