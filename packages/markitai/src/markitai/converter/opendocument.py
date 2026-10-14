@@ -110,7 +110,7 @@ def _content_root(input_path: Path) -> ElementTree.Element:
 
 def _cell_text(cell: ElementTree.Element) -> str:
     blocks = [_text_of(child).strip() for child in cell]
-    return " ".join(block for block in blocks if block)
+    return "\n".join(block for block in blocks if block)
 
 
 def _table_rows(

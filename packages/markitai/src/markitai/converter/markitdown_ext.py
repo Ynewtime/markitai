@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from markitai.converter._patches import apply_all_patches
+from markitai.converter._patches import (
+    apply_all_patches,
+    apply_markitdown_cell_patches,
+)
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -103,6 +106,7 @@ def _convert(input_path: Path) -> ConvertResult:
         # Only generic file conversion needs the Office compatibility patches.
         # Native HTML completes without loading any of those libraries.
         apply_all_patches()
+        apply_markitdown_cell_patches()
         _markitdown = MarkItDown()
 
     input_path = Path(input_path)
@@ -308,6 +312,7 @@ def _epub_chapter_markdown(data: bytes, path: str, pictures: _EpubPictures) -> s
     from bs4 import BeautifulSoup
     from markitdown.converters import HtmlConverter
 
+    apply_markitdown_cell_patches()
     soup = BeautifulSoup(data, "html.parser", from_encoding="utf-8")
     folder = posixpath.dirname(path)
     for svg in soup.find_all("svg"):

@@ -157,6 +157,7 @@
 - **表格不会再多出一行分隔行。** 模型改写表格时有时会重复 `| --- | --- |` 一行，在 `.llm.md` 中显示为一行破折号数据；共用的 Markdown 清理现在会删除表格已有的分隔行（代码块之外）。
 - **文件名与内容不符时会说明实际内容。** 一个实际是 gzip 压缩的 PostScript 文件的 `.epub`，原先报错 "Malformed EPUB: File is not a zip file"；现在提示 "This is not an EPUB file: it holds gzip-compressed data, while an EPUB is a ZIP package. Check the file (it may be misnamed or still compressed)."。OpenDocument 文件同样如此。
 - **Chrome 生成的 PDF 中的中日韩文字使用正确的字符。** Chrome 的"另存为 PDF"在文字层里用部首码位表示部分汉字，Markdown 里于是出现 `使⽤`、`右下⻆`（U+2F64、U+2EC6），看起来与"使用""右下角"一样，却无法搜索、排序或匹配。现在 PDF 输出（基础与 LLM 输出，以及 LLM 路径读取的文字）会把康熙部首（U+2F00–U+2FDF）和代表单个汉字的部首补充字符转换为对应的统一汉字，映射与工作台相同（先 NFKC，再加 NFKC 不处理的 28 个部首补充字符）；⺁ 这类部件形状保持不变。
+- **表格单元格里的换行不再打断表格**：单元格中的换行（XLSX、XLS、ODS 单元格或带引号的 CSV 字段里的换行，DOCX、HTML、EPUB、PPTX、ODT 单元格里的第二段或 `<br>`，PPTX 单元格里的软换行，以及任何单元格里的 U+2028/U+2029 行或段分隔符、垂直制表符或 NEL）现在写成 `<br>`，这一行仍是一行。此前 CSV 把换行原样写进行里，把这一行拆成两行；U+2028 在把它当作行尾的渲染器里会结束表格；DOCX、HTML 和 PPTX 用空格把各行连起来。连续的换行合并为一个 `<br>`，单元格首尾的换行去掉；CSV、DOCX、HTML、PPTX 单元格里的 `|` 会转义（此前会多出一列）；单元格里作为文字写下的 `<br>` 仍是文字（`&lt;br&gt;`）。模型回答（`.llm.md`）或其他路径留在表格行里的分隔符，也由共用的 Markdown 清理写成 `<br>`。
 
 ### 安全
 

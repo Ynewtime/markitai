@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from markitai.converter.base import ConvertResult, conversion_failed
+from markitai.webextract.table_cells import text_cell
 
 
 def _normalize(markdown: str) -> str:
@@ -38,12 +39,12 @@ def convert_csv(path: Path) -> ConvertResult:
         if header is not None:
             width = len(header)
             lines = [
-                "| " + " | ".join(header) + " |",
+                "| " + " | ".join(text_cell(cell) for cell in header) + " |",
                 "| " + " | ".join(["---"] * width) + " |",
             ]
             for row in reader:
                 cells = (row + [""] * max(0, width - len(row)))[:width]
-                lines.append("| " + " | ".join(cells) + " |")
+                lines.append("| " + " | ".join(text_cell(c) for c in cells) + " |")
     except csv.Error as exc:
         conversion_failed(f"Malformed CSV: {exc}")
     return ConvertResult(

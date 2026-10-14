@@ -420,6 +420,62 @@ def drop_stray_table_delimiters(content: str) -> str:
     return "\n".join(kept)
 
 
+# A line or paragraph separator, vertical tab, NEL or lone CR in a table row:
+# a renderer takes it for a line end and the table ends there (U+2028 runs
+# every later row together as one paragraph), so in a cell it is a <br>
+_ROW_BREAK = re.compile("[\r\v\f\x1c-\x1e\x85\u2028\u2029]")
+_CELL_EDGE = re.compile(r"(?<!\\)\|")
+
+
+def _cell_with_breaks(cell: str) -> str:
+    parts = [part.strip() for part in _ROW_BREAK.split(cell)]
+    joined = "<br>".join(part for part in parts if part)
+    return f" {joined} " if joined else " "
+
+
+def table_cell_breaks(content: str) -> str:
+    """Write each line break left inside a table row as ``<br>``.
+
+    The table writers already do (``webextract.table_cells``); this repairs
+    what still arrives, a model's answer above all: U+2028/U+2029, a
+    vertical tab, NEL or a lone CR in a row. Runs become one ``<br>``, none
+    stands at a cell's edges, and a break after the row's last ``|`` is
+    dropped. Lines inside fenced code are left alone.
+    """
+    if not _ROW_BREAK.search(content) or "|" not in content:
+        return content
+    lines = content.split("\n")
+    fence: str | None = None
+    for index, line in enumerate(lines):
+        opener = _FENCE_OPEN.match(line)
+        if fence is not None:
+            if (
+                opener
+                and opener.group(1)[0] == fence[0]
+                and len(opener.group(1)) >= len(fence)
+            ):
+                fence = None
+            continue
+        if opener:
+            fence = opener.group(1)
+            continue
+        ending = "\r" if line.endswith("\r") else ""
+        row = line.removesuffix("\r")
+        if not row.lstrip().startswith("|") or not _ROW_BREAK.search(row):
+            continue
+        segments = _CELL_EDGE.split(row)
+        first, *cells, last = segments
+        first = _ROW_BREAK.sub("", first)
+        cells = [
+            _cell_with_breaks(cell) if _ROW_BREAK.search(cell) else cell
+            for cell in cells
+        ]
+        if _ROW_BREAK.search(last):
+            last = _cell_with_breaks(last).rstrip() if last.strip() else ""
+        lines[index] = "|".join([first, *cells, last]) + ending
+    return "\n".join(lines)
+
+
 def normalize_markdown_whitespace(content: str) -> str:
     """Normalize whitespace in markdown content.
 

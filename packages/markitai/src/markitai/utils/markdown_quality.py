@@ -18,11 +18,13 @@ def normalize_markdown(content: str) -> str:
         drop_stray_table_delimiters,
         fix_broken_markdown_links,
         normalize_markdown_whitespace,
+        table_cell_breaks,
     )
 
     content = fix_broken_markdown_links(content)
     content = strip_repeated_marker_lines(content)
     content = clean_residual_placeholders(content)
+    content = table_cell_breaks(content)
     content = drop_stray_table_delimiters(content)
     content = normalize_markdown_whitespace(content)
     return content.rstrip() + "\n"

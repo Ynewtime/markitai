@@ -464,6 +464,9 @@ class FetchSession:
         if self.markitdown_instance is None:
             from markitdown import MarkItDown
 
+            from markitai.converter._patches import apply_markitdown_cell_patches
+
+            apply_markitdown_cell_patches()
             self.markitdown_instance = MarkItDown()
             # Enable Cloudflare Markdown for Agents content negotiation.
             # CF-enabled sites return text/markdown directly (higher quality,

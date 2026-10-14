@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.constants import DEFAULT_RENDER_DPI, SCREENSHOTS_REL_PATH
-from markitai.converter._patches import apply_all_patches, apply_openpyxl_patches
+from markitai.converter._patches import (
+    apply_all_patches,
+    apply_markitdown_cell_patches,
+    apply_openpyxl_patches,
+)
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -88,6 +92,7 @@ class OfficeConverter(BaseConverter):
             from markitdown import MarkItDown
 
             apply_all_patches()
+            apply_markitdown_cell_patches()
             self._markitdown = MarkItDown()
         result = self._markitdown.convert(input_path, keep_data_uris=True)
 
