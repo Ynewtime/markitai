@@ -57,7 +57,8 @@ export const ja: Dict = {
     "スキャン画像をローカルの OCR エンジンで認識します。LLM がオンのときはページ画像をビジョンモデルに送信するため、追加の費用が発生する場合があります。",
   advVlmOcr: "LLM + OCR ではページ画像をビジョンモデルに送信するため（VLM-OCR）、モデルの費用が増える場合があります。",
   advLocalOcr: "LLM なしの OCR では、このコンピューターのローカル OCR エンジンを使います。",
-  advNeedsModel: "モデルの機能を使うには、設定で LLM の接続を構成してください。",
+  advNeedsModel: "LLM の機能を使うには、設定 → モデル でモデルを追加してください。",
+  advNeedsModelAdmin: "あなたのトークンで使えるモデルはまだありません。サーバー管理者に共有を依頼してください。",
   advImages: "画像",
   helpImages: "テキストと一緒に残す画像の説明やページのスクリーンショットを選びます。",
   advAlt: "代替テキスト",
@@ -299,8 +300,8 @@ export const ja: Dict = {
     if (manualOnly) return "このプロバイダーはモデルの一覧を提供していません。使用するモデル ID を下に追加してください。";
     if (kind === "configured") return "保存済みの接続から、利用可能なモデルを自動で読み込みます。";
     if (kind === "environment") return `${source} の認証情報を使用しています。`;
-    if (provider === "ollama") return "ローカルの既定の Ollama エンドポイントを使用しています。";
     if (needsBase) return "サーバーのアドレスを入力すると、提供されているモデルを読み込みます。";
+    if (provider === "ollama") return "ローカルの既定の Ollama エンドポイントを使用しています。";
     if (local) return "ローカルの既定のエンドポイントを使用しています。キーはサーバーが求める場合にのみ必要です。";
     return "接続情報を入力すると、利用可能なモデルを読み込みます。";
   },
@@ -354,6 +355,7 @@ export const ja: Dict = {
   modelWeight: (n: number) => `ルーティングの重み ${n}`,
   modelWeightShort: (n: number) => `重み ${n}`,
   weightHint: "同じルーティンググループに複数のモデルがあるときに使う、ルーティングの重み",
+  userWeightHint: "自分のモデルと共有モデルの中で、リクエストがこのモデルを選ぶ頻度",
   modelsToAdd: (n: number) => `${n} 個のモデルを追加`,
   modelsToRemove: (n: number) => `${n} 個のモデルを削除`,
   modelsRemoved: (n: number) => `${n} 個のモデルを削除しました`,
@@ -742,12 +744,12 @@ export const ja: Dict = {
   navConfig: "設定ファイルの編集",
   configHint: "設定ファイルをテキストで編集",
   adminOnlyTitle: "管理者トークンが必要です",
-  adminOnlyText: "このページはサーバー管理者用です。あなたのトークンでは変換と自分の変換の管理ができます。",
+  adminOnlyText: "このページはサーバー管理者用です。あなたのトークンでは変換、自分の変換の管理、自分のモデルの追加ができます。",
   userAccessTitle: "アクセス",
   userAccessText: "このタブはユーザートークンを使っています。変換と自分の変換の閲覧ができます。モデルなどの設定には管理者トークンが必要です。",
   userAccessNamed: (label: string) => `このタブはユーザートークン「${label}」を使っています。変換と自分の変換の閲覧ができます。モデルなどの設定には管理者トークンが必要です。`,
   userTokensTitle: "ユーザートークン",
-  userTokensText: "ユーザートークンは変換ができ、自分の変換だけを閲覧・ダウンロード・削除できます。モデル、アクセストークン、設定ファイルの編集は開けません。取り消すまで有効です。",
+  userTokensText: "ユーザートークンは変換ができ、自分の変換だけを閲覧・ダウンロード・削除でき、自分のモデルも追加できます。あなたのモデル、アクセストークン、設定ファイルの編集は開けません。取り消すまで有効です。",
   userTokenLabel: "名前",
   userTokenPlaceholder: "誰が何に使うか",
   userTokenCreate: "トークンを作成",
@@ -759,8 +761,29 @@ export const ja: Dict = {
   userTokenRevoke: "取り消す",
   userTokenRevokeAria: (label: string) => `トークン「${label}」を取り消す`,
   userTokenRevokeTitle: (label: string) => `「${label}」を取り消しますか？`,
-  userTokenRevokeText: "使っている人はすぐにサインアウトされます。その変換は残り、管理者が閲覧できます。",
+  userTokenRevokeText: (models: number) =>
+    models > 0
+      ? `使っている人はすぐにサインアウトされ、そのモデル ${models} 個はキーごと削除されます。その変換は残り、管理者が閲覧できます。`
+      : "使っている人はすぐにサインアウトされ、追加したモデルはキーごと削除されます。その変換は残り、管理者が閲覧できます。",
   userTokenRevoking: "取り消しています…",
+  userTokenModels: (n: number) => `モデル ${n} 個`,
+  userTokenModelsHint: "このトークンが自分の変換用に追加したモデル。キーはこのトークンだけが使えます",
+  sharePrivate: "非公開",
+  shareShared: "共有",
+  shareAria: (model: string) => `${model} の利用範囲`,
+  sharePrivateHint: "自分の変換だけが使います",
+  shareSharedHint: "このワークベンチのユーザーの変換も使えます。キーはサーバーに残ります",
+  shareNowShared: (model: string) => `${model} をユーザーと共有しました`,
+  shareNowPrivate: (model: string) => `${model} を非公開に戻しました`,
+  shareNote: "共有したモデルは、このワークベンチでのユーザーの変換にも使われ、それ以外には使われません。キーとアドレスはサーバーに残り、ユーザーにはどのモデルかだけが見えます。",
+  sharedByAdmin: "管理者が共有",
+  sharedByAdminText: "あなたの変換でもこれらを使えます。キーはサーバーに残ります。",
+  userModelsNone: "モデルはまだありません",
+  userModelsEmptyText: "自分の API キーを使うモデルを追加すると、変換で LLM の機能を使えます。使うのはあなたの変換だけで、キーは保存後に再表示されません。",
+  userModelsOwnNone: "自分のモデルはありません",
+  userModelsOwn: (n: number) => `自分のモデル ${n} 個`,
+  userModelsRouting: "あなたの変換は、自分のモデルと共有モデルを 1 つのグループとして重みで選びます。失敗したときは別のモデルを試します。重み 0 で自分のモデルを無効にできます。",
+  userModelsHint: "自分のモデルと、管理者が共有するモデル",
   configAbsent: "未作成",
   configLoadFailed: "設定を読み込めませんでした",
   configUnreadableTitle: "ファイルが正しい JSON ではありません",

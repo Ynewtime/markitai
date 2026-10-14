@@ -25,10 +25,16 @@ export function ModelPicker({
   onSelected,
   onDropped,
   manualOnly = false,
+  groups = true,
+  weightHint,
 }: {
   t: Dict;
   /** The provider lists no models: manual entry is open and explained. */
   manualOnly?: boolean;
+  /** v1.15: a user's models form one pool, so its picker sets no routing group. */
+  groups?: boolean;
+  /** What the weight does, when it differs from the admin's groups. */
+  weightHint?: string;
   provider: string;
   candidates: ModelCandidate[];
   deployments: Deployment[];
@@ -180,10 +186,12 @@ export function ModelPicker({
             </div>
           </div>
           <span class="field-grid-gap" aria-hidden="true" />
-          <label class="field">
-            <span class="field-label">{t.routingGroup}</span>
-            <input type="text" value={group} onInput={(event) => onGroup(event.currentTarget.value)} />
-          </label>
+          {groups && (
+            <label class="field">
+              <span class="field-label">{t.routingGroup}</span>
+              <input type="text" value={group} onInput={(event) => onGroup(event.currentTarget.value)} />
+            </label>
+          )}
           <label class="field">
             <span class="field-label">{t.weight}</span>
             <input
@@ -200,7 +208,7 @@ export function ModelPicker({
           </label>
         </div>
         <p id="weight-hint" class="field-hint">
-          {t.weightHint}
+          {weightHint ?? t.weightHint}
         </p>
       </section>
     </div>

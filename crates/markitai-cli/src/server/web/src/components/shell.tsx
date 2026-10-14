@@ -1,6 +1,6 @@
 // The frame of every view: a left sidebar with the two work views, the
-// settings sections (Appearance for everyone; Models, Access token and Edit
-// config for the admin token only) and the external links. It collapses to a 60px icon rail
+// settings sections (Appearance for everyone; Models for the admin and, v1.15,
+// a user token's own; Access token and Edit config for the admin token only) and the external links. It collapses to a 60px icon rail
 // (each entry keeps its name for assistive technology and shows it as a
 // tooltip); the choice is remembered in this browser. On phones the sidebar
 // gives way to a top bar and a bottom tab bar.

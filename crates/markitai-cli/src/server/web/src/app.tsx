@@ -118,7 +118,10 @@ export function App() {
   const features = caps?.features ?? null;
   // v1.13: a user token converts and sees its own conversions; settings are the admin's.
   const role = caps?.access?.role ?? "admin";
-  const sections: Section[] = role === "admin" ? ["appearance", "models", "access", ...(features?.config_edit === true ? (["config"] as const) : [])] : ["appearance"];
+  // v1.15: a user token also manages models of its own (and sees the ones the admin shares).
+  const userModels = features?.user_models === true;
+  const sections: Section[] =
+    role === "admin" ? ["appearance", "models", "access", ...(features?.config_edit === true ? (["config"] as const) : [])] : userModels ? ["appearance", "models"] : ["appearance"];
   const docsUrl = caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS;
   const sourceUrl = caps?.source_url && /^https:\/\//.test(caps.source_url) ? caps.source_url : DEFAULT_SOURCE;
 
@@ -553,6 +556,7 @@ export function App() {
       state={composer}
       presets={presets}
       llmReady={llmReady}
+      needsModel={role === "user" && !userModels ? t.advNeedsModelAdmin : t.advNeedsModel}
       cloudflare={caps?.remote_services?.cloudflare}
       urls={urls}
       staged={staged?.files ?? []}
@@ -586,7 +590,8 @@ export function App() {
     compare: features?.original === true,
     cancel: features?.cancel === true,
     retentionDays: caps?.limits.history_retention_days ?? null,
-    admin: role === "admin",
+    // v1.15: a user token opens a Models page of its own.
+    admin: role === "admin" || userModels,
     docsUrl,
     busy,
     labelWords,
@@ -721,7 +726,7 @@ export function App() {
     page =
       section === null ? (
         <div class="page">
-          <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} sections={sections} onNavigate={navigate} />
+          <SettingsIndex t={t} version={caps?.version ?? null} docsUrl={docsUrl} sourceUrl={sourceUrl} sections={sections} user={role === "user"} onNavigate={navigate} />
         </div>
       ) : caps === null && !unauthorized && ADMIN_SECTIONS.has(section) ? (
         // Who is asking is not known yet: an admin page waits rather than ask as the wrong one.
@@ -744,7 +749,16 @@ export function App() {
         </div>
       ) : section === "models" ? (
         <div class="page">
-          <ModelsSettings t={t} locale={locale} onSaved={refreshCaps} announce={announce} describe={describe} />
+          <ModelsSettings
+            key={role}
+            t={t}
+            locale={locale}
+            scope={role === "user" ? "user" : "admin"}
+            canShare={role === "admin" && userModels}
+            onSaved={refreshCaps}
+            announce={announce}
+            describe={describe}
+          />
         </div>
       ) : section === "appearance" ? (
         <div class="page">

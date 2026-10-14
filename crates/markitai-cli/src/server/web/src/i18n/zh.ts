@@ -53,7 +53,8 @@ export const zh: Dict = {
   helpOcr: "识别扫描内容时，不开 LLM 使用本机 OCR 引擎，开启后将页图发送给视觉模型，可能增加费用。",
   advVlmOcr: "LLM + OCR 会将页图发给视觉模型（VLM-OCR），可能产生更多模型费用。",
   advLocalOcr: "不开启 LLM 时，OCR 使用本机的识别引擎。",
-  advNeedsModel: "请先在设置中配置 LLM 连接，再启用模型功能。",
+  advNeedsModel: "在 设置 → 模型 中添加模型后，即可使用 LLM 功能。",
+  advNeedsModelAdmin: "目前没有可供你的令牌使用的模型。请让服务器管理员共享一个。",
   advImages: "图片",
   helpImages: "选择随正文保留的图片描述或页面截图。",
   advAlt: "alt 文本",
@@ -272,8 +273,8 @@ export const zh: Dict = {
     if (manualOnly) return "这个服务商不提供模型列表，请在下方添加要使用的模型 ID。";
     if (kind === "configured") return "已从保存的连接自动加载可用模型。";
     if (kind === "environment") return `使用 ${source} 中的凭据。`;
-    if (provider === "ollama") return "使用本机默认 Ollama 地址。";
     if (needsBase) return "填写服务器地址后加载它提供的模型。";
+    if (provider === "ollama") return "使用本机默认 Ollama 地址。";
     if (local) return "使用本机默认地址；只有服务器要求时才需要 key。";
     return "填写连接信息后加载可用模型。";
   },
@@ -326,6 +327,7 @@ export const zh: Dict = {
   modelWeight: (n) => `路由权重 ${n}`,
   modelWeightShort: (n) => `权重 ${n}`,
   weightHint: "同一路由组有多个模型时，用于决定各模型被选中的比例",
+  userWeightHint: "在你的模型和共享模型之间，请求选中此模型的频率",
   modelsToAdd: (n) => `将添加 ${n} 个模型`,
   modelsToRemove: (n) => `将移除 ${n} 个模型`,
   modelsRemoved: (n) => `已移除 ${n} 个模型`,
@@ -707,12 +709,12 @@ export const zh: Dict = {
   navConfig: "编辑配置",
   configHint: "以文本方式编辑配置文件",
   adminOnlyTitle: "需要管理员令牌",
-  adminOnlyText: "此页面仅供服务器管理员使用。你的令牌可以转换，并管理你自己的转换任务。",
+  adminOnlyText: "此页面仅供服务器管理员使用。你的令牌可以转换、管理你自己的转换任务，并拥有自己的模型。",
   userAccessTitle: "访问",
   userAccessText: "此标签页使用用户令牌：可以转换并查看自己的转换任务。模型及其他设置需要管理员令牌。",
   userAccessNamed: (label) => `此标签页使用用户令牌“${label}”：可以转换并查看自己的转换任务。模型及其他设置需要管理员令牌。`,
   userTokensTitle: "用户令牌",
-  userTokensText: "用户令牌可以转换，并只能查看、下载和删除自己的转换任务；不能打开模型、访问令牌或编辑配置。令牌在撤销前一直有效。",
+  userTokensText: "用户令牌可以转换，只能查看、下载和删除自己的转换任务，也可以添加自己的模型；不能打开你的模型、访问令牌或编辑配置。令牌在撤销前一直有效。",
   userTokenLabel: "名称",
   userTokenPlaceholder: "给谁或做什么用",
   userTokenCreate: "创建令牌",
@@ -724,8 +726,29 @@ export const zh: Dict = {
   userTokenRevoke: "撤销",
   userTokenRevokeAria: (label) => `撤销令牌“${label}”`,
   userTokenRevokeTitle: (label) => `撤销“${label}”？`,
-  userTokenRevokeText: "使用它的人会立即退出。其转换任务保留，管理员仍可查看。",
+  userTokenRevokeText: (models: number) =>
+    models > 0
+      ? `使用它的人会立即退出，它的 ${models} 个模型及其密钥会一并删除。其转换任务保留，管理员仍可查看。`
+      : "使用它的人会立即退出，它添加的模型及其密钥会一并删除。其转换任务保留，管理员仍可查看。",
   userTokenRevoking: "撤销中…",
+  userTokenModels: (n: number) => `${n} 个模型`,
+  userTokenModelsHint: "此令牌为自己的转换添加的模型；其密钥仅此令牌可用",
+  sharePrivate: "私有",
+  shareShared: "共享",
+  shareAria: (model: string) => `${model} 的使用范围`,
+  sharePrivateHint: "仅你的转换使用",
+  shareSharedHint: "此工作台中用户的转换也可使用；密钥留在服务器上",
+  shareNowShared: (model: string) => `${model} 已共享给用户`,
+  shareNowPrivate: (model: string) => `${model} 已改回私有`,
+  shareNote: "共享的模型也会用于用户在此工作台中的转换，仅此而已。其密钥和地址留在服务器上，用户只能看到是哪个模型。",
+  sharedByAdmin: "由管理员共享",
+  sharedByAdminText: "你的转换也可以使用这些模型。它们的密钥留在服务器上。",
+  userModelsNone: "还没有模型",
+  userModelsEmptyText: "添加使用你自己 API 密钥的模型，即可在转换中使用 LLM 功能。只有你的转换会使用它，密钥保存后不会再显示。",
+  userModelsOwnNone: "没有你自己的模型",
+  userModelsOwn: (n: number) => `你自己的模型 ${n} 个`,
+  userModelsRouting: "你的转换把你的模型和共享模型作为一组，按权重选择；某个失败时会改用另一个。权重为 0 可停用你自己的模型。",
+  userModelsHint: "你自己的模型，以及管理员共享的模型",
   configAbsent: "尚未创建",
   configLoadFailed: "无法读取配置",
   configUnreadableTitle: "文件不是有效的 JSON",
