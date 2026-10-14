@@ -374,18 +374,21 @@ def add_basic_frontmatter(
     tiles = screenshot_tiles or ([screenshot_path] if screenshot_path else [])
     tiles = [t for t in tiles if t and t.exists()]
     if tiles:
+        # Markdown paths use "/" on every platform: on Windows str() of the
+        # relative path wrote ".markitai\screenshots\…", which the item's
+        # file ownership (serve.artifacts) and Markdown viewers do not read
         if output_dir:
 
-            def _rel(p: Path) -> Path:
+            def _rel(p: Path) -> str:
                 try:
-                    return p.relative_to(output_dir)
+                    return p.relative_to(output_dir).as_posix()
                 except ValueError:
-                    return p
+                    return p.as_posix()
 
         else:
 
-            def _rel(p: Path) -> Path:
-                return Path(p.name)
+            def _rel(p: Path) -> str:
+                return p.name
 
         if len(tiles) == 1:
             refs = (

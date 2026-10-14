@@ -55,7 +55,8 @@ _DOT_SUFFIX_RE = re.compile(
 _DASH_SUFFIX_RE = re.compile(rf"^\d{{1,6}}(?:-\d{{1,6}})?{_IMAGE_EXT}", re.IGNORECASE)
 # References to an asset directory, as markdown links (percent-encoded,
 # possibly inside an HTML comment) or Obsidian wikilinks (raw names).
-_DIR_ALTERNATION = "|".join(re.escape(d) for d in ASSET_DIRS)
+# A job written on Windows before 1.2.1 separated them with a backslash.
+_DIR_ALTERNATION = "|".join(re.escape(d).replace("/", r"[/\\]") for d in ASSET_DIRS)
 _LINK_REF_RE = re.compile(rf"\]\(<?({_DIR_ALTERNATION})[/\\]([^)>\s]+)")
 _WIKILINK_REF_RE = re.compile(rf"\[\[({_DIR_ALTERNATION})/([^\]|#]+)")
 
@@ -82,9 +83,9 @@ def referenced_assets(markdown: str) -> set[tuple[str, str]]:
     """``(asset dir, file name)`` pairs a markdown text references."""
     refs: set[tuple[str, str]] = set()
     for match in _LINK_REF_RE.finditer(markdown):
-        refs.add((match.group(1), unquote(match.group(2))))
+        refs.add((match.group(1).replace("\\", "/"), unquote(match.group(2))))
     for match in _WIKILINK_REF_RE.finditer(markdown):
-        refs.add((match.group(1), match.group(2).strip()))
+        refs.add((match.group(1).replace("\\", "/"), match.group(2).strip()))
     # Only flat names: a reference never reaches outside its asset dir.
     return {
         (rel, name)

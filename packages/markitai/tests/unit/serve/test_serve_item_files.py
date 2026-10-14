@@ -160,6 +160,17 @@ class TestOwnershipRule:
             ("assets", "c d.png"),
         }
 
+    def test_references_written_on_windows_are_read(self) -> None:
+        """Jobs written on Windows before 1.2.1 used backslashes."""
+        markdown = (
+            "<!-- ![Screenshot 1](.markitai\\screenshots\\example.com_x.full.jpg) -->\n"
+            "<!-- ![Screenshot 2](.markitai\\screenshots/example.com_x.full--1.jpg) -->\n"
+        )
+        assert referenced_assets(markdown) == {
+            (SCREENSHOTS_REL_PATH, "example.com_x.full.jpg"),
+            (SCREENSHOTS_REL_PATH, "example.com_x.full--1.jpg"),
+        }
+
 
 class TestResultArtifacts:
     """GET /items/{id}/result lists every file the item owns."""
