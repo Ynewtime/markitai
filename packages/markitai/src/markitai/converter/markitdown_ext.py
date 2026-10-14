@@ -21,6 +21,7 @@ from markitai.converter.base import (
     ConvertResult,
     FileFormat,
     conversion_failed,
+    not_a_package,
     register_converter,
 )
 from markitai.notices import user_notice
@@ -456,6 +457,10 @@ class EpubConverter(BaseConverter):
         ) as exc:
             # No container or OPF, or one that does not parse (defusedxml's
             # refusals are ValueErrors)
+            if isinstance(exc, zipfile.BadZipFile):
+                reason = not_a_package(input_path, "EPUB")
+                if reason:
+                    conversion_failed(reason)
             conversion_failed(f"Malformed EPUB: {exc}")
 
 

@@ -251,6 +251,50 @@ class ConvertResult:
         return len(self.images) > 0
 
 
+# Leading bytes of formats a mislabeled upload most often turns out to be.
+_CONTENT_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\x1f\x8b", "gzip-compressed data"),
+    (b"%PDF-", "a PDF document"),
+    (b"%!PS", "a PostScript document"),
+    (b"PK\x03\x04", "a ZIP archive"),
+    (b"Rar!\x1a\x07", "a RAR archive"),
+    (b"7z\xbc\xaf\x27\x1c", "a 7-Zip archive"),
+    (b"BZh", "bzip2-compressed data"),
+    (b"\xfd7zXZ\x00", "xz-compressed data"),
+    (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "an OLE compound file (legacy Office)"),
+    (b"\x89PNG", "a PNG image"),
+    (b"\xff\xd8\xff", "a JPEG image"),
+)
+
+
+def not_a_package(path: Path | str, kind: str) -> str | None:
+    """Explain a ``kind`` file (a ZIP package) that is something else.
+
+    Returns a sentence naming what the bytes are, or None when they are not
+    one of the recognized formats.
+    """
+    try:
+        with open(path, "rb") as stream:
+            head = stream.read(16)
+    except OSError:
+        return None
+    for signature, name in _CONTENT_SIGNATURES:
+        if head.startswith(signature) and signature != b"PK\x03\x04":
+            return (
+                f"This is not an {kind} file: it holds {name}, while an {kind} "
+                "is a ZIP package. Check the file (it may be misnamed or still "
+                "compressed)."
+            )
+    if head and not head.startswith(b"PK"):
+        if b"\x00" not in head and head.lstrip()[:1] in (b"<", b"{"):
+            markup = "HTML or XML text" if head.lstrip()[:1] == b"<" else "JSON text"
+            return (
+                f"This is not an {kind} file: it holds {markup}, while an {kind} "
+                "is a ZIP package. Check the file (it may be misnamed)."
+            )
+    return None
+
+
 def conversion_failed(message: str) -> NoReturn:
     """Refuse malformed input the way every converter does: by raising.
 
