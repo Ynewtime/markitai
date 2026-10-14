@@ -20,6 +20,7 @@ from markitai.converter.base import (
     ConvertResult,
     FileFormat,
     conversion_failed,
+    not_a_package,
     register_converter,
 )
 from markitai.converter.delimited import render_markdown_table
@@ -91,7 +92,8 @@ def _content_root(input_path: Path) -> ElementTree.Element:
                 )
             data = archive.read("content.xml")
     except zipfile.BadZipFile as exc:
-        raise _OdfError(f"not a readable zip archive: {exc}") from exc
+        reason = not_a_package(input_path, "OpenDocument")
+        raise _OdfError(reason or f"not a readable zip archive: {exc}") from exc
     except OSError as exc:
         raise _OdfError(f"cannot read the archive: {exc}") from exc
 
