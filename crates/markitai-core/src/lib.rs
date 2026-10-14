@@ -946,10 +946,18 @@ fn convert_inner(
                     failed_step =
                         Some((result.warnings.len(), "LLM enhancement", error.to_string()));
                 }
+                // What happened, in the error's words, and that nothing the
+                // conversion made was lost.
+                let reason = error.to_string();
+                let reason = reason.trim_end_matches('.');
                 result.warnings.push(if screenshot_only {
-                    format!("LLM enhancement failed; captured screenshots retained: {error}")
+                    format!(
+                        "LLM enhancement failed: {reason}; the captured screenshots are kept."
+                    )
                 } else {
-                    format!("LLM enhancement failed; base Markdown retained: {error}")
+                    format!(
+                        "LLM enhancement failed: {reason}; the converted Markdown is kept as it was."
+                    )
                 });
             }
         }

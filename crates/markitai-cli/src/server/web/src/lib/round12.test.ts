@@ -116,5 +116,5 @@ test("a change too large to compare still keeps equal head and tail lines' endin
 test("the Edit config page edits LF text and sends the file's endings", () => {
   const source = readFileSync(new URL("../components/settings-config.tsx", import.meta.url), "utf8");
   assert.match(source, /setText\(editorText\(value\.text/);
-  assert.match(source, /saveConfigDocument\(doc\.revision, fileText\(raw, text\)\)/);
+  assert.match(source, /saveConfigDocument\(doc\.revision, fileText\(raw, text\), scope\)/);
 });

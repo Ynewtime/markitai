@@ -246,6 +246,16 @@ pub(super) fn apply(
     command: Mutation,
 ) -> ApiResult<()> {
     let current = identity::revision(models, providers);
+    apply_at(models, providers, command, current)
+}
+/// [`apply`] against the lists' revision `current` (a user's includes its
+/// shared-model weights).
+pub(super) fn apply_at(
+    models: &mut Vec<Value>,
+    providers: &mut Vec<Value>,
+    command: Mutation,
+    current: String,
+) -> ApiResult<()> {
     let (expected, backfill) = match &command {
         Mutation::Add(v) => (model::string(v, "expected_revision", false, false)?, false),
         Mutation::Batch(v) => (

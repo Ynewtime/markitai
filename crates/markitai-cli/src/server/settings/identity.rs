@@ -7,6 +7,22 @@ pub(super) fn revision(models: &[Value], providers: &[Value]) -> String {
     markitai_core::hex(Sha256::digest(bytes.as_bytes()))
 }
 
+/// A user's revision: [`revision`] while it overrides no shared model's
+/// weight (so revisions from before overrides stay valid), else the same
+/// digest over its models, connections and overrides.
+pub(super) fn user_revision(
+    models: &[Value],
+    providers: &[Value],
+    shared_weights: &std::collections::BTreeMap<String, u64>,
+) -> String {
+    if shared_weights.is_empty() {
+        return revision(models, providers);
+    }
+    let bytes =
+        canonical(&json!({"models":models,"providers":providers,"shared_weights":shared_weights}));
+    markitai_core::hex(Sha256::digest(bytes.as_bytes()))
+}
+
 pub(super) fn id(entry: &Value, index: usize) -> String {
     if let Some(value) = entry
         .pointer("/model_info/id")

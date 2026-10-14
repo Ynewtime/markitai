@@ -1,7 +1,9 @@
 //! `/api/me/models*`: a user token's own models, with the settings routes'
-//! suffixes and shapes. Only a user token may use them (anyone else:
-//! `user_token_required`); `security::guard` marks every answer `no-store`.
-use super::{ApiResult, failure, invalid, model, store::Mutation, users};
+//! suffixes and shapes, its weights for and tests of the models the admin
+//! shares, and `/api/me/config`, its Edit config. Only a user token may use
+//! them (anyone else: `user_token_required`); `security::guard` marks every
+//! answer `no-store`.
+use super::{ApiError, ApiResult, failure, invalid, model, store::Mutation, user_config, users};
 use crate::server::{State, providers, security::Principal};
 use axum::{
     Json, Router,
@@ -23,6 +25,9 @@ api_routes! {
     delete "/api/me/models/deployments/{id}" => delete;
     patch "/api/me/models/providers/{id}" => update_provider;
     delete "/api/me/models/providers/{id}" => delete_provider;
+    patch "/api/me/models/shared/{id}" => update_shared;
+    get "/api/me/config" => config_view;
+    put "/api/me/config" => config_replace;
 }
 
 pub(in crate::server) fn routes() -> Router<Arc<State>> {
@@ -89,6 +94,9 @@ async fn network(
         Err(error) => return providers::response(Err(error)),
     };
     let resolved = match providers::body(request).await {
+        Ok(body) if is_probe && body.get("shared_id").is_some() => {
+            return shared_probe(state, id, &body).await;
+        }
         Ok(body) => {
             if is_probe {
                 users::resolve_probe(&state.users, &id, &body)
@@ -107,6 +115,59 @@ async fn network(
             .await
             .map(users::answer),
     )
+}
+
+/// Ends a user's test of a shared model when it is dropped.
+struct Testing {
+    state: Arc<State>,
+    id: String,
+}
+impl Drop for Testing {
+    fn drop(&mut self) {
+        self.state.users.end_test(&self.id);
+    }
+}
+
+/// `POST /api/me/models/test` with `{shared_id}`: the admin's entry of a
+/// shared model tested on the server, one at a time and a few per minute
+/// for each user; the answer says only whether it passed and why not.
+async fn shared_probe(state: Arc<State>, id: String, body: &Value) -> Response {
+    let shared = match body.as_object().filter(|fields| fields.len() == 1) {
+        Some(fields) => match fields["shared_id"].as_str() {
+            Some(shared) => shared.to_owned(),
+            None => return providers::response(Err(invalid("shared_id must be a string"))),
+        },
+        None => {
+            return providers::response(Err(invalid(
+                "shared_id cannot be combined with other probe fields",
+            )));
+        }
+    };
+    let request = match users::resolve_shared_probe(&state.settings, &shared) {
+        Ok(request) => request,
+        Err(error) => return providers::response(Err(error)),
+    };
+    if let Err(seconds) = state.users.begin_test(&id) {
+        let mut response = providers::response(Err(ApiError::new(
+            429,
+            "provider_busy",
+            format!(
+                "you can test a shared model once at a time and {} times a minute; try again shortly",
+                users::SHARED_TESTS_PER_MINUTE
+            ),
+        )));
+        response
+            .headers_mut()
+            .insert("retry-after", seconds.to_string().parse().unwrap());
+        return response;
+    }
+    let _testing = Testing {
+        state: state.clone(),
+        id,
+    };
+    providers::response(users::shared_answer(
+        providers::network(request, true).await,
+    ))
 }
 
 async fn discover(
@@ -241,4 +302,84 @@ async fn delete_provider(
         },
     )
     .await
+}
+
+/// `PATCH /api/me/models/shared/{id}` with exactly
+/// `{expected_revision, weight}`: the user's weight for a shared model.
+async fn update_shared(
+    ExtractState(state): ExtractState<Arc<State>>,
+    principal: Principal,
+    Path(shared): Path<String>,
+    request: Request,
+) -> ApiResult<Json<Value>> {
+    let id = users::caller(&principal)?;
+    let body = providers::body(request).await?;
+    let shape =
+        || invalid("send exactly {\"expected_revision\": string, \"weight\": integer or null}");
+    let fields = body
+        .as_object()
+        .filter(|fields| {
+            fields.len() == 2
+                && fields.contains_key("expected_revision")
+                && fields.contains_key("weight")
+        })
+        .ok_or_else(shape)?;
+    let expected = fields["expected_revision"]
+        .as_str()
+        .ok_or_else(shape)?
+        .to_owned();
+    let weight = match &fields["weight"] {
+        Value::Null => None,
+        value => Some(
+            value
+                .as_u64()
+                .filter(|weight| *weight <= users::MAX_WEIGHT)
+                .ok_or_else(|| invalid("weight must be a nonnegative integer"))?,
+        ),
+    };
+    crate::task::blocking(move || {
+        let alive = || state.access.exists(&id);
+        users::set_shared_weight(
+            &state.settings,
+            &state.users,
+            &id,
+            &alive,
+            &shared,
+            &expected,
+            weight,
+        )
+    })
+    .await
+    .map_err(|_| failure())?
+    .map(Json)
+}
+
+/// `GET /api/me/config`: the user's models file as the server writes it,
+/// every secret masked.
+async fn config_view(
+    ExtractState(state): ExtractState<Arc<State>>,
+    principal: Principal,
+) -> ApiResult<Json<Value>> {
+    let id = users::caller(&principal)?;
+    crate::task::blocking(move || user_config::config_view(&state.settings, &state.users, &id))
+        .await
+        .map_err(|_| failure())
+        .map(Json)
+}
+
+/// `PUT /api/me/config` with `{expected_revision, text}`.
+async fn config_replace(
+    ExtractState(state): ExtractState<Arc<State>>,
+    principal: Principal,
+    request: Request,
+) -> ApiResult<Json<Value>> {
+    let id = users::caller(&principal)?;
+    let (expected, text) = super::handlers::config_body(request).await?;
+    crate::task::blocking(move || {
+        let alive = || state.access.exists(&id);
+        user_config::replace_config(&state.settings, &state.users, &id, &alive, &expected, &text)
+    })
+    .await
+    .map_err(|_| failure())?
+    .map(Json)
 }

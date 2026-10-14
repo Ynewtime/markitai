@@ -228,7 +228,7 @@ pub(crate) fn process_document_with_runtime(
     };
     if body.trim().is_empty() {
         return Err(Error::Conversion(
-            "LLM document processing produced an empty document".into(),
+            "the model's answer left the document empty, so it was not used".into(),
         ));
     }
     warnings.extend(take_document_warnings());
@@ -481,7 +481,7 @@ pub(super) fn plausible(source: &str, answer: &str, lenient: bool) -> Result<()>
         || source_grams.intersection(&answer_grams).count() * 10 < source_grams.len() * 3
     {
         return Err(Error::Conversion(
-            "LLM answer discarded or replaced too much source content to be a document cleanup"
+            "the model's answer left out or changed too much of the document, so it was not used"
                 .into(),
         ));
     }

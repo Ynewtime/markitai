@@ -368,7 +368,7 @@ fn breaks_in_list_items_quotes_cells_and_notes_keep_their_containers() {
         renderer.blocks(&[Block::BlockQuote(vec![broken()])]),
         "> a  \n> b"
     );
-    // A cell's lines are joined with `<br>`, two breaks with an empty line.
+    // A cell's lines are joined with `<br>`, two breaks with one too.
     let cell = |values: Vec<Inline>| {
         Block::Table(Table::from_rows(
             vec![vec![Cell::from_inlines(values)]],
@@ -386,7 +386,7 @@ fn breaks_in_list_items_quotes_cells_and_notes_keep_their_containers() {
             Inline::plain("c | d"),
             Inline::LineBreak,
         ])]),
-        "|  |\n| --- |\n| a<br>b<br><br>c \\| d |"
+        "|  |\n| --- |\n| a<br>b<br>c \\| d |"
     );
     // A cell holds no blocks: a line starting like one is not escaped.
     assert_eq!(

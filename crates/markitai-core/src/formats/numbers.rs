@@ -403,7 +403,21 @@ fn decimal(value: Decimal, places: Option<usize>) -> String {
     digits
 }
 
+/// Text written escaped for a Markdown or an HTML table: its lines joined
+/// with one `<br>`, none for an empty line or at its edges (a raw line feed
+/// would end a Markdown table's row).
 fn escaped(out: &mut String, text: &str, html: bool) {
+    let joined;
+    let text = if text.contains(super::text::LINE_BREAKS) {
+        joined = text
+            .split(super::text::LINE_BREAKS)
+            .filter(|line| !line.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        &joined
+    } else {
+        text
+    };
     for character in text.chars() {
         match character {
             '&' => out.push_str("&amp;"),

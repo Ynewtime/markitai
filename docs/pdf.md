@@ -204,7 +204,7 @@ covered 89.0%, and words over blank paper 7%; all three are refused.
 
 A page read from its layer has no visibility warning; one warning names every
 such page, checked alike, its producer and that recognition errors in the layer
-are kept (`PDF pages 1-3: the text was read from the invisible OCR text layer
+are kept (`PDF pages 1–3: the text was read from the invisible OCR text layer
 laid over each page image (Tesseract 5.5.3); it lines up with the text in the
 image, …`). Metadata `ocr_layer_pages` lists the pages. Such a page is read
 without headings, code, bold, italic or underline (an OCR layer's font is a

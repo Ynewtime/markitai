@@ -362,9 +362,12 @@ export const batchDelete = (jobs: string[], items: { job_id: string; item_id: st
 export const fetchUserTokens = () => json<{ tokens: UserToken[] }>("/api/access-tokens").then((value) => value.tokens ?? []);
 export const createUserToken = (label: string) => json<UserToken>("/api/access-tokens", { method: "POST", body: { label } });
 export const revokeUserToken = (id: string) => json<null>(`/api/access-tokens/${enc(id)}`, { method: "DELETE" });
-export const fetchConfigDocument = () => json<ConfigDocument>("/api/settings/config");
-export const saveConfigDocument = (revision: string, text: string) =>
-  json<ConfigDocument>("/api/settings/config", { method: "PUT", body: { expected_revision: revision, text } });
+/** The admin's config file (`/api/settings/config`), or v1.16 a user token's own models document (`/api/me/config`). */
+export type ConfigScope = "admin" | "user";
+const CONFIG_PATH: Record<ConfigScope, string> = { admin: "/api/settings/config", user: "/api/me/config" };
+export const fetchConfigDocument = (scope: ConfigScope = "admin") => json<ConfigDocument>(CONFIG_PATH[scope]);
+export const saveConfigDocument = (revision: string, text: string, scope: ConfigScope = "admin") =>
+  json<ConfigDocument>(CONFIG_PATH[scope], { method: "PUT", body: { expected_revision: revision, text } });
 
 /** Whose models a Models page manages: the admin's (`/api/settings/llm`) or, v1.15, a user token's own
  * (`/api/me/models`, the same routes under another prefix; no config file to open). */
@@ -391,6 +394,9 @@ export function modelsApi(scope: ModelsScope) {
       json<SettingsView | UserModelsView>(`${base}/providers/${enc(id)}`, { method: "PATCH", body }),
     deleteProvider: (id: string, revision: string) =>
       json<SettingsView | UserModelsView>(`${base}/providers/${enc(id)}?expected_revision=${enc(revision)}`, { method: "DELETE" }),
+    /** v1.16, user only: this user's weight for a shared model (null = the admin's again). */
+    updateShared: (id: string, revision: string, weight: number | null) =>
+      json<UserModelsView>(`${MODELS_BASE.user}/shared/${enc(id)}`, { method: "PATCH", body: { expected_revision: revision, weight } }),
   };
 }
 export type ModelsApi = ReturnType<typeof modelsApi>;

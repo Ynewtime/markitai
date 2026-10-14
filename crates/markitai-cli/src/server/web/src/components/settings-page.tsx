@@ -7,6 +7,8 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createUserToken, fetchUserTokens, regenerateToken, revokeUserToken } from "../api/client.ts";
 import { hasToken, setToken } from "../api/token.ts";
 import type { RegeneratedToken, UserToken } from "../api/types.ts";
+import { VersionText } from "./version-text.tsx";
+import type { VersionLine } from "../lib/build.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { LOCALES } from "../i18n/locale.ts";
 import { ownClick, type Route, type Section } from "../lib/route.ts";
@@ -471,12 +473,12 @@ function NewToken({ t, token, heading: title, onDone }: { t: Dict; token: Regene
 }
 
 /** Phones: the section list behind the tab bar's Settings. */
-export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user = false, onNavigate }: { t: Dict; version: string | null; docsUrl: string; sourceUrl: string; sections: Section[]; user?: boolean; onNavigate: (route: Route) => void }) {
+export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user = false, onNavigate }: { t: Dict; version: VersionLine | null; docsUrl: string; sourceUrl: string; sections: Section[]; user?: boolean; onNavigate: (route: Route) => void }) {
   const entries: Record<Section, [IconName, string, string]> = {
     appearance: ["Palette", t.navAppearanceShort, t.appearanceHint],
     models: ["Cpu", t.navModels, user ? t.userModelsHint : t.modelsHint],
     access: ["Key", t.navAccess, t.accessHint],
-    config: ["FileCode", t.navConfig, t.configHint],
+    config: ["FileCode", t.navConfig, user ? t.userConfigHint : t.configHint],
   };
   const entry = (section: Section, icon: IconName, label: string, hint: string) => (
     <li key={section}>
@@ -525,7 +527,7 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
           </a>
         </li>
       </ul>
-      {version && <p class="version">markitai {version}</p>}
+      {version && <p class="version" title={t.buildTitle(version.parts)}><VersionText text={version.text} /></p>}
     </section>
   );
 }

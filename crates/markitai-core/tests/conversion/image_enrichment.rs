@@ -1121,7 +1121,7 @@ fn no_model_answer_keeps_only_the_base_markdown_and_says_so_once() {
             !output
                 .warnings
                 .iter()
-                .any(|w| w.contains("base Markdown retained")),
+                .any(|w| w.contains("the converted Markdown is kept as it was")),
             "{case}: {:?}",
             output.warnings
         );
@@ -1212,7 +1212,8 @@ fn any_model_answer_is_not_reported_as_no_model_succeeding() {
         output
             .warnings
             .iter()
-            .any(|w| w.starts_with("LLM enhancement failed; base Markdown retained: ")),
+            .any(|w| w.starts_with("LLM enhancement failed: ")
+                && w.ends_with("; the converted Markdown is kept as it was.")),
         "{:?}",
         output.warnings
     );

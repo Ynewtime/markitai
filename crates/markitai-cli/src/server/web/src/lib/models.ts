@@ -31,3 +31,10 @@ export function modelName(model: string): string {
   const slash = model.indexOf("/");
   return slash < 0 ? model : model.slice(slash + 1);
 }
+
+/** v1.16: the weight a field's text means, or null when it is not a whole number from 0 to 999 999. */
+export function parseWeight(text: string): number | null {
+  const value = text.trim();
+  if (!/^\d{1,6}$/.test(value)) return null;
+  return Number(value);
+}

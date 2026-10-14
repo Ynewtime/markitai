@@ -599,7 +599,7 @@ export const ja: Dict = {
   supportedFormats: "対応形式",
   noticesHeading: (n: number) => `お知らせ ${n} 件`,
   noticeKinds: (n: number) => `お知らせ ${n} 種類`,
-  noticeTitle: (kind: string, count: number, models: string[], sample: string) => {
+  noticeTitle: (kind: string, count: number, models: string[], sample: string, pages: { ranges: string; count: number; total: number | null } | null = null) => {
     // Model IDs are Latin, so a space separates them from the particle; the counted form ends in Japanese.
     const list = (names: string[]) => (names.length <= 2 ? `${names.join("、")} ` : `${names.slice(0, 2).join("、")} ほか ${names.length - 2} 個のモデル`);
     switch (kind) {
@@ -617,6 +617,19 @@ export const ja: Dict = {
         return `${count} 件のモデルリクエストが失敗したため、再送信しました`;
       case "deployment_skipped":
         return models.length ? `今回の実行では ${list(models)}をスキップしました` : "今回の実行ではモデルを 1 つスキップしました";
+      case "answer_rejected":
+        if (/drift guard/.test(sample))
+          return count === 1
+            ? "モデルの回答はページごとに文書と一致しなかったため、使いませんでした。変換した Markdown はそのまま残しています"
+            : `モデルの回答 ${count} 件はページごとに文書と一致しなかったため、使いませんでした。変換した Markdown はそのまま残しています`;
+        return count === 1
+          ? "モデルの回答は使いませんでした。文書の内容を削りすぎたか、変えすぎていました。変換した Markdown はそのまま残しています"
+          : `モデルの回答 ${count} 件は使いませんでした。文書の内容を削りすぎたか、変えすぎていました。変換した Markdown はそのまま残しています`;
+      case "pdf_scanned":
+        return count === 1 ? "この PDF はスキャンです。OCR をオンにして変換し直してください" : `${count} 件の PDF はスキャンです。OCR をオンにして変換し直してください`;
+      case "pdf_ocr_pages":
+        if (count === 1 && pages) return `${pages.ranges} ページ${pages.total ? `（全 ${pages.total} ページ中 ${pages.count} ページ）` : ""}に読み取れる文字がありません。OCR をオンにして変換し直すと読み取れます`;
+        return `${count} 件の PDF に読み取れる文字のないページがあります。OCR をオンにして変換し直してください`;
       default:
         return sample;
     }
@@ -785,7 +798,7 @@ export const ja: Dict = {
   userModelsEmptyText: "自分の API キーを使うモデルを追加すると、変換で LLM の機能を使えます。使うのはあなたの変換だけで、キーは保存後に再表示されません。",
   userModelsOwnNone: "自分のモデルはありません",
   userModelsOwn: (n: number) => `自分のモデル ${n} 個`,
-  userModelsRouting: "あなたの変換は、自分のモデルと共有モデルを 1 つのグループとして重みで選びます。失敗したときは別のモデルを試します。重み 0 で自分のモデルを無効にできます。",
+  userModelsRouting: "あなたの変換は、自分のモデルと共有モデルを 1 つのグループとして重みで選びます。失敗したときは別のモデルを試します。重み 0 でそのモデルをあなたの変換では無効にできます。",
   userModelsHint: "自分のモデルと、管理者が共有するモデル",
   configAbsent: "未作成",
   configLoadFailed: "設定を読み込めませんでした",
@@ -816,4 +829,35 @@ export const ja: Dict = {
   diffAdded: "追加",
   diffRemoved: "削除",
   // crash surface (also read before the dictionary is available)
+  weightLabel: "ルーティングの重み",
+  weightShortLabel: "重み",
+  weightEditHint: "クリックして変更。Enter で保存、Esc で取り消し",
+  weightEditAria: (shown: string, model: string) => `${shown}、${model}：変更`,
+  weightFieldLabel: (model: string) => `${model} のルーティングの重み`,
+  weightKeysHint: "0 以上の整数。Enter で保存、Esc で取り消し",
+  weightInvalid: "0 以上の整数を入力してください",
+  weightSaved: (model: string, weight: number) => (weight === 0 ? `${model} を無効にしました：重み 0` : `${model}：重み ${weight}`),
+  sharedByAdminWeights: "あなたの変換でもこれらを使えます。キーはサーバーに残ります。ここでの重みはあなた専用で、あなたの変換が各モデルを選ぶ頻度だけを変えます。",
+  sharedWeightHint: "あなたの変換がこの共有モデルを選ぶ頻度。あなたにだけ適用されます。0 であなたには無効になります",
+  sharedWeightReset: (weight: number) => `管理者の ${weight} に戻す`,
+  sharedWeightResetAria: (shown: string, model: string) => `${shown}（${model}）`,
+  sharedWeightResetHint: "今後の変更も含めて、管理者の重みに従います",
+  sharedOffForYou: "あなたの変換では無効です（重み 0）。ほかのユーザーには影響しません。",
+  sharedTestFailHint: (reason: string) =>
+    reason === "rate_limited"
+      ? "プロバイダーがリクエストを制限しているか、クォータを使い切っています。しばらくして再試行し、失敗が続く場合は管理者に伝えてください。"
+      : "テストはサーバー上で管理者の設定を使って実行されました。その設定は表示も変更もできません。どのモデルが失敗したかを管理者に伝えてください。",
+  navConfigUser: "設定の編集",
+  userConfigHint: "自分のモデルと重みをテキストで編集",
+  userConfigSubtitle: "自分のモデル、その接続、共有モデルに付けた自分の重み。サーバー自体の設定は管理者のものです。",
+  userConfigNote: "\"models\" と \"providers\" はあなた自身のものです（設定ファイルの llm.model_list と llm.providers と同じ形）。\"shared\" は管理者が共有するモデルの一覧で、変えられるのは \"weight\" だけです（0 であなたには無効、管理者と同じ値なら再び管理者に従います）。",
+  userConfigMasked: (n: number) => `${n} 件のキーをマスクして表示しています（例：us…-key）。マスクされた値をそのままにすると保存済みのキーが残ります。新しいキーを入力すると置き換わります。`,
+  userConfigName: "自分のモデル",
+  userConfigEditorLabel: "自分のモデル（JSON）",
+  userConfigUnreadable: "保存したモデルを読み込めませんでした。ページを再読み込みしてください。続く場合は管理者に伝えてください。",
+  userConfigSaved: "保存しました。次の変換から使われます。",
+  userConfigStale: "このページを開いた後に、モデルが変更されました（ここかモデルのページで）。もう一度読み込んでから変更し直してください。",
+  userConfigReload: "現在のモデルを読み込む",
+  buildTitle: (parts: { version: string; commit: string | null; dirty: boolean; built: string | null }) =>
+    [`バージョン ${parts.version}`, parts.commit && `コミット ${parts.commit}${parts.dirty ? "（未コミットの変更を含むビルド）" : ""}`, parts.built && `ビルド ${parts.built}`].filter(Boolean).join(" · "),
 };

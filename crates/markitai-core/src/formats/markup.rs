@@ -151,7 +151,7 @@ fn table(rows: &[Vec<String>], header: bool) -> String {
             (0..columns)
                 .map(|i| cells
                     .get(i)
-                    .map(|s| s.replace('|', "\\|").replace('\n', "<br>"))
+                    .map(|s| super::text::cell_lines(s).replace('|', "\\|"))
                     .unwrap_or_default())
                 .collect::<Vec<_>>()
                 .join(" | ")

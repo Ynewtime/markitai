@@ -45,7 +45,7 @@ import {
 import { groupNotices } from "../lib/notices.ts";
 import { cachedExcerpt, resultKey } from "../lib/results.ts";
 import type { SessionItem } from "../lib/session.ts";
-import { capTables, freezeColumns, markNumericColumns, MARKER, ROW_CHUNK, ROW_LIMIT, tableSlice, type CappedTable } from "../lib/tables.ts";
+import { capTables, repairTables, freezeColumns, markNumericColumns, MARKER, ROW_CHUNK, ROW_LIMIT, tableSlice, type CappedTable } from "../lib/tables.ts";
 import { entryAt, tocEntries } from "../lib/toc.ts";
 import { FrontCard } from "./inspector.tsx";
 import { Icon, Logo } from "./icons.tsx";
@@ -331,7 +331,7 @@ export function MarkdownView({
       target.replaceChildren();
       headingEls.current = [];
       capHosts.current = [];
-      const cut = capTables(split.body);
+      const cut = capTables(repairTables(split.body));
       capped.current = cut.tables;
       loadLibraries()
         .then(async (libraries) => {
@@ -706,13 +706,13 @@ export function MarkdownView({
                   <summary>
                     <Icon name="Warning" size={14} />
                     <span>{t.noticesHeading(notices.reduce((sum, group) => sum + group.count, 0))}</span>
-                    <span class="doc-notices-first">{t.noticeTitle(notices[0]?.kind ?? "other", notices[0]?.count ?? 0, notices[0]?.models ?? [], notices[0]?.sample ?? "")}</span>
+                    <span class="doc-notices-first">{t.noticeTitle(notices[0]?.kind ?? "other", notices[0]?.count ?? 0, notices[0]?.models ?? [], notices[0]?.sample ?? "", notices[0]?.pages ?? null)}</span>
                   </summary>
                   <ul>
                     {notices.map((group) => (
                       <li key={group.key}>
-                        {t.noticeTitle(group.kind, group.count, group.models, group.sample)}
-                        {group.kind === "other" && group.count > 1 && ` ×${group.count}`}
+                        {t.noticeTitle(group.kind, group.count, group.models, group.sample, group.pages)}
+                        {group.kind === "other" && group.count > 1 && group.pages === null && ` ×${group.count}`}
                       </li>
                     ))}
                   </ul>

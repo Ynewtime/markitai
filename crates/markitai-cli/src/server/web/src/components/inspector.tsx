@@ -185,8 +185,8 @@ function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: No
           </span>
           <div class="notice-body">
             <p class="notice-text">
-              {t.noticeTitle(group.kind, group.count, group.models, group.sample)}
-              {group.kind === "other" && group.count > 1 && <span class="notice-count"> ×{group.count}</span>}
+              {t.noticeTitle(group.kind, group.count, group.models, group.sample, group.pages)}
+              {group.kind === "other" && group.count > 1 && group.pages === null && <span class="notice-count"> ×{group.count}</span>}
             </p>
             {where && <p class="notice-where">{t.noticeWhere(group.names)}</p>}
             {(group.samples.length > 1 || group.kind !== "other") && (

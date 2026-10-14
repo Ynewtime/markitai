@@ -81,7 +81,9 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   A cell's lines (a `<br>`, paragraphs, list items) are joined with `<br>` and a
   literal pipe is written `\|`, as the document formats write a cell (`* x<br>* y`,
   `A \| B`, also inside inline code and math, where `&#124;` showed as written);
-  a code block in a cell stays one code span, its lines joined with spaces.
+  several breaks or empty paragraphs in a row give one `<br>`, none stands at
+  the cell's edges, and a code block in a cell is one code span per line of
+  its code ([line breaks in table cells](formats.md#line-breaks-in-table-cells)).
 - A form's prose is page text; its controls (`input`, `select`, `textarea`,
   `button`) are not. A form is left out whole only when it is an entry box: it
   has visible fields and at most 20 words of text, or it names itself one (a

@@ -13,20 +13,24 @@ use super::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 /// A user token's own models at most.
 pub(in crate::server) const LIMIT: usize = 50;
 
 /// One user's models and connections, as `llm.model_list` and
-/// `llm.providers` entries.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// `llm.providers` entries, and its own weight for shared models (by the
+/// admin's deployment id) where it differs from the admin's.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(in crate::server) struct Lists {
     pub models: Vec<Value>,
     pub providers: Vec<Value>,
+    #[serde(default)]
+    pub shared_weights: BTreeMap<String, u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -34,12 +38,29 @@ struct Saved {
     version: u32,
     models: Vec<Value>,
     providers: Vec<Value>,
+    /// Absent when empty, so a file without overrides keeps its old shape.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    shared_weights: BTreeMap<String, u64>,
+}
+
+/// A user's tests of shared models at most: one at a time, and this many per
+/// rolling minute (the admin's key pays for them).
+pub(in crate::server) const SHARED_TESTS_PER_MINUTE: usize = 6;
+const SHARED_TEST_WINDOW: Duration = Duration::from_secs(60);
+
+/// One user's recent tests of shared models.
+#[derive(Default)]
+struct Tests {
+    running: bool,
+    started: VecDeque<Instant>,
 }
 
 pub(in crate::server) struct Users {
     directory: PathBuf,
     /// Every user's lists read so far; the lock also serializes writes.
     lists: Mutex<HashMap<String, Lists>>,
+    /// Every user's tests of shared models, in memory only.
+    tests: Mutex<HashMap<String, Tests>>,
 }
 
 fn user_file(directory: &Path, id: &str) -> PathBuf {
@@ -69,12 +90,17 @@ fn read(path: &Path) -> Result<Lists, String> {
         .providers
         .iter()
         .all(|entry| entry.is_object() && entry["id"].is_string() && entry["provider"].is_string());
-    if !models_valid || !providers_valid || saved.models.len() > LIMIT {
+    if !models_valid
+        || !providers_valid
+        || saved.models.len() > LIMIT
+        || saved.shared_weights.values().any(|w| *w > MAX_WEIGHT)
+    {
         return Err(format!("{}: invalid model entry", path.display()));
     }
     Ok(Lists {
         models: saved.models,
         providers: saved.providers,
+        shared_weights: saved.shared_weights,
     })
 }
 
@@ -86,6 +112,7 @@ fn save(directory: &Path, id: &str, lists: &Lists) -> std::io::Result<bool> {
         version: 1,
         models: lists.models.clone(),
         providers: lists.providers.clone(),
+        shared_weights: lists.shared_weights.clone(),
     })
     .map_err(std::io::Error::other)?;
     bytes.push(b'\n');
@@ -100,6 +127,46 @@ impl Users {
         Self {
             directory,
             lists: Mutex::new(HashMap::new()),
+            tests: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Whether the user `id` has a file of its own.
+    pub(in crate::server) fn exists(&self, id: &str) -> bool {
+        user_file(&self.directory, id).is_file()
+    }
+
+    /// Start a test of a shared model for the user `id`, within the bound;
+    /// else how many seconds until one may start.
+    pub(in crate::server) fn begin_test(&self, id: &str) -> Result<(), u64> {
+        let mut tests = self.tests.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let entry = tests.entry(id.to_owned()).or_default();
+        while entry
+            .started
+            .front()
+            .is_some_and(|at| now.duration_since(*at) >= SHARED_TEST_WINDOW)
+        {
+            entry.started.pop_front();
+        }
+        if entry.running {
+            return Err(1);
+        }
+        if entry.started.len() >= SHARED_TESTS_PER_MINUTE {
+            let oldest = *entry.started.front().unwrap();
+            let left = SHARED_TEST_WINDOW.saturating_sub(now.duration_since(oldest));
+            return Err(left.as_secs_f64().ceil().max(1.0) as u64);
+        }
+        entry.running = true;
+        entry.started.push_back(now);
+        Ok(())
+    }
+
+    /// The user `id`'s test of a shared model has ended.
+    pub(in crate::server) fn end_test(&self, id: &str) {
+        let mut tests = self.tests.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = tests.get_mut(id) {
+            entry.running = false;
         }
     }
 
@@ -129,8 +196,8 @@ impl Users {
 
     /// Change the user `id`'s lists with `change` and save them, if the
     /// token still exists (`alive`, asked under the lock a revocation's
-    /// deletion takes too).
-    fn write(
+    /// deletion takes too). A change that changes nothing writes nothing.
+    pub(super) fn write(
         &self,
         id: &str,
         alive: &dyn Fn() -> bool,
@@ -144,8 +211,12 @@ impl Users {
                 "this access token was revoked; sign in again",
             ));
         }
-        let mut next = self.cached(&mut lists, id).clone();
+        let current = self.cached(&mut lists, id).clone();
+        let mut next = current.clone();
         change(&mut next)?;
+        if next == current {
+            return Ok(next);
+        }
         let durable = save(&self.directory, id, &next).map_err(|error| {
             eprintln!("Error: Serve: could not save a user token's models: {error}");
             failure()
@@ -315,7 +386,7 @@ pub(super) fn check_entry(entry: &Value, providers: &[Value]) -> ApiResult<()> {
 
 /// Hold a user's lists after a change to the rules, then seal them: no entry
 /// or connection may ever use the environment's credentials.
-fn check(lists: &mut Lists) -> ApiResult<()> {
+pub(super) fn check(lists: &mut Lists) -> ApiResult<()> {
     for connection in &lists.providers {
         check_connection(
             connection["provider"].as_str().unwrap_or_default(),
@@ -344,7 +415,7 @@ fn check(lists: &mut Lists) -> ApiResult<()> {
 
 /// Refuse what a request names before anything changes: a provider that
 /// signs in with the server's own account, or the environment's credentials.
-fn precheck(entry: &Value) -> ApiResult<()> {
+pub(super) fn precheck(entry: &Value) -> ApiResult<()> {
     let prefix = model::provider(entry);
     let named = entry["provider"].as_str().map(str::to_ascii_lowercase);
     if model::server_login(&prefix) || named.as_deref().is_some_and(model::server_login) {
@@ -360,13 +431,68 @@ fn precheck(entry: &Value) -> ApiResult<()> {
 }
 
 /// The user's lists as settings data, for the settings' views and resolvers.
-fn data(lists: Lists) -> Data {
+pub(super) fn data(lists: Lists) -> Data {
     Data {
         cfg: Arc::new(Value::Null),
-        revision: identity::revision(&lists.models, &lists.providers),
+        revision: revision(&lists),
         models: lists.models,
         providers: lists.providers,
         detected: Vec::new(),
+    }
+}
+
+/// The revision of a user's lists: its models, connections and weights of
+/// shared models.
+pub(super) fn revision(lists: &Lists) -> String {
+    identity::user_revision(&lists.models, &lists.providers, &lists.shared_weights)
+}
+
+/// A weight at most, as the admin's `weight` field takes it.
+pub(super) const MAX_WEIGHT: u64 = i64::MAX as u64;
+
+/// One admin model users currently see: shared, admin weight above 0.
+pub(super) struct Shared {
+    pub id: String,
+    pub model: Value,
+    pub provider: String,
+    /// The admin's weight.
+    pub weight: u64,
+}
+
+/// The admin's models users currently see, in the saved order.
+pub(super) fn shared_models(store: &Store) -> Vec<Shared> {
+    store.with_data(|admin| {
+        pool::shared(admin)
+            .into_iter()
+            .map(|(index, entry)| Shared {
+                id: identity::id(entry, index),
+                model: entry["litellm_params"]["model"].clone(),
+                provider: model::connection_provider(entry, &admin.providers),
+                weight: pool::weight(entry),
+            })
+            .collect()
+    })
+}
+
+/// A user's weight for the shared model `shared`: its own, else the admin's.
+pub(super) fn effective_weight(lists: &Lists, shared: &Shared) -> u64 {
+    lists
+        .shared_weights
+        .get(&shared.id)
+        .copied()
+        .unwrap_or(shared.weight)
+}
+
+/// Set the user's weight for `shared` to `weight`: an override only when it
+/// differs from the admin's weight (`None` or the admin's: none).
+pub(super) fn set_weight(lists: &mut Lists, shared: &Shared, weight: Option<u64>) {
+    match weight.filter(|weight| *weight != shared.weight) {
+        Some(weight) => {
+            lists.shared_weights.insert(shared.id.clone(), weight);
+        }
+        None => {
+            lists.shared_weights.remove(&shared.id);
+        }
     }
 }
 
@@ -401,17 +527,15 @@ pub(in crate::server) fn view(store: &Store, users: &Users, id: &str) -> Value {
 fn shaped(store: &Store, users: &Users, id: &str, lists: Lists) -> Value {
     let pool = conversion_config(store, users, id);
     let routable = markitai_core::llm_capabilities(&pool).routable;
-    // What a shared model is, never its key, address or connection.
-    let shared = store.with_data(|admin| {
-        pool::shared(admin)
-            .into_iter()
-            .map(|(index, entry)| {
-                json!({"id":identity::id(entry,index),"model":entry["litellm_params"]["model"],
-                    "provider":model::connection_provider(entry,&admin.providers),
-                    "weight":entry["litellm_params"]["weight"].as_u64().unwrap_or(1)})
-            })
-            .collect::<Vec<_>>()
-    });
+    // What a shared model is, never its key, address or connection: the
+    // user's weight for it and the admin's.
+    let shared = shared_models(store)
+        .iter()
+        .map(|shared| {
+            json!({"id":shared.id,"model":shared.model,"provider":shared.provider,
+                "weight":effective_weight(&lists,shared),"default_weight":shared.weight})
+        })
+        .collect::<Vec<_>>();
     views::user_payload(&data(lists), shared, routable)
 }
 
@@ -431,10 +555,83 @@ pub(in crate::server) fn mutate(
         }
     }
     let lists = users.write(id, alive, |lists| {
-        store::apply(&mut lists.models, &mut lists.providers, command)?;
+        let current = revision(lists);
+        store::apply_at(&mut lists.models, &mut lists.providers, command, current)?;
         check(lists)
     })?;
     Ok(shaped(store, users, id, lists))
+}
+
+fn stale(current: String) -> ApiError {
+    ApiError::structured(
+        409,
+        "stale_revision",
+        json!({"code":"stale_revision","current_revision":current}),
+    )
+}
+
+/// `PATCH /api/me/models/shared/{shared}` for the user `id`: its own weight
+/// for a shared model (`None`: the admin's).
+pub(in crate::server) fn set_shared_weight(
+    store: &Store,
+    users: &Users,
+    id: &str,
+    alive: &dyn Fn() -> bool,
+    shared: &str,
+    expected: &str,
+    weight: Option<u64>,
+) -> ApiResult<Value> {
+    let listed = shared_models(store);
+    let target = listed
+        .iter()
+        .find(|model| model.id == shared)
+        .ok_or_else(missing)?;
+    let lists = users.write(id, alive, |lists| {
+        let current = revision(lists);
+        if expected != current {
+            return Err(stale(current));
+        }
+        set_weight(lists, target, weight);
+        Ok(())
+    })?;
+    Ok(shaped(store, users, id, lists))
+}
+
+/// `POST /api/me/models/test` with `{shared_id}`: the admin's entry of that
+/// shared model, resolved as the admin's own test of it would be.
+pub(in crate::server) fn resolve_shared_probe(store: &Store, shared: &str) -> ApiResult<Value> {
+    store.with_data(|admin| {
+        pool::shared(admin)
+            .into_iter()
+            .find(|(index, entry)| identity::id(entry, *index) == shared)
+            .ok_or_else(|| invalid("deployment not found"))?;
+        store::resolve_probe(admin, &json!({"deployment_id":shared}))
+    })
+}
+
+/// The one sentence a failed test of a shared model says, whatever failed.
+pub(in crate::server) const SHARED_TEST_FAILED: &str =
+    "The shared model did not pass its test; ask the admin to check it";
+
+/// A test answer of a shared model for a user: whether it passed and the
+/// test's reason, never the provider's words, an address or a variable.
+pub(in crate::server) fn shared_answer(value: ApiResult<Value>) -> ApiResult<Value> {
+    let reason = match value {
+        Ok(value) if value["ok"] == true => {
+            return Ok(json!({"ok":true,"detail":"Model test passed"}));
+        }
+        Ok(value) => value["reason"]
+            .as_str()
+            .filter(|reason| {
+                markitai_core::provider_management::probe_reasons().any(|known| known == *reason)
+            })
+            .unwrap_or("provider_error")
+            .to_owned(),
+        // Every server's tests at once: busy, as for any test.
+        Err(error) if error.reason == "provider_busy" => return Err(error),
+        Err(_) => "provider_error".to_owned(),
+    };
+    Ok(json!({"ok":false,"reason":reason,"detail":SHARED_TEST_FAILED}))
 }
 
 /// `GET /api/me/models/providers`.
@@ -654,6 +851,68 @@ mod tests {
             ),
             Some("invalid_settings_request")
         );
+    }
+
+    #[test]
+    fn shared_model_tests_are_one_at_a_time_and_six_a_minute_per_user() {
+        let temp = tempfile::tempdir().unwrap();
+        let users = Users::new(temp.path().join("serve/user-models"));
+        users.begin_test("u_000000000001").unwrap();
+        // One at a time, for that user only.
+        assert_eq!(users.begin_test("u_000000000001"), Err(1));
+        users.begin_test("u_000000000002").unwrap();
+        users.end_test("u_000000000001");
+        for _ in 1..SHARED_TESTS_PER_MINUTE {
+            users.begin_test("u_000000000001").unwrap();
+            users.end_test("u_000000000001");
+        }
+        // The seventh within the minute waits for the first to leave it.
+        let wait = users.begin_test("u_000000000001").unwrap_err();
+        assert!((1..=60).contains(&wait), "{wait}");
+        users.end_test("u_000000000002");
+        users.begin_test("u_000000000002").unwrap();
+    }
+
+    #[test]
+    fn a_files_shared_weights_are_kept_and_count_in_its_revision() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("serve/user-models");
+        let users = Users::new(directory.clone());
+        let alive = || true;
+        let entry = json!({"model_name":"default","litellm_params":{"model":"openai/m","api_key":"user-a-fixture-key"}});
+        let plain = users
+            .write("u_000000000001", &alive, |lists| {
+                lists.models.push(entry.clone());
+                Ok(())
+            })
+            .unwrap();
+        // No overrides: the revision of v1.15, and no key in the file.
+        assert_eq!(
+            revision(&plain),
+            identity::revision(&plain.models, &plain.providers)
+        );
+        let path = directory.join("u_000000000001.json");
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("shared_weights")
+        );
+        let weighted = users
+            .write("u_000000000001", &alive, |lists| {
+                lists.shared_weights.insert("s1".into(), 0);
+                Ok(())
+            })
+            .unwrap();
+        assert_ne!(revision(&weighted), revision(&plain));
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["shared_weights"], json!({"s1":0}));
+        assert_eq!(saved["version"], 1);
+        let restarted = Users::new(directory.clone());
+        assert_eq!(restarted.lists("u_000000000001"), weighted);
+        // A change that changes nothing writes nothing.
+        std::fs::write(&path, b"{not json").unwrap();
+        users.write("u_000000000001", &alive, |_| Ok(())).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
     }
 
     #[test]

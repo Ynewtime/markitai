@@ -28,6 +28,7 @@ import { ModelPicker } from "./model-picker.tsx";
 import { loadBrandMarks } from "./brand-icon.tsx";
 import { manageable, providerLabel, ProviderPicker } from "./provider-picker.tsx";
 import { StateBlock } from "./state-block.tsx";
+import { WeightPill } from "./weight-pill.tsx";
 import { dismissToast, toast } from "../lib/toast.ts";
 
 type Described = { text: string; detail: string };
@@ -117,29 +118,122 @@ function ShareToggle({ t, model, value, busy, onChange }: { t: Dict; model: stri
   );
 }
 
-/** v1.15: the models the admin shares, as a user sees them: what each is, nothing to change. */
-function SharedModels({ t, models, narrow, labelOf }: { t: Dict; models: SharedModel[]; narrow: boolean; labelOf: (provider: string) => string }) {
+/** The Test button of a model row: idle, testing, passed or failed for a moment. */
+function TestButton({ t, model, state, onTest }: { t: Dict; model: string; state: "busy" | "ok" | "fail" | undefined; onTest: () => void }) {
+  return (
+    <button
+      type="button"
+      class={`row-icon test-btn${state ? ` is-${state}` : ""}`}
+      disabled={state === "busy"}
+      aria-label={state === "busy" ? t.testing : state === "ok" ? t.modelTestPassed : state === "fail" ? t.modelTestFailed : t.testModel(model)}
+      title={state === "busy" ? t.testing : state === "ok" ? t.modelTestPassed : state === "fail" ? t.modelTestFailed : t.test}
+      onClick={onTest}
+    >
+      <span class="test-swap" key={state ?? "idle"}>
+        {state === "busy" ? (
+          <span class="spinner" aria-hidden="true" />
+        ) : state === "ok" ? (
+          <Icon name="CheckBold" size={16} />
+        ) : state === "fail" ? (
+          <Icon name="WarningFill" size={15} />
+        ) : (
+          <Icon name="PlugsConnected" size={15} />
+        )}
+      </span>
+    </button>
+  );
+}
+
+/** A model's last failed test, under its row until it is tested again. */
+function TestFailureLine({ t, failure }: { t: Dict; failure: TestFailure | undefined }) {
+  if (!failure) return null;
+  return (
+    <p class="model-test-fail">
+      <Icon name="WarningCircle" size={14} />
+      <span>
+        {t.testFailTitle(failure.reason)}
+        {failure.variable && <span class="model-test-var"> · {failure.variable}</span>}
+      </span>
+    </p>
+  );
+}
+
+/** The models the admin shares, as a user sees them: what each is and, v1.16, this user's
+ * own weight for it (0 = off for this user only) and a Test that runs on the server. */
+function SharedModels({
+  t,
+  models,
+  narrow,
+  labelOf,
+  tests,
+  failures,
+  onTest,
+  onWeight,
+}: {
+  t: Dict;
+  models: SharedModel[];
+  narrow: boolean;
+  labelOf: (provider: string) => string;
+  tests: Record<string, "busy" | "ok" | "fail">;
+  failures: Record<string, TestFailure>;
+  onTest: (model: SharedModel) => void;
+  onWeight: (model: SharedModel, weight: number | null) => Promise<boolean>;
+}) {
   return (
     <section class="shared-models" aria-labelledby="shared-models-title">
       <h2 id="shared-models-title" class="group-title">
         {t.sharedByAdmin}
       </h2>
-      <p class="field-hint">{t.sharedByAdminText}</p>
+      <p class="field-hint">{models.some((model) => model.default_weight !== undefined) ? t.sharedByAdminWeights : t.sharedByAdminText}</p>
       <ul class="model-rows" aria-labelledby="shared-models-title">
-        {models.map((model) => (
-          <li class="model-row is-shared" key={model.id}>
-            <div class="model-line">
-              <span class="model-group">{modelName(model.model)}</span>
-              <span class="model-id" title={model.model}>
-                {model.model}
-              </span>
-              <span class="mini-pill" title={t.weightHint}>
-                {narrow ? t.modelWeightShort(model.weight) : t.modelWeight(model.weight)}
-              </span>
-              <span class="shared-tag">{labelOf(model.provider)}</span>
-            </div>
-          </li>
-        ))}
+        {models.map((model) => {
+          // An older backend sends no `default_weight`: its shared models can only be read.
+          const tunable = model.default_weight !== undefined;
+          const own = tunable && model.weight !== model.default_weight;
+          return (
+            <li class={`model-row is-shared${model.weight === 0 ? " is-off" : ""}`} key={model.id} data-shared={model.id}>
+              <div class="model-line">
+                <span class="model-group">{modelName(model.model)}</span>
+                <span class="model-id" title={model.model}>
+                  {model.model}
+                </span>
+                {tunable ? (
+                  <WeightPill
+                    t={t}
+                    model={modelName(model.model)}
+                    value={model.weight}
+                    narrow={narrow}
+                    title={t.sharedWeightHint}
+                    onSave={(weight) => onWeight(model, weight)}
+                  />
+                ) : (
+                  <span class="mini-pill" title={t.weightHint}>
+                    {narrow ? t.modelWeightShort(model.weight) : t.modelWeight(model.weight)}
+                  </span>
+                )}
+                {own && (
+                  <button
+                    type="button"
+                    class="text-btn weight-reset"
+                    title={t.sharedWeightResetHint}
+                    aria-label={t.sharedWeightResetAria(t.sharedWeightReset(model.default_weight ?? 1), modelName(model.model))}
+                    onClick={() => void onWeight(model, null)}
+                  >
+                    {t.sharedWeightReset(model.default_weight ?? 1)}
+                  </button>
+                )}
+                <span class="shared-tag">{labelOf(model.provider)}</span>
+                {tunable && (
+                  <span class="text-actions">
+                    <TestButton t={t} model={model.model} state={tests[`shared:${model.id}`]} onTest={() => onTest(model)} />
+                  </span>
+                )}
+              </div>
+              {model.weight === 0 && <p class="shared-off">{t.sharedOffForYou}</p>}
+              <TestFailureLine t={t} failure={failures[`shared:${model.id}`]} />
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -165,7 +259,7 @@ export function ModelsSettings({
   describe: (error: unknown) => Described;
 }) {
   const api = useMemo(() => modelsApi(scope), [scope]);
-  const { fetchSettings, fetchProviders, fetchCredentials, discoverModels, probeModel, addDeployments, deleteDeployment, updateDeployment, deleteProvider, updateProvider } = api;
+  const { fetchSettings, fetchProviders, fetchCredentials, discoverModels, probeModel, addDeployments, deleteDeployment, updateDeployment, deleteProvider, updateProvider, updateShared } = api;
   const user = scope === "user";
   const card = useRef<HTMLElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
@@ -261,31 +355,48 @@ export function ModelsSettings({
       state === "ok" ? 1400 : 1800,
     );
   };
-  const runTest = async (deployment: Deployment) => {
-    const id = deployment.deployment_id;
+  /** Test one model: a row's own (`deployment_id`) or, v1.16, a shared one (`shared_id`, keyed `shared:<id>`),
+   * which runs on the server with the admin's key and answers only whether it passed and why not. */
+  const runTest = async (key: string, model: string, body: Record<string, unknown>, shared = false) => {
     dismissToast(TEST_TOAST);
-    setFailures(({ [id]: _, ...rest }) => rest);
-    setTests((previous) => ({ ...previous, [id]: "busy" }));
+    setFailures(({ [key]: _, ...rest }) => rest);
+    setTests((previous) => ({ ...previous, [key]: "busy" }));
     try {
-      const result = await probeModel({ deployment_id: id });
-      settle(id, result.ok ? "ok" : "fail");
+      const result = await probeModel(body);
+      settle(key, result.ok ? "ok" : "fail");
       if (result.ok) {
-        toast({ id: TEST_TOAST, tone: "success", title: t.modelTestPassed, text: t.modelTestReady(deployment.model) });
+        toast({ id: TEST_TOAST, tone: "success", title: t.modelTestPassed, text: t.modelTestReady(model) });
       } else {
         const failure = testFailure(result);
-        setFailures((previous) => ({ ...previous, [id]: failure }));
+        if (shared) failure.variable = null;
+        setFailures((previous) => ({ ...previous, [key]: failure }));
         toast({
           id: TEST_TOAST,
           tone: "error",
-          title: `${t.testFailTitle(failure.reason)} · ${t.testFailFor(deployment.model)}`,
-          text: t.testFailHint(failure.reason, failure.variable, deployment.model),
-          ...(failure.detail ? { detail: failure.detail } : {}),
+          title: `${t.testFailTitle(failure.reason)} · ${t.testFailFor(model)}`,
+          text: shared ? t.sharedTestFailHint(failure.reason) : t.testFailHint(failure.reason, failure.variable, model),
+          ...(failure.detail && !shared ? { detail: failure.detail } : {}),
         });
       }
     } catch (error) {
-      settle(id, "fail");
+      settle(key, "fail");
       const text = describe(error);
       toast({ id: TEST_TOAST, tone: "error", title: t.modelTestFailed, text: text.text, ...(text.detail ? { detail: text.detail } : {}) });
+    }
+  };
+
+  /** v1.16: a weight changed in place, on a row's own model or (user) a shared one; null = the admin's again. */
+  const saveWeight = async (id: string, model: string, weight: number | null, shared = false): Promise<boolean> => {
+    if (revision === null) return false;
+    try {
+      const view = shared ? await updateShared(id, revision, weight) : await updateDeployment(id, { expected_revision: revision, weight });
+      accept(view);
+      const now = shared ? ((view as UserModelsView).shared ?? []).find((item) => item.id === id)?.weight : view.deployments.find((item) => item.deployment_id === id)?.weight;
+      announce(t.weightSaved(modelName(model), now ?? weight ?? 0));
+      return true;
+    } catch (error) {
+      await fail(error);
+      return false;
     }
   };
 
@@ -649,9 +760,21 @@ export function ModelsSettings({
           <span class="model-id" title={deployment.model}>
             {deployment.model}
           </span>
-          <span class="mini-pill" title={t.weightHint}>
-            {detected ? t.sessionBadge : narrow ? t.modelWeightShort(deployment.weight) : t.modelWeight(deployment.weight)}
-          </span>
+          {detected || !deployment.persisted ? (
+            <span class="mini-pill" title={t.weightHint}>
+              {detected ? t.sessionBadge : narrow ? t.modelWeightShort(deployment.weight) : t.modelWeight(deployment.weight)}
+            </span>
+          ) : (
+            <WeightPill
+              t={t}
+              model={user ? modelName(deployment.model) : deployment.model}
+              value={deployment.weight}
+              narrow={narrow}
+              title={user ? t.userWeightHint : t.weightHint}
+              disabled={revision === null}
+              onSave={(weight) => saveWeight(deployment.deployment_id, deployment.model, weight)}
+            />
+          )}
           {canShare && !detected && deployment.persisted && (
             <ShareToggle
               t={t}
@@ -662,26 +785,7 @@ export function ModelsSettings({
             />
           )}
           <span class="text-actions">
-            <button
-              type="button"
-              class={`row-icon test-btn${test ? ` is-${test}` : ""}`}
-              disabled={test === "busy"}
-              aria-label={test === "busy" ? t.testing : test === "ok" ? t.modelTestPassed : test === "fail" ? t.modelTestFailed : t.testModel(deployment.model)}
-              title={test === "busy" ? t.testing : test === "ok" ? t.modelTestPassed : test === "fail" ? t.modelTestFailed : t.test}
-              onClick={() => void runTest(deployment)}
-            >
-              <span class="test-swap" key={test ?? "idle"}>
-                {test === "busy" ? (
-                  <span class="spinner" aria-hidden="true" />
-                ) : test === "ok" ? (
-                  <Icon name="CheckBold" size={16} />
-                ) : test === "fail" ? (
-                  <Icon name="WarningFill" size={15} />
-                ) : (
-                  <Icon name="PlugsConnected" size={15} />
-                )}
-              </span>
-            </button>
+            <TestButton t={t} model={deployment.model} state={test} onTest={() => void runTest(deployment.deployment_id, deployment.model, { deployment_id: deployment.deployment_id })} />
             {detected ? (
               <button type="button" class="text-btn" onClick={() => void saveDetected(deployment)}>
                 {t.saveToConfig}
@@ -710,15 +814,7 @@ export function ModelsSettings({
             )}
           </span>
         </div>
-        {failures[deployment.deployment_id] && (
-          <p class="model-test-fail">
-            <Icon name="WarningCircle" size={14} />
-            <span>
-              {t.testFailTitle(failures[deployment.deployment_id]?.reason ?? "provider_error")}
-              {failures[deployment.deployment_id]?.variable && <span class="model-test-var"> · {failures[deployment.deployment_id]?.variable}</span>}
-            </span>
-          </p>
-        )}
+        <TestFailureLine t={t} failure={failures[deployment.deployment_id]} />
       </div>
     );
   };
@@ -1202,6 +1298,10 @@ export function ModelsSettings({
                   t={t}
                   models={shared}
                   narrow={narrow}
+                  tests={tests}
+                  failures={failures}
+                  onTest={(model) => void runTest(`shared:${model.id}`, model.model, { shared_id: model.id }, true)}
+                  onWeight={(model, weight) => saveWeight(model.id, model.model, weight, true)}
                   labelOf={(name) => {
                     const card = providers.find((item) => item.provider === name);
                     return card ? providerLabel(t, card) : name === "custom" ? t.providerCustom : name;

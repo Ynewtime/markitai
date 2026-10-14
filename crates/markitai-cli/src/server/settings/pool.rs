@@ -1,7 +1,7 @@
 //! The models a user token's conversions route to: its own, then the ones
 //! the admin shares, in one pool. Computed from the current lists on every
 //! request, so a change to either applies to the next conversion.
-use super::{model, store::Data, users, views};
+use super::{identity, model, store::Data, users, views};
 use serde_json::{Value, json};
 
 /// The model of an empty pool. A configuration without models would fall
@@ -14,7 +14,7 @@ fn placeholder() -> Value {
         "api_key":model::NO_KEY,"use_environment_credentials":false}})
 }
 
-fn weight(entry: &Value) -> u64 {
+pub(super) fn weight(entry: &Value) -> u64 {
     entry["litellm_params"]["weight"].as_u64().unwrap_or(1)
 }
 
@@ -58,8 +58,19 @@ pub(super) fn build(base: &Value, own: &users::Lists, admin: &Data) -> Result<Va
         entry["litellm_params"]["use_environment_credentials"] = json!(false);
         models.push(entry);
     }
-    for (_, saved) in shared(admin) {
+    for (index, saved) in shared(admin) {
+        // The user's own weight for this shared model, if it set one; 0
+        // leaves it out of this user's pool only.
+        let effective = own
+            .shared_weights
+            .get(&identity::id(saved, index))
+            .copied()
+            .unwrap_or_else(|| weight(saved));
+        if effective == 0 {
+            continue;
+        }
         let mut entry = grouped(saved);
+        entry["litellm_params"]["weight"] = json!(effective);
         // A failure a user sees names a shared model, never where the admin
         // serves it.
         if !entry["model_info"].is_object() {
@@ -170,6 +181,7 @@ mod tests {
             providers: vec![
                 json!({"id":"p-own","provider":"openai","api_key":"user-a-fixture-key","api_base":"https://models.example/v1","use_environment_credentials":true}),
             ],
+            ..Default::default()
         };
         let data = admin(
             vec![
@@ -214,5 +226,49 @@ mod tests {
         broken.models[0]["litellm_params"]["model"] = json!("claude-agent/sonnet");
         let pool = build(&base(), &broken, &admin(vec![], vec![])).unwrap();
         assert!(models(&pool).is_empty());
+    }
+
+    #[test]
+    fn a_users_own_weight_for_a_shared_model_applies_to_its_pool_only() {
+        let data = admin(
+            vec![
+                json!({"model_name":"fast","litellm_params":{"model":"openai/first","api_key":"admin-fixture-key","weight":3},"model_info":{"id":"s1","share":"shared"}}),
+                json!({"model_name":"slow","litellm_params":{"model":"openai/second","api_key":"admin-fixture-key"},"model_info":{"id":"s2","share":"shared"}}),
+            ],
+            vec![],
+        );
+        let weights = |pool: &Value| -> Vec<u64> {
+            pool["llm"]["model_list"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["litellm_params"]["weight"].as_u64().unwrap())
+                .collect()
+        };
+        let plain = build(&base(), &users::Lists::default(), &data).unwrap();
+        assert_eq!(models(&plain), ["openai/first", "openai/second"]);
+        assert_eq!(weights(&plain), [3, 1]);
+        // A heavier weight for one, 0 for the other: only the first routes,
+        // with the user's weight; an override for an id no longer shared
+        // changes nothing.
+        let own = users::Lists {
+            shared_weights: [("s1".into(), 7), ("s2".into(), 0), ("gone".into(), 5)].into(),
+            ..Default::default()
+        };
+        let pool = build(&base(), &own, &data).unwrap();
+        assert_eq!(models(&pool), ["openai/first"]);
+        assert_eq!(weights(&pool), [7]);
+        assert!(markitai_core::llm_capabilities(&pool).routable);
+        // Every shared model off for this user: an empty, sealed pool.
+        let off = users::Lists {
+            shared_weights: [("s1".into(), 0), ("s2".into(), 0)].into(),
+            ..Default::default()
+        };
+        let pool = build(&base(), &off, &data).unwrap();
+        assert!(models(&pool).is_empty());
+        assert_eq!(pool["llm"]["enabled"], false);
+        assert!(!markitai_core::llm_capabilities(&pool).routable);
+        // The admin's own view of its models is untouched.
+        assert_eq!(shared(&data).len(), 2);
     }
 }

@@ -513,9 +513,13 @@ notes, layouts, charts or images are named in warnings without discarding the
 remaining slide content. These limits cover this reader's explicit passes, not
 every allocation inside ZIP/XML libraries.
 
-PDF pages with unreliable or missing native text retain their numbered marker
-and emit a warning naming the page and the parser's OCR reason. Other pages are
-retained. A document with neither readable text nor recoverable images fails
+PDF pages with unreliable or missing native text retain their numbered marker.
+Without OCR, one warning per OCR reason names their pages as ranges and counts
+them (`PDF pages 3–5, 9 (4 of 120): native text was not recovered (scanned); OCR
+is required to read them. Run again with --ocr.`); when they are nine pages in ten or more, one
+warning says the PDF is scanned (`PDF is scanned: 118 of 120 pages have no
+readable text (pages 1–118); run again with --ocr to read them.`). Other pages
+are retained. A document with neither readable text nor recoverable images fails
 explicitly. An unnamed layout/GID rejection, or a scan classification caused by
 declared but unused image resources, can fall back to bounded font-decoded plain
 text only when execution inspection finds no used image, inline/pattern-image
@@ -568,9 +572,24 @@ break at the edge of a link's text moves outside the link (as a `<br>` at the
 edge of an HTML `<a>` does), and a link the renderer does not write as one
 (no destination, or a scheme other than web, mail and telephone, such as
 `file:`) leaves its text and breaks in the line. In
-a table cell a break is `<br>`. A list item whose label Markdown does not read
+a table cell every line (a break, a paragraph) ends with one `<br>`: see
+[line breaks in table cells](#line-breaks-in-table-cells). A list item whose label Markdown does not read
 (`a)`, `(1)`, `一、`) keeps its line with a hard break after a paragraph, or a
 blank line after a block a hard break cannot follow.
+
+### Line breaks in table cells
+
+A pipe table's row is one line, so a raw line break in a cell would end the
+row (a renderer may then show the rest of the table as one paragraph). Every
+table writer (spreadsheets, Word, OpenDocument, RTF, EPUB, HTML, PowerPoint,
+Numbers, CSV and TSV, reStructuredText, Org and LaTeX) writes a cell's lines
+joined with `<br>`: a line feed, a carriage return or a pair of them, a
+vertical tab, U+0085 and the Unicode line and paragraph separators (U+2028,
+U+2029) are each a break, and so are paragraphs and list items in the cell.
+Several breaks in a row, or the empty paragraph between two, give one `<br>`,
+and none stands at a cell's edges. A code block in a cell is one code span per
+line of its code. A `<br>` written as text in the source stays text (`\<br>`),
+and `|` is written `\|`.
 
 Text is escaped only where CommonMark (with GFM tables, strikethrough and
 footnotes) would read it as syntax in that position, so `snake_case`,
@@ -655,7 +674,8 @@ grid assembly, so a workbook saved in any container converts the same:
   of hidden rows and columns are omitted with them (XLSX, XLSM). Word and
   OpenDocument text comments stay out of the Markdown with a count warning:
   they annotate a span of text rather than a cell.
-- A line break inside a cell is `<br>`.
+- A line break inside a cell (Alt+Enter) is `<br>` (see
+  [line breaks in table cells](#line-breaks-in-table-cells)).
 - Number formats render as Excel shows them in the en-US locale. The currency (5–8) and
   accounting (41–44) format ids, which Excel always defines in the file and
   openpyxl does not, show their currency in the system locale, which the file

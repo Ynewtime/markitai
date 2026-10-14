@@ -193,6 +193,7 @@ mod tests {
             include_str!("settings/me.rs"),
             include_str!("settings/pool.rs"),
             include_str!("settings/users.rs"),
+            include_str!("settings/user_config.rs"),
             include_str!("settings/identity.rs"),
             include_str!("settings/model.rs"),
             include_str!("settings/store.rs"),
@@ -286,6 +287,7 @@ mod tests {
             "config_edit",
             "batch_delete",
             "user_models",
+            "user_config",
         ] {
             assert!(properties.contains(feature), "{feature}");
         }

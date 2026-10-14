@@ -100,7 +100,7 @@ fn a_heading_in_a_table_cell_is_emphasis_not_hash_marks() {
     )]);
     assert_eq!(
         markdown(&body, &[styles()]),
-        "|  |  |\n| --- | --- |\n| **Cell heading**<br><br>Body | Other |"
+        "|  |  |\n| --- | --- |\n| **Cell heading**<br>Body | Other |"
     );
 }
 
@@ -840,5 +840,36 @@ fn tracked_insertions_deletions_and_an_equation_read_as_the_accepted_document() 
     assert_eq!(
         markdown(&body, &[]),
         "Kept text with inserted words in one sentence.\n\nEnergy: $E=mc^{2}$"
+    );
+}
+
+#[test]
+fn a_cell_with_line_breaks_and_paragraphs_stays_one_table_row() {
+    let row = |left: &str, right: &str| format!("<w:tr>{}{}</w:tr>", cell(left), cell(right));
+    let body = table(&[
+        row(&paragraph("Task"), &paragraph("Notes")),
+        row(
+            &paragraph("Plant bulbs"),
+            &format!(
+                r#"<w:p><w:r><w:t>Bring gloves</w:t><w:br/><w:t>and a trowel</w:t></w:r></w:p><w:p/>{}<w:p><w:r><w:br/><w:br/><w:t>Wear boots</w:t></w:r></w:p>"#,
+                paragraph("Second paragraph")
+            ),
+        ),
+        row(
+            &paragraph("Rake leaves"),
+            &paragraph("Into bags\u{2028}by the shed | today"),
+        ),
+        row(
+            &paragraph("Literal &lt;br&gt; text"),
+            &paragraph("last row"),
+        ),
+    ]);
+    assert_eq!(
+        markdown(&body, &[]),
+        "|  |  |\n| --- | --- |\n\
+         | Task | Notes |\n\
+         | Plant bulbs | Bring gloves<br>and a trowel<br>Second paragraph<br>Wear boots |\n\
+         | Rake leaves | Into bags<br>by the shed \\| today |\n\
+         | Literal \\<br> text | last row |"
     );
 }

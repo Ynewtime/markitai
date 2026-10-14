@@ -720,7 +720,7 @@
         "tags": ["me"],
         "operationId": "getUserModels",
         "summary": "A user token's own models and the models the admin shares",
-        "description": "Only for a user token; the admin token (and `--no-auth` callers): 403 `user_token_required`. `shared` lists the admin's shared models that are on (weight above 0) with only `id`, `model`, `provider` and `weight`: never a key, address or connection. `Cache-Control: no-store`.",
+        "description": "Only for a user token; the admin token (and `--no-auth` callers): 403 `user_token_required`. `shared` lists the admin's shared models that are on (admin weight above 0) with only `id`, `model`, `provider`, `weight` (the user's own weight for it, else the admin's; 0 = off for this user only, still listed) and `default_weight` (the admin's): never a key, address or connection. `revision` also covers the user's shared-model weights once it has set one. `Cache-Control: no-store`.",
         "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
       }
     },
@@ -758,8 +758,8 @@
       "post": {
         "tags": ["me"],
         "operationId": "testUserModel",
-        "summary": "One short request to one of the user's own models, or to a draft",
-        "description": "`{deployment_id}` of one of the user's own models, or a draft `{model, api_key?, api_base?}`; a shared model's id or any other id: 422 `invalid_settings_request` (`deployment not found`), nothing is sent. The rules of the user's models apply (`server_credentials`, `key_or_address_required`, `server_address`); literal credentials only, never the server's environment, and no `key_variable` in the answer. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "summary": "One short request to one of the user's own models, a draft, or a shared model",
+        "description": "`{deployment_id}` of one of the user's own models, or a draft `{model, api_key?, api_base?}`; a shared model's id there or any other id: 422 `invalid_settings_request` (`deployment not found`), nothing is sent. `{shared_id}` alone (with any other field: 422 `invalid_settings_request`) tests a model the admin shares and users see (else 422 `invalid_settings_request`, `deployment not found`, nothing sent) on the server, with the admin's key, connection and address; the answer is only `{ok: true, detail: \"Model test passed\"}` or `{ok: false, reason, detail: \"The shared model did not pass its test; ask the admin to check it\"}`, never the provider's words, an address or a variable. A user runs one shared-model test at a time and at most 6 per rolling minute; beyond: 429 `provider_busy` with `Retry-After` (seconds), nothing sent. The rules of the user's models apply (`server_credentials`, `key_or_address_required`, `server_address`); literal credentials only, never the server's environment, and no `key_variable` in the answer. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserProbeRequest" } } } },
         "responses": { "200": { "description": "Test outcome; a provider failure is `ok: false`", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProbeResult" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "413": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
       }
@@ -808,6 +808,47 @@
         "parameters": [{ "$ref": "#/components/parameters/UserModelsId" }, { "$ref": "#/components/parameters/ExpectedRevision" }],
         "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
       }
+    },
+    "/api/me/models/shared/{id}": {
+      "patch": {
+        "tags": ["me"],
+        "operationId": "updateUserSharedWeight",
+        "summary": "The user's own weight for a model the admin shares",
+        "description": "Body exactly `{expected_revision, weight}` (`weight` a nonnegative integer or null; another key or type: 422 `invalid_settings_request`; not JSON: 422 `json_required` / `invalid_json`). `{id}` must be a shared model users see now (`SharedModel.id`), else 404 `settings_entry_missing`, nothing saved. A weight equal to the admin's, or null, removes the user's override; 0 turns that shared model off for this user only. Kept in the user's own file as `shared_weights`; the admin's view and routing do not change. Stale `expected_revision`: 409 with `detail` `{code: \"stale_revision\", current_revision}`. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "description": "A `SharedModel.id` from `GET /api/me/models`", "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expected_revision", "weight"], "additionalProperties": false, "properties": { "expected_revision": { "type": "string" }, "weight": { "type": ["integer", "null"], "minimum": 0 } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "413": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/me/config": {
+      "get": {
+        "tags": ["me"],
+        "operationId": "getUserConfig",
+        "summary": "The user's own models file as text, every secret masked",
+        "description": "A document the server writes from the user's lists (not the file's bytes): pretty JSON with two-space indent, LF line breaks and a final line break, keys `models` (its `llm.model_list` entries as stored), `providers` (its connections as stored) and `shared` (`[{id, model, weight}]`, each model the admin shares and users see, with the user's effective weight). Secrets are masked by the rules of `GET /api/settings/config`. `path` null, `origin` `user`, `exists` whether the user's file exists, `revision` the same value as `GET /api/me/models`' `revision`, `problem` null, `read_only` false. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "responses": {
+          "200": { "description": "The user's document", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfigDocument" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["me"],
+        "operationId": "replaceUserConfig",
+        "summary": "Replace the user's own models from its document",
+        "description": "Body exactly `{expected_revision, text}` (else 422 `invalid_settings_request`); limits as `PUT /api/settings/config` (413 `config_too_large`). Stale `expected_revision`: 409 with `detail` `{code: \"stale_revision\", current_revision}`. Kept masks are put back as `PUT /api/settings/config` does; any other masked value is refused. Then 422 `invalid_config` for text that is not JSON (`line L, column C: …`), not an object, a top-level key other than `models`, `providers`, `shared`, wrong types, a `shared` id that is not a model the admin shares, or duplicate ids. Absent `models` / `providers` are empty; `shared` entries take `id` and `weight` (an integer or null; `model` and `default_weight` are ignored); a shared model left out, or set to the admin's weight, follows the admin's weight. The rules of the Models routes apply (422 `server_credentials`, `key_or_address_required`, `server_address`, `invalid_settings_request` for `env:` values; 409 `model_limit`); models without `model_info.id` get one; the result must combine into the user's pool (else 422 `invalid_config`). Saved owner-only and atomically in the user's own file; unchanged text writes nothing and keeps the revision. `restart_required` is always false. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expected_revision", "text"], "additionalProperties": false, "properties": { "expected_revision": { "type": "string" }, "text": { "type": "string" } } } } } },
+        "responses": {
+          "200": { "description": "The saved document", "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/ConfigDocument" }], "required": ["restart_required"], "properties": { "restart_required": { "type": "boolean", "const": false } } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
     }
   },
   "components": {
@@ -854,6 +895,7 @@
         "required": ["version", "llm", "presets", "preset_options", "extras", "limits"],
         "properties": {
           "version": { "type": "string" },
+          "build": { "$ref": "#/components/schemas/BuildInfo" },
           "implementation": { "type": "string", "enum": ["rust", "python"], "description": "Which backend answers" },
           "docs_url": { "type": "string", "format": "uri", "description": "The user guides" },
           "source_url": { "type": "string", "format": "uri", "description": "This service's source repository" },
@@ -867,10 +909,21 @@
           "access": { "type": "object", "required": ["role"], "description": "Who is asking: `admin` (the server token, or a loopback client with --no-auth) or `user` (a user token, with its `label`; an anonymous --no-auth client is a `user` without one)", "properties": { "role": { "type": "string", "enum": ["admin", "user"] }, "label": { "type": "string" } } }
         }
       },
+      "BuildInfo": {
+        "type": "object",
+        "description": "Which build answers, for every caller",
+        "required": ["version", "commit", "built_at", "dirty"],
+        "properties": {
+          "version": { "type": "string", "description": "As `Capabilities.version`" },
+          "commit": { "type": ["string", "null"], "description": "The short hash of the commit it was built from; null outside a checkout" },
+          "built_at": { "type": ["string", "null"], "format": "date-time", "description": "When it was built, RFC 3339 UTC (`2026-10-14T09:30:00Z`); null when unknown" },
+          "dirty": { "type": "boolean", "description": "The worktree differed from that commit" }
+        }
+      },
       "Features": {
         "type": "object",
         "description": "What this service implements beyond the base job API, for a client shared with other backends",
-        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete", "user_models"],
+        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete", "user_models", "user_config"],
         "properties": {
           "cancel": { "type": "boolean", "description": "POST /api/jobs/{job_id}/cancel" },
           "download_tickets": { "type": "boolean", "description": "POST /api/download-tickets" },
@@ -885,7 +938,8 @@
           "user_tokens": { "type": "boolean", "description": "/api/access-tokens; false when the server runs without a token (--no-auth)" },
           "config_edit": { "type": "boolean", "description": "GET and PUT /api/settings/config" },
           "batch_delete": { "type": "boolean", "description": "POST /api/history/delete" },
-          "user_models": { "type": "boolean", "description": "/api/me/models (a user token's own models) and `share` on the admin's models; false when the server runs without a token (--no-auth)" }
+          "user_models": { "type": "boolean", "description": "/api/me/models (a user token's own models) and `share` on the admin's models; false when the server runs without a token (--no-auth)" },
+          "user_config": { "type": "boolean", "description": "GET and PUT /api/me/config (a user token's Edit config); false when the server runs without a token (--no-auth)" }
         }
       },
       "CloudflareCapabilities": {
@@ -1298,14 +1352,15 @@
       },
       "SharedModel": {
         "type": "object",
-        "required": ["id", "model", "provider", "weight"],
+        "required": ["id", "model", "provider", "weight", "default_weight"],
         "additionalProperties": false,
         "description": "A model the admin shares: what it is, never its key, address or connection",
         "properties": {
-          "id": { "type": "string", "description": "The admin's deployment id; for display only, no route accepts it" },
+          "id": { "type": "string", "description": "The admin's deployment id: taken only by `PATCH /api/me/models/shared/{id}` and `POST /api/me/models/test` `{shared_id}`" },
           "model": { "type": "string", "examples": ["openai/gpt-5-mini"] },
           "provider": { "type": "string", "description": "`custom` for an OpenAI-compatible endpoint, else the model prefix" },
-          "weight": { "type": "integer", "minimum": 1 }
+          "weight": { "type": "integer", "minimum": 0, "description": "The user's weight for it: its own (`PATCH /api/me/models/shared/{id}`), else the admin's; 0 = off for this user" },
+          "default_weight": { "type": "integer", "minimum": 1, "description": "The admin's weight" }
         }
       },
       "ProviderCard": {
@@ -1405,9 +1460,10 @@
       "UserProbeRequest": {
         "type": "object",
         "additionalProperties": false,
-        "description": "One of the user's own models, or a draft model with optional credentials.",
+        "description": "One of the user's own models, a draft model with optional credentials, or `{shared_id}` alone: a model the admin shares.",
         "properties": {
           "deployment_id": { "type": "string" },
+          "shared_id": { "type": "string", "description": "A `SharedModel.id`; with no other field" },
           "model": { "type": "string" },
           "api_key": { "type": "string" },
           "api_base": { "type": "string" }

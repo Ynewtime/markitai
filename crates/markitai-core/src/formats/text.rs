@@ -449,13 +449,119 @@ fn class(encoding: &'static Encoding, lead: u8, trail: u8) -> Class {
     }
 }
 
+/// What ends a line of a table cell's text: a line feed, a carriage return
+/// (a pair of them is one break), a vertical tab (Word's and Excel's manual
+/// line break), a next-line character and the Unicode line and paragraph
+/// separators. Written raw in a pipe table's row, any of them ends the row,
+/// or the table (a renderer such as marked ends a table at U+2028 and runs
+/// the rows after it together as one paragraph).
+pub(super) const LINE_BREAKS: [char; 6] = ['\n', '\r', '\u{0b}', '\u{85}', '\u{2028}', '\u{2029}'];
+
+/// A plain value (a CSV field, a slide's table cell) as one Markdown table
+/// cell: `\` and `|` are escaped, a `<br>` written in the value stays text,
+/// and its lines (see [`LINE_BREAKS`]; an Alt+Enter in a sheet) are joined
+/// with `<br>` (see [`cell_lines`]).
 pub(super) fn cell(value: &str) -> String {
-    value
-        .trim()
-        .replace('\\', "\\\\")
-        .replace('|', "\\|")
-        .replace("\r\n", "<br>")
-        .replace(['\n', '\r'], "<br>")
+    let escaped = literal_breaks(&value.replace('\\', "\\\\").replace('|', "\\|"));
+    joined_lines(&escaped, false)
+}
+
+/// Text that reads as a `<br>` tag (`<br>`, `<BR/>`, `<br class=x>`) written
+/// as text, so that only a real line break becomes one in a table cell.
+pub(super) fn literal_breaks(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('<') {
+        output.push_str(&rest[..at]);
+        let tail = &rest[at + 1..];
+        let tag = tail
+            .get(..2)
+            .is_some_and(|name| name.eq_ignore_ascii_case("br"))
+            && tail[2..]
+                .chars()
+                .next()
+                .is_none_or(|next| next == '>' || next == '/' || next.is_whitespace());
+        if tag {
+            output.push('\\');
+        }
+        output.push('<');
+        rest = tail;
+    }
+    output.push_str(rest);
+    output
+}
+
+/// A table cell's Markdown as one cell of a pipe table, whose row is a single
+/// line: each line of the cell (a line break, a paragraph, a list item) is
+/// joined to the next with one `<br>`. Empty lines, such as the spacing
+/// between paragraphs, several breaks in a row or a `\r\n` pair, add none,
+/// and none stands at the cell's edges. A fenced code block in the cell
+/// becomes one code span per line of its code. Pipes are the caller's to
+/// escape.
+pub(super) fn cell_lines(text: &str) -> String {
+    joined_lines(text, true)
+}
+
+fn joined_lines(text: &str, markdown: bool) -> String {
+    let mut cell = String::with_capacity(text.len() + 8);
+    // An open fence's character and width.
+    let mut fence: Option<(char, usize)> = None;
+    for line in text.split(LINE_BREAKS) {
+        let line = line.trim_end();
+        let written = if markdown {
+            let start = line.trim_start();
+            let marker = start.chars().next().filter(|ch| matches!(ch, '`' | '~'));
+            let width = marker.map_or(0, |ch| start.chars().take_while(|c| *c == ch).count());
+            match (fence, marker) {
+                (Some((ch, open)), Some(found))
+                    if found == ch && width >= open && start[width..].trim().is_empty() =>
+                {
+                    fence = None;
+                    continue;
+                }
+                (None, Some(ch)) if width >= 3 && (ch == '~' || !start[width..].contains('`')) => {
+                    fence = Some((ch, width));
+                    continue;
+                }
+                _ => {}
+            }
+            if fence.is_some() {
+                code_span(line.trim())
+            } else {
+                line.to_owned()
+            }
+        } else {
+            line.to_owned()
+        };
+        if written.trim().is_empty() {
+            continue;
+        }
+        if !cell.is_empty() {
+            cell.push_str("<br>");
+        }
+        cell.push_str(if cell.is_empty() {
+            written.trim_start()
+        } else {
+            &written
+        });
+    }
+    cell
+}
+
+/// A line of code as a code span: its delimiter is longer than any run of
+/// backticks in it, and a backtick at an edge is set off by a space.
+fn code_span(code: &str) -> String {
+    if code.is_empty() {
+        return String::new();
+    }
+    let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let ticks = "`".repeat(longest + 1);
+    let pad = if code.starts_with('`') || code.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{ticks}{pad}{code}{pad}{ticks}")
 }
 
 pub(super) fn table(rows: &[Vec<String>], header: bool) -> String {
@@ -792,6 +898,31 @@ mod tests {
             "| a | b |  |\n| --- | --- | --- |\n| 1 |  |  |\n| 2 | 3 | 4 |"
         );
         assert!(delimited("", b',').unwrap().markdown.is_empty());
+    }
+    #[test]
+    fn a_field_over_several_lines_is_one_row_with_one_br_per_break() {
+        let doc = delimited(
+            "Task,Notes\nPlant bulbs,\"\r\nBring gloves\r\n\r\nand a trowel\n\"\nRake,\"Into bags\u{2028}by the shed\u{0b}today\"\nLiteral,\"type <br> or <BR/>, not <bring>\"\nSweep,last\n",
+            b',',
+        )
+        .unwrap();
+        assert_eq!(
+            doc.markdown,
+            "| Task | Notes |\n| --- | --- |\n\
+             | Plant bulbs | Bring gloves<br>and a trowel |\n\
+             | Rake | Into bags<br>by the shed<br>today |\n\
+             | Literal | type \\<br> or \\<BR/>, not <bring> |\n\
+             | Sweep | last |"
+        );
+    }
+    #[test]
+    fn a_code_block_in_a_cell_is_one_code_span_per_line() {
+        assert_eq!(
+            cell_lines("Run:\n\n```sh\nmake  \n\n``x``\n```\n\nthen ~~~\n~~~~\n`a`\n~~~~"),
+            "Run:<br>`make`<br>``` ``x`` ```<br>then ~~~<br>`` `a` ``"
+        );
+        assert_eq!(cell_lines("  \n\n  a  \n  * b\n\n"), "a<br>  * b");
+        assert_eq!(cell_lines(""), "");
     }
     #[test]
     fn tsv_escapes_cells_and_retains_surplus_columns() {

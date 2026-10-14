@@ -72,13 +72,18 @@ The file name and the content disagree between document types (a PDF saved as
 reads the content as what it is and says so once; rename the file to silence
 the warning. Page screenshots and page OCR need the right extension.
 
-**`! PDF pages 2-3, 5: native text was not recovered …`.** These pages
-have no extractable text (scans, or pages made only of pictures). Run again with
-`--ocr` to read them. Windows/Linux require the local Paddle models first.
-The terminal shows one line per document; the
-report and `--json` keep one warning per page.
+**`! PDF pages 2–3, 5 (3 of 40): native text was not recovered (scanned); …`.**
+These pages have no extractable text (scans, or pages made only of pictures).
+Run again with `--ocr` to read them. Windows/Linux require the local Paddle
+models first. Each reason (`scanned`, `image-only`, `suspected_garbled_text`,
+…) is one warning that lists its pages as ranges and counts them against the
+document's pages.
 
-**`! PDF pages 1-3: the text was read from the invisible OCR text layer laid over each page image …`.**
+**`! PDF is scanned: 38 of 40 pages have no readable text (pages 1–38); run again with --ocr to read them.`.**
+Nine pages in ten or more have no extractable text, whatever the reason, so the
+document is a scan: this one warning stands for them. Run again with `--ocr`.
+
+**`! PDF pages 1–3: the text was read from the invisible OCR text layer laid over each page image …`.**
 The PDF is a searchable scan: a scanning or OCR program (named in brackets when
 the file says which) laid its recognized words, invisibly, over each page image.
 Markitai used those words as the pages' text after checking that they sit on
