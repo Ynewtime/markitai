@@ -216,8 +216,10 @@ were asked for, compare screenshots in `<item_id>.shots/<n>.jpg` (JPEG quality 7
 85–230 KB per tile, so a long page adds up to about 2 MB). Compare screenshots are
 not part of the result (not in `out/`, its file list or archives) and are never
 sent to a model or OCR; the descriptor lists them as `pages` when the item has no
-screenshots of its own. A retry replaces all of them with what its conversion
-captured, or removes them; deleting the item deletes them.
+screenshots of its own. A retry that kept any of them replaces all of them (an
+old file it did not write again goes); a retry that loaded no page (a fetch-cache
+hit, or a remote reader without a browser load) keeps the old ones, as does a
+failed retry; deleting the item deletes them.
 
 ## Cloudflare request authorization
 
