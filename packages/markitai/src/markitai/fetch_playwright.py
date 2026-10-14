@@ -248,7 +248,8 @@ _RENDERED_DOM_SCRIPT = """() => {
 #: (x.com refuses the headless shell Playwright launches by default with
 #: HTTP 403); ``"embed"`` keeps the default browser, which falls back to the
 #: embedded-post page below. Either way a refused x.com falls back to it.
-X_CAPTURE = "direct"
+X_CAPTURE_DEFAULT = "direct"
+X_CAPTURE = X_CAPTURE_DEFAULT
 
 #: X's embedded-post page renders a post without signing in when x.com
 #: itself refuses a browser (HTTP 403 for a signed-out headless visit).

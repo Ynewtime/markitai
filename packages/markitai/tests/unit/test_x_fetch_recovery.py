@@ -526,11 +526,20 @@ def _browser_with(page):
     return browser, context
 
 
-async def test_an_x_post_loads_in_the_new_headless_mode_without_headless_ua():
+def test_direct_capture_is_the_default():
+    import markitai.fetch_playwright as fp
+
+    # conftest pins X_CAPTURE to "embed" for tests that mock one browser
+    assert fp.X_CAPTURE_DEFAULT == "direct"
+
+
+async def test_an_x_post_loads_in_the_new_headless_mode_without_headless_ua(
+    monkeypatch,
+):
     """X_CAPTURE "direct": x.com itself, in Chromium's new headless mode."""
     import markitai.fetch_playwright as fp
 
-    assert fp.X_CAPTURE == "direct"
+    monkeypatch.setattr(fp, "X_CAPTURE", "direct")
     page = AsyncMock()
     page.url = URL
     page.goto.return_value = MagicMock(status=200)
