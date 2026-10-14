@@ -463,6 +463,14 @@ fn a_browser_load_keeps_compare_screenshots_blocks_and_qualities() {
         assert_eq!(item["status"], "done", "{item}");
     }
     let folder = server.jobdir(&id);
+    // The kept page keeps its doctype: without it the frame would lay the page out in quirks
+    // mode (and a bare `:hover` there matches only links).
+    let kept = std::fs::read_to_string(folder.join("snapshots/i2.html")).unwrap();
+    assert!(
+        kept.starts_with("<!DOCTYPE html>"),
+        "{}",
+        &kept[..kept.len().min(80)]
+    );
     let shots = |item: &str| -> Vec<u64> {
         (1..=30)
             .map_while(|number| {

@@ -37,6 +37,7 @@ import {
   readPiece,
   renderChunk,
   renderMarkdown,
+  replacePicture,
   type RenderContext,
   splitFrontmatter,
   splitMarkdown,
@@ -342,12 +343,7 @@ export function MarkdownView({
           const loads = loadArtifactImages(
             target,
             (relpath) => fetchBlob(imagePath(item.jobId, item.itemId, relpath)).then((file) => file.blob),
-            (image) => {
-              const span = document.createElement("span");
-              span.className = "img-blocked";
-              span.textContent = placeholder(image.getAttribute("alt") ?? "");
-              image.replaceWith(span);
-            },
+            (image) => void replacePicture(image, placeholder(image.getAttribute("alt") ?? "")),
             { lazy: true },
           );
           if (rendered) rendered.current.images = loads;

@@ -20,7 +20,7 @@ import type { Dict, Locale } from "../i18n/index.ts";
 import { locate, norm, onShots, pageBlocks, pairBlocks, pairElements, shotBlocks, TARGET_SELECTOR, targetsOf, webViews, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
 import { download } from "../lib/download.ts";
 import { fmtBytes, readable } from "../lib/format.ts";
-import { loadLibraries } from "../lib/markdown.ts";
+import { loadLibraries, shownAs, shownFor } from "../lib/markdown.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { HelpTooltip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
@@ -98,20 +98,22 @@ export function CompareView({
   useEffect(() => {
     const entry = hover ? byId.get(hover.id) : undefined;
     if (!entry) return;
-    const element = entry.element.closest(".table-scroll") ?? entry.element;
+    // A picture that could not load is outlined as the placeholder shown in its place.
+    const shown = shownAs(entry.element);
+    const element = shown.closest(".table-scroll") ?? shown;
     element.classList.add("is-linked");
     return () => element.classList.remove("is-linked");
   }, [hover, byId]);
   const onMarkdownOver = (event: MouseEvent) => {
     // The innermost block under the pointer: a paragraph inside a list item is its own.
-    const element = (event.target as Element | null)?.closest?.(TARGET_SELECTOR);
-    const entry = element ? byElement.get(element) : undefined;
+    const element = (event.target as Element | null)?.closest?.(`${TARGET_SELECTOR}, .img-blocked`);
+    const entry = element ? byElement.get(shownFor(element)) : undefined;
     // A block the original cannot show is not outlined: there is nothing to compare it with.
     setHover(entry && paired.has(entry.target.id) ? linkOf(entry.target.id) : null);
   };
   const reveal = (id: string) => {
     const entry = byId.get(id);
-    const element = entry?.element;
+    const element = entry ? shownAs(entry.element) : null;
     if (!element) return;
     const pane = element.closest(".pane");
     if (!pane) return;
@@ -338,7 +340,7 @@ function PageFrame({
     if (!page || watch.current) return;
     const state = { timer: 0, id: null as string | null };
     const read = () => {
-      const hovered = page.querySelectorAll(":hover");
+      const hovered = page.querySelectorAll(HOVERED);
       let id: string | null = null;
       for (let index = hovered.length - 1; index >= 0 && id === null; index--) id = reverseRef.current.get(hovered[index] as Element) ?? null;
       if (id === state.id) return;
@@ -436,6 +438,10 @@ function InfoTip({ label, text }: { label: string; text: string }) {
   );
 }
 
+/** The hovered elements of a framed page. A page kept without a doctype is in quirks mode, where a
+ * bare `:hover` matches only links (the spec's :hover quirk); a compound with another pseudo-class
+ * is exempt. */
+const HOVERED = ":not(markitai-none):hover";
 /** How often the hovered block of a framed page is read while the pointer is over it. */
 const HOVER_POLL_MS = 60;
 /** How long a framed page is waited for before it is left unlinked until its load event. */
