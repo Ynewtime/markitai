@@ -715,6 +715,77 @@ class TestTweetFidelity:
         assert "[docs](https://example.com/docs?a=1&b=2)" in md
         assert "*emphasis*" in md
 
+    def test_shortlinks_show_and_link_their_destination(self):
+        from markitai.webextract.markdown import render_markdown
+
+        text = "Benchmarks are here: https://t.co/AbCdEf1234 **now**"
+        start = text.index("https://t.co")
+        data = {
+            "text": text,
+            "raw_text": {
+                "text": text,
+                "facets": [
+                    {
+                        "type": "url",
+                        "indices": [start, start + len("https://t.co/AbCdEf1234")],
+                        "original": "https://t.co/AbCdEf1234",
+                        "replacement": "https://example.org/lamp-benchmarks",
+                        "display": "example.org/lamp-bench…",
+                    }
+                ],
+            },
+        }
+        md = render_markdown(XOEmbedEnricher._render_tweet_text(data))
+        assert "t.co" not in md
+        assert "<https://example.org/lamp-benchmarks>" in md
+
+    def test_a_shortlink_without_destination_stays(self):
+        from markitai.webextract.markdown import render_markdown
+
+        text = "See https://t.co/AbCdEf1234"
+        data = {
+            "text": text,
+            "raw_text": {
+                "text": text,
+                "facets": [
+                    {
+                        "type": "url",
+                        "indices": [4, len(text)],
+                        "original": "https://t.co/AbCdEf1234",
+                        "replacement": "not a url",
+                    }
+                ],
+            },
+        }
+        md = render_markdown(XOEmbedEnricher._render_tweet_text(data))
+        assert "<https://t.co/AbCdEf1234>" in md
+
+    def test_video_is_its_poster_linked_to_the_file(self):
+        from markitai.webextract.markdown import render_markdown
+        from markitai.webextract.render import render_semantic_content
+        from markitai.webextract.types import SemanticExtraction
+
+        enricher = XOEmbedEnricher()
+        data = {
+            "text": "Demo",
+            "author": {"screen_name": "user"},
+            "media": {
+                "all": [
+                    {
+                        "type": "video",
+                        "url": "https://video.twimg.com/demo/vid/720x480/a.mp4",
+                        "thumbnail_url": "https://pbs.twimg.com/demo/poster.jpg",
+                    }
+                ]
+            },
+        }
+        thread = enricher._build_thread(data, "123", TWEET_URL)
+        md = render_markdown(render_semantic_content(SemanticExtraction(thread=thread)))
+        assert (
+            "[![Video](https://pbs.twimg.com/demo/poster.jpg)]"
+            "(https://video.twimg.com/demo/vid/720x480/a.mp4)"
+        ) in md
+
     def test_paragraphs_soft_breaks_and_blockquotes(self):
         from markitai.webextract.markdown import render_markdown
 

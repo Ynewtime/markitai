@@ -168,10 +168,11 @@ def _render_media(media: MediaAttachment, indent: str = "  ") -> list[str]:
     """Render a media attachment to HTML.
 
     Images render as ``<img>``.  Videos and GIFs render as a link to the
-    media resource (labelled by type), preceded by the poster image when
-    one is available.  When no real ``https`` media URL is known (e.g. the
-    DOM only exposes a session-local ``blob:`` handle), only the poster is
-    rendered and the useless link is omitted.
+    media file whose content is the poster image (Markdown
+    ``[![Video](poster.jpg)](movie.mp4)``, as Rust writes a ``<video>``), or
+    the type's label when there is no poster.  When no real ``https`` media
+    URL is known (e.g. the DOM only exposes a session-local ``blob:``
+    handle), only the poster is rendered and the useless link is omitted.
 
     Args:
         media: The media attachment.
@@ -184,17 +185,20 @@ def _render_media(media: MediaAttachment, indent: str = "  ") -> list[str]:
     url = escape(media.url)
     parts: list[str] = []
     if media.media_type in ("video", "gif"):
-        label = "GIF" if media.media_type == "gif" else "Video"
-        if media.poster:
-            poster = escape(media.poster)
-            parts.append(
-                f'{indent}<div class="media-attachment">'
-                f'<img src="{poster}" alt="{alt}"></div>'
-            )
+        label = escape(media.alt.strip()) or (
+            "GIF" if media.media_type == "gif" else "Video"
+        )
+        content = (
+            f'<img src="{escape(media.poster)}" alt="{label}">'
+            if media.poster
+            else label
+        )
         if media.url.startswith("http"):
             parts.append(
-                f'{indent}<p class="media-attachment"><a href="{url}">{label}</a></p>'
+                f'{indent}<p class="media-attachment"><a href="{url}">{content}</a></p>'
             )
+        elif media.poster:
+            parts.append(f'{indent}<div class="media-attachment">{content}</div>')
     else:
         parts.append(
             f'{indent}<div class="media-attachment"><img src="{url}" alt="{alt}"></div>'

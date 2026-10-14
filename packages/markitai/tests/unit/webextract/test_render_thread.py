@@ -266,8 +266,11 @@ class TestRenderDefuddleParity:
         markdown = render_markdown(
             render_semantic_content(SemanticExtraction(thread=thread))
         )
-        assert "![](https://pbs.twimg.com/thumb.jpg)" in markdown
-        assert "[Video](https://video.twimg.com/vid.mp4)" in markdown
+        # The poster links to the video file, as Rust writes a <video>
+        assert (
+            "[![Video](https://pbs.twimg.com/thumb.jpg)]"
+            "(https://video.twimg.com/vid.mp4)" in markdown
+        )
 
     def test_card_link_rendered(self) -> None:
         main = ConversationItem(
