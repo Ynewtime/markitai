@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 from markitai.workflow.helpers import (
@@ -588,6 +589,38 @@ class TestAddBasicFrontmatterAdvanced:
         assert "shot--1.jpg" in result
         assert "shot--2.jpg" in result
         assert "Screenshot 1" in result and "Screenshot 3" in result
+
+    def test_screenshot_references_use_slashes_on_every_platform(self):
+        """Windows wrote ``.markitai\\screenshots\\…``: serve then did not count
+        the screenshots as the item's (no Compare pages, not deleted with it)."""
+        from pathlib import PureWindowsPath
+
+        class _WindowsFile(PureWindowsPath):
+            def exists(self) -> bool:
+                return True
+
+        # Windows paths, on any platform (typed as Path: only their methods matter)
+        out: Any = PureWindowsPath("C:/jobs/0a1b/out")
+        tiles: list[Any] = [
+            _WindowsFile(f"C:/jobs/0a1b/out/.markitai/screenshots/{name}")
+            for name in ("example.com_a.full.jpg", "example.com_a.full--1.jpg")
+        ]
+        one = add_basic_frontmatter(
+            "# A",
+            "url",
+            screenshot_path=tiles[0],
+            output_dir=out,
+        )
+        many = add_basic_frontmatter(
+            "# A",
+            "url",
+            screenshot_path=tiles[0],
+            screenshot_tiles=tiles,
+            output_dir=out,
+        )
+        assert "(.markitai/screenshots/example.com_a.full.jpg)" in one
+        assert "(.markitai/screenshots/example.com_a.full--1.jpg)" in many
+        assert "\\" not in one + many
 
     def test_screenshot_tiles_missing_file_skipped(self, tmp_path: Path):
         """Tiles that no longer exist are dropped, not referenced (C3)."""
