@@ -536,8 +536,9 @@ Eligible upright text pages also have a conservative positioned-text refinement
 for document-wide heading levels (including bold headings at the body size),
 paragraph gaps and short last lines, continuous styling, web and mail link
 targets and complete ruled tables. Empty cells/columns are preserved; ambiguous
-geometry retains the existing page reader. Running page headers repeated on most
-pages are removed, and the document title is the information title when it
+geometry retains the existing page reader. Running page headers and footers
+repeated on two pages or more, and page numbers such as `第 3 页`, are removed
+(see [PDF layout](pdf.md)), and the document title is the information title when it
 names the document, else the most prominent text of the first pages. See [PDF layout](pdf.md) for acceptance checks, resource
 limits and the cost of the additional parsing pass.
 

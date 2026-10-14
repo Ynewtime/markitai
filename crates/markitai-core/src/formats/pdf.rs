@@ -846,7 +846,14 @@ impl PdfPages {
                     .map(|(_, image)| image.as_str())
                     .collect();
                 index += group.len();
-                section.insert_str(at, &format!("\n\n{}", group.join("\n\n")));
+                // Between two list items the pictures are a block of their
+                // own.
+                let gap = if section[at..].starts_with('\n') && !section[at..].starts_with("\n\n") {
+                    "\n"
+                } else {
+                    ""
+                };
+                section.insert_str(at, &format!("\n\n{}{gap}", group.join("\n\n")));
             }
             if !leading.is_empty() {
                 let marker = marker_len(&section);
@@ -1640,43 +1647,48 @@ fn extract_pages_inner(
             ocr_layer: layer_checks.remove(&number),
         });
     }
-    // Running page headers go like the page numbers the reader removes. A
-    // page read from its OCR layer has no positioned text to confirm one.
-    let text_pages: Vec<(u32, &str)> = extracted_pages
-        .iter()
-        .filter(|page| {
-            !page.needs_ocr && !page.markdown.trim().is_empty() && page.ocr_layer.is_none()
-        })
-        .map(|page| (page.number as u32, page.markdown.as_str()))
-        .collect();
-    let numbers: Vec<u32> = text_pages.iter().map(|(number, _)| *number).collect();
-    let headed = running::headers(
-        &text_pages,
-        &running::frames(pdf, &page_ids, &numbers),
-        &|pages| {
-            loaded
-                .as_ref()
-                .ok()
-                .and_then(|loaded| {
-                    loaded
-                        .text_with_positions_and_rotations(
-                            Some(pages),
-                            pdf_inspector::PositionOptions::new(),
-                        )
-                        .ok()
-                })
-                .map(|(items, rotations)| {
-                    items
-                        .into_iter()
-                        .filter(|item| !rotations.contains_key(&item.page))
-                        .collect()
-                })
-                .unwrap_or_default()
-        },
-    );
-    for page in &mut extracted_pages {
-        if headed.contains(&(page.number as u32)) {
-            running::strip(&mut page.markdown);
+    // Running page headers and footers go like the page numbers the reader
+    // removes. A page read from its OCR layer has no positioned text to
+    // confirm one.
+    let position = |pages: &HashSet<u32>| {
+        loaded
+            .as_ref()
+            .ok()
+            .and_then(|loaded| {
+                loaded
+                    .text_with_positions_and_rotations(
+                        Some(pages),
+                        pdf_inspector::PositionOptions::new(),
+                    )
+                    .ok()
+            })
+            .map(|(items, rotations)| {
+                items
+                    .into_iter()
+                    .filter(|item| !rotations.contains_key(&item.page))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for edge in [running::Edge::Top, running::Edge::Bottom] {
+        let text_pages: Vec<(u32, &str)> = extracted_pages
+            .iter()
+            .filter(|page| {
+                !page.needs_ocr && !page.markdown.trim().is_empty() && page.ocr_layer.is_none()
+            })
+            .map(|page| (page.number as u32, page.markdown.as_str()))
+            .collect();
+        let numbers: Vec<u32> = text_pages.iter().map(|(number, _)| *number).collect();
+        let marked = running::marked(
+            edge,
+            &text_pages,
+            &running::frames(pdf, &page_ids, &numbers),
+            &position,
+        );
+        for page in &mut extracted_pages {
+            if marked.contains(&(page.number as u32)) {
+                running::strip(edge, &mut page.markdown);
+            }
         }
     }
     // Reviewers' comments follow their pages.
