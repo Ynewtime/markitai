@@ -254,6 +254,59 @@ def framed_text(html: str) -> tuple[str, str]:
     return text, _title(root)
 
 
+_MEDIA_HIDDEN = frozenset({"head", "template", "noscript"})
+
+
+def _hidden(element: Any) -> bool:
+    """A ``hidden`` attribute, or an inline style that hides *element*."""
+    if element.get("hidden") is not None:
+        return True
+    style = "".join((element.get("style") or "").split()).lower()
+    return "display:none" in style or "visibility:hidden" in style
+
+
+def _shows(element: Any) -> bool:
+    """Whether *element* (``img``, ``video`` or ``audio``) is a picture or
+    a player a reader sees."""
+    name = element.tag.lower()
+    if name == "img":
+        media = any(
+            (address := (element.get(attr) or "").strip())
+            and address[:5].lower() != "data:"
+            for attr in ("src", "srcset")
+        )
+    else:
+        media = name == "video" or element.get("controls") is not None
+    if not media or _hidden(element):
+        return False
+    if any(
+        (element.get(size) or "").strip() in ("0", "1") for size in ("width", "height")
+    ):
+        return False
+    return not any(
+        parent.tag.lower() in _MEDIA_HIDDEN or _hidden(parent)
+        for parent in element.iterancestors()
+    )
+
+
+def shows_media(markup: str) -> bool:
+    """Whether *markup* shows a picture or a media player (contract v1.14
+    "Blank pages"): an ``<img>`` with a ``src`` or ``srcset`` that is not a
+    ``data:`` placeholder, a ``<video>``, or an ``<audio controls>``, outside
+    ``head``, ``template`` and ``noscript``, and not hidden (a ``hidden``
+    attribute or an inline ``display: none`` or ``visibility: hidden`` on it
+    or an ancestor, a ``width`` or ``height`` of 0 or 1 on it, as tracking
+    pixels have).
+    """
+    root = _parse(markup)
+    if root is None:
+        return False
+    return any(
+        isinstance(element.tag, str) and _shows(element)
+        for element in root.iter("img", "video", "audio")
+    )
+
+
 def _zhihu_check(title: str) -> bool:
     bare = title
     if title.endswith("知乎"):
@@ -366,8 +419,10 @@ def classify(
     *markup* is the HTML the view showed (the kept page, or the browser's
     DOM), read from *url*; *length* and *title* are what it showed a reader.
     *problem* is :func:`markitai.fetch_page_check.page_problem`'s verdict on
-    the same view, which can only add one: ``challenge`` stays a challenge,
-    ``blank`` makes the view empty.
+    the same view, which can only add a challenge: its ``blank`` never
+    overrides the contract's blank rule (under 80 characters and no
+    picture or player, :func:`shows_media`), so a short picture post stays
+    ``ok``.
     """
     instead = shown_instead(url, markup)
     if instead == "javascript":
@@ -376,7 +431,7 @@ def classify(
         return _quality("challenge", length, title, instead)
     if problem == "challenge":
         return _quality("challenge", length, title, "challenge")
-    if problem == "blank" or min(length, MAX_TEXT_LENGTH) < BLANK_BELOW:
+    if min(length, MAX_TEXT_LENGTH) < BLANK_BELOW and not shows_media(markup):
         return _quality("empty", length, title, "blank")
     return _quality("ok", length, title, None)
 

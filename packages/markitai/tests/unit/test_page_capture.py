@@ -233,6 +233,78 @@ def test_an_empty_body_is_blank_and_80_characters_is_content() -> None:
     assert _state("https://example.com/", text(80)) == ("ok", None)
 
 
+def _post(body: str) -> dict:
+    return page_quality(
+        "https://example.com/p/1",
+        '<html><head><title>Post</title><link rel="icon" href="/i.png"></head>'
+        f"<body>{body}</body></html>",
+    )
+
+
+@pytest.mark.parametrize(
+    "shown",
+    [
+        '<article><img src="https://pictures.example.com/river.jpg" alt="A river">'
+        "<p>Autumn light on the river.</p></article>",
+        '<picture><source srcset="/river.avif"><img srcset="/river.jpg 1x"></picture>'
+        "<p>Autumn light.</p>",
+        '<video controls src="https://media.example.com/clip.mp4"></video>'
+        "<p>A short clip.</p>",
+        '<video><source src="/clip.webm"></video>',
+        '<audio controls src="/song.ogg"></audio><p>Track 1</p>',
+    ],
+)
+def test_a_short_caption_under_a_picture_or_a_player_is_ok(shown: str) -> None:
+    """Rust ``page_capture::tests::a_short_caption_under_a_picture_or_a_player_is_ok``."""
+    quality = _post(shown)
+    assert (quality["state"], quality["reason"]) == ("ok", None)
+
+
+@pytest.mark.parametrize(
+    "unseen",
+    [
+        '<div id="app"></div><noscript><img height="1" width="1" style="display:none"'
+        ' src="https://pixel.example.com/t"></noscript>',
+        '<img src="https://pixel.example.com/t" width="1" height="1" alt="">'
+        '<div id="root"></div>',
+        '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-src="/river.jpg">',
+        '<img src="  "><img alt="No address">',
+        '<img hidden src="/river.jpg"><div style="Display : None">'
+        '<img src="/river.jpg"></div>',
+        '<div style="visibility:hidden"><video src="/clip.mp4"></video></div>',
+        '<audio src="/chime.ogg" autoplay></audio>',
+        '<template><img src="/river.jpg"></template>'
+        '<svg viewBox="0 0 10 10"><circle r="4"/></svg>',
+    ],
+)
+def test_nothing_a_reader_would_see_is_still_blank(unseen: str) -> None:
+    quality = _post(unseen)
+    assert (quality["state"], quality["reason"]) == ("empty", "blank")
+
+
+def test_only_the_blank_rule_looks_at_pictures() -> None:
+    quality = _post('<img src="/logo.png"><p>Please enable JavaScript to continue.</p>')
+    assert (quality["state"], quality["reason"]) == ("empty", "javascript")
+
+
+def test_more_pictures_that_do_not_count() -> None:
+    """Cases beyond Rust's list, from the same rule."""
+    for unseen in (
+        # A noscript pixel without other hiding, and a 0-sized one
+        '<noscript><img src="https://pixel.example.com/t"></noscript>',
+        '<img src="/t.gif" width=" 0 ">',
+        # An ancestor's ``hidden``; ``DATA:`` in any case
+        '<section hidden><figure><img src="/river.jpg"></figure></section>',
+        '<img src=" DATA:image/png;base64,AAAA">',
+    ):
+        assert _post(unseen)["reason"] == "blank", unseen
+    for shown in (
+        '<img src="/river.jpg" width="10" height="2">',
+        '<img src="data:image/png;base64,AAAA" srcset="/river.jpg 2x">',
+    ):
+        assert _post(shown)["state"] == "ok", shown
+
+
 def test_text_is_counted_in_characters_and_capped_and_titles_are_bounded() -> None:
     wide = "<body><p>" + "字  \n " * 100 + "</p></body>"
     assert page_quality("https://example.com/", wide)["text_length"] == 199
@@ -259,7 +331,7 @@ def test_text_is_counted_in_characters_and_capped_and_titles_are_bounded() -> No
 
 
 def test_pythons_own_verdict_only_adds() -> None:
-    """``fetch_page_check``'s verdict maps onto the states, never removes one."""
+    """``fetch_page_check``'s verdict adds a challenge, never removes one."""
     page = "<body><p>" + "Plenty of words on a real page. " * 10 + "</p></body>"
     length = 300
     assert classify("https://example.org/", page, length, "T")["state"] == "ok"
@@ -269,9 +341,24 @@ def test_pythons_own_verdict_only_adds() -> None:
         ]
         == "challenge"
     )
+    # Its blank verdict never overrides the contract's rule: a page that
+    # rule calls ok stays ok (v1.14 "Blank pages")
     assert (
         classify("https://example.org/", page, length, "T", problem="blank")["state"]
-        == "empty"
+        == "ok"
+    )
+    post = '<body><img src="/river.jpg"><p>Autumn light.</p></body>'
+    assert classify("https://example.org/", post, 13, "", problem="blank") == {
+        "state": "ok",
+        "text_length": 13,
+        "title": None,
+        "reason": None,
+    }
+    assert (
+        classify("https://example.org/", "<body></body>", 0, "", problem="blank")[
+            "reason"
+        ]
+        == "blank"
     )
     login = "<body><p>Log in to continue</p></body>"
     assert (
