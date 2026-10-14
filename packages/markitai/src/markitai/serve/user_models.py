@@ -1,10 +1,12 @@
-"""A user token's own models (workbench contract v1.15, section 8).
+"""A user token's own models (workbench contract v1.15 and v1.16, section 8).
 
 Each user token keeps its models and connections in
 ``~/.markitai/serve/user-models/<token id>.json`` (``{"version": 1,
-"models": [...], "providers": [...]}``, ``llm.model_list`` and
-``llm.providers`` entries; folder 0700, file 0600, replaced atomically),
-never in ``config.json``: Edit config and the CLI never show or read them.
+"models": [...], "providers": [...], "shared_weights": {...}}``,
+``llm.model_list`` and ``llm.providers`` entries and its own weight for
+models the admin shares; folder 0700, file 0600, replaced atomically),
+never in ``config.json``: the admin's Edit config and the CLI never show or
+read them.
 The settings routes' own operations change them (``serve.app``); this module
 keeps them, holds them to the rules that keep the server's credentials and
 machine out of a user's reach, and builds the pool a user's conversions
@@ -25,10 +27,13 @@ from __future__ import annotations
 import copy
 import ipaddress
 import json
+import math
 import os
 import re
 import sys
 import threading
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -71,13 +76,33 @@ _KEYED_CLOUDS = frozenset({"bedrock", "bedrock_mantle"})
 
 _USER_ID = re.compile(r"u_[0-9a-f]{12}")
 
+#: A weight at most (the largest the Rust server's settings take).
+MAX_WEIGHT = 2**63 - 1
+
+#: A user's tests of shared models at most: one at a time, and this many per
+#: rolling minute (the admin's key pays for them).
+SHARED_TESTS_PER_MINUTE = 6
+_SHARED_TEST_WINDOW_S = 60.0
+
 
 @dataclass
 class Lists:
-    """One user's ``llm.model_list`` and ``llm.providers`` entries."""
+    """One user's ``llm.model_list`` and ``llm.providers`` entries, and its
+    own weight for shared models (by the admin's deployment id) where it
+    differs from the admin's."""
 
     models: list[dict[str, Any]] = field(default_factory=list)
     providers: list[dict[str, Any]] = field(default_factory=list)
+    shared_weights: dict[str, int] = field(default_factory=dict)
+
+
+def valid_weight(value: Any) -> bool:
+    """Whether *value* is a weight: a whole number from 0 to MAX_WEIGHT."""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= MAX_WEIGHT
+    )
 
 
 # ---------------------------------------------------------------- refusals
@@ -372,7 +397,12 @@ def _read(path: Path) -> Lists:
     if not isinstance(saved, dict) or saved.get("version") != 1:
         raise ValueError(f"{path}: unsupported version")
     models, providers = saved.get("models"), saved.get("providers")
+    weights = saved.get("shared_weights", {})
     if not isinstance(models, list) or not isinstance(providers, list):
+        raise ValueError(f"{path}: invalid model entry")
+    if not isinstance(weights, dict) or not all(
+        isinstance(key, str) and valid_weight(value) for key, value in weights.items()
+    ):
         raise ValueError(f"{path}: invalid model entry")
     valid_models = all(
         isinstance(entry, dict)
@@ -399,7 +429,7 @@ def _read(path: Path) -> Lists:
             LLMProviderConfig.model_validate(entry)
     except ValidationError:
         raise ValueError(f"{path}: invalid model entry") from None
-    return Lists(models=models, providers=providers)
+    return Lists(models=models, providers=providers, shared_weights=weights)
 
 
 def _sync_directory(path: Path) -> bool:
@@ -427,14 +457,15 @@ def _save(directory: Path, path: Path, lists: Lists) -> None:
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     if sys.platform != "win32":
         os.chmod(directory, 0o700)
-    data = (
-        json.dumps(
-            {"version": 1, "models": lists.models, "providers": lists.providers},
-            indent=2,
-            ensure_ascii=False,
-        )
-        + "\n"
-    ).encode("utf-8")
+    saved: dict[str, Any] = {
+        "version": 1,
+        "models": lists.models,
+        "providers": lists.providers,
+    }
+    if lists.shared_weights:
+        # Absent when empty: a file without overrides keeps its v1.15 shape
+        saved["shared_weights"] = dict(sorted(lists.shared_weights.items()))
+    data = (json.dumps(saved, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     staged = directory / f".tmp-{path.stem}-{os.urandom(6).hex()}"
     fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -464,6 +495,8 @@ class UserModels:
         self._lock = threading.Lock()
         self._user_locks: dict[str, threading.Lock] = {}
         self._cache: dict[str, Lists] = {}
+        # Each user's tests of shared models: running, and their start times
+        self._tests: dict[str, tuple[bool, deque[float]]] = {}
 
     def _path(self, user_id: str) -> Path:
         if not _USER_ID.fullmatch(user_id):
@@ -500,6 +533,10 @@ class UserModels:
         with self._user_lock(user_id):
             return copy.deepcopy(self._cached(user_id))
 
+    def exists(self, user_id: str) -> bool:
+        """Whether the user has a file of its own."""
+        return self._path(user_id).is_file()
+
     def count(self, user_id: str) -> int:
         """How many models of its own the user has."""
         with self._user_lock(user_id):
@@ -512,12 +549,16 @@ class UserModels:
         change: Callable[[Lists], None],
     ) -> Lists:
         """Change the user's lists with *change* and save them, if its token
-        still exists (*alive*, asked under the user's lock). Blocking."""
+        still exists (*alive*, asked under the user's lock). A change that
+        changes nothing writes nothing. Blocking."""
         with self._user_lock(user_id):
             if not alive():
                 raise revoked()
-            current = copy.deepcopy(self._cached(user_id))
+            before = self._cached(user_id)
+            current = copy.deepcopy(before)
             change(current)
+            if current == before:
+                return copy.deepcopy(current)
             try:
                 _save(self.directory, self._path(user_id), current)
             except OSError as e:
@@ -544,6 +585,30 @@ class UserModels:
             self._path(user_id).unlink(missing_ok=True)
             _sync_directory(self.directory)
             return count
+
+    def begin_test(self, user_id: str) -> int | None:
+        """Start a test of a shared model for the user, within the bound:
+        None, or how many seconds until one may start."""
+        now = time.monotonic()
+        with self._lock:
+            running, started = self._tests.get(user_id, (False, deque()))
+            while started and now - started[0] >= _SHARED_TEST_WINDOW_S:
+                started.popleft()
+            if running:
+                return 1
+            if len(started) >= SHARED_TESTS_PER_MINUTE:
+                left = _SHARED_TEST_WINDOW_S - (now - started[0])
+                return max(1, math.ceil(left))
+            started.append(now)
+            self._tests[user_id] = (True, started)
+            return None
+
+    def end_test(self, user_id: str) -> None:
+        """The user's test of a shared model has ended."""
+        with self._lock:
+            found = self._tests.get(user_id)
+            if found is not None:
+                self._tests[user_id] = (False, found[1])
 
     def sweep(self, current: Callable[[str], bool]) -> None:
         """Delete the files of tokens that no longer exist (an interrupted
@@ -589,6 +654,55 @@ def shared_models(models: Iterable[ModelConfig]) -> list[tuple[int, ModelConfig]
     ]
 
 
+def shared_id(model: ModelConfig, index: int) -> str:
+    """The admin's deployment id of its saved *model* at *index*."""
+    from markitai.serve.app import _deployment_id
+
+    return _deployment_id(model, index)
+
+
+@dataclass(frozen=True)
+class Shared:
+    """One admin model users see now: shared, admin weight above 0."""
+
+    id: str
+    model: str
+    provider: str
+    #: The admin's weight
+    weight: int
+
+
+def shared_list(
+    admin_models: list[ModelConfig], admin_providers: list[LLMProviderConfig]
+) -> list[Shared]:
+    """The admin's models users see now, in the saved order: what they are,
+    never a key, address or connection."""
+    return [
+        Shared(
+            id=shared_id(model, index),
+            model=model.litellm_params.model,
+            provider=connection_provider(model, admin_providers),
+            weight=model.litellm_params.weight,
+        )
+        for index, model in shared_models(admin_models)
+    ]
+
+
+def effective_weight(lists: Lists, shared: Shared) -> int:
+    """The user's weight for *shared*: its own, else the admin's."""
+    return lists.shared_weights.get(shared.id, shared.weight)
+
+
+def set_weight(lists: Lists, shared: Shared, weight: int | None) -> None:
+    """Set the user's weight for *shared*: an override only while it differs
+    from the admin's (None or the admin's weight removes it; 0 = off for this
+    user only)."""
+    if weight is None or weight == shared.weight:
+        lists.shared_weights.pop(shared.id, None)
+    else:
+        lists.shared_weights[shared.id] = weight
+
+
 def connection_provider(
     model: ModelConfig, providers: Iterable[LLMProviderConfig]
 ) -> str:
@@ -632,10 +746,11 @@ def build_pool(
     admin_providers: list[LLMProviderConfig],
 ) -> Pool:
     """*base* (the admin's configuration) routing to the user's own models
-    that are on, then the admin's shared ones, all in routing group
-    ``default`` with their weights and no fallbacks, and nothing else. An
-    empty pool turns model processing and image descriptions off; the
-    server's environment keys and detected models are never in it."""
+    that are on, then the admin's shared ones with the user's weight for
+    each (0 leaves one out of this user's pool only), all in routing group
+    ``default`` with no fallbacks, and nothing else. An empty pool turns
+    model processing and image descriptions off; the server's environment
+    keys and detected models are never in it."""
     from pydantic import ValidationError
 
     from markitai.config import LLMProviderConfig, ModelConfig
@@ -660,9 +775,15 @@ def build_pool(
             continue
         model.model_name = "default"
         models.append(model)
-    for _index, saved in shared_models(admin_models):
+    for index, saved in shared_models(admin_models):
+        weight = own.shared_weights.get(
+            shared_id(saved, index), saved.litellm_params.weight
+        )
+        if weight <= 0:
+            continue
         model = saved.model_copy(deep=True)
         model.model_name = "default"
+        model.litellm_params.weight = weight
         models.append(model)
         params = model.litellm_params
         linked = model.model_info.provider_id if model.model_info else None

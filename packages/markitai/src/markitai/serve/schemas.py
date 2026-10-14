@@ -119,6 +119,21 @@ class LLMSettingsUpdate(BaseModel):
         return self
 
 
+class UserModelTest(LLMSettingsUpdate):
+    """``POST /api/me/models/test``: one of the user's own models, a draft,
+    or ``{shared_id}`` alone, a model the admin shares (contract v1.16)."""
+
+    shared_id: str | None = None
+
+    @model_validator(mode="after")
+    def _one_form_only(self) -> UserModelTest:  # replaces the parent's rule
+        if self.shared_id is None:
+            return LLMSettingsUpdate._one_form_only(self)  # type: ignore[return-value]
+        if len(self.model_fields_set) != 1:
+            raise ValueError("shared_id cannot be combined with other probe fields")
+        return self
+
+
 class LLMModelCreate(BaseModel):
     """One deployment to append to ``llm.model_list``.
 
@@ -330,6 +345,7 @@ class CapabilitiesFeatures(BaseModel):
     config_edit: bool  # v1.13: GET/PUT /api/settings/config
     batch_delete: bool  # v1.13: POST /api/history/delete
     user_models: bool  # v1.15: /api/me/models* and `share` (not --no-auth)
+    user_config: bool  # v1.16: GET/PUT /api/me/config (not --no-auth)
 
 
 class CapabilitiesAccess(BaseModel):
@@ -382,6 +398,17 @@ class PresetFeatures(BaseModel):
     screenshot: bool
 
 
+class BuildInfo(BaseModel):
+    """Which build answers (``Capabilities.build``, contract v1.16)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: str
+    commit: str | None  # the short commit hash; None when unknown
+    built_at: str | None  # RFC 3339 UTC; None when unknown (a source checkout)
+    dirty: bool  # the build's tree had uncommitted changes
+
+
 class Capabilities(BaseModel):
     """Response of ``GET /api/capabilities``."""
 
@@ -399,6 +426,7 @@ class Capabilities(BaseModel):
     features: CapabilitiesFeatures
     remote_services: RemoteServices
     access: CapabilitiesAccess
+    build: BuildInfo  # v1.16, for every caller
 
 
 class LLMDeployment(BaseModel):
@@ -435,15 +463,18 @@ class LLMSettingsPayload(BaseModel):
 
 
 class SharedModel(BaseModel):
-    """An admin's shared model as a user sees it (contract v1.15): nothing
-    else, ever (no key, mask, address, host, group or connection)."""
+    """An admin's shared model as a user sees it (contract v1.15, v1.16):
+    nothing else, ever (no key, mask, address, host, group or connection)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    id: str  # the admin's deployment id (display only; no route takes it)
+    # The admin's deployment id: taken only by PATCH /api/me/models/shared/{id}
+    # and POST /api/me/models/test {shared_id}
+    id: str
     model: str
     provider: str  # the connection's provider; "custom" = OpenAI-compatible
-    weight: int
+    weight: int  # the user's effective weight (its own, else the admin's)
+    default_weight: int  # the admin's weight
 
 
 class UserModelsView(BaseModel):
@@ -456,7 +487,7 @@ class UserModelsView(BaseModel):
     source: Literal["user"]
     config_path: None
     config_origin: Literal["user"]
-    revision: str  # over its own models and connections
+    revision: str  # over its own models, connections and shared weights
     deployments: list[LLMDeployment]  # its own, without `share`
     detected: list[LLMDeployment]  # always empty
     shared: list[SharedModel]  # the admin's shared models with weight > 0
@@ -861,7 +892,7 @@ class ConfigDocument(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    path: str
+    path: str | None  # null for a user's own document (v1.16)
     origin: str
     exists: bool
     revision: str  # "sha256:<hex of the file's bytes>" or "absent"

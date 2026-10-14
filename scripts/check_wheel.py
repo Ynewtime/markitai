@@ -27,6 +27,8 @@ REQUIRED_FILES = {
     "markitai/litellm_rows.json",
     # Provider groups and brand-mark keys (markitai.serve.provider_catalog)
     "markitai/serve/provider_catalog.json",
+    # Commit, build time and dirty flag (markitai.build_info), from the build hook
+    "markitai/_build_info.py",
 }
 
 

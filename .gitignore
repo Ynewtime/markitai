@@ -105,3 +105,6 @@ bun.lockb
 pnpm-lock.yaml
 package-lock.json
 yarn.lock
+
+# Build identity written into wheels and sdists by hatch_build.py
+packages/markitai/src/markitai/_build_info.py

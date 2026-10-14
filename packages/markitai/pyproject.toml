@@ -134,6 +134,10 @@ path = "src/markitai/__init__.py"
 
 [tool.hatch.metadata.hooks.custom]
 
+# hatch_build.py writes markitai/_build_info.py (short commit, build time,
+# dirty) into the wheel and the sdist; see markitai.build_info
+[tool.hatch.build.hooks.custom]
+
 [tool.hatch.build.targets.sdist]
 exclude = ["/benchmarks/results/latest.json"]
 

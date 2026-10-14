@@ -1,4 +1,5 @@
-"""Contract v1.15 end to end: users' conversions route over their own pool.
+"""Contracts v1.15 and v1.16 end to end: users' conversions route over their
+own pool, with their own weights for shared models.
 
 Two user tokens and the admin on one server; real conversions with LLM
 enhancement reach local OpenAI-compatible model servers that record the
@@ -372,6 +373,7 @@ async def test_shared_and_own_models_serve_users_and_never_the_environment(
                 "model": "openai/fake-model",
                 "provider": "custom",
                 "weight": 1,
+                "default_weight": 1,
             }
         ]
         user_job = await _converted(client, b)
@@ -486,4 +488,63 @@ async def test_shared_and_own_models_serve_users_and_never_the_environment(
         text = json.dumps(failed_job)
         assert failed_job["items"][0]["llm_enhanced"] is False
         assert f"127.0.0.1:{admin_model.port}" not in text, text
+    assert sentinel.received() == []
+
+
+async def test_a_users_weight_and_test_of_a_shared_model(
+    tmp_path: Path, endpoints: dict[str, Any]
+) -> None:
+    """v1.16: a user's weight 0 takes a shared model out of its pool only; a
+    user's Test of it reaches the admin's address with the admin's key and
+    answers only whether it passed."""
+    sentinel, admin_model = endpoints["sentinel"], endpoints["admin"]
+    async with _server(tmp_path, admin_model.port) as client:
+        _a_id, a = await _user(client, "Reading group laptop")
+        _b_id, b = await _user(client, "Studio tablet")
+        await _share(client, "shared")
+
+        async def weigh(weight: int | None) -> dict[str, Any]:
+            response = await client.patch(
+                "/api/me/models/shared/shared-model-1",
+                json={
+                    "expected_revision": await _revision(client, "/api/me/models", b),
+                    "weight": weight,
+                },
+                headers=b,
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        off = await weigh(0)
+        assert off["shared"][0]["weight"] == 0
+        assert off["shared"][0]["default_weight"] == 1
+        assert off["routable"] is False
+        refused = await _submit(client, b, llm=True)
+        assert refused.json()["reason"] == "llm_unavailable"
+        # A still converts with it; the admin's view is unchanged
+        await _converted(client, a)
+        assert set(admin_model.received()) == {f"Bearer {ADMIN_KEY}"}
+        admin_view = (await client.get("/api/settings/llm", headers=ADMIN)).json()
+        assert admin_view["deployments"][0]["weight"] == 1
+        back = await weigh(None)
+        assert back["shared"][0]["weight"] == 1
+        await _converted(client, b)
+        assert set(admin_model.received()) == {f"Bearer {ADMIN_KEY}"}
+
+        passed = await client.post(
+            "/api/me/models/test", json={"shared_id": "shared-model-1"}, headers=b
+        )
+        assert passed.json() == {"ok": True, "detail": "Model test passed"}
+        assert admin_model.received() == [f"Bearer {ADMIN_KEY}"]
+        admin_model.stop()
+        failed = await client.post(
+            "/api/me/models/test", json={"shared_id": "shared-model-1"}, headers=b
+        )
+        assert failed.status_code == 200, failed.text
+        assert failed.json() == {
+            "ok": False,
+            "reason": "network",
+            "detail": "The shared model did not pass its test; ask the admin to "
+            "check it",
+        }
     assert sentinel.received() == []
