@@ -31,7 +31,13 @@ saving settings. They do not persist a connection draft. A failed `/test` answer
 [LLM](llm.md)).
 
 The deployment view contains `deployment_id`, `routing_group`, `model`, `weight`,
-credential-presence flags, a sanitized API origin and `persisted`. A routing group
+credential-presence flags, a sanitized API origin, `persisted` and, on saved rows,
+`share` (`private` or `shared`). `PATCH /deployments/{id}` accepts `share` alone
+(with `expected_revision`) or with the other fields: `shared` saves
+`model_info.share: "shared"` in the entry and lets user tokens' conversions use
+the model, `private` removes it (see
+[users' own models](serve.md#users-own-models-and-shared-models)). Users' own
+models live outside this file under `/api/me/models`, with the same shapes. A routing group
 may contain multiple deployments. Legacy name-based changes return 409 when the
 name is ambiguous. New deployments receive UUID identities; the first v2 mutation
 also assigns persistent identities to legacy entries.

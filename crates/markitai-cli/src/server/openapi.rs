@@ -190,6 +190,9 @@ mod tests {
             include_str!("settings.rs"),
             include_str!("settings/editor.rs"),
             include_str!("settings/handlers.rs"),
+            include_str!("settings/me.rs"),
+            include_str!("settings/pool.rs"),
+            include_str!("settings/users.rs"),
             include_str!("settings/identity.rs"),
             include_str!("settings/model.rs"),
             include_str!("settings/store.rs"),
@@ -282,6 +285,7 @@ mod tests {
             "user_tokens",
             "config_edit",
             "batch_delete",
+            "user_models",
         ] {
             assert!(properties.contains(feature), "{feature}");
         }

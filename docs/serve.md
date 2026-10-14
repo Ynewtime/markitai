@@ -619,12 +619,14 @@ without control characters, else 422 `invalid_label`; at most 50 tokens, else 40
 `token_limit`) answers 201 `{"id", "label", "hint", "created_at",
 "last_used_at": null, "token"}`, the only answer that ever carries the token
 (`mku_` and 64 hex characters; `hint` is its last four). `GET /api/access-tokens`
-lists `{"tokens": [{"id", "label", "hint", "created_at", "last_used_at"}]}`,
-oldest first, and `DELETE /api/access-tokens/{id}` revokes one at once (204;
+lists `{"tokens": [{"id", "label", "hint", "created_at", "last_used_at",
+"model_count"}]}`, oldest first (`model_count`: how many models of its own the
+user saved), and `DELETE /api/access-tokens/{id}` revokes one at once (204;
 unknown 404 `token_not_found`): its next request is 401 `token_required`, its
-download tickets are refused and its open event streams end. The server prints
-`Access token "<label>" created from the web workbench.` or `… revoked …`, never
-the token. These routes, `POST /api/access-token/regenerate` and every
+download tickets are refused, its open event streams end and its own models are
+deleted. The server prints `Access token "<label>" created from the web
+workbench.` or `… revoked …` (with `; its N models were deleted.` when it had
+any), never the token. These routes, `POST /api/access-token/regenerate` and every
 `/api/settings/` route are admin only: a user token gets 403
 `settings_forbidden`; with `--no-auth` there are no tokens and the token routes
 answer 409 `token_disabled`. All their answers carry `Cache-Control: no-store`.
@@ -643,6 +645,37 @@ owner-only, replaced atomically), so user tokens survive restarts and admin-toke
 regeneration; `last_used_at` is kept in memory only. A file that cannot be read
 is left alone (with one warning, and no user token works) until an admin creates
 or revokes a token.
+
+### Users' own models and shared models
+
+A user token manages models of its own under `/api/me/models` (with the
+`/api/settings/llm` suffixes: `/providers`, `/providers/{id}/credentials`,
+`/model-discovery`, `/test`, `/deployments/batch`, `/deployments/{id}`,
+`/providers/{id}`; any other caller gets 403 `user_token_required`; every answer
+is `no-store`). They are kept per token in
+`MARKITAI_HOME/serve/user-models/<token id>.json` (owner-only, replaced
+atomically), never in the configuration file, and are deleted when the token is
+revoked (a file left by a failed deletion is removed at the next start). A user
+has at most 50 (409 `model_limit`). Each needs a key of the user's own, or an
+address of its own for a server that takes none (422 `key_or_address_required`);
+a provider that signs in with the server's own account or cloud login
+(subscriptions, Vertex AI, watsonx, GigaChat, Bedrock without a key) is 422
+`server_credentials`; an address on the server's machine (`localhost`, loopback,
+`0.0.0.0`, `::`, also a provider's documented local address, so Ollama or LM
+Studio need another address) is 422 `server_address`. A user's models never use
+the server's environment keys or detected models, and name only the user's own
+connections.
+
+An admin shares a saved model with every user by `share: "shared"` on
+`PATCH /api/settings/llm/deployments/{id}` (saved as `model_info.share` in the
+configuration file; `private` is the default). A user's conversions, retries and
+enhancements route to one pool: its own models, then the shared ones (weight
+above 0, one routing group, no fallbacks), from the current settings on every
+request. With neither, a request for model processing is 422 `llm_unavailable`
+and conversions run without models. `GET /api/me/models` lists the shared
+models as `{id, model, provider, weight}` only: no user answer carries a shared
+model's key, address or connection, and a failure names the model without its
+host. A revoked user's jobs route to the shared models only.
 
 All settings endpoints require the admin token by default. With `--no-auth`,
 only direct loopback peers without forwarding headers can access settings. Every settings response, including rejected requests,

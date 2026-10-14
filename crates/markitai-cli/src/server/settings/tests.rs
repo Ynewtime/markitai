@@ -57,7 +57,7 @@ fn identity_backfill_preserves_unknown_and_omission_null_are_distinct() {
     let revision = current(&store);
     let first = ok(store.mutate(Mutation::Update {
         key: id,
-        legacy: false,
+        legacy: false, share: None,
         body: json!({"expected_revision":revision,"model":"openai/new","api_key":"fixture-secret","api_base":null}),
     }));
     let raw = saved(&store);
@@ -123,7 +123,8 @@ fn batch_cas_and_invalid_second_item_never_write_or_replace_runtime() {
             .mutate(Mutation::Update {
                 key: "same".into(),
                 body: json!({"model":"openai/not-picked"}),
-                legacy: true
+                legacy: true,
+                share: None,
             })
             .err()
             .unwrap()
@@ -399,6 +400,7 @@ fn clearing_provider_only_deployment_detaches_without_changing_siblings() {
     ok(store.mutate(Mutation::Update {
         key: "one-id".into(),
         legacy: false,
+        share: None,
         body: json!({"expected_revision":current(&store),"api_key":null}),
     }));
     let saved = saved(&store);
@@ -731,7 +733,8 @@ fn settings_mutations_cannot_retarget_retained_server_keys() {
                 .mutate(Mutation::Update {
                     key: id.clone(),
                     body,
-                    legacy: false
+                    legacy: false,
+                    share: None,
                 })
                 .is_err()
         );
@@ -952,6 +955,7 @@ fn an_openai_compatible_endpoint_is_saved_as_a_custom_connection() {
     ok(store.mutate(Mutation::Update {
         key: deployment.clone(),
         legacy: false,
+        share: None,
         body: json!({"expected_revision":current(&store),"model":"openai/renamed"}),
     }));
     let probe = ok(store.resolve_probe(&json!({"deployment_id":deployment})));
@@ -1342,6 +1346,7 @@ fn keyless_cloud_entries_use_the_server_credentials_only_at_the_cloud_endpoint()
     ok(store.mutate(Mutation::Update {
         key: id,
         legacy: false,
+        share: None,
         body: json!({"expected_revision":current(&store),"api_key":null}),
     }));
     let raw = saved(&store);
@@ -1446,7 +1451,7 @@ fn a_cloud_login_model_is_refused_an_address_at_save_and_test_time() {
     refused(
         store.mutate(Mutation::Update {
             key: ids[0].clone(),
-            legacy: false,
+            legacy: false, share: None,
             body: json!({"expected_revision":current(&store),"api_base":"https://capture.example","api_key":null}),
         }),
         vertex,
@@ -1455,6 +1460,7 @@ fn a_cloud_login_model_is_refused_an_address_at_save_and_test_time() {
         store.mutate(Mutation::Update {
             key: ids[1].clone(),
             legacy: false,
+            share: None,
             body: json!({"expected_revision":current(&store),"model":"vertex_ai/gemini-2.5-pro"}),
         }),
         vertex,
@@ -1477,6 +1483,7 @@ fn a_cloud_login_model_is_refused_an_address_at_save_and_test_time() {
     ok(store.mutate(Mutation::Update {
         key: ids[0].clone(),
         legacy: false,
+        share: None,
         body: json!({"expected_revision":current(&store),"api_base":null}),
     }));
 }
@@ -1516,6 +1523,7 @@ fn a_keyed_connection_cannot_become_keyless_at_another_host() {
                     key: "a".into(),
                     body,
                     legacy: false,
+                    share: None,
                 })
                 .err()
                 .unwrap(),
@@ -1528,6 +1536,7 @@ fn a_keyed_connection_cannot_become_keyless_at_another_host() {
         key: "a".into(),
         body: same,
         legacy: false,
+        share: None,
     }));
     let entry = &saved(&store)["llm"]["model_list"][0]["litellm_params"];
     assert_eq!(entry["api_key"], model::NO_KEY);
@@ -1809,4 +1818,45 @@ fn config_edit_keeps_the_files_own_layout_and_saves_exactly_what_was_sent() {
         .map(|entry| entry["model"].clone())
         .collect();
     assert_eq!(models, [json!("openai/first"), json!("openai/second")]);
+}
+#[test]
+fn sharing_is_saved_in_the_model_entry_and_shown_on_saved_rows_only() {
+    let (_dir, store) = setup(fixture());
+    let view = store.view();
+    assert_eq!(view["deployments"][0]["share"], "private");
+    let id = view["deployments"][0]["deployment_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let shared = ok(store.mutate(Mutation::Update {
+        key: id.clone(),
+        body: json!({"expected_revision":current(&store)}),
+        legacy: false,
+        share: Some(true),
+    }));
+    assert_eq!(shared["deployments"][0]["share"], "shared");
+    let file = saved(&store);
+    let entry = &file["llm"]["model_list"][0];
+    assert_eq!(entry["model_info"]["share"], "shared");
+    // Nothing else of the entry changed.
+    assert_eq!(entry["litellm_params"]["api_key"], "fixture-secret");
+    assert_eq!(entry["custom"], json!({"keep":true}));
+    let id = shared["deployments"][0]["deployment_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let private = ok(store.mutate(Mutation::Update {
+        key: id,
+        body: json!({"expected_revision":current(&store),"weight":2}),
+        legacy: false,
+        share: Some(false),
+    }));
+    assert_eq!(private["deployments"][0]["share"], "private");
+    assert_eq!(private["deployments"][0]["weight"], 2);
+    let file = saved(&store);
+    assert!(
+        file["llm"]["model_list"][0]["model_info"]
+            .get("share")
+            .is_none()
+    );
 }

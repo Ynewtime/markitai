@@ -11,6 +11,7 @@ fn entry() -> Deployment {
     Deployment {
         id: "openai/gpt-4.1".into(),
         explicit_id: None,
+        hidden_endpoint: false,
         group: "default".into(),
         model: "gpt-4.1".into(),
         provider: "openai".into(),

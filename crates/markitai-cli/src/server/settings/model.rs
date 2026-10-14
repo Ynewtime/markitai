@@ -23,6 +23,46 @@ const AMBIENT_LOGIN: [(&str, &str, &str); 5] = [
     ("gigachat", "GigaChat", "GIGACHAT_ACCESS_TOKEN"),
 ];
 
+/// Whether a provider signs in with the server's own account or cloud login
+/// whatever an entry carries: the subscription runtimes and the ambient
+/// logins above. A user token may connect none of them (Bedrock needs a key
+/// of the user's own instead; see `users`).
+pub(super) fn server_login(provider: &str) -> bool {
+    local(provider) || AMBIENT_LOGIN.iter().any(|(name, ..)| *name == provider)
+}
+
+/// The documented address of a provider or of the provider a further model
+/// prefix is routed with; `None` when every server has its own.
+pub(super) fn default_base(provider: &str) -> Option<&'static str> {
+    markitai_core::provider_management::provider_default_base(provider).or_else(|| {
+        markitai_core::provider_management::provider_entry(provider)
+            .and_then(|entry| entry.default_base)
+    })
+}
+
+/// Whether requests to `base` would go to the server's own machine: the host
+/// `localhost` or a name under it, a loopback address (IPv4-mapped included)
+/// or an unspecified one (`0.0.0.0`, `::`). An address that is not a URL is
+/// not; callers refuse it on its own.
+pub(super) fn server_machine(base: &str) -> bool {
+    use std::net::Ipv4Addr;
+    let Ok(url) = url::Url::parse(base.trim()) else {
+        return false;
+    };
+    let own = |ip: Ipv4Addr| ip.is_loopback() || ip.octets()[0] == 0;
+    match url.host() {
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name == "localhost" || name.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => own(ip),
+        Some(url::Host::Ipv6(ip)) => {
+            ip.is_loopback() || ip.is_unspecified() || ip.to_ipv4().is_some_and(own)
+        }
+        None => false,
+    }
+}
+
 /// Refuse an entry the settings API writes or tests that would carry the
 /// server's own cloud login to an address: such a model may only use its
 /// cloud's own endpoint here (owner decision, contract v1.9). The detail is

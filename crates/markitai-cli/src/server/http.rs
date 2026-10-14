@@ -54,7 +54,15 @@ pub(super) async fn capabilities(
         _ => json!({"role":"user"}),
     };
     let cfg = state.settings.snapshot();
-    let llm = markitai_core::llm_capabilities(&cfg);
+    // A user's are the pool its conversions route to.
+    let llm = match request
+        .extensions()
+        .get::<Principal>()
+        .and_then(Principal::user)
+    {
+        Some(user) => super::settings::user_capabilities(&state.conversion_config(Some(user))),
+        None => json!(markitai_core::llm_capabilities(&cfg)),
+    };
     // Do not even resolve credentials for an untrusted caller.
     let cloudflare = if trusted {
         markitai_core::cloudflare_capabilities(&cfg)
@@ -82,7 +90,8 @@ pub(super) async fn capabilities(
         "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
             "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
             "item_archive":true,"token_regenerate":state.auth_enabled(),
-            "user_tokens":state.auth_enabled(),"config_edit":true,"batch_delete":true},
+            "user_tokens":state.auth_enabled(),"config_edit":true,"batch_delete":true,
+            "user_models":state.auth_enabled()},
     }))
 }
 
@@ -382,7 +391,8 @@ pub(super) async fn create(
         None => JobOptions::default(),
         Some(bytes) => JobOptions::parse(&bytes)?,
     };
-    let configuration = state.settings.snapshot();
+    // A user's conversions route to its own and the shared models only.
+    let configuration = state.conversion_config(owner.as_deref());
     let cfg = options.config_for_request(&configuration, trusted)?;
     // Without a routable model every item would fail with the same error, so a
     // request for model processing is refused before anything is stored.
@@ -966,6 +976,7 @@ mod error_code_tests {
             tickets: Default::default(),
             previews: Default::default(),
             access: super::super::access::Access::load(root.join("access.json")),
+            users: super::super::settings::Users::new(root.join("user-models")),
         });
         let router = Router::new()
             .route("/api/jobs", post(create))

@@ -125,7 +125,19 @@ fn deployment(entry: &Value, index: usize, persisted: bool) -> Value {
 }
 pub(super) fn payload(data: &Data, source: &SettingsSource) -> Value {
     let path = display_path(source);
-    json!({"configured":!data.models.is_empty(),"routable":routable(data),"source":if !data.models.is_empty(){"config"}else if !data.detected.is_empty(){"detected"}else{"none"},"config_path":path,"config_origin":source.origin,"revision":data.revision,"deployments":data.models.iter().enumerate().map(|(index,entry)|deployment(entry,index,true)).collect::<Vec<_>>(),"detected":data.detected.iter().enumerate().map(|(index,entry)|deployment(entry,index,false)).collect::<Vec<_>>()})
+    json!({"configured":!data.models.is_empty(),"routable":routable(data),"source":if !data.models.is_empty(){"config"}else if !data.detected.is_empty(){"detected"}else{"none"},"config_path":path,"config_origin":source.origin,"revision":data.revision,"deployments":data.models.iter().enumerate().map(|(index,entry)|{let mut row=deployment(entry,index,true);row["share"]=json!(if shared(entry){"shared"}else{"private"});row}).collect::<Vec<_>>(),"detected":data.detected.iter().enumerate().map(|(index,entry)|deployment(entry,index,false)).collect::<Vec<_>>()})
+}
+/// Whether the admin shares this saved model with users' conversions.
+pub(super) fn shared(entry: &Value) -> bool {
+    entry.pointer("/model_info/share").and_then(Value::as_str) == Some("shared")
+}
+/// A user token's own models (`data`, its lists) and the admin's shared ones
+/// (`shared`, already shaped), with whether the pool of both can route.
+pub(super) fn user_payload(data: &Data, shared: Vec<Value>, routable: bool) -> Value {
+    json!({"configured":!data.models.is_empty(),"routable":routable,"source":"user",
+        "config_path":null,"config_origin":"user","revision":data.revision,
+        "deployments":data.models.iter().enumerate().map(|(index,entry)|deployment(entry,index,true)).collect::<Vec<_>>(),
+        "detected":[],"shared":shared,"limit":super::users::LIMIT})
 }
 /// The configuration file's path as the settings show it (`~/…` under home).
 pub(super) fn display_path(source: &SettingsSource) -> String {
@@ -293,6 +305,57 @@ pub(super) fn providers(data: &Data) -> Value {
         facts(&name, card);
     }
     json!({"providers":result})
+}
+
+/// The provider cards a user token sees: the built-in ones it may connect
+/// (none that signs in with the server's own account or cloud login, except
+/// Bedrock with a key of the user's own), then its own saved connections.
+/// Never an environment card, a key variable or a credential, and no default
+/// address on the server's own machine.
+pub(super) fn user_providers(data: &Data) -> Value {
+    let mut result = Vec::new();
+    for known in &catalog() {
+        let name = known.provider;
+        if model::server_login(name) {
+            continue;
+        }
+        let repeatable = matches!(name, "openai" | "custom");
+        if !repeatable
+            && (data.providers.iter().any(|p| p["provider"] == name)
+                || data.models.iter().any(|p| model::provider(p) == name))
+        {
+            continue;
+        }
+        let status =
+            if known.key_optional && known.group != "clouds" && user_default_base(name).is_some() {
+                "unknown"
+            } else {
+                "needs_credentials"
+            };
+        result.push(json!({"id":format!("common:{name}"),"provider":name,"label":known.label,"kind":if known.compatible{"compatible"}else{"common"},"status":status,"source":"built_in","supports_discovery":known.discovery}));
+    }
+    result.extend(
+        configured_cards(data, &HashMap::new())
+            .into_iter()
+            .map(|(card, _)| card),
+    );
+    for card in &mut result {
+        let name = card["provider"].as_str().unwrap_or_default().to_owned();
+        facts(&name, card);
+        let fields = card.as_object_mut().unwrap();
+        fields.remove("credential");
+        fields.insert("key_variable".into(), Value::Null);
+        fields.insert("default_base".into(), json!(user_default_base(&name)));
+        // A user's Bedrock connection needs its own key.
+        if name == "bedrock" {
+            fields.insert("key_optional".into(), json!(false));
+        }
+    }
+    json!({"providers":result})
+}
+/// A provider's documented address, unless it is on the server's own machine.
+pub(super) fn user_default_base(provider: &str) -> Option<&'static str> {
+    model::default_base(provider).filter(|base| !model::server_machine(base))
 }
 
 #[cfg(test)]

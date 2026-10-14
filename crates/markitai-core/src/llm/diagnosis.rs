@@ -22,6 +22,9 @@ const ECHO_STEP: usize = 4;
 /// `[deployment] at [host]`, for the end of a failure message: the
 /// configured model and the endpoint's host, never its path or query.
 pub(super) fn deployment(entry: &Deployment) -> String {
+    if entry.hidden_endpoint {
+        return format!("deployment {}", entry.id);
+    }
     let host = url::Url::parse(&entry.endpoint).ok().and_then(|url| {
         let host = url.host_str()?.to_owned();
         Some(match url.port() {
@@ -554,6 +557,7 @@ mod tests {
         Deployment {
             id: "openai/gpt-test".into(),
             explicit_id: None,
+            hidden_endpoint: false,
             group: "default".into(),
             model: "gpt-test".into(),
             provider: "openai".into(),
@@ -574,6 +578,11 @@ mod tests {
             deployment(&entry("k")),
             "deployment openai/gpt-test at llm.example.test:8443"
         );
+        let hidden = Deployment {
+            hidden_endpoint: true,
+            ..entry("k")
+        };
+        assert_eq!(deployment(&hidden), "deployment openai/gpt-test");
     }
 
     #[test]
