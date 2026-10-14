@@ -9,6 +9,7 @@ from markitai.utils.text import (
     extract_asset_image_names,
     format_error_message,
     markdown_image_reference,
+    page_ranges,
     preview_items_for_log,
     repair_json_string,
 )
@@ -454,3 +455,11 @@ class TestRepairJsonString:
 
     def test_returns_none_when_there_is_no_json(self) -> None:
         assert repair_json_string("no json here at all") is None
+
+
+def test_page_lists_read_as_ranges() -> None:
+    """Every page list in a warning reads as ranges (contract v1.16)."""
+    assert page_ranges([9, 3, 4, 5, 5]) == "3–5, 9"
+    assert page_ranges([2, 3, 5, 6]) == "2–3, 5–6"
+    assert page_ranges(iter([7])) == "7"
+    assert page_ranges([]) == ""

@@ -318,3 +318,22 @@ def test_the_fallback_hint_is_given_once_per_process(
         "a.pdf: " + first,
         "b.pdf: " + first,
     ]
+
+
+def test_an_answer_the_page_guards_emptied_is_explained_in_plain_words(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The warning says what happened and keeps "page drift guard", the words
+    the serve workbench recognizes (contract v1.16)."""
+    from markitai.llm.document import DRIFT_GUARD_REFUSAL
+    from markitai.workflow import llm_failure
+
+    monkeypatch.setattr(llm_failure, "_hinted", True)
+    warning = llm_failure.llm_fallback_warning(
+        "plan.pdf", f"LLM processing failed: {DRIFT_GUARD_REFUSAL}"
+    )
+    assert warning == (
+        "LLM enhancement failed (the model's answer did not match the document "
+        "page by page, so the page drift guard set it aside); kept the "
+        "unenhanced output"
+    )

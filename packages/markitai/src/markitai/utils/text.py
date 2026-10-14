@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 from urllib.parse import quote
 
@@ -723,3 +723,20 @@ def dedupe_long_text_blocks(content: str, min_length: int = 50) -> str:
             result_lines.append(line)
 
     return "\n".join(result_lines)
+
+
+def page_ranges(pages: Iterable[int]) -> str:
+    """Page numbers as ranges: ``"3–5, 9"`` for pages 3, 4, 5 and 9
+    (ascending, an en dash, no repeats), as every page list in a warning
+    reads (workbench contract v1.16)."""
+    numbers = sorted(set(pages))
+    parts: list[str] = []
+    index = 0
+    while index < len(numbers):
+        end = index
+        while end + 1 < len(numbers) and numbers[end + 1] == numbers[end] + 1:
+            end += 1
+        first, last = numbers[index], numbers[end]
+        parts.append(str(first) if first == last else f"{first}–{last}")
+        index = end + 1
+    return ", ".join(parts)

@@ -1613,7 +1613,12 @@ class TestScanAdvisoryWarning:
 
         advisories = [m for m in messages if "consider re-running with --ocr" in m]
         assert len(advisories) == 1
-        assert "scanned.pdf: 1 page looks scanned/garbled (page 1); " in advisories[0]
+        # The document's page count, the pages as ranges, the words the
+        # serve workbench reads (contract v1.16)
+        assert (
+            "[PDF] scanned.pdf: 1 of 1 pages look scanned/garbled (page 1); "
+            in (advisories[0])
+        )
 
     def test_notices_count_pages_in_words(self) -> None:
         """Notices say "1 page (page 3)", not "1 page(s) (pages 3)"."""
@@ -1621,6 +1626,7 @@ class TestScanAdvisoryWarning:
 
         assert _pages_phrases([3]) == ("1 page", "page 3")
         assert _pages_phrases([1, 4, 7]) == ("3 pages", "pages 1, 4, 7")
+        assert _pages_phrases([9, 3, 4, 5, 5]) == ("4 pages", "pages 3–5, 9")
 
     @patch("markitai.converter.pdf.pymupdf4llm")
     def test_no_warning_for_text_pdf(
