@@ -713,6 +713,14 @@ fn normalize_node(value: &Value, node: &Value, path: &str) -> Result<Value> {
                         .ok_or_else(|| invalid(&path, "is required"))?;
                     result.insert(key.clone(), normalize_node(value, field, &path)?);
                 }
+                // Internal: a service hides where this model is served from
+                // the failures it reports (see `llm::Deployment`). Like any
+                // other unknown model field, anything but a boolean is dropped.
+                if path.ends_with(".model_info")
+                    && let Some(value) = values.get("hidden_endpoint").filter(|v| v.is_boolean())
+                {
+                    result.insert("hidden_endpoint".into(), value.clone());
+                }
                 if path == "output" {
                     // Internal write targets are never emitted as public defaults.
                     for key in ["filename", "reserved_stem"] {
@@ -1412,6 +1420,31 @@ mod tests {
         assert_eq!(cfg["llm"]["model_list"].as_array().unwrap().len(), 1);
         assert_eq!(cfg["llm"]["model_list"][0]["litellm_params"]["weight"], 1);
         assert_eq!(cfg["llm"]["model_list"][0]["model_info"], Value::Null);
+        // The one internal model field is kept; other unknown ones are not.
+        let cfg = normalize(
+            &json!({"llm":{"model_list":[{"model_name":"default","litellm_params":{"model":"m"},
+            "model_info":{"hidden_endpoint":true,"other":1}}]}}),
+        )
+        .unwrap();
+        assert_eq!(
+            cfg["llm"]["model_list"][0]["model_info"]["hidden_endpoint"],
+            true
+        );
+        assert!(
+            cfg["llm"]["model_list"][0]["model_info"]
+                .get("other")
+                .is_none()
+        );
+        let cfg = normalize(
+            &json!({"llm":{"model_list":[{"model_name":"default","litellm_params":{"model":"m"},
+            "model_info":{"hidden_endpoint":"yes"}}]}}),
+        )
+        .unwrap();
+        assert!(
+            cfg["llm"]["model_list"][0]["model_info"]
+                .get("hidden_endpoint")
+                .is_none()
+        );
     }
 
     #[test]

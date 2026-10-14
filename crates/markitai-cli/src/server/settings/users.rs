@@ -1,0 +1,707 @@
+//! A user token's own models. Each token keeps its models and connections in
+//! `MARKITAI_HOME/serve/user-models/<token id>.json` (owner-only, replaced
+//! atomically), never in the configuration file. They are changed with the
+//! settings' own operations (`store::apply`), then held to rules that keep
+//! the server's credentials and machine out of reach: no provider that signs
+//! in with the server's own account, a key or an address of the user's own,
+//! no address on the server's machine, no environment credentials at all.
+use super::{
+    ApiError, ApiResult, failure, identity, invalid, missing, model, pool,
+    store::{self, Data, Mutation, Store},
+    views,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
+
+/// A user token's own models at most.
+pub(in crate::server) const LIMIT: usize = 50;
+
+/// One user's models and connections, as `llm.model_list` and
+/// `llm.providers` entries.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(in crate::server) struct Lists {
+    pub models: Vec<Value>,
+    pub providers: Vec<Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Saved {
+    version: u32,
+    models: Vec<Value>,
+    providers: Vec<Value>,
+}
+
+pub(in crate::server) struct Users {
+    directory: PathBuf,
+    /// Every user's lists read so far; the lock also serializes writes.
+    lists: Mutex<HashMap<String, Lists>>,
+}
+
+fn user_file(directory: &Path, id: &str) -> PathBuf {
+    directory.join(format!("{id}.json"))
+}
+
+fn read(path: &Path) -> Result<Lists, String> {
+    let bytes = match markitai_core::config::read_file(path) {
+        Ok(None) => return Ok(Lists::default()),
+        Ok(Some(bytes)) => bytes,
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    let saved: Saved =
+        serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
+    if saved.version != 1 {
+        return Err(format!(
+            "{}: unsupported version {}",
+            path.display(),
+            saved.version
+        ));
+    }
+    let models_valid = saved
+        .models
+        .iter()
+        .all(|entry| entry.is_object() && entry["litellm_params"]["model"].is_string());
+    let providers_valid = saved
+        .providers
+        .iter()
+        .all(|entry| entry.is_object() && entry["id"].is_string() && entry["provider"].is_string());
+    if !models_valid || !providers_valid || saved.models.len() > LIMIT {
+        return Err(format!("{}: invalid model entry", path.display()));
+    }
+    Ok(Lists {
+        models: saved.models,
+        providers: saved.providers,
+    })
+}
+
+/// Replace the file atomically (staged beside it, owner-only, then renamed);
+/// whether the directory is known to be durable.
+fn save(directory: &Path, id: &str, lists: &Lists) -> std::io::Result<bool> {
+    markitai_core::output::create_private_dir(directory)?;
+    let mut bytes = serde_json::to_vec_pretty(&Saved {
+        version: 1,
+        models: lists.models.clone(),
+        providers: lists.providers.clone(),
+    })
+    .map_err(std::io::Error::other)?;
+    bytes.push(b'\n');
+    let staged = markitai_core::config::stage_file(&user_file(directory, id), &bytes)?;
+    let folder = staged.directory().to_owned();
+    staged.publish()?;
+    Ok(markitai_core::platform::sync_directory(&folder).is_ok())
+}
+
+impl Users {
+    pub(in crate::server) fn new(directory: PathBuf) -> Self {
+        Self {
+            directory,
+            lists: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn cached<'a>(&self, lists: &'a mut HashMap<String, Lists>, id: &str) -> &'a mut Lists {
+        lists.entry(id.to_owned()).or_insert_with(|| {
+            read(&user_file(&self.directory, id)).unwrap_or_else(|error| {
+                eprintln!(
+                    "Warning: Serve: ignoring a user token's saved models ({error}); it has none until it saves one."
+                );
+                Lists::default()
+            })
+        })
+    }
+
+    /// The user `id`'s models and connections. A missing file holds none; an
+    /// unreadable or invalid one is left as it is until the user's next
+    /// change replaces it, and holds none meanwhile.
+    pub(in crate::server) fn lists(&self, id: &str) -> Lists {
+        let mut lists = self.lists.lock().unwrap_or_else(|e| e.into_inner());
+        self.cached(&mut lists, id).clone()
+    }
+
+    /// How many models of its own the user `id` has.
+    pub(in crate::server) fn count(&self, id: &str) -> usize {
+        self.lists(id).models.len()
+    }
+
+    /// Change the user `id`'s lists with `change` and save them, if the
+    /// token still exists (`alive`, asked under the lock a revocation's
+    /// deletion takes too).
+    fn write(
+        &self,
+        id: &str,
+        alive: &dyn Fn() -> bool,
+        change: impl FnOnce(&mut Lists) -> ApiResult<()>,
+    ) -> ApiResult<Lists> {
+        let mut lists = self.lists.lock().unwrap_or_else(|e| e.into_inner());
+        if !alive() {
+            return Err(ApiError::new(
+                401,
+                "token_required",
+                "this access token was revoked; sign in again",
+            ));
+        }
+        let mut next = self.cached(&mut lists, id).clone();
+        change(&mut next)?;
+        let durable = save(&self.directory, id, &next).map_err(|error| {
+            eprintln!("Error: Serve: could not save a user token's models: {error}");
+            failure()
+        })?;
+        lists.insert(id.to_owned(), next.clone());
+        if !durable {
+            return Err(ApiError::new(
+                500,
+                "settings_durability_unknown",
+                "Your models were saved, but directory durability could not be confirmed; reload them before another change",
+            ));
+        }
+        Ok(next)
+    }
+
+    /// Delete the user `id`'s models (its token was revoked); how many there
+    /// were.
+    pub(in crate::server) fn delete(&self, id: &str) -> std::io::Result<usize> {
+        let mut lists = self.lists.lock().unwrap_or_else(|e| e.into_inner());
+        let count = self.cached(&mut lists, id).models.len();
+        lists.remove(id);
+        match std::fs::remove_file(user_file(&self.directory, id)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        let _ = markitai_core::platform::sync_directory(&self.directory);
+        Ok(count)
+    }
+
+    /// Delete the files of tokens that no longer exist (`current` says which
+    /// do), and staged files a stopped write left behind.
+    pub(in crate::server) fn sweep(&self, current: impl Fn(&str) -> bool) {
+        let Ok(entries) = std::fs::read_dir(&self.directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let orphan = match name.strip_suffix(".json") {
+                Some(id) => !current(id),
+                None => name.starts_with(".tmp"),
+            };
+            let regular = entry
+                .path()
+                .symlink_metadata()
+                .is_ok_and(|metadata| metadata.is_file());
+            if orphan
+                && regular
+                && let Err(error) = std::fs::remove_file(entry.path())
+            {
+                eprintln!(
+                    "Warning: Serve: could not delete the saved models of a revoked access token ({}): {error}",
+                    entry.path().display()
+                );
+            }
+        }
+    }
+}
+
+fn server_credentials() -> ApiError {
+    ApiError::new(
+        422,
+        "server_credentials",
+        "this provider signs in with the server's own account; add a model with your own API key",
+    )
+}
+fn key_or_address_required() -> ApiError {
+    ApiError::new(
+        422,
+        "key_or_address_required",
+        "a model needs your own API key, or the address of a server that takes none",
+    )
+}
+fn server_address() -> ApiError {
+    ApiError::new(
+        422,
+        "server_address",
+        "that address is the server's own machine, which belongs to the admin; use another address",
+    )
+}
+fn environment_credentials() -> ApiError {
+    invalid("environment credentials are the server's")
+}
+fn user_token_required() -> ApiError {
+    ApiError::new(
+        403,
+        "user_token_required",
+        "these routes manage a user token's own models; the admin's are under /api/settings/llm",
+    )
+}
+
+/// The user token a request acts for, else `user_token_required`.
+pub(in crate::server) fn caller(
+    principal: &crate::server::security::Principal,
+) -> ApiResult<String> {
+    principal
+        .user()
+        .map(str::to_owned)
+        .ok_or_else(user_token_required)
+}
+
+fn real(value: &Value) -> bool {
+    model::real_key(value.as_str())
+}
+fn text(value: &Value) -> Option<&str> {
+    value.as_str().filter(|value| !value.trim().is_empty())
+}
+
+/// Refuse one connection of a user: `provider` with `key` at `base`.
+fn check_connection(provider: &str, key: &Value, base: &Value) -> ApiResult<()> {
+    let provider = provider.trim().to_ascii_lowercase();
+    if model::server_login(&provider) || provider == "bedrock" && !real(key) {
+        return Err(server_credentials());
+    }
+    if [key, base].iter().any(|value| {
+        value
+            .as_str()
+            .is_some_and(|v| v.trim_start().starts_with("env:"))
+    }) {
+        return Err(invalid(
+            "environment references must be configured on the server",
+        ));
+    }
+    let base = text(base);
+    check_address(&provider, base)?;
+    if !real(key) && base.is_none() {
+        return Err(key_or_address_required());
+    }
+    Ok(())
+}
+
+/// Refuse an address that is not HTTP(S), or one where requests of
+/// `provider` would go to the server's own machine (its documented address
+/// when `base` is none).
+fn check_address(provider: &str, base: Option<&str>) -> ApiResult<()> {
+    if let Some(base) = base
+        && url::Url::parse(base.trim())
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some())
+            .is_none()
+    {
+        return Err(invalid("api_base must be an http or https address"));
+    }
+    if base
+        .or_else(|| model::default_base(provider))
+        .is_some_and(model::server_machine)
+    {
+        return Err(server_address());
+    }
+    Ok(())
+}
+
+/// Refuse a user's model entry the rules do not allow, with its linked
+/// connection's key and address.
+pub(super) fn check_entry(entry: &Value, providers: &[Value]) -> ApiResult<()> {
+    if let Some(id) = model::linked(entry)
+        && !providers.iter().any(|p| p["id"] == id)
+    {
+        return Err(missing());
+    }
+    let params = model::params(entry, providers);
+    check_connection(
+        &model::provider(entry),
+        &params["api_key"],
+        &params["api_base"],
+    )
+}
+
+/// Hold a user's lists after a change to the rules, then seal them: no entry
+/// or connection may ever use the environment's credentials.
+fn check(lists: &mut Lists) -> ApiResult<()> {
+    for connection in &lists.providers {
+        check_connection(
+            connection["provider"].as_str().unwrap_or_default(),
+            &connection["api_key"],
+            &connection["api_base"],
+        )?;
+    }
+    for entry in &lists.models {
+        check_entry(entry, &lists.providers)?;
+    }
+    if lists.models.len() > LIMIT {
+        return Err(ApiError::new(
+            409,
+            "model_limit",
+            format!("you have {LIMIT} models already; delete one first"),
+        ));
+    }
+    for entry in &mut lists.models {
+        entry["litellm_params"]["use_environment_credentials"] = json!(false);
+    }
+    for connection in &mut lists.providers {
+        connection["use_environment_credentials"] = json!(false);
+    }
+    Ok(())
+}
+
+/// Refuse what a request names before anything changes: a provider that
+/// signs in with the server's own account, or the environment's credentials.
+fn precheck(entry: &Value) -> ApiResult<()> {
+    let prefix = model::provider(entry);
+    let named = entry["provider"].as_str().map(str::to_ascii_lowercase);
+    if model::server_login(&prefix) || named.as_deref().is_some_and(model::server_login) {
+        return Err(server_credentials());
+    }
+    if entry["credential_provider_id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("env:"))
+    {
+        return Err(environment_credentials());
+    }
+    Ok(())
+}
+
+/// The user's lists as settings data, for the settings' views and resolvers.
+fn data(lists: Lists) -> Data {
+    Data {
+        cfg: Arc::new(Value::Null),
+        revision: identity::revision(&lists.models, &lists.providers),
+        models: lists.models,
+        providers: lists.providers,
+        detected: Vec::new(),
+    }
+}
+
+/// The configuration a conversion of the user `owner` runs with: the admin's
+/// runtime configuration routing to the user's pool only.
+pub(in crate::server) fn conversion_config(store: &Store, users: &Users, owner: &str) -> Value {
+    let own = users.lists(owner);
+    store.with_data(|admin| {
+        pool::build(&admin.cfg, &own, admin).unwrap_or_else(|error| {
+            eprintln!(
+                "Warning: Serve: a user token's models could not be combined ({error}); its conversions run without models."
+            );
+            pool::empty(&admin.cfg)
+        })
+    })
+}
+
+/// What `GET /api/capabilities` says of a user's models: the pool's
+/// routability, whether it has any model, and their ids.
+pub(in crate::server) fn capabilities(pool: &Value) -> Value {
+    let mut llm = markitai_core::llm_capabilities(pool);
+    llm.models = pool::models(pool);
+    llm.configured = !llm.models.is_empty();
+    json!(llm)
+}
+
+/// `GET /api/me/models` for the user `id`.
+pub(in crate::server) fn view(store: &Store, users: &Users, id: &str) -> Value {
+    shaped(store, users, id, users.lists(id))
+}
+
+fn shaped(store: &Store, users: &Users, id: &str, lists: Lists) -> Value {
+    let pool = conversion_config(store, users, id);
+    let routable = markitai_core::llm_capabilities(&pool).routable;
+    // What a shared model is, never its key, address or connection.
+    let shared = store.with_data(|admin| {
+        pool::shared(admin)
+            .into_iter()
+            .map(|(index, entry)| {
+                json!({"id":identity::id(entry,index),"model":entry["litellm_params"]["model"],
+                    "provider":model::connection_provider(entry,&admin.providers),
+                    "weight":entry["litellm_params"]["weight"].as_u64().unwrap_or(1)})
+            })
+            .collect::<Vec<_>>()
+    });
+    views::user_payload(&data(lists), shared, routable)
+}
+
+/// One of the `/api/me/models` changes for the user `id`; the view after it.
+pub(in crate::server) fn mutate(
+    store: &Store,
+    users: &Users,
+    id: &str,
+    alive: &dyn Fn() -> bool,
+    command: Mutation,
+) -> ApiResult<Value> {
+    if let Mutation::Batch(body) = &command
+        && let Some(entries) = body["deployments"].as_array()
+    {
+        for entry in entries {
+            precheck(entry)?;
+        }
+    }
+    let lists = users.write(id, alive, |lists| {
+        store::apply(&mut lists.models, &mut lists.providers, command)?;
+        check(lists)
+    })?;
+    Ok(shaped(store, users, id, lists))
+}
+
+/// `GET /api/me/models/providers`.
+pub(in crate::server) fn providers(users: &Users, id: &str) -> Value {
+    views::user_providers(&data(users.lists(id)))
+}
+
+/// `GET /api/me/models/providers/{id}/credentials`: the user's connection
+/// `connection`, the key only masked, never the environment's.
+pub(in crate::server) fn credentials(
+    users: &Users,
+    id: &str,
+    connection: &str,
+) -> ApiResult<Value> {
+    if connection.starts_with("env:") {
+        return Err(missing());
+    }
+    let mut value = store::credentials(&data(users.lists(id)), connection)?;
+    if value["api_key"]
+        .as_str()
+        .is_some_and(|key| key.starts_with("env:"))
+    {
+        value["api_key"] = Value::Null;
+        value["api_key_masked"] = Value::Null;
+    }
+    value["api_key_source"] = Value::Null;
+    if value["api_base_placeholder"]
+        .as_str()
+        .is_some_and(model::server_machine)
+    {
+        value["api_base_placeholder"] = Value::Null;
+    }
+    Ok(value)
+}
+
+/// The keyless placeholder for a request without a key of its own at an
+/// address of its own: the server's key is never sent there.
+fn keyless(request: &mut Value) {
+    if !real(&request["api_key"]) && text(&request["api_base"]).is_some() {
+        request["api_key"] = json!(model::NO_KEY);
+    }
+}
+
+/// `POST /api/me/models/model-discovery`, resolved over the user's own
+/// connections, with literal credentials only.
+pub(in crate::server) fn resolve_discovery(
+    users: &Users,
+    id: &str,
+    body: &Value,
+) -> ApiResult<Value> {
+    if body["provider_id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("env:"))
+    {
+        return Err(environment_credentials());
+    }
+    let provider = body["provider"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if model::server_login(&provider) {
+        return Err(server_credentials());
+    }
+    let mut request = store::resolve_discovery(&data(users.lists(id)), body)?;
+    request["use_environment_credentials"] = json!(false);
+    let provider = request["provider"].as_str().unwrap_or_default().to_owned();
+    if provider == "bedrock" && !real(&request["api_key"]) {
+        return Err(server_credentials());
+    }
+    check_address(&provider, text(&request["api_base"]))?;
+    keyless(&mut request);
+    Ok(request)
+}
+
+/// `POST /api/me/models/test`: one of the user's own models, or a draft.
+pub(in crate::server) fn resolve_probe(users: &Users, id: &str, body: &Value) -> ApiResult<Value> {
+    model::object(body, &["deployment_id", "model", "api_key", "api_base"])?;
+    if let Some(name) = body["model"].as_str() {
+        precheck(&json!({"litellm_params":{"model":name}}))?;
+    }
+    let mut request = store::resolve_probe(&data(users.lists(id)), body)?;
+    request["use_environment_credentials"] = json!(false);
+    let name = request["model"].as_str().unwrap_or_default().to_owned();
+    check_connection(
+        &model::provider(&json!({"litellm_params":{"model":name}})),
+        &request["api_key"],
+        &request["api_base"],
+    )?;
+    keyless(&mut request);
+    Ok(request)
+}
+
+/// A test or discovery answer for a user: no environment variable named.
+pub(in crate::server) fn answer(mut value: Value) -> Value {
+    if let Some(fields) = value.as_object_mut()
+        && fields.remove("key_variable").is_some()
+    {
+        fields.insert(
+            "detail".into(),
+            json!("This model needs an API key, and none is set"),
+        );
+    }
+    value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_servers_own_machine_is_found_by_its_address() {
+        for own in [
+            "http://localhost:11434",
+            "http://LOCALHOST./v1",
+            "http://models.localhost:8000/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://127.8.9.10/v1",
+            "http://127.1/v1",
+            "http://[::1]:8000/v1",
+            "http://[::ffff:127.0.0.1]/v1",
+            "http://0.0.0.0:8000",
+            "http://[::]:8000",
+        ] {
+            assert!(model::server_machine(own), "{own}");
+        }
+        for other in [
+            "https://api.openai.com/v1",
+            "http://192.0.2.10:8000/v1",
+            "http://[2001:db8::1]/v1",
+            "http://localhost.example/v1",
+            "not an address",
+        ] {
+            assert!(!model::server_machine(other), "{other}");
+        }
+    }
+
+    #[test]
+    fn the_rules_refuse_the_servers_credentials_and_machine() {
+        let reason = |provider: &str, key: Value, base: Value| {
+            check_connection(provider, &key, &base)
+                .err()
+                .map(|error| error.reason)
+        };
+        let none = Value::Null;
+        assert_eq!(
+            reason("openai", json!("user-a-fixture-key"), none.clone()),
+            None
+        );
+        assert_eq!(
+            reason("openai", none.clone(), json!("https://models.example/v1")),
+            None
+        );
+        assert_eq!(
+            reason(
+                "openai",
+                json!(model::NO_KEY),
+                json!("https://models.example/v1")
+            ),
+            None
+        );
+        for login in [
+            "claude-agent",
+            "copilot",
+            "chatgpt",
+            "vertex_ai",
+            "watsonx",
+            "gigachat",
+        ] {
+            assert_eq!(
+                reason(login, json!("user-a-fixture-key"), none.clone()),
+                Some("server_credentials"),
+                "{login}"
+            );
+        }
+        assert_eq!(
+            reason("bedrock", none.clone(), none.clone()),
+            Some("server_credentials")
+        );
+        assert_eq!(
+            reason("bedrock", json!("user-a-fixture-key"), none.clone()),
+            None
+        );
+        assert_eq!(
+            reason("openai", none.clone(), none.clone()),
+            Some("key_or_address_required")
+        );
+        assert_eq!(
+            reason("openai", json!(model::NO_KEY), none.clone()),
+            Some("key_or_address_required")
+        );
+        assert_eq!(
+            reason("ollama", none.clone(), none.clone()),
+            Some("server_address")
+        );
+        assert_eq!(
+            reason("ollama", json!("user-a-fixture-key"), none.clone()),
+            Some("server_address")
+        );
+        assert_eq!(
+            reason("ollama", none.clone(), json!("http://127.0.0.1:11434")),
+            Some("server_address")
+        );
+        assert_eq!(
+            reason("ollama", none.clone(), json!("http://192.0.2.4:11434")),
+            None
+        );
+        assert_eq!(
+            reason("openai", json!("env:OPENAI_API_KEY"), none.clone()),
+            Some("invalid_settings_request")
+        );
+        assert_eq!(
+            reason(
+                "openai",
+                json!("user-a-fixture-key"),
+                json!("ftp://models.example")
+            ),
+            Some("invalid_settings_request")
+        );
+    }
+
+    #[test]
+    fn files_are_owner_only_and_revoked_or_orphaned_ones_are_deleted() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("serve/user-models");
+        let users = Users::new(directory.clone());
+        let alive = || true;
+        let saved = users
+            .write("u_000000000001", &alive, |lists| {
+                lists.models.push(json!({"model_name":"default","litellm_params":{"model":"openai/m","api_key":"user-a-fixture-key"}}));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(saved.models.len(), 1);
+        let path = directory.join("u_000000000001.json");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&path), 0o600);
+            assert_eq!(mode(&directory), 0o700);
+        }
+        let restarted = Users::new(directory.clone());
+        assert_eq!(restarted.count("u_000000000001"), 1);
+        assert_eq!(restarted.count("u_000000000002"), 0);
+        // A revoked token cannot write; an invalid file holds nothing and is
+        // kept until a write replaces it.
+        let gone = || false;
+        assert_eq!(
+            restarted
+                .write("u_000000000001", &gone, |_| Ok(()))
+                .unwrap_err()
+                .reason,
+            "token_required"
+        );
+        std::fs::write(directory.join("u_000000000003.json"), b"{not json").unwrap();
+        assert_eq!(restarted.count("u_000000000003"), 0);
+        assert_eq!(
+            std::fs::read(directory.join("u_000000000003.json")).unwrap(),
+            b"{not json"
+        );
+        std::fs::write(directory.join("u_000000000004.json"), b"{}").unwrap();
+        restarted.sweep(|id| id != "u_000000000004");
+        assert!(!directory.join("u_000000000004.json").exists());
+        assert!(path.exists());
+        assert_eq!(restarted.delete("u_000000000001").unwrap(), 1);
+        assert!(!path.exists());
+        assert_eq!(restarted.count("u_000000000001"), 0);
+    }
+}

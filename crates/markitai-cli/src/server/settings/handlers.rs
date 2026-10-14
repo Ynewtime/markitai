@@ -86,6 +86,7 @@ async fn update_legacy(
             key,
             body: body(value)?,
             legacy: true,
+            share: None,
         },
     )
     .await
@@ -95,12 +96,25 @@ async fn update(
     Path(key): Path<String>,
     value: Result<Json<Value>, JsonRejection>,
 ) -> ApiResult<Json<Value>> {
+    let mut body = body(value)?;
+    // Whether users' conversions may use this model: the admin's own setting,
+    // kept as `model_info.share` in the configuration file.
+    let share = match body
+        .as_object_mut()
+        .and_then(|fields| fields.remove("share"))
+    {
+        None => None,
+        Some(Value::String(value)) if value == "shared" => Some(true),
+        Some(Value::String(value)) if value == "private" => Some(false),
+        Some(_) => return Err(invalid("share must be \"private\" or \"shared\"")),
+    };
     mutate(
         state,
         Mutation::Update {
             key,
-            body: body(value)?,
+            body,
             legacy: false,
+            share,
         },
     )
     .await

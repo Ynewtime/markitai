@@ -85,6 +85,10 @@ enum Protocol {
 struct Deployment {
     id: String,
     explicit_id: Option<String>,
+    /// Failure messages name the deployment without its endpoint's host
+    /// (`model_info.hidden_endpoint`): a service sets it on a model shared
+    /// with users who may not learn where it is served.
+    hidden_endpoint: bool,
     group: String,
     model: String,
     provider: String,
@@ -109,6 +113,7 @@ impl std::fmt::Debug for Deployment {
             .debug_struct("Deployment")
             .field("id", &self.id)
             .field("explicit_id", &self.explicit_id)
+            .field("hidden_endpoint", &self.hidden_endpoint)
             .field("group", &self.group)
             .field("model", &self.model)
             .field("provider", &self.provider)
@@ -794,6 +799,14 @@ fn load_prompt(name: &str, cfg: &Value) -> Result<Option<String>> {
     Ok(None)
 }
 
+/// Whether an entry's failures may not name its endpoint's host.
+fn hidden_endpoint(entry: &Value) -> bool {
+    entry
+        .pointer("/model_info/hidden_endpoint")
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
 fn nonempty(value: Option<&Value>) -> Option<&str> {
     value
         .and_then(Value::as_str)
@@ -1042,6 +1055,7 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
         result.push(Deployment {
             id: model.into(),
             explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),
+            hidden_endpoint: hidden_endpoint(entry),
             group: if grouped {
                 entry
                     .get("model_name")

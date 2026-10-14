@@ -3,26 +3,14 @@
 // provider's page the same way. Escape steps back one level.
 // Every write carries the revision this draft started from; a conflict keeps
 // the draft and reloads the lists, and the person decides to use the new revision.
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import {
-  addDeployments,
-  deleteDeployment,
-  deleteProvider,
-  discoverModels,
-  fetchCredentials,
-  fetchProviders,
-  fetchSettings,
-  isRevisionConflict,
-  openConfig,
-  probeModel,
-  updateProvider,
-} from "../api/client.ts";
-import type { Deployment, DiscoveryResult, NewDeployment, ProviderCard, SettingsView } from "../api/types.ts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { isRevisionConflict, modelsApi, openConfig, type ModelsScope } from "../api/client.ts";
+import type { Deployment, DiscoveryResult, ModelShare, NewDeployment, ProviderCard, SettingsView, SharedModel, UserModelsView } from "../api/types.ts";
 import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { listFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
-import { endpointFor, sameEndpoint } from "../lib/models.ts";
+import { endpointFor, modelName, sameEndpoint } from "../lib/models.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
@@ -94,23 +82,96 @@ function Secret({
 /** One model test notice at a time: a new test replaces the last one's. */
 const TEST_TOAST = "model-test";
 
+/** v1.15: whether an admin's saved model is private or shared with users' conversions, as a two-way toggle. */
+function ShareToggle({ t, model, value, busy, onChange }: { t: Dict; model: string; value: ModelShare; busy: boolean; onChange: (next: ModelShare) => void }) {
+  const options: { value: ModelShare; label: string }[] = [
+    { value: "private", label: t.sharePrivate },
+    { value: "shared", label: t.shareShared },
+  ];
+  return (
+    <span class="seg share-seg" role="radiogroup" aria-label={t.shareAria(model)} aria-busy={busy || undefined}>
+      {options.map((option) => (
+        <button
+          type="button"
+          role="radio"
+          key={option.value}
+          aria-checked={value === option.value}
+          class={value === option.value ? "is-on" : undefined}
+          tabIndex={value === option.value ? 0 : -1}
+          disabled={busy}
+          title={option.value === "shared" ? t.shareSharedHint : t.sharePrivateHint}
+          onClick={() => value !== option.value && onChange(option.value)}
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+            event.preventDefault();
+            const next = value === "private" ? "shared" : "private";
+            onChange(next);
+            const group = event.currentTarget.parentElement;
+            requestAnimationFrame(() => group?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
+          }}
+        >
+          {option.label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+/** v1.15: the models the admin shares, as a user sees them: what each is, nothing to change. */
+function SharedModels({ t, models, narrow, labelOf }: { t: Dict; models: SharedModel[]; narrow: boolean; labelOf: (provider: string) => string }) {
+  return (
+    <section class="shared-models" aria-labelledby="shared-models-title">
+      <h2 id="shared-models-title" class="group-title">
+        {t.sharedByAdmin}
+      </h2>
+      <p class="field-hint">{t.sharedByAdminText}</p>
+      <ul class="model-rows" aria-labelledby="shared-models-title">
+        {models.map((model) => (
+          <li class="model-row is-shared" key={model.id}>
+            <div class="model-line">
+              <span class="model-group">{modelName(model.model)}</span>
+              <span class="model-id" title={model.model}>
+                {model.model}
+              </span>
+              <span class="mini-pill" title={t.weightHint}>
+                {narrow ? t.modelWeightShort(model.weight) : t.modelWeight(model.weight)}
+              </span>
+              <span class="shared-tag">{labelOf(model.provider)}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function ModelsSettings({
   t,
   locale,
+  scope = "admin",
+  canShare = false,
   onSaved,
   announce,
   describe,
 }: {
   t: Dict;
   locale: Locale;
+  /** Whose models: the admin's (the config file), or v1.15 a user token's own plus the shared ones. */
+  scope?: ModelsScope;
+  /** v1.15: the admin's saved models carry a Private/Shared toggle. */
+  canShare?: boolean;
   onSaved: () => void;
   announce: (message: string) => void;
   describe: (error: unknown) => Described;
 }) {
+  const api = useMemo(() => modelsApi(scope), [scope]);
+  const { fetchSettings, fetchProviders, fetchCredentials, discoverModels, probeModel, addDeployments, deleteDeployment, updateDeployment, deleteProvider, updateProvider } = api;
+  const user = scope === "user";
   const card = useRef<HTMLElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
   const narrow = useMedia(NARROW);
-  const [settings, setSettings] = useState<SettingsView | null>(null);
+  const [settings, setSettings] = useState<SettingsView | UserModelsView | null>(null);
+  const shared: SharedModel[] = settings !== null && "shared" in settings ? (settings.shared ?? []) : [];
   const [loadError, setLoadError] = useState<unknown>(null);
   const [providers, setProviders] = useState<ProviderCard[]>([]);
   const [providersFailed, setProvidersFailed] = useState(false);
@@ -147,10 +208,10 @@ export function ModelsSettings({
     return () => {
       stale = true;
     };
-  }, [refreshProviders]);
+  }, [refreshProviders, fetchSettings]);
 
   /** After a successful write: the new view and revision; the conflict is over. */
-  const accept = (view: SettingsView) => {
+  const accept = (view: SettingsView | UserModelsView) => {
     setSettings(view);
     setRevision(view.revision);
     setConflict(false);
@@ -247,6 +308,20 @@ export function ModelsSettings({
     }
   };
 
+  const [sharing, setSharing] = useState<string | null>(null);
+  const changeShare = async (deployment: Deployment, share: ModelShare) => {
+    if (revision === null || sharing !== null) return;
+    setSharing(deployment.deployment_id);
+    try {
+      accept(await updateDeployment(deployment.deployment_id, { expected_revision: revision, share }));
+      announce(share === "shared" ? t.shareNowShared(deployment.model) : t.shareNowPrivate(deployment.model));
+    } catch (error) {
+      await fail(error);
+    } finally {
+      setSharing(null);
+    }
+  };
+
   // Editing opens the provider's own page in the add flow: its connection and
   // catalogue, where more of its models can be added.
   const openEdit = (deployment: Deployment) => {
@@ -305,7 +380,8 @@ export function ModelsSettings({
   // A subscription runtime signs in by itself; Bedrock and Vertex AI read the
   // server's cloud credentials (a Bedrock API key is optional).
   const subscription = provider !== null && isSubscription(provider);
-  const cloud = provider !== null && usesCloudCredentials(provider);
+  // A user's own models never read the server's cloud credentials: Bedrock takes their own key.
+  const cloud = provider !== null && !user && usesCloudCredentials(provider);
   // Vertex AI (and watsonx, GigaChat) sign in with the server's own login at
   // their own endpoint: the server refuses them an address, so none is offered.
   const login = provider !== null ? ownEndpointLogin(provider) : null;
@@ -545,9 +621,9 @@ export function ModelsSettings({
     }
   };
 
-  const source = settings && (
+  const source = settings && !user && (
     <p class="dialog-source">
-      {t.setSourceLbl} {t.originLabel(settings.config_origin)} ·{" "}
+      {t.setSourceLbl} {t.originLabel((settings as SettingsView).config_origin)} ·{" "}
       <button
         type="button"
         class="dotted-link"
@@ -558,7 +634,7 @@ export function ModelsSettings({
           })
         }
       >
-        {settings.config_path}
+        {(settings as SettingsView).config_path}
       </button>
     </p>
   );
@@ -568,13 +644,23 @@ export function ModelsSettings({
     return (
       <div class="model-row" data-deployment={deployment.deployment_id} key={`${detected ? "d" : "c"}:${deployment.deployment_id}`}>
         <div class="model-line">
-          <span class="model-group">{deployment.routing_group}</span>
+          {/* A user's models are one pool: its rows lead with the model's name, as the shared ones do. */}
+          <span class="model-group">{user ? modelName(deployment.model) : deployment.routing_group}</span>
           <span class="model-id" title={deployment.model}>
             {deployment.model}
           </span>
           <span class="mini-pill" title={t.weightHint}>
             {detected ? t.sessionBadge : narrow ? t.modelWeightShort(deployment.weight) : t.modelWeight(deployment.weight)}
           </span>
+          {canShare && !detected && deployment.persisted && (
+            <ShareToggle
+              t={t}
+              model={deployment.model}
+              value={deployment.share === "shared" ? "shared" : "private"}
+              busy={sharing === deployment.deployment_id}
+              onChange={(next) => void changeShare(deployment, next)}
+            />
+          )}
           <span class="text-actions">
             <button
               type="button"
@@ -1084,25 +1170,45 @@ export function ModelsSettings({
                     onWeight={setWeight}
                     onSelected={setSelected}
                     onDropped={setDropped}
+                    groups={!user}
+                    {...(user ? { weightHint: t.userWeightHint } : {})}
                   />
                 )}
               </>
             )
           ) : (
             <>
-              {settings.deployments.length === 0 ? (
-                <StateBlock icon="Cpu" title={t.setStatusNone} text={t.modelsEmptyText} primary={{ label: t.addModels, run: () => setAdding(true), ref: addButton }} />
+              {settings.deployments.length === 0 && (!user || shared.length === 0) ? (
+                <StateBlock
+                  icon="Cpu"
+                  title={user ? t.userModelsNone : t.setStatusNone}
+                  text={user ? t.userModelsEmptyText : t.modelsEmptyText}
+                  primary={{ label: t.addModels, run: () => setAdding(true), ref: addButton }}
+                />
               ) : (
                 <>
                   <div class="settings-summary">
-                    <span>{t.modelsConfigured(settings.deployments.length)}</span>
+                    <span>{settings.deployments.length === 0 ? t.userModelsOwnNone : user ? t.userModelsOwn(settings.deployments.length) : t.modelsConfigured(settings.deployments.length)}</span>
                     <button ref={addButton} type="button" class="btn btn-primary" onClick={() => setAdding(true)}>
                       {t.addModels}
                     </button>
                   </div>
-                  <div class="model-rows">{settings.deployments.map((deployment) => modelRow(deployment))}</div>
+                  {settings.deployments.length > 0 && <div class="model-rows">{settings.deployments.map((deployment) => modelRow(deployment))}</div>}
+                  {canShare && settings.deployments.length > 0 && <p class="field-hint share-note">{t.shareNote}</p>}
                 </>
               )}
+              {user && shared.length > 0 && (
+                <SharedModels
+                  t={t}
+                  models={shared}
+                  narrow={narrow}
+                  labelOf={(name) => {
+                    const card = providers.find((item) => item.provider === name);
+                    return card ? providerLabel(t, card) : name === "custom" ? t.providerCustom : name;
+                  }}
+                />
+              )}
+              {user && (settings.deployments.length > 0 || shared.length > 0) && <p class="field-hint routing-note">{t.userModelsRouting}</p>}
               {settings.detected.length > 0 && (
                 <section class="detected">
                   <h2 class="group-title">{t.detectedSession}</h2>

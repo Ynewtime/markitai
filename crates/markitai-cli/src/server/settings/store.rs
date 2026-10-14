@@ -27,6 +27,9 @@ pub(super) enum Mutation {
         key: String,
         body: Value,
         legacy: bool,
+        /// `share` of the admin's PATCH: `Some(true)` shares the model with
+        /// users' conversions, `Some(false)` makes it private again.
+        share: Option<bool>,
     },
     Delete {
         key: String,
@@ -95,226 +98,17 @@ impl Store {
         views::providers(&self.inner.lock().unwrap_or_else(|e| e.into_inner()))
     }
     pub fn credentials(&self, id: &str) -> ApiResult<Value> {
-        let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let connection = connection(&data, id, None)?;
-        let mut key = connection["api_key"].clone();
-        // The keyless placeholder is no key, and its connection never uses
-        // the environment's.
-        let placeholder = key.as_str() == Some(model::NO_KEY);
-        if placeholder || key.as_str() == Some("") {
-            key = Value::Null;
-        }
-        // A connection without a stored key may still be served by the
-        // environment (a process variable or a dotenv file); say so instead of
-        // reporting the key as missing.
-        let mut detected = Value::Null;
-        if !placeholder
-            && key.is_null()
-            && connection["use_environment_credentials"].as_bool() != Some(false)
-        {
-            let env = markitai_core::config::environment();
-            if let Some(variable) = markitai_core::provider_management::environment_key_variable(
-                connection["provider"].as_str().unwrap_or_default(),
-                &env,
-            ) {
-                key = json!(format!("env:{variable}"));
-                detected = json!("environment");
-            }
-        }
-        // A stored key is never returned, only its masked form; an update
-        // without `api_key` keeps it. The address keeps its text but not its
-        // userinfo or secret parameters; sent back unchanged, it keeps the
-        // stored one.
-        let masked = key.as_str().map(model::masked_key);
-        let base = connection["api_base"]
-            .as_str()
-            .map(markitai_core::output::masked_url);
-        Ok(
-            json!({"api_key":masked,"api_key_masked":masked,"api_key_source":detected,"api_base":base,"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
-        )
+        credentials(&self.inner.lock().unwrap_or_else(|e| e.into_inner()), id)
     }
     pub fn resolve_discovery(&self, body: &Value) -> ApiResult<Value> {
-        model::object(
-            body,
-            &[
-                "provider",
-                "provider_id",
-                "deployment_id",
-                "api_key",
-                "api_base",
-                "refresh",
-            ],
-        )?;
-        let provider = model::string(body, "provider", true, true)?.unwrap();
-        let provider_id = model::string(body, "provider_id", false, false)?;
-        let deployment_id = model::string(body, "deployment_id", false, false)?;
-        let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = if provider_id.is_some() || deployment_id.is_some() {
-            connection(
-                &data,
-                provider_id.as_deref().unwrap_or(""),
-                deployment_id.as_deref(),
-            )
-            .ok()
-        } else {
-            None
-        };
-        let body = &model::unchanged_base(
-            body,
-            saved.as_ref().and_then(|saved| saved["api_base"].as_str()),
-        );
-        let key = model::client_field(body, "api_key")?;
-        let base = model::client_field(body, "api_base")?;
-        let refresh = match body.get("refresh") {
-            None => false,
-            Some(v) => v
-                .as_bool()
-                .ok_or_else(|| invalid("refresh must be boolean"))?,
-        };
-        if provider_id.is_some() && deployment_id.is_some() {
-            return Err(invalid("send one credential reference"));
-        }
-        let fallback = if provider_id.is_some() || deployment_id.is_some() {
-            connection(
-                &data,
-                provider_id.as_deref().unwrap_or(""),
-                deployment_id.as_deref(),
-            )?
-        } else {
-            json!({})
-        };
-        let provider = provider.to_ascii_lowercase();
-        let supplied_key = body.get("api_key").is_some();
-        let resolved_base = if body.get("api_base").is_some() {
-            base.map(Value::String).unwrap_or(Value::Null)
-        } else {
-            fallback["api_base"].clone()
-        };
-        if let Some(old_provider) = fallback["provider"].as_str() {
-            model::check_reuse(
-                old_provider,
-                &provider,
-                fallback["api_base"].as_str(),
-                resolved_base.as_str(),
-                supplied_key,
-            )?;
-        }
-        let allow_environment = !supplied_key
-            && if fallback["provider"].is_string() {
-                fallback["use_environment_credentials"].as_bool() != Some(false)
-            } else {
-                body.get("api_base").is_none()
-            };
-        let resolved_key = if supplied_key {
-            key.map(Value::String).unwrap_or(Value::Null)
-        } else {
-            fallback["api_key"].clone()
-        };
-        Ok(
-            json!({"provider":provider,"api_key":resolved_key,"api_base":resolved_base,"refresh":refresh,"use_environment_credentials":allow_environment || model::local(&provider)}),
-        )
+        resolve_discovery(&self.inner.lock().unwrap_or_else(|e| e.into_inner()), body)
     }
-
     pub fn resolve_probe(&self, body: &Value) -> ApiResult<Value> {
-        model::object(
-            body,
-            &[
-                "deployment_id",
-                "model_name",
-                "model",
-                "api_key",
-                "api_base",
-            ],
-        )?;
-        let id = model::string(body, "deployment_id", false, true)?;
-        let group = model::string(body, "model_name", false, true)?;
-        let name = model::string(body, "model", false, true)?;
-        let key = model::client_field(body, "api_key")?;
-        let base = model::client_field(body, "api_base")?;
-        if [&id, &group, &name]
-            .iter()
-            .any(|v| v.as_deref() == Some(""))
-        {
-            return Err(invalid("model references cannot be blank"));
-        }
-        let data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if id.is_some() || group.is_some() {
-            if id.is_some() && group.is_some() || name.is_some() || key.is_some() || base.is_some()
-            {
-                return Err(invalid(
-                    "stored reference cannot be combined with other probe fields",
-                ));
-            }
-            let entry = if let Some(id) = id {
-                data.models
-                    .iter()
-                    .enumerate()
-                    .chain(data.detected.iter().enumerate())
-                    .find(|(index, entry)| identity::id(entry, *index) == id)
-                    .map(|(_, entry)| entry)
-                    .ok_or_else(|| invalid("deployment not found"))?
-            } else {
-                let name = group.unwrap();
-                let index = model::legacy(&data.models, &name).map_err(|error| {
-                    if error.status.as_u16() == 404 {
-                        invalid("model_name not found")
-                    } else {
-                        error
-                    }
-                })?;
-                &data.models[index]
-            };
-            return Ok(probe_params(entry, &data.providers));
-        }
-        let name = name.ok_or_else(|| invalid("deployment_id, model_name or model is required"))?;
-        // An address the caller names; a stored one is the owner's.
-        model::refuse_ambient_login_address(&name, base.as_deref())?;
-        let provider = name
-            .split_once('/')
-            .map_or("openai", |(provider, _)| provider);
-        let supplied_key = body.get("api_key").is_some();
-        let mut result = json!({"model":name,"api_key":key,"api_base":base,"use_environment_credentials":!supplied_key && body.get("api_base").is_none() || model::local(provider)});
-        if !supplied_key && !model::local(provider) {
-            let candidates: Vec<Value> = data
-                .models
-                .iter()
-                .chain(&data.detected)
-                .filter(|entry| entry["litellm_params"]["model"] == name)
-                .map(|entry| probe_params(entry, &data.providers))
-                .collect();
-            let selected = if body.get("api_base").is_some() {
-                let selected = candidates
-                    .iter()
-                    .find(|params| model::same_base(params["api_base"].as_str(), base.as_deref()));
-                if selected.is_none() && !candidates.is_empty() {
-                    return Err(invalid(
-                        "saved model credentials cannot be used with another endpoint",
-                    ));
-                }
-                selected
-            } else {
-                candidates.first()
-            };
-            if let Some(params) = selected {
-                result["api_key"] = params["api_key"].clone();
-                result["use_environment_credentials"] =
-                    params["use_environment_credentials"].clone();
-                // Send the original configured endpoint, never a request-controlled alias.
-                result["api_base"] = params["api_base"].clone();
-                return Ok(result);
-            }
-        }
-        // A draft at an address the caller names is tested as it would be
-        // saved: without a key, with the placeholder (never the server's own).
-        if result["use_environment_credentials"] == false {
-            result["api_key"] = model::keyless(
-                result["api_key"].clone(),
-                &result["api_base"],
-                provider,
-                false,
-            );
-        }
-        Ok(result)
+        resolve_probe(&self.inner.lock().unwrap_or_else(|e| e.into_inner()), body)
+    }
+    /// `f` of the current saved models and providers.
+    pub(super) fn with_data<R>(&self, f: impl FnOnce(&Data) -> R) -> R {
+        f(&self.inner.lock().unwrap_or_else(|e| e.into_inner()))
     }
     pub fn config_path(&self) -> ApiResult<std::path::PathBuf> {
         if read(&self.source.path)?.is_none() {
@@ -420,69 +214,7 @@ impl Store {
         let mut raw = parse(original.as_deref())?;
         let mut models = list(&raw, "model_list").unwrap_or_else(|| data.models.clone());
         let mut providers = list(&raw, "providers").unwrap_or_else(|| data.providers.clone());
-        let current = identity::revision(&models, &providers);
-        let (expected, backfill) = match &command {
-            Mutation::Add(v) => (model::string(v, "expected_revision", false, false)?, false),
-            Mutation::Batch(v) => (
-                Some(model::string(v, "expected_revision", true, true)?.unwrap()),
-                true,
-            ),
-            Mutation::Update { body, legacy, .. } => (
-                model::string(body, "expected_revision", !*legacy, !*legacy)?,
-                !*legacy,
-            ),
-            Mutation::Delete {
-                revision, legacy, ..
-            } => (revision.clone(), !*legacy),
-            Mutation::Provider { revision, .. } => (Some(revision.clone()), true),
-        };
-        if let Some(expected) = expected
-            && expected != current
-        {
-            return Err(ApiError::structured(
-                409,
-                "stale_revision",
-                json!({"code":"stale_revision","current_revision":current}),
-            ));
-        }
-        let credentials = models.clone();
-        let mapping = if backfill {
-            identity::backfill(&mut models)
-        } else {
-            HashMap::new()
-        };
-        match command {
-            Mutation::Add(body) => model::create(&body, &mut models, &mut providers, &credentials)?,
-            Mutation::Batch(body) => {
-                model::object(&body, &["expected_revision", "deployments"])?;
-                let entries = body["deployments"]
-                    .as_array()
-                    .filter(|v| !v.is_empty() && v.len() <= 50)
-                    .ok_or_else(|| invalid("deployments must contain 1 to 50 entries"))?;
-                for entry in entries {
-                    model::create(entry, &mut models, &mut providers, &credentials)?;
-                }
-            }
-            Mutation::Update { key, body, legacy } => {
-                let index = if legacy {
-                    model::legacy(&models, &key)?
-                } else {
-                    model::find(&models, &key, &mapping)?
-                };
-                model::update(&mut models[index], &body, &providers)?;
-            }
-            Mutation::Delete { key, legacy, .. } => {
-                let index = if legacy {
-                    model::legacy(&models, &key)?
-                } else {
-                    model::find(&models, &key, &mapping)?
-                };
-                model::remove(&mut models, &mut providers, index);
-            }
-            Mutation::Provider { key, body, .. } => {
-                model::mutate_provider(&mut models, &mut providers, &key, &mapping, body.as_ref())?
-            }
-        }
+        apply(&mut models, &mut providers, command)?;
         let next = runtime(&data.cfg, &models, &providers, &data.detected)?;
         if !raw["llm"].is_object() {
             raw["llm"] = json!({});
@@ -504,6 +236,318 @@ impl Store {
         }
         Ok(views::payload(&data, &self.source))
     }
+}
+/// Check `command`'s revision against these lists, give every model an
+/// identity (except on the legacy routes) and apply the change to them: the
+/// settings' and each user's own models (`users`) are changed alike.
+pub(super) fn apply(
+    models: &mut Vec<Value>,
+    providers: &mut Vec<Value>,
+    command: Mutation,
+) -> ApiResult<()> {
+    let current = identity::revision(models, providers);
+    let (expected, backfill) = match &command {
+        Mutation::Add(v) => (model::string(v, "expected_revision", false, false)?, false),
+        Mutation::Batch(v) => (
+            Some(model::string(v, "expected_revision", true, true)?.unwrap()),
+            true,
+        ),
+        Mutation::Update { body, legacy, .. } => (
+            model::string(body, "expected_revision", !*legacy, !*legacy)?,
+            !*legacy,
+        ),
+        Mutation::Delete {
+            revision, legacy, ..
+        } => (revision.clone(), !*legacy),
+        Mutation::Provider { revision, .. } => (Some(revision.clone()), true),
+    };
+    if let Some(expected) = expected
+        && expected != current
+    {
+        return Err(ApiError::structured(
+            409,
+            "stale_revision",
+            json!({"code":"stale_revision","current_revision":current}),
+        ));
+    }
+    let credentials = models.clone();
+    let mapping = if backfill {
+        identity::backfill(models)
+    } else {
+        HashMap::new()
+    };
+    match command {
+        Mutation::Add(body) => model::create(&body, models, providers, &credentials)?,
+        Mutation::Batch(body) => {
+            model::object(&body, &["expected_revision", "deployments"])?;
+            let entries = body["deployments"]
+                .as_array()
+                .filter(|v| !v.is_empty() && v.len() <= 50)
+                .ok_or_else(|| invalid("deployments must contain 1 to 50 entries"))?;
+            for entry in entries {
+                model::create(entry, models, providers, &credentials)?;
+            }
+        }
+        Mutation::Update {
+            key,
+            body,
+            legacy,
+            share,
+        } => {
+            let index = if legacy {
+                model::legacy(models, &key)?
+            } else {
+                model::find(models, &key, &mapping)?
+            };
+            model::update(&mut models[index], &body, providers)?;
+            if let Some(shared) = share {
+                set_share(&mut models[index], shared);
+            }
+        }
+        Mutation::Delete { key, legacy, .. } => {
+            let index = if legacy {
+                model::legacy(models, &key)?
+            } else {
+                model::find(models, &key, &mapping)?
+            };
+            model::remove(models, providers, index);
+        }
+        Mutation::Provider { key, body, .. } => {
+            model::mutate_provider(models, providers, &key, &mapping, body.as_ref())?
+        }
+    }
+    Ok(())
+}
+/// Share a saved model with users' conversions, or make it private again.
+fn set_share(entry: &mut Value, shared: bool) {
+    if !entry["model_info"].is_object() {
+        entry["model_info"] = json!({});
+    }
+    let info = entry["model_info"].as_object_mut().unwrap();
+    if shared {
+        info.insert("share".into(), json!("shared"));
+    } else {
+        info.remove("share");
+    }
+}
+/// The editable fields of the saved connection `id`, the key only masked.
+pub(super) fn credentials(data: &Data, id: &str) -> ApiResult<Value> {
+    let connection = connection(data, id, None)?;
+    let mut key = connection["api_key"].clone();
+    // The keyless placeholder is no key, and its connection never uses
+    // the environment's.
+    let placeholder = key.as_str() == Some(model::NO_KEY);
+    if placeholder || key.as_str() == Some("") {
+        key = Value::Null;
+    }
+    // A connection without a stored key may still be served by the
+    // environment (a process variable or a dotenv file); say so instead of
+    // reporting the key as missing.
+    let mut detected = Value::Null;
+    if !placeholder
+        && key.is_null()
+        && connection["use_environment_credentials"].as_bool() != Some(false)
+    {
+        let env = markitai_core::config::environment();
+        if let Some(variable) = markitai_core::provider_management::environment_key_variable(
+            connection["provider"].as_str().unwrap_or_default(),
+            &env,
+        ) {
+            key = json!(format!("env:{variable}"));
+            detected = json!("environment");
+        }
+    }
+    // A stored key is never returned, only its masked form; an update
+    // without `api_key` keeps it. The address keeps its text but not its
+    // userinfo or secret parameters; sent back unchanged, it keeps the
+    // stored one.
+    let masked = key.as_str().map(model::masked_key);
+    let base = connection["api_base"]
+        .as_str()
+        .map(markitai_core::output::masked_url);
+    Ok(
+        json!({"api_key":masked,"api_key_masked":masked,"api_key_source":detected,"api_base":base,"api_base_placeholder":markitai_core::provider_management::provider_default_base(connection["provider"].as_str().unwrap_or_default())}),
+    )
+}
+/// A discovery request resolved over these saved connections.
+pub(super) fn resolve_discovery(data: &Data, body: &Value) -> ApiResult<Value> {
+    model::object(
+        body,
+        &[
+            "provider",
+            "provider_id",
+            "deployment_id",
+            "api_key",
+            "api_base",
+            "refresh",
+        ],
+    )?;
+    let provider = model::string(body, "provider", true, true)?.unwrap();
+    let provider_id = model::string(body, "provider_id", false, false)?;
+    let deployment_id = model::string(body, "deployment_id", false, false)?;
+    let saved = if provider_id.is_some() || deployment_id.is_some() {
+        connection(
+            data,
+            provider_id.as_deref().unwrap_or(""),
+            deployment_id.as_deref(),
+        )
+        .ok()
+    } else {
+        None
+    };
+    let body = &model::unchanged_base(
+        body,
+        saved.as_ref().and_then(|saved| saved["api_base"].as_str()),
+    );
+    let key = model::client_field(body, "api_key")?;
+    let base = model::client_field(body, "api_base")?;
+    let refresh = match body.get("refresh") {
+        None => false,
+        Some(v) => v
+            .as_bool()
+            .ok_or_else(|| invalid("refresh must be boolean"))?,
+    };
+    if provider_id.is_some() && deployment_id.is_some() {
+        return Err(invalid("send one credential reference"));
+    }
+    let fallback = if provider_id.is_some() || deployment_id.is_some() {
+        connection(
+            data,
+            provider_id.as_deref().unwrap_or(""),
+            deployment_id.as_deref(),
+        )?
+    } else {
+        json!({})
+    };
+    let provider = provider.to_ascii_lowercase();
+    let supplied_key = body.get("api_key").is_some();
+    let resolved_base = if body.get("api_base").is_some() {
+        base.map(Value::String).unwrap_or(Value::Null)
+    } else {
+        fallback["api_base"].clone()
+    };
+    if let Some(old_provider) = fallback["provider"].as_str() {
+        model::check_reuse(
+            old_provider,
+            &provider,
+            fallback["api_base"].as_str(),
+            resolved_base.as_str(),
+            supplied_key,
+        )?;
+    }
+    let allow_environment = !supplied_key
+        && if fallback["provider"].is_string() {
+            fallback["use_environment_credentials"].as_bool() != Some(false)
+        } else {
+            body.get("api_base").is_none()
+        };
+    let resolved_key = if supplied_key {
+        key.map(Value::String).unwrap_or(Value::Null)
+    } else {
+        fallback["api_key"].clone()
+    };
+    Ok(
+        json!({"provider":provider,"api_key":resolved_key,"api_base":resolved_base,"refresh":refresh,"use_environment_credentials":allow_environment || model::local(&provider)}),
+    )
+}
+/// A connection test resolved over these saved models.
+pub(super) fn resolve_probe(data: &Data, body: &Value) -> ApiResult<Value> {
+    model::object(
+        body,
+        &[
+            "deployment_id",
+            "model_name",
+            "model",
+            "api_key",
+            "api_base",
+        ],
+    )?;
+    let id = model::string(body, "deployment_id", false, true)?;
+    let group = model::string(body, "model_name", false, true)?;
+    let name = model::string(body, "model", false, true)?;
+    let key = model::client_field(body, "api_key")?;
+    let base = model::client_field(body, "api_base")?;
+    if [&id, &group, &name]
+        .iter()
+        .any(|v| v.as_deref() == Some(""))
+    {
+        return Err(invalid("model references cannot be blank"));
+    }
+    if id.is_some() || group.is_some() {
+        if id.is_some() && group.is_some() || name.is_some() || key.is_some() || base.is_some() {
+            return Err(invalid(
+                "stored reference cannot be combined with other probe fields",
+            ));
+        }
+        let entry = if let Some(id) = id {
+            data.models
+                .iter()
+                .enumerate()
+                .chain(data.detected.iter().enumerate())
+                .find(|(index, entry)| identity::id(entry, *index) == id)
+                .map(|(_, entry)| entry)
+                .ok_or_else(|| invalid("deployment not found"))?
+        } else {
+            let name = group.unwrap();
+            let index = model::legacy(&data.models, &name).map_err(|error| {
+                if error.status.as_u16() == 404 {
+                    invalid("model_name not found")
+                } else {
+                    error
+                }
+            })?;
+            &data.models[index]
+        };
+        return Ok(probe_params(entry, &data.providers));
+    }
+    let name = name.ok_or_else(|| invalid("deployment_id, model_name or model is required"))?;
+    // An address the caller names; a stored one is the owner's.
+    model::refuse_ambient_login_address(&name, base.as_deref())?;
+    let provider = name
+        .split_once('/')
+        .map_or("openai", |(provider, _)| provider);
+    let supplied_key = body.get("api_key").is_some();
+    let mut result = json!({"model":name,"api_key":key,"api_base":base,"use_environment_credentials":!supplied_key && body.get("api_base").is_none() || model::local(provider)});
+    if !supplied_key && !model::local(provider) {
+        let candidates: Vec<Value> = data
+            .models
+            .iter()
+            .chain(&data.detected)
+            .filter(|entry| entry["litellm_params"]["model"] == name)
+            .map(|entry| probe_params(entry, &data.providers))
+            .collect();
+        let selected = if body.get("api_base").is_some() {
+            let selected = candidates
+                .iter()
+                .find(|params| model::same_base(params["api_base"].as_str(), base.as_deref()));
+            if selected.is_none() && !candidates.is_empty() {
+                return Err(invalid(
+                    "saved model credentials cannot be used with another endpoint",
+                ));
+            }
+            selected
+        } else {
+            candidates.first()
+        };
+        if let Some(params) = selected {
+            result["api_key"] = params["api_key"].clone();
+            result["use_environment_credentials"] = params["use_environment_credentials"].clone();
+            // Send the original configured endpoint, never a request-controlled alias.
+            result["api_base"] = params["api_base"].clone();
+            return Ok(result);
+        }
+    }
+    // A draft at an address the caller names is tested as it would be
+    // saved: without a key, with the placeholder (never the server's own).
+    if result["use_environment_credentials"] == false {
+        result["api_key"] = model::keyless(
+            result["api_key"].clone(),
+            &result["api_base"],
+            provider,
+            false,
+        );
+    }
+    Ok(result)
 }
 fn read_only() -> ApiError {
     ApiError::new(

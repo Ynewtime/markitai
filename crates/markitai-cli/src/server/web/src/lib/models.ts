@@ -25,3 +25,9 @@ export function sameEndpoint(stored: string | null | undefined, effective: strin
   const value = normalizeEndpoint(stored);
   return value === "" || value === normalizeEndpoint(effective);
 }
+
+/** A model ID without its provider prefix (`openai/gpt-5-mini` → `gpt-5-mini`). */
+export function modelName(model: string): string {
+  const slash = model.indexOf("/");
+  return slash < 0 ? model : model.slice(slash + 1);
+}

@@ -113,7 +113,7 @@ export interface InspectorContext {
   compare: boolean;
   cancel: boolean;
   retentionDays: number | null;
-  /** The token may open Models (v1.13: not a user token). */
+  /** The token may open Models (v1.13: not a user token; v1.15: a user token too, for its own models). */
   admin: boolean;
   docsUrl: string;
   busy: ReadonlySet<string>;

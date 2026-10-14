@@ -25,7 +25,7 @@ api_routes! {
 pub(super) fn routes() -> Router<Arc<State>> {
     api_routes()
 }
-fn response(value: ApiResult<Value>) -> Response {
+pub(super) fn response(value: ApiResult<Value>) -> Response {
     let mut response = match value {
         Ok(value) => Json(value).into_response(),
         Err(error) => error.into_response(),
@@ -35,7 +35,7 @@ fn response(value: ApiResult<Value>) -> Response {
         .insert("cache-control", "no-store".parse().unwrap());
     response
 }
-async fn body(request: Request) -> ApiResult<Value> {
+pub(super) async fn body(request: Request) -> ApiResult<Value> {
     let content_type = request
         .headers()
         .get("content-type")
@@ -83,7 +83,7 @@ async fn probe(ExtractState(state): ExtractState<Arc<State>>, request: Request) 
     };
     response(network(request, true).await)
 }
-async fn network(mut request: Value, is_probe: bool) -> ApiResult<Value> {
+pub(super) async fn network(mut request: Value, is_probe: bool) -> ApiResult<Value> {
     static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
     let permit = SLOTS
         .get_or_init(|| Arc::new(Semaphore::new(8)))

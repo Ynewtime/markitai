@@ -126,7 +126,7 @@ pub(super) async fn guard(
     request: Request,
     next: Next,
 ) -> Response {
-    let private = admin_path(request.uri().path());
+    let private = admin_path(request.uri().path()) || me_path(request.uri().path());
     let mut response = guard_inner(state, request, next).await;
     if private {
         response.headers_mut().insert(
@@ -148,6 +148,11 @@ const REGENERATE: &str = "/api/access-token/regenerate";
 /// The user-token routes; admin only like the settings.
 fn tokens_path(path: &str) -> bool {
     path == "/api/access-tokens" || path.starts_with("/api/access-tokens/")
+}
+
+/// A user token's own routes (`/api/me/…`); never cached either.
+fn me_path(path: &str) -> bool {
+    path == "/api/me" || path.starts_with("/api/me/")
 }
 
 /// Routes only an admin may use.
@@ -485,6 +490,7 @@ mod router_tests {
             tickets: Default::default(),
             previews: Default::default(),
             access: super::super::access::Access::load(root.join("access.json")),
+            users: super::super::settings::Users::new(root.join("user-models")),
         });
         Router::new()
             .route(

@@ -145,6 +145,7 @@ export function OptionsPanel({
   state,
   presets = BUILTIN_PRESETS,
   llmReady,
+  needsModel,
   cloudflare,
   urls,
   staged = [],
@@ -161,6 +162,8 @@ export function OptionsPanel({
   state: Composer;
   presets?: PresetTable;
   llmReady: boolean;
+  /** v1.15: what to do while no model can serve this caller (where to add one). */
+  needsModel?: string;
   cloudflare?: CloudflareCapability;
   urls: string[];
   /** Files waiting for Convert: the command names them relative to their folder. */
@@ -176,6 +179,7 @@ export function OptionsPanel({
   onFolder: (files: File[], hidden: number) => void;
 }) {
   const [id] = useState(() => `opts-${++panels}`);
+  const modelNote = needsModel ?? t.advNeedsModel;
   const [open, setOpen] = useState(false);
   // The advanced fold starts open only when something inside already differs.
   const [advOpen, setAdvOpen] = useState(() => hasAdvancedChoices(state.advanced));
@@ -204,7 +208,7 @@ export function OptionsPanel({
     return {
       label: presetLabel[preset],
       text: changed ? t.helpServerPreset : { minimal: t.helpMinimal, standard: t.helpStandard, rich: t.helpRich }[preset],
-      note: presetOff(preset) ? t.advNeedsModel : undefined,
+      note: presetOff(preset) ? modelNote : undefined,
     };
   };
   const profileLabel = (profile: OutputProfile | null) =>
@@ -242,7 +246,7 @@ export function OptionsPanel({
   });
   const analysisNote = analysisOff ? (a.pure ? t.advPlainImages : t.advNeedsLlm) : undefined;
   const help = {
-    llm: { label: t.llmEnhance, text: t.helpLlm, note: llmReady ? undefined : t.advNeedsModel },
+    llm: { label: t.llmEnhance, text: t.helpLlm, note: llmReady ? undefined : modelNote },
     ocr: { label: t.ocr, text: t.helpOcr },
     alt: { label: t.advAlt, text: t.helpAlt, note: analysisNote },
     desc: { label: t.advDesc, text: t.helpDesc, note: analysisNote },
@@ -327,6 +331,7 @@ export function OptionsPanel({
                   />
                   <Chip id={`${id}-ocr`} label={t.ocr} on={state.ocr} help={help.ocr} onToggle={(ocr) => onChange({ ...state, ocr })} />
                   {state.ocr && <p class="opt-note">{state.llm ? t.advVlmOcr : t.advLocalOcr}</p>}
+                  {!llmReady && <p class="opt-note no-model-note">{modelNote}</p>}
                 </div>
               </div>
               <div class="opt-row" role="group" aria-labelledby={`${id}-images`}>

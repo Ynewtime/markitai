@@ -222,6 +222,8 @@ export interface Features {
   config_edit?: boolean;
   /** v1.13: POST /api/history/delete (several conversions in one request). */
   batch_delete?: boolean;
+  /** v1.15: /api/me/models (a user token's own models) and `share` on the admin's models. */
+  user_models?: boolean;
 }
 
 /** v1.13: a user token as the admin's list shows it; `token` only in the answer that created it. */
@@ -232,6 +234,8 @@ export interface UserToken {
   created_at: string;
   last_used_at: string | null;
   token?: string;
+  /** v1.15: how many models of its own this user has saved (never their keys). */
+  model_count?: number;
 }
 
 /** v1.13: `POST /api/history/delete`. */
@@ -302,7 +306,12 @@ export interface Deployment {
   api_base_configured: boolean;
   api_base: string | null;
   persisted: boolean;
+  /** v1.15: an admin's saved model: whether users' conversions may use it. Absent on detected rows and users' own. */
+  share?: ModelShare;
 }
+
+/** v1.15: an admin's saved model is private (default) or shared with every user's conversions. */
+export type ModelShare = "private" | "shared";
 
 export interface SettingsView {
   configured: boolean;
@@ -313,6 +322,28 @@ export interface SettingsView {
   revision: string;
   deployments: Deployment[];
   detected: Deployment[];
+}
+
+/** v1.15: `GET /api/me/models`, a user token's own models and the ones the admin shares. */
+export interface UserModelsView {
+  configured: boolean;
+  routable: boolean;
+  source: "user";
+  config_path: null;
+  config_origin: "user";
+  revision: string;
+  deployments: Deployment[];
+  detected: Deployment[];
+  shared: SharedModel[];
+  limit: number;
+}
+
+/** v1.15: a model the admin shares: what it is, never its key or address. */
+export interface SharedModel {
+  id: string;
+  model: string;
+  provider: string;
+  weight: number;
 }
 
 export interface ProviderCard {

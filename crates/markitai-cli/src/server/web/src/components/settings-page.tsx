@@ -1,6 +1,7 @@
 // Settings as pages of the sidebar's Settings section: Appearance and
 // language, Models (see settings-models), Access token and Edit config (see
-// settings-config); the last three only for the admin token. On phones
+// settings-config); Access token and Edit config only for the admin token, Models
+// for a user token too (v1.15: its own models and the shared ones). On phones
 // `/settings` lists the sections and the external links in one list.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createUserToken, fetchUserTokens, regenerateToken, revokeUserToken } from "../api/client.ts";
@@ -216,12 +217,23 @@ function UserTokens({ t, locale, describe }: { t: Dict; locale: Locale; describe
               <code class="token-hint" title={t.userTokenHint}>
                 …{token.hint}
               </code>
-              <span class="token-when">{token.last_used_at ? t.userTokenUsed(fmtClock(token.last_used_at, locale)) : t.userTokenCreatedAt(fmtClock(token.created_at, locale))}</span>
+              <span class="token-when">
+                {token.last_used_at ? t.userTokenUsed(fmtClock(token.last_used_at, locale)) : t.userTokenCreatedAt(fmtClock(token.created_at, locale))}
+                {/* v1.15: how many models of its own it keeps (never which keys). */}
+                {token.model_count !== undefined && token.model_count > 0 && (
+                  <>
+                    {" · "}
+                    <span class="token-models" title={t.userTokenModelsHint}>
+                      {t.userTokenModels(token.model_count)}
+                    </span>
+                  </>
+                )}
+              </span>
               <ConfirmPopover
                 triggerLabel={t.userTokenRevokeAria(token.label)}
                 triggerText={t.userTokenRevoke}
                 title={t.userTokenRevokeTitle(token.label)}
-                description={t.userTokenRevokeText}
+                description={t.userTokenRevokeText(token.model_count ?? 0)}
                 confirmLabel={t.userTokenRevoke}
                 cancelLabel={t.cancel}
                 busyLabel={t.userTokenRevoking}
@@ -459,10 +471,10 @@ function NewToken({ t, token, heading: title, onDone }: { t: Dict; token: Regene
 }
 
 /** Phones: the section list behind the tab bar's Settings. */
-export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, onNavigate }: { t: Dict; version: string | null; docsUrl: string; sourceUrl: string; sections: Section[]; onNavigate: (route: Route) => void }) {
+export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user = false, onNavigate }: { t: Dict; version: string | null; docsUrl: string; sourceUrl: string; sections: Section[]; user?: boolean; onNavigate: (route: Route) => void }) {
   const entries: Record<Section, [IconName, string, string]> = {
     appearance: ["Palette", t.navAppearanceShort, t.appearanceHint],
-    models: ["Cpu", t.navModels, t.modelsHint],
+    models: ["Cpu", t.navModels, user ? t.userModelsHint : t.modelsHint],
     access: ["Key", t.navAccess, t.accessHint],
     config: ["FileCode", t.navConfig, t.configHint],
   };

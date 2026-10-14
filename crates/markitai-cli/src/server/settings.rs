@@ -2,16 +2,23 @@
 mod editor;
 mod handlers;
 mod identity;
+mod me;
 mod model;
+mod pool;
 mod store;
+mod users;
 mod views;
 
 #[cfg(test)]
 pub(super) use handlers::ROUTES;
 pub(super) use handlers::routes;
+#[cfg(test)]
+pub(super) use me::ROUTES as USER_ROUTES;
+pub(super) use me::routes as user_routes;
 use serde_json::Value;
 use std::path::PathBuf;
 pub(super) use store::{Store, load_base, load_written};
+pub(super) use users::{Users, capabilities as user_capabilities, conversion_config};
 
 pub(crate) struct SettingsSource {
     pub path: PathBuf,

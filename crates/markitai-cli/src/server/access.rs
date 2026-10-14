@@ -314,7 +314,19 @@ pub(super) async fn list(ExtractState(state): ExtractState<Arc<State>>) -> ApiRe
     if !state.auth_enabled() {
         return Err(token_disabled());
     }
-    Ok(no_store(Json(state.access.list()).into_response()))
+    let worker = state.clone();
+    // With how many models of its own each user has saved (never which).
+    let list = crate::task::blocking(move || {
+        let mut list = worker.access.list();
+        for token in list["tokens"].as_array_mut().into_iter().flatten() {
+            let count = worker.users.count(token["id"].as_str().unwrap_or_default());
+            token["model_count"] = json!(count);
+        }
+        list
+    })
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(no_store(Json(list).into_response()))
 }
 
 /// `POST /api/access-tokens` with `{"label": …}`: a new user token, shown
@@ -368,17 +380,33 @@ pub(super) async fn revoke(
     }
     let worker = state.clone();
     let revoked = id.clone();
-    let label = crate::task::blocking(move || worker.access.revoke(&revoked))
-        .await
-        .map_err(ApiError::internal)??;
+    // The token goes first; then its models, which no request of it can
+    // write any more. A deletion that fails is retried at the next start.
+    let (label, deleted) = crate::task::blocking(move || {
+        let label = worker.access.revoke(&revoked)?;
+        let deleted = worker.users.delete(&revoked).map_err(|error| {
+            eprintln!(
+                "Warning: Serve: could not delete the models of the revoked access token \"{label}\" ({error}); the next start deletes them."
+            );
+        });
+        Ok::<_, ApiError>((label, deleted.unwrap_or(0)))
+    })
+    .await
+    .map_err(ApiError::internal)??;
     state.tickets.revoke_user(&id);
     // Every open stream reconnects with its token; only this one is refused.
     state
         .token_generation
         .send_modify(|generation| *generation += 1);
-    announce(format!(
-        "Access token \"{label}\" revoked from the web workbench."
-    ));
+    announce(if deleted == 1 {
+        format!("Access token \"{label}\" revoked from the web workbench; its 1 model was deleted.")
+    } else if deleted > 1 {
+        format!(
+            "Access token \"{label}\" revoked from the web workbench; its {deleted} models were deleted."
+        )
+    } else {
+        format!("Access token \"{label}\" revoked from the web workbench.")
+    });
     Ok(no_store(StatusCode::NO_CONTENT.into_response()))
 }
 

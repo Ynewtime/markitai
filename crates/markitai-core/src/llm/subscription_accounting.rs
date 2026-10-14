@@ -128,6 +128,7 @@ mod tests {
         Deployment {
             id: "claude-agent/sonnet".into(),
             explicit_id: None,
+            hidden_endpoint: false,
             group: "default".into(),
             model: "sonnet".into(),
             provider: "claude-agent".into(),

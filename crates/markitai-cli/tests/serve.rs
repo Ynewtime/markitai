@@ -1117,3 +1117,6 @@ mod token;
 
 #[path = "serve/access.rs"]
 mod access;
+
+#[path = "serve/user_models.rs"]
+mod user_models;

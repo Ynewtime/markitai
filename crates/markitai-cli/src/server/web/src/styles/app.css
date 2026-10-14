@@ -3817,6 +3817,46 @@ kbd {
 .detected {
   padding-top: 6px;
 }
+/* v1.15: an admin's saved model is Private or Shared (the one segmented toggle,
+   at row height), right before the row's actions. */
+.share-seg {
+  flex: none;
+  margin-left: auto;
+}
+.share-seg + .text-actions {
+  margin-left: 0;
+}
+.model-line .share-seg button {
+  height: 22px;
+  padding: 0 8px;
+  font-size: var(--text-sm);
+}
+.share-seg button:disabled {
+  cursor: progress;
+}
+.share-note,
+.routing-note {
+  color: var(--text-3);
+}
+/* v1.15: what the admin shares, as a user sees it: the same rows, nothing to
+   change, the provider named where the actions would be. */
+.shared-models {
+  padding-top: 12px;
+}
+.shared-models > .field-hint {
+  margin: -4px 0 8px;
+  color: var(--text-3);
+}
+.shared-tag {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.token-models {
+  white-space: nowrap;
+}
 .group-title {
   margin-bottom: 8px;
   font-family: var(--font-mono);
@@ -5856,6 +5896,15 @@ input[type="password"],
     grid-column: 1 / -1;
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+  .model-line > .share-seg {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin: 4px 0 0;
+  }
+  .model-line .share-seg button {
+    height: 28px;
   }
   .settings-foot {
     bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));

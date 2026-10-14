@@ -14,7 +14,8 @@
     { "name": "jobs", "description": "Conversion jobs, their items, events and files" },
     { "name": "history", "description": "Saved jobs" },
     { "name": "settings", "description": "Saved model deployments, provider connections and the configuration file; the admin token required by default (a user token is refused), direct loopback only with --no-auth" },
-    { "name": "providers", "description": "Provider detection, model discovery and connection tests; token required by default, direct loopback only with --no-auth" }
+    { "name": "providers", "description": "Provider detection, model discovery and connection tests; token required by default, direct loopback only with --no-auth" },
+    { "name": "me", "description": "A user token's own models (user tokens only), routed with the admin's shared models for that user's conversions" }
   ],
   "paths": {
     "/api/capabilities": {
@@ -592,6 +593,7 @@
         "tags": ["settings"],
         "operationId": "updateDeployment",
         "summary": "Change one deployment by its stable identity",
+        "description": "`share` (`private` or `shared`, alone or with the other fields; any other value: 422 `invalid_settings_request`) decides whether users' conversions may use this model: `shared` saves `model_info.share: \"shared\"` in the configuration file, `private` removes it. It applies to users' next conversion; a shared model with weight 0 is off for everyone.",
         "parameters": [{ "$ref": "#/components/parameters/SettingsId" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/DeploymentPatch" }], "required": ["expected_revision"] } } } },
         "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
@@ -712,6 +714,100 @@
           "503": { "$ref": "#/components/responses/Error" }
         }
       }
+    },
+    "/api/me/models": {
+      "get": {
+        "tags": ["me"],
+        "operationId": "getUserModels",
+        "summary": "A user token's own models and the models the admin shares",
+        "description": "Only for a user token; the admin token (and `--no-auth` callers): 403 `user_token_required`. `shared` lists the admin's shared models that are on (weight above 0) with only `id`, `model`, `provider` and `weight`: never a key, address or connection. `Cache-Control: no-store`.",
+        "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/me/models/providers": {
+      "get": {
+        "tags": ["me"],
+        "operationId": "listUserProviders",
+        "summary": "The provider cards a user token may connect, then its own connections",
+        "description": "Built-in cards except the providers that sign in with the server's own account or cloud login (subscriptions, Vertex AI, watsonx, GigaChat; Bedrock stays, with a key of the user's own); no environment cards; `key_variable` always null, no `credential`; `default_base` null when the documented address is on the server's machine. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "parameters": [{ "name": "refresh", "in": "query", "required": false, "description": "Accepted for compatibility; the list is computed on every request", "schema": { "type": "boolean" } }],
+        "responses": { "200": { "description": "Provider cards", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderList" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/me/models/providers/{id}/credentials": {
+      "get": {
+        "tags": ["me"],
+        "operationId": "getUserProviderCredentials",
+        "summary": "The editable fields of one of the user's own connections; the key only masked",
+        "description": "As the settings' credentials, over the user's own connections only (any other id: 404 `settings_entry_missing`); `api_key_source` always null. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "parameters": [{ "$ref": "#/components/parameters/UserModelsId" }],
+        "responses": { "200": { "description": "Stored fields", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderCredentials" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/me/models/model-discovery": {
+      "post": {
+        "tags": ["me"],
+        "operationId": "discoverUserModels",
+        "summary": "List a provider's models with the given key or one of the user's own connections",
+        "description": "As the settings' discovery, resolved over the user's own connections and models, never with the server's environment credentials. A provider that signs in with the server's own account: 422 `server_credentials`; an address on the server's machine (also a provider's documented local address): 422 `server_address`; `provider_id: \"env:…\"`: 422 `invalid_settings_request`. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryRequest" } } } },
+        "responses": { "200": { "description": "Discovery result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryResult" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "413": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/me/models/test": {
+      "post": {
+        "tags": ["me"],
+        "operationId": "testUserModel",
+        "summary": "One short request to one of the user's own models, or to a draft",
+        "description": "`{deployment_id}` of one of the user's own models, or a draft `{model, api_key?, api_base?}`; a shared model's id or any other id: 422 `invalid_settings_request` (`deployment not found`), nothing is sent. The rules of the user's models apply (`server_credentials`, `key_or_address_required`, `server_address`); literal credentials only, never the server's environment, and no `key_variable` in the answer. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserProbeRequest" } } } },
+        "responses": { "200": { "description": "Test outcome; a provider failure is `ok: false`", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProbeResult" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "413": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/me/models/deployments/batch": {
+      "post": {
+        "tags": ["me"],
+        "operationId": "addUserDeployments",
+        "summary": "Atomically add 1–50 models of the user's own",
+        "description": "As the settings' batch, over the user's own lists (credential references name only the user's own connections and models). Every model needs a key of the user's own, or an address of its own (keyless; stored with the placeholder): 422 `key_or_address_required`; a provider that signs in with the server's own account (subscriptions, Vertex AI, watsonx, GigaChat, Bedrock without a key): 422 `server_credentials`; an address on the server's machine (`localhost`, loopback, `0.0.0.0`, `::`, also as a provider's documented address): 422 `server_address`; `credential_provider_id: \"env:…\"`: 422 `invalid_settings_request`; more than 50 models: 409 `model_limit`. Saved owner-only in `MARKITAI_HOME/serve/user-models/<token id>.json`, never in the configuration file. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentBatch" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/me/models/deployments/{id}": {
+      "patch": {
+        "tags": ["me"],
+        "operationId": "updateUserDeployment",
+        "summary": "Change one of the user's own models",
+        "description": "As the settings' PATCH, without `share` (422 `invalid_settings_request`), and with the rules of the batch. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "parameters": [{ "$ref": "#/components/parameters/UserModelsId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/UserDeploymentPatch" }], "required": ["expected_revision"] } } } },
+        "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "tags": ["me"],
+        "operationId": "deleteUserDeployment",
+        "summary": "Delete one of the user's own models; its connection stays saved",
+        "parameters": [{ "$ref": "#/components/parameters/UserModelsId" }, { "$ref": "#/components/parameters/ExpectedRevision" }],
+        "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/me/models/providers/{id}": {
+      "patch": {
+        "tags": ["me"],
+        "operationId": "updateUserProvider",
+        "summary": "Change one of the user's own connections and every model linked to it",
+        "parameters": [{ "$ref": "#/components/parameters/UserModelsId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderPatch" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "tags": ["me"],
+        "operationId": "deleteUserProvider",
+        "summary": "Delete one of the user's own connections and its models",
+        "parameters": [{ "$ref": "#/components/parameters/UserModelsId" }, { "$ref": "#/components/parameters/ExpectedRevision" }],
+        "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
     }
   },
   "components": {
@@ -724,6 +820,7 @@
       "JobId": { "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } },
       "ItemId": { "name": "item_id", "in": "path", "required": true, "schema": { "type": "string", "examples": ["i1"] } },
       "SettingsId": { "name": "id", "in": "path", "required": true, "description": "A deployment or provider identity from the settings views", "schema": { "type": "string" } },
+      "UserModelsId": { "name": "id", "in": "path", "required": true, "description": "A deployment or connection identity of the user's own, from its views", "schema": { "type": "string" } },
       "PageNumber": {
         "name": "n",
         "in": "path",
@@ -735,6 +832,7 @@
     },
     "responses": {
       "Error": { "description": "Refusal", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "UserModels": { "description": "The user's models after the change", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserModelsView" } } } },
       "Settings": { "description": "The settings after the change", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SettingsView" } } } }
     },
     "schemas": {
@@ -747,7 +845,7 @@
           "reason": {
             "type": "string",
             "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
-            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_config", "invalid_delete_request", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_limit", "token_not_found", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large"]
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_config", "invalid_delete_request", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "key_or_address_required", "llm_unavailable", "method_not_allowed", "model_limit", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "server_address", "server_credentials", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_limit", "token_not_found", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large", "user_token_required"]
           }
         }
       },
@@ -772,7 +870,7 @@
       "Features": {
         "type": "object",
         "description": "What this service implements beyond the base job API, for a client shared with other backends",
-        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete"],
+        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete", "user_models"],
         "properties": {
           "cancel": { "type": "boolean", "description": "POST /api/jobs/{job_id}/cancel" },
           "download_tickets": { "type": "boolean", "description": "POST /api/download-tickets" },
@@ -786,7 +884,8 @@
           "token_regenerate": { "type": "boolean", "description": "POST /api/access-token/regenerate; false when the server runs without a token (--no-auth)" },
           "user_tokens": { "type": "boolean", "description": "/api/access-tokens; false when the server runs without a token (--no-auth)" },
           "config_edit": { "type": "boolean", "description": "GET and PUT /api/settings/config" },
-          "batch_delete": { "type": "boolean", "description": "POST /api/history/delete" }
+          "batch_delete": { "type": "boolean", "description": "POST /api/history/delete" },
+          "user_models": { "type": "boolean", "description": "/api/me/models (a user token's own models) and `share` on the admin's models; false when the server runs without a token (--no-auth)" }
         }
       },
       "CloudflareCapabilities": {
@@ -837,7 +936,8 @@
           "label": { "type": "string" },
           "hint": { "type": "string", "description": "The token's last 4 characters" },
           "created_at": { "type": "string", "format": "date-time" },
-          "last_used_at": { "type": ["string", "null"], "format": "date-time", "description": "Kept in memory only; null until used since the server started" }
+          "last_used_at": { "type": ["string", "null"], "format": "date-time", "description": "Kept in memory only; null until used since the server started" },
+          "model_count": { "type": "integer", "minimum": 0, "description": "In the list: how many models of its own this user has saved (never what they are)" }
         }
       },
       "CreatedUserToken": {
@@ -1162,7 +1262,8 @@
           "api_key_configured": { "type": "boolean" },
           "api_base_configured": { "type": "boolean" },
           "api_base": { "type": ["string", "null"], "description": "The endpoint's HTTP(S) origin only" },
-          "persisted": { "type": "boolean" }
+          "persisted": { "type": "boolean" },
+          "share": { "type": "string", "enum": ["private", "shared"], "description": "An admin's saved model: `shared` when users' conversions may use it (`model_info.share` in the configuration file). Absent on detected rows and on a user's own models" }
         }
       },
       "SettingsView": {
@@ -1177,6 +1278,34 @@
           "revision": { "type": "string" },
           "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } },
           "detected": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } }
+        }
+      },
+      "UserModelsView": {
+        "type": "object",
+        "required": ["configured", "routable", "source", "config_path", "config_origin", "revision", "deployments", "detected", "shared", "limit"],
+        "properties": {
+          "configured": { "type": "boolean", "description": "The user has models of its own" },
+          "routable": { "type": "boolean", "description": "The user's own and the shared models can serve a conversion now" },
+          "source": { "type": "string", "enum": ["user"] },
+          "config_path": { "type": "null" },
+          "config_origin": { "type": "string", "enum": ["user"] },
+          "revision": { "type": "string" },
+          "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" }, "description": "The user's own models (no `share`)" },
+          "detected": { "type": "array", "maxItems": 0, "items": { "$ref": "#/components/schemas/Deployment" } },
+          "shared": { "type": "array", "items": { "$ref": "#/components/schemas/SharedModel" }, "description": "The admin's shared models that are on, in the configuration's order" },
+          "limit": { "type": "integer", "description": "Models of its own a user may save", "examples": [50] }
+        }
+      },
+      "SharedModel": {
+        "type": "object",
+        "required": ["id", "model", "provider", "weight"],
+        "additionalProperties": false,
+        "description": "A model the admin shares: what it is, never its key, address or connection",
+        "properties": {
+          "id": { "type": "string", "description": "The admin's deployment id; for display only, no route accepts it" },
+          "model": { "type": "string", "examples": ["openai/gpt-5-mini"] },
+          "provider": { "type": "string", "description": "`custom` for an OpenAI-compatible endpoint, else the model prefix" },
+          "weight": { "type": "integer", "minimum": 1 }
         }
       },
       "ProviderCard": {
@@ -1256,7 +1385,32 @@
           "api_key": { "type": ["string", "null"] },
           "api_base": { "type": ["string", "null"] },
           "weight": { "type": "integer", "minimum": 0 },
+          "share": { "type": "string", "enum": ["private", "shared"], "description": "The admin's route only: `shared` lets users' conversions use this model, `private` (the default) stops that; may be sent alone with `expected_revision`" },
           "expected_revision": { "type": "string" }
+        }
+      },
+      "UserDeploymentPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Omitted fields are kept; null clears api_key or api_base.",
+        "properties": {
+          "model_name": { "type": "string" },
+          "model": { "type": "string" },
+          "api_key": { "type": ["string", "null"] },
+          "api_base": { "type": ["string", "null"] },
+          "weight": { "type": "integer", "minimum": 0 },
+          "expected_revision": { "type": "string" }
+        }
+      },
+      "UserProbeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "One of the user's own models, or a draft model with optional credentials.",
+        "properties": {
+          "deployment_id": { "type": "string" },
+          "model": { "type": "string" },
+          "api_key": { "type": "string" },
+          "api_base": { "type": "string" }
         }
       },
       "ProviderPatch": {

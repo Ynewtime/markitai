@@ -11,7 +11,7 @@ runtime, CDN or external font, and the page makes no request to another origin.
 A **sidebar** frames every view: Convert and Conversions (with the number of
 conversions and a pulsing dot while something converts), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance
-only, see [Access token](#access-token)), and Docs, GitHub and the
+and its own Models, see [Access token](#access-token)), and Docs, GitHub and the
 version at the bottom. Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
 keyboard focus, and the choice is remembered in this browser. On phones the
@@ -268,6 +268,9 @@ naming the server's key variable when it is not set, key rejected, model not
 found, rate limited or out of quota, provider unreachable, no answer in time, or
 a provider error, with what to do and the provider's own message folded below),
 models detected for this session (Save to config) and the configuration source;
+on servers with user tokens each saved model has a Private | Shared toggle: a
+shared model also serves users' conversions in this workbench (never any other
+route), its key and address staying on the server;
 Add models opens the provider picker: one search over every provider (name,
 model prefix and other names), saved connections and environment credentials as
 rows, the eight common providers as cards, then every other provider by name
@@ -457,9 +460,18 @@ routes, and sees only its own conversions (see
 Access token (admin) lists them (name, the token's last four characters,
 created or last used, Revoke with a confirmation) and creates one from a name,
 showing it once with Copy, a sign-in link and its QR code; it joins the list after
-Done (at the right). A user token sees
-Appearance only among the settings (an admin page says "Admin token needed"),
-and actions that would open Models (Add a model) are not offered to it.
+Done (at the right); a token with models of its own says how many ("3 models"),
+and Revoke says they are deleted with their keys. A user token sees
+Appearance and Models among the settings (an admin page says "Admin token needed").
+Its Models page is the admin's (Add models, Test, Edit, Delete, weights) for models
+of its own, kept on the server for that token alone and used only by its own
+conversions; a model there needs the user's own API key, or the address of a
+server that takes none (not the server's own machine), and subscriptions or cloud
+logins that would sign in with the server's account are refused. Below, "Shared
+by the admin" lists the shared models read-only (model, provider, weight). A
+user's conversions route over its models and the shared ones as one group, by
+weight; with neither, the Convert page's LLM options are off and say to add a
+model in Settings → Models.
 After a server restart that generates a new token, reopen its new launch link
 or use Enter token. `--no-auth` explicitly disables API token enforcement; only
 direct loopback clients without forwarding headers receive the additional trust

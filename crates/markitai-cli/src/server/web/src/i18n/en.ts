@@ -60,7 +60,8 @@ export const en = {
     "Recognize scans with the local OCR engine, or send page images to a vision model when LLM is on, with possible extra costs.",
   advVlmOcr: "LLM + OCR sends page images to a vision model (VLM-OCR) and may incur more model costs.",
   advLocalOcr: "OCR without LLM uses the local OCR engine of this computer.",
-  advNeedsModel: "Configure an LLM connection in Settings to enable model features.",
+  advNeedsModel: "Add a model in Settings → Models to use LLM features.",
+  advNeedsModelAdmin: "No model serves your token yet. Ask the server's admin to share one.",
   advImages: "Images",
   helpImages: "Choose image descriptions or page screenshots to keep alongside the text.",
   advAlt: "Alt Text",
@@ -305,8 +306,8 @@ export const en = {
     if (manualOnly) return "This provider does not list its models. Add the model IDs you want to use below.";
     if (kind === "configured") return "Available models load automatically from this saved connection.";
     if (kind === "environment") return `Using credentials from ${source}.`;
-    if (provider === "ollama") return "Using the default local Ollama endpoint.";
     if (needsBase) return "Enter your server's address to load the models it serves.";
+    if (provider === "ollama") return "Using the default local Ollama endpoint.";
     if (local) return "Using the default local endpoint; a key is needed only if the server asks for one.";
     return "Enter the connection details to load available models.";
   },
@@ -359,6 +360,7 @@ export const en = {
   modelWeight: (n: number) => `Routing weight ${n}`,
   modelWeightShort: (n: number) => `Weight ${n}`,
   weightHint: "Routing weight used when models share the same routing group",
+  userWeightHint: "How often a request picks this model among your models and the shared ones",
   modelsToAdd: (n: number) => `Add ${n} ${plural(n, "model", "models")}`,
   modelsToRemove: (n: number) => `Remove ${n} ${plural(n, "model", "models")}`,
   modelsRemoved: (n: number) => `${n} ${plural(n, "model", "models")} removed`,
@@ -746,12 +748,12 @@ export const en = {
   navConfig: "Edit config",
   configHint: "The configuration file, as text",
   adminOnlyTitle: "Admin token needed",
-  adminOnlyText: "This page belongs to the server's admin. Your token converts and keeps your own conversions.",
+  adminOnlyText: "This page belongs to the server's admin. Your token converts, keeps your own conversions and has models of its own.",
   userAccessTitle: "Access",
   userAccessText: "This tab uses a user token: it converts and sees its own conversions. Models and other settings need the admin token.",
   userAccessNamed: (label: string) => `This tab uses the user token “${label}”: it converts and sees its own conversions. Models and other settings need the admin token.`,
   userTokensTitle: "User tokens",
-  userTokensText: "A user token converts and sees, downloads and deletes only its own conversions. It cannot open Models, Access token or Edit config. Tokens last until you revoke them.",
+  userTokensText: "A user token converts and sees, downloads and deletes only its own conversions, and can add models of its own. It cannot open your models, Access token or Edit config. Tokens last until you revoke them.",
   userTokenLabel: "Name",
   userTokenPlaceholder: "Who or what it is for",
   userTokenCreate: "Create token",
@@ -763,8 +765,30 @@ export const en = {
   userTokenRevoke: "Revoke",
   userTokenRevokeAria: (label: string) => `Revoke the token “${label}”`,
   userTokenRevokeTitle: (label: string) => `Revoke “${label}”?`,
-  userTokenRevokeText: "Whoever uses it is signed out at once. Its conversions stay, for the admin to see.",
+  userTokenRevokeText: (models: number) =>
+    models > 0
+      ? `Whoever uses it is signed out at once, and its ${models} ${plural(models, "model is", "models are")} deleted with their keys. Its conversions stay, for the admin to see.`
+      : "Whoever uses it is signed out at once, and any models it adds are deleted with their keys. Its conversions stay, for the admin to see.",
   userTokenRevoking: "Revoking…",
+  userTokenModels: (n: number) => `${n} ${plural(n, "model", "models")}`,
+  userTokenModelsHint: "Models this token added for its own conversions; their keys stay private to it",
+  // v1.15: a user's own models and the admin's shared ones
+  sharePrivate: "Private",
+  shareShared: "Shared",
+  shareAria: (model: string) => `Who may use ${model}`,
+  sharePrivateHint: "Only your conversions use it",
+  shareSharedHint: "Users' conversions in this workbench may use it too; its key stays on the server",
+  shareNowShared: (model: string) => `${model} is shared with users`,
+  shareNowPrivate: (model: string) => `${model} is private again`,
+  shareNote: "A shared model also serves your users' conversions here, and nothing else. Its key and address stay on the server; users see only which model it is.",
+  sharedByAdmin: "Shared by the admin",
+  sharedByAdminText: "Your conversions can use these too. Their keys stay on the server.",
+  userModelsNone: "No models yet",
+  userModelsEmptyText: "Add a model with your own API key to use LLM features in your conversions. Only your conversions use it, and its key is never shown again.",
+  userModelsOwnNone: "No models of your own",
+  userModelsOwn: (n: number) => `${n} ${plural(n, "model", "models")} of your own`,
+  userModelsRouting: "Your conversions use your models and the shared ones as one group, picked by weight; when one fails, another is tried. Weight 0 turns one of yours off.",
+  userModelsHint: "Your own models, and the ones the admin shares",
   configAbsent: "not created yet",
   configLoadFailed: "Could not read the configuration",
   configUnreadableTitle: "The file is not valid JSON",

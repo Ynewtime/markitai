@@ -182,15 +182,19 @@ fn a_result_excerpt_stops_at_a_line_and_reports_the_whole_size() {
 
 /// An OpenAI-compatible server on loopback: records each chat request and
 /// answers with the document it was sent, as the enhancement prompt asks.
-struct Endpoint {
-    port: u16,
-    requests: Arc<Mutex<Vec<(String, String, Value)>>>,
+pub(super) struct Endpoint {
+    pub(super) port: u16,
+    pub(super) requests: Arc<Mutex<Vec<(String, String, Value)>>>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 impl Endpoint {
-    fn start() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    pub(super) fn start() -> Self {
+        Self::start_at("127.0.0.1".parse().unwrap())
+    }
+    /// The same server at `host`, which may be an address of another interface.
+    pub(super) fn start_at(host: std::net::IpAddr) -> Self {
+        let listener = TcpListener::bind((host, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         listener.set_nonblocking(true).unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -452,7 +456,7 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         capabilities["features"],
         json!({"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
             "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
-            "item_archive":true,"token_regenerate":false,"user_tokens":false,
+            "item_archive":true,"token_regenerate":false,"user_tokens":false,"user_models":false,
             "config_edit":true,"batch_delete":true})
     );
     let id = server.submit(&[("report.pdf", PDF)], json!([]), json!({}))["job_id"]

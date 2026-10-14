@@ -82,6 +82,8 @@ struct State {
     previews: original::Previews,
     /// The user tokens (`serve/access.json`).
     access: access::Access,
+    /// Each user token's own models (`serve/user-models/`).
+    users: settings::Users,
 }
 
 api_routes! {
@@ -123,6 +125,19 @@ impl State {
             .unwrap_or_else(|error| error.into_inner())
             .clone()
     }
+    /// The configuration a conversion of `owner` runs with: the admin's for
+    /// the admin's (and anonymous) jobs, else that user's pool of its own
+    /// models and the admin's shared ones, never the server's environment.
+    fn conversion_config(&self, owner: Option<&str>) -> Arc<Value> {
+        match owner {
+            None => self.settings.snapshot(),
+            Some(owner) => Arc::new(settings::conversion_config(
+                &self.settings,
+                &self.users,
+                owner,
+            )),
+        }
+    }
     fn auth_enabled(&self) -> bool {
         self.token
             .read()
@@ -134,7 +149,13 @@ impl State {
 /// Every API route the service registers, as (method, path).
 #[cfg(test)]
 fn api_table() -> Vec<(&'static str, &'static str)> {
-    [ROUTES, settings::ROUTES, providers::ROUTES].concat()
+    [
+        ROUTES,
+        settings::ROUTES,
+        settings::USER_ROUTES,
+        providers::ROUTES,
+    ]
+    .concat()
 }
 
 pub(crate) fn settings_config(source: &SettingsSource) -> Result<Value, String> {
@@ -196,7 +217,10 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         tickets: tickets::Tickets::default(),
         previews: original::Previews::default(),
         access: access::Access::load(serve_home.join("access.json")),
+        users: settings::Users::new(serve_home.join("user-models")),
     });
+    // The models of tokens revoked while the server was not running.
+    state.users.sweep(|id| state.access.exists(id));
     store::rehydrate(&state.root, &state.jobs).map_err(|e| e.to_string())?;
     // Under the lifetime lock: no other server sweeps this history.
     let _ = &service_lock;
@@ -207,6 +231,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
     let router = Router::new()
         .merge(web::routes())
         .merge(settings::routes())
+        .merge(settings::user_routes())
         .merge(providers::routes())
         .merge(api_routes())
         .fallback(http::missing)

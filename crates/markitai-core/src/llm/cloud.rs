@@ -1043,6 +1043,7 @@ pub(super) fn deployment(
     Ok(Deployment {
         id: format!("{provider}/{model}"),
         explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),
+        hidden_endpoint: super::hidden_endpoint(entry),
         group: if grouped {
             entry
                 .get("model_name")

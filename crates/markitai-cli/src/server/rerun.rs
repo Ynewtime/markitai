@@ -143,7 +143,7 @@ pub(super) async fn retry(
         }};
         // Older histories may contain a previous confirmation; never reuse it.
         if !explicit_options { opts.remote_processing=None; }
-        let configuration=state.settings.snapshot();
+        let configuration=state.conversion_config(job.owner.as_deref());
         let mut cfg=opts.config_for_request(&configuration,trusted)?;
         // Options inherited from the item are the caller's earlier choice and keep the
         // core's failure policy; a request that names model processing now needs a model now.

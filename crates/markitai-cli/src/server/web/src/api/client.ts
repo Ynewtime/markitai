@@ -7,7 +7,6 @@ import type {
   Capabilities,
   ConfigDocument,
   CreateJobResponse,
-  Deployment,
   DiscoveryResult,
   RegeneratedToken,
   HistoryEntry,
@@ -22,6 +21,7 @@ import type {
   ProviderCredentials,
   SettingsView,
   ShotBlocks,
+  UserModelsView,
   UserToken,
 } from "./types.ts";
 
@@ -366,25 +366,35 @@ export const fetchConfigDocument = () => json<ConfigDocument>("/api/settings/con
 export const saveConfigDocument = (revision: string, text: string) =>
   json<ConfigDocument>("/api/settings/config", { method: "PUT", body: { expected_revision: revision, text } });
 
-const settings = "/api/settings/llm";
-export const fetchSettings = () => json<SettingsView>(settings);
-export const fetchProviders = (refresh = false) =>
-  json<{ providers: ProviderCard[] }>(`${settings}/providers?refresh=${refresh}`).then((value) => value.providers ?? []);
-export const fetchCredentials = (id: string) => json<ProviderCredentials>(`${settings}/providers/${enc(id)}/credentials`);
-export const discoverModels = (body: Record<string, unknown>) =>
-  json<DiscoveryResult>(`${settings}/model-discovery`, { method: "POST", body });
-export const probeModel = (body: Record<string, unknown>) => json<ProbeResult>(`${settings}/test`, { method: "POST", body });
-export const addDeployments = (revision: string, deployments: NewDeployment[]) =>
-  json<SettingsView>(`${settings}/deployments/batch`, { method: "POST", body: { expected_revision: revision, deployments } });
-export const updateDeployment = (id: string, body: Partial<Deployment> & Record<string, unknown>) =>
-  json<SettingsView>(`${settings}/deployments/${enc(id)}`, { method: "PATCH", body });
-export const deleteDeployment = (id: string, revision: string) =>
-  json<SettingsView>(`${settings}/deployments/${enc(id)}?expected_revision=${enc(revision)}`, { method: "DELETE" });
-export const updateProvider = (id: string, body: Record<string, unknown>) =>
-  json<SettingsView>(`${settings}/providers/${enc(id)}`, { method: "PATCH", body });
-export const deleteProvider = (id: string, revision: string) =>
-  json<SettingsView>(`${settings}/providers/${enc(id)}?expected_revision=${enc(revision)}`, { method: "DELETE" });
-export const openConfig = () => json<null>(`${settings}/config/open`, { method: "POST" });
+/** Whose models a Models page manages: the admin's (`/api/settings/llm`) or, v1.15, a user token's own
+ * (`/api/me/models`, the same routes under another prefix; no config file to open). */
+export type ModelsScope = "admin" | "user";
+export const MODELS_BASE: Record<ModelsScope, string> = { admin: "/api/settings/llm", user: "/api/me/models" };
+
+export function modelsApi(scope: ModelsScope) {
+  const base = MODELS_BASE[scope];
+  return {
+    scope,
+    fetchSettings: () => json<SettingsView | UserModelsView>(base),
+    fetchProviders: (refresh = false) =>
+      json<{ providers: ProviderCard[] }>(`${base}/providers?refresh=${refresh}`).then((value) => value.providers ?? []),
+    fetchCredentials: (id: string) => json<ProviderCredentials>(`${base}/providers/${enc(id)}/credentials`),
+    discoverModels: (body: Record<string, unknown>) => json<DiscoveryResult>(`${base}/model-discovery`, { method: "POST", body }),
+    probeModel: (body: Record<string, unknown>) => json<ProbeResult>(`${base}/test`, { method: "POST", body }),
+    addDeployments: (revision: string, deployments: NewDeployment[]) =>
+      json<SettingsView | UserModelsView>(`${base}/deployments/batch`, { method: "POST", body: { expected_revision: revision, deployments } }),
+    updateDeployment: (id: string, body: Record<string, unknown>) =>
+      json<SettingsView | UserModelsView>(`${base}/deployments/${enc(id)}`, { method: "PATCH", body }),
+    deleteDeployment: (id: string, revision: string) =>
+      json<SettingsView | UserModelsView>(`${base}/deployments/${enc(id)}?expected_revision=${enc(revision)}`, { method: "DELETE" }),
+    updateProvider: (id: string, body: Record<string, unknown>) =>
+      json<SettingsView | UserModelsView>(`${base}/providers/${enc(id)}`, { method: "PATCH", body }),
+    deleteProvider: (id: string, revision: string) =>
+      json<SettingsView | UserModelsView>(`${base}/providers/${enc(id)}?expected_revision=${enc(revision)}`, { method: "DELETE" }),
+  };
+}
+export type ModelsApi = ReturnType<typeof modelsApi>;
+export const openConfig = () => json<null>(`${MODELS_BASE.admin}/config/open`, { method: "POST" });
 export const regenerateToken = () => json<RegeneratedToken>("/api/access-token/regenerate", { method: "POST", body: {} });
 
 /** Only a revision conflict keeps a settings draft for review; other 409s are plain errors. */
