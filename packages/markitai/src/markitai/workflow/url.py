@@ -72,6 +72,9 @@ class UrlCascadeResult:
     warnings: list[str] = field(default_factory=list)
     #: The fetched page's HTML (FetchResult.html), when there was one
     html: str | None = None
+    #: Why the browser's page was not kept (``fetch_page_check``): a
+    #: verification page (``"challenge"``) or an empty one (``"blank"``)
+    page_problem: str | None = None
 
 
 async def convert_url_cascade(
@@ -415,6 +418,7 @@ async def convert_url_cascade(
         cache_hit=fetch_result.cache_hit,
         warnings=warnings,
         html=fetch_result.html,
+        page_problem=fetch_result.metadata.get("page_problem"),
     )
 
 

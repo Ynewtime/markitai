@@ -1077,7 +1077,19 @@ async def process_url_item(
         if result.screenshot_tiles
         else (1 if result.screenshot_path else 0)
     )
-    if cfg.screenshot.enabled and not screenshots:
+    if result.page_problem is not None:
+        from markitai.fetch_page_check import PROBLEM_TEXT
+        from markitai.notices import user_notice
+        from markitai.utils.url_redaction import redact_url
+
+        # Compare then offers the address to open instead of a stand-in page
+        user_notice(
+            "[URL] No copy or screenshot of {} was kept: {}; open the page "
+            "itself to compare",
+            redact_url(url),
+            PROBLEM_TEXT.get(result.page_problem, result.page_problem),
+        )
+    elif cfg.screenshot.enabled and not screenshots:
         from markitai.notices import user_notice
         from markitai.utils.url_redaction import redact_url
 

@@ -552,6 +552,43 @@ async def test_a_url_conversion_reports_the_page_it_read(
     assert result.success and result.page_html == PAGE
 
 
+async def test_a_verification_page_is_neither_kept_nor_shown_as_the_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fetch found only a CAPTCHA in the browser: no page, one notice."""
+    from markitai.notices import capture_task_notices
+    from markitai.serve.jobs import UrlJobContext, process_url_item
+    from markitai.workflow.url import UrlCascadeResult
+
+    out = tmp_path / "page.md"
+    out.write_text("# x\n", encoding="utf-8")
+
+    async def cascade(*_args: Any, **_kwargs: Any) -> UrlCascadeResult:
+        return UrlCascadeResult(
+            markdown="# x",
+            output_path=out,
+            llm_output_path=None,
+            html=None,
+            page_problem="challenge",
+        )
+
+    monkeypatch.setattr("markitai.workflow.url.convert_url_cascade", cascade)
+    cfg = MarkitaiConfig()
+    cfg.screenshot.enabled = True
+    with capture_task_notices() as notices:
+        result = await process_url_item(
+            URL,
+            cfg,
+            tmp_path,
+            None,
+            UrlJobContext(strategy=None, cache=None, screenshot_dir=tmp_path),
+        )
+    assert result.success and result.page_html is None and result.screenshots == 0
+    assert len(notices) == 1
+    assert "verification page (CAPTCHA)" in notices[0]
+    assert "open the page itself to compare" in notices[0]
+
+
 # ----------------------------------------------------------------------- 2
 
 
