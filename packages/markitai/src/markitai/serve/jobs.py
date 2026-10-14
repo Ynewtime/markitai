@@ -1171,7 +1171,8 @@ def _keep_page_capture(
 
     Only a result that stands replaces the kept files: a failed rerun (an
     enhance without an enhanced result included) keeps the old ones, and so
-    does a result that loaded no page (a page-cache hit, a remote reader).
+    does a result that loaded no page (a page-cache hit, a remote reader)
+    or whose browser was shown a verification or blank page.
     """
     from markitai.serve.originals import capture_to_keep, item_url, keep_capture
 
