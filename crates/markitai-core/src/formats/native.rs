@@ -1065,38 +1065,41 @@ impl Renderer<'_> {
                             row.truncate(width);
                         }
                     }
-                    let sheet = matches!(self.extension, "ods" | "xlsx" | "xlsm" | "xls" | "xlsb");
-                    // A sheet's merged title rows are text above its table,
-                    // where the real header row follows them.
-                    let (titles, body) = if sheet {
-                        sheet_titles(table, &rows)
+                    if matches!(self.extension, "ods" | "xlsx" | "xlsm" | "xls" | "xlsb") {
+                        let mut parts = self.sheet_parts(table, rows);
+                        // A banner the sheet's heading already gives is said
+                        // once.
+                        let repeats = parts
+                            .iter()
+                            .take_while(|part| matches!(part, SheetPart::Banner(text)
+                                if previous_heading && last_heading == *text))
+                            .count();
+                        parts.drain(..repeats);
+                        lifted_title = matches!(parts.first(), Some(SheetPart::Banner(_)));
+                        parts
+                            .iter()
+                            .map(|part| match part {
+                                SheetPart::Banner(text) => literal_heading_marks(text),
+                                // A sheet's first row is its header, as the
+                                // reference's spreadsheet readers take it,
+                                // whether or not the source marks it.
+                                SheetPart::Table(rows) => {
+                                    super::text::table(rows, true).trim_end().to_owned()
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
                     } else {
-                        (Vec::new(), 0)
-                    };
-                    self.merged_cells |= table.grid[body.min(table.grid.len())..]
-                        .iter()
-                        .flatten()
-                        .any(|slot| matches!(slot, CellSlot::Origin(cell) if cell.row_span > 1 || cell.col_span > 1));
-                    // A sheet's first row is its header, as the reference's
-                    // spreadsheet readers take it, whether or not the source
-                    // marks it; a blank header row would only push it down.
-                    // A document's table has a header only when the document
-                    // declares one (Word's repeated header row); otherwise
-                    // the header line is blank and every row is data.
-                    let header = sheet || table.header_rows > 0;
-                    let markdown = super::text::table(&rows[body..], header)
-                        .trim_end()
-                        .to_owned();
-                    // A title the sheet's heading already gives is said once.
-                    let titles = titles
-                        .into_iter()
-                        .filter(|title| !(previous_heading && last_heading == *title))
-                        .collect::<Vec<_>>();
-                    lifted_title = !titles.is_empty();
-                    if titles.is_empty() {
-                        markdown
-                    } else {
-                        format!("{}\n\n{markdown}", titles.join("\n\n"))
+                        self.merged_cells |= table.grid.iter().flatten().any(|slot| {
+                            matches!(slot, CellSlot::Origin(cell) if cell.row_span > 1 || cell.col_span > 1)
+                        });
+                        // A document's table has a header only when the
+                        // document declares one (Word's repeated header row);
+                        // otherwise the header line is blank and every row is
+                        // data.
+                        super::text::table(&rows, table.header_rows > 0)
+                            .trim_end()
+                            .to_owned()
                     }
                 }
             };
@@ -1204,53 +1207,91 @@ fn table_cell(text: &str) -> String {
     out
 }
 
-/// A sheet's leading title rows, as their text, and the row its table starts
-/// at. A title row holds one cell, merged across every column that holds
-/// content in the sheet; the row its titles lead to (past blank rows) must
-/// be the real header: two cells or more, none merged. Without both, the
-/// table starts at its first row, which is then its header as before.
-fn sheet_titles(table: &anydoc::model::Table, rows: &[Vec<String>]) -> (Vec<String>, usize) {
-    let filled = |row: &[String]| row.iter().filter(|cell| !cell.is_empty()).count();
-    // Most sheets have no title: their first row holds several cells.
-    if rows.first().is_none_or(|row| filled(row) != 1) {
-        return (Vec::new(), 0);
-    }
-    let first = rows
-        .iter()
-        .filter_map(|row| row.iter().position(|cell| !cell.is_empty()))
-        .min();
-    let last = rows
-        .iter()
-        .filter_map(|row| row.iter().rposition(|cell| !cell.is_empty()))
-        .max();
-    let (Some(first), Some(last)) = (first, last) else {
-        return (Vec::new(), 0);
-    };
-    let mut titles = Vec::new();
-    let mut at = 0;
-    while let Some(row) = rows.get(at)
-        && filled(row) == 1
-        && let Some(column) = row.iter().position(|cell| !cell.is_empty())
-        && matches!(table.grid.get(at).and_then(|slots| slots.get(column)),
-            Some(CellSlot::Origin(cell)) if cell.row_span == 1 && cell.col_span > 1
-                && column <= first && column + cell.col_span as usize > last)
-    {
-        titles.push(row[column].clone());
-        at += 1;
-        while rows.get(at).is_some_and(|row| filled(row) == 0) {
-            at += 1;
+/// A part of a sheet: a banner row's text, or the rows of one table.
+enum SheetPart {
+    Banner(String),
+    Table(Vec<Vec<String>>),
+}
+
+impl Renderer<'_> {
+    /// A sheet's rows (as table cells) cut at its banner rows. A banner row
+    /// holds one value, in a cell merged across two columns or more (a title,
+    /// a contact line, a section label such as "Afternoon"): it is a
+    /// paragraph and ends the table above it. The rows up to the next banner
+    /// form one table whose first row is its header, as written. Blank rows
+    /// before or after a table are dropped and those inside it keep their
+    /// place; columns empty in every row of a table are left out. Only a
+    /// merge marks a banner: a row with one unmerged value is data, so a
+    /// header-less first column is never taken for a title.
+    fn sheet_parts(
+        &mut self,
+        table: &anydoc::model::Table,
+        rows: Vec<Vec<String>>,
+    ) -> Vec<SheetPart> {
+        fn flush(block: &mut Vec<Vec<String>>, parts: &mut Vec<SheetPart>) {
+            while block
+                .last()
+                .is_some_and(|row| row.iter().all(String::is_empty))
+            {
+                block.pop();
+            }
+            if block.is_empty() {
+                return;
+            }
+            let width = block.iter().map(Vec::len).max().unwrap_or(0);
+            let keep = (0..width)
+                .filter(|&column| {
+                    block
+                        .iter()
+                        .any(|row| row.get(column).is_some_and(|cell| !cell.is_empty()))
+                })
+                .collect::<Vec<_>>();
+            let rows = block
+                .drain(..)
+                .map(|row| {
+                    keep.iter()
+                        .map(|&column| row.get(column).cloned().unwrap_or_default())
+                        .collect()
+                })
+                .collect();
+            parts.push(SheetPart::Table(rows));
         }
+        let mut parts = Vec::new();
+        let mut block = Vec::new();
+        for (index, row) in rows.into_iter().enumerate() {
+            let slots = table.grid.get(index).map_or(&[][..], Vec::as_slice);
+            let mut values = (0..row.len()).filter(|&column| !row[column].is_empty());
+            let banner = match (values.next(), values.next()) {
+                (None, _) => {
+                    if !block.is_empty() {
+                        block.push(row);
+                    }
+                    continue;
+                }
+                (Some(column), None) => match slots.get(column) {
+                    Some(CellSlot::Origin(cell)) if cell.col_span > 1 => Some(cell),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(cell) = banner {
+                flush(&mut block, &mut parts);
+                // A paragraph is one line of the cell's words.
+                let text = self.cell_text(&cell.blocks);
+                parts.push(SheetPart::Banner(
+                    text.split_whitespace().collect::<Vec<_>>().join(" "),
+                ));
+            } else {
+                // A merge left inside a table has no Markdown geometry.
+                self.merged_cells |= slots.iter().any(|slot| {
+                    matches!(slot, CellSlot::Origin(cell) if cell.row_span > 1 || cell.col_span > 1)
+                });
+                block.push(row);
+            }
+        }
+        flush(&mut block, &mut parts);
+        parts
     }
-    let header = rows.get(at).is_some_and(|row| filled(row) >= 2)
-        && table.grid.get(at).is_some_and(|slots| {
-            slots.iter().all(|slot| {
-                matches!(slot, CellSlot::Origin(cell) if cell.row_span == 1 && cell.col_span == 1)
-            })
-        });
-    if titles.is_empty() || !header {
-        return (Vec::new(), 0);
-    }
-    (titles, at)
 }
 
 /// Markdown for the blocks an embedded object holds, which carry no assets,
@@ -1953,10 +1994,10 @@ mod tests {
     }
 
     #[test]
-    fn sheet_trimming_drops_trailing_empty_columns_but_keeps_interior_ones() {
+    fn sheet_tables_leave_out_columns_empty_in_every_row() {
         // A title merged over five columns above three columns of data (the
-        // shape of the reference's ODS fixture) is three columns wide: the
-        // span and the sheet's declared width are not data.
+        // shape of the reference's ODS fixture): the span, the sheet's
+        // declared width and a column empty in every row are not data.
         let wide = Block::Table(Table {
             grid: vec![
                 vec![
@@ -2004,7 +2045,7 @@ mod tests {
         // `a_merged_sheet_title_above_its_header_is_not_the_header`).
         assert_eq!(
             renderer.blocks(std::slice::from_ref(&wide)),
-            "Cups\n\n| Team |  | Count |\n| --- | --- | --- |"
+            "Cups\n\n| Team | Count |\n| --- | --- |"
         );
         // Another format keeps the declared columns.
         renderer.extension = "docx";
@@ -2013,6 +2054,42 @@ mod tests {
                 .blocks(&[wide])
                 .starts_with("| Cups |  |  |  |  |\n| --- | --- | --- | --- | --- |\n")
         );
+    }
+
+    #[test]
+    fn merged_rows_inside_a_sheet_are_paragraphs_between_its_tables() {
+        // Invented day plans (fixtures/day-plan.provenance.json): titles, a
+        // contact line and a section label merged across the sheet.
+        let afternoon = "\n\nAfternoon\n\n|  | Time | Task | Note |\n| --- | --- | --- | --- |\n\
+            | Raffle | 14:00 | Draw tickets | NA |\n| Close | 17.5 |  | 3 |";
+        let morning = "| Item | Time | Task | Note |\n| --- | --- | --- | --- |\n\
+            | Setup crew | 07:30 | Unload tables |  |\n";
+        let full = format!(
+            "## Day plan\n\nSpring Fair 2026 · Day Plan\n\nVenue: Riverside Hall, east wing\n\n\
+             Contact: volunteer desk, extension 12\n\n{morning}\
+             | Kitchen | 08:00 | Start urns | Bring spare fuses |\n| Stage |  | Sound check |  |{afternoon}"
+        );
+        for (extension, bytes, expected) in [
+            ("xlsx", &include_bytes!("native/fixtures/day-plan.xlsx")[..], full.clone()),
+            ("ods", &include_bytes!("native/fixtures/day-plan.ods")[..], format!("{full}\n")),
+            (
+                "xls",
+                &include_bytes!("native/fixtures/day-plan.xls")[..],
+                format!(
+                    "## Day plan\n\nSpring Fair 2026 · Day Plan\n\n{morning}\
+                     | Stage |  | Sound check |  |{afternoon}"
+                ),
+            ),
+        ] {
+            let doc = extract(bytes, extension).unwrap();
+            assert_eq!(doc.markdown, expected, "{extension}");
+            // No merge is left in a table.
+            assert!(
+                !doc.warnings.iter().any(|warning| warning.contains("Merged")),
+                "{extension}: {:?}",
+                doc.warnings
+            );
+        }
     }
 
     #[test]
@@ -2070,20 +2147,44 @@ mod tests {
             renderer.blocks(&[named, report]),
             "## Q1 report\n| Team | City | Cups |\n| --- | --- | --- |\n| Blues | STL | 1 |"
         );
-        // A merge over some columns only groups them, and a title above a
-        // row that is not a header stays the header.
+        // Any row whose only value is merged across two columns or more is
+        // a banner, wherever it stands: it ends the table above it, and the
+        // table below it starts with its own header row.
+        let plan = sheet(vec![
+            vec![title("Plan", 3), covered(), covered()],
+            vec![text("Item"), text("Time"), text("Note")],
+            vec![text("Setup"), text("07:30"), text("")],
+            vec![text(""), text(""), text("")],
+            vec![text("Stage"), text(""), text("Mic")],
+            vec![text(""), text(""), text("")],
+            vec![title("Afternoon", 3), covered(), covered()],
+            vec![text(""), text("Time"), text("Note")],
+            vec![text("Raffle"), text("14:00"), text("")],
+            vec![text(""), text(""), text("")],
+            vec![title("# Close *late*", 2), covered(), text("")],
+        ]);
+        assert_eq!(
+            renderer.blocks(&[plan]),
+            "Plan\n\n| Item | Time | Note |\n| --- | --- | --- |\n| Setup | 07:30 |  |\n\
+             |  |  |  |\n| Stage |  | Mic |\n\nAfternoon\n\n|  | Time | Note |\n| --- | --- | --- |\n\
+             | Raffle | 14:00 |  |\n\n\\# Close \\*late\\*"
+        );
+        assert!(!renderer.merged_cells);
+        // One unmerged value is data, and a merge beside other values is a
+        // group in the table, which warns.
         for grid in [
             vec![
-                vec![title("Q1", 2), covered(), text("")],
+                vec![text("Notes"), text(""), text("")],
                 vec![text("Jan"), text("Feb"), text("Total")],
             ],
             vec![
-                vec![title("Notes", 2), covered()],
-                vec![text("only one"), text("")],
+                vec![title("Q1", 2), covered(), text("Total")],
+                vec![text("Jan"), text("Feb"), text("")],
             ],
         ] {
             assert!(renderer.blocks(&[sheet(grid)]).starts_with("| "));
         }
+        assert!(renderer.merged_cells);
         // A document's merged first row is never lifted.
         renderer.extension = "docx";
         let report = sheet(vec![
@@ -2128,9 +2229,9 @@ mod tests {
         };
         assert_eq!(
             renderer.blocks(&[merged, plain]),
-            "| Title |\n| --- |\n\n| One |\n| --- |"
+            "Title\n\n| One |\n| --- |"
         );
-        assert!(renderer.merged_cells);
+        assert!(!renderer.merged_cells);
     }
 
     #[test]

@@ -366,6 +366,58 @@ fn read_odt(bytes: &[u8]) -> Metadata {
     }
 }
 
+/// An OpenDocument spreadsheet's sheet names (the `table:table` elements of
+/// `office:spreadsheet`, not tables nested in a cell), read while streaming
+/// `content.xml`. The document reader reports a package it cannot read.
+fn read_ods(bytes: &[u8]) -> Metadata {
+    let names = (|| {
+        let mut archive = opc::Zip::open(bytes, opc::MAX_ENTRIES).map_err(|e| e.to_string())?;
+        let xml = zip_text(&mut archive, "content.xml")?;
+        let mut reader = quick_xml::Reader::from_str(&xml);
+        let mut names = Vec::new();
+        // The depth of the open element, and that of `office:spreadsheet`.
+        let mut depth = 0usize;
+        let mut spreadsheet = None;
+        loop {
+            match reader.read_event().map_err(|e| e.to_string())? {
+                quick_xml::events::Event::Start(event) => {
+                    depth += 1;
+                    match event.local_name().into_inner() {
+                        "spreadsheet" if spreadsheet.is_none() => spreadsheet = Some(depth),
+                        "table" if spreadsheet.is_some_and(|at| depth == at + 1) => {
+                            if let Some(name) = event
+                                .attributes()
+                                .flatten()
+                                .find(|attribute| attribute.key.local_name().into_inner() == "name")
+                            {
+                                names.push(
+                                    name.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                        .map_err(|e| e.to_string())?
+                                        .into_owned(),
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                quick_xml::events::Event::End(_) => {
+                    if spreadsheet == Some(depth) {
+                        break;
+                    }
+                    depth = depth.saturating_sub(1);
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
+            }
+        }
+        Ok::<_, String>(names)
+    })();
+    Metadata {
+        sheets: names.unwrap_or_default(),
+        ..Metadata::default()
+    }
+}
+
 fn comment_warning(count: usize) -> Metadata {
     let mut result = Metadata::default();
     if count > 0 {
@@ -525,6 +577,7 @@ pub(super) fn read(bytes: &[u8], extension: &str) -> Metadata {
     let parsed = match extension {
         "docx" | "docm" => return read_docx(bytes),
         "odt" => return read_odt(bytes),
+        "ods" => return read_ods(bytes),
         "xlsx" | "xlsm" | "xlsb" | "epub" => read_zip(bytes, extension),
         "xls" => (|| {
             let mut compound =
