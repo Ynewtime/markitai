@@ -21,7 +21,7 @@ pub(crate) use native::pdf::{
     screenshot_reference as pdf_screenshot_reference,
 };
 pub(crate) use sniff::{
-    check_image, check_not_empty, explain_damage, real_extension, retyped_warning,
+    check_image, check_not_empty, explain_damage, not_a_package, real_extension, retyped_warning,
 };
 
 use crate::{Document, Error, Result};

@@ -526,8 +526,13 @@ fn convert_inner(
         document
     } else {
         let (document, originals) =
-            formats::extract_as_with_attachments(&input_path, document_extension)
-                .map_err(formats::explain_damage)?;
+            formats::extract_as_with_attachments(&input_path, document_extension).map_err(
+                |error| {
+                    // A package name on other content says what the file is.
+                    formats::not_a_package(&input_path, document_extension)
+                        .unwrap_or_else(|| formats::explain_damage(error))
+                },
+            )?;
         original_attachments = originals;
         document
     };
