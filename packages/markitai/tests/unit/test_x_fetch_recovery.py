@@ -606,7 +606,8 @@ async def test_a_build_without_the_new_headless_mode_is_tried_once():
     assert await renderer._ensure_new_headless() is None
     assert await renderer._ensure_new_headless() is None
     playwright.chromium.launch.assert_awaited_once()
-    assert playwright.chromium.launch.await_args.kwargs["channel"] == "chromium"
+    launch = playwright.chromium.launch.await_args
+    assert launch is not None and launch.kwargs["channel"] == "chromium"
 
 
 async def test_the_new_headless_agent_drops_the_headless_word():
