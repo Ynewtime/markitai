@@ -124,7 +124,7 @@ def _picture(shape: Any) -> str:
 
 
 def _table(table: Any) -> str:
-    from markitai.converter.xlsx import dataframe_table_markdown
+    from markitai.converter.html_table import html_table_markdown
 
     rows = []
     for index, row in enumerate(table.rows):
@@ -138,7 +138,7 @@ def _table(table: Any) -> str:
     source = (
         f"<table><thead>{rows[0]}</thead><tbody>{''.join(rows[1:])}</tbody></table>"
     )
-    return dataframe_table_markdown(source) + "\n"
+    return html_table_markdown(source) + "\n"
 
 
 def _chart(chart: Any) -> str:

@@ -40,4 +40,4 @@ class TestXlsConversion:
         assert "| First Name | Last Name |" in result.markdown
         assert result.markdown.count("|") > 100  # full table came through
         assert result.metadata["format"] == "XLS"
-        assert result.metadata["converter"] == "markitdown"
+        assert result.metadata["converter"] == "xlrd"
