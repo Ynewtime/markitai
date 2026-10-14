@@ -474,3 +474,40 @@ async def test_auto_accepts_short_verified_tweet_without_falling_back():
     assert result.content == "你好"
     assert result.strategy_used == "playwright(fxtwitter)"
     assert result.metadata["policy_order"][0] == "playwright"
+
+
+async def test_a_refused_page_that_never_answers_is_not_waited_for(
+    browser_page, tmp_path
+):
+    import asyncio
+
+    renderer, page, _ = browser_page
+
+    async def hang(*_args, **_kwargs):
+        await asyncio.sleep(30)
+
+    page.evaluate = AsyncMock(side_effect=hang)
+    screenshot = tmp_path / "page.png"
+    with (
+        patch.object(
+            renderer,
+            "_try_enricher_fallback_async",
+            AsyncMock(return_value=("Full tweet content", {"title": "T"}, "fxtwitter")),
+        ),
+        patch(
+            "markitai.fetch_playwright._capture_screenshot",
+            AsyncMock(return_value=(screenshot, [screenshot])),
+        ),
+        patch("markitai.fetch_playwright._wait_until_settled", AsyncMock()),
+    ):
+        result = await asyncio.wait_for(
+            renderer.fetch(
+                URL,
+                timeout=200,
+                screenshot_config=ScreenshotConfig(enabled=True),
+                output_dir=tmp_path,
+            ),
+            5,
+        )
+    assert result.content == "Full tweet content"
+    assert result.html is None

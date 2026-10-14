@@ -1366,7 +1366,14 @@ class PlaywrightRenderer:
                 result.metadata["page_source"] = "x-embed"
             except Exception as e:
                 logger.debug("[Playwright] X embedded post did not render: {}", e)
-        html, problem = await _rendered_page(page)
+        try:
+            # Bounded like every page call: a page stuck in a script loop
+            # never answers evaluate()
+            html, problem = await asyncio.wait_for(
+                _rendered_page(page), max(timeout, 1) / 1000
+            )
+        except TimeoutError:
+            html, problem = None, None
         if problem is not None:
             result.metadata["page_problem"] = problem
             from markitai.fetch_page_check import PROBLEM_TEXT
