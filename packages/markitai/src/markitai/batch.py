@@ -1682,7 +1682,7 @@ class BatchProcessor:
         from collections import defaultdict
 
         # A hint continues the line after "; ", like the other warnings
-        # ("...look scanned/garbled (page 1); consider re-running with --ocr")
+        # ("...look scanned/garbled (pages 1–3); consider re-running with --ocr")
         skip_hints: dict[str, str] = {
             "image_only": "use --llm or --ocr for content extraction",
         }

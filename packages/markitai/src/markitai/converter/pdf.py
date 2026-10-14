@@ -52,7 +52,7 @@ from markitai.utils.paths import (
     ensure_assets_dir,
     ensure_screenshots_dir,
 )
-from markitai.utils.text import extract_asset_image_names
+from markitai.utils.text import extract_asset_image_names, page_ranges
 from markitai.vision_consent import ensure_vlm_ocr_disclosed, vlm_ocr_allowed
 
 if TYPE_CHECKING:
@@ -174,11 +174,12 @@ _HIDDEN_EXCERPT_MAX_CHARS = 80
 
 
 def _pages_phrases(pages: Sequence[int]) -> tuple[str, str]:
-    """``("1 page", "page 3")`` or ``("2 pages", "pages 1, 4")`` for a notice."""
-    numbers = ", ".join(str(p) for p in pages)
-    if len(pages) == 1:
+    """``("1 page", "page 3")`` or ``("4 pages", "pages 1–3, 9")`` for a
+    notice: the pages as ranges."""
+    numbers = page_ranges(pages)
+    if len(set(pages)) == 1:
         return "1 page", f"page {numbers}"
-    return f"{len(pages)} pages", f"pages {numbers}"
+    return f"{len(set(pages))} pages", f"pages {numbers}"
 
 
 def _color_luminance(color: int) -> float:
@@ -803,7 +804,9 @@ class PdfConverter(BaseConverter):
 
             # Advisory only: warn when pages look scanned or garbled so the
             # user can re-run with --ocr (behavior is never changed here)
-            self._warn_scanned_or_garbled(input_path, prescanned=advisory_scan)
+            self._warn_scanned_or_garbled(
+                input_path, total_pages=len(page_numbers), prescanned=advisory_scan
+            )
 
             # Fix image paths in markdown: pymupdf4llm uses absolute/full paths,
             # we need relative paths (assets/xxx.jpg)
@@ -1133,7 +1136,7 @@ class PdfConverter(BaseConverter):
             "(possible prompt injection; excerpt: {!r}){}",
             input_path.name,
             total_spans,
-            ", ".join(str(p) for p in sorted(hidden)),
+            page_ranges(hidden),
             excerpt,
             "; removing verbatim matches from output"
             if mode == "remove"
@@ -1174,9 +1177,13 @@ class PdfConverter(BaseConverter):
         self,
         input_path: Path,
         *,
+        total_pages: int,
         prescanned: _Pending[tuple[list[int], list[int]] | None] | None = None,
     ) -> None:
-        """Emit one consolidated warning when pages look scanned or garbled.
+        """Emit one consolidated warning when pages look scanned or garbled:
+        ``[PDF] plan.pdf: 4 of 120 pages look scanned/garbled (pages 3–5,
+        9); consider re-running with --ocr`` (the serve workbench reads it,
+        contract v1.16, and says "This PDF is scanned" at nine pages in ten).
 
         Advisory only: conversion behavior is unchanged and OCR is never
         auto-enabled. Failures are swallowed (debug-logged) so the check
@@ -1184,6 +1191,7 @@ class PdfConverter(BaseConverter):
 
         Args:
             input_path: Path to the PDF file being converted
+            total_pages: How many pages the document has
             prescanned: The check already started in the background
                 (``_start_prescan``); run here when None.
         """
@@ -1212,12 +1220,12 @@ class PdfConverter(BaseConverter):
         )
         # A user notice: the default single-file console only shows errors,
         # and this is the one line that says how to get the missing text.
-        count, listed = _pages_phrases(flagged)
+        _count, listed = _pages_phrases(flagged)
         user_notice(
-            "[PDF] {}: {} {} scanned/garbled ({}); {}",
+            "[PDF] {}: {} of {} pages look scanned/garbled ({}); {}",
             input_path.name,
-            count,
-            "looks" if len(flagged) == 1 else "look",
+            len(flagged),
+            max(total_pages, flagged[-1]),
             listed,
             remedy,
         )
@@ -1666,7 +1674,7 @@ class PdfConverter(BaseConverter):
                 raise OCRError(
                     f"OCR failed on {len(pages)} of {total_pages} page(s) of "
                     f"{input_path.name} (pages "
-                    f"{', '.join(str(p + 1) for p in pages)}): {failures[pages[0]]}"
+                    f"{page_ranges(p + 1 for p in pages)}): {failures[pages[0]]}"
                 )
 
             empty_pages = [i + 1 for i in ocr_pages if not ocr_texts.get(i)]

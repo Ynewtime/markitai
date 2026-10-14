@@ -139,7 +139,10 @@ class TestScannedPdfAdvisory:
         return Path(__file__).resolve().parents[1] / "fixtures" / "sample.pdf"
 
     def _warn(
-        self, monkeypatch: pytest.MonkeyPatch, pages: tuple[list[int], list[int]]
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        pages: tuple[list[int], list[int]],
+        total: int = 12,
     ) -> list[str]:
         from loguru import logger
 
@@ -154,7 +157,9 @@ class TestScannedPdfAdvisory:
         captured: list[str] = []
         sink_id = logger.add(lambda message: captured.append(message), level="WARNING")
         try:
-            self._converter()._warn_scanned_or_garbled(self._fixture())
+            self._converter()._warn_scanned_or_garbled(
+                self._fixture(), total_pages=total
+            )
         finally:
             logger.remove(sink_id)
         return captured
@@ -176,6 +181,7 @@ class TestScannedPdfAdvisory:
         text = "".join(messages)
         assert "--ocr" in text
         assert INSTALL_COMMAND not in text
+        assert ": 2 of 12 pages look scanned/garbled (pages 1–2); " in text
 
     def test_no_advisory_when_no_pages_flagged(
         self, monkeypatch: pytest.MonkeyPatch, ocr_missing: None

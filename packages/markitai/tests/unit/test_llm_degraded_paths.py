@@ -875,7 +875,7 @@ class TestScannedPageTranscription:
             answer = answer.replace(value, placeholder)
         assert plan.call.validate is not None
 
-        with pytest.raises(ValueError, match="discarded"):
+        with pytest.raises(ValueError, match="page drift guard"):
             plan.call.validate(
                 EnhancedDocumentResult(
                     cleaned_markdown=answer,

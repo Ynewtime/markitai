@@ -18,7 +18,7 @@ from markitai.utils.frontmatter import (
     frontmatter_to_yaml,
     split_frontmatter,
 )
-from markitai.utils.text import format_error_message
+from markitai.utils.text import format_error_message, page_ranges
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -519,10 +519,11 @@ class SingleFileWorkflow:
                     "the model read no text from any page screenshot"
                 )
             if empty_pages:
+                one = len(empty_pages) == 1
                 self.warnings.append(
-                    "Screenshot extraction returned no text for page "
-                    f"{', '.join(map(str, empty_pages))}; "
-                    "the enhanced output leaves it out"
+                    "Screenshot extraction returned no text for "
+                    f"{'page' if one else 'pages'} {page_ranges(empty_pages)}; "
+                    f"the enhanced output leaves {'it' if one else 'them'} out"
                 )
 
             # Merge all page content

@@ -72,6 +72,15 @@ Generate the following fields:
 # trip on the first retry after most of them were paid for.
 CHUNK_RETRY_RESERVE = 0.2
 
+#: Why an answer the page guards emptied was not used. Plain words for the
+#: CLI; the serve workbench recognizes "page drift guard" and says "The
+#: model's answer did not match the document page by page, so it was not
+#: used" (contract v1.16).
+DRIFT_GUARD_REFUSAL = (
+    "the model's answer did not match the document page by page, so the page "
+    "drift guard set it aside"
+)
+
 # Prompt-instruction headings an LLM sometimes copies verbatim into
 # cleaned_markdown. Every marker here must still appear in a live prompt
 # template or in-code prompt constant — test_prompt_leakage_sync.py fails
@@ -1052,7 +1061,7 @@ class DocumentEnhancer:
         )
         if self._lost_all_answer_text(answer, result):
             raise LLMEnhancementDegradedError(
-                "LLM answer text was discarded by the page drift guard",
+                DRIFT_GUARD_REFUSAL,
                 cleaned_markdown=extracted_text,
             )
 
@@ -1428,9 +1437,7 @@ class DocumentEnhancer:
                 extracted_text, cleaned, source, vision=True
             )
             if self._lost_all_answer_text(answer, cleaned):
-                raise ValueError(
-                    "LLM answer text was discarded by the page drift guard"
-                )
+                raise ValueError(DRIFT_GUARD_REFUSAL)
             rejection = content_utils.implausible_cleaning_reason(
                 extracted_text, cleaned, check_overlap=False
             )
