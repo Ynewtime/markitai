@@ -132,8 +132,9 @@ of the content: …`. `auto` renders such a page with the local browser first,
 which is how WeChat articles are read; when the browser fails or is shown the
 same check, the site's message is the failure (a browser failure of another kind
 is added in parentheses). A page the browser draws is also refused when it is a
-bot challenge on any site: under 2,000 characters of text that start with a
-challenge's instruction (`Verify you are human`, Geetest's `请在下图依次点击`),
+bot challenge on any site: at most 2,000 characters of text (characters, so a
+CJK check page counts as many as it shows) that start with a challenge's
+instruction (`Verify you are human`, Geetest's `请在下图依次点击`),
 or a challenge widget (Cloudflare and Turnstile, reCAPTCHA, hCaptcha, Geetest,
 DataDome, PerimeterX) with a challenge title or no text; it reads `The site
 served a verification page instead of the content: a bot challenge …`.
