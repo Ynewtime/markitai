@@ -313,6 +313,33 @@ SHAPES: dict[str, dict[str, F]] = {
         "page_count": F("int"),
         "text_layer": F("bool"),
         "reason": null("str"),
+        # v1.14, URL items (null for uploads)
+        "capture": opt("@PageCapture"),
+        "blocks": opt("str"),
+    },
+    "PageCapture": {
+        "page": null("@CaptureQuality"),
+        "screenshot": null("@CaptureQuality"),
+    },
+    "CaptureQuality": {
+        "state": F(frozenset({"ok", "empty", "challenge"})),
+        "text_length": F("int"),
+        "title": null("str"),
+        "reason": null(
+            frozenset({"challenge", "verification", "login", "javascript", "blank"})
+        ),
+    },
+    "ShotBlocks": {
+        "version": F("int"),
+        "width": F("num"),
+        "height": F("num"),
+        "blocks": F(["@ShotBlock"]),
+    },
+    "ShotBlock": {
+        "tag": F("str"),
+        "text": F("str"),
+        "src": opt("str", nullable=False),
+        "bbox": F(["num"]),
     },
     "PageTextLine": {"text": F("str"), "bbox": F(["num"])},
     "PageText": {

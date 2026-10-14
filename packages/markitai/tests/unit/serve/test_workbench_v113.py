@@ -560,8 +560,8 @@ class TestUserSessions:
                     )
             own = await client.get(f"/api/jobs/{job_id}", headers=ADMIN)
         # Every one of them: the cancel, retry, delete, snapshot, events,
-        # result, assets, files, archives and original routes
-        assert len(answers) == 16, sorted(answers)
+        # result, assets, files, archives and original routes (v1.14: blocks)
+        assert len(answers) == 17, sorted(answers)
         for (method, path), answer in answers.items():
             assert _reason(answer) == (404, "job_not_found"), (method, path)
         assert own.status_code == 200

@@ -203,7 +203,8 @@ def clear_browser_cache() -> None:
 #: not in ``page.content()``; they are written into their ``<style>``
 #: elements here, constructed style sheets are appended, and scripts are
 #: dropped (the copy is shown without them). Also measures the visible text,
-#: the media and the shadow roots for :func:`fetch_page_check.page_problem`.
+#: the media and the shadow roots for :func:`fetch_page_check.page_problem`,
+#: and lists the scripts' addresses (a challenge's widget script is one).
 _RENDERED_DOM_SCRIPT = """() => {
   const cssText = (sheet) => {
     try { return Array.from(sheet.cssRules, (r) => r.cssText).join("\\n"); }
@@ -229,11 +230,14 @@ _RENDERED_DOM_SCRIPT = """() => {
       head.appendChild(style);
     }
   }
+  const sources = Array.from(document.scripts, (node) => node.src).filter(Boolean)
+    .slice(0, 200);
   clone.querySelectorAll("script").forEach((node) => node.remove());
   const doctype = document.doctype ? "<!DOCTYPE " + document.doctype.name + ">" : "";
   const body = document.body;
   return {
     html: doctype + clone.outerHTML,
+    sources,
     text: body ? (body.innerText || "").slice(0, 4000) : "",
     media: document.querySelectorAll(
       "img, video, canvas, picture, iframe, embed, object"
@@ -257,14 +261,29 @@ _X_EMBED_URL = "https://platform.twitter.com/embed/Tweet.html?id={id}&dnt=true"
 _X_POST_ID = re.compile(r"/(?:status|statuses)/(\d+)")
 
 
-async def _rendered_page(
-    page: Any, deadline: Any = None
-) -> tuple[str | None, str | None]:
-    """``(rendered HTML, problem)`` of the page as it stands.
+@dataclass
+class _Rendered:
+    """The page as the browser drew it (see ``_RENDERED_DOM_SCRIPT``)."""
 
-    ``problem`` is :func:`fetch_page_check.page_problem`'s verdict (a
-    verification page, an empty page) or None. Never raises except for the
-    page budget running out.
+    html: str
+    #: :func:`fetch_page_check.page_problem`'s verdict, or None
+    problem: str | None
+    #: Addresses of the page's scripts, which the kept copy drops
+    sources: list[str] = field(default_factory=list)
+
+    def markup(self) -> str:
+        """The copy with its scripts named again, for challenge markers."""
+        from html import escape
+
+        return self.html + "".join(
+            f'<script src="{escape(source)}"></script>' for source in self.sources
+        )
+
+
+async def _read_rendered(page: Any, deadline: Any = None) -> _Rendered | None:
+    """The page as it stands, or None when it cannot be read.
+
+    Never raises except for the page budget running out.
     """
     from markitai.fetch_page_check import page_problem
 
@@ -275,9 +294,9 @@ async def _rendered_page(
         raise
     except Exception as e:
         logger.debug("[Playwright] Rendered DOM not read: {}", e)
-        return None, None
+        return None
     if not isinstance(data, dict) or not isinstance(data.get("html"), str):
-        return None, None
+        return None
     html = data["html"]
     problem = page_problem(
         html,
@@ -285,7 +304,236 @@ async def _rendered_page(
         media=int(data.get("media") or 0),
         shadow_roots=int(data.get("shadow") or 0),
     )
-    return html, problem
+    sources = data.get("sources")
+    return _Rendered(
+        html,
+        problem,
+        [str(s) for s in sources if isinstance(s, str)]
+        if isinstance(sources, list)
+        else [],
+    )
+
+
+async def _rendered_page(
+    page: Any, deadline: Any = None
+) -> tuple[str | None, str | None]:
+    """``(rendered HTML, problem)`` of the page as it stands.
+
+    ``problem`` is :func:`fetch_page_check.page_problem`'s verdict (a
+    verification page, an empty page) or None. Never raises except for the
+    page budget running out.
+    """
+    rendered = await _read_rendered(page, deadline)
+    return (None, None) if rendered is None else (rendered.html, rendered.problem)
+
+
+#: What a reader sees of the page as its screenshots are taken (workbench
+#: contract v1.14): the length of its visible text in code points, white
+#: space runs as one (at most a million), and its title.
+_SHOWN_TEXT_SCRIPT = """() => {
+  const text = ((document.body && document.body.innerText) || "")
+    .replace(/\\s+/g, " ").trim();
+  let length = 0;
+  for (const _ of text) { if (++length >= 1000000) break; }
+  return { length, title: document.title || "" };
+}"""
+#: The longest the page's text and blocks are read for, in seconds.
+_VIEW_TIMEOUT_S = 10.0
+
+
+@dataclass
+class _PendingView:
+    """A view whose screenshots are taken; judged once the DOM is read."""
+
+    length: int
+    title: str
+    blocks: bytes | None
+    screenshots: list[Path] = field(default_factory=list)
+    compare: list[bytes] = field(default_factory=list)
+
+
+async def _evaluate_within(page: Any, script: str, seconds: float) -> Any:
+    """``page.evaluate(script)``, or None when it fails or runs too long."""
+    try:
+        return await asyncio.wait_for(page.evaluate(script), seconds)
+    except Exception as e:
+        logger.debug("[Playwright] Page view not read: {}", e)
+        return None
+
+
+def _covered_size(paths: Sequence[Path]) -> tuple[int, int] | None:
+    """Width and stacked height of screenshot tiles (CSS pixels: the
+    browser draws at a device scale of 1)."""
+    from PIL import Image
+
+    width, height = 0, 0
+    try:
+        for path in paths:
+            with Image.open(path) as image:
+                width = max(width, image.size[0])
+                height += image.size[1]
+    except Exception:
+        return None
+    return (width, height) if width and height else None
+
+
+async def _capture_compare(
+    page: Any, tile_height: int, timeout_ms: int
+) -> tuple[list[bytes], int, int]:
+    """Compare screenshots: the page cut into JPEG tiles from its top.
+
+    Quality ``COMPARE_QUALITY``, *tile_height* CSS pixels a tile, at most
+    ``COMPARE_TILES`` tiles and ``COMPARE_MAX_PIXELS`` in all (cut there).
+    Returns ``(tiles, width, covered height)``; no tiles when any failed (a
+    gap would misplace the rest).
+    """
+    from markitai.page_capture import (
+        COMPARE_MAX_PIXELS,
+        COMPARE_QUALITY,
+        COMPARE_TILES,
+    )
+
+    size = await _evaluate_within(
+        page,
+        """() => {
+          const root = document.documentElement, body = document.body;
+          return {
+            width: Math.max(root.scrollWidth, root.clientWidth,
+              body ? body.scrollWidth : 0),
+            height: Math.max(root.scrollHeight, body ? body.scrollHeight : 0),
+          };
+        }""",
+        _VIEW_TIMEOUT_S,
+    )
+    if not isinstance(size, dict):
+        return [], 0, 0
+    width = int(size.get("width") or 0)
+    full = int(size.get("height") or 0)
+    tile = max(1, tile_height)
+    if width <= 0 or full <= 0 or width > 8192:
+        return [], 0, 0
+    height = min(full, tile * COMPARE_TILES, COMPARE_MAX_PIXELS // width)
+    tiles: list[bytes] = []
+    started = time.monotonic()
+    budget_s = max(timeout_ms, 1) / 1000
+    try:
+        for top in range(0, height, tile):
+            left = budget_s - (time.monotonic() - started)
+            if left <= 0:
+                raise TimeoutError
+            tiles.append(
+                await asyncio.wait_for(
+                    page.screenshot(
+                        type="jpeg",
+                        quality=COMPARE_QUALITY,
+                        full_page=True,
+                        clip={
+                            "x": 0,
+                            "y": top,
+                            "width": width,
+                            "height": min(tile, height - top),
+                        },
+                        timeout=max(1, int(left * 1000)),
+                    ),
+                    left,
+                )
+            )
+    except Exception as e:
+        logger.debug("[Playwright] Compare screenshots not taken: {}", e)
+        return [], 0, 0
+    return tiles, width, height
+
+
+async def _take_screenshots(
+    page: Any,
+    screenshot_config: ScreenshotConfig | None,
+    output_dir: Path | None,
+    url: str,
+    *,
+    timeout_ms: int,
+    sink: Any,
+) -> tuple[Path | None, list[Path], str | None, _PendingView | None]:
+    """The page's screenshots, and what it showed as they were taken.
+
+    The conversion's own screenshots when *screenshot_config* asks for
+    them, else compare screenshots when *sink* (a
+    :class:`markitai.page_capture.CaptureSink`) is there to keep them. The
+    page's shown text and its block boxes (the workbench bundle's
+    ``capture/page-blocks.js``, evaluated unchanged) are read first, in the
+    state the screenshots show (scrolled back to the top). Returns
+    ``(primary path, tiles, error, pending view)``.
+    """
+    from markitai.page_capture import page_blocks_script, sized_blocks
+
+    shooting = bool(
+        screenshot_config and output_dir and getattr(screenshot_config, "enabled", True)
+    )
+    if sink is None:
+        # No caller keeps the view (the CLI): only the screenshots
+        if not shooting:
+            return None, [], None, None
+        assert screenshot_config is not None and output_dir is not None
+        return (
+            *await _capture_screenshot_within(
+                page, screenshot_config, output_dir, url, timeout_ms=timeout_ms
+            ),
+            None,
+        )
+    shown = await _evaluate_within(page, _SHOWN_TEXT_SCRIPT, _VIEW_TIMEOUT_S)
+    script = page_blocks_script()
+    raw_blocks = (
+        await _evaluate_within(page, script, _VIEW_TIMEOUT_S) if script else None
+    )
+    length, title = 0, ""
+    if isinstance(shown, dict):
+        length = int(shown.get("length") or 0)
+        title = str(shown.get("title") or "")
+    if shooting:
+        assert screenshot_config is not None and output_dir is not None
+        path, tiles, error = await _capture_screenshot_within(
+            page, screenshot_config, output_dir, url, timeout_ms=timeout_ms
+        )
+        if path is None:
+            return None, [], error, None
+        files = list(tiles or [path])
+        size = await asyncio.to_thread(_covered_size, files)
+        blocks = sized_blocks(raw_blocks, *size) if size else None
+        return path, tiles, None, _PendingView(length, title, blocks, files)
+    compare, width, height = await _capture_compare(page, sink.tile_height, timeout_ms)
+    if not compare:
+        return None, [], None, None
+    blocks = sized_blocks(raw_blocks, width, height)
+    return None, [], None, _PendingView(length, title, blocks, compare=compare)
+
+
+def _shot_view(pending: _PendingView, rendered: _Rendered | None, url: str) -> Any:
+    """The judged view of screenshots just taken (``ShotView``)."""
+    from markitai.page_capture import ShotView, classify
+
+    quality = classify(
+        url,
+        rendered.markup() if rendered else "",
+        pending.length,
+        pending.title,
+        problem=rendered.problem if rendered else None,
+    )
+    return ShotView(
+        quality=quality,
+        blocks=pending.blocks,
+        screenshots=list(pending.screenshots),
+        compare=list(pending.compare),
+    )
+
+
+def _refused_page(rendered: _Rendered, url: str) -> tuple[str, dict[str, Any]]:
+    """A page set aside as a verification or blank page, with its verdict
+    as a frame would show its copy."""
+    from markitai.page_capture import classify, framed_text, text_length
+
+    text, title = framed_text(rendered.html)
+    return rendered.html, classify(
+        url, rendered.markup(), text_length(text), title, problem=rendered.problem
+    )
 
 
 def _discard_screenshots(paths: Sequence[Path | None]) -> None:
@@ -988,6 +1236,11 @@ class PlaywrightRenderer:
         needs_screenshot = bool(
             screenshot_config and getattr(screenshot_config, "enabled", True)
         )
+        from markitai.page_capture import CAPTURE
+
+        # A caller that keeps pages (serve) also gets compare screenshots
+        # of a page loaded without screenshots of its own
+        sink = CAPTURE.get()
         authenticated = bool(
             cookies or http_credentials or extra_http_headers or persist_context
         )
@@ -1175,7 +1428,7 @@ class PlaywrightRenderer:
                     scroll_started = time.perf_counter()
                     scroll_script = _build_auto_scroll_script()
                     await deadline.run(page.evaluate(scroll_script), "auto-scroll")
-                    if needs_screenshot:
+                    if needs_screenshot or sink is not None:
                         # Lets images scrolled into view finish painting.
                         # The text was read at each step and needs no wait.
                         await asyncio.sleep(
@@ -1197,27 +1450,37 @@ class PlaywrightRenderer:
             screenshot_path = None
             screenshot_tiles: list[Path] = []
             screenshot_error: str | None = None
-            if (
-                screenshot_config
-                and output_dir
-                and getattr(screenshot_config, "enabled", True)
-            ):
-                # Timed on its own and given back to the page budget: a
-                # slow capture costs the screenshot, never the text.
-                capture_started = time.monotonic()
-                (
-                    screenshot_path,
-                    screenshot_tiles,
-                    screenshot_error,
-                ) = await _capture_screenshot_within(
-                    page, screenshot_config, output_dir, url, timeout_ms=timeout
-                )
-                deadline.extend(time.monotonic() - capture_started)
+            # Timed on its own and given back to the page budget: a slow
+            # capture costs the screenshot, never the text.
+            capture_started = time.monotonic()
+            (
+                screenshot_path,
+                screenshot_tiles,
+                screenshot_error,
+                pending,
+            ) = await _take_screenshots(
+                page,
+                screenshot_config,
+                output_dir,
+                url,
+                timeout_ms=timeout,
+                sink=sink,
+            )
+            deadline.extend(time.monotonic() - capture_started)
 
             # The page as drawn, before the clean-up below changes it: the
             # copy serve keeps. A verification page or an empty page is not
             # the page: neither it nor its screenshot is kept.
-            rendered_html, page_problem_reason = await _rendered_page(page, deadline)
+            rendered = await _read_rendered(page, deadline)
+            rendered_html = rendered.html if rendered else None
+            page_problem_reason = rendered.problem if rendered else None
+            if sink is not None:
+                # The last load's screenshots are the ones kept
+                sink.view = (
+                    _shot_view(pending, rendered, page.url)
+                    if pending is not None and page_problem_reason is None
+                    else None
+                )
             if page_problem_reason is not None:
                 from markitai.fetch_page_check import PROBLEM_TEXT
 
@@ -1228,6 +1491,10 @@ class PlaywrightRenderer:
                 if screenshot_path is not None:
                     screenshot_error = PROBLEM_TEXT[page_problem_reason]
                 screenshot_path, screenshot_tiles = None, []
+                if sink is not None and rendered is not None:
+                    # Not the page; kept aside so a caller can say what the
+                    # site showed instead
+                    sink.refused = _refused_page(rendered, page.url)
                 rendered_html = None
 
             # Browser DOM normalize: flatten live shadow roots before extraction
@@ -1438,32 +1705,47 @@ class PlaywrightRenderer:
                 result.metadata["page_source"] = "x-embed"
             except Exception as e:
                 logger.debug("[Playwright] X embedded post did not render: {}", e)
+        from markitai.page_capture import CAPTURE
+
+        sink = CAPTURE.get()
         try:
             # Bounded like every page call: a page stuck in a script loop
             # never answers evaluate()
-            html, problem = await asyncio.wait_for(
-                _rendered_page(page), max(timeout, 1) / 1000
+            rendered = await asyncio.wait_for(
+                _read_rendered(page), max(timeout, 1) / 1000
             )
         except TimeoutError:
-            html, problem = None, None
-        if problem is not None:
-            result.metadata["page_problem"] = problem
+            rendered = None
+        if sink is not None:
+            sink.view = None
+        if rendered is not None and rendered.problem is not None:
+            result.metadata["page_problem"] = rendered.problem
             from markitai.fetch_page_check import PROBLEM_TEXT
 
             if screenshot_config and output_dir:
-                result.metadata["screenshot_error"] = PROBLEM_TEXT[problem]
+                result.metadata["screenshot_error"] = PROBLEM_TEXT[rendered.problem]
+            if sink is not None:
+                sink.refused = _refused_page(rendered, page.url)
             return
-        result.html = html
-        if screenshot_config and output_dir:
-            (
-                result.screenshot_path,
-                result.screenshot_tiles,
-                shot_error,
-            ) = await _capture_screenshot_within(
-                page, screenshot_config, output_dir, url, timeout_ms=timeout
-            )
-            if shot_error is not None:
-                result.metadata["screenshot_error"] = shot_error
+        result.html = rendered.html if rendered else None
+        (
+            result.screenshot_path,
+            result.screenshot_tiles,
+            shot_error,
+            pending,
+        ) = await _take_screenshots(
+            page,
+            screenshot_config,
+            output_dir,
+            url,
+            timeout_ms=timeout,
+            sink=sink,
+        )
+        if shot_error is not None:
+            result.metadata["screenshot_error"] = shot_error
+        if sink is not None and pending is not None:
+            # The page was read just before its screenshots, in their state
+            sink.view = _shot_view(pending, rendered, page.url)
 
     async def _release_page(
         self,

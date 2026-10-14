@@ -137,6 +137,7 @@ source_modules = [
     "markitai.ocr",
     "markitai.ocr_layout",
     "markitai.output_profiles",
+    "markitai.page_capture",
     "markitai.ports",
     "markitai.notices",
     "markitai.prompts",
