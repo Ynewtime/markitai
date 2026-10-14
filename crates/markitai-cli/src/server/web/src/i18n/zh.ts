@@ -21,6 +21,8 @@ export const zh: Dict = {
   convert: "转换",
   options: "选项",
   cliAria: "CLI 命令",
+  cliPathsInfo: "关于文件路径",
+  cliPathsNote: "请在存放这些文件的文件夹中运行；浏览器无法看到文件的完整路径。",
   browse: "上传",
   newConversion: "新建转换",
   uploadFiles: "上传文件",
@@ -509,6 +511,7 @@ export const zh: Dict = {
   filterByName: "按名称筛选",
   filterNotices: "有提示",
   dismiss: "关闭",
+  toastDetails: "详细信息",
   downloadFailedFile: "下载失败",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
   nFiles: (n: number) => `${n} 个文件`,
@@ -621,6 +624,15 @@ export const zh: Dict = {
   originalScreenshot: "截图",
   originalPageTitle: "服务器抓取到的网页",
   originalPageNote: "抓取时的网页，含站点的图片和样式；其中的脚本不会运行。",
+  frontLabel: "文档信息",
+  frontTags: (n) => `${n} 个标签`,
+  originalShotNote: "抓取网页时截取的画面。悬停某个段落即可在截图上找到它。",
+  pageNotKept: (state) =>
+    state === "challenge"
+      ? "抓取时网站显示的是验证页面，而不是网页本身，因此未能按原样保留。"
+      : state === "empty"
+        ? "抓取时网页是空白的（站点用脚本生成内容），因此未能按原样保留。"
+        : "网页未能按原样保留。",
   pageOf: (page: number, total: number) => `第 ${page} 页，共 ${total} 页`,
   pageImage: (page: number) => `原件第 ${page} 页`,
   pageUnavailable: "无法绘制此页",
@@ -649,7 +661,6 @@ export const zh: Dict = {
   accessRefused: "服务器拒绝了此标签页的令牌。",
   accessRefusedHint: "请粘贴新的令牌。",
   accessExplain: "粘贴 markitai serve 打印的链接中的令牌。",
-  replaceToken: "粘贴新令牌即可替换。",
   signOutTab: "退出此标签页",
   signOutTabHint: "只删除这个标签页中的令牌；服务器和其他标签页不受影响。",
   regenerateTitle: "重新生成令牌",
@@ -670,7 +681,6 @@ export const zh: Dict = {
   copyLink: "复制链接",
   tokenUntilRestart: "在服务器停止前有效；下次启动会生成新令牌。",
   tokenUntilRestartVariable: (variable) => `在服务器停止前有效；下次启动会再次使用 ${variable}。要长期使用新令牌，请修改 ${variable}。`,
-  useOtherToken: "使用其他令牌",
   done: "完成",
   tokenSaved: "令牌已保存。",
 

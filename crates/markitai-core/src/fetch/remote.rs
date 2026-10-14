@@ -360,6 +360,8 @@ pub(crate) fn outcome(document: Document) -> FetchOutcome {
         cache_hit: false,
         screenshots: Vec::new(),
         html: None,
+        html_url: None,
+        view: None,
     }
 }
 

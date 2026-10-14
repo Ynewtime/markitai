@@ -13,10 +13,12 @@ function rule(selector: string): string {
 }
 
 test("the window's reading column is centred at its reading width", () => {
-  // Rendered, the skeleton in its frame, Source, Files and versions share one column.
+  // Rendered, the skeleton in its frame, Source, Files and versions share one column: 820 px,
+  // wider as the window grows.
+  assert.match(css, /--read-width: clamp\(820px, 56vw, 1120px\);/);
   for (const selector of [".doc", ".skeleton-doc", ".source", ".file-list", ".diff"]) {
     const body = rule(selector);
-    assert.match(body, /max-width: 820px;/, selector);
+    assert.match(body, /max-width: var\(--read-width\);/, selector);
     assert.match(body, /margin: 0 auto;/, selector);
   }
   // A pane's own note follows the column; the list's loading note stays where it is.

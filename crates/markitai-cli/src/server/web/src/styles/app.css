@@ -73,6 +73,8 @@
 /* ------------------------------------------------------------ tokens */
 
 :root {
+  /* The reading column: 820 px, wider as the window grows (full screen on a large display). */
+  --read-width: clamp(820px, 56vw, 1120px);
   color-scheme: light;
   --bg: #fafafa;
   --surface: #ffffff;
@@ -113,6 +115,8 @@
 
   --diff-add-bg: color-mix(in srgb, var(--t-green) 28%, var(--surface));
   --diff-del-bg: color-mix(in srgb, var(--t-red) 20%, var(--surface));
+  --diff-add-word: color-mix(in srgb, var(--t-green) 70%, var(--surface));
+  --diff-del-word: color-mix(in srgb, var(--t-red) 55%, var(--surface));
   --row-hover: color-mix(in srgb, var(--strip) 45%, var(--bg));
 
   /* CJK covered by the system: Inter ships Latin only */
@@ -203,6 +207,8 @@
     --logo-edge: #27272a;
     --diff-add-bg: color-mix(in srgb, var(--t-green) 12%, var(--surface));
     --diff-del-bg: color-mix(in srgb, var(--t-red) 11%, var(--surface));
+    --diff-add-word: color-mix(in srgb, var(--t-green) 30%, var(--surface));
+    --diff-del-word: color-mix(in srgb, var(--t-red) 28%, var(--surface));
     --mark: #a78bfa;
     --mark-contrast: #18181b;
     --code-key: #d8b4fe;
@@ -238,6 +244,8 @@
   --logo-edge: #27272a;
   --diff-add-bg: color-mix(in srgb, var(--t-green) 12%, var(--surface));
   --diff-del-bg: color-mix(in srgb, var(--t-red) 11%, var(--surface));
+  --diff-add-word: color-mix(in srgb, var(--t-green) 30%, var(--surface));
+  --diff-del-word: color-mix(in srgb, var(--t-red) 28%, var(--surface));
   --mark: #a78bfa;
   --mark-contrast: #18181b;
   --code-key: #d8b4fe;
@@ -734,63 +742,90 @@ main:focus {
 /* Transient notices: minimal strips at the bottom (tone B: the surface with
    hairlines). Square, no bar, no shadow, no close button; a mono mark, one
    line, at most one text action. */
-.note-strips {
+/* Toasts: cards stacked at the bottom right (phones: centred above the tab bar),
+   newest at the bottom, fixed so they never move the page. */
+.toasts {
   position: fixed;
   right: 24px;
   bottom: 24px;
   z-index: 80;
-  display: flex;
-  flex-direction: column;
   width: var(--strip-w);
-  border: 1px solid var(--note-edge);
-  background: var(--note-bg);
+  max-width: calc(100vw - 24px);
+  pointer-events: none;
 }
-.note-strips > ul {
+.toasts > ul {
   display: flex;
   flex-direction: column;
+  gap: 8px;
 }
-.note-strip {
+.toast {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  height: var(--strip-h);
-  padding: 12px 16px;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: var(--strip-h);
+  padding: 10px 8px 10px 14px;
+  border: 1px solid var(--note-edge);
+  border-radius: var(--r-sm);
   background: var(--note-bg);
+  box-shadow: var(--shadow-pop);
   font-size: var(--text-base);
   color: var(--text-1);
   touch-action: pan-x;
+  pointer-events: auto;
   animation: note-in var(--dur-slow) var(--ease-out);
 }
-.note-strip + .note-strip {
-  border-top: 1px solid var(--note-rule);
-}
-.note-strip.is-leaving {
+.toast.is-leaving {
   animation: note-out var(--dur-base) ease-in forwards;
 }
 .note-mark {
   flex: none;
   width: 1ch;
+  margin-top: 5px;
   font-family: var(--font-mono);
   font-size: var(--text-mark);
   line-height: 1;
   text-align: center;
   color: var(--note-mark-done);
 }
-.note-strip.is-error .note-mark {
+.toast.is-error .note-mark {
   color: var(--note-mark-err);
 }
-.note-strip.is-warning .note-mark {
+.toast.is-warning .note-mark {
   color: var(--note-mark-warn);
 }
-.note-text {
+.toast-copy {
   flex: 1;
   min-width: 0;
+  padding-top: 3px;
+}
+.toast-text {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow-wrap: anywhere;
+}
+.toast-text strong {
+  font-weight: 600;
+}
+.toast-detail {
+  margin-top: 4px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.toast-detail summary {
+  cursor: pointer;
+  color: var(--text-3);
+}
+.toast-detail p {
+  max-height: 160px;
+  margin-top: 4px;
+  overflow: auto;
+  overflow-wrap: anywhere;
 }
 .note-action {
   flex: none;
+  margin-top: 4px;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-weight: 600;
@@ -798,10 +833,14 @@ main:focus {
   text-transform: uppercase;
   color: var(--text-1);
 }
+.toast-close {
+  flex: none;
+  color: var(--text-3);
+}
 @keyframes note-in {
   from {
     opacity: 0;
-    transform: translateY(100%);
+    transform: translateY(12px);
   }
 }
 @keyframes note-out {
@@ -810,14 +849,18 @@ main:focus {
     transform: translateY(8px);
   }
 }
-/* on a phone: full width, directly above the tab bar (or the screen's edge under the peek window) */
+/* on a phone: centred directly above the tab bar, or above the selection bar while it shows */
 @media screen and (max-width: 760px) {
-  .note-strips {
-    right: 0;
-    bottom: var(--strips-bottom);
-    left: 0;
+  .toasts {
+    right: 12px;
+    bottom: calc(var(--strips-bottom) + 12px);
+    left: 12px;
     width: auto;
-    border-width: 1px 0 0;
+    max-width: 440px;
+    margin-inline: auto;
+  }
+  body:has(.select-bar) .toasts {
+    bottom: calc(var(--strips-bottom) + 68px);
   }
 }
 
@@ -1583,18 +1626,61 @@ main:focus {
 .excerpt-body > :first-child {
   margin-top: 0;
 }
+/* Front matter: one line until opened (title or description, then the tag count). */
 .front-card {
   margin-bottom: 20px;
-  padding: 12px 14px;
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
   background: var(--bg);
 }
+.front-card > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: inherit;
+  cursor: pointer;
+  list-style: none;
+}
+.front-card > summary::-webkit-details-marker {
+  display: none;
+}
+.front-card > summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform 120ms ease;
+}
+.front-card[open] > summary svg {
+  transform: rotate(90deg);
+}
+.front-card > summary:hover {
+  background: var(--row-hover);
+}
+.front-card .front-title,
+.front-card .front-line {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.front-line {
+  color: var(--text-2);
+}
+.front-count {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+.front-count::before {
+  content: "·";
+  margin-right: 8px;
+}
+.front-body {
+  padding: 0 12px 12px 32px;
+}
 .front-card.is-compact {
   margin-bottom: 12px;
-  padding: 0;
-  border: 0;
-  background: none;
 }
 .front-title {
   font-size: var(--text-md);
@@ -1602,7 +1688,6 @@ main:focus {
   color: var(--text-1);
 }
 .front-description {
-  margin-top: 2px;
   color: var(--text-2);
 }
 .front-tags {
@@ -2496,7 +2581,7 @@ kbd {
 /* Access token: the settings pages' own centred column; the status line, then
    the field with Save attached and one hint. */
 .settings-body.access {
-  gap: 20px;
+  gap: 32px;
 }
 .access-state {
   display: flex;
@@ -2522,8 +2607,8 @@ kbd {
 /* making a new token: a section of its own between the status and the field */
 .access-section {
   display: grid;
-  gap: 10px;
-  padding-top: 16px;
+  gap: 12px;
+  padding-top: 28px;
   border-top: 1px solid var(--hairline);
 }
 .access-section .group-title {
@@ -2539,6 +2624,10 @@ kbd {
 }
 .new-token .access-state {
   outline: none;
+}
+.new-token-done {
+  display: flex;
+  justify-content: flex-end;
 }
 .token-value,
 .token-link {
@@ -3154,6 +3243,19 @@ kbd {
 .cli-bar .pill-btn {
   flex: none;
   margin-top: 3px;
+}
+.cli-actions {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: 2px;
+}
+.cli-bar .cli-info {
+  margin-top: 3px;
+  color: var(--t-dim);
+}
+.cli-bar .cli-info:hover {
+  color: var(--t-text);
 }
 .pill-btn {
   position: relative;
@@ -4379,6 +4481,7 @@ input[type="password"],
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  container-type: inline-size;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--hairline-strong) transparent;
@@ -4405,9 +4508,12 @@ input[type="password"],
   contain-intrinsic-size: auto 600px;
 }
 /* A chunk clips what it paints to its own box: the one holding Compare's
-   outline (2 px, 4 px out) is on screen anyway, and paints it whole. */
+   outline (2 px, 4 px out) is on screen anyway, and paints it whole. Only
+   paint containment goes: the chunk keeps its layout containment, so margins
+   never start collapsing across its edge and nothing moves on hover. */
 .doc-chunk:has(.is-linked) {
   content-visibility: visible;
+  contain: layout style;
 }
 
 /* Contents: the document's headings beside it; the entry being read is marked. */
@@ -4561,7 +4667,7 @@ input[type="password"],
 }
 /* The reading column (rendered, source, files, versions) is centred in its pane. */
 .source {
-  max-width: 820px;
+  max-width: var(--read-width);
   min-height: 100%;
   margin: 0 auto;
   padding: 20px 24px;
@@ -4581,7 +4687,7 @@ input[type="password"],
   color: var(--text-3);
 }
 .pane > .pane-note {
-  max-width: 820px;
+  max-width: var(--read-width);
   margin-inline: auto;
 }
 .pane-note.line-error {
@@ -4598,7 +4704,7 @@ input[type="password"],
 }
 
 .doc {
-  max-width: 820px;
+  max-width: var(--read-width);
   margin: 0 auto;
   padding: 28px 32px 48px;
 }
@@ -4611,7 +4717,7 @@ input[type="password"],
   display: none;
 }
 .skeleton-doc {
-  max-width: 820px;
+  max-width: var(--read-width);
   margin: 0 auto;
   padding: 28px 32px 48px;
   animation: fade-in var(--dur-slow) var(--ease-out) both;
@@ -4725,6 +4831,22 @@ input[type="password"],
 }
 .doc-body .table-scroll {
   overflow-x: auto;
+}
+/* A table may reach past the reading column into a wide pane's margins (up to 200 px a side):
+   the body spans the margins (a drawn chunk paints only inside its own box) and every other
+   block keeps to the column. */
+.viewer:not(.is-compact) .doc-body {
+  --bleed: clamp(0px, (100cqi - var(--read-width)) / 2 - 24px, 200px);
+  margin-inline: calc(-1 * var(--bleed));
+}
+.viewer:not(.is-compact) .doc-body > .doc-chunk > :not(.table-scroll) {
+  margin-inline: var(--bleed);
+}
+/* A table takes the column's width, and more only when its cells need it. */
+.viewer:not(.is-compact) .doc-body > .doc-chunk > .table-scroll > table {
+  width: auto;
+  min-width: calc(100% - 2 * var(--bleed));
+  margin-inline: auto;
 }
 .doc-body table {
   width: 100%;
@@ -4882,7 +5004,7 @@ input[type="password"],
 }
 
 .diff {
-  max-width: 820px;
+  max-width: var(--read-width);
   margin: 0 auto;
   padding: 16px 0 28px;
   font-family: var(--font-mono);
@@ -4931,6 +5053,59 @@ input[type="password"],
 .diff-line.is-del .diff-text {
   color: var(--text-1);
 }
+/* Side by side (wide panes): the base on the left, the LLM version on the right; a change's
+   lines face each other and the words that changed carry a deeper tint. */
+.diff.is-split {
+  max-width: min(1680px, 100%);
+  padding-inline: 16px;
+}
+.diff.is-split .diff-meta {
+  padding-inline: 4px;
+}
+.dsplit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.dsplit-cell {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+.dsplit-cell.is-a {
+  border-right: 1px solid var(--hairline);
+}
+.dsplit-cell.is-del {
+  background: var(--diff-del-bg);
+}
+.dsplit-cell.is-add {
+  background: var(--diff-add-bg);
+}
+.dsplit-cell.is-empty {
+  background: repeating-linear-gradient(135deg, transparent 0 6px, var(--row-hover) 6px 7px);
+}
+.dsplit-cell .diff-text {
+  padding-right: 14px;
+}
+.dsplit-cell.is-add .diff-text,
+.dsplit-cell.is-del .diff-text {
+  color: var(--text-1);
+}
+.dsplit-cell mark {
+  border-radius: 2px;
+  color: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.dsplit-cell.is-del mark {
+  background: var(--diff-del-word);
+}
+.dsplit-cell.is-add mark {
+  background: var(--diff-add-word);
+}
+.diff.is-split .diff-fold {
+  padding-left: 52px;
+}
+
 /* Unchanged lines folded between two changes; a click shows them. */
 .diff-fold {
   display: flex;
@@ -4947,7 +5122,7 @@ input[type="password"],
 }
 
 .file-list {
-  max-width: 820px;
+  max-width: var(--read-width);
   margin: 0 auto;
   padding: 12px 20px 20px;
 }
@@ -4988,7 +5163,7 @@ input[type="password"],
   color: var(--text-2);
 }
 .files {
-  max-width: 820px;
+  max-width: var(--read-width);
   margin: 0 auto;
   padding-bottom: 20px;
 }
@@ -5738,10 +5913,10 @@ input[type="password"],
   }
   .veil,
   .dialog,
-  .note-strip {
+  .toast {
     animation: fade-in var(--dur-slow) ease-out !important;
   }
-  .note-strip.is-leaving {
+  .toast.is-leaving {
     animation: fade-out var(--dur-base) ease-in forwards !important;
   }
 }

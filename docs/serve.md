@@ -142,8 +142,21 @@ read through Jina, Defuddle or Cloudflare or from the page cache),
 SVG) or `render_unavailable` (a PDF or image this build cannot open). It also
 gives the original's `name`, `media_type`, `size`, `download` path, `pages`
 (page boxes: PDF points of the visible box after rotation, image and screenshot
-pixels; at most 2,000), `page_count`, `text_layer` (PDF only) and, for `html`,
-`view`: the path of the kept page for a sandboxed frame.
+pixels; at most 2,000), `page_count`, `text_layer` (PDF only), for `html`
+`view`: the path of the kept page for a sandboxed frame, and for a URL item
+`capture` (null for uploads): `{page, screenshot}`, how usable the kept page and
+the screenshots were when they were captured, each `{state, text_length, title,
+reason}` or null when that view was not kept. `state` is `challenge` when the page
+was a verification, captcha, bot check or login page in place of the content
+(`reason` `challenge`, `verification` or `login`, from the same site rules the
+fetch uses), `empty` when it only asked for JavaScript (`javascript`) or showed
+fewer than 80 characters of text (`blank`), else `ok`; `text_length` counts the
+visible text with white space runs as one (the kept page as a frame without
+scripts shows it, `<noscript>` included; the screenshots as the browser showed
+them), `title` is the page's title (at most 200 characters). A job saved before
+this field had it reads the kept page when asked; its `screenshot` is null.
+`blocks` is the path of `…/original/blocks` when the screenshots have block
+boxes, else null.
 
 `…/original/view` sends that page as `text/html` for the workbench's frame: the
 kept bytes with one insertion after `<head>` (else `<html>`, else the start),
@@ -184,10 +197,27 @@ two pages are drawn at a time; another request gets 429 `render_busy` with
 `invalid_page_request` (a page number or width that is not a whole number) and
 422 `render_failed`.
 
+`…/original/blocks` (no ticket) answers `application/json`, `Cache-Control:
+no-store`: `{version: 1, width, height, blocks: [{tag, text, src?, bbox}]}`, the
+page's headings, paragraphs, list items, code, cells, quotes, captions, tables,
+pictures and wordy containers in document order (at most 5,000) with their boxes
+in CSS pixels from the page's top-left corner, read in the browser just before
+it took the screenshots; `width` and `height` are the CSS size the screenshots
+cover (they cut the page into tiles from the top). Else 404 `original_unavailable`.
+
 A URL item's page snapshot is the HTML the item's Markdown was converted from,
-at most 10 MiB, stored privately as `snapshots/<item_id>.html` in the job folder.
-A retry replaces it with the page it converted, or removes it when the new
-result was not converted from HTML here; deleting the item deletes it.
+at most 10 MiB, stored privately as `snapshots/<item_id>.html` in the job folder;
+when the Markdown came from elsewhere (an API extractor) but the browser loaded
+the page for its screenshots, that browser's page is kept instead. Beside it:
+`<item_id>.capture.json` (the two qualities), `<item_id>.blocks.json` (the block
+boxes, at most 4 MiB) and, when the browser loaded the page but no screenshots
+were asked for, compare screenshots in `<item_id>.shots/<n>.jpg` (JPEG quality 70,
+2,000 px tiles of the page as `screenshot` configures them, at most 20; about
+85–230 KB per tile, so a long page adds up to about 2 MB). Compare screenshots are
+not part of the result (not in `out/`, its file list or archives) and are never
+sent to a model or OCR; the descriptor lists them as `pages` when the item has no
+screenshots of its own. A retry replaces all of them with what its conversion
+captured, or removes them; deleting the item deletes them.
 
 ## Cloudflare request authorization
 
@@ -473,7 +503,8 @@ and old unmarked `.upload-*` directories are retained; their names alone are not
 proof of ownership. Normal publication removes the staging marker.
 
 Jobs live below `MARKITAI_HOME/serve/jobs/<12-hex-id>/`, containing private
-`uploads/`, `out/`, URL page `snapshots/`, and an atomically replaced `meta.json`. Job, upload and output root directories use mode
+`uploads/`, `out/`, URL page `snapshots/` (pages, capture records, block boxes,
+compare screenshots), and an atomically replaced `meta.json`. Job, upload and output root directories use mode
 0700 and generated metadata/uploads use mode 0600 on Unix. Current server
 metadata uses the existing version-2 shape, with additive native output-base and
 asset indexes, per-item options, and internal file-transaction commit identifiers. Existing CLI and reference terminal histories are readable. Legacy artifact lists

@@ -74,8 +74,8 @@ export function AppearanceSettings({
   t: Dict;
   locale: Locale;
   onLocale: (locale: Locale) => void;
-  /** Signed in with a user token: which one, and the way to another (the Access page is the admin's). */
-  userAccess: { label: string | null; onOtherToken: () => void } | null;
+  /** Signed in with a user token: which one, and Sign out (another token signs in from the sign-in screen). */
+  userAccess: { label: string | null } | null;
 }) {
   const [theme, setTheme] = useState<Theme>(storedTheme);
   useEffect(() => applyTheme(theme), [theme]);
@@ -108,10 +108,6 @@ export function AppearanceSettings({
               <p>{userAccess.label ? t.userAccessNamed(userAccess.label) : t.userAccessText}</p>
             </div>
             <div class="setting-actions">
-              <button type="button" class="btn" onClick={userAccess.onOtherToken}>
-                <Icon name="Key" size={14} />
-                {t.useOtherToken}
-              </button>
               <button
                 type="button"
                 class="btn"
@@ -144,6 +140,7 @@ function UserTokens({ t, locale, describe }: { t: Dict; locale: Locale; describe
       (error: unknown) => setFailure(describe(error).text),
     );
   useEffect(() => void load(), []);
+  const listed = (tokens ?? []).filter((token) => token.id !== fresh?.id);
   const create = async (event: Event) => {
     event.preventDefault();
     const name = label.trim();
@@ -172,7 +169,10 @@ function UserTokens({ t, locale, describe }: { t: Dict; locale: Locale; describe
           t={t}
           heading={t.userTokenCreated(fresh.label)}
           token={{ token: fresh.token, network_url: null, persistent: true, startup_variable: null }}
-          onDone={() => setFresh(null)}
+          onDone={() => {
+            setFresh(null);
+            void load();
+          }}
         />
       ) : (
         <form class="token-create" onSubmit={create}>
@@ -203,11 +203,14 @@ function UserTokens({ t, locale, describe }: { t: Dict; locale: Locale; describe
       )}
       {tokens === null ? (
         !failure && <p class="field-hint">{t.loading}</p>
-      ) : tokens.length === 0 ? (
+      ) : listed.length === 0 ? (
+        // While a new token is shown, the list waits for Done.
+        fresh ? null : (
         <p class="token-empty">{t.userTokensNone}</p>
+        )
       ) : (
         <ul class="token-list" aria-label={t.userTokensTitle}>
-          {tokens.map((token) => (
+          {listed.map((token) => (
             <li key={token.id}>
               <span class="token-name">{token.label}</span>
               <code class="token-hint" title={t.userTokenHint}>
@@ -271,7 +274,7 @@ export function AccessSettings({
   // new token for the server; then one field with Save for using another token.
   const refused = unauthorized && !saved;
   const state = refused ? t.accessRefused : saved ? t.tokenSaved : held ? t.accessHeld : t.accessNone;
-  const hint = refused ? t.accessRefusedHint : held ? t.replaceToken : t.accessExplain;
+  const hint = refused ? t.accessRefusedHint : t.accessExplain;
   return (
     <section class="settings-page" aria-labelledby="access-title">
       <div class="page-head">
@@ -287,10 +290,9 @@ export function AccessSettings({
               class="text-link"
               title={t.signOutTabHint}
               onClick={() => {
+                // Another token signs in from the sign-in screen the page opens on.
                 setToken("");
-                setHeld(false);
-                setSaved(false);
-                setFresh(null);
+                location.reload();
               }}
             >
               {t.signOutTab}
@@ -350,6 +352,8 @@ export function AccessSettings({
           </section>
         )}
         {userTokens && <UserTokens t={t} locale={locale} describe={describe} />}
+        {/* Only a refused or missing token needs a field here; switching tokens is Sign out. */}
+        {(refused || !held) && (
         <form
           class="access-form"
           onSubmit={(event) => {
@@ -363,7 +367,7 @@ export function AccessSettings({
           }}
         >
           <label class="field-label" for="access-token">
-            {canRegenerate ? t.useOtherToken : t.tokenField}
+            {t.tokenField}
           </label>
           <div class="input-group">
             <input
@@ -386,6 +390,7 @@ export function AccessSettings({
             {hint} {t.tokenNote}
           </p>
         </form>
+        )}
       </div>
     </section>
   );
@@ -444,7 +449,7 @@ function NewToken({ t, token, heading: title, onDone }: { t: Dict; token: Regene
         </div>
       </div>
       {!token.persistent && <p class="conn-note">{token.startup_variable ? t.tokenUntilRestartVariable(token.startup_variable) : t.tokenUntilRestart}</p>}
-      <div>
+      <div class="new-token-done">
         <button type="button" class="btn btn-primary" onClick={onDone}>
           {t.done}
         </button>

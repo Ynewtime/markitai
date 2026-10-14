@@ -1,11 +1,12 @@
 //! Originals for the workbench's Compare view: what can be shown of an item's
 //! source (its kept upload, a URL item's page snapshot, or the conversion's
-//! page screenshots), its stored bytes, page images and a PDF page's text.
-//! Pages are drawn on blocking threads, at most two at a time.
+//! page screenshots, else the item's compare screenshots), its stored bytes,
+//! page images, a PDF page's text, and where the screenshots show the page's
+//! blocks. Pages are drawn on blocking threads, at most two at a time.
 use super::{
     State, files,
     jobs::{self, Job},
-    store,
+    snapshots, store,
     types::{ApiError, ApiResult, Item},
 };
 use axum::{
@@ -43,20 +44,46 @@ const HEADER_BYTES: u64 = 256 * 1024;
 /// A stored original never runs in the service's origin, even if visited.
 const SANDBOX: &str = "sandbox; default-src 'none'";
 
+/// Page qualities computed for kept pages without a record, kept in memory.
+const QUALITIES: usize = 256;
+
 /// Render slots and a small cache of drawn pages, shared by every job.
 pub(super) struct Previews {
     renders: Arc<Semaphore>,
     cache: Mutex<VecDeque<(String, Bytes, &'static str)>>,
+    /// How older jobs' kept pages read, by job, item and page version.
+    qualities: Mutex<VecDeque<(String, Value)>>,
 }
 impl Default for Previews {
     fn default() -> Self {
         Self {
             renders: Arc::new(Semaphore::new(RENDERS)),
             cache: Mutex::new(VecDeque::new()),
+            qualities: Mutex::new(VecDeque::new()),
         }
     }
 }
 impl Previews {
+    /// How a kept page reads, judged once per page version.
+    fn page_quality(&self, key: String, judge: impl FnOnce() -> Value) -> Value {
+        if let Some((_, value)) = self
+            .qualities
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(entry, _)| *entry == key)
+        {
+            return value.clone();
+        }
+        let value = judge();
+        let mut qualities = self.qualities.lock().unwrap();
+        qualities.retain(|(entry, _)| *entry != key);
+        qualities.push_back((key, value.clone()));
+        while qualities.len() > QUALITIES {
+            qualities.pop_front();
+        }
+        value
+    }
     fn cached(&self, key: &str) -> Option<(Bytes, &'static str)> {
         let mut cache = self.cache.lock().unwrap();
         let index = cache.iter().position(|(entry, _, _)| entry == key)?;
@@ -200,9 +227,14 @@ struct Original {
     /// A URL item's address; `None` for an upload.
     url: Option<String>,
     stored: Option<Stored>,
+    /// The conversion's page screenshots, else a URL item's compare screenshots.
     screenshots: Vec<(PathBuf, String)>,
     kind: Kind,
     reason: Option<&'static str>,
+    /// A URL item's `capture.json`.
+    capture: Option<PathBuf>,
+    /// A URL item's `blocks.json`.
+    blocks: Option<PathBuf>,
 }
 
 fn version(metadata: &fs::Metadata) -> String {
@@ -285,10 +317,20 @@ fn resolve(job: &Job, item_id: &str) -> ApiResult<Original> {
             owned
         }
     };
-    let screenshots = names
+    let mut screenshots = names
         .into_iter()
         .filter_map(|name| Some((store::safe_file(&out, &name).ok()?, name)))
         .collect::<Vec<_>>();
+    let url = item.kind == "url";
+    if screenshots.is_empty() && url {
+        screenshots = snapshots::shots(&job.folder, item_id);
+    }
+    let kept = |pick| {
+        url.then(|| snapshots::kept(&job.folder, item_id, pick))
+            .flatten()
+    };
+    let capture = kept(|names| &names.capture);
+    let blocks = kept(|names| &names.blocks);
     let (kind, reason) = match stored.as_ref().map(|stored| stored.format) {
         Some(Format::Pdf) => (Kind::Pdf, None),
         Some(Format::Image { .. }) => (Kind::Image, None),
@@ -301,24 +343,21 @@ fn resolve(job: &Job, item_id: &str) -> ApiResult<Original> {
     Ok(Original {
         job_id: data.id,
         item_id: item_id.to_owned(),
-        url: (item.kind == "url").then(|| item.name.clone()),
+        url: url.then(|| item.name.clone()),
         name: item.name,
         stored,
         screenshots,
         kind,
         reason,
+        capture,
+        blocks,
     })
 }
 
 /// A URL item's page snapshot inside the job's `snapshots/`; none for an
 /// item ID (from an older record) that is not a plain file name.
 pub(super) fn snapshot_name(item_id: &str) -> Option<String> {
-    let plain = !item_id.is_empty()
-        && item_id.len() <= 64
-        && item_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
-    plain.then(|| format!("{item_id}.html"))
+    snapshots::names(item_id).map(|names| names.html)
 }
 
 fn read(path: &FsPath, limit: u64) -> ApiResult<Vec<u8>> {
@@ -415,8 +454,43 @@ fn screenshot_size(path: &FsPath) -> PageSize {
         })
 }
 
+/// The largest kept page judged for an older job without a record.
+const MAX_JUDGED: u64 = 10 * 1024 * 1024;
+
+/// How a URL item's views read when they were captured: the job's record,
+/// else (an older job) its kept page judged now, without a screenshot.
+fn capture(original: &Original, previews: &Previews) -> Value {
+    let Some(url) = &original.url else {
+        return Value::Null;
+    };
+    if let Some((page, screenshot)) = original.capture.as_deref().and_then(snapshots::recorded) {
+        return json!({"page": page, "screenshot": screenshot});
+    }
+    let page = match &original.stored {
+        Some(stored) if stored.size <= MAX_JUDGED => {
+            let key = format!(
+                "{}\u{0}{}\u{0}{}",
+                original.job_id, original.item_id, stored.version
+            );
+            previews.page_quality(key, || {
+                read(&stored.path, MAX_JUDGED)
+                    .ok()
+                    .map(|bytes| {
+                        json!(markitai_core::page_capture::page_quality(
+                            url,
+                            &String::from_utf8_lossy(&bytes)
+                        ))
+                    })
+                    .unwrap_or(Value::Null)
+            })
+        }
+        _ => Value::Null,
+    };
+    json!({"page": page, "screenshot": null})
+}
+
 /// The descriptor; reads page boxes, never draws a page.
-fn describe(original: Original) -> Value {
+fn describe(original: Original, previews: &Previews) -> Value {
     let mut kind = original.kind;
     let mut reason = original.reason;
     let mut pages = Vec::new();
@@ -462,8 +536,13 @@ fn describe(original: Original) -> Value {
         }
         _ => {}
     }
+    let capture = capture(&original, previews);
+    let blocks = (original.blocks.is_some() && original.screenshot_pages())
+        .then(|| original_path(&original, "blocks"));
     let stored = original.stored.as_ref();
     json!({
+        "capture": capture,
+        "blocks": blocks,
         "kind": kind.name(),
         "name": original.name,
         "media_type": stored.map(|stored| stored.media),
@@ -499,7 +578,8 @@ pub(super) async fn descriptor(
         .acquire_owned()
         .await
         .map_err(ApiError::internal)?;
-    let value = crate::task::blocking(move || describe(original))
+    let shared = state.clone();
+    let value = crate::task::blocking(move || describe(original, &shared.previews))
         .await
         .map_err(ApiError::internal)?;
     let mut response = Json(value).into_response();
@@ -522,6 +602,30 @@ pub(super) async fn file(
         &stored.filename,
     )?;
     guard(&mut response, &stored.filename);
+    Ok(response)
+}
+
+/// `GET /api/jobs/{job_id}/items/{item_id}/original/blocks`: where the
+/// item's screenshots show its page's blocks, as kept when they were taken.
+pub(super) async fn blocks(
+    ExtractState(state): ExtractState<Arc<State>>,
+    Path((id, item_id)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let original = original(&state, &id, item_id).await?;
+    let path = original.blocks.ok_or_else(unavailable)?;
+    let limit = markitai_core::page_capture::MAX_BLOCKS_BYTES as u64;
+    let bytes = crate::task::blocking(move || read(&path, limit + 1))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(|_| unavailable())?;
+    if bytes.len() as u64 > limit {
+        return Err(unavailable());
+    }
+    let mut response = ([(header::CONTENT_TYPE, "application/json")], bytes).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    guard(&mut response, "blocks.json");
     Ok(response)
 }
 

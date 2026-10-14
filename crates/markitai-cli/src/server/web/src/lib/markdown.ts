@@ -438,15 +438,32 @@ export function remotePicture(source: string): string | null {
   }
 }
 
+/** A picture's placeholder once it could not load, and back: Compare keeps
+ * outlining the block that stands in for a picture it paired. */
+const placeholders = new WeakMap<Element, Element>();
+const pictures = new WeakMap<Element, Element>();
+/** The element now showing `element`: its placeholder when it was a picture that failed. */
+export const shownAs = (element: Element): Element => (element.isConnected ? element : (placeholders.get(element) ?? element));
+/** The picture a placeholder replaced, or the element itself. */
+export const shownFor = (element: Element): Element => pictures.get(element) ?? element;
+
+/** Put a labelled placeholder where a picture was. */
+export function replacePicture(image: Element, text: string): HTMLSpanElement {
+  const span = image.ownerDocument.createElement("span");
+  span.className = "img-blocked";
+  span.textContent = text;
+  image.replaceWith(span);
+  placeholders.set(image, span);
+  pictures.set(span, image);
+  return span;
+}
+
 /** A remote picture that cannot load becomes its labelled placeholder (one
  * listener for every rendered document, as error events do not bubble). */
 export function swapFailedPicture(event: Event): void {
   const image = event.target as HTMLImageElement | null;
   if (!image || image.tagName !== "IMG" || !image.hasAttribute("data-remote")) return;
-  const span = image.ownerDocument.createElement("span");
-  span.className = "img-blocked";
-  span.textContent = image.getAttribute("data-fallback") || image.alt;
-  image.replaceWith(span);
+  replacePicture(image, image.getAttribute("data-fallback") || image.alt);
 }
 if (typeof document !== "undefined") document.addEventListener("error", swapFailedPicture, true);
 

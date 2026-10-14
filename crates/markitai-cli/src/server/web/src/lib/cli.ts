@@ -1,7 +1,10 @@
 // The command line equivalent of the composer. It assumes default configuration
 // and the server's preset definitions, so only deviations are spelled out.
-// Uploads have no local path the page could know, so they stay a placeholder.
+// A browser never tells a page where a chosen file lives (not even on the same
+// machine), so staged files are named relative to the folder that holds them:
+// `./name` for a file, `./folder/` for a picked folder.
 import type { JobOptions, Preset, PresetFeatures } from "../api/types.ts";
+import { relativePath } from "./files.ts";
 import { BUILTIN_PRESETS, featuresOf, type PresetTable } from "./options.ts";
 
 const SAFE = /^(?!~)[A-Za-z0-9_\-./:@%+=,~]+$/;
@@ -21,11 +24,24 @@ function namedPreset(options: JobOptions, preset: Preset | null, table: PresetTa
   return FEATURES.every((key) => options[key] === features[key]) ? features : null;
 }
 
-export function cliCommand(urls: string[], options: JobOptions, table: PresetTable = BUILTIN_PRESETS): string {
+/** Staged files as the command line names them: each file `./name`, a folder's files once as `./folder/`. */
+export function stagedPaths(files: File[]): string[] {
+  const paths: string[] = [];
+  for (const file of files) {
+    const path = relativePath(file);
+    const slash = path.indexOf("/");
+    const name = slash > 0 ? `./${path.slice(0, slash)}/` : `./${path.slice(slash + 1)}`;
+    if (!paths.includes(name)) paths.push(name);
+  }
+  return paths;
+}
+
+/** `inputs`: staged paths (see stagedPaths) and URLs, in that order. */
+export function cliCommand(inputs: string[], options: JobOptions, table: PresetTable = BUILTIN_PRESETS): string {
   const preset = options.preset as Preset | null;
   const named = namedPreset(options, preset, table);
   const features = named ?? { llm: false, ocr: false, alt: false, desc: false, screenshot: false };
-  const words = ["markitai", ...(urls.length ? urls.map(shellQuote) : ["<files-or-urls>"]), "-o", "output/"];
+  const words = ["markitai", ...(inputs.length ? inputs.map(shellQuote) : ["<files-or-urls>"]), "-o", "output/"];
   if (named !== null && preset !== null) words.push("--preset", preset);
   for (const key of FEATURES) {
     const value = options[key];

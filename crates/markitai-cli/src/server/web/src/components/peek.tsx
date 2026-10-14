@@ -14,6 +14,7 @@ import { readFull, storeFull } from "../lib/peek-pref.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { basename, readable } from "../lib/format.ts";
 import { printDocument, type PrintJob } from "../lib/print.ts";
+import { dismissToast, toast } from "../lib/toast.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { ActionMenu, type MenuAction } from "./action-menu.tsx";
 import { CompareView } from "./compare-view.tsx";
@@ -24,6 +25,8 @@ import { MarkdownView, type RenderedState, type Tab } from "./markdown-view.tsx"
 import { PdfExportCard, readFurniture, storeFurniture } from "./pdf-settings.tsx";
 
 export type PeekTab = "details" | "preview" | "compare";
+
+const DOC_TOAST = "document";
 
 const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
@@ -78,7 +81,8 @@ export function Peek(props: PeekProps) {
   const closePdf = useCallback(() => setPdfOpen(false), []);
   useEffect(() => setPdfOpen(false), [item?.key, tools === null]);
   const previewable = item !== null && item.status === "done" && item.output !== null && !item.skipped;
-  const tabs: PeekTab[] = previewable ? (compareAvailable ? ["details", "preview", "compare"] : ["details", "preview"]) : ["details"];
+  // Preview first: a conversion opens on its document; Details is last.
+  const tabs: PeekTab[] = previewable ? (compareAvailable ? ["preview", "compare", "details"] : ["preview", "details"]) : ["details"];
   const tab = tabs.includes(props.tab) ? props.tab : "details";
   const labels: Record<PeekTab, string> = { details: t.peekDetails, preview: t.preview, compare: t.compare };
   const [full, setFull] = useState(readFull);
@@ -354,7 +358,8 @@ function PeekDocument({
 }: PeekProps & { item: SessionItem; mode: "preview" | "compare"; onTools: (tools: DocTools | null) => void; barHost: HTMLElement | null; compactBar: boolean; wantFiles: boolean; onFilesShown: () => void }) {
   const doc = useResultDocument(item);
   const [tab, setTab] = useState<Tab>("rendered");
-  const [error, setError] = useState<string | null>(null);
+  // A failed export or download: an error toast, replaced by the next one.
+  const setError = useCallback((message: string | null) => (message === null ? dismissToast(DOC_TOAST) : toast({ id: DOC_TOAST, tone: "error", text: message })), []);
   const [furniture, setFurniture] = useState(readFurniture);
   const rendered = useRef<RenderedState>({ printable: null, images: null, complete: null });
   const printing = useRef<PrintJob | null>(null);
@@ -425,11 +430,6 @@ function PeekDocument({
 
   return (
     <>
-      {error && (
-        <p class="viewer-alert line-error" role="alert">
-          {error}
-        </p>
-      )}
       {mode === "compare" ? (
         <CompareView t={t} locale={locale} item={item} doc={doc} createdAt={createdAt} describe={describe} phone={phone} />
       ) : (

@@ -432,6 +432,34 @@ export interface OriginalDescriptor {
    *  "too_large"         the stored original exceeds the backend's preview limit (UI still offers the download)
    *  "render_unavailable" this backend build cannot render the format */
   reason: string | null;
+  /** v1.14, URL items: how usable each kept view was when it was captured (absent: not known, shown as usable). */
+  capture?: { page: CaptureQuality | null; screenshot: CaptureQuality | null } | null;
+  /** v1.14: API path of GET …/original/blocks when the screenshots have their page's block boxes; else null. */
+  blocks?: string | null;
+}
+
+/** v1.14: what a kept page or its screenshot showed when it was captured. */
+export interface CaptureQuality {
+  /** "ok" content; "empty" blank or only a request for JavaScript; "challenge" a verification, captcha or login page. */
+  state: "ok" | "empty" | "challenge";
+  /** Characters of visible text, white space runs counted as one (at most 1 000 000). */
+  text_length: number;
+  /** The document's title, trimmed, at most 200 characters; null when it has none. */
+  title: string | null;
+  /** Why it is not "ok", as the backend's classifier names it ("challenge", "verification", "login", "javascript", "blank"); null when ok. */
+  reason: string | null;
+}
+
+/** v1.14 GET …/original/blocks: the page's blocks where the screenshots show them. The screenshots (the
+ * descriptor's `pages`, in order) are the page cut top to bottom; a screenshot `w` pixels wide shows
+ * `w / width` pixels per CSS pixel. */
+export interface ShotBlocks {
+  version: 1;
+  /** CSS pixels of the area the screenshots cover. */
+  width: number;
+  height: number;
+  /** Document order, at most 5000; bbox [x0, y0, x1, y1] in CSS pixels from the page's top-left corner. */
+  blocks: { tag: string; text: string; src?: string; bbox: [number, number, number, number] }[];
 }
 
 /** `GET /api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text`. */

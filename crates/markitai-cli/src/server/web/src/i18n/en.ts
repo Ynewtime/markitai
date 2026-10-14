@@ -26,6 +26,8 @@ export const en = {
   convert: "Convert",
   options: "Options",
   cliAria: "CLI command",
+  cliPathsInfo: "About the file paths",
+  cliPathsNote: "Run it in the folder that holds these files; the browser can't see their full paths.",
   browse: "Upload",
   newConversion: "New conversion",
   uploadFiles: "Upload files",
@@ -542,6 +544,7 @@ export const en = {
   filterByName: "Filter by name",
   filterNotices: "Notices",
   dismiss: "Dismiss",
+  toastDetails: "Details",
   downloadFailedFile: "Download failed",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
   nFiles: (n: number) => (n === 1 ? "1 file" : `${n} files`),
@@ -654,6 +657,15 @@ export const en = {
   originalScreenshot: "Screenshot",
   originalPageTitle: "The page as the server fetched it",
   originalPageNote: "Page as fetched, with the site's pictures and styles; its scripts don't run.",
+  frontLabel: "Front matter",
+  frontTags: (n: number) => plural(n, "1 tag", `${n} tags`),
+  originalShotNote: "Screenshot taken when the page was fetched. Hover a block to find it on the picture.",
+  pageNotKept: (state: "empty" | "challenge" | "ok" | null): string =>
+    state === "challenge"
+      ? "The site showed a verification check instead of the page, so it couldn't be kept as it looked."
+      : state === "empty"
+        ? "The page was blank when it was fetched (the site builds it with scripts), so it couldn't be kept as it looked."
+        : "The page couldn't be kept as it looked.",
   pageOf: (page: number, total: number) => `Page ${page} of ${total}`,
   pageImage: (page: number) => `Page ${page} of the original`,
   pageUnavailable: "This page could not be drawn",
@@ -682,7 +694,6 @@ export const en = {
   accessRefused: "The server refused this tab's token.",
   accessRefusedHint: "Paste a new token.",
   accessExplain: "Paste the token from the link markitai serve printed.",
-  replaceToken: "Paste a token to replace it.",
   signOutTab: "Sign out of this tab",
   signOutTabHint: "Forgets the token in this tab only; the server and other tabs keep it.",
   regenerateTitle: "Regenerate token",
@@ -703,7 +714,6 @@ export const en = {
   copyLink: "Copy link",
   tokenUntilRestart: "Lasts until the server stops; the next start makes a new token.",
   tokenUntilRestartVariable: (variable: string) => `Lasts until the server stops; the next start uses ${variable} again. Change ${variable} to keep a new token.`,
-  useOtherToken: "Use another token",
   done: "Done",
   tokenSaved: "Token saved.",
 

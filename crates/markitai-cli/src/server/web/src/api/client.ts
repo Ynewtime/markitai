@@ -21,6 +21,7 @@ import type {
   ProviderCard,
   ProviderCredentials,
   SettingsView,
+  ShotBlocks,
   UserToken,
 } from "./types.ts";
 
@@ -334,6 +335,8 @@ export const fetchHistory = (items = false) => json<HistoryEntry[]>(items ? "/ap
 const itemPath = (job: string, item: string) => `/api/jobs/${enc(job)}/items/${enc(item)}`;
 export const fetchOriginal = (job: string, item: string) => json<OriginalDescriptor>(`${itemPath(job, item)}/original`);
 export const originalFilePath = (job: string, item: string) => `${itemPath(job, item)}/original/file`;
+/** v1.14: the page's block boxes on its screenshots, at the descriptor's `blocks` path. */
+export const fetchShotBlocks = (path: string) => json<ShotBlocks>(path);
 /** v1.11: one item's files and its original, as a ZIP. */
 export const itemArchivePath = (job: string, item: string) => `${itemPath(job, item)}/archive`;
 export const originalPagePath = (job: string, item: string, page: number, width: number) =>

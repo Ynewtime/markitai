@@ -51,8 +51,41 @@ pub(crate) struct BrowserPage {
     pub final_url: String,
     pub title: String,
     pub screenshots: Vec<Asset>,
+    /// What the page showed when the browser took its screenshots (or its
+    /// compare screenshots); `None` when it took none.
+    pub view: Option<ShotView>,
     pub warnings: Vec<String>,
 }
+
+/// What a page showed in the browser when its screenshots were taken.
+pub(crate) struct ShotView {
+    pub quality: crate::page_capture::CaptureQuality,
+    /// Where the page's blocks were drawn ([`PAGE_BLOCKS`]), sized to the
+    /// area the screenshots cover; `None` when they could not be read.
+    pub blocks: Option<Vec<u8>>,
+    /// Compare screenshots, when the runtime keeps them and no screenshots
+    /// were asked for: JPEG tiles from the page's top.
+    pub compare: Vec<Vec<u8>>,
+}
+
+/// Which screenshots a page load takes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Shots {
+    None,
+    /// The conversion's own screenshots, as `screenshot` configures them.
+    Output,
+    /// Compare screenshots: tiles as [`capture`] makes them, at JPEG quality
+    /// [`COMPARE_QUALITY`] and at most [`COMPARE_TILES`] of them.
+    Compare,
+}
+
+/// The blocks of a page and where they are drawn (workbench contract v1.14),
+/// evaluated as written in the page when its screenshots are taken.
+const PAGE_BLOCKS: &str = include_str!("browser/page_blocks.js");
+const COMPARE_QUALITY: u64 = 70;
+const COMPARE_TILES: u64 = 20;
+/// The longest the page's text and blocks are read for.
+const VIEW_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Executable by someone on Unix; a program or command script on Windows.
 fn executable(path: &Path) -> bool {
@@ -273,11 +306,19 @@ fn filename(url: &Url) -> String {
     format!("{name}{suffix}.full.jpg")
 }
 
+/// Screenshots, and the CSS size of the area they cover from the page's top.
+struct Captured {
+    assets: Vec<Asset>,
+    width: u64,
+    height: u64,
+}
+
 fn capture(
     browser: &mut cdp::Browser,
     options: &options::Options,
     url: &Url,
-) -> Result<Vec<Asset>> {
+    compare: bool,
+) -> Result<Captured> {
     let layout = browser.call("Page.getLayoutMetrics", json!({}))?;
     let size = layout
         .get("cssContentSize")
@@ -291,8 +332,20 @@ fn capture(
     };
     let width = dimension("width")
         .ok_or_else(|| Error::Fetch("Invalid browser screenshot width".into()))?;
-    let height = dimension("height")
+    let mut height = dimension("height")
         .ok_or_else(|| Error::Fetch("Invalid browser screenshot height".into()))?;
+    let quality = if compare {
+        COMPARE_QUALITY
+    } else {
+        options.quality
+    };
+    // Compare screenshots stop after their last tile, or where the page
+    // reaches the pixel limit.
+    if compare && options.tile_height > 0 {
+        height = height
+            .min(options.tile_height * COMPARE_TILES)
+            .min(MAX_SCREENSHOT_PIXELS / width.max(1));
+    }
     if width > 8192
         || height > 100_000
         || width
@@ -318,7 +371,7 @@ fn capture(
     for index in 0..count {
         let top = index * tile_height;
         let tile = (height - top).min(tile_height);
-        let value = browser.call("Page.captureScreenshot", json!({"format":"jpeg","quality":options.quality,"captureBeyondViewport":true,"fromSurface":true,"clip":{"x":0,"y":top,"width":width,"height":tile,"scale":1}}))?;
+        let value = browser.call("Page.captureScreenshot", json!({"format":"jpeg","quality":quality,"captureBeyondViewport":true,"fromSurface":true,"clip":{"x":0,"y":top,"width":width,"height":tile,"scale":1}}))?;
         let encoded = value
             .get("data")
             .and_then(Value::as_str)
@@ -342,7 +395,7 @@ fn capture(
                 image::imageops::FilterType::Lanczos3,
             );
             let mut resized = Vec::new();
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut resized, options.quality as u8)
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut resized, quality as u8)
                 .encode_image(&image)
                 .map_err(|_| Error::Fetch("Cannot resize browser screenshot".into()))?;
             bytes = resized;
@@ -360,7 +413,25 @@ fn capture(
         };
         result.push(Asset { name, bytes });
     }
-    Ok(result)
+    Ok(Captured {
+        assets: result,
+        width,
+        height,
+    })
+}
+
+/// What a reader sees of the page now: its visible text's length in
+/// characters (white space runs as one, at most a million) and its title.
+fn shown_text(browser: &mut cdp::Browser) -> Result<(u64, String)> {
+    let value = browser.evaluate("(() => { const text = ((document.body && document.body.innerText) || '').replace(/\\s+/g, ' ').trim(); let length = 0; for (const _ of text) { if (++length >= 1000000) break; } return { length, title: document.title || '' }; })()")?;
+    Ok((
+        value.get("length").and_then(Value::as_u64).unwrap_or(0),
+        value
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+    ))
 }
 
 fn final_http_url(value: &str) -> Result<Url> {
@@ -398,9 +469,16 @@ pub(crate) fn fetch_with_runtime(
         let configured = std::env::var_os("MARKITAI_BROWSER_EXECUTABLE").map(PathBuf::from);
         Error::Unsupported(missing_browser(configured.as_deref()))
     })?;
+    let shots = if screenshot {
+        Shots::Output
+    } else if runtime.compare_screenshots {
+        Shots::Compare
+    } else {
+        Shots::None
+    };
     let mut lease = runtime.pool.acquire(&executable, &url, cfg, &options)?;
     lease.browser().begin_page(&options)?;
-    let result = fetch_page(source, cfg, screenshot, &url, &options, lease.browser());
+    let result = fetch_page(source, cfg, shots, &url, &options, lease.browser());
     match result {
         Ok(mut response) => {
             if lease.finish().is_err() {
@@ -448,7 +526,7 @@ fn navigation_failure(reason: &Value) -> String {
 fn fetch_page(
     source: &str,
     cfg: &Value,
-    screenshot: bool,
+    shots: Shots,
     url: &Url,
     options: &options::Options,
     browser: &mut cdp::Browser,
@@ -555,10 +633,34 @@ fn fetch_page(
         .to_owned();
     final_http_url(&final_url)?;
     let mut screenshots = Vec::new();
-    if screenshot {
+    let mut compare = Vec::new();
+    // What the page shows as its screenshots are taken: its text, title and
+    // blocks, read in the same state just before.
+    let mut shown = None;
+    if shots != Shots::None {
+        browser.deadline =
+            Instant::now() + VIEW_TIMEOUT.min(Duration::from_millis(options.timeout));
+        let text = shown_text(browser).ok();
+        let blocks = browser.evaluate(PAGE_BLOCKS).ok();
         browser.deadline = Instant::now() + Duration::from_millis(options.timeout);
-        match capture(browser, options, url) {
-            Ok(assets) => screenshots = assets,
+        match capture(browser, options, url, shots == Shots::Compare) {
+            Ok(captured) => {
+                let blocks = blocks.and_then(|blocks| {
+                    crate::page_capture::sized_blocks(blocks, captured.width, captured.height)
+                });
+                shown = Some((text.unwrap_or_default(), blocks));
+                if shots == Shots::Compare {
+                    compare = captured
+                        .assets
+                        .into_iter()
+                        .map(|asset| asset.bytes)
+                        .collect();
+                } else {
+                    screenshots = captured.assets;
+                }
+            }
+            // A compare screenshot that fails is only missing.
+            Err(_) if shots == Shots::Compare => {}
             Err(error)
                 if crate::config::enabled(cfg, "/screenshot/screenshot_only")
                     && !(crate::config::enabled(cfg, "/llm/enabled")
@@ -574,7 +676,7 @@ fn fetch_page(
     browser.deadline = Instant::now() + Duration::from_millis(options.timeout);
     // Flatten open shadow roots only after capture, so the screenshot retains
     // its original styling. Closed roots and browser-internal content stay opaque.
-    let page = browser.evaluate("(() => { const roots=[document], flattened=new WeakSet(); let seen=0; while(roots.length) { const root=roots.pop(); const walker=document.createTreeWalker(root,NodeFilter.SHOW_ELEMENT); const hosts=[]; let node; while((node=walker.nextNode())) { if(++seen>200000) throw new Error('DOM limit'); if(node.shadowRoot && !flattened.has(node)) { flattened.add(node); hosts.push(node); } } for(const host of hosts) { while(host.shadowRoot.firstChild) host.appendChild(host.shadowRoot.firstChild); roots.push(host); } } const html=document.documentElement.outerHTML; if(html.length>52428800) throw new Error('DOM size limit'); return {html,title:document.title}; })()")?;
+    let page = browser.evaluate("(() => { const roots=[document], flattened=new WeakSet(); let seen=0; while(roots.length) { const root=roots.pop(); const walker=document.createTreeWalker(root,NodeFilter.SHOW_ELEMENT); const hosts=[]; let node; while((node=walker.nextNode())) { if(++seen>200000) throw new Error('DOM limit'); if(node.shadowRoot && !flattened.has(node)) { flattened.add(node); hosts.push(node); } } for(const host of hosts) { while(host.shadowRoot.firstChild) host.appendChild(host.shadowRoot.firstChild); roots.push(host); } } const html=(document.doctype?new XMLSerializer().serializeToString(document.doctype):'')+document.documentElement.outerHTML; if(html.length>52428800) throw new Error('DOM size limit'); return {html,title:document.title}; })()")?;
     let html = page
         .get("html")
         .and_then(Value::as_str)
@@ -588,11 +690,24 @@ fn fetch_page(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
+    // The page as the screenshots show it, judged with the markup it had
+    // then (its widgets and site markers).
+    let view = shown.map(|((length, shown_title), blocks)| ShotView {
+        quality: crate::page_capture::classify(
+            Url::parse(&final_url).ok().as_ref(),
+            &html,
+            length,
+            &shown_title,
+        ),
+        blocks,
+        compare,
+    });
     Ok(BrowserResponse::Page(BrowserPage {
         html,
         final_url,
         title,
         screenshots,
+        view,
         warnings,
     }))
 }

@@ -287,26 +287,35 @@ function Excerpt({ ctx, item }: { ctx: InspectorContext; item: SessionItem }) {
   if (!result || !split) return <Skeleton label={t.loading} kind="list" />;
   return (
     <div class="excerpt">
-      {front && <FrontCard front={front} compact />}
+      {front && <FrontCard t={t} front={front} compact />}
       {/* A picture of the result's start: nothing in it is read or reached by the keyboard. */}
       <div ref={body} class="doc-body excerpt-body" aria-hidden="true" inert />
     </div>
   );
 }
 
-export function FrontCard({ front, compact = false }: { front: FrontMatter; compact?: boolean }) {
+/** A document's front matter (title, description, tags) as a card that starts folded to one line:
+ * the title (or the description) and how many tags; a native disclosure, so the keyboard opens it. */
+export function FrontCard({ t, front, compact = false }: { t: Dict; front: FrontMatter; compact?: boolean }) {
   return (
-    <div class={compact ? "front-card is-compact" : "front-card"}>
-      {front.title && <p class="front-title">{front.title}</p>}
-      {front.description && <p class="front-description">{front.description}</p>}
-      {front.tags.length > 0 && (
-        <ul class="front-tags">
-          {front.tags.slice(0, 12).map((tag) => (
-            <li key={tag}>{tag}</li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <details class={compact ? "front-card is-compact" : "front-card"}>
+      <summary>
+        <Icon name="CaretRight" size={12} />
+        <span class="sr-only">{t.frontLabel}: </span>
+        {front.title ? <span class="front-title">{front.title}</span> : <span class="front-line">{front.description}</span>}
+        {front.tags.length > 0 && <span class="front-count">{t.frontTags(front.tags.length)}</span>}
+      </summary>
+      <div class="front-body">
+        {front.description && <p class="front-description">{front.description}</p>}
+        {front.tags.length > 0 && (
+          <ul class="front-tags">
+            {front.tags.slice(0, 12).map((tag) => (
+              <li key={tag}>{tag}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </details>
   );
 }
 

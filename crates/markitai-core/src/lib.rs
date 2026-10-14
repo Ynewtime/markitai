@@ -21,6 +21,7 @@ pub mod output;
 #[doc(hidden)]
 pub mod output_name;
 mod output_profiles;
+pub mod page_capture;
 mod pdf_media;
 mod pdf_raster;
 #[doc(hidden)]
@@ -214,7 +215,30 @@ pub fn convert_with_html_snapshot(
     context: ConvertContext<'_>,
     html_snapshot: &Path,
 ) -> DetailedResult<ConversionOutput> {
-    convert_scoped(source, options, context, None, Some(html_snapshot))
+    let mut capture = page_capture::PageCapture::default();
+    let result = convert_scoped(source, options, context, None, Some(&mut capture));
+    if let Some(html) = &capture.html {
+        keep_html(html_snapshot, html);
+    }
+    result
+}
+
+/// [`convert_with_context_detailed`] that also fills `capture` with what a
+/// URL's page load left for showing the page beside its Markdown: the HTML
+/// its content was converted from (or the DOM of the browser that took its
+/// screenshots), how usable that page and the screenshots were, the page's
+/// block boxes, and compare screenshots when the context's browser runtime
+/// keeps them ([`BrowserRuntime::keeping_compare_screenshots`]). It is
+/// filled as soon as the page is loaded, so it holds the page even when a
+/// later stage fails; nothing is written anywhere.
+#[doc(hidden)]
+pub fn convert_with_page_capture(
+    source: &str,
+    options: ConvertOptions,
+    context: ConvertContext<'_>,
+    capture: &mut page_capture::PageCapture,
+) -> DetailedResult<ConversionOutput> {
+    convert_scoped(source, options, context, None, Some(capture))
 }
 
 fn convert_scoped(
@@ -222,7 +246,7 @@ fn convert_scoped(
     options: ConvertOptions,
     context: ConvertContext<'_>,
     publication: Option<&dyn output::Publication>,
-    html_snapshot: Option<&Path>,
+    capture: Option<&mut page_capture::PageCapture>,
 ) -> DetailedResult<ConversionOutput> {
     let mut scope = None;
     let result = convert_inner(
@@ -232,7 +256,7 @@ fn convert_scoped(
         publication,
         &mut scope,
         None,
-        html_snapshot,
+        capture,
     );
     result.map_err(|error| ConversionFailure {
         error,
@@ -250,7 +274,7 @@ fn convert_inner(
     publication: Option<&dyn output::Publication>,
     document_scope: &mut Option<llm::DocumentScope>,
     mut prepared: Option<&mut output::PreparedOutput>,
-    html_snapshot: Option<&Path>,
+    capture: Option<&mut page_capture::PageCapture>,
 ) -> Result<ConversionOutput> {
     let start = Instant::now();
     if source.trim().is_empty() {
@@ -454,8 +478,17 @@ fn convert_inner(
         screenshots = fetched.screenshots;
         match fetched.content {
             fetch::FetchContent::Document(document) => {
-                if let (Some(path), Some(html)) = (html_snapshot, &fetched.html) {
-                    keep_html(path, html);
+                if let Some(capture) = capture {
+                    if let Some(html) = fetched.html {
+                        let url = fetched.html_url.as_deref().unwrap_or(source);
+                        capture.page = Some(page_capture::page_quality(url, &html));
+                        capture.html = Some(html);
+                    }
+                    if let Some(view) = fetched.view {
+                        capture.screenshot = Some(view.quality);
+                        capture.blocks = view.blocks;
+                        capture.compare_shots = view.compare;
+                    }
                 }
                 document
             }

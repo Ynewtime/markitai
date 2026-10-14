@@ -35,6 +35,10 @@ taps across 44 px.
 (Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
 to six rows), Options, Upload (files) and Folder on the left, Convert on the
 right, and the options drawer, which ends with the equivalent CLI command line.
+Files and folders waiting for Convert appear in it relative to the folder that
+holds them (`./notes.pdf`, a picked folder as `./Field trip/`, quoted for the
+shell), with an (i) beside Copy: run it in that folder, since a browser never
+tells a page where a chosen file lives.
 On a phone the composer is lighter: the tools are bare 32 px icons (each keeps
 its name for assistive technology and as a tooltip) and Convert is a square arrow.
 The latest three submissions follow, each one click from its details. Files
@@ -91,8 +95,10 @@ files wait on Convert); typing URLs is Convert's job.
   long name gives up its middle at about 34 characters and shows in full on
   hover), the actions that matter (Download, which opens Preview's Files; Retry,
   Add a model or Enable OCR and retry when that is the fix) and "⋯" (Enhance
-  with LLM, Run again, Retry without LLM, Delete), then Details, Preview and
-  Compare as tabs. The expand button (or F) grows the window to the whole
+  with LLM, Run again, Retry without LLM, Delete), then Preview, Compare and
+  Details as tabs; a conversion opens on Preview (a submission, or a
+  conversion without a result, on Details; `?view=details` is Details' own
+  address). The expand button (or F) grows the window to the whole
   viewport and back, remembered in this browser. Up and Down (outside the
   scrolling document) move between items, C switches Compare, Escape, ✕ or a
   click on the dimmed list closes it and returns to the row. (The docked
@@ -119,7 +125,7 @@ files wait on Convert); typing URLs is Convert's job.
   price and links to how to add one, and other warnings group by their wording
   with a count. Each keeps its full original text behind Details.
 
-**Preview** is the window's second tab; its "⋯" adds Copy and Export PDF…,
+**Preview** is the window's first tab; its "⋯" adds Copy and Export PDF…,
 which opens a small card with the one choice it asks (Markitai's own header and
 footer, explained under it) and Print…, and Open the page for a URL (on Compare
 the page opens from the Original header instead, so it is offered once). **Files** lists the original first (the upload, or the page as the server
@@ -130,13 +136,17 @@ submission's job instead, without the original, and offer nothing for an item of
 a larger submission). The window has one fixed
 height, so the tabs never move it: Rendered, Source, Diff (only for an exact base/LLM pair) and
 Files, with the contents button and the Base | LLM switch beside them, sit at the
-end of the window's own tab row (Details, Preview, Compare), so the window has one
+end of the window's own tab row (Preview, Compare, Details), so the window has one
 tab row. Where they do not fit (a phone) they become one button naming the view
 and version on screen, whose menu holds the views and versions. Each keeps its reading
-column (820 px at most) centred in the window. Rendered starts with
-the conversion's notices (collapsed to one line) and a front-matter card (title,
-description, tags; no title when the document opens with the same `#` heading,
-and no card when nothing else is left). Tables over 500 rows show their first 500 rows under a
+column centred in the window: 820 px, wider as the window grows (56 % of its
+width, at most 1120 px), and a table takes up to 200 px more on each side when its
+cells need it. Rendered starts with
+the conversion's notices (collapsed to one line) and a front-matter card folded to
+one line (its title, or its description, and how many tags; open it with a click
+or the keyboard for the description and tags; no title when the document opens
+with the same `#` heading, and no card when nothing else is left); Compare and
+the Details excerpt fold it the same way. Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
 showing all of them adds the rest in steps of 1,000 so the page keeps answering,
 and the download and Source always hold every row. Numeric columns align right
@@ -155,11 +165,16 @@ Base and LLM), with its scroll position. Source is built the first time it is
 opened, in blocks the browser also skips off screen. Diff compares the two
 versions line by line (Myers' algorithm, bounded so a document changed
 everywhere is refused rather than freezing the page) and folds unchanged
-stretches into "Show N unchanged lines". A document with four or more headings
+stretches into "Show N unchanged lines". On a wide window the versions sit side
+by side (base left, LLM right, each with its line numbers), a change's removed
+and added lines face each other and the words that changed between them are
+marked; a narrow window shows one column of changes. In Diff the Base | LLM
+switch shows both on (it compares both); choosing one shows that version. A document with four or more headings
 gets its **contents**: its top three heading levels (a lone title does not count
 as a level; each entry is the heading's plain words, without inline HTML tags or
-private-use glyphs, on two lines at most) beside the document on a wide window, marking the section being
-read as it scrolls; a click goes to the heading. The contents button beside
+private-use glyphs, on two lines at most) beside the document on a wide window, marking the
+heading at the top of the reading area as it scrolls; a click goes to the heading
+and marks it until the reader scrolls (pictures loading below it do not move the mark). The contents button beside
 Base | LLM hides or shows them (remembered in this browser); on a phone or a
 narrow window a round button over the document's corner opens them as a sheet.
 Export PDF waits for the whole document and every picture before it prints.
@@ -167,17 +182,29 @@ Export PDF waits for the whole document and every picture before it prints.
 **Compare** puts the original beside the Markdown: a PDF's pages (drawn by the
 server, loaded as they scroll into view), an uploaded image, an uploaded HTML
 file (sanitized: no scripts, styles, frames, forms, links or remote images), a
-text file, or the page screenshots a conversion saved. A web page opens on its
-screenshot when the conversion took one (it looks exactly like the page); Page
-shows the page as the server fetched it, in a sandboxed frame served by the
+text file, or the page screenshots a conversion saved. A web page shows the page
+the server kept, else its screenshot, with Screenshot | Page when both are
+usable: the server says when either was a verification or captcha page, or blank
+(a page its site builds with scripts), and such a view is not offered; with
+neither, the Original side says why the page could not be kept as it looked and
+offers Open the page. A server that loads a page in its browser keeps a
+screenshot of it even when none was asked for (the Rust server: JPEG tiles, about
+85–230 KB per 2000 px of page, at most 20 tiles, beside the job, never in the
+result). Page shows the page as the server fetched it, in a sandboxed frame served by the
 item's own route, with the site's own pictures, style sheets and fonts (over
 HTTPS) but none of its scripts and no form, so nothing in it can reach the
 workbench (links open in a new tab). The frame keeps the server's origin, so
 the workbench can read the page it shows; its policy still refuses every script,
 inline handler and `javascript:` URL (see [serve](serve.md#originals-for-compare)).
 Its blocks pair with the Markdown's by their words (headings, paragraphs, list
-items, code, table cells and captions, in order; pictures by address), and the
-outline is a style the workbench adds to the frame. Open the page sits in the
+items, code, table cells and captions, in order; pictures by address, else the
+page's picture between the blocks paired around it), and the outline is a style
+the workbench adds to the frame. The workbench reads the page as soon as it is
+parsed (a page without scripts loads all its pictures at once, which can take
+long) and follows the pointer over it by the page's own hover state (Safari runs
+no handler in a page that may run no script). Screenshot links the same blocks
+where the browser drew them when it took the screenshot (servers that record the
+boxes, contract v1.14), outlined on the picture. Open the page sits in the
 Original header, with an (i) that says what the frame shows; a web page's
 header has no download button (the kept page is in Files). Live frames of the real address are not used: most sites
 refuse them. Hovering a heading, table, paragraph, list item, code block or
@@ -187,7 +214,9 @@ draws pictures (when the page draws as many as the Markdown places on it, and
 the server reports them); a framed web page pairs by words as above (a backend
 whose frame policy is still opaque shows the page without outlines); an
 uploaded HTML original pairs its headings and tables, a text
-file its headings. An original that cannot be shown (a DOCX, a page the server did not
+file its headings. A block the original side cannot show (nothing pairs it, or the
+side shows a screenshot without boxes or nothing) is not outlined, and the
+outline never moves the text. An original that cannot be shown (a DOCX, a page the server did not
 keep) says why and offers its download.
 
 **On phones** the window fills the screen, over the tab bar: back, previous and
@@ -206,14 +235,17 @@ keeps its title, New conversion and "⋯" on one row (the two buttons go below
 the title when they do not fit), the status sentence below, and Stop remaining
 on a row of its own.
 
-**Notices** are transient: minimal strips at the bottom, on a phone full width
-directly above the tab bar (or at the screen's edge under the window), on a wide screen a
-380 px stack 24 px from the bottom-right corner. Newest at the bottom, at most
-three (a fourth removes the oldest). Each is one sentence on one line with a mark
-(✕ error, ! warning, ✓ done) and at most one text action (Retry, View, Cancel,
-Enter token); square, on the surface colour with hairlines, no close button. Done
-and warning strips leave after 4 s, errors after 6 s, never while pressed, hovered
-or focused; a swipe down dismisses one. An upload in progress is a strip with
+**Notices** are transient: every one in the workbench (a model test, a saved
+configuration, a failed download or action, a copied link, a retry) is a toast
+card at the bottom, on a wide screen in a 380 px stack 24 px from the
+bottom-right corner, on a phone centred directly above the tab bar (or the
+selection bar); fixed, so nothing on the page moves. Newest at the bottom, at most
+three (a fourth removes the oldest). Each has a mark (✕ error, ! warning, ✓ done),
+its sentence (a short lead in bold when it has one), at most one text action
+(Retry, View, Cancel, Enter token), the service's own wording folded under Details
+when there is any, and a close button. Done and warning toasts leave after 5 s,
+never while pressed, hovered or focused; errors stay until closed; a swipe down
+dismisses one. An upload in progress is a toast with
 Cancel until it ends. Screen readers hear every notice (errors at once, others
 politely). Lasting conditions are not notices: a conversion that ran without a
 model or whose history could not be saved says so in its window's Details, and a list
@@ -231,7 +263,7 @@ and an unknown address. Alone on a page the panel is 480 px wide; in a column
 column's width.
 
 **Settings** are pages. Models lists the configured models (Test, Edit, Delete;
-a failed test says why, under the model and at the top of the page: no API key,
+a test's result is a toast, and a failed test says why, under the model and in its toast: no API key,
 naming the server's key variable when it is not set, key rejected, model not
 found, rate limited or out of quota, provider unreachable, no answer in time, or
 a provider error, with what to do and the provider's own message folded below),
@@ -257,10 +289,11 @@ connection offers no Add key; a key a config entry still holds can be removed).
 A saved subscription offers no key or address. Bedrock keeps its optional key
 and address. A backend that sends
 no provider `group` gets the common eight by name and everything else under All. Appearance (its page is titled Appearance and language, first in the list) chooses English, 中文 or 日本語 and the
-theme (Auto, Light, Dark); for a user token it also says which token the tab uses, with Use another token and Sign out. Edit config (admin) shows the configuration file the Models page names as its source, on the terminal surface: secrets masked (a masked value left where it is keeps the stored secret), the JSON checked as it is typed with the line and column of a mistake, Review changes as a line diff, then Save config, sent with the revision the edit started from and with the file's own line endings (CRLF on Windows; a byte order mark kept): Review shows only real changes, an unchanged line is saved byte for byte, a new line gets the file's ending, and a file that mixes endings says so, keeps each line's own and gives new lines the most common one (a file changed meanwhile offers Load current file; a configuration the server cannot use is refused with its reason). The model list applies at once; other settings after a restart, which the page says. Access token says whether this tab is signed in
-(with Sign out of this tab beside it, which forgets the token here only),
-Regenerate token (below), and Use another token, one field with Save; a token is
-kept in this tab only.
+theme (Auto, Light, Dark); for a user token it also says which token the tab uses, with Sign out (another token signs in from the sign-in screen that follows). Edit config (admin) shows the configuration file the Models page names as its source, on the terminal surface: secrets masked (a masked value left where it is keeps the stored secret), the JSON checked as it is typed with the line and column of a mistake, Review changes as a line diff, then Save config, sent with the revision the edit started from and with the file's own line endings (CRLF on Windows; a byte order mark kept): Review shows only real changes, an unchanged line is saved byte for byte, a new line gets the file's ending, and a file that mixes endings says so, keeps each line's own and gives new lines the most common one (a file changed meanwhile offers Load current file; a configuration the server cannot use is refused with its reason). The model list applies at once; other settings after a restart, which the page says. Access token says whether this tab is signed in
+(with Sign out of this tab beside it, which forgets the token here only and
+opens the sign-in screen: switching tokens is Sign out, then sign in), and
+Regenerate token (below); a token is kept in this tab only. Only a refused or
+missing token shows a token field here.
 
 In **Add models** a provider appears once among the saved rows: the server's
 key for it (`Using OPENAI_API_KEY`) and its connection at its own endpoint are
@@ -296,15 +329,13 @@ error), with the provider's message folded.
   Provider probe and discovery phrases are translated the same way. A job whose
   history could not be saved (`persistence_error`) reports it in the page.
 - **A failed action on one conversion** (Retry, Delete, Download, Enhance, Copy;
-  for a submission Retry failed, Stop, ZIP and Delete) adds one line at the top of
-  its window (under the header, on every tab), in the style of the conversion's own
-  failure reason: a red ✕, one sentence, Full details. It stays until the action
-  is tried again or another conversion is chosen, the polite live region reads
-  it, and no page notice is shown for it.
+  for a submission Retry failed, Stop, ZIP and Delete) is an error toast: a red ✕,
+  one sentence, the service's wording under Details. It stays until it is closed
+  or the action is tried again, and the alert live region reads it.
 - **Offline**: no banner. A list that cannot be loaded shows the Can't reach the
   server panel with Try now, and an action that cannot reach the service says so
-  in its conversion's window. The page asks again every five seconds and,
-  when the service is back, shows a ✓ strip and refreshes capabilities, the list
+  in its toast. The page asks again every five seconds and,
+  when the service is back, shows a ✓ toast and refreshes capabilities, the list
   and the session. A broken event stream
   triggers the same check and, once closed, reconciles the job from its
   snapshot.
@@ -405,9 +436,10 @@ URL the page requests or shows carries it:
   policy allows `frame-src 'self'` for it).
 
 A 401 shows the Access token needed panel in place of the conversions (and a
-refused submission a strip), both with Enter token; it opens a small dialog that
+refused submission a toast), both with Enter token; it opens a small dialog that
 stores a typed token for the tab. Settings → Access token shows
-whether the tab is signed in, signs this tab out, or takes another token.
+whether the tab is signed in and signs this tab out (another token then signs in
+from the sign-in screen).
 **Regenerate token** (on servers that offer it) asks first, then replaces the
 server's token: every other tab and device is signed out at once (open event
 streams end, unused download tickets stop working) and must sign in again,
@@ -424,7 +456,8 @@ routes, and sees only its own conversions (see
 [access levels](serve.md#access-levels-and-user-tokens)).
 Access token (admin) lists them (name, the token's last four characters,
 created or last used, Revoke with a confirmation) and creates one from a name,
-showing it once with Copy, a sign-in link and its QR code. A user token sees
+showing it once with Copy, a sign-in link and its QR code; it joins the list after
+Done (at the right). A user token sees
 Appearance only among the settings (an admin page says "Admin token needed"),
 and actions that would open Models (Add a model) are not offered to it.
 After a server restart that generates a new token, reopen its new launch link
