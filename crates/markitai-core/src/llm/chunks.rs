@@ -309,7 +309,7 @@ impl Protected {
         let actual = tokens(answer);
         if expected != actual {
             return Err(Error::Conversion(
-                "LLM changed, removed, duplicated or reordered a protected document marker".into(),
+                "the model's answer changed, dropped, repeated or moved a part of the document that must stay exactly as it is (a protected document marker for code, a link, an image or a page), so it was not used".into(),
             ));
         }
         Ok(())
@@ -324,7 +324,7 @@ impl Protected {
             let core = squash(&literal_core(literal));
             if core.chars().count() >= 32 && haystack.contains(&core) {
                 return Err(Error::Conversion(
-                    "LLM answer re-creates content a protected marker already stands for".into(),
+                    "the model's answer wrote out again a part of the document that is kept exactly as it is (code, a link, an image), which would have doubled it, so it was not used".into(),
                 ));
             }
         }

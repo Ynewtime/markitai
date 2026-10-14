@@ -156,9 +156,13 @@ fn assert_read_as_a_scan(pages: &PdfPages, document: &crate::Document) {
             .iter()
             .any(|warning| warning.contains("contains invisible text rendering mode"))
     );
-    assert!(document.warnings.iter().any(|warning| {
-        warning.starts_with("PDF page 1: native text was not recovered (invisible_text_layer)")
-    }));
+    assert!(
+        document.warnings.iter().any(|warning| {
+            warning.starts_with("PDF is scanned: 1 of 1 page has no readable text (page 1)")
+        }),
+        "{:?}",
+        document.warnings
+    );
     assert!(!document.metadata.contains_key("ocr_layer_pages"));
 }
 
@@ -336,7 +340,7 @@ fn pages_checked_alike_share_one_warning_and_other_pages_keep_their_reading() {
         .filter(|warning| warning.contains("OCR text layer"))
         .collect();
     assert_eq!(layer_warnings.len(), 1, "{layer_warnings:?}");
-    assert!(layer_warnings[0].starts_with("PDF pages 1, 3-4: the text was read from the invisible OCR text layer laid over each page image;"));
+    assert!(layer_warnings[0].starts_with("PDF pages 1, 3–4: the text was read from the invisible OCR text layer laid over each page image;"));
     assert_eq!(
         document.metadata["ocr_layer_pages"],
         serde_json::json!([1, 3, 4])

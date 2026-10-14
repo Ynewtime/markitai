@@ -118,11 +118,19 @@ fn typed_pages_keep_body_metadata_asset_deduplication_and_default_markers() {
     );
     assert_eq!(document.assets.len(), 1);
     assert_eq!(document.warnings.last().unwrap(), LIMITATION);
-    assert!(
+    // One warning for the pages of one reason, as ranges, out of the
+    // document's pages.
+    assert_eq!(
         document
             .warnings
             .iter()
-            .any(|warning| warning.starts_with("PDF page 2: native text was not recovered"))
+            .filter(|warning| warning.contains("native text was not recovered"))
+            .collect::<Vec<_>>(),
+        [
+            "PDF pages 2–4 (3 of 4): native text was not recovered (empty native text extraction); OCR is required to read them. Run again with --ocr."
+        ],
+        "{:?}",
+        document.warnings
     );
 }
 
@@ -143,7 +151,12 @@ fn blank_and_unextractable_image_pages_are_available_before_default_finish_fails
         );
         let message = pages.finish().unwrap_err().to_string();
         assert!(message.contains("no reliable native text or extractable images"));
-        assert!(message.contains("PDF page 1: native text was not recovered"));
+        // A document whose every page needs OCR is said to be scanned.
+        assert!(
+            message.contains("PDF is scanned: 1 of 1 page has no readable text (page 1); run again with --ocr to read it."),
+            "{message}"
+        );
+        assert!(!message.contains("native text was not recovered"));
         assert!(!message.contains(LIMITATION));
         assert_eq!(extract(&bytes).unwrap_err().to_string(), message);
     }
@@ -203,7 +216,9 @@ fn recovering_one_page_retains_native_body_and_inspection_warning_order() {
     let missing_warning = document
         .warnings
         .iter()
-        .position(|warning| warning.starts_with("PDF page 3: native text was not recovered"))
+        .position(|warning| {
+            warning == "PDF page 3 (1 of 3): native text was not recovered (empty native text extraction); OCR is required to read it. Run again with --ocr."
+        })
         .unwrap();
     let caller_warning = document
         .warnings
@@ -249,22 +264,29 @@ fn only_a_pdf_with_extracted_images_warns_about_their_placement() {
 fn default_missing_warning_precedes_inspection_failure_and_shared_image_is_not_retried() {
     let (bytes, _) = fixture(&[text(NATIVE), "/Im Do".into(), "/Im Do".into()], true);
     let document = extract(&bytes).unwrap();
-    let second = document
+    // The pages of one reason share one warning, where the first of them
+    // stands: before the inspection warning of page 2's image.
+    let missing = document
         .warnings
         .iter()
-        .position(|warning| warning.starts_with("PDF page 2: native text was not recovered"))
+        .position(|warning| {
+            warning == "PDF pages 2–3 (2 of 3): native text was not recovered (empty native text extraction); OCR is required to read them. Run again with --ocr."
+        })
         .unwrap();
     let image = document
         .warnings
         .iter()
         .position(|warning| warning.contains("was not extracted"))
         .unwrap();
-    let third = document
-        .warnings
-        .iter()
-        .position(|warning| warning.starts_with("PDF page 3: native text was not recovered"))
-        .unwrap();
-    assert!(second < image && image < third);
+    assert!(missing < image, "{:?}", document.warnings);
+    assert_eq!(
+        document
+            .warnings
+            .iter()
+            .filter(|warning| warning.contains("native text was not recovered"))
+            .count(),
+        1
+    );
     assert_eq!(
         document
             .warnings

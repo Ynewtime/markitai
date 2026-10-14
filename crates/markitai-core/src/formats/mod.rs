@@ -28,6 +28,31 @@ use crate::{Document, Error, Result};
 use std::collections::HashSet;
 use std::path::Path;
 
+/// Page numbers as a person writes them: ascending, each run of consecutive
+/// pages as a range with an en dash (`1–12, 15, 20–31`).
+pub(crate) fn page_ranges(pages: &[usize]) -> String {
+    let mut sorted = pages.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for page in sorted {
+        match runs.last_mut() {
+            Some((_, end)) if *end + 1 == page => *end = page,
+            _ => runs.push((page, page)),
+        }
+    }
+    runs.iter()
+        .map(|&(start, end)| {
+            if start == end {
+                start.to_string()
+            } else {
+                format!("{start}–{end}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub(crate) fn extract_pdf_with_config(bytes: &[u8], cfg: &serde_json::Value) -> Result<Document> {
     native::pdf::extract_with_config(bytes, cfg)
 }
@@ -97,6 +122,16 @@ pub fn unsupported_format_message(extension: &str) -> String {
 
 #[cfg(test)]
 mod extension_tests {
+    #[test]
+    fn page_ranges_are_ascending_runs_with_an_en_dash() {
+        use super::page_ranges;
+        assert_eq!(page_ranges(&[1, 2, 3, 5, 7, 8, 9]), "1–3, 5, 7–9");
+        assert_eq!(page_ranges(&[20, 4, 3, 5, 4, 1]), "1, 3–5, 20");
+        assert_eq!(page_ranges(&[4]), "4");
+        assert_eq!(page_ranges(&[7, 8]), "7–8");
+        assert_eq!(page_ranges(&[]), "");
+    }
+
     use super::*;
 
     #[test]

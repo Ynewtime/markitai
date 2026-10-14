@@ -271,3 +271,17 @@ fn malformed_model_and_duplicate_object_ids_fail_before_high_level_decode() {
             .contains("duplicate IWA")
     );
 }
+
+#[test]
+fn a_cell_s_line_breaks_are_one_br_each_and_none_at_its_edges() {
+    let mut markdown = String::new();
+    escaped(
+        &mut markdown,
+        "\nBring gloves\r\n\r\nand a trowel\u{2028}| <br>\n",
+        false,
+    );
+    assert_eq!(markdown, "Bring gloves<br>and a trowel<br>\\| &lt;br&gt;");
+    let mut html = String::new();
+    escaped(&mut html, "a\u{2029}\u{0b}b", true);
+    assert_eq!(html, "a<br>b");
+}

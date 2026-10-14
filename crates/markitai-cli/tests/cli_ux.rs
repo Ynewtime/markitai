@@ -364,7 +364,7 @@ mod terminal {
         // and the summary are never glued to a status line.
         let tail = text.rsplit("\u{1b}[K").next().unwrap();
         assert!(
-            tail.starts_with("  \u{1b}[33m!\u{1b}[0m zz-pages.pdf: PDF pages 2-3: "),
+            tail.starts_with("  \u{1b}[33m!\u{1b}[0m zz-pages.pdf: PDF pages 2–3 (2 of 4): "),
             "{tail:?}"
         );
         assert!(
@@ -420,20 +420,26 @@ fn pages_that_need_ocr_become_one_warning_that_names_the_ranges_and_the_flag() {
         .collect();
     assert_eq!(warnings.len(), 1, "{text}");
     assert!(
-        warnings[0].starts_with("  ! PDF pages 2-3, 5-6: native text was not recovered ("),
+        warnings[0].starts_with("  ! PDF pages 2–3, 5–6 (4 of 6): native text was not recovered ("),
         "{text}"
     );
     assert!(warnings[0].contains("--ocr"), "{text}");
-    // The report keeps every page; only the terminal is condensed.
+    // The report keeps every page too, in the same one warning (the converter
+    // writes it so for every caller).
     let json = setup.run(&["scan.pdf", "-o", "again", "--json"]);
     let body: Value = serde_json::from_slice(&json.stdout).unwrap();
     let per_page = body["items"][0]["warnings"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|warning| warning.as_str().unwrap().starts_with("PDF page "))
+        .filter(|warning| {
+            warning
+                .as_str()
+                .unwrap()
+                .starts_with("PDF pages 2–3, 5–6 (4 of 6): ")
+        })
         .count();
-    assert_eq!(per_page, 4, "{body}");
+    assert_eq!(per_page, 1, "{body}");
     // In a batch the same holds per document.
     setup.write("many/a.pdf", pdf(&["x", "", "y", "", ""]));
     setup.write("many/b.pdf", pdf(&["Text", "", "", ""]));
@@ -446,11 +452,11 @@ fn pages_that_need_ocr_become_one_warning_that_names_the_ranges_and_the_flag() {
         .collect();
     assert_eq!(warnings.len(), 2, "{text}");
     assert!(
-        warnings[0].starts_with("  ! a.pdf: PDF pages 2, 4-5: "),
+        warnings[0].starts_with("  ! a.pdf: PDF pages 2, 4–5 (3 of 5): "),
         "{text}"
     );
     assert!(
-        warnings[1].starts_with("  ! b.pdf: PDF pages 2-4: "),
+        warnings[1].starts_with("  ! b.pdf: PDF pages 2–4 (3 of 4): "),
         "{text}"
     );
     assert!(!text.contains("PDF page 2:"), "{text}");

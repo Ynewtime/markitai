@@ -278,13 +278,14 @@ fn restore(answer: &str, mapping: &[(String, String)]) -> Result<String> {
             .iter()
             .find(|(placeholder, _)| placeholder == found.as_str())
             .ok_or_else(|| {
-                Error::Conversion("LLM answer contains a placeholder that was never sent".into())
+                Error::Conversion("the model's answer marks an image, page or slide the document does not have, so it was not used".into())
             })?;
         *seen.entry(known.0.as_str()).or_default() += 1;
     }
     if seen.values().any(|count| *count > 1) {
         return Err(Error::Conversion(
-            "LLM answer repeats a protected placeholder".into(),
+            "the model's answer repeats the mark of an image, page or slide, so it was not used"
+                .into(),
         ));
     }
     let lost = mapping
@@ -295,7 +296,8 @@ fn restore(answer: &str, mapping: &[(String, String)]) -> Result<String> {
         .count();
     if lost > 0 {
         return Err(Error::Conversion(format!(
-            "LLM answer dropped {lost} protected image, page or slide placeholder(s)"
+            "the model's answer dropped {lost} protected image, page or slide placeholder{} (the mark where it stands), so it was not used",
+            if lost == 1 { "" } else { "s" }
         )));
     }
     let mut result = text;

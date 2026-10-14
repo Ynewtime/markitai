@@ -294,9 +294,10 @@ pub(crate) fn process_vision_with_runtime(
         .collect::<Result<Vec<_>>>()?
         .join("\n\n");
     if markdown.trim().is_empty() {
-        return Err(
-            Error::Conversion("Visual processing produced an empty document".into()).into(),
-        );
+        return Err(Error::Conversion(
+            "the model's reading of the page images was empty, so it was not used".into(),
+        )
+        .into());
     }
     warnings.extend(take_document_warnings());
     warnings.sort();

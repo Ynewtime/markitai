@@ -44,6 +44,8 @@
 - `markitai serve` 可在页面中显示条目自己提取出的图片：`GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}` 只发送该条目结果所列的 PNG、JPEG、GIF、WebP 或 AVIF，以内联方式并在沙箱中发送，带 `ETag`（`If-None-Match` 匹配时返回 304）；其他文件、别的条目的图片或越出任务目录的路径一律 404 `file_not_found`。能力接口以 `features.item_assets` 声明。工作台的预览图片改由此路由读取，检查器的「结果开头」现在也显示图片（此前每张图都显示为「[图片：无法预览]」）；文件夹对不上的图片引用（电子书自带的 `../Images/x.png`、模型改写的 `assets/x.png`）按文件名对应到该条目唯一同名的图片。
 
 ### 变更
+- PDF 中没有可读文字的页面按原因各合并为一条警告，用页码范围列出并给出占全文的页数（`PDF pages 3–5, 9 (4 of 120): native text was not recovered (scanned); OCR is required to read them. Run again with --ocr.`）；九成及以上页面没有文字的 PDF 只给一条警告，说明它是扫描件（`PDF is scanned: 488 of 491 pages have no readable text (pages 1–480, 483–490); run again with --ocr to read them.`），报告、`--json` 和服务中不再逐页一条。
+- 安全检查拒绝了模型回答时，警告用平实的话说明：`LLM enhancement failed: the model's answer left out or changed too much of the document, so it was not used; the converted Markdown is kept as it was.`（其他检查同理）。
 - 工作台的「对照」优先显示保留的网页，其次是截图；只有两者都可用时才显示「截图 | 网页」切换；抓取时是验证页或空白的网页或截图不再提供，二者都不可用时，原件一侧说明原因并提供「打开网页」。原件一侧无法显示的段落不再加框。
 - 工作台的「对比」在宽窗口中左右并排（Base 与 LLM 版本各有行号，同一处改动的行相对，改动的词语高亮）；窄窗口仍为单列。在「对比」中 Base | LLM 切换保留，并同时处于选中状态。
 - 工作台的通知改为底部的提示卡片（宽屏在右下角，手机在标签栏上方居中），不会推动页面，带关闭按钮和可折叠的详细信息；错误提示保留到手动关闭。模型测试、保存配置和操作失败都改用提示卡片，不再在页面或窗口顶部插入一行。
@@ -92,6 +94,7 @@
 - 工作台在「全部转换」列表之上用一个窗口打开转换：「详情」「预览」「对照」为标签页，带上一项/下一项及位置、「下载」（或修复操作：重试、添加模型、启用 OCR）和收纳其余操作的「⋯」，取代停靠在列表旁的检查器和单独的预览；手机上窗口铺满屏幕，取代底部抽屉和全屏预览。列表中方向键只移动，单击、Enter 或空格才打开；「汇总」打开全部条目的概览。「全部转换」页的输入行改为「新建转换」（拖入文件仍会转换；文件夹或多个文件在「转换」页等待）。控件统一为更小的尺寸（按钮 28 px、文字 13 px，手机 36 px，每个区域只有一个实心按钮，其余进「⋯」），所有选择都用同一种分段样式；「上传 ▾」改为「上传」和「文件夹」；手机上可复制和导出 PDF；手机上的短文字操作点击区域达到 44 px；设置页的主要操作（加载模型、保存）固定在底栏；宽窗口下每个页面都是居中的一栏。
 
 ### 修复
+- 表格单元格内的换行一律写成 `<br>`：所有表格输出（电子表格中 Alt+Enter 产生的换行、Word、OpenDocument、RTF、EPUB、HTML、PowerPoint、Numbers、CSV 与 TSV、reStructuredText、Org 和 LaTeX）都用一个 `<br>` 连接单元格的各行，并把垂直制表符、U+0085 以及 Unicode 行分隔符和段落分隔符视为换行；以前行内的原始分隔符会让 Markdown 渲染器提前结束表格，把其余部分连成一个段落。连续多个换行只写一个 `<br>`，单元格首尾不写，原文中作为文字出现的 `<br>` 仍是文字。
 - 工作台的「对照」在 Safari 和慢速网络下也能关联网页段落：此前只在框架的 load 事件后才建立关联，而不运行脚本的网页会一次加载全部图片（延迟加载需要脚本），该事件来得很晚甚至不来；Safari 也不会在这种网页中运行工作台添加的处理函数。现在网页一解析完就读取，并通过网页自身的悬停状态跟踪指针。Markdown 中以下载副本引用的图片，会与网页中位于前后已关联段落之间的图片对应。从浏览器保存的网页保留其 doctype，框架不再以怪异模式排版（该模式下悬停只能识别链接）；无法加载的图片通过其占位文字保持关联。
 - 在工作台「对照」中悬停段落不再使文字上下跳动：加框时保留了绘制分块的布局约束。目录在点击后标记被点击的条目（其下方图片加载会把标记移到下一个标题），滚动时标记阅读区顶部的标题。
 - EPUB 的元数据写入 front matter，不再作为正文开头的粗体 `**Title:** … **Authors:** …` 块：`authors`（全部作者，列表）、`language`、`publisher`、`date` 与 `description`，均为纯文本（Calibre 简介中转义的 HTML 按文本读取，Calibre 表示“无日期”的 `0101-01-01` 不写，午夜时间戳写作日期），键与取值与 Python markitai 1.2.1 一致；不再写入标识符。增强输出保留这些字段，`description` 为模型摘要。front matter 的键按参考实现的顺序排列（`title`、`source`、`author`、`authors`、`language`、`publisher`、`date`、`site`、`published`、`canonical_url`、`description`、`tags`……）。

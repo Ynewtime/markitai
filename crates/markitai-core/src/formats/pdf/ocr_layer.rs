@@ -563,27 +563,6 @@ pub(super) fn producer(pdf: &lopdf::Document) -> Option<String> {
     })
 }
 
-/// Page numbers as ranges: `1-3, 5, 7-9`.
-pub(super) fn ranges(pages: &[usize]) -> String {
-    let mut runs: Vec<(usize, usize)> = Vec::new();
-    for &page in pages {
-        match runs.last_mut() {
-            Some((_, end)) if *end + 1 == page => *end = page,
-            _ => runs.push((page, page)),
-        }
-    }
-    runs.iter()
-        .map(|&(start, end)| {
-            if start == end {
-                start.to_string()
-            } else {
-                format!("{start}-{end}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// The warning for the pages whose text is their OCR layer, checked alike.
 pub(super) fn warning(pages: &[usize], check: LayerCheck, producer: Option<&str>) -> String {
     let (label, image) = if pages.len() == 1 {
@@ -604,7 +583,7 @@ pub(super) fn warning(pages: &[usize], check: LayerCheck, producer: Option<&str>
     };
     format!(
         "PDF {label} {}: the text was read from {laid}; {checked}, so recognition errors in the layer are kept.",
-        ranges(pages)
+        crate::formats::page_ranges(pages)
     )
 }
 
@@ -663,8 +642,6 @@ mod tests {
 
     #[test]
     fn page_ranges_read_as_a_person_writes_them() {
-        assert_eq!(ranges(&[1, 2, 3, 5, 7, 8, 9]), "1-3, 5, 7-9");
-        assert_eq!(ranges(&[4]), "4");
         assert_eq!(
             warning(&[2], LayerCheck::Aligned, Some("Tesseract 5.5.3")),
             "PDF page 2: the text was read from the invisible OCR text layer laid over the page image (Tesseract 5.5.3); it lines up with the text in the image, but Markitai did not recognize the text itself, so recognition errors in the layer are kept."
@@ -675,7 +652,7 @@ mod tests {
                 LayerCheck::Unverified("its image is JBIG2-compressed, which is not decoded"),
                 None
             ),
-            "PDF pages 1-2: the text was read from the invisible OCR text layer laid over each page image; it could not be checked against the image (its image is JBIG2-compressed, which is not decoded), so recognition errors in the layer are kept."
+            "PDF pages 1–2: the text was read from the invisible OCR text layer laid over each page image; it could not be checked against the image (its image is JBIG2-compressed, which is not decoded), so recognition errors in the layer are kept."
         );
     }
 

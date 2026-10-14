@@ -793,7 +793,11 @@ merged document must remain nonempty and pass complete-document plausibility:
 for sources of at least 200 non-whitespace characters, keep at least 20% of their
 length and 30% of distinct character bigrams. Chunk checks are more permissive
 when the response's character four-grams substantially come from that chunk.
-These are deletion safeguards, not proof of semantic accuracy.
+These are deletion safeguards, not proof of semantic accuracy. An answer that
+fails them, or changes a protected marker, is not used, and the warning says so
+in plain words: `LLM enhancement failed: the model's answer left out or changed
+too much of the document, so it was not used; the converted Markdown is kept as
+it was.`
 
 Both local and ordinary URL text use the [typed persistent cache](cache.md).
 Cache hits require no model request and have zero new usage; bypass controls still

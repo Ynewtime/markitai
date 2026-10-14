@@ -20,6 +20,9 @@ pub(super) mod pdf;
 #[cfg(test)]
 #[path = "native/slides_tests.rs"]
 mod slides_tests;
+#[cfg(test)]
+#[path = "native/table_breaks_tests.rs"]
+mod table_breaks_tests;
 
 /// Adjacent text runs of one style as one run. A reader can split runs per
 /// character (RTF `\\u` escapes) or wherever the source splits them (Word's
@@ -414,8 +417,8 @@ fn emphasis_edges(text: &str, before: Option<char>, after: Option<char>) -> (&st
 /// What each line break among `values` is written as, as an HTML page's
 /// `<br>` is: the first break of a run of them (with nothing `shows` between)
 /// carries the run and the others are `None`. In running text one break is a
-/// hard break and two or more end the paragraph (`<br><br>` in a cell); a
-/// run at the edge of the content shows nothing (`""`); in a heading or a
+/// hard break and two or more end the paragraph (one `<br>` in a cell, see
+/// [`table_cell`]); a run at the edge of the content shows nothing (`""`); in a heading or a
 /// link's text a break is a space.
 fn break_plan(
     values: &[Inline],
@@ -1182,31 +1185,88 @@ fn list_separator(previous: &ListLine, next: &ListLine, in_cell: bool) -> &'stat
     }
 }
 
-/// A cell's Markdown as one table cell, in one pass: inline Markdown is kept,
-/// `|` is escaped, and each line (a line break, a paragraph, a list item; see
-/// [`Place::Cell`]) is joined with `<br>`.
+/// A cell's Markdown as one table cell: inline Markdown is kept, `|` is
+/// escaped, and its lines (a line break, a paragraph, a list item; see
+/// [`Place::Cell`]) are joined with one `<br>` (see
+/// [`super::text::cell_lines`]).
 fn table_cell(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 8);
-    let mut lines = text.split('\n').peekable();
-    let mut first = true;
-    while let Some(line) = lines.next() {
-        if !first {
-            out.push_str("<br>");
+    super::text::cell_lines(text).replace('|', "\\|")
+}
+
+/// A workbook's text with the characters XML cannot hold as Excel escapes
+/// them in its strings (`_x000D_` for a carriage return, `_x000B_` for a
+/// vertical tab, `_x005F_` for the `_` of a literal `_x…_`), decoded as the
+/// reference's spreadsheet reader decodes them: a line break so escaped is
+/// one `<br>` in its cell, not the escape as text.
+fn xstrings(blocks: &mut [Block]) {
+    fn decoded(text: &str) -> Option<String> {
+        if !text.contains("_x") {
+            return None;
         }
-        first = false;
-        let line = if lines.peek().is_some() {
-            line.strip_suffix("  ").unwrap_or(line)
-        } else {
-            line
-        };
-        for (index, part) in line.split('|').enumerate() {
-            if index > 0 {
-                out.push_str("\\|");
+        let mut output = String::with_capacity(text.len());
+        let mut rest = text;
+        let mut changed = false;
+        while let Some(at) = rest.find("_x") {
+            output.push_str(&rest[..at]);
+            let tail = &rest[at..];
+            let code = tail
+                .get(2..6)
+                .filter(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit()))
+                .filter(|_| tail.as_bytes().get(6) == Some(&b'_'))
+                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                .and_then(char::from_u32);
+            match code {
+                Some(ch) => {
+                    output.push(ch);
+                    rest = &tail[7..];
+                    changed = true;
+                }
+                None => {
+                    output.push_str("_x");
+                    rest = &tail[2..];
+                }
             }
-            out.push_str(part);
+        }
+        output.push_str(rest);
+        changed.then_some(output)
+    }
+    fn inlines(values: &mut [Inline]) {
+        for value in values {
+            match value {
+                Inline::Text { text, .. } | Inline::Image { alt: text, .. } => {
+                    if let Some(text_decoded) = decoded(text) {
+                        *text = text_decoded;
+                    }
+                }
+                Inline::Link { content, .. } => inlines(content),
+                _ => {}
+            }
         }
     }
-    out
+    for block in blocks {
+        match block {
+            Block::Heading { content, .. } | Block::Paragraph(content) => inlines(content),
+            Block::List(list) => {
+                for item in &mut list.items {
+                    xstrings(&mut item.blocks);
+                }
+            }
+            Block::BlockQuote(blocks) => xstrings(blocks),
+            Block::Table(table) => {
+                for slot in table.grid.iter_mut().flatten() {
+                    if let CellSlot::Origin(cell) = slot {
+                        xstrings(&mut cell.blocks);
+                    }
+                }
+            }
+            Block::CodeBlock { text, .. } => {
+                if let Some(text_decoded) = decoded(text) {
+                    *text = text_decoded;
+                }
+            }
+            Block::Rule | Block::Math(_) => {}
+        }
+    }
 }
 
 /// A part of a sheet: a banner row's text, or the rows of one table.
@@ -1338,6 +1398,9 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
         ),
     };
     let bytes = repaired.as_deref().unwrap_or(bytes);
+    if matches!(extension, "xlsx" | "xlsm") {
+        xstrings(&mut parsed.blocks);
+    }
     let metadata = office_meta::read(bytes, extension);
     if metadata.sheets.len() == 1 && !matches!(parsed.blocks.first(), Some(Block::Heading { .. })) {
         parsed.blocks.insert(
@@ -2106,7 +2169,7 @@ mod tests {
 
     #[test]
     fn a_table_cell_escapes_pipes_and_writes_breaks_without_their_spaces() {
-        assert_eq!(table_cell("a | b  \nc\n\nd  "), "a \\| b<br>c<br><br>d  ");
+        assert_eq!(table_cell("a | b  \nc\n\nd  "), "a \\| b<br>c<br>d");
         assert_eq!(table_cell("plain"), "plain");
         assert_eq!(table_cell(""), "");
     }

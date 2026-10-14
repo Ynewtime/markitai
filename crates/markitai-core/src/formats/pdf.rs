@@ -791,6 +791,11 @@ impl PdfPages {
                 .insert("ocr_layer_pages".into(), layer_pages.into());
         }
         let mut appended_images = false;
+        let total = pages.len();
+        // The pages whose native text was not recovered, with their reason,
+        // and where the warning for the first of them stands.
+        let mut unrecovered: Vec<(usize, String)> = Vec::new();
+        let mut unrecovered_index = None;
         for (mut page, readable) in pages.into_iter().zip(readable) {
             readable_pages += usize::from(readable);
             let mut warning = Vec::new();
@@ -800,6 +805,10 @@ impl PdfPages {
                 warning.extend(omitted_text_warning(&page));
                 format!("<!-- Page number: {} -->", page.number)
             } else {
+                if let Some(reason) = unrecovered_reason(&page) {
+                    unrecovered.push((page.number, reason.to_owned()));
+                    unrecovered_index.get_or_insert(page.warning_index);
+                }
                 page_markdown(&page, &mut warning)
             };
             for warning in warning {
@@ -875,6 +884,13 @@ impl PdfPages {
                 section.push_str(&comments);
             }
             sections.push(section);
+        }
+        let unrecovered: Vec<(usize, &str)> = unrecovered
+            .iter()
+            .map(|(number, reason)| (*number, reason.as_str()))
+            .collect();
+        for warning in unrecovered_warnings(&unrecovered, total) {
+            deferred.push((unrecovered_index.unwrap_or_default(), warning));
         }
         // Stable ordering also handles multiple page diagnostics sharing an
         // offset. The merge moves strings once instead of repeated Vec inserts.
@@ -984,18 +1000,80 @@ fn marker_len(section: &str) -> usize {
     }
 }
 
+/// Why a page's native text was not recovered, when OCR has not read it:
+/// its section is then only its marker (see [`unrecovered_warnings`]).
+fn unrecovered_reason(page: &PdfPage) -> Option<&str> {
+    if page.ocr_completed && page.markdown.trim().is_empty() {
+        return None;
+    }
+    (page.needs_ocr || page.markdown.trim().is_empty()).then(|| {
+        page.ocr_reason
+            .as_deref()
+            .unwrap_or("empty native text extraction")
+    })
+}
+
+/// The warnings for the pages whose native text was not recovered, as
+/// `(page, reason)` of a document of `total` pages: one for each reason,
+/// its pages as ranges, or, when they are nine pages in ten or more, one
+/// that says the document is scanned.
+fn unrecovered_warnings(pages: &[(usize, &str)], total: usize) -> Vec<String> {
+    if pages.is_empty() {
+        return Vec::new();
+    }
+    let total = total.max(pages.len());
+    let numbers = |reason: Option<&str>| {
+        pages
+            .iter()
+            .filter(|(_, own)| reason.is_none_or(|reason| reason == *own))
+            .map(|(number, _)| *number)
+            .collect::<Vec<_>>()
+    };
+    if pages.len() * 10 >= total * 9 {
+        let all = numbers(None);
+        let (has, them) = if all.len() == 1 {
+            ("page has", "it")
+        } else {
+            ("pages have", "them")
+        };
+        let label = if all.len() == 1 { "page" } else { "pages" };
+        return vec![format!(
+            "PDF is scanned: {} of {total} {has} no readable text ({label} {}); run again with --ocr to read {them}.",
+            all.len(),
+            crate::formats::page_ranges(&all)
+        )];
+    }
+    let mut reasons: Vec<&str> = Vec::new();
+    for (_, reason) in pages {
+        if !reasons.contains(reason) {
+            reasons.push(reason);
+        }
+    }
+    reasons
+        .into_iter()
+        .map(|reason| {
+            let own = numbers(Some(reason));
+            let (label, these) = if own.len() == 1 {
+                ("page", "it")
+            } else {
+                ("pages", "them")
+            };
+            format!(
+                "PDF {label} {} ({} of {total}): native text was not recovered ({reason}); OCR is required to read {these}. Run again with --ocr.",
+                crate::formats::page_ranges(&own),
+                own.len()
+            )
+        })
+        .collect()
+}
+
 fn page_markdown(page: &PdfPage, warnings: &mut Vec<String>) -> String {
     let number = page.number;
     let marker = format!("<!-- Page number: {number} -->");
     if page.ocr_completed && page.markdown.trim().is_empty() {
         return marker;
     }
-    if page.needs_ocr || page.markdown.trim().is_empty() {
-        let reason = page
-            .ocr_reason
-            .as_deref()
-            .unwrap_or("empty native text extraction");
-        warnings.push(format!("PDF page {number}: native text was not recovered ({reason}); OCR is required for this page."));
+    if unrecovered_reason(page).is_some() {
         marker
     } else {
         warnings.extend(omitted_text_warning(page));
@@ -2149,10 +2227,10 @@ mod tests {
         );
         assert!(result.markdown.contains("<!-- Page number: 2 -->"));
         assert!(
-            result
-                .warnings
-                .iter()
-                .any(|warning| warning.starts_with("PDF page 2: native text was not recovered"))
+            result.warnings.iter().any(|warning| warning
+                == "PDF page 2 (1 of 2): native text was not recovered (empty native text extraction); OCR is required to read it. Run again with --ocr."),
+            "{:?}",
+            result.warnings
         );
     }
     #[test]
@@ -2198,12 +2276,58 @@ mod tests {
         );
         assert_eq!(good, "<!-- Page number: 1 -->\n\nReadable text");
         assert_eq!(missing, "<!-- Page number: 3 -->");
+        // The assembly says which pages were not recovered, once per reason.
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn unrecovered_pages_are_one_warning_per_reason_as_ranges_or_a_scan() {
+        let pages = |numbers: &[(usize, &'static str)]| numbers.to_vec();
         assert_eq!(
-            warnings,
+            unrecovered_warnings(
+                &pages(&[
+                    (3, "scanned"),
+                    (4, "scanned"),
+                    (5, "scanned"),
+                    (9, "scanned"),
+                    (12, "image-only")
+                ]),
+                120
+            ),
             [
-                "PDF page 3: native text was not recovered (image-only); OCR is required for this page."
+                "PDF pages 3\u{2013}5, 9 (4 of 120): native text was not recovered (scanned); OCR is required to read them. Run again with --ocr.",
+                "PDF page 12 (1 of 120): native text was not recovered (image-only); OCR is required to read it. Run again with --ocr."
             ]
         );
+        // Nine pages in ten or more, whatever their reasons: the document is
+        // a scan.
+        let mut scan: Vec<(usize, &str)> = (1..=12)
+            .chain(15..=15)
+            .chain(20..=31)
+            .map(|n| (n, "scanned"))
+            .collect();
+        scan.push((40, "suspected_garbled_text"));
+        assert_eq!(
+            unrecovered_warnings(&scan, 28),
+            [
+                "PDF is scanned: 26 of 28 pages have no readable text (pages 1\u{2013}12, 15, 20\u{2013}31, 40); run again with --ocr to read them."
+            ]
+        );
+        assert_eq!(
+            unrecovered_warnings(&pages(&[(1, "scanned")]), 1),
+            [
+                "PDF is scanned: 1 of 1 page has no readable text (page 1); run again with --ocr to read it."
+            ]
+        );
+        // Below nine in ten the reasons stay apart.
+        let most: Vec<(usize, &str)> = (1..=8).map(|n| (n, "scanned")).collect();
+        assert_eq!(
+            unrecovered_warnings(&most, 10),
+            [
+                "PDF pages 1\u{2013}8 (8 of 10): native text was not recovered (scanned); OCR is required to read them. Run again with --ocr."
+            ]
+        );
+        assert!(unrecovered_warnings(&[], 10).is_empty());
     }
 
     #[test]
@@ -2915,7 +3039,15 @@ mod tests {
         let message = extract(&cjk_pdf("Identity-H", "GB1", &runs))
             .unwrap_err()
             .to_string();
-        assert!(message.contains("suspected_garbled_text"), "{message}");
+        assert!(
+            message.contains("PDF is scanned: 1 of 1 page has no readable text (page 1)"),
+            "{message}"
+        );
+        let pages = extract_pages(&cjk_pdf("Identity-H", "GB1", &runs)).unwrap();
+        assert_eq!(
+            pages.pages[0].ocr_reason.as_deref(),
+            Some("suspected_garbled_text")
+        );
     }
 
     /// A page of `lines` in an Identity-H Type0 font whose ToUnicode CMap

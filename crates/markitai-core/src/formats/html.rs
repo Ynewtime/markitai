@@ -4238,45 +4238,13 @@ fn soft_break(node: htmd::NodeRef<'_>) -> &'static str {
 }
 
 /// A table cell's content as one Markdown cell, as the document formats write
-/// one: its lines (a `<br>`, paragraphs, list items) joined with `<br>`, at
-/// most one empty line between two, none at its edges. A code block in the
-/// cell stays one code span, its lines joined with spaces (a `<br>` would be
-/// literal text inside it). htmd writes a literal pipe as `&#124;`, which
-/// [`compact_table`] writes `\|`.
+/// one (see [`super::text::cell_lines`]): its lines (a `<br>`, paragraphs,
+/// list items) joined with one `<br>`, none at its edges, and a code block's
+/// lines one code span each (a `<br>` would be literal text inside one
+/// span). htmd writes a literal pipe as `&#124;`, which [`compact_table`]
+/// writes `\|`.
 fn cell_lines(content: &str) -> String {
-    let mut cell = String::new();
-    let mut blank = false;
-    // Inside a fenced block, and whether the previous line was one of its.
-    let (mut fence, mut previous_code) = (false, false);
-    for line in content.trim().split('\n') {
-        let line = line.trim_end();
-        let marker = {
-            let start = line.trim_start();
-            start.starts_with("```") || start.starts_with("~~~")
-        };
-        let code = fence || marker;
-        if marker {
-            fence = !fence;
-        }
-        if line.trim().is_empty() && !code {
-            blank = !cell.is_empty();
-            continue;
-        }
-        if !cell.is_empty() {
-            if code && previous_code {
-                cell.push(' ');
-            } else {
-                cell.push_str("<br>");
-                if std::mem::take(&mut blank) {
-                    cell.push_str("<br>");
-                }
-            }
-        }
-        blank = false;
-        cell.push_str(if code { line.trim() } else { line });
-        previous_code = code;
-    }
-    cell
+    super::text::cell_lines(content)
 }
 
 /// A definition list's term, as the document formats write one: bold, on a
@@ -8457,6 +8425,31 @@ map(callbackFn, thisArg)
     }
 
     #[test]
+    fn a_cell_s_breaks_paragraphs_and_code_lines_keep_the_table_row_whole() {
+        let markdown = body(
+            "<table><tr><th>Task</th><th>Notes</th></tr>\
+             <tr><td>Plant bulbs</td><td>Bring gloves<br>and a trowel<br><br><br></td></tr>\
+             <tr><td>Water</td><td><p>Mornings only</p><p></p><p>if dry</p></td></tr>\
+             <tr><td>Rake</td><td><div>Into bags</div><br><br><div>by the shed</div></td></tr>\
+             <tr><td>Weed</td><td>left\u{2028}right\u{2029}done</td></tr>\
+             <tr><td>Literal\n text</td><td>type &lt;br&gt; here</td></tr>\
+             <tr><td>Code</td><td><pre>let a = `x`;\n\nb | c</pre></td></tr>\
+             <tr><td>Sweep</td><td>last row</td></tr></table>",
+        );
+        assert_eq!(
+            markdown,
+            "| Task | Notes |\n| --- | --- |\n\
+             | Plant bulbs | Bring gloves<br>and a trowel |\n\
+             | Water | Mornings only<br>if dry |\n\
+             | Rake | Into bags<br>by the shed |\n\
+             | Weed | left<br>right<br>done |\n\
+             | Literal text | type \\<br> here |\n\
+             | Code | ``let a = `x`;``<br>`b \\| c` |\n\
+             | Sweep | last row |"
+        );
+    }
+
+    #[test]
     fn table_cells_join_their_lines_with_br_and_escape_pipes() {
         let markdown = body(
             "<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody>\
@@ -8466,7 +8459,7 @@ map(callbackFn, thisArg)
         );
         assert!(
             markdown.contains(
-                "| A | B |\n| --- | --- |\n| one two<br>three | p1<br><br>p2 |\n| A \\| B and `c\\|d` | * x<br>* y |\n| ``` typedef x; int y; ``` | $\\|x\\|$ |"
+                "| A | B |\n| --- | --- |\n| one two<br>three | p1<br>p2 |\n| A \\| B and `c\\|d` | * x<br>* y |\n| `typedef x;`<br>`int y;` | $\\|x\\|$ |"
             ),
             "{markdown}"
         );
