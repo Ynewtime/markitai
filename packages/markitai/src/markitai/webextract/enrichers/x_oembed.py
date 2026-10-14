@@ -260,6 +260,7 @@ class XOEmbedEnricher:
                 if left >= right:
                     continue
                 kind = facet.get("type")
+                shown = None
                 if kind in {"italic", "bold"}:
                     tag = "em" if kind == "italic" else "strong"
                     opening, closing = f"<{tag}>", f"</{tag}>"
@@ -269,12 +270,19 @@ class XOEmbedEnricher:
                         if kind == "url"
                         else f"https://x.com/{str(facet.get('text', '')).lstrip('@')}"
                     )
+                    # A url facet's text is the t.co shortlink; X supplies
+                    # the destination as its replacement. Link and show that.
+                    expanded = facet.get("replacement") if kind == "url" else None
+                    if isinstance(expanded, str) and expanded.startswith(
+                        ("https://", "http://")
+                    ):
+                        href = shown = expanded
                     if not href.startswith(("https://", "http://")):
                         continue
                     opening, closing = f'<a href="{escape(href, quote=True)}">', "</a>"
                 else:
                     continue
-                ranges.append((left, right, opening, closing))
+                ranges.append((left, right, opening, closing, shown))
             # Segment at every range boundary and reopen formatting when needed;
             # this also produces valid HTML for partially overlapping facets.
             boundaries = sorted({0, len(value), *(n for r in ranges for n in r[:2])})
@@ -293,7 +301,11 @@ class XOEmbedEnricher:
                     common += 1
                 rendered.extend(r[3] for r in reversed(active[common:]))
                 rendered.extend(r[2] for r in wanted[common:])
-                rendered.append(escape(value[left:right]).replace("\n", "<br>"))
+                replaced = next((r for r in wanted if r[4] is not None), None)
+                if replaced is None:
+                    rendered.append(escape(value[left:right]).replace("\n", "<br>"))
+                elif left == replaced[0]:
+                    rendered.append(escape(replaced[4]))
                 active = wanted
             rendered.extend(r[3] for r in reversed(active))
             body = "".join(rendered)

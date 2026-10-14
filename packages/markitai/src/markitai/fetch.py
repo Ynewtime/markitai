@@ -1027,6 +1027,14 @@ async def fetch_url(
     elif screenshot and not result.screenshot_tiles and result.screenshot_path:
         result.screenshot_tiles = [result.screenshot_path]
 
+    from markitai.fetch_shortlinks import expand_shortlinks, is_x_url
+
+    if is_x_url(url) and "t.co/" in (result.content or ""):
+        # Links X left as t.co shortlinks: their destinations, cached with it
+        result.content = await expand_shortlinks(
+            result.content, proxy=get_proxy_for_url(url) or None
+        )
+
     # Cache the result (for non-static strategies that don't use conditional caching)
     if cache is not None and not result.cache_hit:
         if cache_validators_to_write is not None:

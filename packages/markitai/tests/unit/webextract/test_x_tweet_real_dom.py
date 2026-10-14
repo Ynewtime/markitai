@@ -16,6 +16,7 @@ selector contract:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -86,12 +87,14 @@ class TestMainTweetBody:
 
 class TestMedia:
     def test_video_renders_poster_image(self, result: ExtractedWebContent) -> None:
-        assert f"![]({POSTER_URL})" in result.markdown
+        assert f"![Video]({POSTER_URL})" in result.markdown
 
     def test_no_blob_urls_or_video_link(self, result: ExtractedWebContent) -> None:
         assert "blob:" not in result.markdown
-        # No usable https video URL exists in the DOM -> no [Video] link.
-        assert "[Video]" not in result.markdown
+        # No usable https video URL exists in the DOM -> the poster is not
+        # wrapped in a link to the video.
+        assert f"[![Video]({POSTER_URL})](" not in result.markdown
+        assert not re.search(r"(?<!!)\[Video\]\(", result.markdown)
 
     def test_no_duration_artifact(self, result: ExtractedWebContent) -> None:
         assert "00:00" not in result.markdown
