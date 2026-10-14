@@ -22,7 +22,12 @@ def browser_page():
     browser = AsyncMock()
     browser.new_context.return_value = context
     renderer = PlaywrightRenderer()
-    with patch.object(renderer, "_ensure_browser", AsyncMock(return_value=browser)):
+    # The new-headless build is unavailable here: x.com answers the default
+    # browser (the tests below set the status) and the embed fallback runs
+    with (
+        patch.object(renderer, "_ensure_browser", AsyncMock(return_value=browser)),
+        patch.object(renderer, "_ensure_new_headless", AsyncMock(return_value=None)),
+    ):
         yield renderer, page, context
 
 
@@ -369,7 +374,7 @@ async def test_custom_remote_first_order_retains_browser_profile(
             kwargs = _get_playwright_fetch_kwargs(url, ctx.config)
         assert (
             kwargs["wait_for_selector"]
-            == 'article[data-tweet-id], [data-testid="tweet"]'
+            == 'article[data-tweet-id], [data-testid="tweet"], main article'
         )
         assert kwargs["skip_auto_scroll"] is True
         assert kwargs["extra_wait_ms"] == 250
@@ -511,3 +516,115 @@ async def test_a_refused_page_that_never_answers_is_not_waited_for(
         )
     assert result.content == "Full tweet content"
     assert result.html is None
+
+
+def _browser_with(page):
+    context = AsyncMock()
+    context.new_page.return_value = page
+    browser = AsyncMock()
+    browser.new_context.return_value = context
+    return browser, context
+
+
+async def test_an_x_post_loads_in_the_new_headless_mode_without_headless_ua():
+    """X_CAPTURE "direct": x.com itself, in Chromium's new headless mode."""
+    import markitai.fetch_playwright as fp
+
+    assert fp.X_CAPTURE == "direct"
+    page = AsyncMock()
+    page.url = URL
+    page.goto.return_value = MagicMock(status=200)
+    page.title.return_value = "Post"
+    page.content.return_value = "<main><article><p>Post text</p></article></main>"
+    direct_browser, direct_context = _browser_with(page)
+    default_browser, _ = _browser_with(page)
+    agent = "Mozilla/5.0 (X11; Linux aarch64) Chrome/141.0.0.0 Safari/537.36"
+    renderer = PlaywrightRenderer()
+    with (
+        patch.object(
+            renderer, "_ensure_browser", AsyncMock(return_value=default_browser)
+        ),
+        patch.object(
+            renderer,
+            "_ensure_new_headless",
+            AsyncMock(return_value=(direct_browser, agent)),
+        ),
+        patch.object(
+            renderer,
+            "_try_enricher_fallback_async",
+            AsyncMock(return_value=("Full tweet content", {"title": "T"}, "fxtwitter")),
+        ),
+        patch("markitai.fetch_playwright._wait_until_settled", AsyncMock()),
+    ):
+        result = await renderer.fetch(URL, extra_wait_ms=0)
+    direct_browser.new_context.assert_awaited_once()
+    assert direct_browser.new_context.await_args.kwargs["user_agent"] == agent
+    default_browser.new_context.assert_not_awaited()
+    assert "page_source" not in result.metadata  # the page is x.com's own
+    direct_context.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("capture", "url"),
+    [("embed", URL), ("direct", "https://example.com/post/123")],
+)
+async def test_other_pages_and_the_embed_setting_use_the_default_browser(
+    monkeypatch, capture, url
+):
+    import markitai.fetch_playwright as fp
+
+    monkeypatch.setattr(fp, "X_CAPTURE", capture)
+    page = AsyncMock()
+    page.url = url
+    page.goto.return_value = MagicMock(status=200)
+    page.title.return_value = "Page"
+    page.content.return_value = "<article><p>" + "Plain words. " * 40 + "</p></article>"
+    default_browser, _ = _browser_with(page)
+    renderer = PlaywrightRenderer()
+    new_headless = AsyncMock()
+    with (
+        patch.object(
+            renderer, "_ensure_browser", AsyncMock(return_value=default_browser)
+        ),
+        patch.object(renderer, "_ensure_new_headless", new_headless),
+        patch.object(
+            renderer,
+            "_try_enricher_fallback_async",
+            AsyncMock(return_value=("Full tweet content", {"title": "T"}, "fxtwitter")),
+        ),
+    ):
+        await renderer.fetch(url, extra_wait_ms=0)
+    new_headless.assert_not_awaited()
+    default_browser.new_context.assert_awaited_once()
+
+
+async def test_a_build_without_the_new_headless_mode_is_tried_once():
+    renderer = PlaywrightRenderer()
+    playwright = MagicMock()
+    playwright.chromium.launch = AsyncMock(side_effect=RuntimeError("no chromium"))
+    renderer._playwright = playwright
+    assert await renderer._ensure_new_headless() is None
+    assert await renderer._ensure_new_headless() is None
+    playwright.chromium.launch.assert_awaited_once()
+    assert playwright.chromium.launch.await_args.kwargs["channel"] == "chromium"
+
+
+async def test_the_new_headless_agent_drops_the_headless_word():
+    renderer = PlaywrightRenderer()
+    page = AsyncMock()
+    page.evaluate.return_value = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "HeadlessChrome/141.0.0.0 Safari/537.36"
+    )
+    browser = AsyncMock()
+    browser.new_page.return_value = page
+    playwright = MagicMock()
+    playwright.chromium.launch = AsyncMock(return_value=browser)
+    playwright.stop = AsyncMock()
+    renderer._playwright = playwright
+    direct = await renderer._ensure_new_headless()
+    assert direct is not None
+    assert direct[0] is browser
+    assert "HeadlessChrome" not in direct[1] and "Chrome/141.0.0.0" in direct[1]
+    await renderer.close()
+    browser.close.assert_awaited_once()
