@@ -179,6 +179,22 @@ impl Gate {
         }
     }
 
+    /// Whether the user has neither allowed nor refused remote fallback: the
+    /// default `always` they did not write, or an `ask` not answered yes. A
+    /// failure `auto` could not repair may then say how to allow it.
+    pub(crate) fn could_opt_in(&self, cfg: &Value, vars: &HashMap<String, String>) -> bool {
+        if hard_off(vars) {
+            return false;
+        }
+        match configured(cfg) {
+            Consent::Never => false,
+            Consent::Always => !self.explicitly_always(),
+            Consent::Ask => {
+                *self.decision.lock().unwrap_or_else(PoisonError::into_inner) != Some(true)
+            }
+        }
+    }
+
     /// Whether `auto` may now send the URL to remote services. Under `ask`
     /// this asks once for the whole process (other conversions wait for the
     /// answer); under an explicit `always` it shows the disclosure once.

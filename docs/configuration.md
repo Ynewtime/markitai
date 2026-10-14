@@ -113,7 +113,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 | `image.quality` | JPEG 有效；WebP 不使用 | JPEG 按设置编码；WebP 使用无损编码，不受质量值影响；PNG 也不使用有损质量值，见[图片](images.md) |
 | `llm.model_list[].model_info.max_input_tokens` | 有效 | 限制文档分块的输入窗口，不是兼容性占位键；详见上表和[长文本](llm.md#structured-documents-and-complete-long-text) |
 | `fetch.fallback_patterns` | 显式配置时有效 | CLI 的 `auto` 使用用户写出的列表；内建默认列表不改变策略顺序，`serve`、`mcp` 和绑定不应用列表 |
-| `fetch.remote_consent` | 依调用方式生效 | 远程策略明确选用时按值运行；CLI `auto` 回退需要显式同意，其他接口的 `auto` 不远程回退；见[抓取](fetch.md#strategy-order-and-remote-fallback) |
+| `fetch.remote_consent` | 依调用方式生效 | 远程策略明确选用时按值运行；CLI 与 `serve` 的 `auto` 回退需要显式同意，`mcp` 和语言绑定的 `auto` 不远程回退；见[抓取](fetch.md#strategy-order-and-remote-fallback) |
 
 这张表列出容易与参考版行为混淆的键；其余配置的类型和默认值可用
 `markitai config list` 查看。值通过结构验证，并不会安装可选后端、确认模型登录，
@@ -147,7 +147,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 
 配置解析使用环境快照：依次读取进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`），已存在的值优先，不修改宿主进程环境。`MARKITAI_HOME` 与 `MARKITAI_SERVE_TOKEN` 直接读取进程环境，应在启动前导出，不能靠 `.env` 设置。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 在本构建中不读取。
 
-`fetch.remote_consent` 的默认值 `always` 来自参考版本，`config list` 也这样显示；但运行时拿到的是填好默认值的配置，分不出这个 `always` 是默认值还是你写的。因此本构建中 `auto` 的远程回退只认 CLI 从所选配置文件和 `--config-json` 的原始内容中读到的、你亲手写出的 `always`（第一次回退时显示一次说明，每个 `MARKITAI_HOME` 只显示一次），或 `ask`（每次运行在终端询问一次；没有终端或使用 `--quiet` 时视为 `never` 并提示一次）。`serve`、`mcp` 和语言绑定中的 `auto` 从不回退到远程服务。`fetch.fallback_patterns` 同理：只有你在配置文件或 `--config-json` 中写出的列表才让其中的域名先用浏览器；默认列表（X、Instagram 等）虽在 `config list` 中显示但不生效，`serve`、`mcp` 和语言绑定也不应用任何列表。
+`fetch.remote_consent` 的默认值 `always` 来自参考版本，`config list` 也这样显示；但运行时拿到的是填好默认值的配置，分不出这个 `always` 是默认值还是你写的。因此本构建中 `auto` 的远程回退只认 CLI 从所选配置文件和 `--config-json` 的原始内容中读到的、你亲手写出的 `always`（第一次回退时显示一次说明，每个 `MARKITAI_HOME` 只显示一次），或 `ask`（每次运行在终端询问一次；没有终端或使用 `--quiet` 时视为 `never` 并提示一次）。`serve` 同样读取它自己的配置文件和 `--config-json`：只有你写出的 `always` 才让 `auto` 回退到远程服务（说明写入服务日志），默认值和 `ask` 保持本地。`mcp` 和语言绑定中的 `auto` 从不回退到远程服务。`fetch.fallback_patterns` 同理：只有你在配置文件或 `--config-json` 中写出的列表才让其中的域名先用浏览器；默认列表（X、Instagram 等）虽在 `config list` 中显示但不生效，`serve`、`mcp` 和语言绑定也不应用任何列表。
 
 同一套一次性提示（`MARKITAI_HOME/notices` 下的空标记文件）还用于两种情况：选定的远程抓取策略（`-s defuddle`/`jina`/`cloudflare` 或 `fetch.strategy`）第一次把 URL 发给该服务之前，每个服务提示一次；以及第一次把图像（页面渲染、截图、`--alt`/`--desc` 的图片、OCR 页面）发给不在本机的模型之前（回环地址上的模型不算）。`--quiet` 不显示也不记录，下次运行再显示；`serve`、`mcp` 和语言绑定不显示。见 [LLM：隐私提示](llm.md#privacy-notices)。
 

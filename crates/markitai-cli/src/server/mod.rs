@@ -139,6 +139,12 @@ pub(crate) fn settings_config(source: &SettingsSource) -> Result<Value, String> 
     settings::load_base(source).map_err(|error| error.detail)
 }
 
+/// The service's configuration as written, before defaults (see
+/// `remote_consent::install_service`).
+pub(crate) fn settings_written(source: &SettingsSource) -> Result<Value, String> {
+    settings::load_written(source).map_err(|error| error.detail)
+}
+
 pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> Result<(), String> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

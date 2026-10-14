@@ -543,7 +543,19 @@ fn fetch_with_services(
     {
         match spa_domains::take_hint(cfg, &url) {
             Ok(true) if capture => {
-                return fetch_browser(source, cfg, capture, output_available, runtime);
+                return fetch_browser(source, cfg, capture, output_available, runtime).or_else(
+                    |error| {
+                        past_refusal(
+                            source,
+                            &url,
+                            cfg,
+                            output_available,
+                            runtime,
+                            services,
+                            error,
+                        )
+                    },
+                );
             }
             Ok(true) => learned_route = true,
             Ok(false) => {}
@@ -570,6 +582,17 @@ fn fetch_with_services(
                     learn && needs_javascript,
                     runtime,
                 )
+                .or_else(|error| {
+                    past_refusal(
+                        source,
+                        &url,
+                        cfg,
+                        output_available,
+                        runtime,
+                        services,
+                        error,
+                    )
+                })
             }
         },
         "static" if capture => {
@@ -690,6 +713,7 @@ fn auto_result(
             remote_ready: &mut |_| chain::Readiness::SkipAll(None),
             remote: &mut |_| unreachable!("no remote step"),
             what_works: String::new(),
+            remote_hint: false,
         },
     )
 }
@@ -731,7 +755,75 @@ fn auto_chain(
     learned_route: bool,
     services: &Services<'_>,
 ) -> Result<FetchOutcome> {
-    let steps = auto_order(url, cfg, learned_route, services);
+    chain_after(
+        source,
+        url,
+        cfg,
+        explicit_strategy,
+        output_available,
+        runtime,
+        learn,
+        learned_route,
+        services,
+        None,
+    )
+}
+
+/// `auto` for a page whose capture the local browser was turned away from
+/// (`refusal`, a verification page): the remote services of the strategy
+/// order may still read its text, as after any local failure, when consent
+/// and the target allow. The browser is not asked again, and nothing it was
+/// shown is kept. Any other failure stays what it was.
+fn past_refusal(
+    source: &str,
+    url: &Url,
+    cfg: &Value,
+    output_available: bool,
+    runtime: Option<&crate::BrowserRuntime>,
+    services: &Services<'_>,
+    refusal: Error,
+) -> Result<FetchOutcome> {
+    if !matches!(&refusal, Error::Fetch(message) if sites::refusal_page(message))
+        || browser::identity_configured(cfg)
+    {
+        return Err(refusal);
+    }
+    chain_after(
+        source,
+        url,
+        cfg,
+        None,
+        output_available,
+        runtime,
+        false,
+        false,
+        services,
+        Some(refusal),
+    )
+}
+
+/// The `auto` chain; with `rendered`, the local steps already ran and the
+/// browser failed so, and only the remote steps remain.
+#[allow(clippy::too_many_arguments)]
+fn chain_after(
+    source: &str,
+    url: &Url,
+    cfg: &Value,
+    explicit_strategy: Option<&str>,
+    output_available: bool,
+    runtime: Option<&crate::BrowserRuntime>,
+    learn: bool,
+    learned_route: bool,
+    services: &Services<'_>,
+    rendered: Option<Error>,
+) -> Result<FetchOutcome> {
+    let mut steps = auto_order(url, cfg, learned_route, services);
+    let mut rendered = rendered;
+    let browser_ran = rendered.is_some();
+    if browser_ran {
+        steps.retain(|step| step.remote().is_some());
+        steps.insert(0, policy::Step::Browser);
+    }
     let remote: Vec<Service> = steps.iter().filter_map(|step| step.remote()).collect();
     // The target and consent are settled once, at the first remote step.
     let mut settled: Option<std::result::Result<(), Option<String>>> = None;
@@ -739,9 +831,10 @@ fn auto_chain(
         &steps,
         chain::Attempts {
             static_fetch: &mut || fetch_static(source, url, cfg, explicit_strategy),
-            browser_ready: &|| (services.browser_ready)(),
-            render: &mut |javascript_said| {
-                fetch_browser_and_learn(
+            browser_ready: &|| browser_ran || (services.browser_ready)(),
+            render: &mut |javascript_said| match rendered.take() {
+                Some(failure) => Err(failure),
+                None => fetch_browser_and_learn(
                     source,
                     url,
                     cfg,
@@ -749,7 +842,7 @@ fn auto_chain(
                     output_available,
                     learn && javascript_said,
                     runtime,
-                )
+                ),
             },
             remote_ready: &mut |service| {
                 if service == Service::Cloudflare && !cloudflare::configured(cfg, &services.vars) {
@@ -783,6 +876,8 @@ fn auto_chain(
                 remote::fetch(service, source, url, cfg, services).map(remote::outcome)
             },
             what_works: sites::what_works(url),
+            remote_hint: services.gate.could_opt_in(cfg, &services.vars)
+                && !(services.private_name)(url),
         },
     )
 }
@@ -855,6 +950,17 @@ fn attach_screenshot(
     runtime: Option<&crate::BrowserRuntime>,
 ) -> Result<()> {
     match browser::fetch_with_runtime(source, cfg, true, runtime) {
+        // A verification page is not the page: no screenshot of it.
+        Ok(browser::BrowserResponse::Page(page)) if browser_refusal(&page).is_some() => {
+            if visual_only(cfg) {
+                return Err(Error::Fetch(
+                    browser_refusal(&page).expect("a refusal"),
+                ));
+            }
+            outcome.content.warnings_mut().push(
+                "The browser was shown a verification page instead of the page, so no screenshot was kept; open the page itself to compare.".into(),
+            );
+        }
         Ok(browser::BrowserResponse::Page(page)) => {
             outcome.screenshots = page.screenshots;
             outcome.content.warnings_mut().extend(page.warnings);
@@ -913,12 +1019,21 @@ fn browser_response_outcome(
     }
 }
 
+/// The failure a page the browser drew is when it is no page: a site's
+/// verification or login page, or a bot challenge on any site.
+fn browser_refusal(page: &browser::BrowserPage) -> Option<String> {
+    let url = Url::parse(&page.final_url).ok()?;
+    let shown = sites::Shown::html(&url, &page.html);
+    if let Some(message) = shown.site_refusal().and_then(sites::Refusal::message) {
+        return Some(message);
+    }
+    matches!(shown.notice(), Some(sites::Refusal::Challenge))
+        .then(|| sites::challenge_message(&url))
+}
+
 fn browser_outcome(page: browser::BrowserPage, cfg: &Value) -> Result<FetchOutcome> {
-    if let Ok(url) = Url::parse(&page.final_url)
-        && let Some(message) = sites::Shown::html(&url, &page.html)
-            .site_refusal()
-            .and_then(sites::Refusal::message)
-    {
+    // Neither its copy nor its screenshot is kept.
+    if let Some(message) = browser_refusal(&page) {
         return Err(Error::Fetch(message));
     }
     let visual_only = visual_only(cfg);
@@ -1216,7 +1331,7 @@ fn decode_text<'a>(
 }
 
 /// The failure a challenge page reads as.
-const CHALLENGE_PAGE: &str =
+pub(super) const CHALLENGE_PAGE: &str =
     "HTML challenge page cannot be extracted; browser challenge fallback is not implemented";
 
 /// The failure for markup that is a challenge page or only asks for

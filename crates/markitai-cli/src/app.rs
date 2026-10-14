@@ -2735,6 +2735,11 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
             let source = crate::server::settings_source(cli.config.as_deref(), overrides.clone())
                 .map_err(runtime)?;
             let cfg = crate::server::settings_config(&source).map_err(runtime)?;
+            // A written `fetch.remote_consent: always` is the service's
+            // consent to remote fallback, as it is the CLI's.
+            remote_consent::install_service(
+                &crate::server::settings_written(&source).map_err(runtime)?,
+            );
             crate::server::run(
                 cfg,
                 source,
