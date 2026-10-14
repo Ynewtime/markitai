@@ -560,9 +560,15 @@ class WebExtractHtmlConverter:
         from markitai.webextract.dom import default_parser
 
         encoding = "utf-8" if stream_info.charset is None else stream_info.charset
-        soup = parse_markdown_html(
-            file_stream, default_parser(), from_encoding=encoding
-        )
+        data = file_stream.read()
+        # Decoded here, so its line-break controls are made parser-safe too
+        markup = data
+        if isinstance(data, bytes):
+            try:
+                markup = data.decode(encoding, "replace")
+            except LookupError:  # a charset Python does not know
+                markup = data.decode("utf-8", "replace")
+        soup = parse_markdown_html(markup, default_parser())
         return self._convert_soup(soup, **kwargs)
 
     def convert_string(self, html: str, **kwargs: Any) -> HtmlConversionResult:

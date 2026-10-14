@@ -5,6 +5,7 @@ from importlib.util import find_spec
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.preprocess import preprocess_html
+from markitai.webextract.table_cells import parser_safe_breaks
 
 
 def default_parser() -> str:
@@ -44,6 +45,7 @@ def parse_fragment(html: str) -> BeautifulSoup:
     Returns:
         Parsed BeautifulSoup fragment tree.
     """
+    html = parser_safe_breaks(html)
     parser = default_parser()
     if parser == "html.parser":
         return BeautifulSoup(html, "html.parser")
@@ -72,7 +74,7 @@ def parse_html(html: str) -> BeautifulSoup:
     Returns:
         Parsed BeautifulSoup document.
     """
-    html = preprocess_html(html)
+    html = parser_safe_breaks(preprocess_html(html))
     soup = BeautifulSoup(html, default_parser())
     resolve_noscript_images(soup)
     return soup

@@ -16,7 +16,11 @@ from urllib.parse import quote, unquote, urlparse, urlunparse
 import markdownify
 from bs4 import BeautifulSoup, Tag
 
-from markitai.webextract.table_cells import CELL_BREAK, markdown_cell
+from markitai.webextract.table_cells import (
+    CELL_BREAK,
+    markdown_cell,
+    parser_safe_breaks,
+)
 
 
 class _MarkdownTag(Tag):
@@ -41,7 +45,13 @@ class _MarkdownTag(Tag):
 def parse_markdown_html(
     markup: Any, features: str = "html.parser", **kwargs: Any
 ) -> BeautifulSoup:
-    """Use specialized tags only in the temporary DOM built for rendering."""
+    """Use specialized tags only in the temporary DOM built for rendering.
+
+    Text markup has its line-break controls made parser-safe first
+    (:func:`~markitai.webextract.table_cells.parser_safe_breaks`).
+    """
+    if isinstance(markup, str):
+        markup = parser_safe_breaks(markup)
     kwargs.setdefault("element_classes", {Tag: _MarkdownTag})
     return BeautifulSoup(markup, features, **kwargs)
 
