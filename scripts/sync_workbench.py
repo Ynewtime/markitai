@@ -4,7 +4,8 @@
 The workbench UI is built in the markitai-rust repository (one frontend for
 both backends) and published as a bundle: a reproducible ``.tar.gz`` holding,
 at its root, ``manifest.json``, ``index.html``, ``ui/<file>`` (everything served
-under ``/ui/``) and ``LICENSES/``, plus a copy of the manifest beside it. The
+under ``/ui/``), ``capture/<file>`` (scripts the server runs in a browser it
+drives, contract v1.14) and ``LICENSES/``, plus a copy of the manifest beside it. The
 manifest lists every file with its size and SHA-256, the source commit and the
 build command. This script copies a bundle, unchanged, to
 ``packages/markitai/src/markitai/serve/workbench/``. The wheel ships that copy,
@@ -40,7 +41,7 @@ TARGET = ROOT / "packages" / "markitai" / "src" / "markitai" / "serve" / "workbe
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_BUNDLE_BYTES = 128 * 1024 * 1024
 #: Top-level folders a bundle may carry, and how deep their files sit.
-FOLDERS = {"ui": 1, "LICENSES": 1}
+FOLDERS = {"ui": 1, "capture": 1, "LICENSES": 1}
 
 
 class BundleError(Exception):
@@ -52,7 +53,7 @@ def _sha256(data: bytes) -> str:
 
 
 def _usable_path(name: str) -> bool:
-    """``index.html``, ``ui/<file>`` or ``LICENSES/<file>``; nothing else."""
+    """``index.html``, ``ui/<file>``, ``capture/<file>`` or ``LICENSES/<file>``."""
     parts = PurePosixPath(name).parts
     if not parts or any(part in ("", ".", "..") for part in parts) or "\\" in name:
         return False
