@@ -9,7 +9,8 @@ use url::Url;
 pub const MAX_TEXT_LENGTH: u64 = 1_000_000;
 /// Characters of a title kept at most.
 const MAX_TITLE: usize = 200;
-/// Visible text shorter than this, in characters, is a blank page.
+/// Visible text shorter than this, in characters, is a blank page unless
+/// the page shows a picture or a media player (a picture post's caption).
 const BLANK_BELOW: u64 = 80;
 /// Bytes of block boxes kept at most.
 pub const MAX_BLOCKS_BYTES: usize = 4 * 1024 * 1024;
@@ -97,7 +98,9 @@ pub(crate) fn classify(
     let (state, reason) = match refusal {
         Some(reason) if reason != "javascript" => (CaptureState::Challenge, Some(reason)),
         Some(reason) => (CaptureState::Empty, Some(reason)),
-        None if text_length < BLANK_BELOW => (CaptureState::Empty, Some("blank")),
+        None if text_length < BLANK_BELOW && !shows_media(markup) => {
+            (CaptureState::Empty, Some("blank"))
+        }
         None => (CaptureState::Ok, None),
     };
     CaptureQuality {
@@ -162,6 +165,65 @@ fn collect(tree: &scraper::Html, text: &mut String, title: &mut Option<String>, 
             return;
         }
     }
+}
+
+/// Whether markup shows a picture or a media player: an `<img>` with a
+/// `src` or `srcset` that is not a `data:` placeholder, a `<video>`, or an
+/// `<audio controls>`, outside `head`, `template` and `noscript`, and not
+/// hidden (a `hidden` attribute or an inline `display: none` or
+/// `visibility: hidden` on it or an ancestor, a `width` or `height` of 0 or
+/// 1 on it, as tracking pixels have).
+fn shows_media(markup: &str) -> bool {
+    let tree = scraper::Html::parse_document(markup);
+    tree.tree
+        .nodes()
+        .filter_map(scraper::ElementRef::wrap)
+        .any(|element| {
+            let value = element.value();
+            let media = match value.name() {
+                "img" => ["src", "srcset"].into_iter().any(|name| {
+                    value.attr(name).is_some_and(|address| {
+                        let address = address.trim();
+                        !address.is_empty()
+                            && !address
+                                .get(..5)
+                                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
+                    })
+                }),
+                "video" => true,
+                "audio" => value.attr("controls").is_some(),
+                _ => false,
+            };
+            let pixel = ["width", "height"].into_iter().any(|name| {
+                value
+                    .attr(name)
+                    .is_some_and(|size| matches!(size.trim(), "0" | "1"))
+            });
+            media
+                && !pixel
+                && !hidden(&element)
+                && element
+                    .ancestors()
+                    .filter_map(scraper::ElementRef::wrap)
+                    .all(|parent| {
+                        !matches!(parent.value().name(), "head" | "template" | "noscript")
+                            && !hidden(&parent)
+                    })
+        })
+}
+
+/// A `hidden` attribute, or an inline style that hides the element.
+fn hidden(element: &scraper::ElementRef) -> bool {
+    let value = element.value();
+    value.attr("hidden").is_some()
+        || value.attr("style").is_some_and(|style| {
+            let style: String = style
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            style.contains("display:none") || style.contains("visibility:hidden")
+        })
 }
 
 /// `page_blocks.js`'s result for screenshots that cover `width` × `height`
@@ -289,6 +351,56 @@ mod tests {
         assert_eq!(
             page_quality("https://example.com/", &text(80)).state,
             CaptureState::Ok
+        );
+    }
+
+    #[test]
+    fn a_short_caption_under_a_picture_or_a_player_is_ok() {
+        let page = |body: &str| {
+            page_quality(
+                "https://example.com/p/1",
+                &format!(
+                    "<html><head><title>Post</title><link rel=\"icon\" href=\"/i.png\"></head><body>{body}</body></html>"
+                ),
+            )
+        };
+        for shown in [
+            "<article><img src=\"https://pictures.example.com/river.jpg\" alt=\"A river\"><p>Autumn light on the river.</p></article>",
+            "<picture><source srcset=\"/river.avif\"><img srcset=\"/river.jpg 1x\"></picture><p>Autumn light.</p>",
+            "<video controls src=\"https://media.example.com/clip.mp4\"></video><p>A short clip.</p>",
+            "<video><source src=\"/clip.webm\"></video>",
+            "<audio controls src=\"/song.ogg\"></audio><p>Track 1</p>",
+        ] {
+            let quality = page(shown);
+            assert_eq!(
+                (quality.state, quality.reason),
+                (CaptureState::Ok, None),
+                "{shown}"
+            );
+        }
+        // Nothing a reader would see: still blank.
+        for unseen in [
+            "<div id=\"app\"></div><noscript><img height=\"1\" width=\"1\" style=\"display:none\" src=\"https://pixel.example.com/t\"></noscript>",
+            "<img src=\"https://pixel.example.com/t\" width=\"1\" height=\"1\" alt=\"\"><div id=\"root\"></div>",
+            "<img src=\"data:image/gif;base64,R0lGODlhAQABAAAAACw=\" data-src=\"/river.jpg\">",
+            "<img src=\"  \"><img alt=\"No address\">",
+            "<img hidden src=\"/river.jpg\"><div style=\"Display : None\"><img src=\"/river.jpg\"></div>",
+            "<div style=\"visibility:hidden\"><video src=\"/clip.mp4\"></video></div>",
+            "<audio src=\"/chime.ogg\" autoplay></audio>",
+            "<template><img src=\"/river.jpg\"></template><svg viewBox=\"0 0 10 10\"><circle r=\"4\"/></svg>",
+        ] {
+            let quality = page(unseen);
+            assert_eq!(
+                (quality.state, quality.reason.as_deref()),
+                (CaptureState::Empty, Some("blank")),
+                "{unseen}"
+            );
+        }
+        // Only the blank rule looks at pictures: a JavaScript notice stays one.
+        let quality = page("<img src=\"/logo.png\"><p>Please enable JavaScript to continue.</p>");
+        assert_eq!(
+            (quality.state, quality.reason.as_deref()),
+            (CaptureState::Empty, Some("javascript"))
         );
     }
 

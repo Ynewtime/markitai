@@ -142,7 +142,7 @@ export const en = {
   dropLimit: (kept: number) => `Only the first ${kept} files were added (job limit)`,
   folderHidden: (n: number) => `${n} hidden or system ${plural(n, "file", "files")} skipped`,
   folderUnreadable: (n: number) => `${n} ${plural(n, "item", "items")} could not be read`,
-  restoreFailed: "Could not restore this task · the server did not answer",
+  restoreFailed: "Could not restore this task. The server did not answer.",
   restoreRetry: "Retry restore",
   badUrl: (value: string) => `Not a web address · ${value}`,
   badScheme: (value: string) => `Only http:// and https:// addresses can be converted · ${value}`,
@@ -447,7 +447,7 @@ export const en = {
   saved: "Saved",
   settingsConflict: "Settings were changed in another window · your draft is kept",
   useCurrentRevision: "Use current revision",
-  draftKept: "Draft kept · submit again when ready",
+  draftKept: "Draft kept. Submit again when ready.",
   originLabel: (origin: string) =>
     (
       ({
@@ -545,6 +545,8 @@ export const en = {
   filterNotices: "Notices",
   dismiss: "Dismiss",
   toastDetails: "Details",
+  /** Between a notice's lead and the rest ("Retry failed. The upload is gone."). */
+  toastLead: ". ",
   downloadFailedFile: "Download failed",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
   nFiles: (n: number) => (n === 1 ? "1 file" : `${n} files`),
@@ -660,12 +662,14 @@ export const en = {
   frontLabel: "Front matter",
   frontTags: (n: number) => plural(n, "1 tag", `${n} tags`),
   originalShotNote: "Screenshot taken when the page was fetched. Hover a block to find it on the picture.",
-  pageNotKept: (state: "empty" | "challenge" | "ok" | null): string =>
+  pageNotKept: (state: "empty" | "challenge" | "ok" | null, reason: string | null = null): string =>
     state === "challenge"
       ? "The site showed a verification check instead of the page, so it couldn't be kept as it looked."
-      : state === "empty"
-        ? "The page was blank when it was fetched (the site builds it with scripts), so it couldn't be kept as it looked."
-        : "The page couldn't be kept as it looked.",
+      : state === "empty" && reason === "javascript"
+        ? "The page only asked for JavaScript when it was fetched, so it couldn't be kept as it looked."
+        : state === "empty"
+          ? "The page was blank when it was fetched (almost no text and no pictures), so it couldn't be kept as it looked."
+          : "The page couldn't be kept as it looked.",
   pageOf: (page: number, total: number) => `Page ${page} of ${total}`,
   pageImage: (page: number) => `Page ${page} of the original`,
   pageUnavailable: "This page could not be drawn",

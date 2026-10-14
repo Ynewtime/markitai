@@ -184,9 +184,9 @@ server, loaded as they scroll into view), an uploaded image, an uploaded HTML
 file (sanitized: no scripts, styles, frames, forms, links or remote images), a
 text file, or the page screenshots a conversion saved. A web page shows the page
 the server kept, else its screenshot, with Screenshot | Page when both are
-usable: the server says when either was a verification or captcha page, or blank
-(a page its site builds with scripts), and such a view is not offered; with
-neither, the Original side says why the page could not be kept as it looked and
+usable: the server says when either was a verification or captcha page, only a
+request for JavaScript, or blank (almost no text and no pictures), and such a
+view is not offered; with neither, the Original side says why the page could not be kept as it looked and
 offers Open the page. A server that loads a page in its browser keeps a
 screenshot of it even when none was asked for (the Rust server: JPEG tiles, about
 85–230 KB per 2000 px of page, at most 20 tiles, beside the job, never in the

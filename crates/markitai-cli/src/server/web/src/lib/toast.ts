@@ -13,6 +13,12 @@ export interface ToastInput {
   action?: { label: string; run: () => void };
 }
 
+/** A lead and the rest as one sentence pair, in the language's own
+ * punctuation (`join` is the dictionary's `toastLead`: ". " or "。"). */
+export function withLead(lead: string, text: string, join: string): string {
+  return text ? `${lead}${join}${text}` : lead;
+}
+
 type Listener = (note: ToastInput) => void;
 const listeners = new Set<Listener>();
 

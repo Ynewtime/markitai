@@ -543,6 +543,7 @@ export const ja: Dict = {
   filterNotices: "お知らせあり",
   dismiss: "閉じる",
   toastDetails: "詳細",
+  toastLead: "。",
   downloadFailedFile: "ダウンロードに失敗しました",
   announceSettled: (name: string, status: string) => `${name} · ${status}`,
   nFiles: (n: number) => `${n} 個のファイル`,
@@ -660,12 +661,14 @@ export const ja: Dict = {
   frontLabel: "フロントマター",
   frontTags: (n) => `タグ ${n} 件`,
   originalShotNote: "ページを取得したときに撮った画面です。段落にポインタを置くと画像上の位置がわかります。",
-  pageNotKept: (state) =>
+  pageNotKept: (state, reason = null) =>
     state === "challenge"
       ? "取得時にサイトがページではなく確認画面を表示したため、見たままに保存できませんでした。"
-      : state === "empty"
-        ? "取得時のページが空白でした（サイトがスクリプトで内容を作るため）。見たままに保存できませんでした。"
-        : "ページを見たままに保存できませんでした。",
+      : state === "empty" && reason === "javascript"
+        ? "取得時のページは JavaScript の有効化を求めるだけでした。見たままに保存できませんでした。"
+        : state === "empty"
+          ? "取得時のページが空白でした（文字がほとんどなく、画像もありません）。見たままに保存できませんでした。"
+          : "ページを見たままに保存できませんでした。",
   pageOf: (page: number, total: number) => `${page} / ${total} ページ`,
   pageImage: (page: number) => `原本の ${page} ページ目`,
   pageUnavailable: "このページを描画できませんでした",
