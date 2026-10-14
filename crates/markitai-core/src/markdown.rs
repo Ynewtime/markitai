@@ -488,7 +488,8 @@ mod tests {
             "| Tool | What it does |\n| --- | --- |\n| [lamp](https://lamp.example) | Shows the lamp |\n"
         );
         // Each table keeps its own; fenced code and a dash row of text stay.
-        let kept = "| A |\n| --- |\n\n| B |\n| --- |\n| -- |\n\n```\n| x |\n| --- |\n| --- |\n```\n";
+        let kept =
+            "| A |\n| --- |\n\n| B |\n| --- |\n| -- |\n\n```\n| x |\n| --- |\n| --- |\n```\n";
         assert_eq!(normalize(kept), kept);
     }
 
