@@ -349,6 +349,7 @@ class TestAccessTokens:
         check_shape("AccessTokenList", listed.json())
         assert listed.json()["tokens"] == [
             {key: value for key, value in created.items() if key != "token"}
+            | {"model_count": 0}
         ]
         assert capabilities["access"] == {"role": "user", "label": "Team laptop"}
         assert capabilities["features"]["user_tokens"] is True

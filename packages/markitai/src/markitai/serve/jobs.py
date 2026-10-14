@@ -315,6 +315,9 @@ class Job:
     # for the admin's, an anonymous caller's or a CLI-recorded job. Saved in
     # meta.json, never sent in an answer.
     owner: str | None = None
+    # Hosts the admin serves the shared models of a user's job at (contract
+    # v1.15): never named in what the job reports. In memory only.
+    hidden_hosts: tuple[str, ...] = ()
     # POST .../cancel: original items still waiting for a slot never start
     stop_requested: bool = False
     # Tasks of the initial run's items still waiting for a conversion slot;
@@ -1246,6 +1249,16 @@ async def _run_item(
             success=False, error=format_error_message(e), error_code="internal_error"
         )
     item.warnings = merge_item_warnings(item.warnings, result.warnings)
+    if job.hidden_hosts:
+        # A shared model's failure names the model, never where it is served
+        from markitai.serve.user_models import hide_hosts
+
+        item.warnings = [hide_hosts(text, job.hidden_hosts) for text in item.warnings]
+        result.warnings = [
+            hide_hosts(text, job.hidden_hosts) for text in result.warnings
+        ]
+        if result.error:
+            result.error = hide_hosts(result.error, job.hidden_hosts)
     if require_llm and result.success:
         if not (result.output_path and result.llm_enhanced):
             from markitai.workflow.llm_failure import llm_fallback_reason
