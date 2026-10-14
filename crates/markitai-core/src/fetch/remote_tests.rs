@@ -1869,6 +1869,7 @@ fn a_capture_turned_away_by_a_verification_page_reads_the_text_remotely() {
             final_url: source.into(),
             title: "验证码_哔哩哔哩".into(),
             screenshots: Vec::new(),
+            view: None,
             warnings: Vec::new(),
         };
         browser_outcome(page, &cfg).err().unwrap()
@@ -1901,6 +1902,7 @@ fn a_bot_challenge_the_browser_drew_on_any_site_is_no_page() {
         final_url: "https://news.example/post/7".into(),
         title: "验证码".into(),
         screenshots: Vec::new(),
+        view: None,
         warnings: Vec::new(),
     };
     let Error::Fetch(message) = browser_outcome(page, &cfg).err().unwrap() else {
@@ -1916,6 +1918,7 @@ fn a_bot_challenge_the_browser_drew_on_any_site_is_no_page() {
         final_url: "https://news.example/essay".into(),
         title: "Captchas".into(),
         screenshots: Vec::new(),
+        view: None,
         warnings: Vec::new(),
     };
     assert!(browser_outcome(page, &cfg).is_ok());
