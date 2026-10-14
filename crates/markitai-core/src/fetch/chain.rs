@@ -14,7 +14,7 @@
 use super::policy::Step;
 use super::remote::Service;
 use super::{
-    FetchOutcome, JS_REQUIRED, JS_SHELL, NO_BROWSER_FOR_JAVASCRIPT, NO_CONTENT,
+    CHALLENGE_PAGE, FetchOutcome, JS_REQUIRED, JS_SHELL, NO_BROWSER_FOR_JAVASCRIPT, NO_CONTENT,
     browser_quality_failure, needs_javascript, sites,
 };
 use crate::{Error, Result};
@@ -40,6 +40,9 @@ pub(super) struct Attempts<'a> {
     /// What works instead for this page ([`sites::what_works`]), said when a
     /// remote service was turned away and no other failure says it already.
     pub what_works: String,
+    /// Remote services could read this page if the user allowed them: a
+    /// verification page then says how.
+    pub remote_hint: bool,
 }
 
 const NO_BROWSER_FOR_ROUTE: &str = "No local browser (Chrome or Chromium) was found for a strategy order that needs one; install one or set MARKITAI_BROWSER_EXECUTABLE (see 'markitai doctor')";
@@ -148,7 +151,19 @@ pub(super) fn run(steps: &[Step], attempts: Attempts<'_>) -> Result<FetchOutcome
                     }
                 }
                 match (attempts.remote)(service) {
-                    Ok(outcome) => return Ok(outcome),
+                    Ok(mut outcome) => {
+                        // What the browser was shown in place of the page
+                        // is kept neither as a copy nor as a screenshot.
+                        if let Some(Error::Fetch(refusal)) = &failure
+                            && shown_instead(refusal)
+                        {
+                            outcome
+                                .content
+                                .warnings_mut()
+                                .push(sites::read_past_notice(refusal, reader(service)));
+                        }
+                        return Ok(outcome);
+                    }
                     Err(error) => remote_failures.push(error.to_string()),
                 }
             }
@@ -196,6 +211,12 @@ pub(super) fn run(steps: &[Step], attempts: Attempts<'_>) -> Result<FetchOutcome
             "No fetch strategy could run for this URL; check fetch.policy.strategy_priority and fetch.domain_profiles".into(),
         ),
     };
+    // A verification page that a remote reader was not allowed to try.
+    let error = if attempts.remote_hint && shown_instead(&error.to_string()) {
+        appended(error, sites::REMOTE_READERS)
+    } else {
+        error
+    };
     if remote_failures.is_empty() {
         return Err(error);
     }
@@ -211,6 +232,21 @@ pub(super) fn run(steps: &[Step], attempts: Attempts<'_>) -> Result<FetchOutcome
         return Err(appended(error, &attempts.what_works));
     }
     Err(error)
+}
+
+/// Whether a local failure is a page shown instead of the content: a site's
+/// verification or login page, or a bot challenge.
+fn shown_instead(message: &str) -> bool {
+    sites::refusal_page(message) || message.starts_with(CHALLENGE_PAGE)
+}
+
+/// A remote service as the reader knows it.
+fn reader(service: Service) -> &'static str {
+    match service {
+        Service::Defuddle => "defuddle.md",
+        Service::Jina => "Jina Reader",
+        Service::Cloudflare => "Cloudflare Browser Rendering",
+    }
 }
 
 fn capitalized(text: &str) -> String {
@@ -342,6 +378,7 @@ mod tests {
                         }
                     },
                     what_works: sites::what_works(&zhihu()),
+                    remote_hint: false,
                 },
             )
         }

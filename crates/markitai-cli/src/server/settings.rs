@@ -11,7 +11,7 @@ pub(super) use handlers::ROUTES;
 pub(super) use handlers::routes;
 use serde_json::Value;
 use std::path::PathBuf;
-pub(super) use store::{Store, load_base};
+pub(super) use store::{Store, load_base, load_written};
 
 pub(crate) struct SettingsSource {
     pub path: PathBuf,

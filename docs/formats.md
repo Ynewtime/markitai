@@ -536,8 +536,9 @@ Eligible upright text pages also have a conservative positioned-text refinement
 for document-wide heading levels (including bold headings at the body size),
 paragraph gaps and short last lines, continuous styling, web and mail link
 targets and complete ruled tables. Empty cells/columns are preserved; ambiguous
-geometry retains the existing page reader. Running page headers repeated on most
-pages are removed, and the document title is the information title when it
+geometry retains the existing page reader. Running page headers and footers
+repeated on two pages or more, and page numbers such as `第 3 页`, are removed
+(see [PDF layout](pdf.md)), and the document title is the information title when it
 names the document, else the most prominent text of the first pages. See [PDF layout](pdf.md) for acceptance checks, resource
 limits and the cost of the additional parsing pass.
 
@@ -669,11 +670,15 @@ grid assembly, so a workbook saved in any container converts the same:
   `yyyy"年"m"月"d"日"` gives `2026年3月4日`. A format whose `[$-lcid]`
   locale is not English keeps the ISO date, since its month names are not
   English.
-- A sheet's first row is its header. A first row that holds one cell merged
-  across every column with content (a title) is written as a line above the
-  table when the row it leads to holds at least two cells and no merge, which
-  then is the header; a title that repeats the sheet's heading is not written
-  again. ODS sheets do the same.
+- A row whose only value sits in a cell merged across two columns or more (a
+  title, a contact line, a section label such as "Afternoon") is a paragraph
+  and ends the table above it, wherever it stands in the sheet; a title that
+  repeats the sheet's heading is not written again. The rows up to the next
+  such row form one table whose first row is its header, as written: an empty
+  header cell stays empty, and so does every empty cell. A row with one
+  unmerged value is data. Blank rows before or after a table are dropped,
+  those inside it keep their place, and columns empty in every row of a table
+  are left out. XLS and ODS sheets follow the same rule.
 
 Large XLSX-family workbooks have fixed reading limits: at most 2,000,000 XML
 nodes (elements and text runs) per package part, 128 MiB decompressed per part,
@@ -806,13 +811,12 @@ or paragraph it marks, never inside a heading's text (a Word bookmark around a
 heading, a table-of-contents target, an EPUB chapter's start), so headings
 and their slugs stay clean; a heading in a table cell, which has no lines of its
 own, keeps the anchor inline. DOCX
-tables keep their first row as data with a blank Markdown header. ODS uses its
-first row as the header and removes trailing columns that are empty in every row,
-whatever the sheet declares or a merged title spans (a title merged over five
-columns above three columns of data gives three, as the reference renders the
-ODS fixture); empty columns between filled ones stay. A merged title row above
-the real header is text above the table, as in XLSX (see
-[spreadsheets](#spreadsheets)); the reference makes it the header. RTF heading bold markers are omitted while other emphasis is
+tables keep their first row as data with a blank Markdown header. An ODS sheet
+is headed by its name, even when it is the only one, and its tables follow the
+XLSX rule (see [spreadsheets](#spreadsheets)): merged rows with one value are
+paragraphs between tables, each table's first row is its header, and columns
+empty in every row of a table, whatever the sheet declares or a merged title
+spans, are left out. RTF heading bold markers are omitted while other emphasis is
 retained. Hidden XLS/XLSX/XLSB worksheets, rows and columns are omitted by the upstream parser
 and reported explicitly. Older XLS code pages other than
 Windows-1252, exact presentation image encoding, PDF table

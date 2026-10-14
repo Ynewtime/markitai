@@ -57,6 +57,15 @@ cross-reference table. The reader's own wording follows in parentheses. A
 download that stopped early or a file that was saved twice is the usual cause;
 open it in its application, or fetch it again.
 
+**`✗ This is not an EPUB e-book: the file holds …, while a .epub file is a ZIP
+package`.** The file is named like a ZIP-based document (`.docx`, `.xlsx`,
+`.pptx`, `.odt`, `.ods`, `.odp`, `.epub` and their templates) but its bytes are
+something else, named from their first bytes: gzip-, bzip2-, xz- or
+Zstandard-compressed data (for gzip, with the file name its header records,
+such as `lamp-manual.ps`), a PostScript or RTF document, a RAR or 7-Zip
+archive, a legacy Office file, an image, or HTML, XML or JSON text. Rename the
+file to what it is, or decompress it first.
+
 **`! The content is a PDF document although the file name ends in .docx; …`.**
 The file name and the content disagree between document types (a PDF saved as
 `.docx`, a Word file saved as `.pdf`, a modern package saved as `.doc`). Markitai

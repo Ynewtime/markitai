@@ -252,7 +252,10 @@ combining either URL strategy with the Cloudflare file backend returns 422
 `fetch.remote_consent=never` and `MARKITAI_NO_REMOTE_FETCH` remain hard stops.
 Accepted requests use `ask` with the explicitly selected Cloudflare service;
 there is no terminal prompt and no implicit authorization of remote fallback in
-`auto`. The server returns 403 `remote_processing_forbidden` for an untrusted
+`auto`. Remote fallback of `auto` (defuddle.md, Jina Reader, and Cloudflare when
+configured) runs only when the server's configuration file or `--config-json`
+writes `fetch.remote_consent: always`, as in the CLI ([consent](fetch.md#consent));
+the default leaves `auto` local. The server returns 403 `remote_processing_forbidden` for an untrusted
 caller, 422 `remote_processing_confirmation_required` without current consent,
 422 `remote_processing_disabled` when policy forbids it, and 422
 `cloudflare_unavailable` when local prerequisites are missing. Unknown enum

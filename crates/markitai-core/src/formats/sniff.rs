@@ -165,6 +165,110 @@ pub(crate) fn explain_damage(error: Error) -> Error {
     }
 }
 
+/// Extensions of documents that are ZIP packages.
+const ZIP_PACKAGES: &[&str] = &[
+    "docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "xlsb", "pptx", "pptm", "ppsx",
+    "ppsm", "potx", "potm", "odt", "ott", "ods", "ots", "odp", "otp", "epub",
+];
+
+/// Leading bytes of what a misnamed package most often turns out to be.
+const SIGNATURES: &[(&[u8], &str)] = &[
+    (PDF, "a PDF document"),
+    (b"%!PS", "a PostScript document"),
+    (b"Rar!\x1a\x07", "a RAR archive"),
+    (b"7z\xbc\xaf\x27\x1c", "a 7-Zip archive"),
+    (b"BZh", "bzip2-compressed data"),
+    (b"\xfd7zXZ\x00", "xz-compressed data"),
+    (b"\x28\xb5\x2f\xfd", "Zstandard-compressed data"),
+    (OLE, "an OLE compound file (a legacy Office document)"),
+    (b"\x89PNG", "a PNG image"),
+    (b"\xff\xd8\xff", "a JPEG image"),
+    (b"{\\rtf", "an RTF document"),
+];
+
+/// What gzip-compressed bytes hold, from the original file name its header
+/// carries when `gzip` wrote it (`lamp-manual.ps`).
+fn gzip_content(head: &[u8]) -> String {
+    // ID1 ID2 CM FLG MTIME(4) XFL OS, then FEXTRA when FLG has it, then FNAME.
+    let flags = head.get(3).copied().unwrap_or(0);
+    let mut at = 10usize;
+    if flags & 0x04 != 0 {
+        let extra = head.get(10..12).map_or(usize::MAX, |n| {
+            usize::from(u16::from_le_bytes([n[0], n[1]]))
+        });
+        at = at.saturating_add(2).saturating_add(extra);
+    }
+    let name = (flags & 0x08 != 0)
+        .then(|| head.get(at..))
+        .flatten()
+        .and_then(|rest| rest.split(|&b| b == 0).next().filter(|_| rest.contains(&0)))
+        .map(|name| String::from_utf8_lossy(name).trim().to_owned())
+        .filter(|name| !name.is_empty() && name.len() <= 200 && !name.contains(char::is_control));
+    let Some(name) = name else {
+        return "gzip-compressed data".into();
+    };
+    let inner = Path::new(&name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    let kind = match inner.as_deref() {
+        Some("ps" | "eps") => " (a PostScript document)",
+        Some("pdf") => " (a PDF document)",
+        Some("tar") => " (a tar archive)",
+        Some(extension) if ZIP_PACKAGES.contains(&extension) => " (the document, compressed)",
+        _ => "",
+    };
+    format!("a gzip-compressed copy of `{name}`{kind}")
+}
+
+/// A document of a ZIP package type whose bytes are something else (a
+/// gzip-compressed PostScript file named `.epub`), said in those terms
+/// rather than as a damaged file. `None` when the file starts like a ZIP
+/// archive, or its content is not recognized.
+pub(crate) fn not_a_package(path: &Path, extension: &str) -> Option<Error> {
+    if !ZIP_PACKAGES.contains(&extension) {
+        return None;
+    }
+    let head = head(path, 4096)?;
+    if head.starts_with(b"PK") || head.is_empty() {
+        return None;
+    }
+    let text = || {
+        if head.contains(&0) {
+            return None;
+        }
+        let start = head.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&head);
+        match start.trim_ascii_start().first() {
+            Some(b'<') => Some("HTML or XML text"),
+            Some(b'{' | b'[') => Some("JSON text"),
+            _ => None,
+        }
+    };
+    let content = if head.starts_with(b"\x1f\x8b") {
+        gzip_content(&head)
+    } else {
+        SIGNATURES
+            .iter()
+            .find(|(signature, _)| head.starts_with(signature))
+            .map(|(_, name)| (*name).to_owned())
+            .or_else(|| text().map(str::to_owned))?
+    };
+    let kind = kind_name(super::document_extension(extension));
+    let article = if kind.starts_with(['A', 'E', 'I', 'O', 'U']) {
+        "an"
+    } else {
+        "a"
+    };
+    let hint = if content.contains("compressed") {
+        "it may be misnamed or still compressed"
+    } else {
+        "it may be misnamed"
+    };
+    Some(Error::Conversion(format!(
+        "This is not {article} {kind}: the file holds {content}, while a .{extension} file is a ZIP package. Check the file ({hint})."
+    )))
+}
+
 /// The prefix read to learn an image's format and size. A JPEG's frame header
 /// can follow long metadata; a prefix that ends first is trusted.
 const HEADER_LIMIT: u64 = 1024 * 1024;
@@ -374,6 +478,60 @@ mod tests {
         );
         let kept = Error::InvalidInput("malformed document".into());
         assert_eq!(explain_damage(kept).to_string(), "malformed document");
+    }
+
+    #[test]
+    fn a_package_name_on_other_content_says_what_the_file_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        // gzip of an invented PostScript page, without and with the file
+        // name `gzip` records.
+        let postscript = b"%!PS-Adobe-3.0\n72 720 moveto (Desk lamp manual) show\nshowpage\n";
+        let gzip = |name: Option<&str>| {
+            let mut bytes = vec![0x1f, 0x8b, 8, if name.is_some() { 8 } else { 0 }];
+            bytes.extend([0, 0, 0, 0, 0, 3]);
+            if let Some(name) = name {
+                bytes.extend(name.as_bytes());
+                bytes.push(0);
+            }
+            bytes.extend(&postscript[..]);
+            bytes
+        };
+        let message = |name: &str, bytes: &[u8]| {
+            not_a_package(&file(&dir, name, bytes), name.rsplit('.').next().unwrap())
+                .map(|error| error.to_string())
+        };
+        assert_eq!(
+            message("lamp-manual.epub", &gzip(None)).unwrap(),
+            "This is not an EPUB e-book: the file holds gzip-compressed data, while a .epub file \
+             is a ZIP package. Check the file (it may be misnamed or still compressed)."
+        );
+        let named = message("manual.epub", &gzip(Some("lamp-manual.ps"))).unwrap();
+        assert!(
+            named.contains(
+                "holds a gzip-compressed copy of `lamp-manual.ps` (a PostScript document)"
+            ),
+            "{named}"
+        );
+        for (name, bytes, holds) in [
+            ("a.epub", &postscript[..], "a PostScript document"),
+            ("b.odt", b"<!DOCTYPE html><p>notes", "HTML or XML text"),
+            ("c.dotx", b"{\"notes\": 1}", "JSON text"),
+            ("d.xlsx", b"Rar!\x1a\x07\x01\x00", "a RAR archive"),
+            ("e.epub", OLE, "an OLE compound file"),
+        ] {
+            let text = message(name, bytes).unwrap();
+            assert!(text.contains(&format!("the file holds {holds}")), "{text}");
+        }
+        assert!(
+            message("c.dotx", b"{}")
+                .unwrap()
+                .starts_with("This is not a Word document")
+        );
+        // A damaged ZIP package, unknown content and other formats are left
+        // to the parser's own error.
+        assert_eq!(message("f.epub", b"PK\x03\x04truncated"), None);
+        assert_eq!(message("g.epub", b"plain words"), None);
+        assert_eq!(message("h.doc", &gzip(None)), None);
     }
 
     #[test]

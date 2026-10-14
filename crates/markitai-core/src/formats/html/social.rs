@@ -16,9 +16,11 @@ use super::Attribute;
 use super::hacker_news::escaped;
 use super::{Announcement, Landmarks, render_clean, selector};
 use crate::Result;
+use regex::Regex;
 use scraper::{ElementRef, Html};
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 use url::Url;
 
 fn inside(element: ElementRef<'_>, container: Option<ElementRef<'_>>) -> bool {
@@ -221,45 +223,173 @@ fn original_image(url: &str) -> String {
     parsed.into()
 }
 
+/// The poster address that names a video's picture, whatever size and
+/// format the page asks for: `pbs.twimg.com` and the path without its
+/// extension (`/media/Eu2ND` for `/media/Eu2ND.jpg` and
+/// `/media/Eu2ND?format=webp&name=medium`).
+fn poster_key(url: &str) -> Option<String> {
+    let url = Url::parse(url.trim()).ok()?;
+    if url.host_str() != Some("pbs.twimg.com") {
+        return None;
+    }
+    let path = url.path();
+    let stem = match path.rsplit_once('.') {
+        Some((stem, extension)) if !extension.contains('/') => stem,
+        _ => path,
+    };
+    Some(stem.to_owned())
+}
+
+static MEDIA_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""?media_url_https"?\s*:\s*"([^"]+)""#).expect("pattern"));
+static MP4_VARIANT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\{[^{}]*video/mp4[^{}]*\}"#).expect("pattern"));
+static VARIANT_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""?url"?\s*:\s*"([^"]+)""#).expect("pattern"));
+static VARIANT_BITRATE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""?bitrate"?\s*:\s*(\d+)"#).expect("pattern"));
+
+/// The video files a post page names for its videos, by poster (see
+/// [`poster_key`]). The page draws a video as its poster and a player that
+/// streams it (a browser-local `blob:` address); the post's data, which X
+/// serializes into the page's scripts, lists the files as `video/mp4`
+/// variants after the media's `media_url_https`. The largest one is kept,
+/// and only on X's video host.
+fn video_files(document: &Html) -> HashMap<String, String> {
+    let mut files = HashMap::new();
+    for script in document.select(&selector("script")) {
+        let text = script.text().collect::<String>();
+        if !text.contains("video/mp4") {
+            continue;
+        }
+        let unescape = |value: &str| {
+            value
+                .replace("\\/", "/")
+                .replace("\\u002F", "/")
+                .replace("\\u002f", "/")
+                .replace("\\u0026", "&")
+        };
+        let starts: Vec<_> = MEDIA_URL.captures_iter(&text).collect();
+        for (index, captures) in starts.iter().enumerate() {
+            let whole = captures.get(0).expect("match");
+            let end = starts
+                .get(index + 1)
+                .map_or(text.len(), |next| next.get(0).expect("match").start());
+            let Some(key) = poster_key(&unescape(&captures[1])) else {
+                continue;
+            };
+            let best = MP4_VARIANT
+                .find_iter(&text[whole.end()..end])
+                .filter_map(|variant| {
+                    let variant = variant.as_str();
+                    let url = unescape(&VARIANT_URL.captures(variant)?[1]);
+                    let bitrate = VARIANT_BITRATE
+                        .captures(variant)
+                        .and_then(|found| found[1].parse::<u64>().ok())
+                        .unwrap_or(0);
+                    Url::parse(&url)
+                        .is_ok_and(|parsed| {
+                            parsed.scheme() == "https"
+                                && parsed.host_str() == Some("video.twimg.com")
+                        })
+                        .then_some((bitrate, url))
+                })
+                .max_by_key(|(bitrate, _)| *bitrate);
+            if let Some((_, url)) = best {
+                files.entry(key).or_insert(url);
+            }
+        }
+    }
+    files
+}
+
+/// The scripts of an X post page that name video files (see
+/// [`video_files`]), as markup to add to another copy of the page: the page a
+/// browser drew has run and removed them.
+pub(crate) fn video_data_scripts(html: &str) -> String {
+    let document = Html::parse_document(html);
+    let mut scripts = String::new();
+    for script in document.select(&selector("script")) {
+        let text = script.text().collect::<String>();
+        // Text of a parsed script cannot close it early.
+        if text.contains("video/mp4") && text.contains("media_url_https") {
+            scripts.push_str("<script>");
+            scripts.push_str(&text);
+            scripts.push_str("</script>");
+        }
+    }
+    scripts
+}
+
 /// Images and videos of a post in page order, each once, as Markdown: a photo
-/// at its original size, a video as its poster and, when the page carries a
-/// real address (not the browser-local `blob:` handle), a link to the file.
-fn media(post: ElementRef<'_>, exclude: Option<ElementRef<'_>>) -> Vec<String> {
+/// at its original size, a video as its poster linked to its file
+/// (`[![Video](poster)](file.mp4)`, as a page's `<video>` is written) when
+/// the page names one, either as the element's address or in the post's data
+/// (`files`), and as its poster alone when it only has the browser-local
+/// `blob:` handle.
+fn media(
+    post: ElementRef<'_>,
+    exclude: Option<ElementRef<'_>>,
+    files: &HashMap<String, String>,
+) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut add = |line: String| {
         if !lines.contains(&line) {
             lines.push(line);
         }
     };
+    let https = |url: Option<&str>| {
+        url.map(str::trim)
+            .filter(|url| url.starts_with("https://"))
+            .map(str::to_owned)
+    };
+    // A player draws its poster as a picture too, which is not a photo.
+    let posters: HashSet<String> = post
+        .select(&selector("video[poster]"))
+        .filter_map(|video| poster_key(video.value().attribute("poster")?))
+        .collect();
     for element in post.select(&selector(
         r#"video, [data-testid="tweetPhoto"] img, a[aria-label="Image"] img"#,
     )) {
         if inside(element, exclude) {
             continue;
         }
-        let https = |url: Option<&str>| {
-            url.map(str::trim)
-                .filter(|url| url.starts_with("https://"))
-                .map(str::to_owned)
-        };
         if element.value().name() == "video" {
-            if let Some(poster) = https(element.value().attribute("poster")) {
-                add(image_markdown(&poster));
-            }
+            let poster = https(element.value().attribute("poster"));
             let source = element.value().attribute("src").or_else(|| {
                 element
                     .select(&selector("source[src]"))
                     .find_map(|source| source.value().attribute("src"))
             });
-            if let Some(source) = https(source) {
-                let label = if source.contains("/tweet_video/") {
-                    "GIF"
-                } else {
-                    "Video"
-                };
-                add(format!("[{label}]({})", source.replace(' ', "%20")));
+            let file = https(source).or_else(|| {
+                poster
+                    .as_deref()
+                    .and_then(poster_key)
+                    .and_then(|key| files.get(&key).cloned())
+            });
+            let label = if file
+                .as_deref()
+                .is_some_and(|file| file.contains("/tweet_video/"))
+            {
+                "GIF"
+            } else {
+                "Video"
+            };
+            match (poster, file) {
+                (Some(poster), Some(file)) => add(format!(
+                    "[{}]({})",
+                    image_markdown(&poster).replacen("![]", &format!("![{label}]"), 1),
+                    file.replace(' ', "%20")
+                )),
+                (Some(poster), None) => {
+                    add(image_markdown(&poster).replacen("![]", &format!("![{label}]"), 1));
+                }
+                (None, Some(file)) => add(format!("[{label}]({})", file.replace(' ', "%20"))),
+                (None, None) => {}
             }
-        } else if let Some(photo) = https(element.value().attribute("src")) {
+        } else if let Some(photo) = https(element.value().attribute("src"))
+            && !poster_key(&photo).is_some_and(|key| posters.contains(&key))
+        {
             add(image_markdown(&original_image(&photo)));
         }
     }
@@ -358,6 +488,12 @@ fn mirror_host(host: &str) -> bool {
 /// for any other address and for one that already is canonical, so a caller
 /// can fetch the post itself rather than a mirror's redirect page.
 pub(crate) fn canonical_status_url(url: &Url) -> Option<Url> {
+    status_address(url).filter(|canonical| canonical != url)
+}
+
+/// The canonical `https://x.com/<user>/status/<id>` (or `/article/<id>`)
+/// address of a post named through X's hosts or a mirror, canonical or not.
+pub(crate) fn status_address(url: &Url) -> Option<Url> {
     if !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
         return None;
     }
@@ -382,8 +518,7 @@ pub(crate) fn canonical_status_url(url: &Url) -> Option<Url> {
     {
         return None;
     }
-    let canonical = Url::parse(&format!("https://x.com/{user}/{kind}/{id}")).ok()?;
-    (canonical != *url).then_some(canonical)
+    Url::parse(&format!("https://x.com/{user}/{kind}/{id}")).ok()
 }
 
 /// Whether a page is an X post page: by its host (a status or Article
@@ -442,7 +577,7 @@ impl<'a> Post<'a> {
     }
 
     /// The post's text, media and quoted post as Markdown blocks.
-    fn blocks(&self, base: Option<&Url>) -> Result<Vec<String>> {
+    fn blocks(&self, base: Option<&Url>, files: &HashMap<String, String>) -> Result<Vec<String>> {
         let mut blocks = Vec::new();
         if let Some(text) = text_element(self.element, self.quote) {
             let text = text_markdown(text, base)?;
@@ -450,9 +585,9 @@ impl<'a> Post<'a> {
                 blocks.push(text);
             }
         }
-        blocks.extend(media(self.element, self.quote));
+        blocks.extend(media(self.element, self.quote, files));
         if let Some(quote) = self.quote
-            && let Some(block) = quote_block(quote, base)?
+            && let Some(block) = quote_block(quote, base, files)?
         {
             blocks.push(block);
         }
@@ -462,7 +597,11 @@ impl<'a> Post<'a> {
 
 /// The quoted post as a block quote: `**Name @handle** · date`, its text and
 /// media, and a link to it.
-fn quote_block(quote: ElementRef<'_>, base: Option<&Url>) -> Result<Option<String>> {
+fn quote_block(
+    quote: ElementRef<'_>,
+    base: Option<&Url>,
+    files: &HashMap<String, String>,
+) -> Result<Option<String>> {
     let (name, handle) = author(quote, None);
     let handle = handle.or_else(|| {
         quote
@@ -506,7 +645,7 @@ fn quote_block(quote: ElementRef<'_>, base: Option<&Url>) -> Result<Option<Strin
             lines.push(text);
         }
     }
-    lines.extend(media(quote, None));
+    lines.extend(media(quote, None, files));
     if let Some(href) = quote.value().attribute("data-href")
         && let Some(url) = Url::parse("https://x.com")
             .ok()
@@ -734,7 +873,11 @@ fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announceme
 
 /// A reply under `## Comments`, as the reference writes it: `**Name @handle**
 /// · [date](permalink)`, then the reply's text, media and quoted post.
-fn comment(reply: &Post<'_>, base: Option<&Url>) -> Result<Option<Vec<String>>> {
+fn comment(
+    reply: &Post<'_>,
+    base: Option<&Url>,
+    files: &HashMap<String, String>,
+) -> Result<Option<Vec<String>>> {
     let mut header = Vec::new();
     let who = match (&reply.name, &reply.handle) {
         (Some(name), Some(handle)) => format!("{name} {handle}"),
@@ -757,7 +900,7 @@ fn comment(reply: &Post<'_>, base: Option<&Url>) -> Result<Option<Vec<String>>> 
             None => date,
         });
     }
-    let blocks = reply.blocks(base)?;
+    let blocks = reply.blocks(base, files)?;
     if header.is_empty() && blocks.is_empty() {
         return Ok(None);
     }
@@ -857,7 +1000,8 @@ pub(super) fn post(
         return Ok(None);
     };
     let main = Post::read(timeline[position]);
-    let lead = main.blocks(base)?;
+    let files = video_files(document);
+    let lead = main.blocks(base, &files)?;
     if lead.is_empty() {
         return Ok(None);
     }
@@ -882,10 +1026,10 @@ pub(super) fn post(
         let reply = Post::read(*article);
         thread_ended |= !reply.same_author(&main);
         if thread_ended {
-            comments.extend(comment(&reply, base)?);
+            comments.extend(comment(&reply, base, &files)?);
             continue;
         }
-        let blocks = reply.blocks(base)?;
+        let blocks = reply.blocks(base, &files)?;
         if !blocks.is_empty() {
             sections.push(blocks.join("\n\n"));
         }
@@ -999,7 +1143,7 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         let doc = extract_html(page, Some("https://x.com/ada/status/1")).unwrap();
         assert_eq!(
             doc.markdown,
-            "First line of the post.\n\nSecond line with [example.com/tool](https://example.com/tool)\n\n![](https://pbs.twimg.com/amplify_video_thumb/9/img/p.jpg)\n\n> **Grace @grace** · Jun 19\n>\n> The quoted post.\n>\n> ![](https://pbs.twimg.com/media/Q?format=jpg&name=orig)\n>\n> [https://x.com/grace/status/2](https://x.com/grace/status/2)\n\n---\n\n## Comments\n\n> A reply."
+            "First line of the post.\n\nSecond line with [example.com/tool](https://example.com/tool)\n\n![Video](https://pbs.twimg.com/amplify_video_thumb/9/img/p.jpg)\n\n> **Grace @grace** · Jun 19\n>\n> The quoted post.\n>\n> ![](https://pbs.twimg.com/media/Q?format=jpg&name=orig)\n>\n> [https://x.com/grace/status/2](https://x.com/grace/status/2)\n\n---\n\n## Comments\n\n> A reply."
         );
         assert_eq!(doc.metadata["title"], "Post by @ada on X");
         assert_eq!(doc.metadata["author"], "@ada");
@@ -1081,9 +1225,31 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         let doc = extract_html(&page(&main, ""), Some(STATUS)).unwrap();
         assert_eq!(
             doc.markdown,
-            "Clips\n\n![](https://pbs.twimg.com/amplify_video_thumb/9/img/p?format=webp&name=medium)\n\n![](https://pbs.twimg.com/tweet_video_thumb/g.jpg)\n\n[GIF](https://video.twimg.com/tweet_video/g.mp4)"
+            "Clips\n\n![Video](https://pbs.twimg.com/amplify_video_thumb/9/img/p?format=webp&name=medium)\n\n[![GIF](https://pbs.twimg.com/tweet_video_thumb/g.jpg)](https://video.twimg.com/tweet_video/g.mp4)"
         );
         assert!(!doc.markdown.contains("00:00"));
+    }
+
+    #[test]
+    fn a_video_links_the_largest_file_the_posts_data_names() {
+        // X's server-rendered page: the player is a poster (also drawn as a
+        // picture), and the post's data in a script lists the files.
+        let state = r#"<script>window.state={media_entities2:[{id_str:"5",media_url_https:"https://pbs.twimg.com/media/Lamp5.jpg",type:"video",video_info:{variants:[{content_type:"application/x-mpegURL",url:"https://video.twimg.com/amplify_video/5/pl/a.m3u8"},{bitrate:288000,content_type:"video/mp4",url:"https://video.twimg.com/amplify_video/5/vid/480x270/s.mp4?tag=1"},{bitrate:2176000,content_type:"video/mp4",url:"https://video.twimg.com/amplify_video/5/vid/1280x720/l.mp4?tag=1"}]}},{media_url_https:"https://pbs.twimg.com/media/Other6.jpg",type:"video",video_info:{variants:[{bitrate:9,content_type:"video/mp4",url:"https://elsewhere.example/v.mp4"}]}}]}</script>"#;
+        let player = r#"<div data-testid="tweetPhoto"><video poster="https://pbs.twimg.com/media/Lamp5?format=webp&amp;name=medium"></video>
+            <img alt="" src="https://pbs.twimg.com/media/Lamp5?format=webp&amp;name=medium"></div>
+            <video poster="https://pbs.twimg.com/media/Other6?format=jpg&amp;name=small" src="blob:https://x.com/9"></video>"#;
+        let main = article("ada", "Ada", ID, "Feb 25, 2025", "Lamp test", player);
+        let doc = extract_html(&format!("{}{state}", page(&main, "")), Some(STATUS)).unwrap();
+        assert_eq!(
+            doc.markdown,
+            "Lamp test\n\n[![Video](https://pbs.twimg.com/media/Lamp5?format=webp&name=medium)](https://video.twimg.com/amplify_video/5/vid/1280x720/l.mp4?tag=1)\n\n![Video](https://pbs.twimg.com/media/Other6?format=jpg&name=small)"
+        );
+        // The data a browser's copy of the page has lost is taken from the
+        // server-rendered page's scripts alone.
+        let scripts = super::video_data_scripts(&format!(
+            "<html><body><script>a=1</script>{state}</body></html>"
+        ));
+        assert!(scripts.starts_with("<script>window.state=") && !scripts.contains("a=1"));
     }
 
     #[test]
@@ -1106,7 +1272,7 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         let doc = extract_html(&page(&main, ""), Some(STATUS)).unwrap();
         assert_eq!(
             doc.markdown,
-            "Good luck!\n\n> **Grace Hopper @grace** · 2025-02-24\n>\n> A quoted line.\n>\n> ![](https://pbs.twimg.com/amplify_video_thumb/7/img/q?format=webp&name=medium)\n>\n> [https://x.com/grace/status/1894160928502858201](https://x.com/grace/status/1894160928502858201)"
+            "Good luck!\n\n> **Grace Hopper @grace** · 2025-02-24\n>\n> A quoted line.\n>\n> ![Video](https://pbs.twimg.com/amplify_video_thumb/7/img/q?format=webp&name=medium)\n>\n> [https://x.com/grace/status/1894160928502858201](https://x.com/grace/status/1894160928502858201)"
         );
         assert_eq!(doc.metadata["author"], "@ada");
         assert_eq!(doc.metadata["published"], "2025-02-25");

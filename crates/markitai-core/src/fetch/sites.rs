@@ -211,6 +211,37 @@ pub(super) fn says_what_works(message: &str) -> bool {
     message.contains(SAVE_PAGE)
 }
 
+/// The failure of a local reader shown a bot challenge (a CAPTCHA, a
+/// Cloudflare check) on any site: a verification page, routed as a site's is.
+pub(super) fn challenge_message(url: &Url) -> String {
+    let site = url
+        .host_str()
+        .and_then(site_of)
+        .map_or("The site", |site| site.name);
+    format!(
+        "{site} {VERIFICATION_PAGE} instead of the content: a bot challenge (CAPTCHA) that only a person's browser passes; {SAVE_PAGE}"
+    )
+}
+
+/// The note on a page a remote reader read after a local reader was shown
+/// the site's verification or login page (`refusal`, its failure): neither
+/// that page nor its screenshot was kept, and the reader should compare
+/// with the page itself.
+pub(super) fn read_past_notice(refusal: &str, reader: &str) -> String {
+    let (site, shown) = match refusal.split_once(" served a ") {
+        Some((site, rest)) if rest.starts_with("login page") => (site, "a login page"),
+        Some((site, _)) => (site, "a verification page"),
+        None => ("The site", "a verification page"),
+    };
+    format!(
+        "{site} showed {shown} instead of the page, so no copy or screenshot of the page was kept; its text was read by {reader}. Open the page itself to compare."
+    )
+}
+
+/// What a reader that is not allowed to send the page to a remote service
+/// can do about a verification page.
+pub(super) const REMOTE_READERS: &str = "a remote reader (defuddle.md, Jina Reader) may read it if you allow one: set fetch.remote_consent to always, or choose the defuddle or jina strategy for this conversion";
+
 /// What works instead, for a page of `url` that turned a reader away: the
 /// site's own advice when it is known, otherwise saving the page.
 pub(super) fn what_works(url: &Url) -> String {
@@ -409,13 +440,15 @@ fn json_error(json: &str, site: Option<&Site>) -> Option<String> {
 const FEW_WORDS: usize = 60;
 
 /// Visible text a challenge page starts with.
-const CHALLENGE_TEXT: [&str; 6] = [
+const CHALLENGE_TEXT: [&str; 8] = [
     "checking your browser before accessing",
     "verify you are human",
     "verify that you are human",
     "verifying you are human",
     "智能验证检测中",
     "由极验提供技术支持",
+    "请在下图依次点击",
+    "请完成下列验证后继续",
 ];
 /// Titles of challenge pages.
 const CHALLENGE_TITLES: [&str; 4] = [
@@ -506,6 +539,12 @@ impl<'a> Shown<'a> {
                             "hcaptcha.com",
                             "g-recaptcha",
                             "h-captcha",
+                            "geetest_",
+                            "static.geetest.com",
+                            "cf-turnstile",
+                            "challenges.cloudflare.com/turnstile",
+                            "captcha-delivery.com",
+                            "px-captcha",
                         ]
                         .iter()
                         .any(|marker| value.contains(marker));

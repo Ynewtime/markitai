@@ -68,6 +68,26 @@ pub(super) fn install(raw: &Value, quiet: bool) {
     });
 }
 
+/// Install the consent facts of `serve` from its configuration as written:
+/// a `fetch.remote_consent` written as `always` lets `auto` send a public URL
+/// that local fetching could not read to the remote services, as in the CLI;
+/// a service never asks a question, so `ask` stays local. Notices go to the
+/// service's log.
+pub(super) fn install_service(raw: &Value) {
+    let (explicitly_always, _) = written(raw);
+    markitai_core::set_remote_fallback(RemoteFallback {
+        explicitly_always,
+        // A service applies no fallback_patterns list (see docs/fetch.md).
+        explicit_fallback_patterns: false,
+        ask: None,
+        notify: Box::new(|notice: &RemoteNotice| {
+            let english = notice_text(notice, Lang::En);
+            super::logging::diagnostic_as(format_args!("{english}"), format_args!("{english}"));
+            true
+        }),
+    });
+}
+
 fn names(services: &[&str], lang: Lang) -> String {
     services
         .iter()

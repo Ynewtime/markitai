@@ -165,8 +165,25 @@ fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
     text.chars().filter(|ch| ch.is_alphanumeric())
 }
 
-/// The byte offset in `section` just after the paragraph that holds `line`,
-/// when the end of that line occurs exactly once in it.
+/// Whether a Markdown line starts a list item (`- `, `* `, `+ `, `1. `,
+/// `1) `), after its indentation.
+fn list_item(line: &str) -> bool {
+    let line = line.trim_start_matches(' ');
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    let rest = if (1..=9).contains(&digits) && line[digits..].starts_with(['.', ')']) {
+        &line[digits + 1..]
+    } else if line.starts_with(['-', '*', '+']) {
+        &line[1..]
+    } else {
+        return false;
+    };
+    rest.is_empty() || rest.starts_with([' ', '\t'])
+}
+
+/// The byte offset in `section` just after the paragraph that holds `line`
+/// (after the list item, when the line is a list item's: a picture drawn
+/// between two items goes between them), when the end of that line occurs
+/// exactly once in it.
 pub(super) fn after_paragraph(section: &str, line: &str) -> Option<usize> {
     let wanted: Vec<char> = letters(line).collect();
     if wanted.len() < MIN_ANCHOR {
@@ -187,11 +204,23 @@ pub(super) fn after_paragraph(section: &str, line: &str) -> Option<usize> {
     if found.next().is_some() {
         return None;
     }
-    Some(
-        section[end..]
-            .find("\n\n")
-            .map_or(section.len(), |gap| end + gap),
-    )
+    let paragraph_end = section[end..]
+        .find("\n\n")
+        .map_or(section.len(), |gap| end + gap);
+    let line_start = section[..end].rfind('\n').map_or(0, |at| at + 1);
+    if !list_item(&section[line_start..]) {
+        return Some(paragraph_end);
+    }
+    // The item ends where the next one starts, within its list.
+    let mut at = end;
+    while let Some(newline) = section[at..paragraph_end].find('\n') {
+        let next = at + newline;
+        if list_item(&section[next + 1..]) {
+            return Some(next);
+        }
+        at = next + 1;
+    }
+    Some(paragraph_end)
 }
 
 #[cfg(test)]
@@ -212,5 +241,16 @@ mod tests {
             after_paragraph("repeated line\n\nrepeated line", "repeated line"),
             None
         );
+    }
+
+    #[test]
+    fn a_line_of_a_list_item_places_after_that_item() {
+        let section = "Intro.\n\n- 2、Choose a server in the Proxy group\n  of the list\n- 3、Press start in the corner\n\nEnd.";
+        let at = after_paragraph(section, "2、Choose a server in the Proxy group").unwrap();
+        assert_eq!(&section[at..], "\n- 3、Press start in the corner\n\nEnd.");
+        let at = after_paragraph(section, "3、Press start in the corner").unwrap();
+        assert_eq!(&section[at..], "\n\nEnd.");
+        assert!(list_item("12) twelve") && list_item("  * nested") && list_item("-"));
+        assert!(!list_item("-5 degrees") && !list_item("1.5 m"));
     }
 }

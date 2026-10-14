@@ -519,6 +519,17 @@ fn durability_unknown() -> ApiError {
         "Configuration was written and activated, but directory durability could not be confirmed; reload settings before another change",
     )
 }
+/// The service's configuration as the user wrote it (file and overrides),
+/// before defaults are filled in.
+pub(in crate::server) fn load_written(source: &SettingsSource) -> ApiResult<Value> {
+    let bytes = read(&source.path)?;
+    let mut value = parse(bytes.as_deref())?;
+    if let Some(overrides) = source.overrides.clone() {
+        markitai_core::config::merge(&mut value, overrides);
+    }
+    Ok(value)
+}
+
 pub(in crate::server) fn load_base(source: &SettingsSource) -> ApiResult<Value> {
     let bytes = read(&source.path)?;
     let mut value = parse(bytes.as_deref())?;

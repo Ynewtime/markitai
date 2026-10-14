@@ -42,8 +42,9 @@ data row or element name is not a reliable document title. See
 
 Ordinary Markdown receives heading spacing, trailing whitespace (a hard break's
 two spaces stay where the next line continues the paragraph) and blank-line
-cleanup, residual placeholder removal, broken-link repair and repeated page-footer
-cleanup. It ends with one newline. Existing input YAML remains part of the body
+cleanup, residual placeholder removal, broken-link repair, repeated page-footer
+cleanup and, outside fenced code, removal of a table's repeated delimiter row
+(`| --- | --- |` again after the first one, as a model may write it). It ends with one newline. Existing input YAML remains part of the body
 beneath the generated frontmatter, matching the reference workflow.
 
 Pure output bypasses this normalization. Existing YAML is parsed for API metadata,

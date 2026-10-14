@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "content": "invented for the Python markitai 1.2.1 round-17 spreadsheet fix (a fair's day plan); no real data",
+  "purpose": "rows whose only value sits in a cell merged across the sheet (titles, a contact line, a section label inside the sheet), a header-less first column, empty cells",
+  "files": {
+    "day-plan.xlsx": {
+      "generator": "day-plan-xlsx.py (openpyxl), merged A1:D1, A2:D2, A3:D3, A8:D8",
+      "bytes": 5204,
+      "sha256": "a532c3e2552542d4fd53409f975d1d82783f08ebd11a220edec90fd8b6c0cb9d"
+    },
+    "day-plan.xls": {
+      "generator": "day-plan-xls.py (xlwt), merged rows 1 and 5; byte-identical to the Python repository's tests/fixtures/day-plan.xls",
+      "bytes": 5632,
+      "sha256": "a4806dec1ba1a5e5c9150643dcc11f515978bc5ad799feae2ac748623f08968a"
+    },
+    "day-plan.ods": {
+      "generator": "day-plan-ods.py (Python zipfile, table:number-columns-spanned), the xlsx layout",
+      "bytes": 1109,
+      "sha256": "3f58e8a9c3ffb60cd52529a091fa7f00532b05a684c2968a5ab8649371cb1e5d"
+    }
+  }
+}

@@ -1204,6 +1204,7 @@ fn a_zhihu_login_wall_from_jina_fails_with_the_site_aware_refusal_and_every_serv
                 remote::fetch(service, ZHIHU_QUESTION, &url, &cfg, &services).map(remote::outcome)
             },
             what_works: sites::what_works(&url),
+            remote_hint: false,
         },
     );
     let Err(Error::Fetch(message)) = result else {
@@ -1402,6 +1403,7 @@ fn a_zhihu_json_refusal_cloudflare_rendered_fails_with_every_service_and_why() {
                         .map(remote::outcome)
                 },
                 what_works: sites::what_works(&url),
+                remote_hint: false,
             },
         );
         let Err(Error::Fetch(message)) = result else {
@@ -1785,4 +1787,180 @@ fn workers_ai_output_loses_its_frame_and_pages_read_like_the_native_pdf_reader()
     assert_eq!(document.markdown, "<!-- Page number: 1 -->\n\nText.");
     assert!(!document.metadata.contains_key("title"));
     assert!(!document.metadata.contains_key("date"));
+}
+
+// ---- a verification page shown to local readers ---------------------------
+
+/// A Geetest click captcha as a site serves it to a client it distrusts.
+const CAPTCHA: &str = "<!doctype html><html><head><meta charset=\"utf-8\"><title>验证码</title></head><body><div class=\"geetest_panel\"><p>请在下图依次点击：灯 台 光</p><div class=\"geetest_item_wrap\"></div></div></body></html>";
+
+#[test]
+fn a_verification_page_is_read_by_a_remote_reader_with_a_notice_or_named_with_how() {
+    // Consent written as always: the page's text comes from Jina, with a
+    // note that nothing the local reader was shown is kept.
+    let (directory, mut cfg) = auto_settings();
+    cfg["fetch"]["remote_consent"] = json!("always");
+    let page = PageServer::new(vec![Reply::html(CAPTCHA)]);
+    let service = Mock::new(vec![
+        Answer::text(503, "busy"),
+        jina_page("# Desk lamp notes\n\nThe post's own words."),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(
+        &terminal,
+        true,
+        None,
+        Some(directory.path().join("notices")),
+    ));
+    let services = fixture.services(&service.origin);
+    let outcome =
+        fetch_with_services(&page.url("/opus/1"), &cfg, None, true, None, &services).unwrap();
+    assert_eq!(
+        markdown(&outcome),
+        "# Desk lamp notes\n\nThe post's own words."
+    );
+    assert!(outcome.html.is_none() && outcome.screenshots.is_empty());
+    assert!(
+        outcome.document().warnings.iter().any(|warning| warning
+            == "The site showed a verification page instead of the page, so no copy or screenshot of the page was kept; its text was read by Jina Reader. Open the page itself to compare."),
+        "{:?}",
+        outcome.document().warnings
+    );
+
+    // Without the user's consent the failure says how a remote reader could
+    // read it; nothing is sent.
+    let (_directory, cfg) = auto_settings();
+    let page = PageServer::new(vec![Reply::html(CAPTCHA)]);
+    let service = Mock::new(Vec::new());
+    let fixture = Fixture::new(gate(&terminal, false, None, None));
+    let services = fixture.services(&service.origin);
+    let Err(Error::Fetch(message)) =
+        fetch_with_services(&page.url("/opus/1"), &cfg, None, true, None, &services)
+    else {
+        panic!("not a fetch failure");
+    };
+    assert!(message.contains(sites::REMOTE_READERS), "{message}");
+    assert!(service.requests().is_empty());
+}
+
+#[test]
+fn a_capture_turned_away_by_a_verification_page_reads_the_text_remotely() {
+    // The browser drew Bilibili's captcha for a screenshot: the remote
+    // services of the order are asked, the browser is not asked again.
+    let (directory, mut cfg) = auto_settings();
+    cfg["fetch"]["remote_consent"] = json!("always");
+    let service = Mock::new(vec![
+        Answer::text(503, "busy"),
+        jina_page("# Opus\n\nThe post's own words."),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(
+        &terminal,
+        true,
+        None,
+        Some(directory.path().join("notices")),
+    ));
+    let services = fixture.services(&service.origin);
+    let source = "https://www.bilibili.com/opus/1";
+    let url = Url::parse(source).unwrap();
+    let refusal = || {
+        let page = browser::BrowserPage {
+            html: "<html><head><title>验证码_哔哩哔哩</title></head><body><div id=\"risk-captcha-app\"></div></body></html>".into(),
+            final_url: source.into(),
+            title: "验证码_哔哩哔哩".into(),
+            screenshots: Vec::new(),
+            warnings: Vec::new(),
+        };
+        browser_outcome(page, &cfg).err().unwrap()
+    };
+    let outcome = past_refusal(source, &url, &cfg, true, None, &services, refusal()).unwrap();
+    assert_eq!(markdown(&outcome), "# Opus\n\nThe post's own words.");
+    assert!(outcome.screenshots.is_empty() && outcome.html.is_none());
+    assert!(outcome.document().warnings[0].starts_with(
+        "Bilibili showed a verification page instead of the page, so no copy or screenshot"
+    ));
+    let requests = service.requests();
+    assert!(requests[0].target.starts_with("/defuddle/"));
+    assert!(requests[1].target.starts_with("/jina/"));
+    // Another failure is not a reason to send the page anywhere.
+    let other = Error::Fetch("Browser navigation failed: net::ERR_NAME_NOT_RESOLVED".into());
+    let kept = past_refusal(source, &url, &cfg, true, None, &services, other)
+        .err()
+        .unwrap();
+    assert_eq!(
+        kept.to_string(),
+        "Browser navigation failed: net::ERR_NAME_NOT_RESOLVED"
+    );
+}
+
+#[test]
+fn a_bot_challenge_the_browser_drew_on_any_site_is_no_page() {
+    let cfg = config::defaults();
+    let page = browser::BrowserPage {
+        html: CAPTCHA.into(),
+        final_url: "https://news.example/post/7".into(),
+        title: "验证码".into(),
+        screenshots: Vec::new(),
+        warnings: Vec::new(),
+    };
+    let Error::Fetch(message) = browser_outcome(page, &cfg).err().unwrap() else {
+        panic!("not a fetch failure");
+    };
+    assert!(
+        message.starts_with("The site served a verification page instead of the content"),
+        "{message}"
+    );
+    // An article that mentions such a check is a page.
+    let page = browser::BrowserPage {
+        html: "<article><h1>Captchas</h1><p>请在下图依次点击 is what a Geetest captcha asks, as this essay about bot checks on news sites explains at length.</p></article>".into(),
+        final_url: "https://news.example/essay".into(),
+        title: "Captchas".into(),
+        screenshots: Vec::new(),
+        warnings: Vec::new(),
+    };
+    assert!(browser_outcome(page, &cfg).is_ok());
+}
+
+#[test]
+#[ignore = "requires an installed Chromium; uses only isolated loopback servers"]
+fn installed_chromium_captcha_capture_keeps_no_screenshot_and_reads_the_text_remotely() {
+    assert!(browser::available(), "requires an installed Chromium");
+    let (directory, mut cfg) = auto_settings();
+    cfg["fetch"]["remote_consent"] = json!("always");
+    cfg["screenshot"]["enabled"] = json!(true);
+    cfg["fetch"]["playwright"]["timeout"] = json!(15000);
+    // Static probe, browser capture: the same captcha both times.
+    let page = PageServer::new(vec![Reply::html(CAPTCHA), Reply::html(CAPTCHA)]);
+    let service = Mock::new(vec![
+        Answer::text(503, "busy"),
+        jina_page("# Desk lamp notes\n\nThe post's own words."),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(
+        &terminal,
+        true,
+        None,
+        Some(directory.path().join("notices")),
+    ));
+    let mut services = fixture.services(&service.origin);
+    services.browser_ready = browser::available;
+    let outcome =
+        fetch_with_services(&page.url("/opus/1"), &cfg, None, true, None, &services).unwrap();
+    assert_eq!(
+        markdown(&outcome),
+        "# Desk lamp notes\n\nThe post's own words."
+    );
+    assert!(
+        outcome.screenshots.is_empty(),
+        "a captcha screenshot was kept"
+    );
+    assert!(outcome.html.is_none());
+    assert!(outcome.document().warnings[0].contains("no copy or screenshot of the page was kept"));
+    // One static probe and one browser load of the page, no more.
+    let loads = page.requests();
+    let loads = loads
+        .iter()
+        .filter(|request| request.starts_with("GET /opus/1 "))
+        .count();
+    assert_eq!(loads, 2);
 }

@@ -566,6 +566,20 @@ fn an_empty_file_a_wrong_extension_and_a_damaged_file_are_each_described() {
             stderr(&output)
         );
     }
+    // A package name on other content (a gzip-compressed PostScript page
+    // named .epub) says what the file holds instead.
+    setup.write(
+        "lamp-manual.epub",
+        b"\x1f\x8b\x08\x08\0\0\0\0\0\x03lamp-manual.ps\0compressed bytes",
+    );
+    let output = setup.run(&["lamp-manual.epub", "-o", "out"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        "  ✗ This is not an EPUB e-book: the file holds a gzip-compressed copy of \
+         `lamp-manual.ps` (a PostScript document), while a .epub file is a ZIP package. Check \
+         the file (it may be misnamed or still compressed).\n"
+    );
 }
 
 #[test]

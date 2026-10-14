@@ -324,6 +324,100 @@ fn a_running_header_on_every_page_is_removed_like_a_folio() {
     );
 }
 
+/// Pages of body text over a footer (`size` points, at the foot of a 792pt
+/// page) that names the document and the page as `3 / 9`.
+fn footed_pages(count: usize, size: usize) -> Vec<Vec<u8>> {
+    (1..=count)
+        .map(|page| {
+            let mut content = String::new();
+            for row in 0..8 {
+                content.push_str(&text(
+                    700 - row * 40,
+                    &format!("Body paragraph {row} of page {page} keeps its own words."),
+                ));
+            }
+            content.push_str(&format!(
+                "BT /F1 {size} Tf 1 0 0 1 40 30 Tm (Desk Lamp Proxy Guide) Tj ET\n\
+                 BT /F1 {size} Tf 1 0 0 1 540 30 Tm ({page} / {count}) Tj ET\n"
+            ));
+            content.into_bytes()
+        })
+        .collect()
+}
+
+#[test]
+fn a_running_footer_on_two_pages_goes_with_its_page_numbers() {
+    let document = extract(&pdf(&footed_pages(2, 8), &[])).unwrap();
+    assert!(
+        !document.markdown.contains("Desk Lamp"),
+        "{}",
+        document.markdown
+    );
+    assert!(!document.markdown.contains("/ 2"), "{}", document.markdown);
+    assert!(
+        document
+            .markdown
+            .contains("Body paragraph 7 of page 2 keeps its own words.")
+    );
+    // Set at the body size it still stands at the same height on both pages.
+    let document = extract(&pdf(&footed_pages(2, 10), &[])).unwrap();
+    assert!(
+        !document.markdown.contains("Desk Lamp"),
+        "{}",
+        document.markdown
+    );
+    // A footer on one page only is text.
+    let document = extract(&pdf(&footed_pages(1, 8), &[])).unwrap();
+    assert!(document.markdown.contains("Desk Lamp Proxy Guide"));
+    // So is a body-sized last line that two pages end with at other heights.
+    let ending = |y: usize| {
+        format!(
+            "{}{}",
+            text(700, "Body paragraph of a page that keeps its own words."),
+            text(y, "Signed by the desk lamp committee")
+        )
+        .into_bytes()
+    };
+    let document = extract(&pdf(&[ending(120), ending(60)], &[])).unwrap();
+    assert_eq!(
+        document
+            .markdown
+            .matches("Signed by the desk lamp committee")
+            .count(),
+        2,
+        "{}",
+        document.markdown
+    );
+    // Two pages that open with the same small line in their top fifth.
+    let headed: Vec<Vec<u8>> = headed_pages(8).into_iter().take(2).collect();
+    let document = extract(&pdf(&headed, &[])).unwrap();
+    assert!(
+        !document.markdown.contains("Proc. of"),
+        "{}",
+        document.markdown
+    );
+}
+
+#[test]
+fn a_chromium_how_to_loses_its_footer_and_keeps_steps_after_their_pictures() {
+    // Invented (fixtures/page-chrome): three pages with the title and the
+    // page number in the footer; page 2 is picture, step 2, picture, step 3.
+    let document = extract(include_bytes!("fixtures/page-chrome/how-to-cjk-footer.pdf")).unwrap();
+    let markdown = &document.markdown;
+    assert_eq!(
+        markdown.matches("Desk Lamp Proxy Guide").count(),
+        1,
+        "{markdown}"
+    );
+    let page = &markdown[markdown.find("<!-- Page number: 2 -->").unwrap()..];
+    let picture = |from: usize| page[from..].find("![Image on page 2]").map(|at| from + at);
+    let first = picture(0).unwrap();
+    let step2 = page.find("2、列表加载后").unwrap();
+    let second = picture(first + 1).unwrap();
+    let step3 = page.find("3、最后").unwrap();
+    assert!(first < step2 && step2 < second && second < step3, "{page}");
+}
+
 #[test]
 fn an_info_title_that_is_a_file_name_or_a_default_name_is_not_the_document_title() {
     for title in [

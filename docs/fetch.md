@@ -49,7 +49,13 @@ through an explicit remote strategy or an `auto` fallback the user opted in to
 usually in one or two seconds; the `x.com` and `twitter.com` entries of the
 default `fetch.fallback_patterns` do not make it start with the browser (see
 [strategy order](#strategy-order-and-remote-fallback)). The post reader is
-described in [HTML conversion](html.md).
+described in [HTML conversion](html.md). A post the browser draws (screenshots,
+`-s playwright`) plays its videos from browser-local `blob:` addresses and has
+dropped the page data that named the files; when such a post shows a video,
+one more request reads X's server-rendered page of the post (15 seconds, 8 MiB,
+without the browser's identity, not made when a browser identity is
+configured) for the video files only, so the video is linked as on the static
+path. A failure leaves the poster alone.
 
 ## Character encodings
 
@@ -125,7 +131,28 @@ Weibo, Reddit) and shows little more than a request to log in (`请您登录后�
 of the content: …`. `auto` renders such a page with the local browser first,
 which is how WeChat articles are read; when the browser fails or is shown the
 same check, the site's message is the failure (a browser failure of another kind
-is added in parentheses).
+is added in parentheses). A page the browser draws is also refused when it is a
+bot challenge on any site: under 2,000 characters of text that start with a
+challenge's instruction (`Verify you are human`, Geetest's `请在下图依次点击`),
+or a challenge widget (Cloudflare and Turnstile, reCAPTCHA, hCaptcha, Geetest,
+DataDome, PerimeterX) with a challenge title or no text; it reads `The site
+served a verification page instead of the content: a bot challenge …`.
+
+What the browser was shown in place of the page is never kept: no page copy and
+no screenshot, also when screenshots were asked for (`--screenshot`, the
+workbench). `auto` then goes on to the remote services of the
+[strategy order](#strategy-order-and-remote-fallback) when the user allowed
+remote fallback ([consent](#consent)), with screenshots on as well, without
+loading the page in the browser again; a page one of them reads (Bilibili's
+opus posts are read by Jina Reader) carries the warning `<Site> showed a
+verification page instead of the page, so no copy or screenshot of the page was
+kept; its text was read by Jina Reader. Open the page itself to compare.`
+Without that consent the failure ends with `a remote reader (defuddle.md, Jina
+Reader) may read it if you allow one: set fetch.remote_consent to always, or
+choose the defuddle or jina strategy for this conversion`; an explicit `never`
+or a browser identity (cookies, credentials) keeps it local without the hint. A
+static or remote reading with screenshots on whose capture is a verification
+page keeps its text with the warning that no screenshot was kept.
 
 The same judgement applies to every reader: the static client, the local
 browser, Cloudflare Browser Rendering (all on the page's markup) and defuddle
@@ -455,9 +482,12 @@ print it and leaves it due). Refusals of a selected strategy start with
 honours local-only patterns; `-s` for the run overrides them for a public URL.
 Credential material and private hosts are refused whatever was chosen.
 
-`serve`, `mcp` and the language bindings install no interactive consent host:
-`auto` there never falls back to a remote service, and `ask` cannot ask a terminal
-question. Explicitly selected strategies in MCP and bindings behave as in the
+`serve` reads its configuration file (with `--config-json`) the same way: a
+`fetch.remote_consent` written as `always` lets `auto` fall back to the remote
+services for every job, with the disclosure in the service's log; the default
+and `ask` keep `auto` local, since a service asks no terminal question. `mcp`
+and the language bindings install no consent host: `auto` there never falls
+back to a remote service. Explicitly selected strategies in MCP and bindings behave as in the
 table. The workbench and REST service additionally require
 [current-request Cloudflare authorization](serve.md#cloudflare-request-authorization)
 for a selected Cloudflare strategy or file backend. Server defaults and history
@@ -479,6 +509,12 @@ fall back to the `auto` chain here; it fails with the service's reason.
 | defuddle | `GET https://defuddle.md/<URL, percent-encoded>`; Markdown with YAML frontmatter, which becomes metadata | `fetch.defuddle.timeout` (seconds, default 30), `rpm` (default 20) |
 | jina | `GET https://r.jina.ai/<URL>` with `Accept: application/json` | `fetch.jina.api_key` (a value or `env:NAME`, else `JINA_API_KEY`) as a bearer token; `timeout` (seconds), `rpm`; `no_cache` sends `X-No-Cache: true`; `target_selector` and `wait_for_selector` send `X-Target-Selector` and `X-Wait-For-Selector` |
 | cloudflare | `POST https://api.cloudflare.com/client/v4/accounts/<account>/browser-rendering/content` with your token | see below |
+
+Cost: defuddle.md and Jina Reader without a key are free services with rate
+limits (Jina's keyless limit is lower; a 429 says to add a key). A Jina key
+draws on that key's token balance for every page it reads, and Cloudflare
+Browser Rendering counts against your account's browser time. A remote fallback
+of `auto` is one request per service tried, at most three per page.
 
 Each service has its own sliding one-minute window of `rpm` requests, shared by
 every conversion of the process; a request waits for a slot. An `env:NAME` key

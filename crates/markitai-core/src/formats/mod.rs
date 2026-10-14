@@ -9,10 +9,10 @@ mod numbers;
 mod sniff;
 mod text;
 
-pub(crate) use html::canonical_status_url;
 pub(crate) use html::count_words as word_count;
 pub(crate) use html::decode_fetched as decode_fetched_html;
 pub use html::extract_html;
+pub(crate) use html::{canonical_status_url, status_address, video_data_scripts};
 pub(crate) use native::extract_presentation_count;
 #[cfg(test)]
 pub(crate) use native::pdf::extract_pages as extract_pdf_pages;
@@ -21,7 +21,7 @@ pub(crate) use native::pdf::{
     screenshot_reference as pdf_screenshot_reference,
 };
 pub(crate) use sniff::{
-    check_image, check_not_empty, explain_damage, real_extension, retyped_warning,
+    check_image, check_not_empty, explain_damage, not_a_package, real_extension, retyped_warning,
 };
 
 use crate::{Document, Error, Result};

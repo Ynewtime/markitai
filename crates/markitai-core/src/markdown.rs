@@ -30,6 +30,33 @@ static PAGE: LazyLock<Regex> =
 static SLIDE: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"^<!--\s*Slide\s+(number:\s*)?\d+\s*-->"));
 static BLANKS: LazyLock<Regex> = LazyLock::new(|| pattern(r"\n{3,}"));
+static DELIMITER_ROW: LazyLock<Regex> =
+    LazyLock::new(|| pattern(r"^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$"));
+
+/// Prose without the delimiter rows (`| --- | --- |`) a table already has. A
+/// pipe table has one, right after its header; a model rewriting a table
+/// sometimes repeats it, and the repeat would show as a row of dashes.
+fn without_stray_delimiters(text: &str) -> String {
+    if !text.contains("---") || !text.contains('|') {
+        return text.to_owned();
+    }
+    // The current line's place in its run of table lines.
+    let mut row = 0usize;
+    let mut output = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\n', '\r']);
+        if !content.trim_start().starts_with('|') {
+            row = 0;
+        } else {
+            row += 1;
+            if row > 2 && DELIMITER_ROW.is_match(content) {
+                continue;
+            }
+        }
+        output.push_str(line);
+    }
+    output
+}
 
 /// Prose lines without the hard breaks content removed after rendering
 /// leaves behind (a filtered image between two breaks, or before one): a line
@@ -390,7 +417,7 @@ pub(crate) fn normalize(source: &str) -> String {
             text = EMPTY_IMAGE.replace_all(&text, "").into_owned();
             text = EXTRA_PAREN.replace_all(&text, "$1").into_owned();
         }
-        text
+        without_stray_delimiters(&text)
     });
     let lines = without_dangling_breaks(trimmed_lines(&text));
     let mut output: Vec<&str> = Vec::with_capacity(lines.len());
@@ -449,6 +476,21 @@ mod tests {
         let output = normalize(&input);
         assert!(!output.contains("Footer"));
         assert!(output.contains("Long content for page 2 that must remain."));
+    }
+
+    #[test]
+    fn a_table_keeps_one_delimiter_row() {
+        // A model repeated the delimiter row of a page's table.
+        assert_eq!(
+            normalize(
+                "| Tool | What it does |\n| --- | --- |\n| --- | --- |\n| [lamp](https://lamp.example) | Shows the lamp |\n| :--- | ---: |\n"
+            ),
+            "| Tool | What it does |\n| --- | --- |\n| [lamp](https://lamp.example) | Shows the lamp |\n"
+        );
+        // Each table keeps its own; fenced code and a dash row of text stay.
+        let kept =
+            "| A |\n| --- |\n\n| B |\n| --- |\n| -- |\n\n```\n| x |\n| --- |\n| --- |\n```\n";
+        assert_eq!(normalize(kept), kept);
     }
 
     #[test]

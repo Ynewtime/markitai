@@ -99,6 +99,21 @@ and retains substantive paragraphs beginning `Page N`, including prose following
 do not prevent cleanup; code and HTML literal blocks are preserved. Positional
 running-furniture detection remains separate.
 
+Running headers and footers go as page chrome. A page's first block of Markdown
+is a running header, and its last block a running footer, when the same short
+line (8 to 160 characters, digits ignored, so `Page 3 of 9` and a chapter
+number may change) opens or ends two pages or more and is, on each of them, the
+page's topmost or bottommost text, on one baseline in the top or bottom fifth of
+the page, set smaller than the body text. A footer set at the body size also
+counts when it stands further from the text above it than the page's line pitch
+and at the same height on another page (a publication's title beside its page
+numbers). A printed line may keep the `Page N` the page reader already removed
+from its block (`Page 3 Publication 501 (2025)`). Page numbers in forms the page
+reader leaves (`3 / 9`, `— 3 —`, `第 3 页`, `第3页，共9页`, `共 9 页 第 3 页`) go
+from any page where they are that top or bottom line, as Python markitai 1.2.1
+drops page chrome. A one-off line, a body-sized line other pages end with at
+other heights, and anything below the top or above the bottom line stay.
+
 A lone one-to-four-digit number in the top or bottom page band is still removed
 as a folio, except when it is set at 20 pt or more (a report's year across its
 cover; a bare number the page reader sets as a heading is kept for the same
@@ -224,8 +239,9 @@ page retaining its own reference.
 
 At assembly each image of a page read from its text is placed where it is
 drawn: before the text when it lies above every text line, after the paragraph
-holding the nearest line above it that shares its columns, or after the text
-when it lies below every line. The paragraph is found by the last 40 letters and
+holding the nearest line above it that shares its columns (after that line's
+list item, when it is one, so a picture drawn between two numbered steps stays
+between them), or after the text when it lies below every line. The paragraph is found by the last 40 letters and
 digits of that line, which must occur exactly once in the page's Markdown. An
 image drawn inside a form, twice on one page, beside text with no line above it,
 or whose line cannot be found follows the page's text as before, and only then
