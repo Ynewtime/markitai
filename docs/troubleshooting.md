@@ -83,6 +83,14 @@ document's pages.
 Nine pages in ten or more have no extractable text, whatever the reason, so the
 document is a scan: this one warning stands for them. Run again with `--ocr`.
 
+**`! PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in the output.`.**
+Local OCR read these pages and found nothing on them: blank pages, separator
+pages, or a picture without writing. Each keeps its place (its marker under
+`--page-markers`) with no text. One warning names every such page as ranges
+and counts them against the document's pages. If a listed page does have
+writing, it may be too faint or too small to read at the rendered size; check
+the page, or try `ocr.lang` for its script.
+
 **`! PDF pages 1–3: the text was read from the invisible OCR text layer laid over each page image …`.**
 The PDF is a searchable scan: a scanning or OCR program (named in brackets when
 the file says which) laid its recognized words, invisibly, over each page image.

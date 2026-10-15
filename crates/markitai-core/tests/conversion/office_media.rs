@@ -208,6 +208,7 @@ fn office_local_ocr_adds_supplement_without_replacing_native_body() {
         result
             .warnings
             .iter()
-            .any(|warning| warning.contains("page 2: local OCR completed with no recognized text"))
+            .any(|warning| warning.starts_with("Office page 2 (1 of ")
+                && warning.ends_with("): OCR found no text; the OCR supplement leaves it out."))
     );
 }

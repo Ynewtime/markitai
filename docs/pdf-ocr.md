@@ -34,8 +34,10 @@ recognized; their text follows the corresponding image reference. Shared images
 are recognized once. Unreadable pictures or a missing backend keep the native
 page and reference with a warning; invalid configuration or an unsupported
 language on an available backend fails explicitly. Page OCR failure fails the document. Successful blank OCR keeps the
-page in place (with its marker under `--page-markers`) and emits a notice
-without fabricated body text.
+page in place (with its marker under `--page-markers`) without fabricated body
+text, and one warning names every such page as ranges with the document's page
+count (`PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in
+the output.`).
 
 OCR plus LLM normally renders every page, including reliable native pages,
 independently of `screenshot.enabled`. The local routing setting does not select

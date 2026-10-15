@@ -64,7 +64,7 @@ fn pdf_local_ocr_preserves_native_page_and_records_blank_outcome() {
         result
             .warnings
             .iter()
-            .any(|w| w.contains("page 3: local OCR completed with no recognized text"))
+            .any(|w| w == "PDF page 3 (1 of 3): OCR found no text; it is blank in the output.")
     );
     assert!(result.screenshots.is_empty());
     config["ocr"]["per_page_routing"] = json!(false);

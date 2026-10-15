@@ -125,6 +125,9 @@ are appended in an explicit appendix, rather than inventing a correspondence
 between native paragraphs and rendered pages. Root conversion integration applies
 the existing screenshot, local OCR, pure, VLM opt-out and model-page budgets.
 Local OCR supplements native text; it does not replace it with PDF extraction.
+Rendered pages where it finds no text are left out of the supplement and named
+in one warning (`Office pages 2, 5 (2 of 9): OCR found no text; the OCR
+supplement leaves them out.`).
 See [PDF rendering](pdf-rendering.md) for page pixel and encoding limits.
 
 ## Execution and limits
