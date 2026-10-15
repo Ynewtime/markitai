@@ -7,6 +7,8 @@
 //! hand-written entry; a keyed connection cannot be made keyless at another
 //! host. Two loopback model servers stand for a caller's host and the
 //! operator's endpoint.
+#[path = "support/console.rs"]
+mod console;
 
 use serde_json::{Value, json};
 use std::{
@@ -193,7 +195,7 @@ impl Server {
         )
         .unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for key in ["PATH", "TMPDIR", "SYSTEMROOT"] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);

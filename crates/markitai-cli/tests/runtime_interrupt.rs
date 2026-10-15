@@ -15,6 +15,9 @@
 //! The runtime's private workspace (its prompt and settings files) must not
 //! outlive the CLI either; each CLI gets a temporary directory of its own to
 //! check that, and so that nothing a failure leaves reaches the machine's.
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
@@ -64,7 +67,7 @@ impl Fixture {
     /// signal mask, or with SIGINT inherited as ignored.
     fn spawn_with(&self, args: &[&str], stdin: Stdio, ignore_sigint: bool) -> Child {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear().current_dir(self.root.path());
+        console::english(command.env_clear()).current_dir(self.root.path());
         for key in [
             "HOME",
             "PATH",

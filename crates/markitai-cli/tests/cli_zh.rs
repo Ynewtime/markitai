@@ -16,6 +16,7 @@ fn command(root: &Path, envs: &[(&str, &str)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     console::detached(&mut command);
     command.env_clear();
+    console::english_unless_chosen(&mut command, envs);
     for name in ["PATH", "SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
@@ -29,9 +30,17 @@ fn command(root: &Path, envs: &[(&str, &str)]) -> Command {
         .env("COPILOT_CLI_PATH", root.join("missing-copilot"))
         .env("CLAUDE_CLI_PATH", root.join("missing-claude"))
         .env("CODEX_CLI_PATH", root.join("missing-codex"))
-        .envs(envs.iter().copied());
+        .envs(envs.iter().copied().filter(|(name, _)| *name != UNSET));
+    for (name, value) in envs {
+        if *name == UNSET {
+            command.env_remove(value);
+        }
+    }
     command
 }
+
+/// An entry of `envs` that removes the variable it names.
+const UNSET: &str = "-";
 
 fn run(root: &Path, envs: &[(&str, &str)], args: &[&str]) -> Output {
     command(root, envs)
@@ -84,10 +93,11 @@ fn batch_summary_and_item_lines_are_chinese_with_the_converters_reasons_kept() {
     assert_eq!(output.status.code(), Some(10));
     assert!(output.stdout.is_empty());
     let lines: Vec<String> = stderr(&output).lines().map(str::to_owned).collect();
-    // The failure keeps the converter's English reason after a Chinese frame.
+    // The failure is worded in Chinese; the parser's detail inside the
+    // parentheses is kept as it came.
     assert!(
         lines[0].starts_with(
-            "  ✗ broken.docx: The file appears to be damaged or truncated (Native document conversion failed: "
+            "  ✗ broken.docx: 文件似乎已损坏或被截断（Native document conversion failed: "
         ),
         "{lines:?}"
     );
@@ -294,12 +304,12 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
         "{}",
         stderr(&array)
     );
-    // No valid URL: the frame is Chinese, the reason is the one JSON would carry.
+    // No valid URL: the whole line is Chinese, the reason JSON carries is not.
     std::fs::write(root.path().join("bad.urls"), "ftp://x/y\n").unwrap();
     let bad = run(root.path(), ZH, &["bad.urls", "-o", "out"]);
     assert_eq!(bad.status.code(), Some(1));
     assert!(
-        stderr(&bad).ends_with("✗ No valid URLs found in bad.urls.\n"),
+        stderr(&bad).ends_with("✗ bad.urls 中没有找到有效的 URL。\n"),
         "{}",
         stderr(&bad)
     );
@@ -357,10 +367,7 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     let model = run(root.path(), ZH, &["note.txt", "--llm"]);
     assert_eq!(model.status.code(), Some(1));
     let message = stderr(&model);
-    assert!(
-        message.starts_with("  ✗ No model configured; "),
-        "{message}"
-    );
+    assert!(message.starts_with("  ✗ 未配置 LLM 模型；"), "{message}");
     assert!(
         message.contains("\n  → 请设置供应商的 API key，例如 OPENAI_API_KEY"),
         "{message}"
@@ -776,4 +783,50 @@ fn an_interrupted_batch_says_so_in_chinese_while_the_log_keeps_english() {
         "{text}"
     );
     assert!(!has_chinese(&text), "{text}");
+}
+
+#[test]
+fn run_level_errors_are_chinese_on_the_terminal_and_english_in_json() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = run(root.path(), ZH, &["nothere.pdf"]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert_eq!(stderr(&missing), "  ✗ 找不到输入文件：nothere.pdf\n");
+
+    let unsupported = run(root.path(), ZH, &["--preset", "nope", "a.txt"]);
+    assert_eq!(unsupported.status.code(), Some(1));
+    assert_eq!(
+        stderr(&unsupported),
+        "✗ 未知预设 'nope'。可用：minimal, rich, standard\n"
+    );
+
+    // JSON and the English run say the same thing in English.
+    let json = run(root.path(), ZH, &["nothere.pdf", "--json", "-o", "out"]);
+    let english = run(root.path(), EN, &["nothere.pdf", "--json", "-o", "out"]);
+    assert_eq!(json.stdout, english.stdout);
+    assert!(
+        String::from_utf8_lossy(&json.stdout).contains("Input file not found: nothere.pdf"),
+        "{}",
+        String::from_utf8_lossy(&json.stdout)
+    );
+    let english = run(root.path(), EN, &["nothere.pdf"]);
+    assert_eq!(stderr(&english), "  ✗ Input file not found: nothere.pdf\n");
+}
+
+#[test]
+fn a_run_chosen_by_the_locale_variable_is_chinese_on_every_line() {
+    let root = tempfile::tempdir().unwrap();
+    batch_input(root.path());
+    for env in [
+        &[("LANG", "zh_CN.UTF-8"), (UNSET, "MARKITAI_LANG")][..],
+        &[("LC_ALL", "zh_CN.UTF-8"), (UNSET, "MARKITAI_LANG")][..],
+    ] {
+        let output = run(root.path(), env, &["docs", "-o", "out-locale", "-v"]);
+        let message = stderr(&output);
+        let cjk = |c: char| ('\u{4e00}'..='\u{9fff}').contains(&c);
+        for line in message.lines().filter(|line| !line.trim().is_empty()) {
+            assert!(line.chars().any(cjk), "{line:?} in\n{message}");
+        }
+        let missing = run(root.path(), env, &["nothere.pdf"]);
+        assert!(stderr(&missing).contains("找不到输入文件"), "{env:?}");
+    }
 }

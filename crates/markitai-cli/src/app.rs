@@ -64,6 +64,8 @@ mod json_output;
 pub(crate) mod logging;
 #[path = "app/progress.rs"]
 mod progress;
+#[path = "app/reasons.rs"]
+mod reasons;
 #[path = "app/remote_consent.rs"]
 mod remote_consent;
 #[path = "app/warnings.rs"]

@@ -1,5 +1,8 @@
 #![cfg(unix)]
 //! What `markitai serve` prints when it starts, and why it refuses to.
+#[path = "support/console.rs"]
+mod console;
+
 use std::{
     io::{BufRead, BufReader},
     net::TcpListener,
@@ -19,7 +22,7 @@ struct Serve {
 impl Serve {
     fn start(home: &Path, language: Option<&str>, args: &[&str]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for key in ["PATH", "HOME", "TMPDIR"] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);

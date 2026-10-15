@@ -1,3 +1,6 @@
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
@@ -15,7 +18,7 @@ use std::time::{Duration, Instant};
 // explicit configuration, with no inherited provider or user configuration.
 fn invoke(root: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    command.env_clear();
+    console::english(command.env_clear());
     for name in ["PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);

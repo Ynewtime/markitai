@@ -1,4 +1,6 @@
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
 
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -49,7 +51,7 @@ fn invoke(root: &Path, args: &[&str]) -> Output {
     let stdout = tempfile::NamedTempFile::new_in(root).unwrap();
     let stderr = tempfile::NamedTempFile::new_in(root).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    cmd.env_clear();
+    console::english(cmd.env_clear());
     for key in [
         "HOME",
         "PATH",

@@ -8,7 +8,7 @@ mod console;
 fn command(root: &Path, cfg: Value) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     console::detached(&mut command);
-    command.env_clear();
+    console::english(command.env_clear());
     for key in ["HOME", "SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);

@@ -1,4 +1,7 @@
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -20,7 +23,7 @@ struct Server {
 impl Server {
     fn start(root: &Path, extra: &[&str]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for key in [
             "PATH",
             "HOME",

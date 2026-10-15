@@ -324,10 +324,18 @@ fn emit(original: String, console: Option<String>, shape: Option<Shape>) {
     let shape = shape.unwrap_or(label_shape);
     // The console text carries the same label as the English one.
     let body = message.strip_prefix(&original[..label]).unwrap_or(&message);
+    // A line built without the terminal language (a run-level error, a
+    // converter's reason) is translated here when it is a known message, so a
+    // Chinese run is Chinese throughout; the file log keeps the English.
+    let body = if console.is_none() && super::i18n::lang() == super::i18n::Lang::Zh {
+        super::reasons::localize(body)
+    } else {
+        body.to_owned()
+    };
     event(level, &original);
     // A status line on the terminal gives way to the line that follows it.
     super::progress::clear();
-    let line = render(shape, body);
+    let line = render(shape, &body);
     write_line(&line);
 }
 

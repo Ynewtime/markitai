@@ -7,6 +7,9 @@
 //! snapshot after an intended English change with
 //! `MARKITAI_UPDATE_HELP_SNAPSHOT=1 cargo test -p markitai-cli --test help_language`.
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
+
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -16,6 +19,7 @@ const SNAPSHOT: &str = "tests/fixtures/help_en.txt";
 fn run(root: &Path, envs: &[(&str, &str)], args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     command.env_clear();
+    console::english_unless_chosen(&mut command, envs);
     for name in ["PATH", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);

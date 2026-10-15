@@ -14,6 +14,7 @@ fn command(root: &Path, envs: &[(&str, &str)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     console::detached(&mut command);
     command.env_clear();
+    console::english_unless_chosen(&mut command, envs);
     for name in ["SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
@@ -35,10 +36,20 @@ fn command(root: &Path, envs: &[(&str, &str)]) -> Command {
         .env("MARKITAI_HOME", root.join("home"))
         .env("MARKITAI_BROWSER_EXECUTABLE", root.join("absent-browser"))
         .env("PLAYWRIGHT_BROWSERS_PATH", root.join("browser-cache"))
-        .envs(envs.iter().copied())
+        .envs(envs.iter().copied().filter(|(name, _)| *name != UNSET))
         .stdin(Stdio::null());
+    // `(UNSET, NAME)` removes NAME again, e.g. the pinned language, so a test
+    // can see what the .env files alone decide.
+    for (name, value) in envs {
+        if *name == UNSET {
+            command.env_remove(value);
+        }
+    }
     command
 }
+
+/// Marks an entry of `envs` that removes a variable instead of setting one.
+const UNSET: &str = "-";
 
 fn run(root: &Path, envs: &[(&str, &str)], args: &[&str]) -> Output {
     command(root, envs).args(args).output().expect("CLI starts")
@@ -372,6 +383,8 @@ fn lc_all_precedes_lc_messages_and_lang_and_markitai_lang_wins() {
         valid(&[("LC_ALL", "POSIX"), ("LANG", "zh_CN.UTF-8")]),
         "✓ 配置有效\n"
     );
+    // Alone it falls through to the system language, which Windows has.
+    #[cfg(not(windows))]
     assert_eq!(valid(&[("LANG", "C")]), "✓ Configuration is valid\n");
     // On Unix a terminal set to another character set cannot draw Chinese (or
     // the marks): English and the ASCII marks, unless MARKITAI_LANG asks.
@@ -399,9 +412,10 @@ fn dotenv_files_supply_the_language_after_the_process_environment() {
     std::fs::create_dir_all(dir.path().join("home")).unwrap();
     std::fs::write(dir.path().join("home/.env"), "MARKITAI_LANG=zh\n").unwrap();
     let valid = |envs: &[(&str, &str)]| stdout(&run(dir.path(), envs, &["config", "validate"]));
-    assert_eq!(valid(&[]), "✓ 配置有效\n");
+    let unset = &[(UNSET, "MARKITAI_LANG")];
+    assert_eq!(valid(unset), "✓ 配置有效\n");
     assert_eq!(valid(EN), "✓ Configuration is valid\n");
     // The current directory's .env is read before the one in MARKITAI_HOME.
     std::fs::write(dir.path().join(".env"), "MARKITAI_LANG=en\n").unwrap();
-    assert_eq!(valid(&[]), "✓ Configuration is valid\n");
+    assert_eq!(valid(unset), "✓ Configuration is valid\n");
 }

@@ -2,6 +2,9 @@
 //! `tests/fixtures/python-batch`) are collected after upgrading: by ID or by
 //! `--llm-batch --resume`, from a loopback provider that answers the Python
 //! requests. Python's files are never modified.
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -260,7 +263,7 @@ impl Run {
     }
     fn markitai(&self, args: &[&str]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for key in ["PATH", "SYSTEMROOT", "TMPDIR", "TMP", "TEMP"] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);

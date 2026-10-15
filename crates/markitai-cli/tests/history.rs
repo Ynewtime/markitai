@@ -1,4 +1,6 @@
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
 
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -58,7 +60,7 @@ struct Running {
 impl Running {
     fn spawn(root: &Path, args: &[&str], env: &[(&str, &str)]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for name in ["PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP"] {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);

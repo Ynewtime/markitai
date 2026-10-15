@@ -214,25 +214,32 @@ fn deadlines_and_stderr_limit_stop_processes_and_preserve_paid_evidence() {
         "stderr-flood",
         "stderr-after-terminal",
     ] {
+        let flood = matches!(mode, "stderr-flood" | "stderr-after-terminal");
+        // A hanging process is stopped by the deadline. A flooding one must be
+        // stopped by the stderr limit before any deadline can matter, so its
+        // deadline is far beyond the time even a loaded machine needs to start
+        // the process and read the megabyte: the outcome does not race.
+        let timeout = Duration::from_secs(if flood { 60 } else { 2 });
         let f = Fixture::new(mode);
         let start = Instant::now();
         let failure = complete(
             &f.config,
             Request {
-                timeout: Duration::from_secs(2),
+                timeout,
                 ..f.request("body")
             },
         )
         .unwrap_err();
         assert_eq!(
             failure.kind,
-            if matches!(mode, "stderr-flood" | "stderr-after-terminal") {
+            if flood {
                 FailureKind::ResourceLimit
             } else {
                 FailureKind::Timeout
-            }
+            },
+            "{mode}"
         );
-        assert!(start.elapsed() < Duration::from_secs(6));
+        assert!(start.elapsed() < timeout + Duration::from_secs(4), "{mode}");
         if mode == "hang-paid" {
             assert_eq!(failure.usage.calls.len(), 1);
         }

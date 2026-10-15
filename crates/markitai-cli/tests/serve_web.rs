@@ -1,6 +1,9 @@
 //! Actual service static routing and browser bootstrap contract. Browser rendering
 //! and interactive behavior have separate real-browser acceptance.
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::json;
 use std::{
     collections::HashMap,
@@ -22,7 +25,7 @@ impl Server {
     fn start(root: &Path) -> Self {
         std::fs::write(root.join("config.json"),json!({"llm":{"enabled":false},"cache":{"enabled":false},"history":{"record":false},"log":{"dir":null},"prompts":{"dir":root.join("absent-prompts")}}).to_string()).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for key in ["HOME", "PATH", "TMPDIR", "SYSTEMROOT"] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);

@@ -27,7 +27,7 @@ fn native(path: &str) -> String {
 fn invoke_env(root: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     console::detached(&mut command);
-    command.env_clear();
+    console::english(command.env_clear());
     for name in ["HOME", "PATH", "SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);

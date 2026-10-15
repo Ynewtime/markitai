@@ -41,7 +41,7 @@ pub(crate) fn request_error(error: reqwest::Error) -> Error {
     let mut message = error.to_string();
     let mut source = std::error::Error::source(&error);
     while let Some(cause) = source {
-        let cause_text = cause.to_string();
+        let cause_text = cause_text(cause);
         if !message.contains(&cause_text) {
             message.push_str(": ");
             message.push_str(&cause_text);
@@ -49,6 +49,39 @@ pub(crate) fn request_error(error: reqwest::Error) -> Error {
         source = cause.source();
     }
     Error::Fetch(message)
+}
+
+/// What a cause of a failed request says. An operating-system error carries
+/// the system's own wording, which is in the user's language on Windows
+/// ("由于目标计算机积极拒绝，无法连接。 (os error 10061)") and so differs from
+/// machine to machine; a kind Rust names is worded by Rust instead, followed
+/// by the system's code, which is the same everywhere.
+fn cause_text(cause: &(dyn std::error::Error + 'static)) -> String {
+    let Some(io) = cause.downcast_ref::<std::io::Error>() else {
+        return cause.to_string();
+    };
+    let kind = io.kind().to_string();
+    match io.raw_os_error() {
+        Some(code) if kind != "uncategorized error" && kind != "other error" => {
+            format!("{kind} (os error {code})")
+        }
+        _ => cause.to_string(),
+    }
+}
+
+/// The kind and code of the operating-system error behind a failed request.
+#[cfg(test)]
+fn os_cause(error: &reqwest::Error) -> Option<(std::io::ErrorKind, i32)> {
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>()
+            && let Some(code) = io.raw_os_error()
+        {
+            return Some((io.kind(), code));
+        }
+        source = cause.source();
+    }
+    None
 }
 
 /// Pauses before the second and third attempt of a GET whose connection failed
@@ -1835,16 +1868,17 @@ mod tests {
             .unwrap()
             .port();
         let url = format!("http://user:secret@127.0.0.1:{port}/private/path");
-        let error = client(5)
-            .unwrap()
-            .get(&url)
-            .send()
-            .map_err(request_error)
-            .unwrap_err();
-        let Error::Fetch(message) = error else {
-            panic!("{error:?}")
+        let failure = client(5).unwrap().get(&url).send().unwrap_err();
+        // The system's wording differs by language; its kind and code do not.
+        let (kind, code) = os_cause(&failure).expect("an operating-system cause");
+        assert_eq!(kind, std::io::ErrorKind::ConnectionRefused);
+        let Error::Fetch(message) = request_error(failure) else {
+            panic!("a fetch error")
         };
-        assert!(message.to_lowercase().contains("refused"), "{message}");
+        assert!(
+            message.contains(&format!("connection refused (os error {code})")),
+            "{message}"
+        );
         assert!(
             !message.contains("secret") && !message.contains("/private/path"),
             "{message}"

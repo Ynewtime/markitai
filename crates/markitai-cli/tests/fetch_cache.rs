@@ -1,3 +1,6 @@
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -126,7 +129,7 @@ impl Drop for Server {
 
 fn invoke(root: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    command.env_clear();
+    console::english(command.env_clear());
     for name in ["PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
