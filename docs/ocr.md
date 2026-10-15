@@ -282,7 +282,9 @@ still receives the ordinary no-text warning.
   starting as soon as any of them is done. Results are the same as on one
   thread; detections take turns two at a time, so a multi-page scan holds at
   most two pages' detection memory at once (about 300 bytes per page pixel
-  each).
+  each). On Linux the CLI keeps glibc to four malloc arenas (unless
+  `MALLOC_ARENA_MAX` is set): with one per thread, the buffers OCR's threads
+  free stayed reserved, and a 40-page scan peaked at 1.3 GB instead of 0.7 GB.
 - An image or page whose full-image pass keeps no text is read again in
   overlapping tiles, as the reference does: about 800 by 600 pixels each (at
   most four by four, overlapping by 6 %), each enlarged toward a 736-pixel

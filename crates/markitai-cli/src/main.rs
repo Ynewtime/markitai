@@ -20,7 +20,27 @@ mod sort;
 mod task;
 mod term;
 fn main() {
+    limit_malloc_arenas();
     let code = app::run();
     signals::yield_to_handler();
     std::process::exit(code);
 }
+
+/// glibc gives each thread that allocates a heap of its own, up to eight per
+/// processor, and keeps what a thread frees in that heap. Local OCR reads a
+/// scan on many threads that each free large buffers, so the freed memory
+/// piled up: a 40-page scan peaked at 1.3 GB instead of 0.7 GB with four
+/// heaps, which convert as fast. `MALLOC_ARENA_MAX` still decides when set.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn limit_malloc_arenas() {
+    if std::env::var_os("MALLOC_ARENA_MAX").is_none() {
+        // SAFETY: mallopt only sets an allocator parameter, and no other
+        // thread exists yet to allocate while it changes.
+        unsafe {
+            libc::mallopt(libc::M_ARENA_MAX, 4);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn limit_malloc_arenas() {}
