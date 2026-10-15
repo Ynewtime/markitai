@@ -83,7 +83,8 @@ OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 
 `MARKITAI_LANG=zh` 选中文，其他非空值选英文；未设置时依次读
 `LC_ALL`、`LC_MESSAGES`、`LANG`，跳过 `C`/`POSIX`。没有可用值时，Windows
-读系统显示语言再回退用户区域语言，其他系统默认英文。变量来自进程环境、
+读系统显示语言（`GetUserDefaultUILanguage`）再回退用户区域语言，其他系统默认英文；
+测试与脚本要固定语言时设 `MARKITAI_LANG`。变量来自进程环境、
 当前目录 `.env`、`MARKITAI_HOME/.env`，前者优先。由 locale 或系统选中的中文
 在输出无法显示中文时回退为英文：Unix 上字符集不是 UTF-8 的 locale（如 `zh_CN.GBK`），
 或代码页既非 CJK 也非 UTF-8 的旧版 Windows 控制台（Windows 的管道与文件输出是 UTF-8，
@@ -94,8 +95,10 @@ MARKITAI_LANG=zh markitai --help
 MARKITAI_LANG=zh markitai doctor
 ```
 
-帮助、主要诊断与批处理摘要有中英文；参数名、JSON 字段、路径、核心原始错误、
-文件日志保持原文。文件日志里的 `Error:`、`Warning:` 等标签固定，方便检索；
+帮助、主要诊断与批处理摘要有中英文，一次运行里的每一行同属一种语言：运行级错误
+（找不到输入、未知预设、缺少输出目录等）和转换器常见的失败原因（文件损坏、格式不支持、
+未配置模型、PDF 页需要 OCR）在终端上以中文显示。括号内解析器、操作系统、供应商返回的
+技术细节、参数名、JSON 字段、路径、文件日志保持原文，`--json` 与报告里的 `error` 也是英文。文件日志里的 `Error:`、`Warning:` 等标签固定，方便检索；
 终端上由标记代替（见下文）。
 交互编辑器、向导、订阅认证及部分服务输出仍为英文；工作台独立切换语言。
 
