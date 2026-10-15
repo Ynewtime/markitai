@@ -1019,6 +1019,25 @@ class PageText(BaseModel):
     lines: list[PageTextLine]
 
 
+class PdfOutlineEntry(BaseModel):
+    """One bookmark of a PDF: its title, 1-based page and 1-based level."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    page: int
+    level: int
+
+
+class PdfOutline(BaseModel):
+    """Response of ``GET .../original/outline`` (contract v1.17)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[PdfOutlineEntry]
+    truncated: bool
+
+
 class RootInfo(BaseModel):
     """JSON hint served at ``/`` when no web UI is bundled."""
 
