@@ -715,9 +715,36 @@ pub(crate) fn capture_external_pdf(
 const WEBP_NOTE: &str =
     "PDF screenshots use lossless WebP; image.quality does not affect this encoder.";
 
-/// Scanned pages recognized at once; a recognition's detection holds about
-/// 300 bytes per page pixel while it runs.
-const OCR_PAGES_AT_ONCE: usize = 2;
+/// Scanned pages recognized at once. The portable engine spreads a page's
+/// lines over several threads, but a page alone leaves processors idle
+/// between its steps and while its last lines are read, so a quarter of the
+/// processors' worth of pages run at once (two to four). Its detections, which
+/// hold about 300 bytes per page pixel each, take turns separately, which
+/// bounds the memory. Vision reads two pages at a time.
+fn ocr_pages_at_once() -> usize {
+    if ocr::backend() == "paddle" {
+        std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .div_euclid(4)
+            .clamp(2, 4)
+    } else {
+        2
+    }
+}
+
+/// Recognized pages kept waiting for an earlier page, past which the next
+/// page waits too: their results are small, but a page that takes long must
+/// not let the queue grow with the document.
+const OCR_PAGES_QUEUED: usize = 16;
+
+/// Tells the page loop that a recognition ended, also when it panicked.
+struct Ended(std::sync::mpsc::Sender<()>);
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
 
 /// A rendered page: its screenshot's diagnostics and its recognition, if any.
 struct Pending<'scope> {
@@ -823,12 +850,16 @@ fn prepare_with(
         }.into());
     }
     // Pages are rendered here, in order (a session stays on its thread), and
-    // recognized on up to OCR_PAGES_AT_ONCE threads at once. Each page's
+    // recognized on up to `ocr_pages_at_once` threads at once: the next page
+    // starts as soon as any recognition ends, not only the oldest. Each page's
     // diagnostics are written in page order once its recognition is in.
     let mut webp_noted = false;
+    let at_once = ocr_pages_at_once();
     std::thread::scope(|scope| -> Result<()> {
         let mut pending: std::collections::VecDeque<Pending<'_>> =
             std::collections::VecDeque::new();
+        let (ended, endings) = std::sync::mpsc::channel::<()>();
+        let mut running = 0usize;
         for (&index, &size) in render_indices.iter().zip(&sizes) {
             let number = pages.pages[index].number;
             let pixels = session
@@ -865,26 +896,39 @@ fn prepare_with(
                 });
                 screenshot_pages.push(index);
             }
-            // Wait for the oldest recognition only when another would
-            // exceed the limit: the next page renders while two run.
+            // Wait for a recognition to end only when another would exceed
+            // the limit: the next page renders while the others run.
             if plan.recognize[index] {
-                while pending.iter().filter(|p| p.recognition.is_some()).count()
-                    >= OCR_PAGES_AT_ONCE
-                {
+                running -= endings.try_iter().count();
+                while running >= at_once {
+                    // A sender stays here, so this waits for an ending.
+                    let _ = endings.recv();
+                    running -= 1;
+                }
+                while pending.len() >= OCR_PAGES_QUEUED {
                     let next = pending.pop_front().expect("a page is pending");
                     apply_page(&mut pages, &mut counts, next)?;
                 }
             }
             let recognition = plan.recognize[index].then(|| {
                 counts.attempted += 1;
-                scope.spawn(move || recognize(pixels, cfg))
+                running += 1;
+                let ended = Ended(ended.clone());
+                scope.spawn(move || {
+                    let _ended = ended;
+                    recognize(pixels, cfg)
+                })
             });
             pending.push_back(Pending {
                 index,
                 warnings,
                 recognition,
             });
-            while pending.front().is_some_and(|p| p.recognition.is_none()) {
+            while pending.front().is_some_and(|p| {
+                p.recognition
+                    .as_ref()
+                    .is_none_or(std::thread::ScopedJoinHandle::is_finished)
+            }) {
                 let next = pending.pop_front().expect("a page is pending");
                 apply_page(&mut pages, &mut counts, next)?;
             }
@@ -1440,7 +1484,7 @@ mod tests {
     }
 
     #[test]
-    fn scanned_pages_are_recognized_two_at_a_time_and_written_in_page_order() {
+    fn scanned_pages_are_recognized_several_at_a_time_and_written_in_page_order() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let (running, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let recognize = |pixels: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
@@ -1468,7 +1512,7 @@ mod tests {
         let cfg =
             json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});
         let prepared = prepare_with(&scans(4), "scan.pdf", &cfg, false, &recognize).unwrap();
-        assert_eq!(most.load(Ordering::SeqCst), OCR_PAGES_AT_ONCE);
+        assert_eq!(most.load(Ordering::SeqCst), ocr_pages_at_once());
         let (document, _) = prepared.finish().unwrap();
         let markdown = &document.markdown;
         let at = |text: &str| {
@@ -1498,6 +1542,54 @@ mod tests {
                 .filter(|warning| warning.contains("OCR found no text"))
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn a_slow_page_does_not_hold_up_the_pages_after_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (running, most, started) = (
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+        );
+        let started_while_first_ran = AtomicUsize::new(0);
+        let recognize = |pixels: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            started.fetch_add(1, Ordering::SeqCst);
+            let (width, height) = pixels.dimensions();
+            let page = (u64::from(pixels.get_pixel(width / 2, height / 2).0[0]) + 20) / 40;
+            let pause = if page == 1 { 900 } else { 30 };
+            std::thread::sleep(std::time::Duration::from_millis(pause));
+            if page == 1 {
+                started_while_first_ran.store(started.load(Ordering::SeqCst), Ordering::SeqCst);
+            }
+            running.fetch_sub(1, Ordering::SeqCst);
+            Ok(ocr::OcrResult {
+                text: format!("Recognized page {page}."),
+                confidence: 1.0,
+                boxes: Vec::new(),
+                scale: 1.0,
+                language: "test".into(),
+                unread: false,
+                capped: false,
+            })
+        };
+        let cfg =
+            json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});
+        let prepared = prepare_with(&scans(6), "scan.pdf", &cfg, false, &recognize).unwrap();
+        assert!(most.load(Ordering::SeqCst) <= ocr_pages_at_once());
+        // The other five pages were read while the first one still ran.
+        assert_eq!(started_while_first_ran.load(Ordering::SeqCst), 6);
+        let (document, _) = prepared.finish().unwrap();
+        let markdown = &document.markdown;
+        let positions: Vec<usize> = (1..=6)
+            .map(|page| markdown.find(&format!("Recognized page {page}.")).unwrap())
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "{markdown}"
         );
     }
 

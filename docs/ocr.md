@@ -277,9 +277,12 @@ still receives the ordinary no-text warning.
   classifier and the first recognizer are prepared while the first image's
   text is detected, lines are cut out, classified and read side by side (an
   image with one or two lines uses the detection threads), and a PDF's scanned
-  pages are recognized two at a time while the next page renders. Results are
-  the same as on one thread; a multi-page scan holds two pages' detection
-  memory at once (about 300 bytes per page pixel each).
+  pages are recognized several at a time (a quarter of the processor count,
+  two to four; two with Vision) while the next page renders, the next page
+  starting as soon as any of them is done. Results are the same as on one
+  thread; detections take turns two at a time, so a multi-page scan holds at
+  most two pages' detection memory at once (about 300 bytes per page pixel
+  each).
 - An image or page whose full-image pass keeps no text is read again in
   overlapping tiles, as the reference does: about 800 by 600 pixels each (at
   most four by four, overlapping by 6 %), each enlarged toward a 736-pixel
