@@ -160,6 +160,8 @@ SHAPES: dict[str, dict[str, F]] = {
             "batch_delete",
             "user_models",
             "user_config",
+            "convert_defaults",
+            "pdf_outline",
         )
     },
     "PresetFeatures": {
@@ -365,6 +367,8 @@ SHAPES: dict[str, dict[str, F]] = {
         "height": F("num"),
         "lines": F(["@PageTextLine"]),
     },
+    "PdfOutlineEntry": {"title": F("str"), "page": F("int"), "level": F("int")},
+    "PdfOutline": {"items": F(["@PdfOutlineEntry"]), "truncated": F("bool")},
     "ProviderCard": {
         "id": F("str"),
         "provider_id": opt("str"),

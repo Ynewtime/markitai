@@ -932,6 +932,59 @@ def pdf_page_text(path: Path, page_number: int) -> dict[str, Any]:
     }
 
 
+#: A PDF's outline lists at most this many entries, each title this long.
+MAX_OUTLINE_ENTRIES = 2000
+MAX_OUTLINE_TITLE = 300
+
+
+def pdf_outline(path: Path) -> dict[str, Any]:
+    """A PDF's own outline (bookmarks) in outline order, for Compare's viewer.
+
+    Pages are 1-based and levels 1-based. An entry whose destination is not a
+    page of this document takes the page of the next entry that has one, and
+    is left out when none follows. Never an error: a PDF without an outline,
+    one that needs a password or one that cannot be read has no entries.
+    """
+    import unicodedata
+
+    import pymupdf
+
+    empty: dict[str, Any] = {"items": [], "truncated": False}
+    try:
+        with pymupdf.open(path) as document:
+            if document.needs_pass:
+                return empty
+            count = document.page_count
+            toc = document.get_toc(simple=True)
+        placed: list[tuple[int, str, int]] = []
+        following: int | None = None
+        for level, title, page in reversed(toc):
+            if isinstance(page, int) and 1 <= page <= count:
+                following = page
+            if following is None:
+                continue
+            words = "".join(
+                " " if unicodedata.category(c)[0] == "C" else c for c in str(title)
+            )
+            placed.append(
+                (
+                    max(1, int(level)),
+                    " ".join(words.split())[:MAX_OUTLINE_TITLE].rstrip(),
+                    following,
+                )
+            )
+        placed.reverse()
+    except Exception:
+        return empty
+    return {
+        "items": [
+            {"title": title, "page": page, "level": level}
+            for level, title, page in placed[:MAX_OUTLINE_ENTRIES]
+        ],
+        "truncated": len(placed) > MAX_OUTLINE_ENTRIES,
+    }
+
+
 def _init_page_worker() -> None:
     """Ignore Ctrl-C and end with the server.
 

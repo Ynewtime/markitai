@@ -56,6 +56,8 @@ COMPONENTS: dict[str, str] = {
     "CaptureQuality": "CaptureQuality",
     "PageTextLine": "PageTextLine",
     "PageText": "PageText",
+    "PdfOutlineEntry": "PdfOutlineEntry",
+    "PdfOutline": "PdfOutline",
     "ProviderCard": "ProviderConnection",
     "ProviderCredentials": "LLMProviderCredentials",
     "SettingsView": "LLMSettingsPayload",

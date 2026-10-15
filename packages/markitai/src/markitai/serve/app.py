@@ -92,6 +92,7 @@ from markitai.serve.originals import (
     kept_capture_files,
     kept_original,
     kept_upload,
+    pdf_outline,
     pdf_page_text,
     pdf_pages,
     remove_empty_shots_dir,
@@ -128,6 +129,7 @@ from markitai.serve.schemas import (
     ModelDiscoveryResult,
     OriginalDescriptor,
     PageText,
+    PdfOutline,
     ProviderConnectionList,
     RegeneratedToken,
     RootInfo,
@@ -6290,6 +6292,26 @@ def create_app(
             raise ApiError(404, "page_not_found", "no such page") from None
         except RenderError:
             raise ApiError(422, "render_failed", "this page cannot be read") from None
+
+    @app.get(
+        "/api/jobs/{job_id}/items/{item_id}/original/outline",
+        response_model=PdfOutline,
+    )
+    async def get_item_original_outline(
+        request: Request, job_id: str, item_id: str
+    ) -> dict[str, Any]:
+        """A PDF's own bookmarks: ``{items: [{title, page, level}], truncated}``
+        (contract v1.17); empty when it has none or they cannot be read."""
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        original = await _describe(request, job, item, boxes=False)
+        if original.kind != "pdf" or original.path is None:
+            raise ApiError(404, "original_unavailable", "this original is not a PDF")
+        workers: PdfWorkers = request.app.state.pdf_workers
+        try:
+            return await asyncio.to_thread(workers.run, pdf_outline, original.path)
+        except Exception:
+            return {"items": [], "truncated": False}
 
     # ---------------------------------------------------------- downloads
 
