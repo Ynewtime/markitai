@@ -463,6 +463,32 @@ struct OcrCounts {
     attempted: usize,
     nonempty: usize,
     blank: usize,
+    /// The rendered pages local OCR found no text on, by number.
+    blank_pages: Vec<usize>,
+}
+
+/// The one warning for the rendered pages of a `kind` document ("PDF",
+/// "Office") of `total` pages that local OCR read without finding text,
+/// their numbers as ranges; none when there are none. A PDF page is blank in
+/// the output; an Office page keeps its native text without an OCR supplement.
+fn no_text_warning(kind: &str, pages: &[usize], total: usize) -> Option<String> {
+    if pages.is_empty() {
+        return None;
+    }
+    let one = pages.len() == 1;
+    let outcome = match (kind, one) {
+        ("PDF", true) => "it is blank in the output",
+        ("PDF", false) => "they are blank in the output",
+        (_, true) => "the OCR supplement leaves it out",
+        (_, false) => "the OCR supplement leaves them out",
+    };
+    Some(format!(
+        "{kind} {} {} ({} of {}): OCR found no text; {outcome}.",
+        if one { "page" } else { "pages" },
+        crate::formats::page_ranges(pages),
+        pages.len(),
+        total.max(pages.len())
+    ))
 }
 
 impl OcrCounts {
@@ -626,6 +652,7 @@ pub(crate) fn capture_external_pdf(
         return Err(failure("renderer and Office export disagree on page count"));
     }
     let mut budget = Budget::default();
+    let mut blank_pages = Vec::new();
     let mut sizes = Vec::with_capacity(count);
     for page in 1..=count {
         let size = session.dimensions(page, DPI)?;
@@ -674,13 +701,14 @@ pub(crate) fn capture_external_pdf(
             }
             let text = recognized.text;
             if text.trim().is_empty() {
-                captured.warnings.push(format!(
-                    "Office page {page}: local OCR completed with no recognized text."
-                ));
+                blank_pages.push(page);
             }
             captured.ocr.push(text);
         }
     }
+    captured
+        .warnings
+        .extend(no_text_warning("Office", &blank_pages, count));
     Ok(captured)
 }
 
@@ -729,10 +757,7 @@ fn apply_page(pages: &mut PdfPages, counts: &mut OcrCounts, done: Pending<'_>) -
     page.ocr_layer = None;
     if page.markdown.trim().is_empty() {
         counts.blank += 1;
-        pages.document.warnings.push(format!(
-            "PDF page {}: local OCR completed with no recognized text.",
-            page.number
-        ));
+        counts.blank_pages.push(page.number);
     } else {
         counts.nonempty += 1;
     }
@@ -869,6 +894,11 @@ fn prepare_with(
         }
         Ok(())
     })?;
+    let total = pages.pages.len();
+    pages
+        .document
+        .warnings
+        .extend(no_text_warning("PDF", &counts.blank_pages, total));
     let picture_counts = if plan.local_ocr {
         recognize_native_pictures(&mut pages, &plan, cfg, &mut budget)?
     } else {
@@ -1460,9 +1490,39 @@ mod tests {
                 .position(|warning| warning.contains(text))
                 .unwrap_or_else(|| panic!("{text}: {:?}", document.warnings))
         };
-        assert!(
-            warning("PDF page 2: local OCR completed with no recognized text")
-                < warning("PDF page 3")
+        assert!(warning("PDF page 3") < warning("PDF page 2 (1 of 4): OCR found no text"));
+        assert_eq!(
+            document
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("OCR found no text"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn pages_without_text_are_one_warning_with_ranges_and_the_page_count() {
+        assert_eq!(no_text_warning("PDF", &[], 10), None);
+        assert_eq!(
+            no_text_warning("PDF", &[57], 318).unwrap(),
+            "PDF page 57 (1 of 318): OCR found no text; it is blank in the output."
+        );
+        assert_eq!(
+            no_text_warning("PDF", &[57, 212], 318).unwrap(),
+            "PDF pages 57, 212 (2 of 318): OCR found no text; they are blank in the output."
+        );
+        assert_eq!(
+            no_text_warning("PDF", &[3, 4, 5, 9, 40, 41, 42, 43, 44], 120).unwrap(),
+            "PDF pages 3\u{2013}5, 9, 40\u{2013}44 (9 of 120): OCR found no text; they are blank in the output."
+        );
+        assert_eq!(
+            no_text_warning("Office", &[2], 3).unwrap(),
+            "Office page 2 (1 of 3): OCR found no text; the OCR supplement leaves it out."
+        );
+        assert_eq!(
+            no_text_warning("Office", &[2, 3], 3).unwrap(),
+            "Office pages 2\u{2013}3 (2 of 3): OCR found no text; the OCR supplement leaves them out."
         );
     }
 
@@ -1492,7 +1552,7 @@ mod tests {
         assert_eq!(document.metadata["ocr_path"], "vision");
         assert_eq!(document.markdown.matches("<!-- Page number:").count(), 3);
         assert!(document.warnings.iter().any(|warning| {
-            warning.contains("page 3: local OCR completed with no recognized text")
+            warning == "PDF page 3 (1 of 3): OCR found no text; it is blank in the output."
         }));
     }
 

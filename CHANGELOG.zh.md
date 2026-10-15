@@ -47,6 +47,7 @@
 
 ### 变更
 - PDF 中没有可读文字的页面按原因各合并为一条警告，用页码范围列出并给出占全文的页数（`PDF pages 3–5, 9 (4 of 120): native text was not recovered (scanned); OCR is required to read them. Run again with --ocr.`）；九成及以上页面没有文字的 PDF 只给一条警告，说明它是扫描件（`PDF is scanned: 488 of 491 pages have no readable text (pages 1–480, 483–490); run again with --ocr to read them.`），报告、`--json` 和服务中不再逐页一条。
+- 本地 OCR 没有识别出文字的渲染页合并为一条警告，用页码范围列出并给出占全文的页数（`PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in the output.`；Office 文档为 `Office pages 2, 5 (2 of 9): OCR found no text; the OCR supplement leaves them out.`），不再逐页给出 `PDF page 2: local OCR completed with no recognized text.`。
 - 安全检查拒绝了模型回答时，警告用平实的话说明：`LLM enhancement failed: the model's answer left out or changed too much of the document, so it was not used; the converted Markdown is kept as it was.`（其他检查同理）。
 - 工作台的「对照」优先显示保留的网页，其次是截图；只有两者都可用时才显示「截图 | 网页」切换；抓取时是验证页或空白的网页或截图不再提供，二者都不可用时，原件一侧说明原因并提供「打开网页」。原件一侧无法显示的段落不再加框。
 - 工作台的「对比」在宽窗口中左右并排（Base 与 LLM 版本各有行号，同一处改动的行相对，改动的词语高亮）；窄窗口仍为单列。在「对比」中 Base | LLM 切换保留，并同时处于选中状态。

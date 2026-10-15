@@ -306,14 +306,14 @@ fn completed_blank_ocr_does_not_claim_another_ocr_attempt_is_required() {
     pages
         .document
         .warnings
-        .push("PDF page 1: local OCR completed with no recognized text.".into());
+        .push("PDF page 1 (1 of 1): OCR found no text; it is blank in the output.".into());
     let document = pages.finish_with_media().unwrap();
     assert_eq!(document.markdown, "<!-- Page number: 1 -->");
     assert!(
         document
             .warnings
             .iter()
-            .any(|warning| warning.contains("no recognized text"))
+            .any(|warning| warning.contains("OCR found no text"))
     );
     assert!(
         !document
