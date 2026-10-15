@@ -57,7 +57,7 @@ markitai serve --host 0.0.0.0
 侧栏分三处：**转换**、**转换任务**和**系统设置**（外观与语言、模型、访问令牌、编辑配置）。在手机上它们移到底部栏，转换以全屏窗口打开。它们下方有一行说明当前应答的服务器构建：版本、构建所用的提交（构建含未提交改动时带 `-dirty`）以及按你所在时区显示的构建时间（`1.2.1 1a2b3c4 10-15 09:30`；悬停可看完整时间）。从源码检出运行的服务器没有构建时间。
 
 - **输入区**：粘贴 URL（每行一个），拖入文件或文件夹，或用**上传**（下拉菜单可选文件夹）。文件先暂存，按下**转换**才提交，带上传进度，可以和 URL 合成一次提交。`.urls` 文件按 URL 列表读取，与命令行一致。URL 在发送前就会校验。
-- **选项**：默认什么都不问。**选项**里有预设、增强（LLM、OCR、图片分析）、输出（profile）和高级（抓取策略、文件后端、缓存、压缩），并附上等价命令行，可直接复制。
+- **选项**：默认什么都不问。**选项**里有预设、增强（LLM、OCR、图片分析）、输出（profile）和高级（抓取策略、文件后端、缓存、压缩），并附上等价命令行，可直接复制。 选项从**服务器的默认值**开始（`config.json` 叠加内置默认值：`llm.enabled`、`ocr.enabled`、`image.alt_enabled`、`image.desc_enabled`、`screenshot.enabled`、`screenshot.screenshot_only`、`llm.pure`、`cache.no_cache`、`image.compress`、`output.profile` 和 `fetch.strategy`，命令行读取的也是这些键）。命令行上方一行会说明它们是服务器的、你的还是已改动的，并提供**恢复默认值**和**存为默认值**：管理员的选择写入 `config.json` 并立即用于下一次转换，用户令牌的选择保存在它自己的文件里（**使用服务器的默认值**可撤销）。Cloudflare 永远不会成为默认值。
 - **转换任务**：一个列表列出所有条目，按提交分组（以来源文件夹或 `.urls` 列表命名），实时更新，可按名称筛选，或按全部、失败、有提示过滤。要一次删除多个，用行或提交标题左侧的勾选框选中它们（空格勾选当前行，Shift 扩展选择，Ctrl/⌘+A 勾选所有列出的行，Esc 清除；手机上先点**选择**），再点出现的底部栏里的**删除**并确认；仍在转换的条目不能勾选。**停止剩余**会停下正在运行的提交里尚未开始的条目，已在转换的条目照常完成，被停下的条目之后可以重试；在手机上，它一直在盖住列表的全屏窗口标题栏里。**新建转换**回到转换页，“⋯”里有**重试失败**和**全部下载**。提交在后台标签页完成时会发通知。
 - **转换窗口**：点击条目（或在条目上按 Enter）会在列表上方打开它的窗口，有三个标签：**详情**、**预览**和**对照**。↑/↓ 或窗口标题栏的箭头切换到上一个或下一个条目，**C** 切换到对照，Esc 关闭。窗口的放大按钮（或 **F**）让它占满浏览器并还原（每个浏览器记住这个选择）；在手机上窗口占满屏幕。**详情**显示条目的状态、原件与输出的大小、使用的模型与费用、选项、保留期限和提示，以及结果开头。标题栏有**下载**（打开预览的**文件**），需要时还有**重试**；“⋯”里有**用 LLM 增强**、**重新运行**和删除。markitai 无法转换的文件类型不提供重试。对条目的操作失败时（例如服务器拒绝了重试），原因显示在详情顶部。
 - **费用**：只有确知的费用才会显示金额。提供商没有给某个模型定价时，条目显示费用未知，而不是 `$0`；只有部分请求有价格时显示“至少”多少。
@@ -99,7 +99,7 @@ Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不�
 
 ### 用户的模型与共享模型
 
-用户令牌在**系统设置 → 模型**中管理自己的模型（同一个页面，没有配置文件那一行，也没有检测到的模型）：添加模型、测试、编辑、删除和设置权重。每个已保存行的权重都可以直接修改：点击它，输入整数，按 Enter 或离开输入框即保存，Esc 取消（管理员的行也一样）。这些模型保存在 `~/.markitai/serve/user-models/<令牌 id>.json`（只有你的用户可读，从不写入配置文件，所以编辑配置和命令行都看不到），只用于该用户的转换，密钥只以打码形式显示。用户只能添加带自己 API key 的模型，或不需要 key 的服务器地址（保存为 `markitai-no-key`）；服务器会拒绝用其自身账号或云登录认证的服务商（Claude Code、Copilot 和 ChatGPT 订阅、Vertex AI、watsonx、GigaChat、SageMaker、不带 key 的 Bedrock）、`env:` 引用，以及指向服务器本机的地址（`localhost`、`127.0.0.1`、`::1`、`0.0.0.0`；所以 Ollama 或 LM Studio 需要用户自己的地址）；最多 50 个模型。
+用户令牌在**系统设置 → 模型**中管理自己的模型（同一个页面，没有配置文件那一行，也没有检测到的模型）：添加模型、测试、编辑、删除和设置权重。每个已保存行的权重都可以直接修改：点击它，输入 0 到 100 的整数，按 Enter 或离开输入框即保存，Esc 取消（管理员的行也一样）。这些模型保存在 `~/.markitai/serve/user-models/<令牌 id>.json`（只有你的用户可读，从不写入配置文件，所以编辑配置和命令行都看不到），只用于该用户的转换，密钥只以打码形式显示。用户只能添加带自己 API key 的模型，或不需要 key 的服务器地址（保存为 `markitai-no-key`）；服务器会拒绝用其自身账号或云登录认证的服务商（Claude Code、Copilot 和 ChatGPT 订阅、Vertex AI、watsonx、GigaChat、SageMaker、不带 key 的 Bedrock）、`env:` 引用，以及指向服务器本机的地址（`localhost`、`127.0.0.1`、`::1`、`0.0.0.0`；所以 Ollama 或 LM Studio 需要用户自己的地址）；最多 50 个模型。
 
 管理员保存的模型默认是**私有**；设为**共享**后，所有用户的转换都可以使用它（在配置文件中保存为 `"model_info": {"share": "shared"}`）。用户在**管理员共享**下只能看到共享模型的模型 ID、服务商和权重：它的 key 和地址留在服务器上，用户看到的失败信息也不会说出它在哪里提供服务。用户的转换使用一个模型池：自己的模型和共享的模型按权重选择，请求失败时换用池中另一个模型；提示词、预算和缓存仍是管理员的设置，任务会显示用了哪个模型和费用。两者都没有的用户没有 LLM 选项，请求 LLM 会被拒绝（`llm_unavailable`）：服务器的环境变量 key 和检测到的模型从不为用户服务。把模型改回私有对下一个请求立即生效。
 
@@ -134,7 +134,7 @@ Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不�
 | `DELETE /api/jobs/{job_id}/items/{item_id}` | 永久移除条目，连同其上传原件、输出、图片与截图 |
 | `GET /api/jobs/{job_id}/items/{item_id}/result` | 条目结果（`?max_bytes=` 只取开头）；配套资源经 `GET /api/jobs/{job_id}/files/{path}` 获取 |
 | `GET /api/jobs/{job_id}/items/{item_id}/assets/{path}` | 条目自身提取出的一张图片（PNG、JPEG、GIF、WebP、AVIF），以内联方式返回供显示 |
-| `GET /api/jobs/{job_id}/items/{item_id}/original` | 条目原件能显示什么（网页还包括其副本和截图是否可用，`capture`）；`/original/file`、`/original/view`、`/original/pages/{n}?width=`、`/original/pages/{n}/text` 与 `/original/blocks`（网页各区块在截图上的位置）提供内容 |
+| `GET /api/jobs/{job_id}/items/{item_id}/original` | 条目原件能显示什么（网页还包括其副本和截图是否可用，`capture`）；`/original/file`、`/original/view`、`/original/pages/{n}?width=`、`/original/pages/{n}/text`、`/original/outline`（PDF 的书签）与 `/original/blocks`（网页各区块在截图上的位置）提供内容 |
 | `GET /api/jobs/{job_id}/archive` | 整个任务打包为 zip 下载 |
 | `POST /api/download-tickets` | 为一次下载换取一分钟内有效、只能用一次的 `?ticket=` 链接 |
 | `GET /api/history` | 列出历史条目（`?include=items` 附带全部条目） |
@@ -142,6 +142,7 @@ Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不�
 | `DELETE /api/history/{job_id}` | 删除单条历史 |
 | `POST /api/history/delete` | 一次请求删除多个任务和条目（`{"jobs": [...], "items": [{"job_id", "item_id"}]}`，最多 1000 项），每项按对应的单个路由处理，应答列出每项结果 |
 | `/api/settings/llm*` | LLM 提供商、模型与部署管理 |
+| `GET`/`PUT /api/convert-defaults` | 新建转换的选项默认值（所有调用者可读；`PUT` 为 `{"expected_revision", "defaults"}`：管理员的写入 `config.json`，用户令牌的写入它自己的文件，`null` 表示删除） |
 | `GET`/`PUT /api/settings/config` | 配置文件文本（密钥已遮盖）；按其 `revision` 原样保存 |
 | `GET`/`POST /api/access-tokens`、`DELETE /api/access-tokens/{id}` | 用户令牌（仅管理员；列表给出每个令牌的 `model_count`） |
 | `/api/me/models*` | 用户令牌自己的模型，后缀和规则与 `/api/settings/llm*` 相同（其他调用者得到 403 `user_token_required`）；`PATCH /api/me/models/shared/{id}` 设置它对某个共享模型的权重，`POST /api/me/models/test` 带 `{"shared_id"}` 测试共享模型 |
