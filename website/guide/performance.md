@@ -68,6 +68,35 @@ speedup grows with the number of cores and pages; a small PDF converted on
 its own stays in-process, where starting workers would cost more than it
 saves.
 
+## Scanned PDFs with OCR (15 October 2026)
+
+OCR reads a scanned page in two steps: a detector finds the lines, a
+recognizer reads them. The recognizer takes over 80 % of the time, and
+running it on many cores for one page gains little. The CLI, `markitai serve`
+and the MCP server therefore read the pages of a scanned PDF in the same
+worker processes that extract PDF pages, one page per worker: each worker
+loads the OCR models once and runs them on its share of the cores. Only as
+many pages are under way as there are workers and memory for them (half of
+the available memory at about 400 MB a page), so a long scan does not keep
+other documents waiting. The text is the same as reading the pages in one
+process. `MARKITAI_PDF_WORKERS` sets the number of workers here too.
+
+An invented 490-page scanned book (Chinese with English and code, six blank
+pages), `--preset minimal --ocr`, on an 18-core machine that other work kept
+busy (load 18 to 42):
+
+| Run | Before | Now |
+| --- | ---: | ---: |
+| Workbench job | 497 s | 294 s |
+| CLI | 510 s | 288 s |
+| CLI CPU time | 6,655 s | about 2,600 s |
+| Memory | 2.1 GB | about 6 GB (12 workers) |
+
+The workbench job also includes a fix to the Markdown cleanup, which spent
+50 s on the finished book and held the server meanwhile. Pages are rendered
+at 150 dpi: 120 and 200 dpi read the invented pages no better, and the
+detector, the only step the resolution changes, is a small part of a page.
+
 ## Understanding a slow run
 
 `-v` prints the selected strategy and the reason for each fallback. `--no-cache`

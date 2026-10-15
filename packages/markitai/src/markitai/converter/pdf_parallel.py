@@ -49,10 +49,18 @@ if TYPE_CHECKING:
 PARALLEL_MIN_PAGES = 12
 #: Pages per worker task at least: fewer make the per-task overhead show.
 MIN_PAGES_PER_TASK = 4
+#: A document with at least this many pages to OCR reads them in the
+#: workers: a page takes seconds of CPU, a worker loads the OCR models once.
+OCR_PARALLEL_MIN_PAGES = 4
 #: Memory one worker holds (the layout models plus a page's buffers).
 _WORKER_RAM_BYTES = 450 * 1024 * 1024
+#: What reading a page adds to a worker: the OCR models and the detector's
+#: buffers for one 150 dpi page.
+_OCR_PAGE_RAM_BYTES = 400 * 1024 * 1024
 #: The workers together use at most this share of the available memory.
 _RAM_SHARE = 0.25
+#: Pages being read at once use at most this share of the available memory.
+_OCR_RAM_SHARE = 0.5
 _MAX_WORKERS = 12
 #: ProcessPoolExecutor refuses more workers than this on Windows.
 _MAX_WINDOWS_WORKERS = 61
@@ -381,6 +389,116 @@ class PageRun(Generic[_R]):
             return self._scan(self._path, self._pages)
 
 
+def ocr_slots(workers: int) -> int:
+    """Pages read at once in *workers* workers: memory may allow fewer."""
+    try:
+        import psutil
+
+        available = psutil.virtual_memory().available * _OCR_RAM_SHARE
+        return max(1, min(workers, int(available // _OCR_PAGE_RAM_BYTES)))
+    except Exception:  # psutil missing or unsupported: cores decide
+        return workers
+
+
+def run_page_tasks(
+    path: Path,
+    task: Callable[..., _R],
+    pages: list[int],
+    args: tuple[Any, ...],
+    on_done: Callable[[int, Future[_R]], None],
+) -> list[int] | None:
+    """Run ``task(path, page, threads, *args)`` for each page in the workers.
+
+    For page work that costs seconds of CPU (OCR): one task per page, at
+    most :func:`ocr_slots` of them submitted at a time, so a long document
+    neither queues all its pages ahead of other documents' work nor holds
+    more pages in memory than the machine allows. ``threads`` is the task's
+    share of the cores, for onnxruntime: one when there are as many pages
+    at once as cores, more when memory allows fewer. *on_done* gets each page
+    and its finished future in this thread, in the order they finish (the
+    task's own exception is the future's). *task* must be a module-level
+    function (it is pickled by reference).
+
+    Returns:
+        None when the workers do not serve this document (do every page
+        in-process instead); else the pages they did not finish, in order
+        (the workers failed midway: do those in-process).
+
+    Raises:
+        BrokenProcessPool: :func:`shutdown_pool` stopped the workers.
+        Whatever *on_done* raises; the pages not started are dropped.
+    """
+    global _active
+    if not _enabled or not pages:
+        return None
+    workers = worker_count()
+    if workers < 2 or not (
+        len(pages) >= OCR_PARALLEL_MIN_PAGES or _active > 0 or _pool is not None
+    ):
+        return None
+    from collections import deque
+    from concurrent.futures import FIRST_COMPLETED, CancelledError, wait
+
+    with _lock:
+        _active += 1
+    try:
+        try:
+            pool = _get_pool(workers)
+        except Exception as e:
+            if _stopping:
+                raise
+            logger.debug(
+                "[PDF] Workers unavailable ({}); reading {} in-process", e, path.name
+            )
+            return None
+        slots = min(ocr_slots(workers), len(pages))
+        threads = max(1, (os.cpu_count() or 1) // slots)
+        waiting = deque(pages)
+        running: dict[Future[_R], int] = {}
+
+        def workers_failed(error: BaseException | None) -> list[int]:
+            """The pages left to read in-process once the pool failed."""
+            if _stopping:
+                raise error or CancelledError()
+            left = sorted([*waiting, *running.values()])
+            _discard_pool(pool)
+            logger.warning(
+                "[PDF] The workers failed ({}); reading the {} page(s) of {} "
+                "they left in-process",
+                error or "cancelled",
+                len(left),
+                path.name,
+            )
+            return left
+
+        try:
+            while waiting or running:
+                while waiting and len(running) < slots:
+                    try:
+                        future = pool.submit(
+                            task, str(path), waiting[0], threads, *args
+                        )
+                    except Exception as e:  # broken, not flagged yet
+                        return workers_failed(e)
+                    running[future] = waiting.popleft()
+                finished, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in sorted(finished, key=running.__getitem__):
+                    error = None if future.cancelled() else future.exception()
+                    if future.cancelled() or (
+                        error is not None and _pool_failed(pool, error)
+                    ):
+                        return workers_failed(error)
+                    on_done(running.pop(future), future)
+        except BaseException:
+            for future in running:  # this document's pages not started yet
+                future.cancel()
+            raise
+        return []
+    finally:
+        with _lock:
+            _active -= 1
+
+
 def _page_runs(page_list: list[int], workers: int) -> list[list[int]]:
     """Contiguous runs of pages, one per task, at least MIN_PAGES_PER_TASK."""
     tasks = max(1, min(workers, math.ceil(len(page_list) / MIN_PAGES_PER_TASK)))
@@ -498,13 +616,24 @@ def _init_worker() -> None:
             if options is None:
                 options = ort.SessionOptions()
                 kwargs["sess_options"] = options
-            options.intra_op_num_threads = 1
-            options.inter_op_num_threads = 1
+            _one_thread_unless_set(options)
             super().__init__(*args, **kwargs)
 
     ort.InferenceSession = _SingleThreadSession  # type: ignore[misc]
     # Load the layout engine once per worker, not on its first task
     importlib.import_module("pymupdf4llm")
+
+
+def _one_thread_unless_set(options: Any) -> None:
+    """Run a worker's onnxruntime session on one thread unless told otherwise.
+
+    Unset (0) means every core; a count the session's owner set on purpose
+    stays: a page's OCR takes its share of the cores (run_page_tasks).
+    """
+    if not options.intra_op_num_threads:
+        options.intra_op_num_threads = 1
+    if not options.inter_op_num_threads:
+        options.inter_op_num_threads = 1
 
 
 def _get_pool(workers: int) -> ProcessPoolExecutor:

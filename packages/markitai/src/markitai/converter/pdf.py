@@ -7,7 +7,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
@@ -31,7 +31,12 @@ from markitai.converter.base import (
 )
 from markitai.converter.pdf_layout_boxes import clean_layout_chunks
 from markitai.converter.pdf_markdown import repair_pages
-from markitai.converter.pdf_parallel import map_page_runs, to_markdown_chunks
+from markitai.converter.pdf_ocr import PageShot, read_page, read_page_task
+from markitai.converter.pdf_parallel import (
+    map_page_runs,
+    run_page_tasks,
+    to_markdown_chunks,
+)
 from markitai.converter.pdf_tables import restore_flattened_tables
 from markitai.image import ImageProcessor
 from markitai.notices import user_notice
@@ -139,6 +144,10 @@ def _collect_native_text_pages(doc: Any) -> dict[int, str]:
             native[i] = text
     return native
 
+
+# Pages read at once in this process, at most: its engine already spreads
+# each page over every core (see PdfConverter._ocr_thread_count).
+_MAX_OCR_THREADS = 8
 
 # Pictures on native pages smaller than this (pixels at the render DPI, about
 # 1.8 square inches at 150 DPI) are icons, logos or rules: not worth an OCR pass.
@@ -380,9 +389,6 @@ def _chunk_page_number(chunk: Any, index: int) -> int:
 _T = TypeVar("_T")
 _T_co = TypeVar("_T_co", covariant=True)
 
-#: Peak memory of one page in OCR (detector on a 150 dpi render).
-_OCR_PAGE_RAM_BYTES = 1024 * 1024 * 1024
-
 
 def _scan_hidden_text(
     input_path: Path | str, pages: list[int] | None = None
@@ -543,9 +549,7 @@ class PdfConverter(BaseConverter):
     )
     _TEXT_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)?|[\u4e00-\u9fff]+")
 
-    def _get_worker_count(
-        self, input_path: Path, task_count: int, *, per_worker_bytes: int = 0
-    ) -> int:
+    def _get_worker_count(self, input_path: Path, task_count: int) -> int:
         """Calculate optimal worker count based on file size and system resources.
 
         Each worker opens its own PDF copy, so memory usage scales with
@@ -554,9 +558,6 @@ class PdfConverter(BaseConverter):
         Args:
             input_path: Path to the PDF file (used to check file size).
             task_count: Number of tasks (pages) to process.
-            per_worker_bytes: Memory one task holds while it runs (OCR:
-                about a gigabyte); the workers then take at most half of
-                the available memory.
 
         Returns:
             Optimal number of workers (at least 1, at most _MAX_INTERNAL_WORKERS).
@@ -571,16 +572,20 @@ class PdfConverter(BaseConverter):
         else:
             workers = min(2, task_count)
 
-        if per_worker_bytes:
-            try:
-                import psutil
-
-                budget = psutil.virtual_memory().available // 2
-                workers = min(workers, max(1, budget // per_worker_bytes))
-            except Exception:  # psutil unavailable: file size decides
-                pass
-
         return max(1, min(workers, self._MAX_INTERNAL_WORKERS))
+
+    @staticmethod
+    def _ocr_thread_count(task_count: int) -> int:
+        """Threads reading pages in this process (no worker processes).
+
+        One per two cores, 8 at most: the engine here runs onnxruntime on
+        every core for each page, and the cores idle only while a page is
+        in Python (layout, cropping). Memory may allow fewer.
+        """
+        from markitai.converter.pdf_parallel import ocr_slots
+
+        threads = min(_MAX_OCR_THREADS, (os.cpu_count() or 2) // 2, task_count)
+        return max(1, min(threads, ocr_slots(max(1, threads))))
 
     def _is_text_heavy_picture_text(self, picture_text: str) -> bool:
         """Return True when picture text looks like extracted table/text content."""
@@ -1560,114 +1565,68 @@ class PdfConverter(BaseConverter):
         ocr_pages = [i for i in range(total_pages) if i not in page_texts]
 
         try:
-            # A page in recognition holds about a gigabyte (the detector runs
-            # on the full-resolution render): memory bounds the parallelism
-            max_workers = self._get_worker_count(
-                input_path, total_pages, per_worker_bytes=_OCR_PAGE_RAM_BYTES
-            )
+            # Also the threads for screenshots and pictures on native pages
+            max_workers = self._ocr_thread_count(total_pages)
             ocr_texts: dict[int, str] = {}
             failures: dict[int, str] = {}
-
+            shot: PageShot | None = None
             if enable_screenshot:
                 screenshots_dir.mkdir(parents=True, exist_ok=True)
-                ocr_page_set = set(ocr_pages)
+                shot = PageShot(
+                    directory=str(screenshots_dir),
+                    prefix=self.asset_prefix or input_path.name,
+                    image_format=image_format,
+                    image=self.config.image if self.config else None,
+                )
+            # Every page when each gets a screenshot, else the ones to read
+            targets = list(range(total_pages)) if shot else ocr_pages
+            ocr_page_set = set(ocr_pages)
+            results: dict[int, dict[str, Any]] = {}
 
-                def process_page_with_screenshot(page_num: int) -> dict:
-                    """Process a single page: render + OCR (thread-safe)."""
-                    # Each thread opens its own document (PyMuPDF not thread-safe)
-                    thread_doc = pymupdf.open(input_path)
-                    img_processor = ImageProcessor(
-                        self.config.image if self.config else None
-                    )
-                    try:
-                        page = thread_doc[page_num]
+            def finished(page_num: int, future: Future[dict[str, Any]]) -> None:
+                try:
+                    results[page_num] = future.result()
+                    logger.debug(f"OCR processed page {page_num + 1}/{total_pages}")
+                except (OCRBackendMissing, OCRLanguageError):
+                    raise
+                except Exception as e:
+                    failures[page_num] = str(e)
 
-                        # Render page to image
-                        mat = pymupdf.Matrix(dpi / 72, dpi / 72)
-                        pix = page.get_pixmap(matrix=mat)
-
-                        # Save page image with compression
-                        prefix = self.asset_prefix or input_path.name
-                        image_name = f"{prefix}.page{page_num + 1:04d}.{image_format}"
-                        image_path = screenshots_dir / image_name
-                        _size, actual_path = img_processor.save_screenshot(
-                            pix.samples, pix.width, pix.height, image_path
-                        )
-
-                        # Use the actual path returned by save_screenshot, which may
-                        # differ from image_path when the fallback changes the extension
-                        actual_name = actual_path.name
-
-                        text: str | None = None
-                        if page_num in ocr_page_set:
-                            # OCR - reuse already rendered pixmap to avoid re-rendering
-                            text = ocr.recognize_pixmap(
-                                pix.samples, pix.width, pix.height, pix.n
-                            ).text.strip()
-
-                        return {
-                            "page_image": {
-                                "page": page_num + 1,
-                                "path": str(actual_path),
-                                "name": actual_name,
-                            },
-                            "text": text,
-                        }
-                    finally:
-                        thread_doc.close()
-
-                # Process pages in parallel
-                results: dict[int, dict] = {}
+            # In the workers when this process has them (one page per core,
+            # the engine loaded once per worker), else on threads here
+            left = run_page_tasks(
+                input_path,
+                read_page_task,
+                targets,
+                (dpi, ocr_config, frozenset(ocr_page_set), shot),
+                finished,
+            )
+            if left is None:
+                left = targets
+            if left:
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
-                        executor.submit(process_page_with_screenshot, i): i
-                        for i in range(total_pages)
+                        executor.submit(
+                            read_page,
+                            ocr,
+                            input_path,
+                            i,
+                            dpi,
+                            read=i in ocr_page_set,
+                            shot=shot,
+                        ): i
+                        for i in left
                     }
                     for future in as_completed(futures):
-                        page_num = futures[future]
-                        try:
-                            results[page_num] = future.result()
-                            logger.debug(
-                                f"OCR processed page {page_num + 1}/{total_pages}"
-                            )
-                        except (OCRBackendMissing, OCRLanguageError):
-                            raise
-                        except Exception as e:
-                            failures[page_num] = str(e)
+                        finished(futures[future], future)
 
-                # Collect results in order. Page renders are screenshots,
-                # counted from page_images like on the standard path, never
-                # as embedded images.
-                for i in range(total_pages):
-                    r = results.get(i)
-                    if r is None:
-                        continue
-                    page_images.append(r["page_image"])
-                    if r["text"] is not None:
-                        ocr_texts[i] = r["text"]
-            elif ocr_pages:
-
-                def process_page_ocr_only(page_num: int) -> str:
-                    """Process a single page: OCR only (thread-safe)."""
-                    return ocr.recognize_pdf_page(
-                        input_path, page_num, dpi=dpi
-                    ).text.strip()
-
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {
-                        executor.submit(process_page_ocr_only, i): i for i in ocr_pages
-                    }
-                    for future in as_completed(futures):
-                        page_num = futures[future]
-                        try:
-                            ocr_texts[page_num] = future.result()
-                            logger.debug(
-                                f"OCR processed page {page_num + 1}/{total_pages}"
-                            )
-                        except (OCRBackendMissing, OCRLanguageError):
-                            raise
-                        except Exception as e:
-                            failures[page_num] = str(e)
+            # In page order. Page renders are screenshots, counted from
+            # page_images like on the standard path, never as embedded images.
+            for i in sorted(results):
+                if results[i]["page_image"] is not None:
+                    page_images.append(results[i]["page_image"])
+                if results[i]["text"] is not None and i in ocr_page_set:
+                    ocr_texts[i] = results[i]["text"]
 
             if failures:
                 pages = sorted(failures)
@@ -1679,13 +1638,19 @@ class PdfConverter(BaseConverter):
 
             empty_pages = [i + 1 for i in ocr_pages if not ocr_texts.get(i)]
             if empty_pages:
-                count, listed = _pages_phrases(empty_pages)
+                # Python's scanned-pages notice form (contract v1.16): the
+                # name, "N of M pages", the pages as ranges
+                one = len(empty_pages) == 1
+                _count, listed = _pages_phrases(empty_pages)
                 user_notice(
-                    "[OCR] No text found on {} of {} ({}); {} blank in the output",
-                    count,
+                    "[OCR] {}: {} of {} pages {} no text ({}); {} left blank "
+                    "in the output",
                     input_path.name,
+                    len(empty_pages),
+                    total_pages,
+                    "has" if one else "have",
                     listed,
-                    "it is" if len(empty_pages) == 1 else "they are",
+                    "it is" if one else "they are",
                 )
             page_texts.update(ocr_texts)
 

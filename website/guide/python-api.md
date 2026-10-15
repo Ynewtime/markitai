@@ -87,7 +87,7 @@ A short-lived script can occasionally end with exit code 134 after a successful 
 
 ## Parallel PDF Extraction
 
-The CLI, `markitai serve` and the MCP server extract the pages of long PDFs, and of PDFs converted at the same time, in worker processes. The output is the same, several times faster. A script opts in with `markitai.enable_worker_processes()`:
+The CLI, `markitai serve` and the MCP server extract the pages of long PDFs, and of PDFs converted at the same time, in worker processes, and read the pages of a scanned PDF with OCR there too, one page per core. The output is the same, several times faster. A script opts in with `markitai.enable_worker_processes()`:
 
 ```python
 import markitai

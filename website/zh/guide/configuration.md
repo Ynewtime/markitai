@@ -237,7 +237,7 @@ LiteLLM 也会从 `GOOGLE_API_KEY` 读取 Gemini 的 key（优先于 `GEMINI_API
 | `MARKITAI_NO_REMOTE_FETCH` | 绝不把 URL 发给远程服务，显式 `-s` 也不行（`1`、`true`、`yes`） |
 | `MARKITAI_NO_VLM_OCR` | `--ocr --llm` 时用本地 RapidOCR 而不是视觉模型（`1`、`true`、`yes`）。只管 OCR：`--screenshot --llm` 仍会把页面截图发给视觉模型 |
 | `MARKITAI_STATIC_HTTP` | 静态抓取客户端：`httpx`（默认）或 `curl_cffi` |
-| `MARKITAI_PDF_WORKERS` | PDF 页面提取用的工作进程数；`0` 或 `1` 表示在本进程内提取。默认取 CPU 核数减二，最多 12 个，并且合计不超过可用内存的四分之一（每个约 450 MB） |
+| `MARKITAI_PDF_WORKERS` | PDF 页面提取和扫描页 OCR 用的工作进程数；`0` 或 `1` 表示在本进程内进行。默认取 CPU 核数减二，最多 12 个，并且合计不超过可用内存的四分之一（每个约 450 MB） |
 | `MARKITAI_SERVE_TOKEN` | `markitai serve` 的固定访问令牌 |
 | `MARKITAI_TIMINGS` | 命令结束时在 stderr 列出时间花在哪里（启动、`doctor` 的每项检查）（`1`、`true`、`yes`、`on`） |
 | `MARKITAI_INSTALL_OPTIONAL` | 安装脚本：不询问直接装可选组件 |
