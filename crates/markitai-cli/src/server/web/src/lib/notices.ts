@@ -108,12 +108,15 @@ export function pdfPageNotice(text: string): { pages: number[]; total: number | 
   return null;
 }
 
-/** Pages OCR read but found no text on: Python's `[OCR] No text found on N pages of <name> (pages …); they are
- * blank in the output`, Rust's `PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in the output.`
+/** Pages OCR read but found no text on: Python 1.2.1's `[OCR] No text found on N pages of <name> (pages …); they are
+ * blank in the output` (and its later `[OCR] <name>: N of M pages have no text (pages …); …`), Rust's `PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in the output.`
  * (`Office pages …: OCR found no text; the OCR supplement leaves them out.` for an Office document). */
 export function ocrBlankNotice(text: string): { pages: number[]; total: number | null; office: boolean } | null {
   let match = /^\[OCR\] No text found on \d+ pages? of [\s\S]*?\(pages? ([\d,\s–-]+)\)/.exec(text);
   if (match) return { pages: parsePages(match[1] ?? ""), total: null, office: false };
+  // Python's later form: `[OCR] <name>: 2 of 491 pages have no text (pages 166, 360); they are left blank in the output`.
+  match = /^\[OCR\] [\s\S]*?: \d+ of (\d+) pages? (?:has|have) no text \(pages? ([\d,\s–-]+)\)/.exec(text);
+  if (match) return { pages: parsePages(match[2] ?? ""), total: Number(match[1]), office: false };
   match = /^(PDF|Office) pages? ([\d,\s–-]+?)(?: \(\d+ of (\d+)\))?: OCR found no text\b/.exec(text);
   if (match) return { pages: parsePages(match[2] ?? ""), total: match[3] ? Number(match[3]) : null, office: match[1] === "Office" };
   return null;

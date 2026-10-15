@@ -124,6 +124,8 @@ test("defaults are read and saved with the revision", async () => {
 test("pages OCR found no text on read as one notice with ranges, in either backend's words", () => {
   assert.deepEqual(ocrBlankNotice("[OCR] No text found on 2 pages of book.pdf (pages 166, 360); they are blank in the output"), { pages: [166, 360], total: null, office: false });
   assert.deepEqual(ocrBlankNotice("[OCR] No text found on 1 page of a.pdf (page 7); it is blank in the output"), { pages: [7], total: null, office: false });
+  assert.deepEqual(ocrBlankNotice("[OCR] book.pdf: 2 of 491 pages have no text (pages 166, 360); they are left blank in the output"), { pages: [166, 360], total: 491, office: false });
+  assert.deepEqual(ocrBlankNotice("[OCR] a: b.pdf: 1 of 9 pages has no text (page 4); it is left blank in the output"), { pages: [4], total: 9, office: false });
   assert.deepEqual(ocrBlankNotice("PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in the output."), { pages: [2, 245, 246], total: 490, office: false });
   assert.deepEqual(ocrBlankNotice("PDF page 1 (1 of 1): OCR found no text; it is blank in the output."), { pages: [1], total: 1, office: false });
   assert.deepEqual(ocrBlankNotice("Office pages 2, 5 (2 of 9): OCR found no text; the OCR supplement leaves them out."), { pages: [2, 5], total: 9, office: true });
