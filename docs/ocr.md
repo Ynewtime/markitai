@@ -272,14 +272,17 @@ still receives the ordinary no-text warning.
 - Spaces between numbers and words, code symbols and small glyphs can change.
 - First recognition and first model loading can be much slower than subsequent
   calls. Download time, cold caches and parallel work are separate costs.
-- Work is spread over the processor's cores: text detection runs its matrix
-  kernels and depthwise convolutions on up to eight threads, the direction
+- Work is spread over the processor's cores on one pool of threads, as many
+  as the processors this process may use (`MARKITAI_OCR_THREADS`, a positive
+  number, sets another count): text detection runs its matrix kernels and
+  depthwise convolutions on it, and the lines of every page in flight are
+  classified and read on it, so the busy threads never exceed the count and
+  the last lines of a page are shared by all of them. The direction
   classifier and the first recognizer are prepared while the first image's
-  text is detected, lines are cut out, classified and read side by side (an
-  image with one or two lines uses the detection threads), and a PDF's scanned
-  pages are recognized several at a time (a quarter of the processor count,
-  two to four; two with Vision) while the next page renders, the next page
-  starting as soon as any of them is done. Results are the same as on one
+  text is detected, and a PDF's scanned pages are recognized several at a
+  time (a quarter of the thread count, two to four; two with Vision) while
+  the next page renders, the next page starting as soon as any of them is
+  done. Results are the same as on one
   thread; detections take turns two at a time, so a multi-page scan holds at
   most two pages' detection memory at once (about 300 bytes per page pixel
   each). On Linux the CLI keeps glibc to four malloc arenas (unless
