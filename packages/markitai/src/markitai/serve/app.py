@@ -1550,6 +1550,21 @@ def _replace_config_file(
     except ValueError as e:
         raise _invalid_config(str(e)) from None
     document = json.loads(saved_text)
+    # Round 18: every weight the text writes is a whole number from 0 to 100;
+    # one the file already held for the same entry may stay
+    llm = document.get("llm")
+    written = llm.get("model_list") if isinstance(llm, dict) else None
+    if isinstance(written, list):
+        old_llm = old.get("llm") if isinstance(old, dict) else None
+        old_models = old_llm.get("model_list") if isinstance(old_llm, dict) else None
+        user_models.check_weights(
+            written,
+            old_models if isinstance(old_models, list) else [],
+            lambda index, entry: (
+                f"/llm/model_list/{index} ({entry['litellm_params'].get('model', '?')} "
+                f"in {entry.get('model_name', '?')})"
+            ),
+        )
     try:
         MarkitaiConfig.model_validate(document)
     except ValidationError as e:
@@ -1833,6 +1848,8 @@ def _llm_settings_payload(state: ServeState) -> dict[str, Any]:
             _deployment_view(model, index, persisted=False)
             for index, model in enumerate(state.detected_models)
         ],
+        # Round 18: the batch route also takes `remove`
+        "batch_remove": True,
     }
 
 
@@ -3324,6 +3341,11 @@ def create_app(
         path = request.url.path
         if any(error.get("type") == "json_invalid" for error in errors):
             reason = "invalid_json"
+        elif path.startswith(("/api/settings/llm", "/api/me/models")) and any(
+            "weight" in error.get("loc", ()) for error in errors
+        ):
+            # Round 18: one reason for every weight a route refuses
+            return error_response(422, "invalid_weight", user_models.WEIGHT_RULE)
         elif path.startswith(("/api/settings/llm", "/api/me/models")):
             reason = "invalid_settings_request"
         elif path.endswith("/retry"):
@@ -4286,8 +4308,40 @@ def create_app(
         state: _ModelLists, body: LLMDeploymentBatch, *, user: bool = False
     ) -> _Mutation:
         def mutate(
-            entries: list[Any], providers: list[Any], _legacy_mapping: dict[str, str]
+            entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
         ) -> list[Any]:
+            # Round 18: removals and additions in one change. Every id names
+            # an entry of the list the revision identifies: ids to remove
+            # through the backfill's mapping, and an addition's
+            # credential_deployment_id through *state*, still the list before
+            # this change, so removing the model a provider card stands for
+            # and adding another through that card is one valid change
+            targets = []
+            for deployment_id in body.remove:
+                entry = _find_raw_deployment(entries, deployment_id, legacy_mapping)
+                if entry is None:
+                    raise ApiError(
+                        404,
+                        "settings_entry_missing",
+                        (
+                            "This model configuration no longer exists. "
+                            "Refresh settings and try again."
+                        ),
+                    )
+                if any(entry is target for target in targets):
+                    raise ApiError(
+                        422,
+                        "invalid_settings_request",
+                        "remove lists one deployment twice",
+                    )
+                targets.append(entry)
+            for entry in targets:
+                _preserve_raw_deployment_provider(entry, entries, providers)
+            entries = [
+                entry
+                for entry in entries
+                if not any(entry is target for target in targets)
+            ]
             for deployment in body.deployments:
                 entries.append(
                     raw_deployment(state, deployment, providers, entries, user=user)
@@ -4672,6 +4726,7 @@ def create_app(
                 for shared in shared_now(state)
             ],
             "limit": user_models.LIMIT,
+            "batch_remove": True,
         }
 
     async def user_scope(user_id: str) -> _UserScope:
@@ -4932,10 +4987,8 @@ def create_app(
         ):
             raise shape
         weight = body["weight"]
-        if weight is not None and not user_models.valid_weight(weight):
-            raise ApiError(
-                422, "invalid_settings_request", "weight must be a nonnegative integer"
-            )
+        if weight is not None and not user_models.routing_weight(weight):
+            raise user_models.invalid_weight()
         expected: str = body["expected_revision"]
 
         def write() -> dict[str, Any]:

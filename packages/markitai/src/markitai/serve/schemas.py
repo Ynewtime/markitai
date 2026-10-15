@@ -18,7 +18,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from markitai.config import ConversionBackend, FetchStrategy, OutputProfile
 
@@ -148,7 +155,8 @@ class LLMModelCreate(BaseModel):
     provider: str | None = None
     api_key: str | None = None
     api_base: str | None = None
-    weight: int = Field(default=1, ge=0)
+    # Round 18: a whole number from 0 to 100 (422 ``invalid_weight``)
+    weight: StrictInt = Field(default=1, ge=0, le=100)
     credential_provider_id: str | None = None
     credential_deployment_id: str | None = None
     expected_revision: str | None = None
@@ -198,7 +206,7 @@ class LLMModelUpdate(BaseModel):
     model: str | None = None
     api_key: str | None = None
     api_base: str | None = None
-    weight: int | None = Field(default=None, ge=0)
+    weight: StrictInt | None = Field(default=None, ge=0, le=100)
     expected_revision: str | None = None
     # v1.15: whether user tokens' conversions may use the admin's model
     # (stored as model_info.share; the user routes refuse it)
@@ -279,12 +287,28 @@ class LLMProviderUpdate(BaseModel):
 
 
 class LLMDeploymentBatch(BaseModel):
-    """Atomic creation of one or more deployments."""
+    """One atomic change (round 18): add ``deployments`` and remove the saved
+    deployments ``remove`` lists, every id as the list at
+    ``expected_revision`` names it, all or nothing."""
 
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: str
-    deployments: list[LLMModelCreate] = Field(min_length=1, max_length=50)
+    deployments: list[LLMModelCreate] = Field(default_factory=list, max_length=50)
+    remove: list[str] = Field(default_factory=list, max_length=1000)
+
+    @model_validator(mode="after")
+    def _has_change(self) -> LLMDeploymentBatch:
+        if not self.deployments and not self.remove:
+            raise ValueError(
+                "deployments must contain 1 to 50 entries, or remove at least "
+                "one deployment id"
+            )
+        if len(set(self.remove)) != len(self.remove):
+            raise ValueError("remove lists one deployment twice")
+        if any(not deployment_id.strip() for deployment_id in self.remove):
+            raise ValueError("remove must list deployment ids")
+        return self
 
     @field_validator("expected_revision")
     @classmethod
@@ -460,6 +484,8 @@ class LLMSettingsPayload(BaseModel):
     revision: str
     deployments: list[LLMDeployment]
     detected: list[LLMDeployment]
+    # Round 18: the batch route also takes ``remove``
+    batch_remove: bool = True
 
 
 class SharedModel(BaseModel):
@@ -492,6 +518,7 @@ class UserModelsView(BaseModel):
     detected: list[LLMDeployment]  # always empty
     shared: list[SharedModel]  # the admin's shared models with weight > 0
     limit: int  # its own models at most (50)
+    batch_remove: bool = True  # round 18: the batch route also takes `remove`
 
 
 class LLMProviderCredentials(BaseModel):

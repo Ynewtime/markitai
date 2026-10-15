@@ -96,6 +96,66 @@ class Lists:
     shared_weights: dict[str, int] = field(default_factory=dict)
 
 
+#: The largest routing weight a write may set (round 18): a weight is a share
+#: among the models of one routing group, 0 turns a model off (it stays
+#: saved), 100 gives 1 % steps. Files holding a bigger weight still load;
+#: only writes are checked.
+ROUTING_WEIGHT_MAX = 100
+#: Why a routing weight is refused, in every route that writes one.
+WEIGHT_RULE = "Routing weight must be a whole number from 0 to 100"
+
+
+def routing_weight(value: Any) -> bool:
+    """Whether a write may set *value* as a routing weight: a whole number
+    from 0 to 100 (not a bool, a float or a string)."""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= ROUTING_WEIGHT_MAX
+    )
+
+
+def invalid_weight(where: str | None = None) -> ApiError:
+    """422 ``invalid_weight``; *where* names the entry of a text save."""
+    return ApiError(
+        422, "invalid_weight", f"{where}: {WEIGHT_RULE}" if where else WEIGHT_RULE
+    )
+
+
+def check_weights(
+    models: list[Any], old: list[Any], name: Callable[[int, dict[str, Any]], str]
+) -> None:
+    """Refuse a weight of these config *models* (a whole text save's) that
+    :func:`routing_weight` refuses, unless the saved *old* list holds the
+    same entry (the same ``model_info.id``, else the same group and model)
+    with that same weight: a file written before the limit saves unchanged.
+    *name* says where an entry is."""
+
+    def key(entry: Any) -> tuple[Any, ...]:
+        if not isinstance(entry, dict):
+            return ("other",)
+        info = entry.get("model_info")
+        params = entry.get("litellm_params")
+        identity = info.get("id") if isinstance(info, dict) else None
+        if identity is not None:
+            return ("id", identity)
+        model = params.get("model") if isinstance(params, dict) else None
+        return ("name", entry.get("model_name"), model)
+
+    def weight(entry: Any) -> Any:
+        params = entry.get("litellm_params") if isinstance(entry, dict) else None
+        return params.get("weight") if isinstance(params, dict) else None
+
+    kept = {(key(entry), repr(weight(entry))) for entry in old}
+    for index, entry in enumerate(models):
+        value = weight(entry)
+        if value is None or routing_weight(value):
+            continue
+        if (key(entry), repr(value)) in kept:
+            continue
+        raise invalid_weight(name(index, entry))
+
+
 def valid_weight(value: Any) -> bool:
     """Whether *value* is a weight: a whole number from 0 to MAX_WEIGHT."""
     return (
