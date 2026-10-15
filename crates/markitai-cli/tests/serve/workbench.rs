@@ -457,7 +457,7 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         json!({"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
             "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
             "item_archive":true,"token_regenerate":false,"user_tokens":false,"user_models":false,"user_config":false,
-            "config_edit":true,"batch_delete":true})
+            "config_edit":true,"batch_delete":true,"pdf_outline":true,"convert_defaults":true})
     );
     let id = server.submit(&[("report.pdf", PDF)], json!([]), json!({}))["job_id"]
         .as_str()
@@ -524,6 +524,11 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         "{bbox:?}"
     );
     assert_eq!(text["images"], json!([]), "a page of text has no pictures");
+    // A PDF without bookmarks has an empty outline.
+    let outline = server.request("GET", &format!("{base}/outline"), &[], &[]);
+    assert_eq!(outline.status, 200, "{}", outline.text());
+    sandboxed(&outline);
+    assert_eq!(outline.json(), json!({"items":[],"truncated":false}));
     // The scanned page has no text, only the picture it is drawn as.
     let scanned = server.json(&format!("{base}/pages/2/text"));
     assert_eq!(scanned["lines"], json!([]));
@@ -585,6 +590,97 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
             .as_bytes(),
     );
     assert_eq!(reply.status, 201, "{}", reply.text());
+    server.stop();
+}
+
+/// Four blank pages and a two-level outline, written with a correct
+/// cross-reference table: "Planting plan" (page 1) holding "Spring beds" (2)
+/// and "Autumn beds" (3), then "Tool list" (4).
+fn outlined_pdf() -> Vec<u8> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 3 0 R >>",
+        "<< /Type /Pages /Count 4 /Kids [4 0 R 5 0 R 6 0 R 7 0 R] >>",
+        "<< /Type /Outlines /First 8 0 R /Last 11 0 R /Count 4 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+        "<< /Title (Planting plan) /Parent 3 0 R /Dest [4 0 R /Fit] /First 9 0 R /Last 10 0 R /Next 11 0 R >>",
+        "<< /Title (Spring beds) /Parent 8 0 R /Dest [5 0 R /Fit] /Next 10 0 R >>",
+        "<< /Title <FEFF0041007500740075006D006E0020006200650064007300> /Parent 8 0 R /A << /S /GoTo /D [6 0 R /XYZ 0 792 0] >> >>",
+        "<< /Title (Tool list) /Parent 3 0 R /Dest [7 0 R /Fit] >>",
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    let size = objects.len() + 1;
+    pdf.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    pdf
+}
+
+#[test]
+fn a_pdfs_outline_lists_its_bookmarks_and_other_originals_have_none() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    // The third title is UTF-16BE and opens its page through a GoTo action.
+    let pdf = outlined_pdf();
+    let id = server.submit(
+        &[("garden-plan.pdf", &pdf), ("tray.png", PNG)],
+        json!([]),
+        json!({}),
+    )["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    server.done(&id);
+    let base = format!("/api/jobs/{id}/items");
+    let reply = server.request("GET", &format!("{base}/i1/original/outline"), &[], &[]);
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    sandboxed(&reply);
+    assert_eq!(reply.headers["content-type"], "application/json");
+    assert_eq!(
+        reply.json(),
+        json!({"items":[
+            {"title":"Planting plan","page":1,"level":1},
+            {"title":"Spring beds","page":2,"level":2},
+            {"title":"Autumn beds","page":3,"level":2},
+            {"title":"Tool list","page":4,"level":1}],"truncated":false})
+    );
+    // Asked again: the same answer, from the cache.
+    assert_eq!(
+        server.json(&format!("{base}/i1/original/outline")),
+        reply.json()
+    );
+    for (path, status, reason) in [
+        (
+            format!("{base}/i2/original/outline"),
+            404,
+            "original_unavailable",
+        ),
+        (format!("{base}/i9/original/outline"), 404, "item_not_found"),
+        (
+            "/api/jobs/000000000000/items/i1/original/outline".into(),
+            404,
+            "job_not_found",
+        ),
+    ] {
+        let reply = server.request("GET", &path, &[], &[]);
+        assert_eq!(
+            (reply.status, reply.json()["reason"].as_str()),
+            (status, Some(reason)),
+            "{path}"
+        );
+    }
     server.stop();
 }
 

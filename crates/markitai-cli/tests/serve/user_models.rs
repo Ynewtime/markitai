@@ -149,7 +149,7 @@ fn users_keep_their_own_models_apart_masked_and_within_the_rules() {
         empty,
         json!({"configured":false,"routable":false,"source":"user","config_path":null,
             "config_origin":"user","revision":empty["revision"],"deployments":[],"detected":[],
-            "shared":[],"limit":50})
+            "shared":[],"limit":50,"batch_remove":true})
     );
     let reply = add(
         &server,
@@ -857,13 +857,24 @@ fn users_weigh_shared_models_for_themselves_only() {
         reply.json()["detail"],
         json!({"code":"stale_revision","current_revision":original})
     );
+    // A weight is a whole number from 0 to 100.
+    for weight in [json!("3"), json!(-1), json!(1.5), json!(101)] {
+        let reply = patch_shared(
+            &server,
+            &a,
+            "s-two",
+            json!({"expected_revision":original,"weight":weight}),
+        );
+        assert_eq!(reason(&reply), (422, json!("invalid_weight")), "{weight}");
+        assert_eq!(
+            reply.json()["detail"],
+            "Routing weight must be a whole number from 0 to 100"
+        );
+    }
     for body in [
         json!({"expected_revision":original}),
         json!({"weight":3}),
         json!({"expected_revision":original,"weight":3,"share":"shared"}),
-        json!({"expected_revision":original,"weight":"3"}),
-        json!({"expected_revision":original,"weight":-1}),
-        json!({"expected_revision":original,"weight":1.5}),
         json!({"expected_revision":7,"weight":3}),
         json!([]),
     ] {
@@ -1316,8 +1327,22 @@ fn a_users_edit_config_is_its_own_models_file() {
         ),
         (
             edited(&text, |d| d["shared"][0]["weight"] = json!("heavy")),
-            (422, "invalid_config"),
-            None,
+            (422, "invalid_weight"),
+            Some("shared/0 (s-one): Routing weight must be a whole number from 0 to 100"),
+        ),
+        (
+            edited(&text, |d| d["shared"][0]["weight"] = json!(101)),
+            (422, "invalid_weight"),
+            Some("shared/0 (s-one): Routing weight"),
+        ),
+        (
+            edited(&text, |d| {
+                d["models"][0]["litellm_params"]["weight"] = json!(250)
+            }),
+            (422, "invalid_weight"),
+            Some(
+                "models/0 (openai/own-model): Routing weight must be a whole number from 0 to 100",
+            ),
         ),
         (
             edited(&text, |d| {
@@ -1515,4 +1540,76 @@ fn capabilities_name_the_build_for_every_caller() {
     assert_eq!(capabilities["features"]["user_config"], false);
     assert!(capabilities["build"].is_object());
     server.stop();
+}
+
+/// A user's provider page saves additions and removals as one change, by
+/// the ids of the list its revision names (round 18).
+#[test]
+fn a_users_batch_adds_and_removes_in_one_change() {
+    let sentinel = Endpoint::start();
+    let temp = tempfile::tempdir().unwrap();
+    let server = start(temp.path(), &sentinel);
+    let (_, a) = user(&server, "Laptop A");
+    let model = |name: &str| {
+        json!({"model_name":"default","model":format!("openai/{name}"),"api_key":USER_A_KEY,
+            "api_base":"https://garden.example/v1","weight":2})
+    };
+    let reply = add(
+        &server,
+        &a,
+        json!([model("garden-lite"), model("garden-flash")]),
+    );
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let view = reply.json();
+    assert_eq!(view["batch_remove"], true);
+    let card = ok(&server, "GET", "/api/me/models/providers", &a, None)["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|card| card["kind"] == "configured")
+        .cloned()
+        .unwrap();
+    let lite = view["deployments"][0]["deployment_id"].clone();
+    let batch = |body: Value| {
+        call(
+            &server,
+            "POST",
+            "/api/me/models/deployments/batch",
+            &a,
+            Some(body),
+        )
+    };
+    // Refused as a whole: an unknown id, or a weight above 100.
+    for (body, expected) in [
+        (
+            json!({"expected_revision":view["revision"],"remove":[lite,"no-such-id"]}),
+            (404, json!("settings_entry_missing")),
+        ),
+        (
+            json!({"expected_revision":view["revision"],"remove":[lite],
+                "deployments":[{"model_name":"default","model":"openai/garden-new",
+                "credential_provider_id":card["provider_id"],"weight":150}]}),
+            (422, json!("invalid_weight")),
+        ),
+    ] {
+        assert_eq!(reason(&batch(body.clone())), expected, "{body}");
+        assert_eq!(revision(&server, "/api/me/models", &a), view["revision"]);
+    }
+    let reply = batch(json!({"expected_revision":view["revision"],"remove":[lite],
+        "deployments":[{"model_name":"default","model":"openai/garden-new",
+        "credential_provider_id":card["provider_id"],"weight":3}]}));
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let rows: Vec<_> = reply.json()["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["model"].clone(), row["weight"].clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (json!("openai/garden-flash"), json!(2)),
+            (json!("openai/garden-new"), json!(3))
+        ]
+    );
 }

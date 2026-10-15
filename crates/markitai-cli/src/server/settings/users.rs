@@ -41,6 +41,10 @@ struct Saved {
     /// Absent when empty, so a file without overrides keeps its old shape.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     shared_weights: BTreeMap<String, u64>,
+    /// The user's own conversion defaults (`/api/convert-defaults`); absent
+    /// when it follows the server's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    convert_defaults: Option<serde_json::Map<String, Value>>,
 }
 
 /// A user's tests of shared models at most: one at a time, and this many per
@@ -106,13 +110,19 @@ fn read(path: &Path) -> Result<Lists, String> {
 
 /// Replace the file atomically (staged beside it, owner-only, then renamed);
 /// whether the directory is known to be durable.
-fn save(directory: &Path, id: &str, lists: &Lists) -> std::io::Result<bool> {
+fn save(
+    directory: &Path,
+    id: &str,
+    lists: &Lists,
+    convert_defaults: Option<&serde_json::Map<String, Value>>,
+) -> std::io::Result<bool> {
     markitai_core::output::create_private_dir(directory)?;
     let mut bytes = serde_json::to_vec_pretty(&Saved {
         version: 1,
         models: lists.models.clone(),
         providers: lists.providers.clone(),
         shared_weights: lists.shared_weights.clone(),
+        convert_defaults: convert_defaults.cloned(),
     })
     .map_err(std::io::Error::other)?;
     bytes.push(b'\n');
@@ -217,7 +227,8 @@ impl Users {
         if next == current {
             return Ok(next);
         }
-        let durable = save(&self.directory, id, &next).map_err(|error| {
+        let defaults = read_defaults(&user_file(&self.directory, id));
+        let durable = save(&self.directory, id, &next, defaults.as_ref()).map_err(|error| {
             eprintln!("Error: Serve: could not save a user token's models: {error}");
             failure()
         })?;
@@ -272,6 +283,65 @@ impl Users {
                 );
             }
         }
+    }
+}
+
+/// The conversion defaults a user's file keeps; none when it has none, or
+/// when they are unreadable (the next save of defaults replaces them).
+fn read_defaults(path: &Path) -> Option<serde_json::Map<String, Value>> {
+    let bytes = markitai_core::config::read_file(path).ok()??;
+    let saved: Value = serde_json::from_slice(&bytes).ok()?;
+    crate::server::convert_defaults::checked(saved.get("convert_defaults")?).ok()
+}
+
+impl Users {
+    /// The user `id`'s own conversion defaults, if it saved any.
+    pub(in crate::server) fn convert_defaults(
+        &self,
+        id: &str,
+    ) -> Option<serde_json::Map<String, Value>> {
+        let _lists = self.lists.lock().unwrap_or_else(|e| e.into_inner());
+        read_defaults(&user_file(&self.directory, id))
+    }
+
+    /// Replace the user `id`'s conversion defaults with what `change` makes of
+    /// the current ones (`None`: follow the server's), if its token still
+    /// exists; its models stay as they are.
+    pub(in crate::server) fn set_convert_defaults(
+        &self,
+        id: &str,
+        alive: &dyn Fn() -> bool,
+        change: impl FnOnce(
+            Option<&serde_json::Map<String, Value>>,
+        ) -> ApiResult<Option<serde_json::Map<String, Value>>>,
+    ) -> ApiResult<Option<serde_json::Map<String, Value>>> {
+        let mut lists = self.lists.lock().unwrap_or_else(|e| e.into_inner());
+        if !alive() {
+            return Err(ApiError::new(
+                401,
+                "token_required",
+                "this access token was revoked; sign in again",
+            ));
+        }
+        let path = user_file(&self.directory, id);
+        let current = read_defaults(&path);
+        let next = change(current.as_ref())?;
+        if next == current {
+            return Ok(next);
+        }
+        let models = self.cached(&mut lists, id).clone();
+        let durable = save(&self.directory, id, &models, next.as_ref()).map_err(|error| {
+            eprintln!("Error: Serve: could not save a user token's conversion defaults: {error}");
+            failure()
+        })?;
+        if !durable {
+            return Err(ApiError::new(
+                500,
+                "settings_durability_unknown",
+                "Your defaults were saved, but directory durability could not be confirmed; reload them before another change",
+            ));
+        }
+        Ok(next)
     }
 }
 

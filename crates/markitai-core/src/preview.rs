@@ -1,8 +1,12 @@
 //! Previews of an original document for a side-by-side view: PDF page boxes,
-//! rendered pages and positioned text lines, and raster images scaled to a
-//! width. They use the conversion's own renderers, decoders and pixel limits.
+//! rendered pages, positioned text lines and the outline (bookmarks), and
+//! raster images scaled to a width. They use the conversion's own renderers,
+//! decoders and pixel limits.
 use crate::{Error, Result, images, pdf_raster::PdfRasterSession};
 use image::{DynamicImage, ImageEncoder, RgbImage};
+
+mod outline;
+pub use outline::{MAX_OUTLINE_ENTRIES, MAX_OUTLINE_TITLE, OutlineEntry, PdfOutline, pdf_outline};
 
 /// Lines a page's text answer holds at most.
 pub const MAX_LINES: usize = 5000;

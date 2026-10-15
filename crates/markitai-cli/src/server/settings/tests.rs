@@ -1860,3 +1860,219 @@ fn sharing_is_saved_in_the_model_entry_and_shown_on_saved_rows_only() {
             .is_none()
     );
 }
+/// Several models of one connection written by hand (no ids), as the
+/// round-18 report had them: the provider card stands for the first.
+fn garden() -> Value {
+    let entry = |name: &str| {
+        json!({"model_name":"default","litellm_params":{"model":format!("openai/{name}"),
+            "api_key":"sk-fixture-garden-0000","api_base":"https://garden.example/v1"}})
+    };
+    json!({"llm":{"model_list":[entry("garden-lite"),entry("garden-flash"),entry("garden-pro")]}})
+}
+fn models_of(store: &Store) -> Vec<String> {
+    store.view()["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["model"].as_str().unwrap().to_owned())
+        .collect()
+}
+#[test]
+fn one_batch_adds_and_removes_through_the_card_of_a_removed_model() {
+    for removed in ["openai/garden-lite", "openai/garden-flash"] {
+        let (_dir, store) = setup(garden());
+        let view = store.view();
+        assert_eq!(view["batch_remove"], true);
+        let card = store.providers()["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|card| card["kind"] == "configured")
+            .cloned()
+            .unwrap();
+        let anchor = card["deployment_id"].as_str().unwrap().to_owned();
+        assert_eq!(anchor, view["deployments"][0]["deployment_id"]);
+        let target = view["deployments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["model"] == removed)
+            .unwrap()["deployment_id"]
+            .clone();
+        let after = ok(store.mutate(Mutation::Batch(json!({
+            "expected_revision": current(&store),
+            "remove": [target],
+            "deployments": [{"model_name":"default","model":"openai/garden-new","weight":1,
+                "provider":"openai","credential_deployment_id":anchor}],
+        }))));
+        let mut expected = vec![
+            "openai/garden-lite",
+            "openai/garden-flash",
+            "openai/garden-pro",
+        ];
+        expected.retain(|model| *model != removed);
+        expected.push("openai/garden-new");
+        assert_eq!(models_of(&store), expected);
+        assert_eq!(after["revision"], json!(current(&store)));
+        // The new model uses the removed model's connection, saved once.
+        let raw = saved(&store);
+        let providers = raw["llm"]["providers"].as_array().unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0]["api_key"], "sk-fixture-garden-0000");
+        assert!(
+            raw["llm"]["model_list"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|entry| entry["model_info"]["provider_id"] == providers[0]["id"])
+        );
+    }
+}
+#[test]
+fn a_batch_is_all_or_nothing_and_checks_every_id_against_its_revision() {
+    let (_dir, store) = setup(garden());
+    let view = store.view();
+    let ids: Vec<Value> = view["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["deployment_id"].clone())
+        .collect();
+    let revision = current(&store);
+    let before = fs::read(&store.source.path).unwrap();
+    let add = json!({"model_name":"default","model":"openai/garden-new","credential_deployment_id":ids[0]});
+    for (body, status, reason) in [
+        // An unknown id, one id twice, an invalid addition, nothing at all.
+        (
+            json!({"expected_revision":revision,"remove":[ids[1],"no-such-id"],"deployments":[add]}),
+            404,
+            "settings_entry_missing",
+        ),
+        (
+            json!({"expected_revision":revision,"remove":[ids[1],ids[1]]}),
+            422,
+            "invalid_settings_request",
+        ),
+        (
+            json!({"expected_revision":revision,"remove":[ids[1]],"deployments":[{"model_name":"x","model":"openai/x","weight":101}]}),
+            422,
+            "invalid_weight",
+        ),
+        (
+            json!({"expected_revision":revision,"remove":[],"deployments":[]}),
+            422,
+            "invalid_settings_request",
+        ),
+        (
+            json!({"expected_revision":revision,"remove":[7]}),
+            422,
+            "invalid_settings_request",
+        ),
+        (
+            json!({"expected_revision":"stale","remove":[ids[1]]}),
+            409,
+            "stale_revision",
+        ),
+    ] {
+        let (code, why, _) = refused(store.mutate(Mutation::Batch(body.clone())));
+        assert_eq!((code, why), (status, reason), "{body}");
+        assert_eq!(fs::read(&store.source.path).unwrap(), before, "{body}");
+    }
+    // Removals alone; ids from before the write, in any order.
+    ok(store.mutate(Mutation::Batch(
+        json!({"expected_revision":revision,"remove":[ids[2],ids[0]]}),
+    )));
+    assert_eq!(models_of(&store), ["openai/garden-flash"]);
+}
+#[test]
+fn every_weight_write_is_a_whole_number_from_0_to_100() {
+    let (_dir, store) = setup(garden());
+    let id = store.view()["deployments"][1]["deployment_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let before = fs::read(&store.source.path).unwrap();
+    for weight in [json!(101), json!(-1), json!(1.5), json!("3"), json!(1e3)] {
+        let revision = current(&store);
+        for result in [
+            store.mutate(Mutation::Batch(json!({"expected_revision":revision,
+                "deployments":[{"model_name":"x","model":"openai/x","weight":weight}]}))),
+            store.mutate(Mutation::Add(
+                json!({"model_name":"x","model":"openai/x","weight":weight}),
+            )),
+            store.mutate(Mutation::Update {
+                key: id.clone(),
+                legacy: false,
+                share: None,
+                body: json!({"expected_revision":revision,"weight":weight}),
+            }),
+        ] {
+            assert_eq!(
+                refused(result),
+                (422, "invalid_weight", model::WEIGHT_RULE.to_owned()),
+                "{weight}"
+            );
+        }
+    }
+    assert_eq!(fs::read(&store.source.path).unwrap(), before);
+    for weight in [0, 100] {
+        // The first write gives the hand-written entries their ids.
+        let id = store.view()["deployments"][1]["deployment_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let view = ok(store.mutate(Mutation::Update {
+            key: id,
+            legacy: false,
+            share: None,
+            body: json!({"expected_revision":current(&store),"weight":weight}),
+        }));
+        assert_eq!(view["deployments"][1]["weight"], weight);
+    }
+}
+#[test]
+fn edit_config_refuses_a_new_weight_over_100_and_keeps_an_old_one() {
+    let mut value = garden();
+    value["llm"]["model_list"][2]["litellm_params"]["weight"] = json!(500);
+    let (_dir, store) = setup(value);
+    // A file written before the limit still loads and shows its weight.
+    assert_eq!(store.view()["deployments"][2]["weight"], 500);
+    let view = ok(store.config_view());
+    let text = view["text"].as_str().unwrap().to_owned();
+    let revision = view["revision"].as_str().unwrap().to_owned();
+    let before = fs::read(&store.source.path).unwrap();
+    let mut edited: Value = serde_json::from_str(&text).unwrap();
+    edited["llm"]["model_list"][0]["litellm_params"]["weight"] = json!(101);
+    assert_eq!(
+        refused(store.replace_config(&revision, &edited.to_string())),
+        (
+            422,
+            "invalid_weight",
+            "/llm/model_list/0 (openai/garden-lite in default): Routing weight must be a whole number from 0 to 100".into()
+        )
+    );
+    edited["llm"]["model_list"][0]["litellm_params"]["weight"] = json!(2.5);
+    assert_eq!(
+        refused(store.replace_config(&revision, &edited.to_string())).1,
+        "invalid_weight"
+    );
+    // Another entry's old weight changed to another big one is refused too.
+    edited["llm"]["model_list"][0]["litellm_params"]["weight"] = json!(100);
+    edited["llm"]["model_list"][2]["litellm_params"]["weight"] = json!(600);
+    assert!(
+        refused(store.replace_config(&revision, &edited.to_string()))
+            .2
+            .starts_with("/llm/model_list/2 ")
+    );
+    assert_eq!(fs::read(&store.source.path).unwrap(), before);
+    // The old weight left as it was saves with the new one.
+    edited["llm"]["model_list"][2]["litellm_params"]["weight"] = json!(500);
+    ok(store.replace_config(&revision, &edited.to_string()));
+    let weights: Vec<_> = store.view()["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["weight"].clone())
+        .collect();
+    assert_eq!(weights, [json!(100), json!(1), json!(500)]);
+}

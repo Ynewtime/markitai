@@ -330,12 +330,7 @@ async fn update_shared(
         .to_owned();
     let weight = match &fields["weight"] {
         Value::Null => None,
-        value => Some(
-            value
-                .as_u64()
-                .filter(|weight| *weight <= users::MAX_WEIGHT)
-                .ok_or_else(|| invalid("weight must be a nonnegative integer"))?,
-        ),
+        value => Some(model::weight(value)?),
     };
     crate::task::blocking(move || {
         let alive = || state.access.exists(&id);

@@ -133,6 +133,63 @@ pub(super) fn refuse_keyless_move(old: &Value, next: &Value, provider: &str) -> 
     Err(invalid(KEYLESS_MOVE))
 }
 
+/// The largest routing weight a write may set. A weight is a share among the
+/// models of one routing group: 0 turns a model off (it stays saved), 100
+/// gives 1 % steps. Files holding a bigger weight still load as they are;
+/// only writes are checked.
+pub(super) const WEIGHT_MAX: u64 = 100;
+/// Why a routing weight is refused, in every route that writes one.
+pub(super) const WEIGHT_RULE: &str = "Routing weight must be a whole number from 0 to 100";
+/// The refusal of a weight that is not a whole number from 0 to 100;
+/// `detail` names where it is.
+pub(super) fn invalid_weight(detail: impl Into<String>) -> ApiError {
+    ApiError::new(422, "invalid_weight", detail.into())
+}
+/// A routing weight a request writes: a JSON integer from 0 to 100.
+pub(super) fn weight(value: &Value) -> ApiResult<u64> {
+    value
+        .as_u64()
+        .filter(|weight| *weight <= WEIGHT_MAX)
+        .ok_or_else(|| invalid_weight(WEIGHT_RULE))
+}
+/// Refuse a routing weight of these config `models` (a whole file's, as
+/// text saves send) that is not a whole number from 0 to 100, unless the
+/// saved `old` list holds the same entry (the same `model_info.id`, else the
+/// same group and model) with that same weight: a file written before the
+/// limit saves unchanged. `name` says where an entry is, for the refusal.
+pub(super) fn check_weights(
+    models: &[Value],
+    old: &[Value],
+    name: impl Fn(usize, &Value) -> String,
+) -> ApiResult<()> {
+    let same = |left: &Value, right: &Value| match left.pointer("/model_info/id") {
+        Some(id) if !id.is_null() => right.pointer("/model_info/id") == Some(id),
+        _ => {
+            left["model_name"] == right["model_name"]
+                && left["litellm_params"]["model"] == right["litellm_params"]["model"]
+        }
+    };
+    for (index, entry) in models.iter().enumerate() {
+        let Some(value) = entry["litellm_params"]
+            .get("weight")
+            .filter(|v| !v.is_null())
+        else {
+            continue;
+        };
+        if weight(value).is_ok()
+            || old.iter().any(|saved| {
+                same(entry, saved) && saved["litellm_params"].get("weight") == Some(value)
+            })
+        {
+            continue;
+        }
+        return Err(invalid_weight(format!(
+            "{}: {WEIGHT_RULE}",
+            name(index, entry)
+        )));
+    }
+    Ok(())
+}
 pub(super) fn object<'a>(body: &'a Value, allowed: &[&str]) -> ApiResult<&'a Map<String, Value>> {
     let map = body
         .as_object()
@@ -519,10 +576,7 @@ pub(super) fn create(
     }
     let weight = match body.get("weight") {
         None => 1,
-        Some(value) => value
-            .as_u64()
-            .filter(|n| *n <= i64::MAX as u64)
-            .ok_or_else(|| invalid("weight must be a nonnegative integer"))?,
+        Some(value) => weight(value)?,
     };
     if provider_id.is_none() {
         provider_id = ensure_provider(providers, models, &name, &key, &base, allow_environment);
@@ -639,10 +693,7 @@ pub(super) fn update(entry: &mut Value, body: &Value, providers: &[Value]) -> Ap
         }
     }
     if let Some(value) = body.get("weight").filter(|v| !v.is_null()) {
-        if value.as_u64().filter(|n| *n <= i64::MAX as u64).is_none() {
-            return Err(invalid("weight must be a nonnegative integer"));
-        }
-        entry["litellm_params"]["weight"] = value.clone();
+        entry["litellm_params"]["weight"] = json!(weight(value)?);
     }
     if local(&provider(entry)) {
         let params = entry["litellm_params"].as_object_mut().unwrap();

@@ -29,6 +29,33 @@
         }
       }
     },
+    "/api/convert-defaults": {
+      "get": {
+        "tags": ["service"],
+        "operationId": "getConvertDefaults",
+        "summary": "The conversion options the workbench's composer starts from",
+        "description": "For every caller. `server`: the server's defaults, read from its running configuration (`config.json` over the built-in defaults): `llm` `llm.enabled`, `ocr` `ocr.enabled`, `alt` `image.alt_enabled`, `desc` `image.desc_enabled`, `screenshot` `screenshot.enabled`, `screenshot_only` `screenshot.screenshot_only`, `pure` `llm.pure`, `no_cache` `cache.no_cache`, `no_compress` not `image.compress`, `profile` `output.profile` (null = default output), `strategy` `fetch.strategy` (a server set to `cloudflare` reads `auto`: Cloudflare is never a default). `own`: a user token's own defaults (null otherwise); `defaults`: `own` over `server`. `scope`: where a save goes (`server` for the admin, `user` for a user token); `can_save`: false for an anonymous caller. `revision`: `sha256:` + hex over what a save replaces. `Cache-Control: no-store`.",
+        "responses": {
+          "200": { "description": "The defaults", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConvertDefaultsView" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["service"],
+        "operationId": "replaceConvertDefaults",
+        "summary": "Save the composer's choices as the defaults",
+        "description": "Body exactly `{expected_revision, defaults}` (else 422 `invalid_convert_defaults`). `defaults`: an object of the option names above (only those; each of its type; `strategy` one of auto, static, playwright, defuddle, jina; `profile` rag, obsidian, okf or null), else 422 `invalid_convert_defaults`. The admin writes the options sent into `config.json` at the keys above (a null profile removes `output.profile`) and into the running configuration; `defaults: null` from the admin: 422. A user token replaces its own (`null`: none, the server's apply again), kept in its file under `serve/user-models/`. Stale `expected_revision`: 409 with `detail` `{code: \"stale_revision\", current_revision}`. An anonymous caller: 403 `settings_forbidden`. Answers as GET. `Cache-Control: no-store`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expected_revision", "defaults"], "additionalProperties": false, "properties": { "expected_revision": { "type": "string" }, "defaults": { "oneOf": [{ "$ref": "#/components/schemas/ConvertDefaults" }, { "type": "null" }] } } } } } },
+        "responses": {
+          "200": { "description": "The defaults after the save", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConvertDefaultsView" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/openapi.json": {
       "get": {
         "tags": ["service"],
@@ -422,6 +449,23 @@
         }
       }
     },
+    "/api/jobs/{job_id}/items/{item_id}/original/outline": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "getOriginalOutline",
+        "summary": "A PDF's own outline (bookmarks) as titles, pages and levels",
+        "description": "Only for `pdf` originals (404 `original_unavailable` otherwise). The bookmarks in the outline's order (a parent before its children), each with its title on one line (PDFDocEncoding, UTF-16 or UTF-8 decoded; control characters and white space runs as one space; trimmed; at most 300 characters), the 1-based page it opens and its 1-based level (top-level entries are 1). An entry whose destination is not a page of this document opens the page of the next entry that has one, and is left out when none follows. At most 2000 entries; `truncated` says more exist. `items` is empty when the PDF has no outline or it cannot be read. Read under the same two-at-a-time limit as page images, waited for rather than refused.",
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" },
+          { "$ref": "#/components/parameters/ItemId" }
+        ],
+        "responses": {
+          "200": { "description": "The outline", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PdfOutline" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/jobs/{job_id}/files/{relpath}": {
       "get": {
         "tags": ["jobs"],
@@ -583,7 +627,8 @@
       "post": {
         "tags": ["settings"],
         "operationId": "addDeployments",
-        "summary": "Atomically add 1–50 deployments",
+        "summary": "Atomically add up to 50 deployments and remove saved ones",
+        "description": "One change, all or nothing: `remove` lists saved deployment ids and `deployments` the new ones (at least one of the two non-empty). Every id (to remove, and an addition's `credential_deployment_id`) names a deployment of the list `expected_revision` identifies, before this change, so removing the model a provider card stands for and adding another through that card is valid; removals apply first. An unknown id: 404 `settings_entry_missing`; an id listed twice: 422 `invalid_settings_request`; a weight that is not a whole number from 0 to 100: 422 `invalid_weight`; nothing is saved. `SettingsView.batch_remove: true` says the route takes `remove`.",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentBatch" } } } },
         "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
       }
@@ -654,7 +699,7 @@
         "tags": ["settings"],
         "operationId": "replaceConfigFile",
         "summary": "Replace the configuration file",
-        "description": "Body exactly `{expected_revision, text}` (else 422 `invalid_settings_request`); `text` over 1 MiB or a body over 1.5 MiB: 413 `config_too_large`. Session model/provider overrides active: 409 `settings_read_only`. `expected_revision` not the file's current revision: 409 with `detail` `{code: \"stale_revision\", current_revision}`. `text` must be a JSON object (422 `invalid_config`, `line L, column C: …` for a parse error). A masked value sent back unchanged at the position GET sent it is put back in place as the stored literal; a masked value anywhere else is refused (422 `invalid_config`, naming its JSON pointer). The result must be a valid configuration (422 `invalid_config` with the validation message). Saved atomically like the other settings changes (409 `config_changed` when the file changed meanwhile; 500 `settings_durability_unknown`); the file is saved exactly as written (the sent text byte for byte, with only the kept masked values put back). The models and providers apply at once; `restart_required` is true when anything else changed, which is read at the next start. `Cache-Control: no-store`.",
+        "description": "Body exactly `{expected_revision, text}` (else 422 `invalid_settings_request`); `text` over 1 MiB or a body over 1.5 MiB: 413 `config_too_large`. Session model/provider overrides active: 409 `settings_read_only`. `expected_revision` not the file's current revision: 409 with `detail` `{code: \"stale_revision\", current_revision}`. `text` must be a JSON object (422 `invalid_config`, `line L, column C: …` for a parse error). A masked value sent back unchanged at the position GET sent it is put back in place as the stored literal; a masked value anywhere else is refused (422 `invalid_config`, naming its JSON pointer). The result must be a valid configuration (422 `invalid_config` with the validation message). A `llm.model_list` weight must be a whole number from 0 to 100 (422 `invalid_weight`, naming the entry: `/llm/model_list/N (model in group): …`), unless the file already holds that entry (same `model_info.id`, else group and model) with that same weight. Saved atomically like the other settings changes (409 `config_changed` when the file changed meanwhile; 500 `settings_durability_unknown`); the file is saved exactly as written (the sent text byte for byte, with only the kept masked values put back). The models and providers apply at once; `restart_required` is true when anything else changed, which is read at the next start. `Cache-Control: no-store`.",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expected_revision", "text"], "additionalProperties": false, "properties": { "expected_revision": { "type": "string" }, "text": { "type": "string" } } } } } },
         "responses": {
           "200": { "description": "The saved file", "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/ConfigDocument" }], "required": ["restart_required"], "properties": { "restart_required": { "type": "boolean" } } } } } },
@@ -814,7 +859,7 @@
         "tags": ["me"],
         "operationId": "updateUserSharedWeight",
         "summary": "The user's own weight for a model the admin shares",
-        "description": "Body exactly `{expected_revision, weight}` (`weight` a nonnegative integer or null; another key or type: 422 `invalid_settings_request`; not JSON: 422 `json_required` / `invalid_json`). `{id}` must be a shared model users see now (`SharedModel.id`), else 404 `settings_entry_missing`, nothing saved. A weight equal to the admin's, or null, removes the user's override; 0 turns that shared model off for this user only. Kept in the user's own file as `shared_weights`; the admin's view and routing do not change. Stale `expected_revision`: 409 with `detail` `{code: \"stale_revision\", current_revision}`. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "description": "Body exactly `{expected_revision, weight}` (`weight` a whole number from 0 to 100 or null, else 422 `invalid_weight`; another key: 422 `invalid_settings_request`; not JSON: 422 `json_required` / `invalid_json`). `{id}` must be a shared model users see now (`SharedModel.id`), else 404 `settings_entry_missing`, nothing saved. A weight equal to the admin's, or null, removes the user's override; 0 turns that shared model off for this user only. Kept in the user's own file as `shared_weights`; the admin's view and routing do not change. Stale `expected_revision`: 409 with `detail` `{code: \"stale_revision\", current_revision}`. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
         "parameters": [{ "name": "id", "in": "path", "required": true, "description": "A `SharedModel.id` from `GET /api/me/models`", "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expected_revision", "weight"], "additionalProperties": false, "properties": { "expected_revision": { "type": "string" }, "weight": { "type": ["integer", "null"], "minimum": 0 } } } } } },
         "responses": { "200": { "$ref": "#/components/responses/UserModels" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "413": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
@@ -837,7 +882,7 @@
         "tags": ["me"],
         "operationId": "replaceUserConfig",
         "summary": "Replace the user's own models from its document",
-        "description": "Body exactly `{expected_revision, text}` (else 422 `invalid_settings_request`); limits as `PUT /api/settings/config` (413 `config_too_large`). Stale `expected_revision`: 409 with `detail` `{code: \"stale_revision\", current_revision}`. Kept masks are put back as `PUT /api/settings/config` does; any other masked value is refused. Then 422 `invalid_config` for text that is not JSON (`line L, column C: …`), not an object, a top-level key other than `models`, `providers`, `shared`, wrong types, a `shared` id that is not a model the admin shares, or duplicate ids. Absent `models` / `providers` are empty; `shared` entries take `id` and `weight` (an integer or null; `model` and `default_weight` are ignored); a shared model left out, or set to the admin's weight, follows the admin's weight. The rules of the Models routes apply (422 `server_credentials`, `key_or_address_required`, `server_address`, `invalid_settings_request` for `env:` values; 409 `model_limit`); models without `model_info.id` get one; the result must combine into the user's pool (else 422 `invalid_config`). Saved owner-only and atomically in the user's own file; unchanged text writes nothing and keeps the revision. `restart_required` is always false. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
+        "description": "Body exactly `{expected_revision, text}` (else 422 `invalid_settings_request`); limits as `PUT /api/settings/config` (413 `config_too_large`). Stale `expected_revision`: 409 with `detail` `{code: \"stale_revision\", current_revision}`. Kept masks are put back as `PUT /api/settings/config` does; any other masked value is refused. Then 422 `invalid_config` for text that is not JSON (`line L, column C: …`), not an object, a top-level key other than `models`, `providers`, `shared`, wrong types, a `shared` id that is not a model the admin shares, or duplicate ids. Absent `models` / `providers` are empty; `shared` entries take `id` and `weight` (a whole number from 0 to 100 or null; `model` and `default_weight` are ignored); a weight outside 0–100 in `shared` or `models` is 422 `invalid_weight` naming the entry (`shared/N (id): …`, `models/N (model): …`) unless it is the one the user already has; a shared model left out, or set to the admin's weight, follows the admin's weight. The rules of the Models routes apply (422 `server_credentials`, `key_or_address_required`, `server_address`, `invalid_settings_request` for `env:` values; 409 `model_limit`); models without `model_info.id` get one; the result must combine into the user's pool (else 422 `invalid_config`). Saved owner-only and atomically in the user's own file; unchanged text writes nothing and keeps the revision. `restart_required` is always false. Only for a user token (403 `user_token_required`). `Cache-Control: no-store`.",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expected_revision", "text"], "additionalProperties": false, "properties": { "expected_revision": { "type": "string" }, "text": { "type": "string" } } } } } },
         "responses": {
           "200": { "description": "The saved document", "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/ConfigDocument" }], "required": ["restart_required"], "properties": { "restart_required": { "type": "boolean", "const": false } } } } } },
@@ -886,8 +931,32 @@
           "reason": {
             "type": "string",
             "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
-            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_config", "invalid_delete_request", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "key_or_address_required", "llm_unavailable", "method_not_allowed", "model_limit", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "server_address", "server_credentials", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_limit", "token_not_found", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large", "user_token_required"]
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_config", "invalid_convert_defaults", "invalid_delete_request", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_weight", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "key_or_address_required", "llm_unavailable", "method_not_allowed", "model_limit", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "server_address", "server_credentials", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_limit", "token_not_found", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large", "user_token_required"]
           }
+        }
+      },
+      "ConvertDefaults": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "llm": { "type": "boolean" }, "ocr": { "type": "boolean" }, "alt": { "type": "boolean" }, "desc": { "type": "boolean" },
+          "screenshot": { "type": "boolean" }, "screenshot_only": { "type": "boolean" }, "pure": { "type": "boolean" },
+          "no_cache": { "type": "boolean" }, "no_compress": { "type": "boolean" },
+          "profile": { "oneOf": [{ "type": "string", "enum": ["rag", "obsidian", "okf"] }, { "type": "null" }] },
+          "strategy": { "type": "string", "enum": ["auto", "static", "playwright", "defuddle", "jina"] }
+        }
+      },
+      "ConvertDefaultsView": {
+        "type": "object",
+        "required": ["defaults", "server", "own", "origin", "scope", "can_save", "revision"],
+        "properties": {
+          "defaults": { "$ref": "#/components/schemas/ConvertDefaults" },
+          "server": { "$ref": "#/components/schemas/ConvertDefaults" },
+          "own": { "oneOf": [{ "$ref": "#/components/schemas/ConvertDefaults" }, { "type": "null" }] },
+          "origin": { "type": "string", "enum": ["server", "user"] },
+          "scope": { "type": "string", "enum": ["server", "user"] },
+          "can_save": { "type": "boolean" },
+          "revision": { "type": "string" }
         }
       },
       "Capabilities": {
@@ -923,7 +992,7 @@
       "Features": {
         "type": "object",
         "description": "What this service implements beyond the base job API, for a client shared with other backends",
-        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete", "user_models", "user_config"],
+        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete", "user_models", "user_config", "pdf_outline", "convert_defaults"],
         "properties": {
           "cancel": { "type": "boolean", "description": "POST /api/jobs/{job_id}/cancel" },
           "download_tickets": { "type": "boolean", "description": "POST /api/download-tickets" },
@@ -939,7 +1008,9 @@
           "config_edit": { "type": "boolean", "description": "GET and PUT /api/settings/config" },
           "batch_delete": { "type": "boolean", "description": "POST /api/history/delete" },
           "user_models": { "type": "boolean", "description": "/api/me/models (a user token's own models) and `share` on the admin's models; false when the server runs without a token (--no-auth)" },
-          "user_config": { "type": "boolean", "description": "GET and PUT /api/me/config (a user token's Edit config); false when the server runs without a token (--no-auth)" }
+          "user_config": { "type": "boolean", "description": "GET and PUT /api/me/config (a user token's Edit config); false when the server runs without a token (--no-auth)" },
+          "pdf_outline": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/original/outline (a PDF's bookmarks)" },
+          "convert_defaults": { "type": "boolean", "description": "GET and PUT /api/convert-defaults (the composer's defaults)" }
         }
       },
       "CloudflareCapabilities": {
@@ -1261,6 +1332,14 @@
           "images": { "type": "array", "description": "The boxes the page's pictures are drawn in, in drawing order; absent from a server that does not report them", "items": { "type": "object", "required": ["bbox"], "properties": { "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } }
         }
       },
+      "PdfOutline": {
+        "type": "object",
+        "required": ["items", "truncated"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 2000, "items": { "type": "object", "required": ["title", "page", "level"], "properties": { "title": { "type": "string", "maxLength": 300 }, "page": { "type": "integer", "minimum": 1 }, "level": { "type": "integer", "minimum": 1 } } } },
+          "truncated": { "type": "boolean", "description": "The outline has more entries than are listed" }
+        }
+      },
       "Artifact": {
         "type": "object",
         "required": ["relpath", "size"],
@@ -1331,7 +1410,8 @@
           "config_origin": { "type": "string" },
           "revision": { "type": "string" },
           "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } },
-          "detected": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } }
+          "detected": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } },
+          "batch_remove": { "type": "boolean", "description": "The batch route also removes saved deployments (`remove`)" }
         }
       },
       "UserModelsView": {
@@ -1347,7 +1427,8 @@
           "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" }, "description": "The user's own models (no `share`)" },
           "detected": { "type": "array", "maxItems": 0, "items": { "$ref": "#/components/schemas/Deployment" } },
           "shared": { "type": "array", "items": { "$ref": "#/components/schemas/SharedModel" }, "description": "The admin's shared models that are on, in the configuration's order" },
-          "limit": { "type": "integer", "description": "Models of its own a user may save", "examples": [50] }
+          "limit": { "type": "integer", "description": "Models of its own a user may save", "examples": [50] },
+          "batch_remove": { "type": "boolean", "description": "The batch route also removes saved deployments (`remove`)" }
         }
       },
       "SharedModel": {
@@ -1415,7 +1496,7 @@
           "provider": { "type": "string" },
           "api_key": { "type": "string", "description": "A literal key or `env:NAME`" },
           "api_base": { "type": "string" },
-          "weight": { "type": "integer", "minimum": 0, "default": 1 },
+          "weight": { "type": "integer", "minimum": 0, "maximum": 100, "default": 1 },
           "credential_provider_id": { "type": "string" },
           "credential_deployment_id": { "type": "string" },
           "expected_revision": { "type": "string" }
@@ -1423,11 +1504,12 @@
       },
       "DeploymentBatch": {
         "type": "object",
-        "required": ["expected_revision", "deployments"],
+        "required": ["expected_revision"],
         "additionalProperties": false,
         "properties": {
           "expected_revision": { "type": "string" },
-          "deployments": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "#/components/schemas/NewDeployment" } }
+          "deployments": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/NewDeployment" } },
+          "remove": { "type": "array", "maxItems": 1000, "uniqueItems": true, "items": { "type": "string" }, "description": "Saved deployment ids to remove, as the list at `expected_revision` names them" }
         }
       },
       "DeploymentPatch": {
@@ -1439,7 +1521,7 @@
           "model": { "type": "string" },
           "api_key": { "type": ["string", "null"] },
           "api_base": { "type": ["string", "null"] },
-          "weight": { "type": "integer", "minimum": 0 },
+          "weight": { "type": "integer", "minimum": 0, "maximum": 100 },
           "share": { "type": "string", "enum": ["private", "shared"], "description": "The admin's route only: `shared` lets users' conversions use this model, `private` (the default) stops that; may be sent alone with `expected_revision`" },
           "expected_revision": { "type": "string" }
         }
@@ -1453,7 +1535,7 @@
           "model": { "type": "string" },
           "api_key": { "type": ["string", "null"] },
           "api_base": { "type": ["string", "null"] },
-          "weight": { "type": "integer", "minimum": 0 },
+          "weight": { "type": "integer", "minimum": 0, "maximum": 100 },
           "expected_revision": { "type": "string" }
         }
       },

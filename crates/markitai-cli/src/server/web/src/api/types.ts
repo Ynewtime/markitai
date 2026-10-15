@@ -239,6 +239,10 @@ export interface Features {
   user_models?: boolean;
   /** v1.16: GET/PUT /api/me/config (a user token's own models file as text). */
   user_config?: boolean;
+  /** v1.17: GET /api/jobs/{id}/items/{item}/original/outline (a PDF's own bookmarks). */
+  pdf_outline?: boolean;
+  /** v1.17: GET/PUT /api/convert-defaults, the composer's defaults (the server's, a user's own). */
+  convert_defaults?: boolean;
 }
 
 /** v1.13: a user token as the admin's list shows it; `token` only in the answer that created it. */
@@ -338,6 +342,8 @@ export interface SettingsView {
   revision: string;
   deployments: Deployment[];
   detected: Deployment[];
+  /** Round 18: the batch route also takes `remove` (saved ids), so a page saves additions and removals as one change. */
+  batch_remove?: boolean;
 }
 
 /** v1.15: `GET /api/me/models`, a user token's own models and the ones the admin shares. */
@@ -352,6 +358,8 @@ export interface UserModelsView {
   detected: Deployment[];
   shared: SharedModel[];
   limit: number;
+  /** Round 18: as `SettingsView.batch_remove`. */
+  batch_remove?: boolean;
 }
 
 /** v1.15: a model the admin shares: what it is, never its key or address. */
@@ -513,6 +521,14 @@ export interface ShotBlocks {
   blocks: { tag: string; text: string; src?: string; bbox: [number, number, number, number] }[];
 }
 
+/** v1.17 `GET /api/jobs/{job_id}/items/{item_id}/original/outline`: a PDF's bookmarks in outline order (a parent
+ * before its children); titles on one line, at most 300 characters; at most 2000 entries; `items` empty without one. */
+export interface PdfOutline {
+  items: { title: string; page: number; level: number }[];
+  /** More entries exist than are listed. */
+  truncated: boolean;
+}
+
 /** `GET /api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text`. */
 export interface PageText {
   page: number;
@@ -522,4 +538,34 @@ export interface PageText {
   lines: { text: string; bbox: [number, number, number, number] }[];
   /** Where the page's pictures are drawn, same frame, in drawing order (absent from servers that do not report them). */
   images?: { bbox: [number, number, number, number] }[];
+}
+
+/** v1.17: the conversion options the composer starts from (`/api/convert-defaults`). Cloudflare is
+ * never a default (it needs a confirmation in each request), so there is no `backend`. */
+export interface ConvertDefaults {
+  llm: boolean;
+  ocr: boolean;
+  alt: boolean;
+  desc: boolean;
+  screenshot: boolean;
+  screenshot_only: boolean;
+  pure: boolean;
+  no_cache: boolean;
+  no_compress: boolean;
+  profile: OutputProfile | null;
+  strategy: Exclude<FetchStrategy, "cloudflare">;
+}
+
+export interface ConvertDefaultsView {
+  /** What this caller's composer starts from: its own (a user's) over the server's. */
+  defaults: ConvertDefaults;
+  /** The server's: `config.json` over the built-in defaults. */
+  server: ConvertDefaults;
+  /** A user's own, or null (the admin; a user that follows the server's). */
+  own: Partial<ConvertDefaults> | null;
+  origin: "server" | "user";
+  /** Where a save goes: the server's `config.json` (admin) or the user's own settings. */
+  scope: "server" | "user";
+  can_save: boolean;
+  revision: string;
 }

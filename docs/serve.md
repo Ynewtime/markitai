@@ -197,6 +197,12 @@ two pages are drawn at a time; another request gets 429 `render_busy` with
 `Retry-After`. Errors: 404 `original_unavailable`, 404 `page_not_found`, 422
 `invalid_page_request` (a page number or width that is not a whole number) and
 422 `render_failed`.
+`…/original/outline` (`features.pdf_outline`) returns a PDF's own bookmarks as
+`{items: [{title, page, level}], truncated}`: outline order, titles on one line
+(at most 300 characters), 1-based pages and levels, an entry whose destination is
+not a page of this document taking the next entry's page, at most 2,000 entries;
+`items: []` when the PDF has none or it cannot be read; 404
+`original_unavailable` for anything but a PDF.
 
 `…/original/blocks` (no ticket) answers `application/json`, `Cache-Control:
 no-store`: `{version: 1, width, height, blocks: [{tag, text, src?, bbox}]}`, the
@@ -680,7 +686,9 @@ models as `{id, model, provider, weight, default_weight}` only: no user answer
 carries a shared model's key, address or connection, and a failure names the
 model without its host. A revoked user's jobs route to the shared models only.
 
-A user may give a shared model a weight of its own with
+A user's own models take the same batch (`remove` with `deployments`, all or
+nothing) and the same weight rule (a whole number from 0 to 100, else 422
+`invalid_weight`). A user may give a shared model a weight of its own with
 `PATCH /api/me/models/shared/{id}` `{expected_revision, weight}` (`weight` is the
 user's, `default_weight` the admin's; 0 turns it off for that user only, null or
 the admin's weight goes back to the admin's), kept in its own file. `POST
@@ -691,6 +699,27 @@ the admin's connection and answers only whether it passed and the failure's
 document of its own `models`, `providers` and the `shared` weights, secrets
 masked as in the admin's editor, saved through the same rules
 (`features.user_config`).
+
+### Convert defaults
+
+The workbench's Convert options start from `GET /api/convert-defaults`
+(`features.convert_defaults`), for every caller: `server` is the server's
+defaults read from its running configuration (`llm` `llm.enabled`, `ocr`
+`ocr.enabled`, `alt` `image.alt_enabled`, `desc` `image.desc_enabled`,
+`screenshot` `screenshot.enabled`, `screenshot_only`, `pure` `llm.pure`,
+`no_cache` `cache.no_cache`, `no_compress` the opposite of `image.compress`,
+`profile` `output.profile`, `strategy` `fetch.strategy`), `own` a user token's
+own, `defaults` the two together, plus `scope`, `can_save` and `revision`.
+`PUT /api/convert-defaults` `{expected_revision, defaults}` saves them: the
+admin's into `config.json` at those keys (a key the file already has is set, a
+value the built-in default gives is not added) and into the running
+configuration, so requests that leave an option out follow them too; a user
+token's into its own file under `serve/user-models/` (`defaults: null` removes
+them). Cloudflare can never be a default (it needs a confirmation in each
+request): `strategy: "cloudflare"` or any other option is 422
+`invalid_convert_defaults`; a stale revision is 409 `stale_revision`; an
+anonymous caller gets 403 `settings_forbidden`. Answers carry
+`Cache-Control: no-store`.
 
 All settings endpoints require the admin token by default. With `--no-auth`,
 only direct loopback peers without forwarding headers can access settings. Every settings response, including rejected requests,

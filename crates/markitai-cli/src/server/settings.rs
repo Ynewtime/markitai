@@ -38,6 +38,10 @@ fn missing() -> ApiError {
         "This saved configuration no longer exists. Refresh settings and try again.",
     )
 }
+/// The settings' "could not read or save" answer, for routes beside them.
+pub(super) fn io_failure() -> ApiError {
+    failure()
+}
 fn failure() -> ApiError {
     ApiError::new(
         500,

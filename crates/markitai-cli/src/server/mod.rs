@@ -14,6 +14,7 @@ macro_rules! api_routes {
 }
 
 mod access;
+mod convert_defaults;
 mod files;
 mod http;
 mod jobs;
@@ -109,6 +110,7 @@ api_routes! {
     get "/api/jobs/{job_id}/items/{item_id}/archive" => files::item_archive;
     get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}" => original::page_image;
     get "/api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text" => original::page_text;
+    get "/api/jobs/{job_id}/items/{item_id}/original/outline" => original::outline;
     get "/api/jobs/{job_id}/files/{*relpath}" => files::download;
     get "/api/jobs/{job_id}/archive" => files::job_archive;
     get "/api/history" => http::history;
@@ -154,6 +156,7 @@ fn api_table() -> Vec<(&'static str, &'static str)> {
         settings::ROUTES,
         settings::USER_ROUTES,
         providers::ROUTES,
+        convert_defaults::ROUTES,
     ]
     .concat()
 }
@@ -233,6 +236,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         .merge(settings::routes())
         .merge(settings::user_routes())
         .merge(providers::routes())
+        .merge(convert_defaults::routes())
         .merge(api_routes())
         .fallback(http::missing)
         .method_not_allowed_fallback(http::method_not_allowed)

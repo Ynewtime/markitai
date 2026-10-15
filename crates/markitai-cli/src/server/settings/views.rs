@@ -123,9 +123,11 @@ fn deployment(entry: &Value, index: usize, persisted: bool) -> Value {
     let local = model::local(&model::provider(entry));
     json!({"deployment_id":identity::id(entry,index),"routing_group":entry["model_name"].as_str().unwrap_or("default"),"model":params["model"],"weight":params["weight"].as_u64().unwrap_or(1),"api_key_configured":!local&&model::real_key(params["api_key"].as_str()),"api_base_configured":!local&&nonempty(&params["api_base"]),"api_base":if local{None}else{origin(params["api_base"].as_str())},"persisted":persisted})
 }
+/// The settings view; `batch_remove`: the batch route also removes saved
+/// models (`remove`), so the page saves additions and removals as one change.
 pub(super) fn payload(data: &Data, source: &SettingsSource) -> Value {
     let path = display_path(source);
-    json!({"configured":!data.models.is_empty(),"routable":routable(data),"source":if !data.models.is_empty(){"config"}else if !data.detected.is_empty(){"detected"}else{"none"},"config_path":path,"config_origin":source.origin,"revision":data.revision,"deployments":data.models.iter().enumerate().map(|(index,entry)|{let mut row=deployment(entry,index,true);row["share"]=json!(if shared(entry){"shared"}else{"private"});row}).collect::<Vec<_>>(),"detected":data.detected.iter().enumerate().map(|(index,entry)|deployment(entry,index,false)).collect::<Vec<_>>()})
+    json!({"configured":!data.models.is_empty(),"routable":routable(data),"source":if !data.models.is_empty(){"config"}else if !data.detected.is_empty(){"detected"}else{"none"},"config_path":path,"config_origin":source.origin,"revision":data.revision,"deployments":data.models.iter().enumerate().map(|(index,entry)|{let mut row=deployment(entry,index,true);row["share"]=json!(if shared(entry){"shared"}else{"private"});row}).collect::<Vec<_>>(),"detected":data.detected.iter().enumerate().map(|(index,entry)|deployment(entry,index,false)).collect::<Vec<_>>(),"batch_remove":true})
 }
 /// Whether the admin shares this saved model with users' conversions.
 pub(super) fn shared(entry: &Value) -> bool {
@@ -137,7 +139,7 @@ pub(super) fn user_payload(data: &Data, shared: Vec<Value>, routable: bool) -> V
     json!({"configured":!data.models.is_empty(),"routable":routable,"source":"user",
         "config_path":null,"config_origin":"user","revision":data.revision,
         "deployments":data.models.iter().enumerate().map(|(index,entry)|deployment(entry,index,true)).collect::<Vec<_>>(),
-        "detected":[],"shared":shared,"limit":super::users::LIMIT})
+        "detected":[],"shared":shared,"limit":super::users::LIMIT,"batch_remove":true})
 }
 /// The configuration file's path as the settings show it (`~/…` under home).
 pub(super) fn display_path(source: &SettingsSource) -> String {

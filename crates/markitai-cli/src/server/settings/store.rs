@@ -169,6 +169,26 @@ impl Store {
         // Saved exactly as sent, with the kept masked literals put back.
         let saved = editor::unmask(text, current_text).map_err(refused)?;
         let document: Value = serde_json::from_str(&saved).map_err(|_| failure())?;
+        // Every weight the text writes is a whole number from 0 to 100; one
+        // the file already held for the same entry may stay.
+        if let Some(written) = document
+            .pointer("/llm/model_list")
+            .and_then(Value::as_array)
+        {
+            let saved_models = old
+                .as_ref()
+                .and_then(|old| old.pointer("/llm/model_list"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            model::check_weights(written, &saved_models, |index, entry| {
+                format!(
+                    "/llm/model_list/{index} ({} in {})",
+                    entry["litellm_params"]["model"].as_str().unwrap_or("?"),
+                    entry["model_name"].as_str().unwrap_or("?")
+                )
+            })?;
+        }
         let mut merged = document.clone();
         if let Some(overrides) = self.source.overrides.clone() {
             markitai_core::config::merge(&mut merged, overrides);
@@ -236,6 +256,28 @@ impl Store {
         }
         Ok(views::payload(&data, &self.source))
     }
+    /// Change the configuration file's JSON with `change` under the settings
+    /// lock (the convert defaults: `change` checks the caller's revision against
+    /// the running configuration first), then the running configuration with
+    /// `runtime`, so conversions that omit an option follow the new defaults.
+    pub(in crate::server) fn edit_defaults(
+        &self,
+        change: impl FnOnce(&Value, &mut Value) -> ApiResult<()>,
+        runtime: impl FnOnce(&mut Value),
+    ) -> ApiResult<Arc<Value>> {
+        let mut data = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let original = read(&self.source.path)?;
+        let mut raw = parse(original.as_deref())?;
+        change(&data.cfg, &mut raw)?;
+        let durable = save(&self.source.path, &raw, original.as_deref())?;
+        let mut cfg = (*data.cfg).clone();
+        runtime(&mut cfg);
+        data.cfg = Arc::new(cfg);
+        if !durable {
+            return Err(durability_unknown());
+        }
+        Ok(data.cfg.clone())
+    }
 }
 /// Check `command`'s revision against these lists, give every model an
 /// identity (except on the legacy routes) and apply the change to them: the
@@ -288,16 +330,7 @@ pub(super) fn apply_at(
     };
     match command {
         Mutation::Add(body) => model::create(&body, models, providers, &credentials)?,
-        Mutation::Batch(body) => {
-            model::object(&body, &["expected_revision", "deployments"])?;
-            let entries = body["deployments"]
-                .as_array()
-                .filter(|v| !v.is_empty() && v.len() <= 50)
-                .ok_or_else(|| invalid("deployments must contain 1 to 50 entries"))?;
-            for entry in entries {
-                model::create(entry, models, providers, &credentials)?;
-            }
-        }
+        Mutation::Batch(body) => batch(&body, models, providers, &credentials, &mapping)?,
         Mutation::Update {
             key,
             body,
@@ -325,6 +358,64 @@ pub(super) fn apply_at(
         Mutation::Provider { key, body, .. } => {
             model::mutate_provider(models, providers, &key, &mapping, body.as_ref())?
         }
+    }
+    Ok(())
+}
+/// The most saved models one batch may remove.
+const BATCH_REMOVE_MAX: usize = 1000;
+/// `POST …/deployments/batch`: `{expected_revision, deployments?, remove?}`
+/// adds `deployments` and removes the saved models whose ids `remove` lists,
+/// all or nothing. Every id (to remove, or an addition's
+/// `credential_deployment_id`) names a model of the list the revision
+/// identifies (`credentials`, before this change), so neither the order nor
+/// the identities a write assigns matter: removing the model a provider card
+/// stands for and adding another through that card is one valid change.
+fn batch(
+    body: &Value,
+    models: &mut Vec<Value>,
+    providers: &mut Vec<Value>,
+    credentials: &[Value],
+    mapping: &HashMap<String, String>,
+) -> ApiResult<()> {
+    model::object(body, &["expected_revision", "deployments", "remove"])?;
+    let entries = match body.get("deployments") {
+        None => &[][..],
+        Some(value) => value
+            .as_array()
+            .filter(|v| v.len() <= 50)
+            .ok_or_else(|| invalid("deployments must contain at most 50 entries"))?,
+    };
+    let remove = match body.get("remove") {
+        None => &[][..],
+        Some(value) => value
+            .as_array()
+            .filter(|v| v.len() <= BATCH_REMOVE_MAX)
+            .ok_or_else(|| invalid("remove must list at most 1000 deployment ids"))?,
+    };
+    if entries.is_empty() && remove.is_empty() {
+        return Err(invalid(
+            "deployments must contain 1 to 50 entries, or remove at least one deployment id",
+        ));
+    }
+    let mut indices = Vec::with_capacity(remove.len());
+    for id in remove {
+        let id = id
+            .as_str()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| invalid("remove must list deployment ids"))?;
+        let index = model::find(models, id, mapping)?;
+        if indices.contains(&index) {
+            return Err(invalid("remove lists one deployment twice"));
+        }
+        indices.push(index);
+    }
+    // From the last place to the first, so each index still names its entry.
+    indices.sort_unstable_by(|a, b| b.cmp(a));
+    for index in indices {
+        model::remove(models, providers, index);
+    }
+    for entry in entries {
+        model::create(entry, models, providers, credentials)?;
     }
     Ok(())
 }

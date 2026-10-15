@@ -5,9 +5,9 @@
 //! editor's own rules; a saved text goes through the user rules the Models
 //! routes apply, and its revision is the Models page's.
 use super::{
-    ApiError, ApiResult, editor, failure, identity, pool,
+    ApiError, ApiResult, editor, failure, identity, model, pool,
     store::Store,
-    users::{self, Lists, MAX_WEIGHT, Shared, Users},
+    users::{self, Lists, Shared, Users},
 };
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
@@ -93,6 +93,14 @@ fn parse(document: &Value, current: &Lists, shared: &[Shared]) -> ApiResult<List
             )));
         }
     }
+    model::check_weights(&models, &current.models, |index, entry| {
+        format!(
+            "models/{index} ({})",
+            entry["litellm_params"]["model"]
+                .as_str()
+                .unwrap_or_default()
+        )
+    })?;
     let providers = objects(fields, "providers")?;
     for (index, connection) in providers.iter().enumerate() {
         if !connection["id"].is_string() || !connection["provider"].is_string() {
@@ -137,14 +145,6 @@ fn parse(document: &Value, current: &Lists, shared: &[Shared]) -> ApiResult<List
             .get("id")
             .and_then(Value::as_str)
             .ok_or_else(|| refused(format!("shared/{index} needs its id")))?;
-        let weight = match entry.get("weight") {
-            None | Some(Value::Null) => None,
-            Some(value) => Some(value.as_u64().filter(|w| *w <= MAX_WEIGHT).ok_or_else(|| {
-                refused(format!(
-                    "shared/{index}: weight must be a nonnegative integer or null"
-                ))
-            })?),
-        };
         let model = shared
             .iter()
             .find(|model| model.id == id)
@@ -152,9 +152,19 @@ fn parse(document: &Value, current: &Lists, shared: &[Shared]) -> ApiResult<List
         if !seen.insert(id.to_owned()) {
             return Err(refused(format!("shared lists {id} twice")));
         }
+        let unchanged = entry.get("weight").and_then(Value::as_u64)
+            == Some(users::effective_weight(current, model));
+        let weight = match entry.get("weight") {
+            None | Some(Value::Null) => None,
+            // A weight saved before the limit may stay as it is.
+            Some(value) if unchanged => value.as_u64(),
+            Some(value) => Some(model::weight(value).map_err(|_| {
+                model::invalid_weight(format!("shared/{index} ({id}): {}", model::WEIGHT_RULE))
+            })?),
+        };
         // An unchanged weight keeps what the user had; another one follows
         // the rule of the Models page.
-        if weight == Some(users::effective_weight(current, model)) {
+        if unchanged {
             if let Some(kept) = current.shared_weights.get(id) {
                 next.shared_weights.insert(id.to_owned(), *kept);
             }
@@ -318,10 +328,6 @@ mod tests {
                 "other is not a model the admin shares",
             ),
             (
-                json!({"shared":[{"id":"s1","weight":-1}]}),
-                "shared/0: weight must be a nonnegative integer or null",
-            ),
-            (
                 json!({"shared":[{"id":"s1"},{"id":"s1"}]}),
                 "shared lists s1 twice",
             ),
@@ -336,5 +342,42 @@ mod tests {
                 ("invalid_config", detail)
             );
         }
+        // A weight is a whole number from 0 to 100; one the user already
+        // had (from before the limit) may stay as it is.
+        for (document, detail) in [
+            (
+                json!({"shared":[{"id":"s1","weight":-1}]}),
+                "shared/0 (s1): Routing weight must be a whole number from 0 to 100",
+            ),
+            (
+                json!({"shared":[{"id":"s2","weight":101}]}),
+                "shared/0 (s2): Routing weight must be a whole number from 0 to 100",
+            ),
+            (
+                json!({"models":[{"litellm_params":{"model":"openai/own","weight":1.5}}]}),
+                "models/0 (openai/own): Routing weight must be a whole number from 0 to 100",
+            ),
+        ] {
+            let error = parse(&document, &current, &shared()).unwrap_err();
+            assert_eq!(
+                (error.reason, error.detail.as_str()),
+                ("invalid_weight", detail)
+            );
+        }
+        let old = Lists {
+            models: vec![
+                json!({"model_name":"default","litellm_params":{"model":"openai/own","weight":300},"model_info":{"id":"m1"}}),
+            ],
+            shared_weights: [("s1".into(), 500)].into(),
+            ..Default::default()
+        };
+        let next = parse(
+            &json!({"models":old.models,"shared":[{"id":"s1","weight":500}]}),
+            &old,
+            &shared(),
+        )
+        .unwrap();
+        assert_eq!(next.shared_weights, [("s1".into(), 500)].into());
+        assert_eq!(next.models[0]["litellm_params"]["weight"], 300);
     }
 }

@@ -126,7 +126,9 @@ pub(super) async fn guard(
     request: Request,
     next: Next,
 ) -> Response {
-    let private = admin_path(request.uri().path()) || me_path(request.uri().path());
+    let private = admin_path(request.uri().path())
+        || me_path(request.uri().path())
+        || request.uri().path() == "/api/convert-defaults";
     let mut response = guard_inner(state, request, next).await;
     if private {
         response.headers_mut().insert(

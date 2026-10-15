@@ -19,7 +19,7 @@ save. Responses identify `config_path` and `config_origin`.
 | GET | `/providers/{id}/credentials` | Explicitly requested editable saved values |
 | POST | `/models` | Add one deployment; legacy compatible |
 | PUT / DELETE | `/models/{model_name}` | Change one unambiguous routing group |
-| POST | `/deployments/batch` | Atomically add 1–50 deployments |
+| POST | `/deployments/batch` | Atomically add up to 50 deployments and remove saved ones (`remove`), all or nothing |
 | PATCH / DELETE | `/deployments/{id}` | Change a stable deployment identity |
 | PATCH / DELETE | `/providers/{id}` | Change a connection or remove it and its deployments |
 | POST | `/config/open` | Ask the server host's system opener to open the selected file |
@@ -29,6 +29,17 @@ Provider detection, live discovery and the transient connection test use
 saving settings. They do not persist a connection draft. A failed `/test` answers
 `{ok: false, detail, reason}` with the category of the failure (see
 [LLM](llm.md)).
+
+A routing weight is a whole number from 0 to 100 (0 = off; the model stays
+saved): every write of one outside that range, Edit config included, is 422
+`invalid_weight` (a weight the file already held for the same entry may stay).
+`POST /deployments/batch` takes `{expected_revision, deployments?, remove?}`:
+the ids in `remove` and every addition's credential reference name deployments of
+the list `expected_revision` identifies, before the change (so the model a
+connection card stands for can be removed while another is added through that
+card); removals apply first, and an unknown id (404 `settings_entry_missing`), a
+repeated id (422) or a stale revision (409) saves nothing. Views report
+`batch_remove: true`.
 
 The deployment view contains `deployment_id`, `routing_group`, `model`, `weight`,
 credential-presence flags, a sanitized API origin, `persisted` and, on saved rows,

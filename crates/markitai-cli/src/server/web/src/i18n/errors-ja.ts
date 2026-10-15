@@ -35,6 +35,7 @@ export const ja: Record<MessageKey, string> = {
   errUrlScheme: "変換できるのは http:// と https:// のアドレスのみです。",
   errRemoteUrl: "ウェブページを変換できるのは、このコンピューター上か、アクセストークンを使用している場合のみです。ファイルはアップロードできます。",
   errInvalidOptions: "サービスがこの変換オプションを受け付けませんでした。",
+  errInvalidDefaults: "サービスはこの選択を既定値として受け付けませんでした。",
   errRemoteProcessingForbidden: "この接続では Cloudflare での処理をリクエストできません。アクセストークンを使ってサービスを開いてください。",
   errRemoteConfirmation: "このリクエストを送信する前に、Cloudflare に送信する範囲をもう一度確認してください。",
   errRemoteDisabled: "サーバーのポリシーにより、リモート処理は無効になっています。ネイティブのリーダーを選ぶか、管理者に問い合わせてください。",
@@ -72,6 +73,7 @@ export const ja: Record<MessageKey, string> = {
   errCloudLoginAddress: "{label} のモデルは、このサーバー自身の{credential}を指定されたどのアドレスにも送信するため、ここでは {label} 自身のエンドポイントしか使えません。別のアドレスは設定ファイルで指定してください。",
   credGoogle: "Google の認証情報",
   errSettingsMissing: "この保存済みの設定はもう存在しません。ページを更新してから、もう一度お試しください。",
+  errInvalidWeight: "ルーティングの重みは 0 から 100 までの整数です（0 でそのモデルはオフになります）。",
   errSettingsIo: "設定ファイルを読み込めないか、保存できませんでした。",
   errConfigMissing: "設定ファイルはまだありません。モデルを保存すると作成されます。",
   errSettingsReadOnly:

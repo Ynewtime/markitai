@@ -1,8 +1,9 @@
 //! Originals for the workbench's Compare view: what can be shown of an item's
 //! source (its kept upload, a URL item's page snapshot, or the conversion's
 //! page screenshots, else the item's compare screenshots), its stored bytes,
-//! page images, a PDF page's text, and where the screenshots show the page's
-//! blocks. Pages are drawn on blocking threads, at most two at a time.
+//! page images, a PDF page's text and a PDF's outline, and where the
+//! screenshots show the page's blocks. Pages are drawn on blocking threads,
+//! at most two at a time.
 use super::{
     State, files,
     jobs::{self, Job},
@@ -988,6 +989,57 @@ pub(super) async fn page_text(
     .await
     .map_err(ApiError::internal)??;
     let bytes = Bytes::from(text);
+    state.previews.keep(key, bytes.clone(), "application/json");
+    Ok(respond(bytes))
+}
+
+/// `GET /api/jobs/{job_id}/items/{item_id}/original/outline`: a PDF's own
+/// outline (bookmarks) as titles, 1-based pages and levels; `items` is empty
+/// when it has none. Read once per stored version and kept with the pages.
+pub(super) async fn outline(
+    ExtractState(state): ExtractState<Arc<State>>,
+    Path((id, item_id)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let original = original(&state, &id, item_id).await?;
+    let stored = match (original.kind, original.stored) {
+        (Kind::Pdf, Some(stored)) => stored,
+        _ => return Err(unavailable()),
+    };
+    let key = format!(
+        "{}\u{0}{}\u{0}{}\u{0}outline",
+        id, original.item_id, stored.version
+    );
+    let respond = |bytes: Bytes| {
+        let mut response = ([(header::CONTENT_TYPE, "application/json")], bytes).into_response();
+        guard(&mut response, "outline.json");
+        response
+    };
+    if let Some((bytes, _)) = state.previews.cached(&key) {
+        return Ok(respond(bytes));
+    }
+    // Parsing a large PDF is work like measuring it: a render slot, waited for.
+    let slot = state
+        .previews
+        .renders
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(ApiError::internal)?;
+    let body = crate::task::blocking(move || -> ApiResult<Vec<u8>> {
+        let _slot = slot;
+        let bytes = read(&stored.path, MAX_READ)?;
+        let outline = preview::pdf_outline(&bytes);
+        let items: Vec<Value> = outline
+            .entries
+            .into_iter()
+            .map(|entry| json!({"title":entry.title,"page":entry.page,"level":entry.level}))
+            .collect();
+        serde_json::to_vec(&json!({"items":items,"truncated":outline.truncated}))
+            .map_err(ApiError::internal)
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    let bytes = Bytes::from(body);
     state.previews.keep(key, bytes.clone(), "application/json");
     Ok(respond(bytes))
 }
