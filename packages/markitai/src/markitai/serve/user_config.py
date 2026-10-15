@@ -124,7 +124,10 @@ def parse(value: Any, current: Lists, shared: list[Shared]) -> Lists:
         if key not in listed
     }
     result = user_models.Lists(
-        models=models, providers=providers, shared_weights=weights
+        models=models,
+        providers=providers,
+        shared_weights=weights,
+        convert_defaults=current.convert_defaults,
     )
     seen: set[str] = set()
     for index, entry in enumerate(_objects(value, "shared")):

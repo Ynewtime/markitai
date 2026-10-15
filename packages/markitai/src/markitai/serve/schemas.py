@@ -368,6 +368,8 @@ class CapabilitiesFeatures(BaseModel):
     user_tokens: bool  # v1.13: /api/access-tokens and access levels (not --no-auth)
     config_edit: bool  # v1.13: GET/PUT /api/settings/config
     batch_delete: bool  # v1.13: POST /api/history/delete
+    convert_defaults: bool  # v1.17: GET/PUT /api/convert-defaults
+    pdf_outline: bool  # v1.17: GET …/original/outline
     user_models: bool  # v1.15: /api/me/models* and `share` (not --no-auth)
     user_config: bool  # v1.16: GET/PUT /api/me/config (not --no-auth)
 
