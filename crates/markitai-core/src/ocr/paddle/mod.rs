@@ -194,23 +194,35 @@ impl Detector {
     }
 }
 
-/// The threads tract's matrix kernels share for a detection: a page's
-/// convolutions split over its rows, with the same results as on one thread.
+/// The one pool of compute threads OCR uses, as many as
+/// [`super::thread_budget`]: a page's detection splits its convolutions over
+/// it and the lines of every page in flight are read on it, so the threads
+/// busy at once never exceed the budget however many pages are in flight, and
+/// a page left with the last lines does not read them alone while the others
+/// idle. `None` on a single thread.
+fn pool() -> Option<&'static Arc<rayon::ThreadPool>> {
+    static POOL: std::sync::OnceLock<Option<Arc<rayon::ThreadPool>>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = super::thread_budget();
+        if threads < 2 {
+            return None;
+        }
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|n| format!("markitai-ocr-{n}"))
+            .build()
+            .ok()
+            .map(Arc::new)
+    })
+    .as_ref()
+}
+
+/// tract's matrix kernels on [`pool`]: a page's convolutions split over its
+/// rows, with the same results as on one thread.
 fn executor() -> tract_linalg::multithread::Executor {
-    static EXECUTOR: std::sync::OnceLock<tract_linalg::multithread::Executor> =
-        std::sync::OnceLock::new();
-    EXECUTOR
-        .get_or_init(|| {
-            let threads = std::thread::available_parallelism()
-                .map_or(1, |n| n.get())
-                .min(8);
-            if threads > 1 {
-                tract_linalg::multithread::Executor::multithread_with_name(threads, "markitai-ocr")
-            } else {
-                tract_linalg::multithread::Executor::SingleThread
-            }
-        })
-        .clone()
+    pool().map_or(tract_linalg::multithread::Executor::SingleThread, |pool| {
+        tract_linalg::multithread::Executor::MultiThread(pool.clone())
+    })
 }
 
 fn detection_shape(shape: &[usize], values: usize, width: u32, height: u32) -> bool {
@@ -516,28 +528,6 @@ fn classified(classifier: &Plan, image: &RgbImage, regions: &[detect::Region]) -
     Ok(batches.into_iter().flatten().collect())
 }
 
-/// Threads reading lines in this process, beyond the callers' own.
-static HELPERS: AtomicUsize = AtomicUsize::new(0);
-const MAX_HELPERS_PER_IMAGE: usize = 7;
-
-/// Take up to `wanted` helper threads within the processor count.
-fn take_helpers(wanted: usize) -> usize {
-    let budget = std::thread::available_parallelism()
-        .map_or(1, |n| n.get())
-        .saturating_sub(1);
-    let mut active = HELPERS.load(Ordering::Relaxed);
-    loop {
-        let take = wanted.min(budget.saturating_sub(active));
-        if take == 0 {
-            return 0;
-        }
-        match HELPERS.compare_exchange(active, active + take, Ordering::AcqRel, Ordering::Relaxed) {
-            Ok(_) => return take,
-            Err(now) => active = now,
-        }
-    }
-}
-
 /// One cut-out line read with `recognizer`: as cut, and also turned over
 /// when the classifier flagged it, keeping the more confident reading.
 fn read_cut(recognizer: &Recognizer, cut: &Cut) -> Result<Line> {
@@ -571,9 +561,28 @@ fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
     spread(cuts.len(), |index| read_cut(recognizer, cuts[index]))
 }
 
+/// `work` of each index below `count`, in order, computed on [`pool`] next
+/// to every other page's work (on this thread without a pool). `work` must
+/// not wait for another page's work: the pool's threads would all wait.
+fn spread<T: Send>(
+    count: usize,
+    work: impl Fn(usize) -> Result<T> + Send + Sync,
+) -> Result<Vec<T>> {
+    use rayon::prelude::*;
+    match pool().filter(|_| count > 1) {
+        Some(pool) => pool.install(|| (0..count).into_par_iter().map(work).collect()),
+        None => (0..count).map(work).collect(),
+    }
+}
+
 /// `work` of each index below `count`, in order, computed on this thread and
-/// up to [`MAX_HELPERS_PER_IMAGE`] more, each taking the next index.
-fn spread<T: Send>(count: usize, work: impl Fn(usize) -> Result<T> + Sync) -> Result<Vec<T>> {
+/// one more, each taking the next index. For work that takes a
+/// [`DetectionTurn`], which would hold up the threads of [`pool`]; the
+/// detections themselves use the pool.
+fn spread_detections<T: Send>(
+    count: usize,
+    work: impl Fn(usize) -> Result<T> + Sync,
+) -> Result<Vec<T>> {
     let next = AtomicUsize::new(0);
     let worker = || -> Result<Vec<(usize, T)>> {
         let mut done = Vec::new();
@@ -585,20 +594,18 @@ fn spread<T: Send>(count: usize, work: impl Fn(usize) -> Result<T> + Sync) -> Re
             done.push((index, work(index)?));
         }
     };
-    let helpers = take_helpers(MAX_HELPERS_PER_IMAGE.min(count.saturating_sub(1)));
     let results: Vec<Result<Vec<(usize, T)>>> = std::thread::scope(|scope| {
-        let spawned: Vec<_> = (0..helpers).map(|_| scope.spawn(worker)).collect();
+        let helper = (count > 1).then(|| scope.spawn(worker));
         let mut results = vec![worker()];
-        for handle in spawned {
+        if let Some(helper) = helper {
             results.push(
-                handle
+                helper
                     .join()
-                    .unwrap_or_else(|_| Err(failure("a recognition thread failed"))),
+                    .unwrap_or_else(|_| Err(failure("a detection thread failed"))),
             );
         }
         results
     });
-    HELPERS.fetch_sub(helpers, Ordering::AcqRel);
     let mut values: Vec<Option<T>> = (0..count).map(|_| None).collect();
     for result in results {
         for (index, value) in result? {
@@ -607,7 +614,7 @@ fn spread<T: Send>(count: usize, work: impl Fn(usize) -> Result<T> + Sync) -> Re
     }
     values
         .into_iter()
-        .map(|value| value.ok_or_else(|| failure("a line was not read")))
+        .map(|value| value.ok_or_else(|| failure("a tile was not searched")))
         .collect()
 }
 
@@ -826,7 +833,7 @@ fn tiled(engine: &Engine, image: &RgbImage, choice: Choice) -> Result<Option<(Re
     } else {
         f32::INFINITY
     };
-    let found = spread(tiles.len(), |index| {
+    let found = spread_detections(tiles.len(), |index| {
         let [x0, y0, x1, y1] = tiles[index];
         let tile = image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image();
         let short = tile.width().min(tile.height()).max(1) as f32;
@@ -1294,12 +1301,40 @@ mod tests {
     }
 
     #[test]
-    fn helper_threads_stay_within_the_processor_count() {
-        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-        let first = take_helpers(usize::MAX);
-        assert!(first < cores);
-        HELPERS.fetch_sub(first, Ordering::AcqRel);
-        assert_eq!(take_helpers(0), 0);
+    fn lines_are_read_in_order_on_the_pool_of_the_thread_budget() {
+        let names = Mutex::new(std::collections::HashSet::new());
+        let read = spread(64, |index| {
+            names
+                .lock()
+                .unwrap()
+                .insert(std::thread::current().name().map(str::to_owned));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            Ok(index)
+        })
+        .unwrap();
+        assert_eq!(read, (0..64).collect::<Vec<_>>());
+        let threads = names.lock().unwrap().len();
+        assert!(threads <= super::super::thread_budget().max(1), "{threads}");
+    }
+
+    #[test]
+    fn a_failed_line_fails_the_page() {
+        let failed = spread(8, |index| {
+            if index == 5 {
+                Err(failure("no"))
+            } else {
+                Ok(index)
+            }
+        });
+        assert!(failed.is_err());
+        let failed = spread_detections(8, |index| {
+            if index == 5 {
+                Err(failure("no"))
+            } else {
+                Ok(index)
+            }
+        });
+        assert!(failed.is_err());
     }
 
     #[test]

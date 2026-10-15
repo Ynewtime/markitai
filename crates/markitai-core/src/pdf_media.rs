@@ -723,10 +723,7 @@ const WEBP_NOTE: &str =
 /// bounds the memory. Vision reads two pages at a time.
 fn ocr_pages_at_once() -> usize {
     if ocr::backend() == "paddle" {
-        std::thread::available_parallelism()
-            .map_or(1, |n| n.get())
-            .div_euclid(4)
-            .clamp(2, 4)
+        ocr::thread_budget().div_euclid(4).clamp(2, 4)
     } else {
         2
     }
