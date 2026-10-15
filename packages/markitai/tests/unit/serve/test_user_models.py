@@ -465,6 +465,7 @@ async def test_only_a_user_token_reaches_its_own_models(
         "detected": [],
         "shared": [],
         "limit": 50,
+        "batch_remove": True,
     }
 
 

@@ -96,6 +96,11 @@ def parse(value: Any, current: Lists, shared: list[Shared]) -> Lists:
         params = entry.get("litellm_params")
         if not isinstance(params, dict) or not isinstance(params.get("model"), str):
             raise refused(f"models/{index} needs litellm_params.model, the model ID")
+    user_models.check_weights(
+        models,
+        current.models,
+        lambda index, entry: f"models/{index} ({entry['litellm_params']['model']})",
+    )
     providers = _objects(value, "providers")
     for index, connection in enumerate(providers):
         if not isinstance(connection.get("id"), str) or not isinstance(
@@ -133,16 +138,22 @@ def parse(value: Any, current: Lists, shared: list[Shared]) -> Lists:
         if not isinstance(shared_id, str):
             raise refused(f"shared/{index} needs its id")
         weight = entry.get("weight")
-        if weight is not None and not user_models.valid_weight(weight):
-            raise refused(
-                f"shared/{index}: weight must be a nonnegative integer or null"
-            )
         model = next((model for model in shared if model.id == shared_id), None)
         if model is None:
             raise refused(f"{shared_id} is not a model the admin shares")
         if shared_id in seen:
             raise refused(f"shared lists {shared_id} twice")
         seen.add(shared_id)
+        # A weight the user already has (one saved before the limit) may stay
+        unchanged = user_models.valid_weight(weight) and weight == (
+            user_models.effective_weight(current, model)
+        )
+        if (
+            weight is not None
+            and not unchanged
+            and not user_models.routing_weight(weight)
+        ):
+            raise user_models.invalid_weight(f"shared/{index} ({shared_id})")
         # An unchanged weight keeps what the user had; another one follows
         # the rule of the Models page
         if weight == user_models.effective_weight(current, model):

@@ -214,6 +214,7 @@ async def test_users_weigh_shared_models_for_themselves_only(
             await _weigh(client, a, "s1", True),
             await _weigh(client, a, "s1", "2"),
             await _weigh(client, a, "s1", 1.5),
+            await _weigh(client, a, "s1", 101),
             await _weigh(client, a, "s1", 2, share="shared"),
             await client.patch(
                 "/api/me/models/shared/s1",
@@ -278,10 +279,12 @@ async def test_users_weigh_shared_models_for_themselves_only(
         (404, "settings_entry_missing"),
         (404, "settings_entry_missing"),  # not shared: 404 before the revision
         (409, "stale_revision"),
-        (422, "invalid_settings_request"),
-        (422, "invalid_settings_request"),
-        (422, "invalid_settings_request"),
-        (422, "invalid_settings_request"),
+        # Round 18: a weight is a whole number from 0 to 100
+        (422, "invalid_weight"),
+        (422, "invalid_weight"),
+        (422, "invalid_weight"),
+        (422, "invalid_weight"),
+        (422, "invalid_weight"),
         (422, "invalid_settings_request"),
         (422, "invalid_settings_request"),
         (422, "json_required"),
@@ -592,7 +595,7 @@ async def test_a_users_edit_config_is_its_own_models_file(
         (422, "invalid_config"),
         (422, "invalid_config"),
         (422, "invalid_config"),
-        (422, "invalid_config"),
+        (422, "invalid_weight"),  # shared weight -1
         (422, "invalid_config"),
         (422, "invalid_config"),
         (422, "invalid_config"),
@@ -601,7 +604,7 @@ async def test_a_users_edit_config_is_its_own_models_file(
         (422, "server_address"),
         (422, "invalid_settings_request"),
         (422, "invalid_config"),  # the same model id twice
-        (422, "invalid_config"),
+        (422, "invalid_weight"),  # a model's weight "x"
         (403, "user_token_required"),
         (403, "user_token_required"),
         (422, "invalid_settings_request"),

@@ -414,6 +414,7 @@ SHAPES: dict[str, dict[str, F]] = {
         "detected": F(["obj"]),
         "shared": F(["@SharedModel"]),
         "limit": F("int"),
+        "batch_remove": opt("bool", nullable=False),
     },
     "SettingsView": {
         "configured": F("bool"),
@@ -424,6 +425,7 @@ SHAPES: dict[str, dict[str, F]] = {
         "revision": F("str"),
         "deployments": F(["obj"]),
         "detected": F(["obj"]),
+        "batch_remove": opt("bool", nullable=False),
     },
 }
 
@@ -479,6 +481,7 @@ REASONS: dict[int, set[str]] = {
     },
     422: {
         "empty_job",
+        "invalid_weight",
         "too_many_items",
         "invalid_url",
         "unsupported_url_scheme",
