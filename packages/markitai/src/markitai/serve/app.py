@@ -40,6 +40,7 @@ from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, PENDING_BATCH_SKIP_REASON
 from markitai.serve import (
     config_editor,
+    convert_defaults,
     model_test,
     new_access_token,
     user_config,
@@ -1913,6 +1914,41 @@ def _mutate_config_model_list(
     return merged, merged_providers, revision
 
 
+def _save_server_defaults(
+    config_path: Path, running: MarkitaiConfig, expected: str, wanted: dict[str, Any]
+) -> None:
+    """Write the admin's conversion defaults into the configuration file,
+    atomically, if *expected* is still the revision of the running defaults."""
+    from markitai.security import atomic_write_json
+
+    current = convert_defaults.revision(convert_defaults.of_config(running))
+    if expected != current:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "stale_revision", "current_revision": current},
+        )
+    data: dict[str, Any] = {}
+    try:
+        if config_path.is_file():
+            loaded = json.loads(config_path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("existing config file is not a JSON object")
+            data = loaded
+        convert_defaults.write_into_file(data, wanted)
+        atomic_write_json(config_path, data, private=True)
+    except (OSError, ValueError) as e:
+        logger.error(
+            "[Serve] Conversion defaults write failed for {}: {}",
+            config_path,
+            type(e).__name__,
+        )
+        raise ApiError(
+            500,
+            "settings_io_failed",
+            f"failed to update config file: {type(e).__name__}",
+        ) from None
+
+
 def _find_raw_entries(entries: list[Any], model_name: str) -> list[dict[str, Any]]:
     return [
         entry
@@ -3424,7 +3460,7 @@ def create_app(
             response = await call_next(request)
             response.headers["Cache-Control"] = "no-store"
             return response
-        if path.startswith("/api/me/"):
+        if path.startswith(("/api/me/", "/api/convert-defaults")):
             # A user's own models and their keys' masks: never cached
             response = await call_next(request)
             response.headers["Cache-Control"] = "no-store"
@@ -3556,6 +3592,8 @@ def create_app(
                 "batch_delete": True,
                 "user_models": request.app.state.serve_token is not None,
                 "user_config": request.app.state.serve_token is not None,
+                "convert_defaults": True,
+                "pdf_outline": True,
             },
             # Anonymous callers may not use the settings, so they are users
             "access": (
@@ -5143,6 +5181,87 @@ def create_app(
             **_config_view(state, saved),
             "restart_required": config_editor.restart_required(old, document),
         }
+
+    # ------------------------------------------------ convert defaults
+
+    def convert_defaults_view(
+        state: ServeState, caller: Caller, lists: user_models.Lists | None
+    ) -> dict[str, Any]:
+        server = convert_defaults.of_config(state.config)
+        if caller.role == "user":
+            own = lists.convert_defaults if lists is not None else None
+            return convert_defaults.answer(server, own, scope="user", can_save=True)
+        return convert_defaults.answer(
+            server, None, scope="server", can_save=caller.role == "admin"
+        )
+
+    @app.get("/api/convert-defaults")
+    async def get_convert_defaults(request: Request) -> dict[str, Any]:
+        """The options the composer starts from, for every caller (v1.17)."""
+        state = _state(request)
+        caller = _caller(request)
+        if caller.role == "user" and caller.user_id is not None:
+            user_id = caller.user_id
+            lists = await asyncio.to_thread(users.lists, user_id)
+            return convert_defaults_view(state, caller, lists)
+        return convert_defaults_view(state, caller, None)
+
+    @app.put("/api/convert-defaults")
+    async def put_convert_defaults(request: Request) -> dict[str, Any]:
+        """Save the composer's defaults: the admin's into the configuration
+        file (and the running configuration), a user's into its own file;
+        ``defaults: null`` returns a user to the server's (v1.17)."""
+        state = _state(request)
+        caller = _caller(request)
+        shape = convert_defaults.invalid(
+            'send a JSON body {"expected_revision": string, "defaults": object}'
+        )
+        try:
+            body = json.loads(await request.body())
+        except ValueError:
+            raise shape from None
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"expected_revision", "defaults"}
+            or not isinstance(body["expected_revision"], str)
+        ):
+            raise shape
+        expected: str = body["expected_revision"]
+        wanted = (
+            None
+            if body["defaults"] is None
+            else convert_defaults.checked(body["defaults"])
+        )
+        if caller.role == "anonymous":
+            raise ApiError(
+                403,
+                "settings_forbidden",
+                "only the server's administrator or a user token may save defaults",
+            )
+        if caller.role == "user" and caller.user_id is not None:
+            user_id = caller.user_id
+
+            def change(lists: user_models.Lists) -> None:
+                current = convert_defaults.revision(lists.convert_defaults)
+                if expected != current:
+                    raise stale(current)
+                lists.convert_defaults = wanted
+
+            def write() -> user_models.Lists:
+                return users.write(user_id, lambda: access.exists(user_id), change)
+
+            lists = await asyncio.to_thread(write)
+            return convert_defaults_view(state, caller, lists)
+        if wanted is None:
+            raise convert_defaults.invalid(
+                "the server's defaults cannot be removed; send the options to use"
+            )
+        async with state.settings_lock:
+            await asyncio.to_thread(
+                _save_server_defaults, state.config_path, state.config, expected, wanted
+            )
+            convert_defaults.write_into_running(state.config, wanted)
+        return convert_defaults_view(state, caller, None)
 
     @app.post("/api/settings/llm/config/open", status_code=204)
     async def open_llm_config(request: Request) -> None:

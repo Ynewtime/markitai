@@ -41,6 +41,7 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from markitai.serve import convert_defaults
 from markitai.serve.errors import ApiError
 
 if TYPE_CHECKING:
@@ -94,6 +95,9 @@ class Lists:
     models: list[dict[str, Any]] = field(default_factory=list)
     providers: list[dict[str, Any]] = field(default_factory=list)
     shared_weights: dict[str, int] = field(default_factory=dict)
+    #: The user's own conversion defaults (contract v1.17), None when it
+    #: follows the server's. Kept in the same file; not part of the revision.
+    convert_defaults: dict[str, Any] | None = None
 
 
 #: The largest routing weight a write may set (round 18): a weight is a share
@@ -489,7 +493,18 @@ def _read(path: Path) -> Lists:
             LLMProviderConfig.model_validate(entry)
     except ValidationError:
         raise ValueError(f"{path}: invalid model entry") from None
-    return Lists(models=models, providers=providers, shared_weights=weights)
+    own = saved.get("convert_defaults")
+    try:
+        defaults = None if own is None else convert_defaults.checked(own)
+    except ApiError:
+        # Not worth losing the user's models over: it follows the server's
+        defaults = None
+    return Lists(
+        models=models,
+        providers=providers,
+        shared_weights=weights,
+        convert_defaults=defaults,
+    )
 
 
 def _sync_directory(path: Path) -> bool:
@@ -525,6 +540,8 @@ def _save(directory: Path, path: Path, lists: Lists) -> None:
     if lists.shared_weights:
         # Absent when empty: a file without overrides keeps its v1.15 shape
         saved["shared_weights"] = dict(sorted(lists.shared_weights.items()))
+    if lists.convert_defaults is not None:
+        saved["convert_defaults"] = lists.convert_defaults
     data = (json.dumps(saved, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     staged = directory / f".tmp-{path.stem}-{os.urandom(6).hex()}"
     fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
