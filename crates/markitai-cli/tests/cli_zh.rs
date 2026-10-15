@@ -15,7 +15,8 @@ const EN: &[(&str, &str)] = &[("MARKITAI_LANG", "en")];
 fn command(root: &Path, envs: &[(&str, &str)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     console::detached(&mut command);
-    console::english(command.env_clear());
+    command.env_clear();
+    console::english_unless_chosen(&mut command, envs);
     for name in ["PATH", "SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
@@ -29,9 +30,17 @@ fn command(root: &Path, envs: &[(&str, &str)]) -> Command {
         .env("COPILOT_CLI_PATH", root.join("missing-copilot"))
         .env("CLAUDE_CLI_PATH", root.join("missing-claude"))
         .env("CODEX_CLI_PATH", root.join("missing-codex"))
-        .envs(envs.iter().copied());
+        .envs(envs.iter().copied().filter(|(name, _)| *name != UNSET));
+    for (name, value) in envs {
+        if *name == UNSET {
+            command.env_remove(value);
+        }
+    }
     command
 }
+
+/// An entry of `envs` that removes the variable it names.
+const UNSET: &str = "-";
 
 fn run(root: &Path, envs: &[(&str, &str)], args: &[&str]) -> Output {
     command(root, envs)
@@ -801,4 +810,23 @@ fn run_level_errors_are_chinese_on_the_terminal_and_english_in_json() {
     );
     let english = run(root.path(), EN, &["nothere.pdf"]);
     assert_eq!(stderr(&english), "  ✗ Input file not found: nothere.pdf\n");
+}
+
+#[test]
+fn a_run_chosen_by_the_locale_variable_is_chinese_on_every_line() {
+    let root = tempfile::tempdir().unwrap();
+    batch_input(root.path());
+    for env in [
+        &[("LANG", "zh_CN.UTF-8"), (UNSET, "MARKITAI_LANG")][..],
+        &[("LC_ALL", "zh_CN.UTF-8"), (UNSET, "MARKITAI_LANG")][..],
+    ] {
+        let output = run(root.path(), env, &["docs", "-o", "out-locale", "-v"]);
+        let message = stderr(&output);
+        let cjk = |c: char| ('\u{4e00}'..='\u{9fff}').contains(&c);
+        for line in message.lines().filter(|line| !line.trim().is_empty()) {
+            assert!(line.chars().any(cjk), "{line:?} in\n{message}");
+        }
+        let missing = run(root.path(), env, &["nothere.pdf"]);
+        assert!(stderr(&missing).contains("找不到输入文件"), "{env:?}");
+    }
 }
