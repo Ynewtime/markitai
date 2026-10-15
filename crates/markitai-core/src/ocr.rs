@@ -250,6 +250,30 @@ enum Backend {
     Paddle,
 }
 
+/// The environment variable that sets [`thread_budget`].
+const THREADS_VARIABLE: &str = "MARKITAI_OCR_THREADS";
+
+/// Threads local OCR may keep busy at once, all pages together: the
+/// processors this process may run on, or `MARKITAI_OCR_THREADS` (a positive
+/// number) when set. Pages in flight share these threads instead of each
+/// bringing its own, so a busy machine is not oversubscribed.
+pub(crate) fn thread_budget() -> usize {
+    static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BUDGET.get_or_init(|| {
+        budget_from(
+            std::env::var(THREADS_VARIABLE).ok().as_deref(),
+            std::thread::available_parallelism().map_or(1, |n| n.get()),
+        )
+    })
+}
+
+fn budget_from(requested: Option<&str>, processors: usize) -> usize {
+    requested
+        .and_then(|text| text.trim().parse::<usize>().ok())
+        .filter(|n| (1..=1024).contains(n))
+        .unwrap_or(processors)
+}
+
 /// The environment variable that chooses an engine.
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 const BACKEND_VARIABLE: &str = "MARKITAI_OCR_BACKEND";
@@ -866,6 +890,15 @@ fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, conf
 pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_thread_budget_is_the_processors_unless_a_valid_number_is_set() {
+        assert_eq!(budget_from(None, 8), 8);
+        assert_eq!(budget_from(Some(" 3 "), 8), 3);
+        for bad in ["", "0", "-2", "many", "5000"] {
+            assert_eq!(budget_from(Some(bad), 8), 8, "{bad}");
+        }
+    }
 
     #[test]
     fn the_capped_warning_names_the_region_limit() {

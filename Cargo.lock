@@ -2177,6 +2177,7 @@ dependencies = [
  "png",
  "quick-xml",
  "rav1d",
+ "rayon",
  "regex",
  "reqwest",
  "resvg",
