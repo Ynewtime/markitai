@@ -2026,10 +2026,7 @@ class TestOcrPerPageRouting:
 
         with (
             patch.dict(sys.modules, {"markitai.ocr": mock_module}),
-            patch(
-                "markitai.converter.pdf.ImageProcessor",
-                return_value=mock_img_processor,
-            ),
+            patch("markitai.image.ImageProcessor", return_value=mock_img_processor),
         ):
             result = converter.convert(pdf_file, output_dir)
 
@@ -2395,7 +2392,8 @@ class TestOcrPathMatchesStandardPath:
         assert "No text detected" not in result.markdown
         notices = [r for r in records if is_user_notice(r)]
         assert any(
-            "No text found on 1 page of mixed.pdf (page 2); it is blank" in r["message"]
+            r["message"] == "[OCR] mixed.pdf: 1 of 2 pages has no text (page 2); "
+            "it is left blank in the output"
             for r in notices
         )
 

@@ -380,18 +380,25 @@ class OCRProcessor:
     # Global singleton engine with thread-safe initialization
     _global_engine: Any = None
     _global_config: OCRConfig | None = None
+    _global_threads: int | None = None
     _init_lock = threading.Lock()
     # Guards the shared engine's mutable thresholds (see _EngineGate)
     _gate = _EngineGate()
 
-    def __init__(self, config: OCRConfig | None = None) -> None:
+    def __init__(
+        self, config: OCRConfig | None = None, *, threads: int | None = None
+    ) -> None:
         """
         Initialize OCR processor.
 
         Args:
             config: Optional OCR configuration
+            threads: onnxruntime threads per recognition (None: its default,
+                every core). A PDF extraction worker reading one page of
+                many sets its share of the cores.
         """
         self.config = config
+        self._threads = threads
         self._engine = None
 
     @classmethod
@@ -406,7 +413,9 @@ class OCRProcessor:
         return config.model_dump_json()
 
     @classmethod
-    def get_shared_engine(cls, config: OCRConfig | None = None) -> Any:
+    def get_shared_engine(
+        cls, config: OCRConfig | None = None, threads: int | None = None
+    ) -> Any:
         """Get or create global singleton engine (thread-safe).
 
         Uses double-checked locking for thread-safe lazy initialization.
@@ -416,26 +425,31 @@ class OCRProcessor:
 
         Args:
             config: Optional OCR configuration for engine creation
+            threads: onnxruntime threads per recognition (None: its default)
 
         Returns:
             Shared RapidOCR engine instance
         """
         new_fp = cls._config_fingerprint(config)
-        if (
-            cls._global_engine is None
-            or cls._config_fingerprint(cls._global_config) != new_fp
-        ):
+
+        def stale() -> bool:
+            return (
+                cls._global_engine is None
+                or cls._config_fingerprint(cls._global_config) != new_fp
+                or cls._global_threads != threads
+            )
+
+        if stale():
             with cls._init_lock:
-                if (
-                    cls._global_engine is None
-                    or cls._config_fingerprint(cls._global_config) != new_fp
-                ):
+                if stale():
                     logger.debug("Creating global shared OCR engine")
                     # Create first, assign after: if creation raises, the old
                     # engine/config pair stays consistent instead of serving a
                     # stale engine under the new config's fingerprint
-                    cls._global_engine = cls._create_engine_impl(config)
+                    engine = cls._create_engine_impl(config, threads=threads)
+                    cls._global_engine = engine
                     cls._global_config = config
+                    cls._global_threads = threads
         return cls._global_engine
 
     @classmethod
@@ -469,11 +483,14 @@ class OCRProcessor:
         return engine
 
     @classmethod
-    def _create_engine_impl(cls, config: OCRConfig | None = None) -> Any:
+    def _create_engine_impl(
+        cls, config: OCRConfig | None = None, *, threads: int | None = None
+    ) -> Any:
         """Create RapidOCR engine with configuration (implementation).
 
         Args:
             config: Optional OCR configuration
+            threads: onnxruntime threads per model call (None: its default)
 
         Returns:
             New RapidOCR engine instance
@@ -503,6 +520,9 @@ class OCRProcessor:
         # unknown value used to fall back to the Chinese model silently.
         if config and config.lang:
             params.update(cls._language_params(config.lang))
+        if threads:
+            params["EngineConfig.onnxruntime.intra_op_num_threads"] = threads
+            params["EngineConfig.onnxruntime.inter_op_num_threads"] = 1
 
         try:
             return RapidOCR(params=params)
@@ -546,7 +566,7 @@ class OCRProcessor:
         Falls back to instance-specific engine only if configs differ.
         """
         # Use global shared engine for better performance
-        return self.get_shared_engine(self.config)
+        return self.get_shared_engine(self.config, self._threads)
 
     def _run_engine(self, image: Any) -> Any:
         """One full-image recognition pass with the engine's own thresholds."""

@@ -87,7 +87,7 @@ asyncio.run(main())
 
 ## 并行提取 PDF
 
-CLI、`markitai serve` 和 MCP 服务器会把长 PDF 以及同时转换的多个 PDF 交给工作进程按页并行提取，输出不变，速度快好几倍。脚本里调用 `markitai.enable_worker_processes()` 即可启用：
+CLI、`markitai serve` 和 MCP 服务器会把长 PDF 以及同时转换的多个 PDF 交给工作进程按页并行提取，扫描版 PDF 的 OCR 也在工作进程里按页进行，每个核一页。输出不变，速度快好几倍。脚本里调用 `markitai.enable_worker_processes()` 即可启用：
 
 ```python
 import markitai

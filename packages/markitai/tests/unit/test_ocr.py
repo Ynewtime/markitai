@@ -406,7 +406,7 @@ class TestOCRConfigChangedRebuildsEngine:
 
         call_count = 0
 
-        def fake_create(config=None):
+        def fake_create(config=None, threads=None):
             nonlocal call_count
             call_count += 1
             if config and config.lang == "en":
@@ -450,7 +450,7 @@ class TestOCRConfigChangedRebuildsEngine:
 
         call_count = 0
 
-        def fake_create(config=None):
+        def fake_create(config=None, threads=None):
             nonlocal call_count
             call_count += 1
             if config and config.lang == "zh":
@@ -527,6 +527,40 @@ class TestOCRLanguageResolution:
         ):
             OCRProcessor._create_engine_impl(OCRConfig(enabled=True, lang="xx"))
         rapid.assert_not_called()
+
+    def test_an_engine_can_run_on_a_set_number_of_threads(self):
+        """A PDF worker reading one page of many runs its share of the cores."""
+        pytest.importorskip("rapidocr")
+        config = OCRConfig(enabled=True, lang="en")
+        with patch("rapidocr.RapidOCR") as rapid:
+            OCRProcessor._create_engine_impl(config, threads=3)
+            OCRProcessor._create_engine_impl(config)
+
+        threaded, default = (call.kwargs["params"] for call in rapid.call_args_list)
+        assert threaded["EngineConfig.onnxruntime.intra_op_num_threads"] == 3
+        assert threaded["EngineConfig.onnxruntime.inter_op_num_threads"] == 1
+        assert not any(key.startswith("EngineConfig") for key in default)
+
+    def test_the_shared_engine_is_rebuilt_for_another_thread_count(self):
+        built: list[int | None] = []
+
+        def fake_create(config=None, threads=None):
+            built.append(threads)
+            return MagicMock(name=f"engine-{threads}")
+
+        OCRProcessor._global_engine = None
+        try:
+            with patch.object(
+                OCRProcessor, "_create_engine_impl", side_effect=fake_create
+            ):
+                first = OCRProcessor(threads=2).engine
+                assert OCRProcessor(threads=2).engine is first
+                assert OCRProcessor().engine is not first
+        finally:
+            OCRProcessor._global_engine = None
+            OCRProcessor._global_threads = None
+
+        assert built == [2, None]
 
     @pytest.mark.parametrize(
         "lang",
