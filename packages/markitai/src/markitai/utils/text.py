@@ -647,22 +647,46 @@ def fix_broken_markdown_links(content: str) -> str:
     Returns:
         Content with fixed links
     """
-    # Pattern: [text with newlines inside](url)
-    # Captures: [anything with newlines](url) and keeps only first line + url
-    pattern = r"\[([^\]]*?)\n+([^\]]*?)\]\(([^)]+)\)"
-
-    def fix_link(match: re.Match[str]) -> str:
-        first_part = match.group(1).strip()
-        url = match.group(3)
-        return f"[{first_part}]({url})"
-
     # Apply fix iteratively until no more changes
     prev_content = ""
     while prev_content != content:
         prev_content = content
-        content = re.sub(pattern, fix_link, content)
+        content = _join_split_link_texts(content)
 
     return content
+
+
+def _join_split_link_texts(content: str) -> str:
+    r"""One pass of :func:`fix_broken_markdown_links`, in linear time.
+
+    What ``re.sub(r"\[([^\]]*?)\n+([^\]]*?)\]\(([^)]+)\)", "[\1](\3)")``
+    did (group 1 stripped), without its backtracking: from each ``[`` the
+    pattern tried every line break as the split and ran to the end of the
+    text from each, so a long document with an unclosed ``[`` (an OCR'd
+    book) took most of a minute. A link text runs from a ``[`` to the first
+    ``]`` after it, so of the ``[`` before one ``]`` only the first can
+    start a match, and it matches when a line break comes before that ``]``
+    and ``(url)`` right after it.
+    """
+    parts: list[str] = []
+    copied = pos = 0
+    while (start := content.find("[", pos)) >= 0:
+        close = content.find("]", start + 1)
+        if close < 0:
+            break
+        newline = content.find("\n", start + 1, close)
+        end = content.find(")", close + 2) if newline >= 0 else -1
+        if content.startswith("(", close + 1) and end > close + 2:
+            first_line = content[start + 1 : newline].strip()
+            parts += [
+                content[copied:start],
+                f"[{first_line}]({content[close + 2 : end]})",
+            ]
+            copied = pos = end + 1
+        else:
+            pos = close + 1
+    parts.append(content[copied:])
+    return "".join(parts)
 
 
 def dedupe_paragraphs(content: str, min_length: int = 100) -> str:

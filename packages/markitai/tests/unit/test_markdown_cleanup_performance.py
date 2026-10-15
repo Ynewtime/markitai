@@ -2,12 +2,14 @@
 
 import random
 import re
+import time
 from unittest.mock import patch
 
 import pytest
 
 from markitai.utils.text import (
     clean_residual_placeholders,
+    fix_broken_markdown_links,
     fix_malformed_image_refs,
     normalize_markdown_whitespace,
 )
@@ -108,3 +110,53 @@ def test_already_bounded_blank_lines_skip_the_collapse_scan():
         side_effect=AssertionError("No excess blank lines"),
     ):
         assert normalize_markdown_whitespace(content) == content
+
+
+def reference_broken_links(content):
+    """Former regex implementation, used as a differential oracle."""
+    pattern = r"\[([^\]]*?)\n+([^\]]*?)\]\(([^)]+)\)"
+    previous = ""
+    while previous != content:
+        previous = content
+        content = re.sub(
+            pattern, lambda m: f"[{m.group(1).strip()}]({m.group(3)})", content
+        )
+    return content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "[Link\ntext](https://example.com)",
+        "[Title text\n\nDescription text](/url) after",
+        "[\nfirst](u) [a\nb](v)",
+        "[a [b\nc](u)",
+        "[a\nb] (u)",
+        "[a\nb]()",
+        "[a\nb](u",
+        "![alt\nmore](img.png)",
+        "[one line](u)",
+        "[a\nb](u)\n[c\nd](w)",
+    ],
+)
+def test_split_link_texts_join_as_the_regex_did(content):
+    assert fix_broken_markdown_links(content) == reference_broken_links(content)
+
+
+def test_split_link_texts_match_the_regex_on_random_text():
+    rng = random.Random(7)
+    for _ in range(20000):
+        content = "".join(rng.choices("[]()\n a!x", k=rng.randrange(0, 30)))
+        assert fix_broken_markdown_links(content) == reference_broken_links(content)
+
+
+def test_an_unclosed_bracket_in_a_long_document_is_linear():
+    """An OCR'd book (half a million characters, 16,000 lines, three ``[``
+    and no ``]``) took 50 s in the regex, which tried every line break as
+    the split and ran to the end of the text from each."""
+    line = "结构指针在函数中控制约束 interpreter 接口对那么就传播一般来说 data-directed"
+    content = "[" + "\n".join([line] * 16000) + "\n[ (x)\n[ y"
+
+    started = time.perf_counter()
+    assert fix_broken_markdown_links(content) == content
+    assert time.perf_counter() - started < 1.0
