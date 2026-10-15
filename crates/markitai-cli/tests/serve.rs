@@ -1,4 +1,6 @@
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
 
 use serde_json::{Value, json};
 use std::{
@@ -51,7 +53,7 @@ impl Server {
             configure(root);
         }
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for key in ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT"] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);

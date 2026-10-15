@@ -2,6 +2,8 @@
 //! quietly, as with other Unix tools; a stream that cannot be written for any
 //! other reason fails with a message that names it.
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
 
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
@@ -15,7 +17,7 @@ static CHILDREN: Mutex<()> = Mutex::new(());
 
 fn command(root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    command.env_clear();
+    console::english(command.env_clear());
     for name in [
         "HOME",
         "PATH",

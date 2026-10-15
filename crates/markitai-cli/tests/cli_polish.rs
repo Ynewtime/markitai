@@ -15,7 +15,7 @@ fn command(root: &Path) -> Command {
 /// `program` in an environment that names only `root`, with English asked for.
 fn isolated(program: impl AsRef<OsStr>, root: &Path) -> Command {
     let mut command = Command::new(program);
-    command.env_clear();
+    console::english(command.env_clear());
     for key in ["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "ComSpec"] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);

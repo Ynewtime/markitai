@@ -15,7 +15,7 @@ const EN: &[(&str, &str)] = &[("MARKITAI_LANG", "en")];
 fn command(root: &Path, envs: &[(&str, &str)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     console::detached(&mut command);
-    command.env_clear();
+    console::english(command.env_clear());
     for name in ["PATH", "SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);

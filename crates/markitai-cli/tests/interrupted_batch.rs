@@ -1,6 +1,8 @@
 //! An interrupted batch says how many items it never started and how to
 //! continue, in the terminal language.
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
 
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -15,7 +17,7 @@ const WAIT: Duration = Duration::from_secs(20);
 
 fn command(root: &Path, language: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    command.env_clear();
+    console::english(command.env_clear());
     for name in ["PATH", "SYSTEMROOT", "USERPROFILE", "TMPDIR", "TEMP", "TMP"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);

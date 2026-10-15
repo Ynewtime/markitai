@@ -1,6 +1,9 @@
 //! `--llm-batch` against a loopback Anthropic Message Batches server: submit,
 //! wait, collect, a pending handoff, resume and an uncertain creation proven
 //! by reconciliation. No provider is contacted; keys are fixture strings.
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -266,7 +269,7 @@ impl Run {
     }
     fn markitai(&self, args: &[&str]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for key in ["PATH", "SYSTEMROOT", "TMPDIR", "TMP", "TEMP"] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);

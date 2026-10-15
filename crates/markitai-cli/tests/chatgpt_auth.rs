@@ -1,4 +1,7 @@
 #![cfg(unix)]
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::{Value, json};
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Output, Stdio};
@@ -30,7 +33,7 @@ impl Fixture {
     }
     fn command(&self) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        c.env_clear().current_dir(self.root.path());
+        console::english(c.env_clear()).current_dir(self.root.path());
         for key in ["HOME", "PATH", "LANG", "LC_ALL", "TMPDIR"] {
             if let Some(value) = std::env::var_os(key) {
                 c.env(key, value);

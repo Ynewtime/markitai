@@ -1,3 +1,6 @@
+#[path = "support/console.rs"]
+mod console;
+
 #[cfg(unix)]
 use serde_json::{Value, json};
 use std::path::Path;
@@ -5,7 +8,7 @@ use std::process::{Command, Stdio};
 
 fn command(root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    command.env_clear();
+    console::english(command.env_clear());
     for key in ["HOME", "PATH", "SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);

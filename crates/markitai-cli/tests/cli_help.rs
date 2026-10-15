@@ -1,9 +1,12 @@
+#[path = "support/console.rs"]
+mod console;
+
 use std::path::Path;
 use std::process::{Command, Output};
 
 fn invoke(root: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    command.env_clear();
+    console::english(command.env_clear());
     for name in [
         "HOME",
         "PATH",

@@ -62,6 +62,7 @@ impl Client {
         let mut command = Command::new(executable);
         command
             .env_clear()
+            .env("MARKITAI_LANG", "en")
             .env("HOME", directory.path().join("home"))
             .env("USERPROFILE", directory.path().join("home"))
             .env("MARKITAI_HOME", directory.path().join("home"))

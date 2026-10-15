@@ -2,6 +2,8 @@
 //! `--version` and shows its own name in help and usage errors, while no
 //! argument at all still starts the MCP service.
 #![cfg(any(unix, windows))]
+#[path = "support/console.rs"]
+mod console;
 
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -43,7 +45,7 @@ impl Launcher {
             })
         };
         let mut command = Command::new(path);
-        command.env_clear();
+        console::english(command.env_clear());
         for name in [
             "PATH",
             "TMPDIR",

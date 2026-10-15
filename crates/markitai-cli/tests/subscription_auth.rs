@@ -55,7 +55,7 @@ impl Fixture {
     }
     fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear().current_dir(self.root.path());
+        console::english(command.env_clear()).current_dir(self.root.path());
         for key in SYSTEM {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);

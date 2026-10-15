@@ -1,3 +1,6 @@
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -173,7 +176,7 @@ fn check_batch(urls: bool) {
             "inputs"
         };
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for key in ["PATH", "SYSTEMROOT", "TMPDIR", "TMP", "TEMP"] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);

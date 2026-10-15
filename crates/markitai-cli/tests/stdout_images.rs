@@ -1,6 +1,9 @@
 //! A document printed to stdout links its images to files saved under
 //! `MARKITAI_HOME/assets` (`image.stdout_persist`), never under the real
 //! home or next to the input; turning that off keeps relative references.
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::json;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -28,7 +31,7 @@ impl Sandbox {
     }
     fn run(&self, args: &[&str]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        command.env_clear();
+        console::english(command.env_clear());
         for name in ["PATH", "SYSTEMROOT", "TMPDIR"] {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);

@@ -1,3 +1,6 @@
+#[path = "support/console.rs"]
+mod console;
+
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -99,7 +102,7 @@ impl Drop for ModelServer {
 
 fn invoke(root: &Path, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    cmd.env_clear();
+    console::english(cmd.env_clear());
     for name in ["PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP"] {
         if let Some(value) = std::env::var_os(name) {
             cmd.env(name, value);
@@ -351,7 +354,7 @@ fn model_content(request: &Value, markdown: &str) -> String {
 
 fn invoke_spa(root: &Path, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_markitai"));
-    cmd.env_clear();
+    console::english(cmd.env_clear());
     for name in [
         "HOME",
         "PATH",
