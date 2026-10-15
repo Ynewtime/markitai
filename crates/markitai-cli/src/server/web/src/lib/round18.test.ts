@@ -122,16 +122,21 @@ test("defaults are read and saved with the revision", async () => {
 });
 
 test("pages OCR found no text on read as one notice with ranges, in either backend's words", () => {
-  assert.deepEqual(ocrBlankNotice("[OCR] No text found on 2 pages of book.pdf (pages 166, 360); they are blank in the output"), { pages: [166, 360], total: null });
-  assert.deepEqual(ocrBlankNotice("[OCR] No text found on 1 page of a.pdf (page 7); it is blank in the output"), { pages: [7], total: null });
-  assert.deepEqual(ocrBlankNotice("OCR found no text on pages 3–5, 9 (4 of 120): they are blank in the output."), { pages: [3, 4, 5, 9], total: 120 });
-  const [group] = groupNotices([{ itemKey: "a", itemName: "a.pdf", text: "OCR found no text on pages 3–5, 9 (4 of 120): they are blank in the output." }]);
+  assert.deepEqual(ocrBlankNotice("[OCR] No text found on 2 pages of book.pdf (pages 166, 360); they are blank in the output"), { pages: [166, 360], total: null, office: false });
+  assert.deepEqual(ocrBlankNotice("[OCR] No text found on 1 page of a.pdf (page 7); it is blank in the output"), { pages: [7], total: null, office: false });
+  assert.deepEqual(ocrBlankNotice("PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in the output."), { pages: [2, 245, 246], total: 490, office: false });
+  assert.deepEqual(ocrBlankNotice("PDF page 1 (1 of 1): OCR found no text; it is blank in the output."), { pages: [1], total: 1, office: false });
+  assert.deepEqual(ocrBlankNotice("Office pages 2, 5 (2 of 9): OCR found no text; the OCR supplement leaves them out."), { pages: [2, 5], total: 9, office: true });
+  assert.equal(ocrBlankNotice("PDF pages 3–5 (3 of 120): native text was not recovered (scanned); OCR is required for these pages."), null);
+  const rust = "PDF pages 3–5, 9 (4 of 120): OCR found no text; they are blank in the output.";
+  const [group] = groupNotices([{ itemKey: "a", itemName: "a.pdf", text: rust }]);
   assert.equal(group?.kind, "ocr_blank");
-  assert.equal(en.noticeTitle("ocr_blank", 1, [], "", group?.pages ?? null), "OCR found no text on pages 3–5, 9 (4 of 120): they are blank in the output");
+  assert.equal(en.noticeTitle("ocr_blank", 1, [], rust, group?.pages ?? null), "OCR found no text on pages 3–5, 9 (4 of 120): they are blank in the output");
+  assert.equal(en.noticeTitle("ocr_blank", 1, [], "Office pages 2 (1 of 9): OCR found no text; the OCR supplement leaves them out.", { ranges: "2", count: 1, total: 9 }), "OCR found no text on page 2 (1 of 9): nothing was added from them");
   assert.equal(zh.noticeTitle("ocr_blank", 1, [], "", { ranges: "7", count: 1, total: null }), "OCR 在第 7 页没有识别到文字：这些页在输出中是空白的");
   const two = groupNotices([
     { itemKey: "a", itemName: "a.pdf", text: "[OCR] No text found on 1 page of a.pdf (page 7); it is blank in the output" },
-    { itemKey: "b", itemName: "b.pdf", text: "[OCR] No text found on 1 page of b.pdf (page 2); it is blank in the output" },
+    { itemKey: "b", itemName: "b.pdf", text: "PDF page 2 (1 of 30): OCR found no text; it is blank in the output." },
   ]);
   assert.deepEqual([two.length, two[0]?.count, two[0]?.pages], [1, 2, null]);
 });

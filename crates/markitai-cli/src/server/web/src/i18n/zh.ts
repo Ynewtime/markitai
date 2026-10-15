@@ -615,7 +615,7 @@ export const zh: Dict = {
       case "pdf_scanned":
         return count === 1 ? "这个 PDF 是扫描件：请开启 OCR 后重新转换" : `${count} 个 PDF 是扫描件：请开启 OCR 后重新转换`;
       case "ocr_blank":
-        if (count === 1 && pages) return `OCR 在第 ${pages.ranges} 页${pages.total ? `（共 ${pages.total} 页中的 ${pages.count} 页）` : ""}没有识别到文字：这些页在输出中是空白的`;
+        if (count === 1 && pages) return `OCR 在第 ${pages.ranges} 页${pages.total ? `（共 ${pages.total} 页中的 ${pages.count} 页）` : ""}没有识别到文字：${/^Office pages? /.test(sample) ? "没有从这些页补充内容" : "这些页在输出中是空白的"}`;
         return `${count} 个文档有 OCR 没有识别到文字的页面：这些页在输出中是空白的`;
       case "pdf_ocr_pages":
         if (count === 1 && pages) return `第 ${pages.ranges} 页${pages.total ? `（共 ${pages.total} 页中的 ${pages.count} 页）` : ""}没有可读文字：开启 OCR 后重新转换即可读取`;

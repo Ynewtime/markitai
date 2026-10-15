@@ -656,7 +656,9 @@ export const en = {
       case "ocr_blank":
         if (count === 1 && pages) {
           const of = pages.total ? ` (${pages.count} of ${pages.total})` : "";
-          return pages.count === 1 ? `OCR found no text on page ${pages.ranges}${of}: it is blank in the output` : `OCR found no text on pages ${pages.ranges}${of}: they are blank in the output`;
+          // An Office document's pages only supplement its text: nothing is added from them.
+          const outcome = /^Office pages? /.test(sample) ? "nothing was added from them" : pages.count === 1 ? "it is blank in the output" : "they are blank in the output";
+          return `OCR found no text on ${pages.count === 1 ? "page" : "pages"} ${pages.ranges}${of}: ${outcome}`;
         }
         return `${count} documents have pages where OCR found no text: those pages are blank in the output`;
       case "pdf_ocr_pages":

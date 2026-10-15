@@ -651,7 +651,7 @@ export const ja: Dict = {
       case "pdf_scanned":
         return count === 1 ? "この PDF はスキャンです。OCR をオンにして変換し直してください" : `${count} 件の PDF はスキャンです。OCR をオンにして変換し直してください`;
       case "ocr_blank":
-        if (count === 1 && pages) return `OCR は ${pages.ranges} ページ${pages.total ? `（全 ${pages.total} ページ中 ${pages.count} ページ）` : ""}で文字を検出できませんでした。出力では空白になっています`;
+        if (count === 1 && pages) return `OCR は ${pages.ranges} ページ${pages.total ? `（全 ${pages.total} ページ中 ${pages.count} ページ）` : ""}で文字を検出できませんでした。${/^Office pages? /.test(sample) ? "これらのページからは何も補われていません" : "出力では空白になっています"}`;
         return `${count} 件の文書に OCR が文字を検出できなかったページがあります。出力では空白になっています`;
       case "pdf_ocr_pages":
         if (count === 1 && pages) return `${pages.ranges} ページ${pages.total ? `（全 ${pages.total} ページ中 ${pages.count} ページ）` : ""}に読み取れる文字がありません。OCR をオンにして変換し直すと読み取れます`;
