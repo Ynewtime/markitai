@@ -16,6 +16,7 @@ mod layout;
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 pub(crate) mod paddle;
 mod pixels;
+pub(crate) mod trace;
 #[cfg(target_os = "macos")]
 mod vision;
 

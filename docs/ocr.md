@@ -288,6 +288,16 @@ still receives the ordinary no-text warning.
   each). On Linux the CLI keeps glibc to four malloc arenas (unless
   `MALLOC_ARENA_MAX` is set): with one per thread, the buffers OCR's threads
   free stayed reserved, and a 40-page scan peaked at 1.3 GB instead of 0.7 GB.
+- `MARKITAI_OCR_TRACE=1` (any value but empty, `0`, `false` or `no`) writes
+  timing lines to stderr for the portable engine: per scanned PDF page the
+  render time, then detection, direction classification, recognition and
+  layout (`post`) in milliseconds, a line for each model prepared (its
+  optimization time and its operators with the matrix-kernel names tract
+  chose, such as `fma_mmm_f32_16x6` on x86-64 with AVX2), and the ten operators
+  that took longest so far (summed over threads; each line includes the ones
+  before it). Pages in flight share the threads, so for per-stage numbers that
+  are not mixed with other pages' use `MARKITAI_OCR_THREADS=1` and a page
+  range. Text results are unchanged.
 - An image or page whose full-image pass keeps no text is read again in
   overlapping tiles, as the reference does: about 800 by 600 pixels each (at
   most four by four, overlapping by 6 %), each enlarged toward a 736-pixel

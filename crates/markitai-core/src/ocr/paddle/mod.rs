@@ -103,6 +103,7 @@ fn plan(mut model: InferenceModel, shape: [Option<usize>; 4], name: &str) -> Res
             None => model.sym(&format!("d{axis}")).into(),
         })
         .collect();
+    let mut lap = super::trace::Lap::start();
     let built = model
         .set_input_fact(0, f32::fact(dims).into())
         .and_then(|_| model.into_typed())
@@ -111,8 +112,66 @@ fn plan(mut model: InferenceModel, shape: [Option<usize>; 4], name: &str) -> Res
             depthwise::split(&mut typed)?;
             typed.into_optimized()
         })
-        .and_then(|typed| typed.into_runnable());
+        .and_then(|typed| {
+            if super::trace::enabled() {
+                super::trace::line(format_args!(
+                    "optimized {name} in {:.0}ms: {}",
+                    lap.ms(),
+                    operators(&typed)
+                ));
+            }
+            typed.into_runnable()
+        });
     built.map_err(|error| engine_error(&format!("cannot prepare the model {name}"), error))
+}
+
+/// The operators of an optimized model with how many of each, for the trace:
+/// the matrix products name the kernels tract chose for them.
+fn operators(model: &TypedModel) -> String {
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for node in model.nodes() {
+        let op = node.op();
+        let name = op.name();
+        let detail = format!("{op:?}");
+        let key = match detail.find("mmm") {
+            // The kernel names appear as `fma_mmm_f32_16x6`, `generic_f32_4x4`...
+            Some(_) => kernels(&detail),
+            None => name.to_string(),
+        };
+        *counts.entry(key).or_default() += 1;
+    }
+    counts
+        .iter()
+        .map(|(name, count)| format!("{name}x{count}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The kernel names in the debug text of a matrix product.
+fn kernels(detail: &str) -> String {
+    let mut found = Vec::new();
+    for word in detail.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+        if (word.contains("_mmm_") || word.contains("_f32_")) && !found.contains(&word) {
+            found.push(word);
+        }
+    }
+    if found.is_empty() {
+        "matmul".into()
+    } else {
+        found.join("+")
+    }
+}
+
+/// `plan` run on `input` with each operator's time added to the trace's
+/// totals.
+fn profiled(plan: &Plan, input: Tensor, name: &str) -> TractResult<TVec<TValue>> {
+    plan.spawn()?
+        .run_plan_with_eval(tvec!(input.into()), |context, state, node, inputs| {
+            let start = std::time::Instant::now();
+            let outputs = tract_onnx::tract_core::plan::eval(context, state, node, inputs);
+            super::trace::operator(name, &node.op().name(), start.elapsed());
+            outputs
+        })
 }
 
 /// Run a plan on one input of `shape` and return its first output's values
@@ -122,9 +181,12 @@ fn run(plan: &Plan, shape: &[usize], data: Vec<f32>, name: &str) -> Result<(Vec<
         .map_err(|error| engine_error(&format!("cannot pass an input to {name}"), error))?;
     // from_shape copies the planes; do not retain both allocations during inference.
     drop(data);
-    let outputs = plan
-        .run(tvec!(input.into()))
-        .map_err(|error| engine_error(&format!("the model {name} failed"), error))?;
+    let outputs = if super::trace::enabled() {
+        profiled(plan, input, name)
+    } else {
+        plan.run(tvec!(input.into()))
+    }
+    .map_err(|error| engine_error(&format!("the model {name} failed"), error))?;
     let output = outputs
         .first()
         .ok_or_else(|| failure(&format!("the model {name} returned no output")))?;
@@ -481,6 +543,7 @@ fn cut_of(image: &RgbImage, region: &detect::Region) -> Result<Cut> {
 /// on their own threads while the detector reads the image, the first time
 /// in a process: optimizing a model takes a tenth of a second or more.
 fn cuts(engine: &Engine, image: &RgbImage, reader: &'static str) -> Result<(Vec<Cut>, bool)> {
+    let mut lap = super::trace::Lap::start();
     let (detected, classifier) = std::thread::scope(|scope| {
         let classifier = scope.spawn(classifier);
         // A failure is reported when the lines are read with it.
@@ -493,7 +556,14 @@ fn cuts(engine: &Engine, image: &RgbImage, reader: &'static str) -> Result<(Vec<
         (detected, classifier)
     });
     let (regions, capped) = detected?;
-    Ok((classified(&*classifier?, image, &regions)?, capped))
+    let detect_ms = lap.ms();
+    let cuts = classified(&*classifier?, image, &regions)?;
+    super::trace::line(format_args!(
+        "det={detect_ms:.0}ms cls={:.0}ms regions={}",
+        lap.ms(),
+        regions.len()
+    ));
+    Ok((cuts, capped))
 }
 
 /// `regions` of `image` cut out upright and direction-classified. Batches of
@@ -766,17 +836,24 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
         Choice::Model(name) => name,
         Choice::Default => MULTILINGUAL,
     };
+    let mut lap = super::trace::Lap::start();
     let (cuts, capped) = cuts(&engine, image, reader)?;
+    lap.ms();
     let (lines, language, unread) = recognize(choice, &cuts)?;
+    super::trace::line(format_args!("rec={:.0}ms lines={}", lap.ms(), cuts.len()));
     if !lines.iter().any(|line| line.confidence >= TEXT_SCORE)
         && let Some(((lines, language, unread), capped)) = tiled(&engine, image, choice)?
     {
+        let tile_ms = lap.ms();
         let mut result = finish(lines, image, language, unread, TILE_TEXT_SCORE)?;
         result.capped = capped;
+        super::trace::line(format_args!("tiled={tile_ms:.0}ms post={:.0}ms", lap.ms()));
         return Ok(result);
     }
     let mut result = finish(lines, image, language, unread, TEXT_SCORE)?;
     result.capped = capped;
+    super::trace::line(format_args!("post={:.0}ms", lap.ms()));
+    super::trace::report(10);
     Ok(result)
 }
 

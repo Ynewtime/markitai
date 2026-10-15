@@ -859,10 +859,18 @@ fn prepare_with(
         let mut running = 0usize;
         for (&index, &size) in render_indices.iter().zip(&sizes) {
             let number = pages.pages[index].number;
+            let mut lap = ocr::trace::Lap::start();
             let pixels = session
                 .as_ref()
                 .expect("render indices require a session")
                 .render(number, DPI)?;
+            ocr::trace::set_page(number);
+            ocr::trace::line(format_args!(
+                "render={:.0}ms size={}x{}",
+                lap.ms(),
+                pixels.width(),
+                pixels.height()
+            ));
             if pixels.dimensions() != size {
                 return Err(failure(
                     "rendered dimensions changed after budget validation",
@@ -913,6 +921,7 @@ fn prepare_with(
                 let ended = Ended(ended.clone());
                 scope.spawn(move || {
                     let _ended = ended;
+                    ocr::trace::set_page(number);
                     recognize(pixels, cfg)
                 })
             });
