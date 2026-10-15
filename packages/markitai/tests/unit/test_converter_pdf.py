@@ -2392,8 +2392,8 @@ class TestOcrPathMatchesStandardPath:
         assert "No text detected" not in result.markdown
         notices = [r for r in records if is_user_notice(r)]
         assert any(
-            r["message"] == "[OCR] mixed.pdf: 1 of 2 pages has no text (page 2); "
-            "it is left blank in the output"
+            r["message"] == "PDF page 2 (1 of 2): OCR found no text; "
+            "it is blank in the output."
             for r in notices
         )
 

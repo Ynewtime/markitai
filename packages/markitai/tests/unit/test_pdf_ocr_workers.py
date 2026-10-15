@@ -82,8 +82,7 @@ def test_scanned_pages_read_in_the_workers_match_this_process(
     assert [shot["page"] for shot in shots] == [1, 2, 3, 4, 5]
     assert all(Path(shot["path"]).is_file() for shot in shots)
     assert notices == [
-        "[OCR] harbour.pdf: 1 of 5 pages has no text (page 3); "
-        "it is left blank in the output"
+        "PDF page 3 (1 of 5): OCR found no text; it is blank in the output."
     ]
 
     pdf_parallel.shutdown_pool()

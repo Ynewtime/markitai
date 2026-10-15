@@ -1638,18 +1638,15 @@ class PdfConverter(BaseConverter):
 
             empty_pages = [i + 1 for i in ocr_pages if not ocr_texts.get(i)]
             if empty_pages:
-                # Python's scanned-pages notice form (contract v1.16): the
-                # name, "N of M pages", the pages as ranges
+                # One notice with the pages as ranges, worded as Rust's
+                # (contract v1.17)
                 one = len(empty_pages) == 1
-                _count, listed = _pages_phrases(empty_pages)
                 user_notice(
-                    "[OCR] {}: {} of {} pages {} no text ({}); {} left blank "
-                    "in the output",
-                    input_path.name,
+                    "PDF {} {} ({} of {}): OCR found no text; {} blank in the output.",
+                    "page" if one else "pages",
+                    page_ranges(empty_pages),
                     len(empty_pages),
                     total_pages,
-                    "has" if one else "have",
-                    listed,
                     "it is" if one else "they are",
                 )
             page_texts.update(ocr_texts)
