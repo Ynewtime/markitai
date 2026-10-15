@@ -10,6 +10,8 @@
  * its place in the original.
  */
 
+@import "./pdf-viewer.css";
+
 @font-face {
   font-family: "Inter Variable";
   font-style: normal;
@@ -539,12 +541,21 @@ textarea {
   width: 10px;
   height: 10px;
 }
+/* converting: grey and pulsing; all done: green and still, then it fades */
 .live-dot > span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--success);
+  background: var(--text-3);
   animation: pulse 1500ms ease-in-out infinite;
+}
+.live-dot.is-done > span {
+  background: var(--success);
+  animation: none;
+}
+.live-dot.is-leaving {
+  opacity: 0;
+  transition: opacity var(--dur-slow) ease;
 }
 .nav-group .live-dot + .nav-count {
   margin-left: 6px;
@@ -1627,82 +1638,141 @@ main:focus {
 .excerpt-body > :first-child {
   margin-top: 0;
 }
-/* Front matter: one line until opened (title or description, then the tag count). */
-.front-card {
-  margin-bottom: 20px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-sm);
-  background: var(--bg);
-}
-.front-card > summary {
+/* Front matter: one light line above the body (tags inline, a Summary control at its end), or,
+   opened, a two-column properties table whose header folds it again. No card, no title. */
+.front-meta {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 8px 12px;
-  border-radius: inherit;
-  cursor: pointer;
-  list-style: none;
-}
-.front-card > summary::-webkit-details-marker {
-  display: none;
-}
-.front-card > summary svg {
-  flex: none;
+  min-height: 28px;
+  margin-bottom: 16px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-sm);
   color: var(--text-3);
-  transition: transform 120ms ease;
 }
-.front-card[open] > summary svg {
-  transform: rotate(90deg);
+.front-meta > svg,
+.front-head > svg:first-child {
+  flex: none;
+  color: var(--text-4);
 }
-.front-card > summary:hover {
-  background: var(--row-hover);
-}
-.front-card .front-title,
-.front-card .front-line {
+.front-meta .front-line {
+  flex: 1;
   overflow: hidden;
   min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.front-line {
   color: var(--text-2);
 }
-.front-count {
-  flex: none;
+.front-sep {
+  color: var(--text-4);
+}
+.front-toggle,
+.front-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
   color: var(--text-3);
-  font-size: var(--text-sm);
+  font: inherit;
+  cursor: pointer;
 }
-.front-count::before {
-  content: "·";
-  margin-right: 8px;
+.front-toggle {
+  flex: none;
+  margin-left: auto;
 }
-.front-body {
-  padding: 0 12px 12px 32px;
-}
-.front-card.is-compact {
-  margin-bottom: 12px;
-}
-.front-title {
-  font-size: var(--text-md);
-  font-weight: 650;
+.front-toggle:hover,
+.front-head:hover {
+  background: var(--row-hover);
   color: var(--text-1);
 }
-.front-description {
-  color: var(--text-2);
+.front-meta.is-open {
+  display: block;
+  padding-bottom: 4px;
+}
+.front-head {
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 0;
+  text-align: left;
+}
+.front-head:hover {
+  background: none;
+}
+.front-head-label {
+  flex: 1;
+}
+.front-table {
+  display: grid;
+  grid-template-columns: minmax(5em, max-content) minmax(0, 1fr);
+  column-gap: 20px;
+  margin: 0;
+}
+.front-row {
+  display: contents;
+}
+.front-table dt,
+.front-table dd {
+  padding: 6px 0;
+  border-top: 1px solid var(--hairline);
+}
+.front-table dt {
+  color: var(--text-3);
+}
+.front-table dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-1);
+}
+.front-meta.is-compact {
+  margin-bottom: 12px;
 }
 .front-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
 }
 .front-tags li {
-  padding: 1px 8px;
+  padding: 0 8px;
   border: 1px solid var(--hairline-strong);
   border-radius: 999px;
-  font-size: var(--text-sm);
   color: var(--text-2);
+}
+@media (max-width: 760px) {
+  .front-table {
+    grid-template-columns: minmax(4.5em, max-content) minmax(0, 1fr);
+    column-gap: 12px;
+  }
+}
+/* The Details excerpt opens Preview: the whole card is one button under the properties control. */
+.excerpt.is-link {
+  cursor: pointer;
+}
+.excerpt.is-link:hover {
+  border-color: var(--hairline-strong);
+}
+.excerpt-open {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  cursor: pointer;
+}
+.excerpt-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.excerpt .front-meta {
+  position: relative;
+  z-index: 2;
 }
 
 /* ------------------------------------------------- inspector, in lines */
@@ -2713,6 +2783,15 @@ kbd {
   border-color: var(--text-3);
   outline: none;
 }
+/* a weight outside 0–100: the field says so (with its message below it) */
+.settings-page input[aria-invalid="true"],
+.settings-page input[aria-invalid="true"]:focus,
+.weight-input[aria-invalid="true"] {
+  border-color: var(--err);
+}
+.weight-error {
+  margin-top: 6px;
+}
 .settings-index {
   border-top: 1px solid var(--hairline);
 }
@@ -3211,6 +3290,33 @@ kbd {
   color: var(--text-3);
 }
 
+/* the composer against its defaults: where it stands, Reset and Save as default */
+.opts-defaults {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--hairline);
+}
+.opts-defaults-state {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+.opts-defaults-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.opts-defaults-actions .text-link {
+  font-size: var(--text-sm);
+}
+.opts-defaults-note {
+  margin-top: 0;
+}
 .cli-bar {
   display: flex;
   align-items: flex-start;
@@ -4474,6 +4580,11 @@ input[type="password"],
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* a saved model under its alias, or one the provider's list does not have */
+.picker-saved-note {
+  font-family: var(--font-sans);
+  color: var(--text-2);
+}
 .picker-note,
 .picker-count {
   font-family: var(--font-mono);
@@ -4931,21 +5042,19 @@ input[type="password"],
 .doc-body .table-scroll {
   overflow-x: auto;
 }
-/* A table may reach past the reading column into a wide pane's margins (up to 200 px a side):
-   the body spans the margins (a drawn chunk paints only inside its own box) and every other
-   block keeps to the column. */
-.viewer:not(.is-compact) .doc-body {
-  --bleed: clamp(0px, (100cqi - var(--read-width)) / 2 - 24px, 200px);
-  margin-inline: calc(-1 * var(--bleed));
+/* Every table keeps to the reading column: the column's width and left edge. A table whose
+   cells need more scrolls sideways inside its own box; its cells never shrink below a few words. */
+.doc-body .table-scroll > table {
+  width: 100%;
+  margin-inline: 0;
 }
-.viewer:not(.is-compact) .doc-body > .doc-chunk > :not(.table-scroll) {
-  margin-inline: var(--bleed);
+.doc-body .table-scroll th,
+.doc-body .table-scroll td {
+  min-width: 6em;
 }
-/* A table takes the column's width, and more only when its cells need it. */
-.viewer:not(.is-compact) .doc-body > .doc-chunk > .table-scroll > table {
-  width: auto;
-  min-width: calc(100% - 2 * var(--bleed));
-  margin-inline: auto;
+.doc-body .table-scroll th:empty,
+.doc-body .table-scroll thead td:empty {
+  min-width: 2em;
 }
 .doc-body table {
   width: 100%;
@@ -6331,29 +6440,84 @@ input[type="password"],
   display: grid;
   gap: 8px;
 }
-.config-editor textarea {
-  width: 100%;
-  min-height: min(62vh, 640px);
-  padding: 14px 16px;
-  border: 1px solid var(--t-border);
+/* The editor follows the theme: the textarea's text is transparent over a layer that draws the
+   same text as coloured JSON (the code tokens); both share every metric, and the layer follows
+   the textarea's scroll. */
+.config-code {
+  position: relative;
+  border: 1px solid var(--hairline-strong);
   border-radius: var(--r-sm);
-  background: var(--t-bg);
-  color: var(--t-text);
-  caret-color: var(--t-text);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  line-height: 1.65;
-  tab-size: 2;
-  white-space: pre;
-  overflow: auto;
-  resize: vertical;
+  background: var(--strip);
 }
-.config-editor textarea:focus-visible {
+.config-code:has(textarea[aria-invalid="true"]) {
+  border-color: var(--err);
+}
+.config-code:has(textarea:focus-visible) {
   outline: 2px solid var(--text-1);
   outline-offset: 2px;
 }
-.config-editor textarea[aria-invalid="true"] {
-  border-color: var(--err);
+.config-highlight,
+.config-editor textarea {
+  margin: 0;
+  padding: 14px 16px;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-ligatures: none;
+  line-height: 1.65;
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.config-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: var(--text-1);
+  pointer-events: none;
+}
+.config-editor textarea {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: min(62vh, 640px);
+  border-radius: inherit;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-1);
+  overflow: auto;
+  resize: vertical;
+}
+.config-editor textarea::selection {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: transparent;
+}
+.config-editor textarea:focus-visible {
+  outline: none;
+}
+.json-key {
+  color: var(--code-key);
+}
+.json-string {
+  color: var(--code-string);
+}
+.json-number {
+  color: var(--code-number);
+}
+.json-literal {
+  color: var(--code-call);
+}
+.json-punct {
+  color: var(--text-3);
+}
+@media (forced-colors: active) {
+  .config-highlight {
+    display: none;
+  }
+  .config-editor textarea {
+    color: CanvasText;
+  }
 }
 .config-check {
   display: flex;

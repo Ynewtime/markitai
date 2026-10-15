@@ -64,25 +64,33 @@ interface Cursor {
   line: number;
 }
 
-/** Walk lines in reading order from a cursor, wrapping once to the start. */
+/** Walk lines in reading order from a cursor to the document's end. It never wraps back to the
+ * start: a heading not found ahead (its page not read yet, or written otherwise) stays unlinked
+ * rather than pairing with an earlier line that says the same (a running head, the contents). */
 function* walk(pages: PageLines[], from: Cursor): Generator<Cursor> {
-  const total = pages.reduce((sum, page) => sum + page.lines.length, 0);
   let pageIndex = from.pageIndex;
   let line = from.line;
-  for (let seen = 0; seen < total; seen++) {
+  for (;;) {
     while (pageIndex < pages.length && line >= (pages[pageIndex]?.lines.length ?? 0)) {
       pageIndex++;
       line = 0;
     }
-    if (pageIndex >= pages.length) {
-      pageIndex = 0;
-      line = 0;
-      while (pageIndex < pages.length && (pages[pageIndex]?.lines.length ?? 0) === 0) pageIndex++;
-      if (pageIndex >= pages.length) return;
-    }
+    if (pageIndex >= pages.length) return;
     yield { pageIndex, line };
     line++;
   }
+}
+
+/** A line's text as `norm` gives it, worked out once: a long document is searched many times. */
+const normed = new WeakMap<object, string>();
+function normOf(line: { text: string } | undefined): string {
+  if (!line) return "";
+  let text = normed.get(line);
+  if (text === undefined) {
+    text = norm(line.text);
+    normed.set(line, text);
+  }
+  return text;
 }
 
 const lineAt = (pages: PageLines[], at: Cursor) => pages[at.pageIndex]?.lines[at.line];
@@ -92,7 +100,7 @@ function findHeading(pages: PageLines[], wanted: string, from: Cursor): { at: Cu
   for (const at of walk(pages, from)) {
     const line = lineAt(pages, at);
     if (!line) continue;
-    const text = norm(line.text);
+    const text = normOf(line);
     if (!text) continue;
     if (text === wanted) return { at, box: line.bbox };
     // A heading wrapped over two lines, or set apart from a section number.
@@ -114,18 +122,18 @@ function findTable(pages: PageLines[], header: string[], last: string[], from: C
   for (const at of walk(pages, from)) {
     const start = lineAt(pages, at);
     if (!start) continue;
-    const text = norm(start.text);
+    const text = normOf(start);
     if (!holds(text, cells[0] as string)) continue;
     // The header must show at least half its cells within the next few lines.
     const page = pages[at.pageIndex] as PageLines;
-    const window = page.lines.slice(at.line, at.line + cells.length + 2).map((line) => norm(line.text)).join("|");
+    const window = page.lines.slice(at.line, at.line + cells.length + 2).map(normOf).join("|");
     if (cells.filter((cell) => window.includes(cell)).length < Math.ceil(cells.length / 2)) continue;
     // The table ends at the line that holds its last row's first cell (or the page end).
     let end = page.lines.length - 1;
     if (tail.length) {
       const first = tail[0] as string;
       for (let index = at.line + 1; index < page.lines.length; index++) {
-        if (holds(norm(page.lines[index]?.text ?? ""), first)) {
+        if (holds(normOf(page.lines[index]), first)) {
           end = index;
           // A row set as several lines: take the lines on the same baseline.
           const baseline = page.lines[index]?.bbox[3] ?? 0;
@@ -157,7 +165,7 @@ function findBlock(pages: PageLines[], wanted: string, from: Cursor): { at: Curs
   for (let pageIndex = from.pageIndex; pageIndex < pages.length && seen < BLOCK_REACH; pageIndex++) {
     const lines = pages[pageIndex]?.lines ?? [];
     for (let line = pageIndex === from.pageIndex ? from.line : 0; line < lines.length && seen < BLOCK_REACH; line++, seen++) {
-      const text = norm(lines[line]?.text ?? "");
+      const text = normOf(lines[line]);
       // A short block is a line of its own; a longer one may start or sit inside a line.
       if (wanted.length < 4) {
         if (text === wanted) return { at: { pageIndex, line }, end: { pageIndex, line }, box: lines[line]?.bbox as Box };
@@ -175,7 +183,7 @@ function findBlock(pages: PageLines[], wanted: string, from: Cursor): { at: Curs
         let next = line + 1;
         let last = line;
         while (read < wanted.length && next < lines.length) {
-          const more = norm(lines[next]?.text ?? "");
+          const more = normOf(lines[next]);
           if (!more) {
             next++;
             continue;

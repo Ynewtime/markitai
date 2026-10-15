@@ -1,0 +1,403 @@
+/* Compare's PDF viewer (components/pdf-viewer.tsx), in the workbench's
+ * language: the tools share the original's 44 px header (S28 controls, 36 px
+ * on phones), one hairline between groups, the page box in the monospace
+ * figures the header already uses for the file size, white pages on the
+ * strip. The outline panel is a surface column beside the pages, or a sheet
+ * over them when the pane is narrow. Sizes, radii, durations and shadows are
+ * the tokens of app.css; the viewer drops its least needed tools first as
+ * its pane narrows (container queries on .pdfv). esbuild puts this file
+ * before app.css, so a rule that meets one of app.css's names is more specific. */
+
+.pdfv {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  container-type: inline-size;
+  container-name: pdfv;
+}
+
+/* ---------------------------------------------------------------- tools */
+
+.orig-head.has-tools {
+  gap: 8px;
+  padding-left: 12px;
+}
+.orig-head.has-tools .orig-size {
+  margin-left: 0;
+}
+.pdfv-tools {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.pdfv-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--hairline-strong);
+}
+.pdfv-panel-btn.is-on {
+  background: var(--sel-strong);
+  color: var(--text-1);
+}
+.pdfv-nav,
+.pdfv-zoom {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.pdfv-zoom {
+  margin-left: auto;
+}
+.pdfv-page-box {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.pdfv-page-input {
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+  text-align: center;
+}
+.pdfv-page-input[aria-invalid="true"] {
+  border-color: var(--err);
+}
+.pdfv-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 92px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-ui);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) ease;
+}
+.pdfv-zoom-btn svg {
+  color: var(--text-3);
+}
+.pdfv-zoom-btn[aria-expanded="true"] {
+  background: var(--sel-strong);
+}
+.menu.pdfv-menu {
+  width: 168px;
+}
+
+/* ----------------------------------------------------------------- pages */
+
+.pdfv-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.orig-scroll.pdfv-scroll {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+.pdfv-sheet {
+  position: relative;
+}
+.pdfv-page {
+  position: absolute;
+  border: 1px solid var(--hairline);
+  background: #ffffff;
+  box-shadow: var(--shadow-pop);
+}
+.pdfv-page img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  user-select: none;
+}
+.pdfv-more {
+  text-align: center;
+}
+
+/* ----------------------------------------------------------------- panel */
+
+.pdfv-panel {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 256px;
+  min-height: 0;
+  border-right: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.pdfv-panel.is-over {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  width: min(320px, calc(100% - 48px));
+  border-right: 0;
+  box-shadow: var(--shadow-modal);
+  animation: pdfv-in var(--dur-slow) var(--ease-out);
+}
+@keyframes pdfv-in {
+  from {
+    transform: translateX(-12px);
+    opacity: 0;
+  }
+}
+/* a phone: the contents sheet's frame (.toc-veil, .toc-sheet), holding the panel's list */
+.pdfv-panel.is-sheet {
+  width: 100%;
+  height: min(72dvh, 640px);
+  border-right: 0;
+}
+.pdfv-panel.is-sheet .pdfv-panel-head {
+  padding: 10px 8px 6px 16px;
+}
+.pdfv-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: rgb(9 9 11 / 0.32);
+  animation: fade-in var(--dur-slow) var(--ease-out);
+}
+.pdfv-panel-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 8px 0 12px;
+}
+.pdfv-panel-title {
+  font-size: var(--text-ui);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.pdfv-source {
+  flex: none;
+  padding: 0 14px 8px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.pdfv-tree,
+.pdfv-thumbs {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 6px 6px 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) transparent;
+}
+.pdfv-tree {
+  position: relative;
+}
+.pdfv-row {
+  display: flex;
+  align-items: flex-start;
+}
+.pdfv-fold,
+.pdfv-fold-gap {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 28px;
+  border-radius: var(--r-xs);
+  color: var(--text-3);
+}
+.pdfv-entry {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px 5px 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-ui);
+  line-height: 1.4;
+  color: var(--text-2);
+  text-align: left;
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.pdfv-entry-title {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.pdfv-entry-page {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.pdfv-entry.is-on {
+  background: var(--sel-strong);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.pdfv-entry.is-on::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.pdfv-thumbs {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding-top: 12px;
+}
+.pdfv-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-xs);
+}
+.pdfv-thumb-page {
+  display: block;
+  width: 112px;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  background: #ffffff;
+}
+.pdfv-thumb-page img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.pdfv-thumb-number {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.pdfv-thumb.is-on .pdfv-thumb-page {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pdfv-thumb.is-on .pdfv-thumb-number {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* ------------------------------------------------------- hover and focus */
+
+@media (hover: hover) and (pointer: fine) {
+  .pdfv-zoom-btn:hover,
+  .pdfv-fold:hover,
+  .pdfv-entry:not(.is-on):hover,
+  .pdfv-thumb:hover {
+    background: var(--strip);
+    color: var(--text-1);
+  }
+}
+.pdfv-zoom-btn:focus-visible,
+.pdfv-fold:focus-visible,
+.pdfv-entry:focus-visible,
+.pdfv-thumb:focus-visible,
+.pdfv-page-input:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: -2px;
+}
+
+/* ------------------------------------------- narrower panes drop tools */
+
+@container pdfv (max-width: 620px) {
+  .orig-head.has-tools .orig-size {
+    display: none;
+  }
+}
+@container pdfv (max-width: 520px) {
+  .orig-head.has-tools .orig-label {
+    display: none;
+  }
+  .orig-head.has-tools {
+    padding-left: 6px;
+  }
+}
+@container pdfv (max-width: 460px) {
+  .pdfv .pdfv-zoom-step,
+  .pdfv-sep-zoom {
+    display: none;
+  }
+  .pdfv-zoom-btn {
+    min-width: 0;
+  }
+}
+@container pdfv (max-width: 340px) {
+  .pdfv .pdfv-step {
+    display: none;
+  }
+}
+
+/* phones: 36 px controls, as the rest of the workbench */
+@media screen and (max-width: 760px) {
+  /* 16 px keeps iOS from zooming the page when the box takes focus */
+  .pdfv-page-input {
+    height: 32px;
+    font-size: var(--text-md);
+  }
+  .pdfv-zoom-btn {
+    height: 36px;
+  }
+  .pdfv-fold,
+  .pdfv-fold-gap {
+    width: 28px;
+    height: 36px;
+  }
+  .pdfv-entry {
+    padding-block: 9px;
+    font-size: var(--text-base);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdfv-panel.is-over,
+  .pdfv-veil {
+    animation: none;
+  }
+}

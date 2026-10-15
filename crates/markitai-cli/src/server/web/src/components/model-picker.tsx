@@ -2,12 +2,14 @@
 // the search and Select all: search, select what is visible, add an identifier
 // by hand, and set the routing group and weight (all in plain sight, on the grid
 // of the connection's key and address). Models
-// already configured with the same group and endpoint cannot be added twice.
+// already configured with the same group and endpoint cannot be added twice:
+// a saved model shows ticked on its listed row (also when it was saved under an
+// alias the provider defines), or as a row of its own when the list lacks it.
 // The selection count sits with the dialog's pinned actions.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Deployment, ModelCandidate } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
-import { manualModelId, sameEndpoint } from "../lib/models.ts";
+import { manualModelId, parseWeight, pickerRows, stepWeight, WEIGHT_MAX, WEIGHT_PLACEHOLDER } from "../lib/models.ts";
 import { Icon } from "./icons.tsx";
 
 export function ModelPicker({
@@ -27,6 +29,8 @@ export function ModelPicker({
   manualOnly = false,
   groups = true,
   weightHint,
+  defaultBase,
+  onWeightValid,
 }: {
   t: Dict;
   /** The provider lists no models: manual entry is open and explained. */
@@ -35,6 +39,10 @@ export function ModelPicker({
   groups?: boolean;
   /** What the weight does, when it differs from the admin's groups. */
   weightHint?: string;
+  /** The provider's documented address: a saved model without one of its own is there. */
+  defaultBase?: string | null;
+  /** Whether the weight field holds a weight Save may write (a whole number from 0 to 100). */
+  onWeightValid?: (valid: boolean) => void;
   provider: string;
   candidates: ModelCandidate[];
   deployments: Deployment[];
@@ -67,14 +75,20 @@ export function ModelPicker({
     for (const candidate of [...candidates, ...added]) byModel.set(candidate.model, candidate);
     return [...byModel.values()];
   }, [candidates, added]);
-  const configured = (model: string) =>
-    deployments.some(
-      (deployment) => deployment.model === model && deployment.routing_group === group.trim() && sameEndpoint(deployment.api_base, apiBase),
-    );
+  // Every listed model with the saved ones it stands for, then saved models the
+  // list does not show; the configured ones head the list.
+  const rows = useMemo(() => pickerRows(provider, all, deployments, group, apiBase, defaultBase), [provider, all, deployments, group, apiBase, defaultBase]);
+  const configuredModels = useMemo(() => new Set(rows.filter((row) => row.saved.length > 0).map((row) => row.model)), [rows]);
+  const configured = (model: string) => configuredModels.has(model);
   const needle = query.trim().toLowerCase();
-  const matching = all.filter((candidate) => !needle || candidate.model.toLowerCase().includes(needle) || candidate.label.toLowerCase().includes(needle));
-  // Models already enabled for this group and endpoint head the list.
-  const visible = [...matching.filter((candidate) => configured(candidate.model)), ...matching.filter((candidate) => !configured(candidate.model))];
+  const visible = rows.filter(
+    (row) => !needle || [row.model, row.label, ...row.aliases].some((text) => text.toLowerCase().includes(needle)),
+  );
+  // A provider that lists models but not this saved one says so; one without a list has nothing to compare.
+  const listed = candidates.length > 0;
+  const weightError = weightDraft !== null && weightDraft.trim() !== "" && parseWeight(weightDraft) === null;
+  const weightEmpty = weightDraft !== null && weightDraft.trim() === "";
+  useEffect(() => onWeightValid?.(!weightError && !weightEmpty), [weightError, weightEmpty]);
   // The tick is the state this connection will keep: a configured model is on
   // unless it was unticked, another one is on once it was ticked.
   const chosen = (model: string) => (configured(model) ? !dropped.has(model) : selected.has(model));
@@ -132,21 +146,23 @@ export function ModelPicker({
               <input ref={selectAll} type="checkbox" checked={allChosen} disabled={!visible.length} onChange={toggleVisible} />
               {t.selectAll}
             </label>
-            <span class="picker-total">{t.pickerShown(visible.length, all.length)}</span>
+            <span class="picker-total">{t.pickerShown(visible.length, rows.length)}</span>
           </div>
         </div>
         <div class="picker-list" role="group" aria-label={t.modelsAvailable}>
           {visible.map((candidate) => {
             const done = configured(candidate.model);
             const removed = done && dropped.has(candidate.model);
+            const note = candidate.unlisted && listed ? t.savedNotListed : candidate.aliases.length ? candidate.aliases.map((alias) => t.savedAsAlias(alias)).join(" · ") : null;
             return (
-              <label key={candidate.model} class={removed ? "picker-option is-removed" : "picker-option"}>
+              <label key={candidate.model} class={removed ? "picker-option is-removed" : "picker-option"} data-unlisted={candidate.unlisted || undefined}>
                 {/* The tick states what this connection keeps: a model it already
                     routes comes in ticked, and unticking it schedules a removal. */}
                 <input type="checkbox" checked={chosen(candidate.model)} onChange={() => toggle(candidate.model)} />
                 <span class="picker-option-main">
                   <span>{candidate.label}</span>
                   <span class="picker-id">{candidate.model}</span>
+                  {note && <span class="picker-id picker-saved-note">{note}</span>}
                 </span>
                 {candidate.supports_vision && <span class="mini-pill">{t.visionTag}</span>}
                 {done && <span class={removed ? "mini-pill is-removed" : "mini-pill"}>{removed ? t.willRemove : t.alreadyConfigured}</span>}
@@ -196,19 +212,43 @@ export function ModelPicker({
             <span class="field-label">{t.weight}</span>
             <input
               type="number"
+              inputMode="numeric"
               min={0}
+              max={WEIGHT_MAX}
+              step={1}
+              placeholder={WEIGHT_PLACEHOLDER}
               value={weightDraft ?? weight}
-              aria-describedby="weight-hint"
+              aria-invalid={weightError || weightEmpty || undefined}
+              aria-describedby={weightError || weightEmpty ? "weight-error weight-hint" : "weight-hint"}
               onInput={(event) => {
-                setWeightDraft(event.currentTarget.value);
-                onWeight(Math.max(0, Math.floor(Number(event.currentTarget.value)) || 0));
+                const text = event.currentTarget.value;
+                setWeightDraft(text);
+                const next = parseWeight(text);
+                if (next !== null) onWeight(next);
               }}
-              onBlur={() => setWeightDraft(null)}
+              onKeyDown={(event) => {
+                // The browser's own stepping stops at min and max as well; this keeps a typed value in range too.
+                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                event.preventDefault();
+                const next = stepWeight(weightDraft ?? String(weight), weight, event.key === "ArrowUp" ? 1 : -1);
+                setWeightDraft(String(next));
+                onWeight(next);
+              }}
+              // A valid value settles; an invalid or empty one stays to be corrected.
+              onBlur={() => weightDraft !== null && parseWeight(weightDraft) !== null && setWeightDraft(null)}
             />
           </label>
         </div>
+        {(weightError || weightEmpty) && (
+          <p id="weight-error" class="config-check is-error weight-error" role="alert">
+            <Icon name="WarningCircle" size={14} />
+            <span>{t.weightInvalid}</span>
+          </p>
+        )}
         <p id="weight-hint" class="field-hint">
           {weightHint ?? t.weightHint}
+          <br />
+          {t.weightRangeHint}
         </p>
       </section>
     </div>

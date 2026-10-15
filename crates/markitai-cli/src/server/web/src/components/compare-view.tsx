@@ -3,7 +3,8 @@
 // conversion's page screenshots); page images load as they scroll into view,
 // fetched with the header token. Hovering a heading or table on either side
 // outlines its counterpart: PDF pages are matched through their text layer,
-// HTML by element. A web page opens on its screenshot when the conversion took
+// HTML by element; a PDF opens in the PDF viewer (pdf-viewer.tsx: zoom, page
+// box, outline). A web page opens on its screenshot when the conversion took
 // one; its other view is the kept snapshot in a sandboxed frame that runs no
 // script and loads only the site's pictures, styles and fonts. The frame shares
 // the workbench's origin (it still runs nothing: no `allow-scripts`, and its
@@ -11,13 +12,14 @@
 // with the Markdown's by their words and outlines them with a style of its own.
 // On phones the original sits above the Markdown.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, downloadTicket, fetchBlob, fetchPageText, fetchShotBlocks, fetchText, originalPagePath } from "../api/client.ts";
+import type { ComponentChildren } from "preact";
+import { ApiError, downloadTicket, fetchBlob, fetchShotBlocks, fetchText, originalPagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
 import type { CaptureQuality, OriginalDescriptor } from "../api/types.ts";
 import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { locate, norm, onShots, pageBlocks, pairBlocks, pairElements, shotBlocks, TARGET_SELECTOR, targetsOf, webViews, type Box, type Located, type PageLines, type Target } from "../lib/compare.ts";
+import { norm, onShots, pageBlocks, pairBlocks, pairElements, shotBlocks, TARGET_SELECTOR, targetsOf, webViews, type Located, type Target } from "../lib/compare.ts";
 import { download } from "../lib/download.ts";
 import { fmtBytes, readable } from "../lib/format.ts";
 import { loadLibraries, shownAs, shownFor } from "../lib/markdown.ts";
@@ -26,17 +28,9 @@ import { HelpTooltip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { Skeleton } from "./skeleton.tsx";
 import { MarkdownView, type Tab } from "./markdown-view.tsx";
+import { NO_IDS, PageMarks, PdfViewer, usePaired, type Linked } from "./pdf-viewer.tsx";
 
-/** Text layers read for matching, at most this many pages. */
-const TEXT_PAGES = 40;
 const ORIGINAL_TEXT_BYTES = 5 * 1024 * 1024;
-
-interface Linked {
-  id: string;
-  kind: Target["kind"];
-  /** 1-based ordinal among targets of its kind, for the label ("Table 2"). */
-  ordinal: number;
-}
 
 /** Times a page refused as busy (429) is asked again before it reads as not drawn. */
 const RENDER_RETRIES = 4;
@@ -63,7 +57,7 @@ export function CompareView({
   const [targets, setTargets] = useState<{ element: HTMLElement; target: Target }[]>([]);
   const [hover, setHover] = useState<Linked | null>(null);
   // The blocks the original can show: only those are outlined when the Markdown is hovered.
-  const [paired, setPaired] = useState<ReadonlySet<string>>(NONE);
+  const [paired, setPaired] = useState<ReadonlySet<string>>(NO_IDS);
   const markdownRoot = useRef<HTMLElement | null>(null);
   const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
   // A web page: its kept page, its screenshots, or neither when what was kept is not the page
@@ -126,17 +120,28 @@ export function CompareView({
     if (id) reveal(id);
   };
 
-  const original = (
+  const header = (tools?: ComponentChildren) => (
+    <OriginalHeader
+      t={t}
+      item={item}
+      descriptor={descriptor}
+      url={url}
+      views={web?.page && web.shot && snapView ? { value: snapView, onChange: setSnapView } : null}
+      framed={webPage}
+      shot={snapView === "shot"}
+    >
+      {tools}
+    </OriginalHeader>
+  );
+  // A PDF: the viewer holds its tools in the header.
+  const pdf = !error && descriptor?.kind === "pdf" && !(webPage && url);
+  const original = pdf ? (
     <div class="orig">
-      <OriginalHeader
-        t={t}
-        item={item}
-        descriptor={descriptor}
-        url={url}
-        views={web?.page && web.shot && snapView ? { value: snapView, onChange: setSnapView } : null}
-        framed={webPage}
-        shot={snapView === "shot"}
-      />
+      <PdfViewer t={t} item={item} descriptor={descriptor} doc={doc} targets={targets} hover={hover} onHover={onOriginalHover} onPaired={setPaired} header={header} phone={phone} />
+    </div>
+  ) : (
+    <div class="orig">
+      {header()}
       {error ? (
         <p class="pane-note line-error">{describe(error).text}</p>
       ) : descriptor === null ? (
@@ -174,16 +179,6 @@ export function CompareView({
   );
 }
 
-const NONE: ReadonlySet<string> = new Set();
-
-/** Reports, while it is shown, which of the Markdown's blocks an original view can show. */
-function usePaired(onPaired: (ids: ReadonlySet<string>) => void, ids: Iterable<string>, key: unknown) {
-  useEffect(() => {
-    onPaired(new Set(ids));
-  }, [key]);
-  useEffect(() => () => onPaired(NONE), []);
-}
-
 /** A web page whose kept copy is not the page (a check page, a blank page, a JavaScript notice) and
  * that has no usable screenshot: say so, and open the page itself. */
 function PageNotKept({ t, url, failed }: { t: Dict; url: string; failed: CaptureQuality | null }) {
@@ -208,6 +203,7 @@ function OriginalHeader({
   views,
   framed,
   shot,
+  children,
 }: {
   t: Dict;
   item: SessionItem;
@@ -218,11 +214,13 @@ function OriginalHeader({
   framed: boolean;
   /** Its screenshot is shown. */
   shot: boolean;
+  /** A viewer's tools (the PDF viewer's), between the label and the file's size. */
+  children?: ComponentChildren;
 }) {
   const [failed, setFailed] = useState(false);
   const fetchable = framed ? null : descriptor?.download;
   return (
-    <div class="orig-head">
+    <div class={children ? "orig-head has-tools" : "orig-head"}>
       <span class="orig-label">{t.original}</span>
       {framed && <InfoTip label={t.originalPageInfo} text={shot ? t.originalShotNote : t.originalPageNote} />}
       {views && (
@@ -234,6 +232,7 @@ function OriginalHeader({
           ))}
         </span>
       )}
+      {children}
       {descriptor?.size != null && <span class="orig-size">{fmtBytes(descriptor.size)}</span>}
       {fetchable && (
         <button
@@ -472,7 +471,6 @@ function OriginalBody({
   onPaired: (ids: ReadonlySet<string>) => void;
 }) {
   switch (descriptor.kind) {
-    case "pdf":
     case "image":
     case "screenshots":
       return <Pages t={t} item={item} descriptor={descriptor} targets={targets} hover={hover} onHover={onHover} onPaired={onPaired} />;
@@ -499,7 +497,7 @@ function OriginalBody({
   }
 }
 
-/** Page images, loaded as they come into view, with the located outlines on top. */
+/** Page images (an image, a web page's screenshots), loaded as they come into view, with the located outlines on top. */
 function Pages({
   t,
   item,
@@ -582,9 +580,9 @@ function Pages({
 
   // A web page's screenshots: the boxes its blocks had when they were taken (v1.14), paired like the page's own.
   useEffect(() => {
-    const path = descriptor.kind === "pdf" ? null : descriptor.blocks;
+    const path = descriptor.blocks;
     if (!path || !targets.length) {
-      if (descriptor.kind !== "pdf") setLocated(new Map());
+      setLocated(new Map());
       return;
     }
     let stale = false;
@@ -611,38 +609,6 @@ function Pages({
     };
   }, [item.key, descriptor, targets]);
 
-  // Text layers for matching: the first pages, read once per item.
-  useEffect(() => {
-    if (descriptor.kind !== "pdf" || !descriptor.text_layer || !targets.length) {
-      if (descriptor.kind === "pdf") setLocated(new Map());
-      return;
-    }
-    const controller = new AbortController();
-    const count = Math.min(descriptor.page_count, TEXT_PAGES);
-    // Two at a time, as the server reads pages (it answers more 429 render_busy);
-    // a busy answer is asked again a little later, a few times at most.
-    const read = async (page: number): Promise<PageLines> => {
-      for (let attempt = 0; ; attempt++) {
-        try {
-          const text = await fetchPageText(item.jobId, item.itemId, page, controller.signal);
-          return { page: text.page, lines: text.lines, images: text.images?.map((image) => image.bbox) };
-        } catch (error) {
-          if (controller.signal.aborted || !(error instanceof ApiError && error.status === 429) || attempt >= RENDER_RETRIES) return { page, lines: [] };
-          await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-        }
-      }
-    };
-    const layers: PageLines[] = [];
-    let next = 1;
-    const worker = async () => {
-      while (next <= count && !controller.signal.aborted) layers.push(await read(next++));
-    };
-    void Promise.all([worker(), worker()]).then(() => {
-      if (!controller.signal.aborted) setLocated(locate(layers.sort((a, b) => a.page - b.page), targets.map(({ target }) => target)));
-    });
-    return () => controller.abort();
-  }, [item.key, descriptor, targets]);
-
   // The hovered element's page comes into view.
   useEffect(() => {
     if (!hover) return;
@@ -655,35 +621,6 @@ function Pages({
     const top = node.offsetTop + (size ? (spot.box[1] / size.height) * node.clientHeight : 0);
     if (top < root.scrollTop + 40 || top > root.scrollTop + root.clientHeight - 80) root.scrollTo({ top: Math.max(0, top - root.clientHeight / 3), behavior: "smooth" });
   }, [hover, located]);
-
-  const marks = (page: number) => {
-    const size = pages[page - 1];
-    if (!size) return null;
-    const pct = (box: Box) => ({
-      left: `${(box[0] / size.width) * 100}%`,
-      top: `${(box[1] / size.height) * 100}%`,
-      width: `${((box[2] - box[0]) / size.width) * 100}%`,
-      height: `${((box[3] - box[1]) / size.height) * 100}%`,
-    });
-    const counters = { heading: 0, table: 0, block: 0, image: 0 };
-    return targets.map(({ target }) => {
-      const ordinal = ++counters[target.kind];
-      const spot = located.get(target.id);
-      if (!spot || spot.page !== page) return null;
-      const on = hover?.id === target.id;
-      return (
-        <span
-          key={target.id}
-          class={on ? `omark is-${target.kind} is-on` : `omark is-${target.kind}`}
-          style={pct(spot.box)}
-          onMouseEnter={() => onHover(target.id)}
-          onMouseLeave={() => onHover(null)}
-        >
-          {on && (target.kind === "heading" || target.kind === "table") && <span class="omark-label">{target.kind === "table" ? t.tableN(ordinal) : t.headingMark}</span>}
-        </span>
-      );
-    });
-  };
 
   return (
     <div class="orig-pages-wrap">
@@ -704,7 +641,7 @@ function Pages({
               ) : (
                 <span class="page-note">{t.loading}</span>
               )}
-              <span class="page-marks">{marks(page)}</span>
+              <PageMarks t={t} page={page} size={size} targets={targets} located={located} hover={hover} onHover={onHover} />
             </div>
           );
         })}

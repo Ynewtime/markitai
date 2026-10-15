@@ -17,6 +17,8 @@ import {
   matchingPreset,
   PRESETS,
   resolveOptions,
+  sameAsDefaults,
+  defaultsOf,
   type Advanced,
   type Composer,
   type PresetTable,
@@ -24,6 +26,7 @@ import {
 import { UploadPicker } from "./file-picker.tsx";
 import { HelpTooltip, helpItemText, type HelpItem } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
+import type { DefaultsControl } from "../hooks/use-convert-defaults.ts";
 
 const STRATEGIES: FetchStrategy[] = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
 const BACKENDS: ConversionBackend[] = ["native", "cloudflare"];
@@ -154,6 +157,7 @@ export function OptionsPanel({
   heading,
   actions,
   busy,
+  defaults = null,
   onChange,
   onFiles,
   onFolder,
@@ -174,6 +178,8 @@ export function OptionsPanel({
   heading?: ComponentChildren;
   actions?: ComponentChildren;
   busy: boolean;
+  /** v1.17: the server's (or the user's own) defaults, saved and restored here. */
+  defaults?: DefaultsControl | null;
   onChange: (next: Composer) => void;
   onFiles: (files: File[]) => void;
   onFolder: (files: File[], hidden: number) => void;
@@ -474,6 +480,7 @@ export function OptionsPanel({
                 </div>
               )}
             </div>
+            {defaults && <DefaultsBar t={t} id={id} state={state} presets={presets} control={defaults} llmReady={llmReady} />}
             <div class="cli-bar">
               <div class="cli-body">
                 <code class="cli-text" role="group" tabIndex={0} aria-label={t.cliAria}>
@@ -506,6 +513,58 @@ export function OptionsPanel({
           {selectionReason && selectionReason !== "incompatible_strategy" && <details><summary>{t.helpLabel}</summary><p>{t.cloudflareSetup}</p></details>}
         </div>}
       </div>
+    </div>
+  );
+}
+
+/** Where the composer stands against its defaults, and Save as default / Reset to defaults. */
+function DefaultsBar({ t, id, state, presets, control, llmReady }: { t: Dict; id: string; state: Composer; presets: PresetTable; control: DefaultsControl; llmReady: boolean }) {
+  const { view, saving, failure } = control;
+  // Without a model the defaults apply without LLM (the composer turns it off), so they still count as met.
+  const same = sameAsDefaults(state, llmReady ? view.defaults : { ...view.defaults, llm: false }, presets);
+  const remote = defaultsOf(state, presets) === null;
+  const own = view.origin === "user";
+  const where = same ? (own ? t.defaultsOwn : t.defaultsServer) : t.defaultsChanged;
+  return (
+    <div class="opts-defaults" role="group" aria-labelledby={`${id}-defaults`}>
+      <p class="opts-defaults-state">
+        <span id={`${id}-defaults`} class="sr-only">
+          {t.defaultsGroup}:{" "}
+        </span>
+        <span role="status">{where}</span>
+      </p>
+      <div class="opts-defaults-actions">
+        {own && view.can_save && (
+          <button type="button" class="text-link" disabled={saving} onClick={control.useServer}>
+            {t.defaultsUseServer}
+          </button>
+        )}
+        <button type="button" class="btn btn-sm" disabled={same} onClick={control.reset}>
+          {t.defaultsReset}
+        </button>
+        {view.can_save && (
+          <button
+            type="button"
+            class="btn btn-sm"
+            disabled={same || remote || saving}
+            aria-busy={saving || undefined}
+            aria-describedby={same ? undefined : `${id}-defaults-scope`}
+            onClick={control.save}
+          >
+            {t.defaultsSave}
+          </button>
+        )}
+      </div>
+      {view.can_save && !same && (
+        <p id={`${id}-defaults-scope`} class="opt-note opts-defaults-note">
+          {remote ? t.defaultsNoCloudflare : view.scope === "user" ? t.defaultsScopeUser : t.defaultsScopeServer}
+        </p>
+      )}
+      {failure && (
+        <p class="opt-note opts-defaults-note line-error" role="alert">
+          {failure.stale ? t.defaultsStale : failure.text}
+        </p>
+      )}
     </div>
   );
 }

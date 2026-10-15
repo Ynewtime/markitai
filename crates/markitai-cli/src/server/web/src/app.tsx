@@ -5,13 +5,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ApiError, fetchCapabilities, filePath, itemArchivePath, NetworkError, setItemAssets, setTicketDownloads } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
-import type { Capabilities, JobOptions } from "./api/types.ts";
+import type { Capabilities, ConvertDefaultsView, JobOptions } from "./api/types.ts";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
 import { ConversionsPage } from "./components/conversions-page.tsx";
 import { ConvertPage } from "./components/convert-page.tsx";
 import { DropOverlay } from "./components/drop-overlay.tsx";
 import { MAX_NOTES, NoticeStack, type Note } from "./components/notes.tsx";
-import { onToast, withLead } from "./lib/toast.ts";
+import { onToast, toast, withLead } from "./lib/toast.ts";
 import { OptionsPanel } from "./components/options-panel.tsx";
 import { AccessSettings, AppearanceSettings, SettingsIndex } from "./components/settings-page.tsx";
 import { ConfigSettings } from "./components/settings-config.tsx";
@@ -34,6 +34,7 @@ import { isFailed, isJobKey, jobKey, submissions, type Filter, type LabelWords }
 import { download } from "./lib/download.ts";
 import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked } from "./lib/files.ts";
 import { basename, displayName, fmtBytes } from "./lib/format.ts";
+import { useConvertDefaults } from "./hooks/use-convert-defaults.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
 import { ADMIN_SECTIONS, listQuery, OPEN_MODE, parseListState, parseRoute, routePath, type PaneMode, type Route, type Section } from "./lib/route.ts";
@@ -131,12 +132,16 @@ export function App() {
   const docsUrl = caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS;
   const sourceUrl = caps?.source_url && /^https:\/\//.test(caps.source_url) ? caps.source_url : DEFAULT_SOURCE;
 
-  // ---- composer options, remembered in this browser
+  // ---- composer options: v1.17 backends give their defaults (below); older ones, the last choice in this browser
   const [composer, setComposer] = useState<Composer>(() => initialComposer(readRemembered()));
-  useEffect(() => remember(composer), [composer]);
+  const serverDefaults = features?.convert_defaults === true;
   useEffect(() => {
+    if (caps !== null && !serverDefaults) remember(composer);
+  }, [composer, caps, serverDefaults]);
+  useEffect(() => {
+    // Also after the server's defaults arrive: a default that asks for a model waits for one.
     if (caps !== null && !caps.llm.routable) setComposer((state) => (state.llm || state.preset !== "minimal" ? { ...state, preset: "minimal", llm: false } : state));
-  }, [caps]);
+  }, [caps, composer.llm, composer.preset]);
   const options = useMemo(() => resolveOptions(composer, presets), [composer, presets]);
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -156,6 +161,12 @@ export function App() {
     if (error instanceof RangeError) return { text: words.diffTooLarge, detail: "" };
     return { text: error instanceof Error ? error.message : String(error), detail: "" };
   }, []);
+  const onDefaultsSaved = useCallback(
+    (view: ConvertDefaultsView, removed: boolean) =>
+      toast({ id: "defaults-saved", tone: "success", text: removed ? dicts[localeRef.current].defaultsFollowServer : view.scope === "user" ? dicts[localeRef.current].defaultsSavedOwn : dicts[localeRef.current].defaultsSavedServer }),
+    [],
+  );
+  const defaults = useConvertDefaults({ enabled: serverDefaults, composer, setComposer, presets, describe, onSaved: onDefaultsSaved });
 
   const conversions = useConversions(
     features,
@@ -291,7 +302,8 @@ export function App() {
           // The new submission is selected in the list: one item, or its group.
           const count = files.length + list.length;
           setRoute({ view: "jobs" });
-          updateList({ selected: count > 1 ? jobKey(jobId) : `${jobId}/i1`, mode: "inspector" }, location.pathname !== "/jobs");
+          // One item opens on Preview once it is converted (Details while it runs or when it fails).
+          updateList({ selected: count > 1 ? jobKey(jobId) : `${jobId}/i1`, mode: OPEN_MODE }, location.pathname !== "/jobs");
           setFilter("all");
           setQuery("");
         }
@@ -568,7 +580,11 @@ export function App() {
       staged={staged?.files ?? []}
       announce={announce}
       busy={submitting || cloudflare.pending !== null}
-      onChange={setComposer}
+      defaults={defaults.control}
+      onChange={(next) => {
+        defaults.touch();
+        setComposer(next);
+      }}
       onFiles={(files) => submitFiles(files)}
       onFolder={submitFolder}
       source={(tools) => (

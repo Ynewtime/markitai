@@ -49,7 +49,8 @@ test("a shared model's weight and a user's own models document use their own rou
 test("a weight typed in place is a whole number from 0", () => {
   assert.equal(parseWeight("0"), 0);
   assert.equal(parseWeight(" 12 "), 12);
-  assert.equal(parseWeight("999999"), 999999);
+  // Round 18: at most 100 (round18-models.test.ts).
+  assert.equal(parseWeight("100"), 100);
   for (const bad of ["", "-1", "1.5", "1e3", "abc", "1000000", "２"]) assert.equal(parseWeight(bad), null, bad);
 });
 

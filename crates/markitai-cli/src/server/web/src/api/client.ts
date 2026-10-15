@@ -3,6 +3,8 @@
 // events (`markitai:offline`, `markitai:online`, `markitai:unauthorized`).
 import { bearer, serviceURL } from "./token.ts";
 import type {
+  ConvertDefaults,
+  ConvertDefaultsView,
   BatchDeleteResult,
   Capabilities,
   ConfigDocument,
@@ -16,6 +18,7 @@ import type {
   NewDeployment,
   OriginalDescriptor,
   PageText,
+  PdfOutline,
   ProbeResult,
   ProviderCard,
   ProviderCredentials,
@@ -343,6 +346,8 @@ export const originalPagePath = (job: string, item: string, page: number, width:
   `${itemPath(job, item)}/original/pages/${page}?width=${width}`;
 export const fetchPageText = (job: string, item: string, page: number, abort?: AbortSignal) =>
   json<PageText>(`${itemPath(job, item)}/original/pages/${page}/text`, { signal: abort });
+/** v1.17: a PDF's own outline (bookmarks). */
+export const fetchOriginalOutline = (job: string, item: string) => json<PdfOutline>(`${itemPath(job, item)}/original/outline`);
 
 /** false when it was already gone. */
 export async function deleteHistoryJob(job: string): Promise<boolean> {
@@ -365,6 +370,11 @@ export const revokeUserToken = (id: string) => json<null>(`/api/access-tokens/${
 /** The admin's config file (`/api/settings/config`), or v1.16 a user token's own models document (`/api/me/config`). */
 export type ConfigScope = "admin" | "user";
 const CONFIG_PATH: Record<ConfigScope, string> = { admin: "/api/settings/config", user: "/api/me/config" };
+export const fetchConvertDefaults = () => json<ConvertDefaultsView>("/api/convert-defaults");
+/** `defaults: null` (a user only): follow the server's defaults again. */
+export const saveConvertDefaults = (revision: string, defaults: ConvertDefaults | null) =>
+  json<ConvertDefaultsView>("/api/convert-defaults", { method: "PUT", body: { expected_revision: revision, defaults } });
+
 export const fetchConfigDocument = (scope: ConfigScope = "admin") => json<ConfigDocument>(CONFIG_PATH[scope]);
 export const saveConfigDocument = (revision: string, text: string, scope: ConfigScope = "admin") =>
   json<ConfigDocument>(CONFIG_PATH[scope], { method: "PUT", body: { expected_revision: revision, text } });
@@ -384,8 +394,12 @@ export function modelsApi(scope: ModelsScope) {
     fetchCredentials: (id: string) => json<ProviderCredentials>(`${base}/providers/${enc(id)}/credentials`),
     discoverModels: (body: Record<string, unknown>) => json<DiscoveryResult>(`${base}/model-discovery`, { method: "POST", body }),
     probeModel: (body: Record<string, unknown>) => json<ProbeResult>(`${base}/test`, { method: "POST", body }),
-    addDeployments: (revision: string, deployments: NewDeployment[]) =>
-      json<SettingsView | UserModelsView>(`${base}/deployments/batch`, { method: "POST", body: { expected_revision: revision, deployments } }),
+    /** Round 18: `remove` (saved ids, as this revision names them) goes in the same change; only when the view says `batch_remove`. */
+    addDeployments: (revision: string, deployments: NewDeployment[], remove: string[] = []) =>
+      json<SettingsView | UserModelsView>(`${base}/deployments/batch`, {
+        method: "POST",
+        body: { expected_revision: revision, ...(deployments.length ? { deployments } : {}), ...(remove.length ? { remove } : {}) },
+      }),
     updateDeployment: (id: string, body: Record<string, unknown>) =>
       json<SettingsView | UserModelsView>(`${base}/deployments/${enc(id)}`, { method: "PATCH", body }),
     deleteDeployment: (id: string, revision: string) =>

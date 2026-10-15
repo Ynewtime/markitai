@@ -85,7 +85,7 @@ const manifest = {
     content_security_policy: csp,
     headers: { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-cache" },
     gzip_twins: [...files.keys()].filter((name) => name.endsWith(".gz")).map((name) => name.slice(3, -3)),
-    api_contract: "API-CONTRACT.md version 1.16",
+    api_contract: "API-CONTRACT.md version 1.17",
   },
   // Evaluated in a page when its screenshots are taken; its result is GET …/original/blocks (v1.14).
   capture: { page_blocks: "capture/page-blocks.js" },

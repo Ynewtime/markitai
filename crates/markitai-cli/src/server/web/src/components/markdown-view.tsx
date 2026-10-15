@@ -47,7 +47,7 @@ import { cachedExcerpt, resultKey } from "../lib/results.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { capTables, repairTables, freezeColumns, markNumericColumns, MARKER, ROW_CHUNK, ROW_LIMIT, tableSlice, type CappedTable } from "../lib/tables.ts";
 import { entryAt, tocEntries } from "../lib/toc.ts";
-import { FrontCard } from "./inspector.tsx";
+import { FrontCard } from "./front-matter.tsx";
 import { Icon, Logo } from "./icons.tsx";
 import { Skeleton } from "./skeleton.tsx";
 import { TocAside, TocSheet } from "./toc.tsx";

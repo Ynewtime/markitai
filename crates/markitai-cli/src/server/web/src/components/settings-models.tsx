@@ -10,7 +10,7 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { listFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
-import { endpointFor, modelName, sameEndpoint } from "../lib/models.ts";
+import { endpointFor, modelName, pickerRows, removals } from "../lib/models.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
@@ -158,6 +158,17 @@ function TestFailureLine({ t, failure }: { t: Dict; failure: TestFailure | undef
   );
 }
 
+/** A weight being edited in place that cannot be saved, under its row (round 18). */
+function WeightErrorLine({ t, shown }: { t: Dict; shown: boolean }) {
+  if (!shown) return null;
+  return (
+    <p class="config-check is-error weight-error" role="alert">
+      <Icon name="WarningCircle" size={14} />
+      <span>{t.weightInvalid}</span>
+    </p>
+  );
+}
+
 /** The models the admin shares, as a user sees them: what each is and, v1.16, this user's
  * own weight for it (0 = off for this user only) and a Test that runs on the server. */
 function SharedModels({
@@ -169,8 +180,12 @@ function SharedModels({
   failures,
   onTest,
   onWeight,
+  weightErrors,
+  onWeightInvalid,
 }: {
   t: Dict;
+  weightErrors: Record<string, boolean>;
+  onWeightInvalid: (key: string, invalid: boolean) => void;
   models: SharedModel[];
   narrow: boolean;
   labelOf: (provider: string) => string;
@@ -205,6 +220,7 @@ function SharedModels({
                     narrow={narrow}
                     title={t.sharedWeightHint}
                     onSave={(weight) => onWeight(model, weight)}
+                    onInvalid={(invalid) => onWeightInvalid(`shared:${model.id}`, invalid)}
                   />
                 ) : (
                   <span class="mini-pill" title={t.weightHint}>
@@ -229,6 +245,7 @@ function SharedModels({
                   </span>
                 )}
               </div>
+              <WeightErrorLine t={t} shown={weightErrors[`shared:${model.id}`] === true} />
               {model.weight === 0 && <p class="shared-off">{t.sharedOffForYou}</p>}
               <TestFailureLine t={t} failure={failures[`shared:${model.id}`]} />
             </li>
@@ -304,13 +321,16 @@ export function ModelsSettings({
     };
   }, [refreshProviders, fetchSettings]);
 
-  /** After a successful write: the new view and revision; the conflict is over. */
-  const accept = (view: SettingsView | UserModelsView) => {
+  /** After a successful write: the new view and revision; the conflict is over.
+   * Round 18: the provider cards come again too, since a write can give
+   * hand-written models their ids (and a card names the connection by one). */
+  const accept = (view: SettingsView | UserModelsView, cards = true) => {
     setSettings(view);
     setRevision(view.revision);
     setConflict(false);
     setListError(null);
     onSaved();
+    if (cards) void refreshProviders(true);
   };
 
   const credentialText = (error: CredentialInputError) =>
@@ -338,6 +358,12 @@ export function ModelsSettings({
 
   // ---- model rows: test, edit, delete, save detected
   const [tests, setTests] = useState<Record<string, "busy" | "ok" | "fail">>({});
+  /** Rows whose weight field holds a value that cannot be saved (round 18). */
+  const [weightErrors, setWeightErrors] = useState<Record<string, boolean>>({});
+  const weightInvalid = useCallback(
+    (key: string, invalid: boolean) => setWeightErrors((previous) => (Boolean(previous[key]) === invalid ? previous : { ...previous, [key]: invalid })),
+    [],
+  );
   /** The last failed test of each model, shown under it until it is tested again. */
   const [failures, setFailures] = useState<Record<string, TestFailure>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -407,7 +433,6 @@ export function ModelsSettings({
     const successor = index < 0 ? null : ((rest[index] ?? rest[index - 1])?.deployment_id ?? null);
     try {
       accept(await deleteDeployment(deployment.deployment_id, revision));
-      void refreshProviders(true);
       requestAnimationFrame(() => {
         const row = successor === null ? null : card.current?.querySelector<HTMLElement>(`[data-deployment="${CSS.escape(successor)}"] button`);
         (row ?? addButton.current)?.focus();
@@ -461,7 +486,6 @@ export function ModelsSettings({
     if (!connection.provider_id || revision === null) return false;
     try {
       accept(await deleteProvider(connection.provider_id, revision));
-      void refreshProviders(true);
       return true;
     } catch (error) {
       await fail(error);
@@ -481,6 +505,8 @@ export function ModelsSettings({
   const [dropped, setDropped] = useState(new Set<string>());
   const [group, setGroup] = useState("default");
   const [weight, setWeight] = useState(1);
+  /** The form's weight field holds a weight Save may write (round 18: a whole number from 0 to 100). */
+  const [weightValid, setWeightValid] = useState(true);
   const [addBusy, setAddBusy] = useState(false);
   const autoLoaded = useRef<string | null>(null);
   const existing =
@@ -583,7 +609,8 @@ export function ModelsSettings({
     setConnBusy(true);
     setConnError(null);
     try {
-      accept(await updateProvider(current.provider_id, body));
+      // The list comes below, to pick this connection's card again.
+      accept(await updateProvider(current.provider_id, body), false);
       closeConnEdit();
       announce(done);
       const list = await refreshProviders(true);
@@ -668,7 +695,7 @@ export function ModelsSettings({
       setDiscovery(result);
       const available = new Set(result.models.map((candidate) => candidate.model));
       setSelected((previous) => new Set([...previous].filter((model) => available.has(model))));
-      setDropped((previous) => new Set([...previous].filter((model) => available.has(model))));
+      // Unticked saved models stay unticked: a saved row the list lacks is still on the page.
     } catch (error) {
       await fail(error);
     } finally {
@@ -683,13 +710,15 @@ export function ModelsSettings({
     // `load` reads the current draft; the guard above keys the request by provider.
   }, [adding, provider, autoLoads, discovery, discovering]);
 
-  /** The routing entry of one configured model, for a pending removal. */
+  /** The address this page's models are at; the rows of its model list, as the picker shows them. */
   const endpoint = endpointFor(draftBase, provider?.api_base);
-  const deploymentId = (model: string) =>
-    settings?.deployments.find((item) => item.model === model && item.routing_group === group.trim() && sameEndpoint(item.api_base, endpoint))?.deployment_id ?? null;
+  const pageRows = () =>
+    provider === null || settings === null
+      ? []
+      : pickerRows(provider.provider, discovery?.models ?? [], settings.deployments, group, endpoint, provider.default_base);
 
   const addSelected = async () => {
-    if (!provider || (!selected.size && !dropped.size) || revision === null || addBusy) return;
+    if (!provider || (!selected.size && !dropped.size) || revision === null || addBusy || !weightValid) return;
     let credentials: Partial<NewDeployment>;
     try {
       credentials = deploymentCredentials(provider, draftKey, login === null ? draftBase : "");
@@ -704,26 +733,42 @@ export function ModelsSettings({
       weight,
       ...credentials,
     }));
+    // The saved models of every unticked row (also one saved under an alias, or
+    // one the list lacks), by the ids of the revision this draft started from.
+    const rows = pageRows();
+    const remove = removals(rows, dropped);
+    const removed = remove.length;
+    if (!deployments.length && !removed) {
+      // The unticked rows no longer stand for a saved model: nothing to save.
+      setAddBusy(false);
+      backToProviders();
+      return;
+    }
     try {
-      // Removals first, one write at a time: each returns the revision the next
-      // call has to quote.
-      let current = revision;
-      let removed = 0;
-      for (const model of dropped) {
-        const id = deploymentId(model);
-        if (id === null) continue;
-        const view = await deleteDeployment(id, current);
-        accept(view);
-        current = view.revision;
-        removed += 1;
+      if (settings?.batch_remove === true || !remove.length) {
+        // One change, all or nothing: additions and removals under one revision.
+        accept(await addDeployments(revision, deployments, remove));
+      } else {
+        // An older backend takes additions only: add first (the provider card may
+        // stand for a model about to go), then remove by the ids the new view has.
+        let view = deployments.length ? await addDeployments(revision, deployments) : null;
+        if (view) accept(view);
+        const gone = rows.filter((row) => dropped.has(row.model)).flatMap((row) => row.saved);
+        for (const old of gone) {
+          const current = view ?? settings!;
+          const same = current.deployments.find(
+            (item) => item.model === old.model && item.routing_group === old.routing_group && (item.api_base ?? "") === (old.api_base ?? ""),
+          );
+          if (!same) continue;
+          view = await deleteDeployment(same.deployment_id, view?.revision ?? revision);
+          accept(view);
+        }
       }
-      if (deployments.length) accept(await addDeployments(current, deployments));
       setAdding(false);
       setProvider(null);
       setDiscovery(null);
       setSelected(new Set());
       setDropped(new Set());
-      void refreshProviders(true);
       announce([deployments.length ? t.modelsAdded(deployments.length) : "", removed ? t.modelsRemoved(removed) : ""].filter(Boolean).join(" · "));
     } catch (error) {
       await fail(error);
@@ -773,6 +818,7 @@ export function ModelsSettings({
               title={user ? t.userWeightHint : t.weightHint}
               disabled={revision === null}
               onSave={(weight) => saveWeight(deployment.deployment_id, deployment.model, weight)}
+              onInvalid={(invalid) => weightInvalid(deployment.deployment_id, invalid)}
             />
           )}
           {canShare && !detected && deployment.persisted && (
@@ -814,6 +860,7 @@ export function ModelsSettings({
             )}
           </span>
         </div>
+        {!detected && <WeightErrorLine t={t} shown={weightErrors[deployment.deployment_id] === true} />}
         <TestFailureLine t={t} failure={failures[deployment.deployment_id]} />
       </div>
     );
@@ -869,7 +916,7 @@ export function ModelsSettings({
           {t.cancel}
         </button>
         {picking ? (
-          <button type="button" class="btn btn-primary" disabled={addBusy || (!selected.size && !dropped.size)} onClick={() => void addSelected()}>
+          <button type="button" class="btn btn-primary" disabled={addBusy || !weightValid || (!selected.size && !dropped.size)} onClick={() => void addSelected()}>
             {addBusy ? t.saving : t.save}
           </button>
         ) : (
@@ -1267,6 +1314,8 @@ export function ModelsSettings({
                     onSelected={setSelected}
                     onDropped={setDropped}
                     groups={!user}
+                    defaultBase={provider.default_base ?? null}
+                    onWeightValid={setWeightValid}
                     {...(user ? { weightHint: t.userWeightHint } : {})}
                   />
                 )}
@@ -1302,6 +1351,8 @@ export function ModelsSettings({
                   failures={failures}
                   onTest={(model) => void runTest(`shared:${model.id}`, model.model, { shared_id: model.id }, true)}
                   onWeight={(model, weight) => saveWeight(model.id, model.model, weight, true)}
+                  weightErrors={weightErrors}
+                  onWeightInvalid={weightInvalid}
                   labelOf={(name) => {
                     const card = providers.find((item) => item.provider === name);
                     return card ? providerLabel(t, card) : name === "custom" ? t.providerCustom : name;

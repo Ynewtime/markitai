@@ -43,6 +43,20 @@ export const en = {
   preset: "Preset",
   presetHint: "Choose a common setup, or adjust individual options.",
   presetCustomized: "Custom",
+  defaultsGroup: "Defaults",
+  defaultsServer: "The server's defaults",
+  defaultsOwn: "Your defaults",
+  defaultsChanged: "Changed from the defaults",
+  defaultsSave: "Save as default",
+  defaultsReset: "Reset to defaults",
+  defaultsUseServer: "Use the server's defaults",
+  defaultsScopeServer: "Saved to the server's config.json: new conversions here, and the command line, start from these choices.",
+  defaultsScopeUser: "Saved for your token only: your new conversions start from these choices.",
+  defaultsNoCloudflare: "Cloudflare can't be a default: it asks for your confirmation each time.",
+  defaultsStale: "The defaults changed meanwhile and were reloaded. Save again to replace them.",
+  defaultsSavedServer: "Saved as the server's defaults",
+  defaultsSavedOwn: "Saved as your defaults",
+  defaultsFollowServer: "Using the server's defaults again",
   presetMinimal: "Minimal",
   presetStandard: "Standard",
   presetRich: "Rich",
@@ -499,6 +513,7 @@ export const en = {
   navAppearanceShort: "Appearance",
   navAccess: "Access token",
   navLive: (n: number) => `${n} converting`,
+  navAllDone: "All conversions finished",
   titleSettings: "Settings · Markitai",
 
   // convert view
@@ -595,6 +610,14 @@ export const en = {
   originCliLong: "the command line",
   modelsNotReported: "Not reported by this server",
   costNone: "No model used",
+  costQueued: "Counted once it starts",
+  costCounting: "Counting…",
+  costWaitingModel: "Waiting for the model…",
+  costNoModelAsked: "No model requested",
+  costNoModelAnswered: "None: no model answered",
+  costFailedNone: "None: no model ran",
+  costStoppedNone: "None: stopped before a model ran",
+  costSoFar: (amount: string) => `${amount} so far`,
   costUnknown: "Unknown: no price for the model's answers",
   costUnknownKnown: (amount: string) => `Unknown: at least ${amount}`,
   costPartial: (amount: string, unpriced: number) => `At least ${amount} · ${unpriced === 1 ? "1 request" : `${unpriced} requests`} without a price`,
@@ -630,6 +653,12 @@ export const en = {
           : `${count} model answers were not used: they left out or changed too much of the document. The converted Markdown is kept as it was`;
       case "pdf_scanned":
         return count === 1 ? "This PDF is scanned: turn on OCR and convert again" : `${count} PDFs are scanned: turn on OCR and convert them again`;
+      case "ocr_blank":
+        if (count === 1 && pages) {
+          const of = pages.total ? ` (${pages.count} of ${pages.total})` : "";
+          return pages.count === 1 ? `OCR found no text on page ${pages.ranges}${of}: it is blank in the output` : `OCR found no text on pages ${pages.ranges}${of}: they are blank in the output`;
+        }
+        return `${count} documents have pages where OCR found no text: those pages are blank in the output`;
       case "pdf_ocr_pages":
         if (count === 1 && pages) {
           const of = pages.total ? ` (${pages.count} of ${pages.total})` : "";
@@ -647,6 +676,7 @@ export const en = {
   showItem: "Show item",
   showItems: "Show items",
   resultStart: "Start of the result",
+  openInPreview: "Open in Preview",
   failedHeading: (n: number) => (n === 1 ? "1 failed" : `${n} failed`),
   stoppedCount: (n: number) => (n === 1 ? "1 item was stopped before conversion." : `${n} items were stopped before conversion.`),
   deleteSubmissionAria: (label: string) => `Permanently delete ${label}`,
@@ -682,6 +712,28 @@ export const en = {
   originalPageNote: "Page as fetched, with the site's pictures and styles; its scripts don't run.",
   frontLabel: "Front matter",
   frontTags: (n: number) => plural(n, "1 tag", `${n} tags`),
+  frontSummary: "Summary",
+  frontProperties: (n: number) => `Properties · ${n}`,
+  frontShowAll: (n: number) => plural(n, "Show the document's property", `Show the document's ${n} properties`),
+  frontKey: (key: string) =>
+    ({
+      title: "Title",
+      description: "Summary",
+      summary: "Summary",
+      tags: "Tags",
+      keywords: "Tags",
+      source: "Source",
+      author: "Author",
+      authors: "Authors",
+      language: "Language",
+      publisher: "Publisher",
+      date: "Date",
+      site: "Site",
+      published: "Published",
+      canonical_url: "Canonical link",
+      markitai_processed: "Processed",
+      fetch_strategy: "Fetched with",
+    })[key] ?? key,
   originalShotNote: "Screenshot taken when the page was fetched. Hover a block to find it on the picture.",
   pageNotKept: (state: "empty" | "challenge" | "ok" | null, reason: string | null = null): string =>
     state === "challenge"
@@ -843,8 +895,12 @@ export const en = {
   weightEditHint: "Click to change; Enter saves, Esc cancels",
   weightEditAria: (shown: string, model: string) => `${shown}, ${model}: change`,
   weightFieldLabel: (model: string) => `Routing weight of ${model}`,
-  weightKeysHint: "A whole number, 0 or more. Enter saves, Esc cancels",
-  weightInvalid: "Enter a whole number, 0 or more",
+  weightKeysHint: "A whole number from 0 to 100. Enter saves, Esc cancels",
+  weightInvalid: "Enter a whole number from 0 to 100",
+  // round 18: the weight range, saved models a provider's list names otherwise
+  weightRangeHint: "A whole number from 0 to 100, its share among the models a request picks from; 0 turns it off (it stays saved).",
+  savedNotListed: "Saved, not in the provider's current list",
+  savedAsAlias: (id: string) => `Saved as ${id}`,
   weightSaved: (model: string, weight: number) => (weight === 0 ? `${model} is off: weight 0` : `${model}: weight ${weight}`),
   sharedByAdminWeights: "Your conversions can use these too. Their keys stay on the server. The weights here are yours: they change only how often your conversions pick each one.",
   sharedWeightHint: "How often your conversions pick this shared model; only yours. 0 turns it off for you",
@@ -875,6 +931,36 @@ export const en = {
     ]
       .filter(Boolean)
       .join(" · "),
+  // the PDF viewer in Compare (round 18)
+  pdfTools: "Page viewer",
+  pdfOutlineShow: "Show outline",
+  pdfOutlineHide: "Hide outline",
+  pdfPrevPage: "Previous page",
+  pdfNextPage: "Next page",
+  pdfPageInput: (total: number) => `Page number, 1 to ${total}`,
+  pdfPageTotal: (total: number) => `/ ${total}`,
+  pdfZoomIn: "Zoom in",
+  pdfZoomOut: "Zoom out",
+  pdfZoom: "Zoom",
+  pdfFitWidth: "Fit width",
+  pdfFitPage: "Fit page",
+  pdfPercent: (n: number) => `${n}%`,
+  pdfZoomShown: (label: string) => `Zoom ${label}`,
+  pdfZoomFitTitle: (label: string, percent: number) => `${label} (${percent}%)`,
+  pdfOutline: "Outline",
+  pdfBookmarks: "Bookmarks",
+  pdfHeadings: "Headings",
+  pdfThumbnails: "Pages",
+  pdfSourcePdf: "The PDF's own bookmarks",
+  pdfSourcePdfCut: (n: number) => `The PDF's own bookmarks · the first ${n.toLocaleString("en")} are listed`,
+  pdfSourceHeadings: "Headings from the Markdown · this PDF has no bookmarks",
+  pdfSourceThumbs: "Page thumbnails",
+  pdfSourceNone: "Page thumbnails · this PDF has no bookmarks and the Markdown has no headings to place",
+  pdfExpand: (title: string) => `Expand ${title}`,
+  pdfCollapse: (title: string) => `Collapse ${title}`,
+  pdfThumb: (page: number) => `Page ${page}`,
+  pdfUntitled: "Untitled",
+  pdfEntryPage: (page: number) => `page ${page}`,
 };
 
 export type Dict = typeof en;

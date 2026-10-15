@@ -19,6 +19,7 @@ import { jsonProblem } from "../lib/config-text.ts";
 import { editorText, fileText, textLayout } from "../lib/line-endings.ts";
 import { toast } from "../lib/toast.ts";
 import { Icon } from "./icons.tsx";
+import { JsonHighlight } from "./json-highlight.tsx";
 import { DiffRows } from "./markdown-view.tsx";
 import { StateBlock } from "./state-block.tsx";
 
@@ -154,6 +155,8 @@ export function ConfigSettings({
             <label class="sr-only" for="config-text">
               {user ? t.userConfigEditorLabel : t.configEditorLabel}
             </label>
+            <div class="config-code">
+            <JsonHighlight text={text} editor={editor} />
             <textarea
               ref={editor}
               id="config-text"
@@ -170,6 +173,7 @@ export function ConfigSettings({
                 setFailure(null);
               }}
             />
+            </div>
             <p id="config-check" class={problem ? "config-check is-error" : "config-check"} aria-live="polite">
               <Icon name={problem ? "WarningCircle" : "Check"} size={14} />
               <span>{problem ?? (changed ? t.configValidChanged : t.configValid)}</span>

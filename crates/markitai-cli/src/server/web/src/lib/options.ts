@@ -2,6 +2,7 @@
 // A preset sets five features (llm, ocr, alt, desc, screenshot); the image
 // switches can override it, and the advanced choices are independent.
 import type {
+  ConvertDefaults,
   ConversionBackend,
   FetchStrategy,
   JobOptions,
@@ -239,4 +240,68 @@ export function initialComposer(saved: Remembered): Composer {
  * model or OCR already ran. */
 export function withOcrFor(options: JobOptions): JobOptions {
   return !options.llm && !options.ocr ? { ...options, ocr: true } : options;
+}
+
+/** v1.17: the composer a set of saved defaults gives: the preset that differs least from them
+ * (image switches only where they differ from it), and the rest as saved. */
+export function composerFromDefaults(defaults: ConvertDefaults, table: PresetTable = BUILTIN_PRESETS): Composer {
+  const misses = (preset: Preset) => {
+    const features = featuresOf(preset, table);
+    const images = defaults.llm ? (["alt", "desc"] as const).filter((key) => features[key] !== defaults[key]).length : 0;
+    // The model matters most: a preset that agrees on it wins over one that agrees on two pictures switches.
+    return (features.llm !== defaults.llm ? 3 : 0) + (features.screenshot !== defaults.screenshot ? 1 : 0) + images;
+  };
+  const preset = PRESETS.reduce((best, preset) => (misses(preset) < misses(best) ? preset : best), PRESETS[0] as Preset);
+  const features = featuresOf(preset, table);
+  const differs = (key: "alt" | "desc" | "screenshot") => (features[key] !== defaults[key] ? defaults[key] : null);
+  return {
+    preset,
+    llm: defaults.llm,
+    ocr: defaults.ocr,
+    profile: defaults.profile,
+    advanced: {
+      // Kept while the model is off too: they apply once it is turned on.
+      alt: differs("alt"),
+      desc: differs("desc"),
+      screenshot: differs("screenshot"),
+      screenshotOnly: defaults.screenshot_only,
+      pure: defaults.pure,
+      noCache: defaults.no_cache,
+      noCompress: defaults.no_compress,
+      strategy: defaults.strategy,
+      backend: "native",
+    },
+  };
+}
+
+/** The defaults the composer's choices would save; null while they name Cloudflare (it asks each time). */
+export function defaultsOf(state: Composer, table: PresetTable = BUILTIN_PRESETS): ConvertDefaults | null {
+  const a = state.advanced;
+  if (a.strategy === "cloudflare" || a.backend === "cloudflare") return null;
+  const features = featuresOf(state.preset, table);
+  return {
+    llm: state.llm,
+    ocr: state.ocr,
+    // The image switches as shown, not as sent: without a model they are kept for when one runs.
+    alt: a.alt ?? features.alt,
+    desc: a.desc ?? features.desc,
+    screenshot: a.screenshotOnly || (a.screenshot ?? features.screenshot),
+    screenshot_only: a.screenshotOnly,
+    pure: a.pure,
+    no_cache: a.noCache,
+    no_compress: a.noCompress,
+    profile: state.profile,
+    strategy: a.strategy,
+  };
+}
+
+const DEFAULT_KEYS = ["llm", "ocr", "alt", "desc", "screenshot", "screenshot_only", "pure", "no_cache", "no_compress", "profile", "strategy"] as const;
+
+/** Whether the composer's choices are these defaults (what a request would do, so the image
+ * switches count only while a model analyses pictures). */
+export function sameAsDefaults(state: Composer, defaults: ConvertDefaults, table: PresetTable = BUILTIN_PRESETS): boolean {
+  const mine = defaultsOf(state, table);
+  if (mine === null) return false;
+  const analysis = mine.llm && !mine.pure;
+  return DEFAULT_KEYS.every((key) => ((key === "alt" || key === "desc") && !analysis) || mine[key] === defaults[key]);
 }

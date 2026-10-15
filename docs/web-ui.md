@@ -9,7 +9,8 @@ runtime, CDN or external font, and the page makes no request to another origin.
 ## Layout and interaction
 
 A **sidebar** frames every view: Convert and Conversions (with the number of
-conversions and a pulsing dot while something converts), the Settings sections
+conversions and a grey pulsing dot while something converts, which turns green and still once
+everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
 its own Models and Edit config for them, see [Access token](#access-token)), and Docs, GitHub and the
 version line at the bottom: the version, the commit it was built from and the build time
@@ -37,6 +38,15 @@ taps across 44 px.
 (Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
 to six rows), Options, Upload (files) and Folder on the left, Convert on the
 right, and the options drawer, which ends with the equivalent CLI command line.
+The options start from the server's defaults (its configuration: `llm.enabled`,
+`ocr.enabled`, `image.alt_enabled`, `image.desc_enabled`, `screenshot.enabled`,
+`screenshot.screenshot_only`, `llm.pure`, `cache.no_cache`, `image.compress`,
+`output.profile`, `fetch.strategy`), or for a user token its own defaults over
+them. A row above the command line says whether the choices are those defaults;
+Reset to defaults returns to them, and Save as default makes the current choices
+the defaults: the admin's go into `config.json` (the command line reads them
+too), a user token's into its own settings (Use the server's defaults removes
+them). Cloudflare is never a default: it asks for a confirmation each time.
 Files and folders waiting for Convert appear in it relative to the folder that
 holds them (`./notes.pdf`, a picked folder as `./Field trip/`, quoted for the
 shell), with an (i) beside Copy: run it in that folder, since a browser never
@@ -99,8 +109,9 @@ files wait on Convert); typing URLs is Convert's job.
   Add a model or Enable OCR and retry when that is the fix) and "⋯" (Enhance
   with LLM, Run again, Retry without LLM, Delete), then Preview, Compare and
   Details as tabs; a conversion opens on Preview (a submission, or a
-  conversion without a result, on Details; `?view=details` is Details' own
-  address). The expand button (or F) grows the window to the whole
+  conversion without a result, on Details; one just submitted shows Details while
+  it converts and turns to Preview when it is done, or stays on Details if it
+  failed; `?view=details` is Details' own address). The expand button (or F) grows the window to the whole
   viewport and back, remembered in this browser. Up and Down (outside the
   scrolling document) move between items, C switches Compare, Escape, ✕ or a
   click on the dimmed list closes it and returns to the row. (The docked
@@ -112,7 +123,7 @@ files wait on Convert); typing URLs is Convert's job.
   options, finished, kept until; a long output name stays on one line and gives
   up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
   the start of the result with its front matter and its own pictures, in the same
-  centred reading column as Preview. A
+  centred reading column as Preview (the whole card opens Preview). A
   submission's window shows its progress as one bar (done, failed, stopped,
   converting, waiting) with Retry failed, Download .zip, Stop remaining and Delete,
   the cost, its failures and the notices of all its items; Summary opens the same
@@ -120,7 +131,12 @@ files wait on Convert); typing URLs is Convert's job.
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N
   requests without a price", a model that ran without pricing "Unknown". An item
-  that used no model says so.
+  that used no model says so. Before there is an amount the line says what will
+  happen: "Counted once it starts" (waiting), "Counting…" (converting with a
+  model), "Waiting for the model…" (Enhance), "No model requested", and after the
+  end "None: no model answered", "None: no model ran" (failed) or "None: stopped
+  before a model ran"; a submission still converting shows "Counting…" or the
+  amount "so far".
 - **Notices** are counted by kind instead of repeated per row: 31 "image
   analysis failed" warnings of one document read once as "31 images kept their
   original alt text", an incomplete cost names the models without a reviewed
@@ -148,13 +164,16 @@ end of the window's own tab row (Preview, Compare, Details), so the window has o
 tab row. Where they do not fit (a phone) they become one button naming the view
 and version on screen, whose menu holds the views and versions. Each keeps its reading
 column centred in the window: 820 px, wider as the window grows (56 % of its
-width, at most 1120 px), and a table takes up to 200 px more on each side when its
-cells need it. Rendered starts with
-the conversion's notices (collapsed to one line) and a front-matter card folded to
-one line (its title, or its description, and how many tags; open it with a click
-or the keyboard for the description and tags; no title when the document opens
-with the same `#` heading, and no card when nothing else is left); Compare and
-the Details excerpt fold it the same way. Tables over 500 rows show their first 500 rows under a
+width, at most 1120 px); every table keeps to that column (its width and left
+edge), and one whose cells need more scrolls sideways inside its own box. Rendered starts with
+the conversion's notices (collapsed to one line) and the front matter as one light
+line above the body: a tag icon, the tags inline (`gardening · community beds · …`;
+else the summary) and Summary at its end, with no title of its own (the body's
+heading is the title). Summary (a button, Enter or Space) opens it into a
+two-column properties table (Summary, Tags as chips, Source, Processed and every
+other key, values wrapped) whose `Properties · N` header folds it again; the
+choice holds for the tab's session (`sessionStorage['markitai.front']`) and in
+Preview, Compare and the Details excerpt alike. Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
 showing all of them adds the rest in steps of 1,000 so the page keeps answering,
 and the download and Source always hold every row. Numeric columns align right
@@ -163,7 +182,8 @@ or a Unicode line or paragraph separator, which ends a table for the parser) is
 put back together for drawing: the break becomes a line break in the cell and the
 rows after it stay in the table (Source keeps the text as written). A video written
 as a linked poster (`[![Video](poster.jpg)](https://…/clip.mp4)`) plays in place
-(`https` only, loaded only when played, no referrer, the poster when it is on the web);
+(`https` only, loaded only when played, no referrer, with its poster: the link's
+picture, from the web or the item's own copy through its asset route);
 one that cannot play turns back into its link. Code blocks are highlighted by a 3 KB module loaded only when
 a preview contains code. While a result loads, Rendered, Source and Files show
 its shape in grey lines inside the same frame (with the size of a large result),
@@ -196,7 +216,17 @@ Export PDF waits for the whole document and every picture before it prints.
 **Compare** puts the original beside the Markdown: a PDF's pages (drawn by the
 server, loaded as they scroll into view), an uploaded image, an uploaded HTML
 file (sanitized: no scripts, styles, frames, forms, links or remote images), a
-text file, or the page screenshots a conversion saved. A web page shows the page
+text file, or the page screenshots a conversion saved. A PDF has a viewer's
+toolbar in the original's header: the outline button, previous and next page
+with a page box (`12 / 492`, Enter jumps; PageUp and PageDown turn pages; the box
+follows scrolling), and zoom (Fit width, Fit page, 50–200 %, − and +, and
+Ctrl/⌘ + − 0 or Ctrl with the wheel while the pane has the focus or the pointer;
+the zoom is kept per conversion for the session, and the page being read stays
+in place). Pages are drawn at the zoom's width near the view only. The outline
+panel (beside the pages, over them in a narrow pane, a sheet on a phone) shows
+the PDF's own bookmarks, else the Markdown's headings, else page thumbnails, and
+says which. Blocks link at every zoom; the page text of a long PDF is read in
+the background, the first 40 pages first, so linking reaches its last page. A web page shows the page
 the server kept, else its screenshot, with Screenshot | Page when both are
 usable: the server says when either was a verification or captcha page, only a
 request for JavaScript, or blank (almost no text and no pictures), and such a
@@ -278,7 +308,10 @@ column's width.
 
 **Settings** are pages. Models lists the configured models (Test, Edit, Delete;
 a model's routing weight is edited in place: click the pill, type, Enter or
-leaving the field saves, Escape cancels;
+leaving the field saves, Escape cancels; a weight is a whole number from 0 to 100
+(0 = off: the model stays saved but gets no requests; the empty field shows
+`0–100`, a value outside it is said under the field and Enter keeps the field
+open, the arrow keys stay within it, and every form checks the same rule);
 a test's result is a toast, and a failed test says why, under the model and in its toast: no API key,
 naming the server's key variable when it is not set, key rejected, model not
 found, rate limited or out of quota, provider unreachable, no answer in time, or
@@ -297,6 +330,13 @@ Choosing one leads to the provider's page: the key and the address side by side
 (the address optional, its default as the placeholder), then the model catalogue
 and, in plain sight under it, Model ID and routing (add a model by its ID, the
 routing group and weight), with a breadcrumb that Escape steps back through.
+Every model already saved for the connection shows in its list, ticked and
+marked Configured: on the listed row when the provider lists it under another
+name ("Saved as claude-agent/sonnet" for Claude's `sonnet`, `opus`, `haiku`
+aliases, an undated Anthropic ID on its newest snapshot), else as its own row
+("Saved, not in the provider's current list"). Ticking some models and unticking
+others saves in one request: the additions and removals succeed or fail
+together.
 Every settings page keeps its primary action in one place, the pinned bar at the
 bottom (Load models, then Save, beside Cancel); a subscription needs no key or
 address, and Bedrock and Vertex AI (also Perplexity, Z.ai and Fireworks AI) take
@@ -308,7 +348,7 @@ connection offers no Add key; a key a config entry still holds can be removed).
 A saved subscription offers no key or address. Bedrock keeps its optional key
 and address. A backend that sends
 no provider `group` gets the common eight by name and everything else under All. Appearance (its page is titled Appearance and language, first in the list) chooses English, 中文 or 日本語 and the
-theme (Auto, Light, Dark); for a user token it also says which token the tab uses, with Sign out (another token signs in from the sign-in screen that follows). Edit config (admin) shows the configuration file the Models page names as its source, on the terminal surface: secrets masked (a masked value left where it is keeps the stored secret), the JSON checked as it is typed with the line and column of a mistake, Review changes as a line diff, then Save config, sent with the revision the edit started from and with the file's own line endings (CRLF on Windows; a byte order mark kept): Review shows only real changes, an unchanged line is saved byte for byte, a new line gets the file's ending, and a file that mixes endings says so, keeps each line's own and gives new lines the most common one (a file changed meanwhile offers Load current file; a configuration the server cannot use is refused with its reason). The model list applies at once; other settings after a restart, which the page says. Access token says whether this tab is signed in
+theme (Auto, Light, Dark); for a user token it also says which token the tab uses, with Sign out (another token signs in from the sign-in screen that follows). Edit config (admin) shows the configuration file the Models page names as its source, in an editor that follows the theme and colours the JSON (keys, strings, numbers, `true`/`false`/`null`, punctuation; the text field itself stays a plain text area for the keyboard and screen readers, and Windows high-contrast mode shows the plain text): secrets masked (a masked value left where it is keeps the stored secret), the JSON checked as it is typed with the line and column of a mistake, Review changes as a line diff, then Save config, sent with the revision the edit started from and with the file's own line endings (CRLF on Windows; a byte order mark kept): Review shows only real changes, an unchanged line is saved byte for byte, a new line gets the file's ending, and a file that mixes endings says so, keeps each line's own and gives new lines the most common one (a file changed meanwhile offers Load current file; a configuration the server cannot use is refused with its reason). The model list applies at once; other settings after a restart, which the page says. Access token says whether this tab is signed in
 (with Sign out of this tab beside it, which forgets the token here only and
 opens the sign-in screen: switching tokens is Sign out, then sign in), and
 Regenerate token (below); a token is kept in this tab only. Only a refused or
@@ -517,9 +557,10 @@ Security Policy allows no inline script). Values kept in this browser's
 `localStorage`: `markitai.lang`, `markitai.theme`, `markitai.sidebar`,
 `markitai.peek` (`full` or `window`: whether a conversion opens at full screen;
 an older `docked` reads as `window`),
-`markitai.options` (preset, LLM, OCR, output profile and the image overrides;
-fetch strategy, backend, cache and source choices are never remembered, so a
-revisit cannot silently re-enable a remote service),
+`markitai.options` (only with a backend without convert defaults: preset, LLM,
+OCR, output profile and the image overrides; fetch strategy, backend, cache and
+source choices are never remembered, so a revisit cannot silently re-enable a
+remote service),
 `markitai.pdf.custom-header-footer` and `markitai.notify-denied` (a refused
 desktop-notification permission, which is then never asked again). A finished
 job raises a system notification only while the tab is hidden and permission was

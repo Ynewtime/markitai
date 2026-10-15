@@ -15,6 +15,7 @@ export type NoticeKind =
   | "answer_rejected"
   | "pdf_scanned"
   | "pdf_ocr_pages"
+  | "ocr_blank"
   | "other";
 
 export interface NoticeEntry {
@@ -107,6 +108,16 @@ export function pdfPageNotice(text: string): { pages: number[]; total: number | 
   return null;
 }
 
+/** Pages OCR read but found no text on (blank in the output): Python's `[OCR] No text found on N pages of
+ * <name> (pages …); they are blank in the output`, Rust's `OCR found no text on pages … (N of M); …`. */
+export function ocrBlankNotice(text: string): { pages: number[]; total: number | null } | null {
+  let match = /^\[OCR\] No text found on \d+ pages? of [\s\S]*?\(pages? ([\d,\s–-]+)\)/.exec(text);
+  if (match) return { pages: parsePages(match[1] ?? ""), total: null };
+  match = /^OCR found no text on pages? ([\d,\s–-]+?)(?: \(\d+ of (\d+)\))?[;:.]/.exec(text);
+  if (match) return { pages: parsePages(match[1] ?? ""), total: match[2] ? Number(match[2]) : null };
+  return null;
+}
+
 /** At least this share of a document's pages without readable text: the document is a scan. */
 export const SCANNED_SHARE = 0.9;
 /** Without the page count: pages 1 to at least this many, all without text, read as a scan. */
@@ -164,7 +175,8 @@ export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
       if (document.texts.length < 50) document.texts.push(compressPageLists(text));
       continue;
     }
-    const kind = kindOf(text);
+    const blank = ocrBlankNotice(text);
+    const kind = blank ? "ocr_blank" : kindOf(text);
     // A recognized kind is one group whatever its details; others group by template.
     const key = kind === "other" ? `other:${template(text)}` : kind;
     let group = groups.get(key);
@@ -186,6 +198,8 @@ export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
     const shown = compressPageLists(text);
     if (group.samples.length < 50 && !group.samples.includes(shown)) group.samples.push(shown);
     for (const model of noticeModels(kind, text)) if (!group.models.includes(model)) group.models.push(model);
+    // One document's blank pages are told with their ranges; several documents only by count.
+    if (blank) group.pages = group.items.length === 1 ? { ranges: pageRanges(blank.pages), count: blank.pages.length, total: blank.total } : null;
   }
   for (const [key, pages] of paged) {
     const group = groups.get(key);

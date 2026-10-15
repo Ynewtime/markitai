@@ -12,9 +12,10 @@ import type { ItemResult } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { itemErrorText, persistenceText } from "../i18n/errors.ts";
 import { counts, isFailed, isStopped, presetOf, submissionLabel, type ConvJob, type LabelWords } from "../lib/conversions.ts";
-import { costState, fmtUsd, itemCost, totalCost, type CostState } from "../lib/cost.ts";
+import { costState, fmtUsd, itemCost, itemCostPhase, totalCost, totalCostPhase, type CostState } from "../lib/cost.ts";
 import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, readable, timestampMs } from "../lib/format.ts";
-import { cardFacts, parseFrontMatter, type FrontMatter } from "../lib/frontmatter.ts";
+import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
+import { FrontCard } from "./front-matter.tsx";
 import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
@@ -138,6 +139,27 @@ export function costText(t: Dict, state: CostState): string {
   }
 }
 
+/** An item's cost line: an amount only once the conversion has one; until then what will happen. */
+export function itemCostText(t: Dict, item: SessionItem): string {
+  const phase = itemCostPhase(item);
+  if (phase === "amount") return costText(t, itemCost(item));
+  return {
+    queued: t.costQueued,
+    counting: t.costCounting,
+    waiting_model: t.costWaitingModel,
+    no_model_asked: t.costNoModelAsked,
+    no_model_answered: t.costNoModelAnswered,
+    failed_none: t.costFailedNone,
+    stopped_none: t.costStoppedNone,
+  }[phase];
+}
+
+/** A job's or the list's cost line: while something that asks for a model still converts, the sum so far. */
+function totalCostText(t: Dict, items: SessionItem[], cost: ReturnType<typeof totalCost>): string {
+  if (totalCostPhase(items) === "amount") return costText(t, cost);
+  return cost.kind === "none" || cost.usd === null ? t.costCounting : t.costSoFar(fmtUsd(cost.usd));
+}
+
 function keptUntil(ctx: InspectorContext, finishedAt: string | null): string | null {
   const ms = timestampMs(finishedAt);
   if (ctx.retentionDays === null || ms === null) return null;
@@ -216,7 +238,7 @@ function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: No
 }
 
 /** The first blocks of a result, with the item's own pictures as small figures. */
-function Excerpt({ ctx, item }: { ctx: InspectorContext; item: SessionItem }) {
+function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionItem; onOpen: () => void }) {
   const { t } = ctx;
   const key = resultKey(item);
   const [result, setResult] = useState<ItemResult | null>(() => cachedExcerpt(key));
@@ -286,36 +308,15 @@ function Excerpt({ ctx, item }: { ctx: InspectorContext; item: SessionItem }) {
   if (error) return <p class="pane-note line-error">{ctx.describe(error).text}</p>;
   if (!result || !split) return <Skeleton label={t.loading} kind="list" />;
   return (
-    <div class="excerpt">
+    <div class="excerpt is-link">
+      {/* The whole card opens Preview; its properties control stays above this button. */}
+      <button type="button" class="excerpt-open" onClick={onOpen}>
+        <span class="sr-only">{t.openInPreview}</span>
+      </button>
       {front && <FrontCard t={t} front={front} compact />}
       {/* A picture of the result's start: nothing in it is read or reached by the keyboard. */}
       <div ref={body} class="doc-body excerpt-body" aria-hidden="true" inert />
     </div>
-  );
-}
-
-/** A document's front matter (title, description, tags) as a card that starts folded to one line:
- * the title (or the description) and how many tags; a native disclosure, so the keyboard opens it. */
-export function FrontCard({ t, front, compact = false }: { t: Dict; front: FrontMatter; compact?: boolean }) {
-  return (
-    <details class={compact ? "front-card is-compact" : "front-card"}>
-      <summary>
-        <Icon name="CaretRight" size={12} />
-        <span class="sr-only">{t.frontLabel}: </span>
-        {front.title ? <span class="front-title">{front.title}</span> : <span class="front-line">{front.description}</span>}
-        {front.tags.length > 0 && <span class="front-count">{t.frontTags(front.tags.length)}</span>}
-      </summary>
-      <div class="front-body">
-        {front.description && <p class="front-description">{front.description}</p>}
-        {front.tags.length > 0 && (
-          <ul class="front-tags">
-            {front.tags.slice(0, 12).map((tag) => (
-              <li key={tag}>{tag}</li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </details>
   );
 }
 
@@ -498,7 +499,7 @@ export function ItemInspector({
           </>
         )}
         <dt>{t.factCost}</dt>
-        <dd class={cost.kind === "unknown" ? "is-unknown" : undefined}>{costText(t, cost)}</dd>
+        <dd class={cost.kind === "unknown" && itemCostPhase(item) === "amount" ? "is-unknown" : undefined}>{itemCostText(t, item)}</dd>
         {optionsText(t, item) && (
           <>
             <dt>{t.factOptions}</dt>
@@ -527,7 +528,7 @@ export function ItemInspector({
       {isPreviewable(item) && (
         <section class="insp-section" aria-labelledby={`${headingId}-start`}>
           <h3 id={`${headingId}-start`}>{t.resultStart}</h3>
-          <Excerpt ctx={ctx} item={item} />
+          <Excerpt ctx={ctx} item={item} onOpen={() => actions.preview(item)} />
         </section>
       )}
     </section>
@@ -614,7 +615,7 @@ export function JobInspector({
       <dl class="facts">
         <dt>{t.factCost}</dt>
         <dd class={cost.kind === "unknown" ? "is-unknown" : undefined}>
-          {costText(t, cost)}
+          {totalCostText(t, items, cost)}
           {cost.kind === "unknown" && cost.unknownItems > 0 && <span class="fact-dim"> · {t.costUnknownItems(cost.unknownItems)}</span>}
         </dd>
         {optionsText(t, job) && (
@@ -730,7 +731,7 @@ export function Overview({ ctx, items, peek = false, onShowItems }: { ctx: Inspe
       <dl class="facts">
         <dt>{t.factCost}</dt>
         <dd class={cost.kind === "unknown" ? "is-unknown" : undefined}>
-          {costText(t, cost)}
+          {totalCostText(t, items, cost)}
           {cost.kind === "unknown" && cost.unknownItems > 0 && <span class="fact-dim"> · {t.costUnknownItems(cost.unknownItems)}</span>}
         </dd>
       </dl>

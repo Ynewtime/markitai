@@ -31,8 +31,9 @@ test("the card above a document leaves out a title the document opens with", () 
   assert.equal(openingHeading("Text first\n\n# Later"), null);
   // Same words: no title, the description stays.
   assert.deepEqual(cardFacts(front, "# Reflections on the **team**\n\nBody"), { ...front, title: null });
-  // Another first heading keeps the title.
-  assert.equal(cardFacts(front, "# Something else\n")?.title, "Reflections on the *team*");
+  // Round 18: the body's own heading is the title, whatever it says.
+  assert.equal(cardFacts(front, "# Something else\n")?.title, null);
+  assert.equal(cardFacts(front, "Plain start\n")?.title, "Reflections on the *team*");
   // Nothing left to show: no card.
   assert.equal(cardFacts(parseFrontMatter("---\ntitle: Only\n---"), "# Only\n"), null);
   assert.equal(cardFacts(null, "# x"), null);

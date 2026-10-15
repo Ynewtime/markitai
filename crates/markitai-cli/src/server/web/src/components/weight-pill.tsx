@@ -1,11 +1,12 @@
 // A model row's routing weight, edited in place (v1.16): the pill is a button;
 // a click turns it into a number field with the value selected. Enter or
 // leaving the field saves (with the page's revision, as every settings write),
-// Escape puts the pill back unchanged. A value that is not a whole number of 0
-// or more is not sent: the field says so and stays open (on blur it reverts).
+// Escape puts the pill back unchanged. A value that is not a whole number from 0
+// to 100 is not sent: the row says so under the pill (`onInvalid`), Enter keeps
+// the field open, leaving it reverts; ArrowUp/ArrowDown step within 0–100.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
-import { parseWeight } from "../lib/models.ts";
+import { parseWeight, stepWeight, WEIGHT_PLACEHOLDER } from "../lib/models.ts";
 
 
 export function WeightPill({
@@ -16,6 +17,7 @@ export function WeightPill({
   title,
   disabled = false,
   onSave,
+  onInvalid,
 }: {
   t: Dict;
   /** The model's name, for the field's label and the pill's own. */
@@ -27,10 +29,15 @@ export function WeightPill({
   disabled?: boolean;
   /** Save a new weight; whether it was saved (a failure is shown by the page). */
   onSave: (weight: number) => Promise<boolean>;
+  /** Whether the field holds a value that cannot be saved, for the row's message under the pill. */
+  onInvalid?: (invalid: boolean) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState(false);
   const [busy, setBusy] = useState(false);
+  // A typed value out of range says so at once; an empty one when Enter refuses it.
+  const shown = invalid || (draft !== null && draft.trim() !== "" && parseWeight(draft) === null);
+  useEffect(() => onInvalid?.(shown), [shown]);
   const field = useRef<HTMLInputElement>(null);
   const pill = useRef<HTMLButtonElement>(null);
   /** Enter or Escape closed the field: the blur that follows does nothing. */
@@ -102,7 +109,7 @@ export function WeightPill({
     );
   }
   return (
-    <span class={`mini-pill weight-pill is-editing${invalid ? " is-invalid" : ""}`} aria-busy={busy || undefined}>
+    <span class={`mini-pill weight-pill is-editing${shown ? " is-invalid" : ""}`} aria-busy={busy || undefined}>
       <span aria-hidden="true">{narrow ? t.weightShortLabel : t.weightLabel}</span>
       <input
         ref={field}
@@ -112,13 +119,14 @@ export function WeightPill({
         enterKeyHint="done"
         autoComplete="off"
         spellcheck={false}
-        maxLength={6}
-        size={Math.max(1, draft.length)}
+        maxLength={3}
+        placeholder={WEIGHT_PLACEHOLDER}
+        size={draft ? Math.max(1, draft.length) : WEIGHT_PLACEHOLDER.length}
         value={draft}
         disabled={busy}
         aria-label={t.weightFieldLabel(model)}
-        aria-invalid={invalid || undefined}
-        title={invalid ? t.weightInvalid : t.weightKeysHint}
+        aria-invalid={shown || undefined}
+        title={shown ? t.weightInvalid : t.weightKeysHint}
         onInput={(event) => {
           setDraft(event.currentTarget.value);
           setInvalid(false);
@@ -135,8 +143,7 @@ export function WeightPill({
             close(true);
           } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
             event.preventDefault();
-            const current = parseWeight(draft) ?? value;
-            setDraft(String(Math.max(0, Math.min(999999, current + (event.key === "ArrowUp" ? 1 : -1)))));
+            setDraft(String(stepWeight(draft, value, event.key === "ArrowUp" ? 1 : -1)));
             setInvalid(false);
           }
         }}
@@ -145,7 +152,7 @@ export function WeightPill({
           void commit(false);
         }}
       />
-      {invalid && (
+      {shown && !onInvalid && (
         <span class="sr-only" role="alert">
           {t.weightInvalid}
         </span>

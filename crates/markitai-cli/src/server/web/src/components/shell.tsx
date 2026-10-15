@@ -5,7 +5,7 @@
 // tooltip); the choice is remembered in this browser. On phones the sidebar
 // gives way to a top bar and a bottom tab bar.
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { VersionText } from "./version-text.tsx";
 import type { VersionLine } from "../lib/build.ts";
 import type { Dict } from "../i18n/index.ts";
@@ -100,17 +100,53 @@ export interface ShellProps {
 
 const SECTION_ICONS: Record<Section, IconName> = { appearance: "Palette", models: "Cpu", access: "Key", config: "FileCode" };
 
+/** How long the green "all done" dot stays before it fades, and the fade. */
+const DONE_MS = 6000;
+const FADE_MS = 160;
+
+/** After the last conversion ends: "shown", then "leaving" (fading), then "none". */
+function useFinished(active: number): "none" | "shown" | "leaving" {
+  const [state, setState] = useState<"none" | "shown" | "leaving">("none");
+  const before = useRef(active);
+  useEffect(() => {
+    const was = before.current;
+    before.current = active;
+    if (active > 0) {
+      setState("none");
+      return;
+    }
+    if (was === 0) return;
+    setState("shown");
+    const fade = setTimeout(() => setState("leaving"), DONE_MS);
+    const clear = setTimeout(() => setState("none"), DONE_MS + FADE_MS);
+    return () => {
+      clearTimeout(fade);
+      clearTimeout(clear);
+    };
+  }, [active]);
+  return state;
+}
+
 export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, collapsed, onToggle, onNavigate, sections, children }: ShellProps) {
   const section = route.view === "settings" ? route.section ?? sections[0] ?? "appearance" : null;
   const sectionLabels: Record<Section, string> = { appearance: t.navAppearanceShort, models: t.navModels, access: t.navAccess, config: t.navConfig };
   const settingsLink = (to: Section, icon: IconName, label: string) => (
     <NavLink to={{ view: "settings", section: to }} icon={icon} label={label} current={section === to} onNavigate={onNavigate} />
   );
-  const live = active > 0 && (
-    <span class="live-dot" role="img" aria-label={t.navLive(active)}>
-      <span />
-    </span>
-  );
+  const finished = useFinished(active);
+  // Grey and pulsing while something converts; green and still once everything is done, then it fades.
+  const live =
+    active > 0 ? (
+      <span class="live-dot" role="img" aria-label={t.navLive(active)}>
+        <span />
+      </span>
+    ) : (
+      finished !== "none" && (
+        <span class={finished === "leaving" ? "live-dot is-done is-leaving" : "live-dot is-done"} role="img" aria-label={t.navAllDone}>
+          <span />
+        </span>
+      )
+    );
   const count = total > 0 && <span class="nav-count">{total}</span>;
   return (
     <div class="shell">

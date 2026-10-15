@@ -581,9 +581,12 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext, numb
     video.setAttribute("controls", "");
     video.setAttribute("preload", "none");
     video.setAttribute("playsinline", "");
-    // Only a poster on the web (https), as the page's policy loads it; an item's own picture needs the token.
+    // The poster is the link's picture: one on the web (https) as the page's policy loads it, or the
+    // item's own copy through its asset route (fetched with the token and shown as an object URL).
     const still = poster?.hasAttribute("data-remote") ? remotePicture(poster.getAttribute("src") ?? "") : null;
     if (still) video.setAttribute("poster", still);
+    else if (poster?.getAttribute("data-artifact-src")) video.setAttribute("data-artifact-poster", poster.getAttribute("data-artifact-src") as string);
+    else if (poster?.getAttribute("src")) video.setAttribute("poster", poster.getAttribute("src") as string);
     video.setAttribute("aria-label", poster?.getAttribute("alt") || link.querySelector(".img-blocked")?.textContent || context.fallbackAlt);
     video.setAttribute("src", source);
     video.className = "doc-video";
@@ -642,11 +645,13 @@ export function loadArtifactImages(
     objectURL = URL,
   }: { limit?: number; lazy?: boolean; margin?: string; objectURL?: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> } = {},
 ): ImageLoads {
+  // Pictures wait in `data-artifact-src`; a video's poster (the item's own picture) in `data-artifact-poster`.
+  const attributeOf = (element: Element) => (element.tagName === "VIDEO" ? "data-artifact-poster" : "data-artifact-src");
   const urls: string[] = [];
-  const known: HTMLImageElement[] = [];
-  const seen = new Set<HTMLImageElement>();
-  const queued = new Set<HTMLImageElement>();
-  const queue: HTMLImageElement[] = [];
+  const known: HTMLElement[] = [];
+  const seen = new Set<HTMLElement>();
+  const queued = new Set<HTMLElement>();
+  const queue: HTMLElement[] = [];
   let waiters: (() => void)[] = [];
   let active = 0;
   let disposed = false;
@@ -656,8 +661,9 @@ export function loadArtifactImages(
     waiters = [];
     for (const resolve of ready) resolve();
   };
-  const show = async (image: HTMLImageElement) => {
-    const path = image.getAttribute("data-artifact-src") ?? "";
+  const show = async (image: HTMLElement) => {
+    const attribute = attributeOf(image);
+    const path = image.getAttribute(attribute) ?? "";
     let blob: Blob | null = null;
     try {
       blob = await load(path);
@@ -665,18 +671,20 @@ export function loadArtifactImages(
       blob = null;
     }
     if (disposed) return;
-    image.removeAttribute("data-artifact-src");
+    image.removeAttribute(attribute);
+    const video = image.tagName === "VIDEO";
     if (blob === null) {
-      failed(image);
+      // A poster that cannot load leaves the player as it is.
+      if (!video) failed(image as HTMLImageElement);
       return;
     }
     const url = objectURL.createObjectURL(blob);
     urls.push(url);
-    image.setAttribute("src", url);
+    image.setAttribute(video ? "poster" : "src", url);
   };
   const pump = () => {
     while (!disposed && active < limit && queue.length > 0) {
-      const image = queue.shift() as HTMLImageElement;
+      const image = queue.shift() as HTMLElement;
       active++;
       void show(image).finally(() => {
         active--;
@@ -685,8 +693,8 @@ export function loadArtifactImages(
       });
     }
   };
-  const enqueue = (image: HTMLImageElement) => {
-    if (disposed || queued.has(image) || image.getAttribute("data-artifact-src") === null) return;
+  const enqueue = (image: HTMLElement) => {
+    if (disposed || queued.has(image) || image.getAttribute(attributeOf(image)) === null) return;
     queued.add(image);
     queue.push(image);
     pump();
@@ -698,14 +706,14 @@ export function loadArtifactImages(
             for (const entry of entries) {
               if (!entry.isIntersecting) continue;
               observer?.unobserve(entry.target);
-              enqueue(entry.target as HTMLImageElement);
+              enqueue(entry.target as HTMLElement);
             }
           },
           { rootMargin: margin },
         )
       : null;
   const add = (scope: ParentNode) => {
-    for (const image of scope.querySelectorAll<HTMLImageElement>("img[data-artifact-src]")) {
+    for (const image of scope.querySelectorAll<HTMLElement>("img[data-artifact-src], video[data-artifact-poster]")) {
       if (seen.has(image)) continue;
       seen.add(image);
       known.push(image);
