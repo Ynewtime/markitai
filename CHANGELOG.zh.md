@@ -50,6 +50,7 @@
 
 ### 修复
 
+- 批量转换时多个线程同时首次导入 markitdown，偶尔让某个文件（常见是 `.msg`）失败，报 `_DeadlockError: deadlock detected by _ModuleLock('markitdown.converters')`：现在 markitdown 在任何转换器使用前、加锁只导入一次。
 - **在提供商页面勾选一个模型、取消勾选另一个，不再因 `settings_entry_missing` 失败**（工作台 b7a19af，契约 v1.17）。页面原来先删除，这会让手写条目重新编号，或删掉提供商卡片所代表的模型，随后的保存就找不到它的卡片。`POST /api/settings/llm/deployments/batch` 和 `POST /api/me/models/deployments/batch` 现在也接受 `remove`（部署 id），并对页面读取的版本同时应用添加和删除，要么全部成功要么全部不做（视图中 `batch_remove: true`）。路由权重是 0 到 100 的整数（0 表示关闭，模型仍保留），所有写入权重的路由都按此检查，其他值返回 422 `invalid_weight`，Edit config 会指出具体条目。文件里已有的同一条目的权重可以保留，所以旧文件照常保存。
 - **长文档转换后不再让 `markitai serve` 卡住一分钟。** Markdown 清理中有一步会把跨行断开的链接文字接回去（`[Title\n\nDescription](/url)` → `[Title](/url)`）：对每个后面没有 `]` 的 `[`，它把后文的每个换行都试作断点，并从每个断点一直读到文末。一本 490 页、带三个孤立 `[` 的 OCR 书籍在这一步花了 50 秒；这期间它占着 Python 解释器锁，工作台和 API 都停止响应（一次状态请求等了 80 秒），CLI 则多花 50 秒。现在只把文本读一遍，结果相同，耗时以毫秒计。
 - **2027 年起的 Gemini 3.8 Flash 和 3.6 Flash**：Google 在 Gemini API 上对 Gemini 3.8 Flash、3.6 Flash 和 `gemini-flash-latest` 的首发优惠价只到 2026 年 12 月 31 日，2027 年 1 月 1 日起价格翻倍。LiteLLM 1.104.2 只有优惠价，所以从 2027 年起 markitai 报出的费用只有实际的一半，`max_cost_per_document_usd` 也只计入一半。现在 2027-01-01（UTC）起的应答记为未定价，与 markitai Rust 实现一致。

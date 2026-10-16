@@ -18,6 +18,7 @@ from loguru import logger
 from markitai.converter._patches import (
     apply_all_patches,
     apply_markitdown_cell_patches,
+    import_markitdown,
 )
 from markitai.converter.base import (
     BaseConverter,
@@ -101,6 +102,7 @@ def _convert(input_path: Path) -> ConvertResult:
     """
     global _markitdown
     if _markitdown is None:
+        import_markitdown()
         from markitdown import MarkItDown
 
         # Only generic file conversion needs the Office compatibility patches.
@@ -310,6 +312,8 @@ def _epub_chapter_markdown(data: bytes, path: str, pictures: _EpubPictures) -> s
     ``<img>`` first.
     """
     from bs4 import BeautifulSoup
+
+    import_markitdown()
     from markitdown.converters import HtmlConverter
 
     apply_markitdown_cell_patches()
