@@ -847,7 +847,7 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
         && let Some(qpp) = qpp::engine()?
         && let Some(found) = qpp.read(image)
     {
-        return read_qpp(image, choice, found);
+        return read_qpp(qpp, image, choice, found);
     }
     let engine = engine()?;
     let reader = match choice {
@@ -882,7 +882,12 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
 /// `image` read by qppocr: its lines, then (for the default language) the
 /// Korean pass on the doubtful ones and the tiled retry of a sparse image,
 /// both with tract.
-fn read_qpp(image: &RgbImage, choice: Choice, mut found: qpp::Found) -> Result<OcrResult> {
+fn read_qpp(
+    qpp: &qpp::Qpp,
+    image: &RgbImage,
+    choice: Choice,
+    mut found: qpp::Found,
+) -> Result<OcrResult> {
     let mut lap = super::trace::Lap::start();
     let capped = found.capped;
     let (lines, language, unread) = match choice {
@@ -893,17 +898,21 @@ fn read_qpp(image: &RgbImage, choice: Choice, mut found: qpp::Found) -> Result<O
         }
     };
     let second_ms = lap.ms();
-    if !lines.iter().any(|line| line.confidence >= TEXT_SCORE)
-        && let Some(((lines, language, unread), capped)) = tiled(image, choice)?
-    {
-        let tile_ms = lap.ms();
-        let mut result = finish(lines, image, language, unread, TILE_TEXT_SCORE)?;
-        result.capped = capped;
-        super::trace::line(format_args!(
-            "engine=qppocr second={second_ms:.0}ms tiled(tract)={tile_ms:.0}ms post={:.0}ms",
-            lap.ms()
-        ));
-        return Ok(result);
+    if !lines.iter().any(|line| line.confidence >= TEXT_SCORE) {
+        let retried = match tiled_qpp(image, choice, qpp)? {
+            Some(retried) => retried,
+            None => tiled(image, choice)?,
+        };
+        if let Some(((lines, language, unread), capped)) = retried {
+            let tile_ms = lap.ms();
+            let mut result = finish(lines, image, language, unread, TILE_TEXT_SCORE)?;
+            result.capped = capped;
+            super::trace::line(format_args!(
+                "engine=qppocr second={second_ms:.0}ms tiled={tile_ms:.0}ms post={:.0}ms",
+                lap.ms()
+            ));
+            return Ok(result);
+        }
     }
     let mut result = finish(lines, image, language, unread, TEXT_SCORE)?;
     result.capped = capped;
@@ -912,6 +921,16 @@ fn read_qpp(image: &RgbImage, choice: Choice, mut found: qpp::Found) -> Result<O
         lap.ms()
     ));
     Ok(result)
+}
+
+/// Whether a region is a block, not a line of text: at least 200 pixels and a
+/// fifth of the image's shorter side on its short side, and less than three
+/// times as long as that.
+fn blocky(corners: &[[f32; 2]; 4], (width, height): (u32, u32)) -> bool {
+    let side = |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+    let (one, other) = (side(corners[0], corners[1]), side(corners[0], corners[3]));
+    let (short, long) = (one.min(other), one.max(other));
+    short >= 200.0 && short >= 0.2 * width.min(height) as f32 && long < 3.0 * short
 }
 
 /// The spaces between a Chinese or Japanese letter and a Latin letter or
@@ -974,6 +993,10 @@ fn qpp_default(image: &RgbImage, mut found: qpp::Found) -> Result<Reading> {
     let mut cuts = Vec::new();
     for index in (0..found.lines.len()).filter(|&i| !sure(&found.lines[i])) {
         let corners = found.corners[index];
+        // A page-sized block (a spine shadow, a photo) is no line of Hangul.
+        if blocky(&corners, image.dimensions()) {
+            continue;
+        }
         let region = detect::Region {
             corners,
             score: 1.0,
@@ -1029,44 +1052,13 @@ const TILE_TEXT_SCORE: f32 = 0.45;
 /// and read, and a line two overlapping tiles both found is kept once (the
 /// more confident reading). `None` when the image is too small to tile.
 fn tiled(image: &RgbImage, choice: Choice) -> Result<Option<(Reading, bool)>> {
-    let tiles = detect::tiles(image.width(), image.height());
-    if tiles.is_empty() {
+    let Some((tiles, budget)) = tile_windows(image) else {
         return Ok(None);
-    }
-    // Tiles without a sharp edge (a gradient, a blank margin) hold no text;
-    // the others are searched side by side, two detections at a time.
-    let tiles: Vec<[u32; 4]> = tiles
-        .into_iter()
-        .filter(|tile| detect::has_edges(image, *tile))
-        .collect();
-    let budget = if tiles.len() > 1 {
-        let full = detect::Layout::of(image.width(), image.height());
-        let window = tiles
-            .iter()
-            .map(|[x0, y0, x1, y1]| f64::from(x1 - x0) * f64::from(y1 - y0))
-            .fold(1.0, f64::max);
-        (f64::from(full.width) * f64::from(full.height) / (2.0 * window)).sqrt() as f32
-    } else {
-        f32::INFINITY
     };
-    if tiles.is_empty() {
-        return Ok(None);
-    }
     let engine = engine()?;
     let found = spread_detections(tiles.len(), |index| {
         let [x0, y0, x1, y1] = tiles[index];
-        let tile = image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image();
-        let short = tile.width().min(tile.height()).max(1) as f32;
-        let factor = (TILE_SHORT_SIDE / short)
-            .min(TILE_UPSCALE)
-            .min(budget)
-            .max(1.0);
-        let scaled = if factor > 1.0 {
-            let side = |n: u32| ((n as f32 * factor).round() as u32).max(1);
-            resize(&tile, side(tile.width()), side(tile.height()))
-        } else {
-            tile
-        };
+        let scaled = scaled_tile(image, tiles[index], budget);
         let (found, more) = engine.detector.regions(&scaled, TILE_BOX_THRESHOLD)?;
         let (scale_x, scale_y) = (
             scaled.width() as f32 / (x1 - x0) as f32,
@@ -1093,10 +1085,115 @@ fn tiled(image: &RgbImage, choice: Choice) -> Result<Option<(Reading, bool)>> {
     Ok(Some(((distinct(lines), language, unread), capped)))
 }
 
+/// The tiles of a sparse image worth searching (those with a sharp edge: a
+/// gradient or a blank margin holds no text), and by how much each may be
+/// enlarged; `None` when there are none.
+fn tile_windows(image: &RgbImage) -> Option<(Vec<[u32; 4]>, f32)> {
+    let tiles: Vec<[u32; 4]> = detect::tiles(image.width(), image.height())
+        .into_iter()
+        .filter(|tile| detect::has_edges(image, *tile))
+        .collect();
+    if tiles.is_empty() {
+        return None;
+    }
+    let budget = if tiles.len() > 1 {
+        let full = detect::Layout::of(image.width(), image.height());
+        let window = tiles
+            .iter()
+            .map(|[x0, y0, x1, y1]| f64::from(x1 - x0) * f64::from(y1 - y0))
+            .fold(1.0, f64::max);
+        (f64::from(full.width) * f64::from(full.height) / (2.0 * window)).sqrt() as f32
+    } else {
+        f32::INFINITY
+    };
+    Some((tiles, budget))
+}
+
+/// `tile` of `image`, enlarged toward [`TILE_SHORT_SIDE`] by at most
+/// [`TILE_UPSCALE`] and `budget`.
+fn scaled_tile(image: &RgbImage, [x0, y0, x1, y1]: [u32; 4], budget: f32) -> RgbImage {
+    let tile = image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image();
+    let short = tile.width().min(tile.height()).max(1) as f32;
+    let factor = (TILE_SHORT_SIDE / short)
+        .min(TILE_UPSCALE)
+        .min(budget)
+        .max(1.0);
+    if factor > 1.0 {
+        let side = |n: u32| ((n as f32 * factor).round() as u32).max(1);
+        resize(&tile, side(tile.width()), side(tile.height()))
+    } else {
+        tile
+    }
+}
+
+/// [`tiled`] read by qppocr, tile after tile, with no tract model loaded.
+/// `None` when it cannot (a tile it fails on): the caller reads with tract.
+fn tiled_qpp(
+    image: &RgbImage,
+    choice: Choice,
+    qpp: &qpp::Qpp,
+) -> Result<Option<Option<(Reading, bool)>>> {
+    let Some((tiles, budget)) = tile_windows(image) else {
+        return Ok(Some(None));
+    };
+    let mut found = qpp::Found::empty();
+    for tile in tiles {
+        let [x0, y0, x1, y1] = tile;
+        let scaled = scaled_tile(image, tile, budget);
+        let Some(part) = qpp.read(&scaled) else {
+            return Ok(None);
+        };
+        let (scale_x, scale_y) = (
+            scaled.width() as f32 / (x1 - x0) as f32,
+            scaled.height() as f32 / (y1 - y0) as f32,
+        );
+        found.extend_mapped(
+            part,
+            |[x, y]| [x / scale_x + x0 as f32, y / scale_y + y0 as f32],
+            image.dimensions(),
+        );
+    }
+    if found.lines.is_empty() {
+        return Ok(Some(None));
+    }
+    let capped = found.capped;
+    // A line two overlapping tiles both found is kept once.
+    let kept = distinct_indices(&found.lines);
+    let mut keep = vec![false; found.lines.len()];
+    for index in kept {
+        keep[index] = true;
+    }
+    let mut flags = keep.iter();
+    found.lines.retain(|_| *flags.next().unwrap_or(&false));
+    let mut flags = keep.iter();
+    found.corners.retain(|_| *flags.next().unwrap_or(&false));
+    let mut flags = keep.iter();
+    found.centers.retain(|_| *flags.next().unwrap_or(&false));
+    let mut flags = keep.iter();
+    found.flipped.retain(|_| *flags.next().unwrap_or(&false));
+    let reading = match choice {
+        Choice::Default => qpp_default(image, found)?,
+        Choice::Model(name) => {
+            qpp_spaces(image, &mut found);
+            (found.lines, name, false)
+        }
+    };
+    Ok(Some(Some((reading, capped))))
+}
+
 /// `lines` without repeats: a line whose text matches a kept one (case and
 /// spacing aside) and overlaps it by a third or more of the smaller box is
 /// the same line, found again by an overlapping tile.
 fn distinct(lines: Vec<Line>) -> Vec<Line> {
+    let kept = distinct_indices(&lines);
+    let mut lines: Vec<Option<Line>> = lines.into_iter().map(Some).collect();
+    kept.into_iter()
+        .filter_map(|index| lines[index].take())
+        .collect()
+}
+
+/// The indices of the lines [`distinct`] keeps, in order.
+fn distinct_indices(lines: &[Line]) -> Vec<usize> {
     let key = |line: &Line| {
         line.text
             .split_whitespace()
@@ -1110,16 +1207,16 @@ fn distinct(lines: Vec<Line>) -> Vec<Line> {
         let area = |r: [f32; 4]| ((r[2] - r[0]) * (r[3] - r[1])).max(1.0);
         width * height / area(a).min(area(b))
     };
-    let mut kept: Vec<Line> = Vec::new();
-    for line in lines {
-        let text = key(&line);
-        match kept
-            .iter_mut()
-            .find(|other| key(other) == text && overlap(other.bounds, line.bounds) >= 0.35)
-        {
-            Some(other) if line.confidence > other.confidence => *other = line,
+    let mut kept: Vec<usize> = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let text = key(line);
+        match kept.iter_mut().find(|other| {
+            let other = &lines[**other];
+            key(other) == text && overlap(other.bounds, line.bounds) >= 0.35
+        }) {
+            Some(other) if line.confidence > lines[*other].confidence => *other = index,
             Some(_) => {}
-            None => kept.push(line),
+            None => kept.push(index),
         }
     }
     kept
@@ -1260,6 +1357,12 @@ fn finish(
     result.language = language.to_owned();
     result.unread = unread;
     Ok(result)
+}
+
+/// The engine this process reads with (`qppocr`, which falls back to tract, or
+/// `tract`), for `doctor`.
+pub(crate) fn engine_name() -> &'static str {
+    qpp::planned()
 }
 
 /// The models the configured language needs, for `doctor`: the default set
@@ -1522,6 +1625,16 @@ mod tests {
         let result = read(&page, "en").unwrap();
         assert_eq!(words(&result.text), words(expected), "{}", result.text);
         assert!(!result.unread);
+    }
+
+    #[test]
+    fn a_page_sized_region_is_a_block_and_a_line_is_not() {
+        let rectangle = |w: f32, h: f32| [[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]];
+        assert!(blocky(&rectangle(875.0, 1241.0), (875, 1241)));
+        assert!(!blocky(&rectangle(700.0, 40.0), (875, 1241)));
+        // A tall strip of a line, a small image that is one line.
+        assert!(!blocky(&rectangle(40.0, 700.0), (875, 1241)));
+        assert!(!blocky(&rectangle(300.0, 60.0), (300, 60)));
     }
 
     #[test]

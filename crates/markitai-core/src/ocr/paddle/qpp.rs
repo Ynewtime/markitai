@@ -49,6 +49,65 @@ pub(super) struct Found {
     pub capped: bool,
 }
 
+impl Found {
+    pub(super) fn empty() -> Found {
+        Found {
+            lines: Vec::new(),
+            corners: Vec::new(),
+            centers: Vec::new(),
+            flipped: Vec::new(),
+            capped: false,
+        }
+    }
+
+    /// The lines of a part of an image, `map`ped from the part's pixels to
+    /// those of the image (`width` by `height`), added to these.
+    pub(super) fn extend_mapped(
+        &mut self,
+        other: Found,
+        map: impl Fn([f32; 2]) -> [f32; 2],
+        (width, height): (u32, u32),
+    ) {
+        self.capped |= other.capped;
+        for (mut line, (corners, (centers, flipped))) in other.lines.into_iter().zip(
+            other
+                .corners
+                .into_iter()
+                .zip(other.centers.into_iter().zip(other.flipped)),
+        ) {
+            let corners = corners.map(&map);
+            line.bounds = bounds_of(&corners, width, height);
+            self.lines.push(line);
+            self.corners.push(corners);
+            self.centers.push(centers.into_iter().map(&map).collect());
+            self.flipped.push(flipped);
+        }
+    }
+}
+
+/// The pixel rectangle `[left, top, right, bottom]` of a region's corners,
+/// within an image of `width` by `height`.
+fn bounds_of(corners: &[[f32; 2]; 4], width: u32, height: u32) -> [f32; 4] {
+    let xs = corners.map(|p| p[0]);
+    let ys = corners.map(|p| p[1]);
+    let low = |v: [f32; 4], limit: u32| {
+        v.into_iter()
+            .fold(f32::MAX, f32::min)
+            .clamp(0.0, limit as f32)
+    };
+    let high = |v: [f32; 4], limit: u32| {
+        v.into_iter()
+            .fold(f32::MIN, f32::max)
+            .clamp(0.0, limit as f32)
+    };
+    [
+        low(xs, width),
+        low(ys, height),
+        high(xs, width),
+        high(ys, height),
+    ]
+}
+
 /// The engine this process reads with, `None` for tract. The first call
 /// decides; a bad `MARKITAI_OCR_ENGINE` is an error every time.
 pub(super) fn engine() -> Result<Option<&'static Qpp>> {
@@ -58,6 +117,17 @@ pub(super) fn engine() -> Result<Option<&'static Qpp>> {
         .as_ref()
         .map(Option::as_ref)
         .map_err(|message| crate::Error::Config(message.clone()))
+}
+
+/// The engine this process would read with, by the same rules as [`engine`]
+/// but without loading anything: for `doctor`.
+pub(super) fn planned() -> &'static str {
+    let wanted = match request(&std::env::var(VARIABLE).unwrap_or_default()) {
+        Ok(Request::Qppocr) => true,
+        Ok(Request::Auto) => DEFAULT_ARCH && fast_cpu(),
+        _ => false,
+    };
+    if wanted { "qppocr" } else { "tract" }
 }
 
 /// Whether qppocr is the default engine on this architecture. On aarch64 it
@@ -162,6 +232,15 @@ fn shards(threads: usize) -> usize {
 }
 
 pub(super) fn start() -> std::result::Result<Qpp, String> {
+    Ok(Qpp {
+        engine: build()?,
+        gate: Mutex::new(()),
+        backend: format!("{:?}", qppocr::detect_backend()).to_lowercase(),
+    })
+}
+
+/// An engine on the verified model files.
+fn build() -> std::result::Result<Engine, String> {
     let bytes = |name: &str| -> std::result::Result<Vec<u8>, String> {
         models::named(name)
             .and_then(|model| models::load(model, true))
@@ -176,7 +255,7 @@ pub(super) fn start() -> std::result::Result<Qpp, String> {
     };
     let threads = super::super::thread_budget();
     let rec_shards = shards(threads);
-    let engine = Engine::builder()
+    Engine::builder()
         .tier(Tier::Small)
         .threads(threads)
         .device(DeviceChoice::Cpu)
@@ -187,12 +266,7 @@ pub(super) fn start() -> std::result::Result<Qpp, String> {
             advanced.rec_space_gap = 0.0;
         })
         .build_with(source)
-        .map_err(|error| error.to_string())?;
-    Ok(Qpp {
-        engine,
-        gate: Mutex::new(()),
-        backend: format!("{:?}", qppocr::detect_backend()).to_lowercase(),
-    })
+        .map_err(|error| error.to_string())
 }
 
 /// qppocr said no to this image once; the rest of the process is told so
@@ -238,36 +312,11 @@ impl Qpp {
             timings.total_ms,
             result.lines.len(),
         ));
-        let (limit_x, limit_y) = (width as f32, height as f32);
-        let mut found = Found {
-            lines: Vec::with_capacity(result.lines.len()),
-            corners: Vec::with_capacity(result.lines.len()),
-            centers: Vec::with_capacity(result.lines.len()),
-            flipped: Vec::with_capacity(result.lines.len()),
-            capped: result.num_boxes >= crate::ocr::MAX_TEXT_REGIONS,
-        };
+        let mut found = Found::empty();
+        found.capped = result.num_boxes >= crate::ocr::MAX_TEXT_REGIONS;
         for line in result.lines {
             let [tl, tr, _, bl] = line.pts;
-            let xs = line.pts.map(|p| p[0]);
-            let ys = line.pts.map(|p| p[1]);
-            let bounds = [
-                xs.iter()
-                    .copied()
-                    .fold(f32::MAX, f32::min)
-                    .clamp(0.0, limit_x),
-                ys.iter()
-                    .copied()
-                    .fold(f32::MAX, f32::min)
-                    .clamp(0.0, limit_y),
-                xs.iter()
-                    .copied()
-                    .fold(f32::MIN, f32::max)
-                    .clamp(0.0, limit_x),
-                ys.iter()
-                    .copied()
-                    .fold(f32::MIN, f32::max)
-                    .clamp(0.0, limit_y),
-            ];
+            let bounds = bounds_of(&line.pts, width, height);
             // The text runs along the top edge of a wide region and up the
             // left edge of a tall one (qppocr turns those clockwise); a line
             // it found upside down runs the other way.

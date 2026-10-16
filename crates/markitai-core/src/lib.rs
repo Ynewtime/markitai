@@ -91,6 +91,13 @@ pub fn local_ocr_models(config: &Value) -> Result<Option<Vec<LocalOcrModel>>> {
     ocr::portable_models(config)
 }
 
+/// The portable OCR engine this process reads with: `qppocr` (tract takes
+/// over for Korean lines, a processor qppocr cannot use and images it fails
+/// on) or `tract`. Nothing is loaded.
+pub fn local_ocr_engine() -> &'static str {
+    ocr::portable_engine()
+}
+
 /// Explicitly download the missing files [`local_ocr_models`] lists from the
 /// official PaddleOCR mirror, each verified by size and SHA-256, into the
 /// private Markitai home; returns the files installed.

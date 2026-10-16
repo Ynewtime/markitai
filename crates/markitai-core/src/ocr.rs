@@ -201,6 +201,19 @@ impl LocalOcrModel {
     }
 }
 
+/// The portable engine this process reads with: `qppocr` (tract takes over
+/// where it cannot read) or `tract`.
+pub(crate) fn portable_engine() -> &'static str {
+    #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+    {
+        paddle::engine_name()
+    }
+    #[cfg(not(any(not(target_os = "macos"), feature = "portable-media")))]
+    {
+        "tract"
+    }
+}
+
 /// The model files the portable engine needs for `cfg`'s `ocr.lang`, or
 /// `None` when this process reads with another engine or has none. Never
 /// downloads or creates anything.

@@ -172,7 +172,8 @@ cannot run (macOS before 11, or an x86_64 build under Rosetta), and
 `MARKITAI_OCR_BACKEND=paddle` or `vision` chooses one explicitly (any other
 value is a configuration error; `vision` is an unsupported-capability error
 where Vision is absent). Metadata records `ocr_path: paddle`, and `markitai
-doctor` names the engine in its `rapidocr` check.
+doctor` names the engine this process would read with (`qppocr, tract fallback`
+or `tract`) in its `rapidocr` check.
 
 ### Engines
 
@@ -191,9 +192,9 @@ everything else, and stands in for qppocr, with a notice on standard error
 - a line is Korean: lines of the default language the multilingual reading is
   not sure of are read again with the Korean recognizer, which uses an
   operator qppocr lacks (`HardSwish`), and so are all other single-script
-  recognizers (`ocr.lang` of `ko`, `ar`, `th`, …);
-- the image is nearly empty and its full-image pass keeps no text: the
-  overlapping-tiles retry below runs on tract.
+  recognizers (`ocr.lang` of `ko`, `ar`, `th`, …). A page-sized region (a
+  spine shadow, a photo) is not re-read: it is no line of text, and loading
+  the Korean model for it would only delay the other pages.
 
 On aarch64 (Linux and Windows on Arm) tract stays the default: qppocr's NEON
 kernels read the same text but took about 45 % longer and 40 % more CPU time
@@ -208,7 +209,9 @@ because the v2.0 classifier turned an upright line of prose over. Spaces
 between a Chinese or Japanese letter and a Latin letter or digit follow the
 same rule with either engine.
 
-qppocr reads one image at a time with all of the OCR thread budget
+The overlapping-tiles retry of a nearly empty image (below) also runs on
+qppocr, with its own region threshold instead of the reference's 0.35. qppocr
+reads one image at a time with all of the OCR thread budget
 (`MARKITAI_OCR_THREADS`), rendering and laying out the other pages meanwhile.
 Its text detector shrinks an image whose long side is over 960 pixels, tract's
 to 1,600.
