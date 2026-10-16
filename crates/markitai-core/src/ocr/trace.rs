@@ -62,10 +62,13 @@ impl Lap {
     }
 }
 
+// Only the portable engine (tract) reports operators.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 /// Time spent in each operator of each model, summed over the run so far.
 static OPERATORS: std::sync::Mutex<Vec<(String, std::time::Duration, u64)>> =
     std::sync::Mutex::new(Vec::new());
 
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 /// Add one evaluation of operator `op` of `model` to the totals.
 pub(crate) fn operator(model: &str, op: &str, took: std::time::Duration) {
     let key = format!("{model}/{op}");
@@ -79,6 +82,7 @@ pub(crate) fn operator(model: &str, op: &str, took: std::time::Duration) {
     }
 }
 
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 /// The operators that took longest so far (summed over threads, so with
 /// several running at once the sum can exceed the wall time).
 pub(crate) fn report(top: usize) {
