@@ -428,12 +428,15 @@ fn local_ocr_check(available: bool, translated: bool) -> Check {
 
 /// The optional local OCR check of the portable engine: whether the model
 /// files the configured `ocr.lang` needs are installed. It never loads them.
-fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrModel>>) -> Check {
+fn portable_ocr_check(
+    engine: &str,
+    models: markitai_core::Result<Vec<markitai_core::LocalOcrModel>>,
+) -> Check {
     let mut fix = Vec::new();
     let (status, message, hint, path) = match models {
         Err(error) => (
             "warning",
-            format!("Portable PaddleOCR engine (tract): {error}"),
+            format!("Portable PaddleOCR engine ({engine}): {error}"),
             "Set ocr.lang to a language the portable OCR models read".to_owned(),
             None,
         ),
@@ -461,7 +464,7 @@ fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrM
                     .map(|model| model.detail.as_deref().unwrap_or("unsafe model path"))
                     .collect::<Vec<_>>()
                     .join("; ");
-                ("warning", format!("Portable PaddleOCR engine (tract): unsafe model path: {detail}"),
+                ("warning", format!("Portable PaddleOCR engine ({engine}): unsafe model path: {detail}"),
                     "Restore an ordinary owned private models directory/file; doctor --fix refuses unsafe paths before downloading".to_owned(), folder)
             } else if !corrupt.is_empty() {
                 let detail = corrupt
@@ -475,7 +478,7 @@ fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrM
                     ),
                     Fix::command("markitai doctor --fix"),
                 ];
-                ("warning", format!("Portable PaddleOCR engine (tract): {} damaged model file(s); {detail}; ordinary OCR will not overwrite them", corrupt.len()),
+                ("warning", format!("Portable PaddleOCR engine ({engine}): {} damaged model file(s); {detail}; ordinary OCR will not overwrite them", corrupt.len()),
                     "Run markitai doctor --fix to replace only damaged managed model files, after verifying each new size and SHA-256".to_owned(), folder)
             } else if !missing.is_empty() {
                 let bytes: u64 = missing.iter().map(|model| model.bytes).sum();
@@ -485,13 +488,13 @@ fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrM
                     ),
                     Fix::command("markitai doctor --fix"),
                 ];
-                ("warning", format!("Portable PaddleOCR engine (tract): {} of the {} model files the configured ocr.lang needs ({:.1} MB) are not installed; the first OCR downloads them", missing.len(), models.len(), bytes as f64 / 1e6),
+                ("warning", format!("Portable PaddleOCR engine ({engine}): {} of the {} model files the configured ocr.lang needs ({:.1} MB) are not installed; the first OCR downloads them", missing.len(), models.len(), bytes as f64 / 1e6),
                     "Run markitai doctor --fix to download them now from the official PaddleOCR mirror (each verified by SHA-256)".to_owned(), folder)
             } else {
                 (
                     "ok",
                     format!(
-                        "Portable PaddleOCR engine (tract): the {} model files the configured ocr.lang needs have verified size and SHA-256; this check does not load ONNX graphs or establish recognition accuracy",
+                        "Portable PaddleOCR engine ({engine}): the {} model files the configured ocr.lang needs have verified size and SHA-256; this check does not load ONNX graphs or establish recognition accuracy",
                         models.len()
                     ),
                     String::new(),
@@ -513,6 +516,15 @@ fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrM
     check
 }
 
+/// The portable engine's name in the check: qppocr says that tract takes over
+/// where it cannot read.
+fn portable_engine() -> String {
+    match markitai_core::local_ocr_engine() {
+        "qppocr" => "qppocr, tract fallback".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
 /// The local OCR check of the engine this process reads with.
 fn local_ocr(cfg: &Value) -> Check {
     match markitai_core::local_ocr_models(cfg) {
@@ -520,8 +532,8 @@ fn local_ocr(cfg: &Value) -> Check {
             markitai_core::local_ocr_available(),
             markitai_core::rosetta_translated(),
         ),
-        Ok(Some(models)) => portable_ocr_check(Ok(models)),
-        Err(error) => portable_ocr_check(Err(error)),
+        Ok(Some(models)) => portable_ocr_check(&portable_engine(), Ok(models)),
+        Err(error) => portable_ocr_check(&portable_engine(), Err(error)),
     }
 }
 
@@ -1107,11 +1119,11 @@ mod tests {
                 None,
             )
         };
-        let ready = portable_ocr_check(Ok(vec![model(true), model(true)]));
+        let ready = portable_ocr_check("tract", Ok(vec![model(true), model(true)]));
         assert_eq!(ready.status, "ok");
         assert!(ready.message.contains("PaddleOCR") && ready.install_hint.is_empty());
         assert_eq!(ready.path, Some(PathBuf::from("/home/models/ocr")));
-        let missing = portable_ocr_check(Ok(vec![model(true), model(false)]));
+        let missing = portable_ocr_check("tract", Ok(vec![model(true), model(false)]));
         assert_eq!(missing.status, "warning");
         assert!(
             missing.message.contains("1 of the 2 model files")
@@ -1120,9 +1132,12 @@ mod tests {
             missing.message
         );
         assert!(missing.install_hint.contains("markitai doctor --fix"));
-        let wrong = portable_ocr_check(Err(markitai_core::Error::Unsupported(
-            "ocr.lang is not a language the portable OCR models read (xx)".into(),
-        )));
+        let wrong = portable_ocr_check(
+            "tract",
+            Err(markitai_core::Error::Unsupported(
+                "ocr.lang is not a language the portable OCR models read (xx)".into(),
+            )),
+        );
         assert_eq!(wrong.status, "warning");
         assert!(wrong.message.contains("(xx)"));
         for check in [ready, missing, wrong] {
@@ -1143,13 +1158,13 @@ mod tests {
                 Some("/home/models/ocr/fixture/model.onnx: exact path reason".into()),
             )
         };
-        let corrupt = portable_ocr_check(Ok(vec![model(State::Corrupt)]));
+        let corrupt = portable_ocr_check("tract", Ok(vec![model(State::Corrupt)]));
         assert_eq!(corrupt.status, "warning");
         assert!(
             corrupt.message.contains("damaged") && corrupt.message.contains("exact path reason")
         );
         assert!(corrupt.install_hint.contains("doctor --fix"));
-        let unsafe_path = portable_ocr_check(Ok(vec![model(State::Unsafe)]));
+        let unsafe_path = portable_ocr_check("tract", Ok(vec![model(State::Unsafe)]));
         assert!(
             unsafe_path.message.contains("unsafe model path")
                 && unsafe_path.message.contains("exact path reason")
