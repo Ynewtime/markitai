@@ -10,12 +10,12 @@
 //! steps as Vision's ([`super::assemble`]): turned pages, columns, rows,
 //! paragraphs, code and mended zeros.
 //!
-//! Two engines run these models. `qppocr` ([`qpp`]) is the default where it
-//! can run (x86_64 with AVX2 and FMA, aarch64): it detects, orients and reads
-//! the lines of the multilingual recognizer's languages in one pass, and
-//! `tract` reads the rest, takes over for a processor or a model qppocr
-//! cannot run, and re-reads doubtful lines of the default language with the
-//! Korean recognizer. `MARKITAI_OCR_ENGINE` (`qppocr`, `tract`) chooses one.
+//! Two engines run these models. `tract` is the default. `qppocr` ([`qpp`]) is
+//! an experimental opt-in (`MARKITAI_OCR_ENGINE=qppocr`): it detects, orients
+//! and reads the lines of the multilingual recognizer's languages in one pass,
+//! and tract reads the rest, takes over for a model or a failure qppocr cannot
+//! handle, and re-reads doubtful lines of the default language with the
+//! Korean recognizer.
 //!
 //! The default language reads with the multilingual recognizer (Latin
 //! script, Chinese, Japanese) and, when that reading looks like another
@@ -1370,10 +1370,16 @@ pub(crate) fn engine_name() -> &'static str {
 /// language's recognizer.
 pub(crate) fn needed(spelling: &str) -> Result<Vec<&'static models::Model>> {
     match choice(spelling)? {
-        Choice::Default => Ok(models::defaults().collect()),
+        Choice::Default => {
+            let mut needed: Vec<_> = models::defaults().collect();
+            if qpp::planned() == "qppocr" {
+                needed.push(models::named(qpp::CLASSIFIER)?);
+            }
+            Ok(needed)
+        }
         Choice::Model(name) => {
             let mut needed = vec![DETECTOR, CLASSIFIER, name];
-            if name == MULTILINGUAL {
+            if name == MULTILINGUAL && qpp::planned() == "qppocr" {
                 needed.push(qpp::CLASSIFIER);
             }
             needed.into_iter().map(models::named).collect()
@@ -1441,7 +1447,7 @@ mod tests {
             assert!(matches!(error, crate::Error::Unsupported(_)), "{unknown}");
             assert!(error.to_string().contains("zh_tw"), "{error}");
         }
-        assert_eq!(needed("en").unwrap().len(), 5);
+        assert_eq!(needed("en").unwrap().len(), 4);
         assert_eq!(
             needed("ar")
                 .unwrap()
@@ -1568,6 +1574,10 @@ mod tests {
         for model in models::defaults() {
             assert!(models::present(model), "install {} first", model.name);
         }
+        assert!(
+            models::present(models::named(qpp::CLASSIFIER).unwrap()),
+            "install the qppocr classifier first"
+        );
         let qpp = qpp::start().unwrap();
         let fixture = include_bytes!("../fixtures/english.png");
         let expected = include_str!("../fixtures/english.txt");

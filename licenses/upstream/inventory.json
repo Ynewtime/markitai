@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 8846,
-      "sha256": "87fdf598f583eb8c342fa6f7d383a0bf19e938bb28ec306a96bf3f2e1b3803fd"
+      "bytes": 8835,
+      "sha256": "6951d4ed63c045587ffb568826d880e91d55a23bd5b262a0c8a4335a29edb365"
     },
     {
       "path": "input-manifest.json",

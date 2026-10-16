@@ -605,7 +605,6 @@ mod tests {
             [
                 "ppocrv6-det-small",
                 "ppocr-cls-mobile-v2",
-                "ppocr-lcnet-textline-ori",
                 "ppocrv6-rec-small",
                 "korean-ppocrv5-rec-mobile"
             ]

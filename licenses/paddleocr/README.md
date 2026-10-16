@@ -2,7 +2,7 @@
 
 The portable local OCR engine (Windows, Linux, and macOS builds with the
 `portable-media` feature) runs PaddleOCR's PP-OCR models in process with the
-pure-Rust `qppocr` and `tract` inference engines. The models are not part of any Markitai
+pure-Rust `tract` inference engine, or optionally (`MARKITAI_OCR_ENGINE=qppocr`) `qppocr`. The models are not part of any Markitai
 executable, library or package. `markitai doctor --fix`, or the first OCR that
 needs one, downloads each model file from the official mirror listed in
 [`crates/markitai-core/src/ocr/paddle/models.json`](../../crates/markitai-core/src/ocr/paddle/models.json)
@@ -42,9 +42,12 @@ published size and SHA-256.
 | `ta-ppocrv5-rec-mobile` | `ta_PP-OCRv5_rec_mobile.onnx` | 7,909,926 | `a42448808b7dea87597336f12438935f40353f1949e8360acd9e06b4da21bfe1` |
 | `te-ppocrv5-rec-mobile` | `te_PP-OCRv5_rec_mobile.onnx` | 7,923,102 | `a3690451b50028a09a3316a1274f7c05728151ea3f8fd392696397a7fefcbd92` |
 
-The first five form the default set (`doctor --fix` installs them, about
-46.3 MB); the others are downloaded only when `ocr.lang` names their language.
-Every digest above equals the one RapidOCR 3.9.2 publishes for the file.
+The detector, the v2.0 classifier, the multilingual recognizer and the Korean
+recognizer form the default set (`doctor --fix` installs them, about 45.2 MB);
+`ppocr-lcnet-textline-ori` is installed only when qppocr is selected
+(`MARKITAI_OCR_ENGINE=qppocr`); the others are downloaded only when `ocr.lang`
+names their language. Every digest above, except the qppocr classifier's,
+equals the one RapidOCR 3.9.2 publishes for the file.
 
 The inference engine itself (`tract-onnx` 0.23.8 and its `tract-*` crates,
 MIT OR Apache-2.0) is compiled into the executable and is covered by the

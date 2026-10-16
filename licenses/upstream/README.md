@@ -53,8 +53,7 @@ overlay files. Legal review remains not_performed.
 
 ## qppocr 0.3.1 crates
 
-qppocr, qppocr-core and qppocr-kernels 0.3.1 (the default local OCR engine on
-x86_64) publish no license file and no `.cargo_vcs_info.json`. Each exact
+qppocr, qppocr-core and qppocr-kernels 0.3.1 (the opt-in local OCR engine) publish no license file and no `.cargo_vcs_info.json`. Each exact
 published `Cargo.toml.orig` is byte-identical to the crate manifest of
 qinwenhui/qppocr at commit `3e53bbc2…` (the repository's only commit, version
 0.3.1), which inherits `license = "MIT OR Apache-2.0"` from its workspace

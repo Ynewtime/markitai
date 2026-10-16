@@ -30,7 +30,7 @@
       "sha256": "94a6a0a0425f2b5f08b5df72086f2d72abe40f1d22f6d12d2cd83674f11f2ff3",
       "bytes": 1019454,
       "license": "Apache-2.0",
-      "default": true
+      "default": false
     },
     {
       "name": "ppocrv6-rec-small",

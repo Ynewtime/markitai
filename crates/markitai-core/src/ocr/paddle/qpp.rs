@@ -1,15 +1,14 @@
-//! The default local OCR engine on x86_64 and aarch64: `qppocr`, a pure-Rust
-//! runner of the PP-OCRv6 models with its own AVX2/FMA and NEON kernels. It
-//! reads the multilingual recognizer's languages (the default language and
-//! the Chinese, Japanese and Latin-script spellings); `tract` stays for the
-//! rest (the Korean and other single-script recognizers, which use operators
-//! qppocr lacks) and for the cases `engine` lists.
+//! An experimental opt-in local OCR engine, `MARKITAI_OCR_ENGINE=qppocr`:
+//! `qppocr`, a pure-Rust runner of the PP-OCRv6 models with its own AVX2/FMA
+//! and NEON kernels. It reads the multilingual recognizer's languages (the
+//! default language and the Chinese, Japanese and Latin-script spellings);
+//! `tract`, the default, reads the rest (the Korean and other single-script
+//! recognizers use operators qppocr lacks) and takes over for what `engine`
+//! lists. Measured in the whole pipeline it was no faster than tract.
 //!
-//! One engine per process, decided once: [`engine`] says which engine this
-//! process reads with, and why when it is not qppocr. qppocr's kernels are
+//! One engine per process, decided once: [`engine`]. qppocr's kernels are
 //! chosen at run time (`is_x86_feature_detected!`), so a processor without
-//! AVX2 and FMA never executes an instruction it lacks; it reads with tract
-//! all the same, because qppocr's portable path is slow.
+//! AVX2 and FMA never executes an instruction it lacks.
 
 use super::{Line, Result, models};
 use image::RgbImage;
@@ -122,18 +121,11 @@ pub(super) fn engine() -> Result<Option<&'static Qpp>> {
 /// The engine this process would read with, by the same rules as [`engine`]
 /// but without loading anything: for `doctor`.
 pub(super) fn planned() -> &'static str {
-    let wanted = match request(&std::env::var(VARIABLE).unwrap_or_default()) {
-        Ok(Request::Qppocr) => true,
-        Ok(Request::Auto) => DEFAULT_ARCH && fast_cpu(),
-        _ => false,
-    };
-    if wanted { "qppocr" } else { "tract" }
+    match request(&std::env::var(VARIABLE).unwrap_or_default()) {
+        Ok(Request::Qppocr) => "qppocr",
+        _ => "tract",
+    }
 }
-
-/// Whether qppocr is the default engine on this architecture. On aarch64 it
-/// reads as accurately but takes about 45 % more time and 40 % more CPU than
-/// tract (measured here, 4 to 17 threads), so the default stays tract.
-const DEFAULT_ARCH: bool = cfg!(target_arch = "x86_64");
 
 /// Whether this processor runs qppocr's fast kernels: AVX2 and FMA on
 /// x86_64, always NEON on aarch64.
@@ -184,19 +176,12 @@ fn decide() -> std::result::Result<Option<Qpp>, String> {
             return Ok(None);
         }
     };
-    if !forced && !DEFAULT_ARCH {
-        // aarch64: qppocr's NEON kernels cost more CPU than tract's, so the
-        // default stays tract there; `MARKITAI_OCR_ENGINE=qppocr` runs it.
+    if !forced {
+        // qppocr is opt-in: in the full pipeline it measured no faster than
+        // tract on x86_64 laptops and slower on aarch64.
         return Ok(None);
     }
     if !fast_cpu() {
-        if !forced {
-            notice(
-                "this processor has no AVX2 and FMA, which the fast qppocr engine needs, so text \
-                 is read with the slower tract engine.",
-            );
-            return Ok(None);
-        }
         notice(&format!(
             "{VARIABLE}=qppocr on a processor without AVX2 and FMA: qppocr runs its portable \
              path, which is very slow."
@@ -388,11 +373,5 @@ mod tests {
         assert_eq!(shards(1), 0);
         assert_eq!(shards(4), 2);
         assert_eq!(shards(16), 4);
-    }
-
-    #[test]
-    fn this_architecture_has_a_kernel_policy() {
-        // The default engine is qppocr only where it was measured faster.
-        assert_eq!(DEFAULT_ARCH, cfg!(target_arch = "x86_64"));
     }
 }
