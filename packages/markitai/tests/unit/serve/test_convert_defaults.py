@@ -8,6 +8,7 @@ caller of a ``--no-auth`` server only reads. All values are invented.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -116,7 +117,8 @@ async def test_the_admin_saves_into_the_file_and_the_running_config(
         "image": {"compress": False},
         "fetch": {"strategy": "jina"},
     }
-    assert (tmp_path / "config.json").stat().st_mode & 0o077 == 0
+    if sys.platform != "win32":  # Windows has no POSIX mode bits
+        assert (tmp_path / "config.json").stat().st_mode & 0o077 == 0
     assert put.json() == again
     assert again["server"]["llm"] is True
     assert again["server"]["no_compress"] is True
