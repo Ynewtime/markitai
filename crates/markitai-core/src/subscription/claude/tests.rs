@@ -215,35 +215,45 @@ fn deadlines_and_stderr_limit_stop_processes_and_preserve_paid_evidence() {
         "stderr-after-terminal",
     ] {
         let flood = matches!(mode, "stderr-flood" | "stderr-after-terminal");
-        // A hanging process is stopped by the deadline. A flooding one must be
-        // stopped by the stderr limit before any deadline can matter, so its
-        // deadline is far beyond the time even a loaded machine needs to start
-        // the process and read the megabyte: the outcome does not race.
-        let timeout = Duration::from_secs(if flood { 60 } else { 2 });
-        let f = Fixture::new(mode);
-        let start = Instant::now();
-        let failure = complete(
-            &f.config,
-            Request {
-                timeout,
-                ..f.request("body")
-            },
-        )
-        .unwrap_err();
-        assert_eq!(
-            failure.kind,
-            if flood {
-                FailureKind::ResourceLimit
-            } else {
-                FailureKind::Timeout
-            },
-            "{mode}"
-        );
-        assert!(start.elapsed() < timeout + Duration::from_secs(4), "{mode}");
-        if mode == "hang-paid" {
-            assert_eq!(failure.usage.calls.len(), 1);
+        // A flooding process must be stopped by the stderr limit before any
+        // deadline can matter, so its deadline is far beyond the time even a
+        // loaded machine needs to start the process and read the megabyte: the
+        // outcome does not race. A hanging process is stopped by the deadline,
+        // but the paid call it made first shows only if it started before the
+        // deadline; a slow start (a scanner holding a new executable) is
+        // retried with a longer deadline.
+        let deadlines: &[u64] = if flood { &[60] } else { &[2, 10, 30] };
+        let mut paid_seen = false;
+        for &seconds in deadlines {
+            let timeout = Duration::from_secs(seconds);
+            let f = Fixture::new(mode);
+            let start = Instant::now();
+            let failure = complete(
+                &f.config,
+                Request {
+                    timeout,
+                    ..f.request("body")
+                },
+            )
+            .unwrap_err();
+            assert_eq!(
+                failure.kind,
+                if flood {
+                    FailureKind::ResourceLimit
+                } else {
+                    FailureKind::Timeout
+                },
+                "{mode}"
+            );
+            assert!(start.elapsed() < timeout + Duration::from_secs(4), "{mode}");
+            paid_seen = failure.usage.calls.len() == 1;
+            f.clean();
+            if mode != "hang-paid" || paid_seen {
+                paid_seen = true;
+                break;
+            }
         }
-        f.clean();
+        assert!(paid_seen, "{mode}: no paid call before the deadline");
     }
 }
 #[test]

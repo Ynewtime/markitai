@@ -416,47 +416,66 @@ mod runtime {
     #[test]
     fn timeout_and_cancellation_terminate_descendant_pipe_holders() {
         for cancelled in [false, true] {
-            let fixture = Fixture::new("hang");
-            let cancel = Arc::new(AtomicBool::new(false));
-            let notify = cancel.clone();
-            let ready = fixture.root.path().join("descendant");
-            let sender = cancelled.then(|| {
-                std::thread::spawn(move || {
-                    let wait = Instant::now();
-                    while !ready.exists() && wait.elapsed() < Duration::from_secs(2) {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    notify.store(true, Ordering::Release);
-                })
-            });
-            let mut request = fixture.request("text", Some(&cancel));
-            request.timeout = Duration::from_secs(if cancelled { 3 } else { 1 });
-            let started = Instant::now();
-            let failure = complete(&fixture.cfg, request).unwrap_err();
-            assert_eq!(
-                failure.kind,
-                if cancelled {
-                    FailureKind::Cancelled
-                } else {
-                    FailureKind::Timeout
-                }
+            // A slow start of the fake runtime (a scanner holding a new
+            // executable) can use up the deadline before it records anything;
+            // that turn proves nothing about cleanup, so it is run again with
+            // a longer deadline.
+            let started = [1, 5, 15]
+                .into_iter()
+                .any(|scale| pipe_holder_turn(cancelled, scale));
+            assert!(
+                started,
+                "the runtime never started (cancelled: {cancelled})"
             );
-            assert!(started.elapsed() < Duration::from_secs(4));
-            if let Some(sender) = sender {
-                sender.join().unwrap();
-            }
-            fixture.assert_private_cwd_removed();
-            // The descendant holding the runtime's pipes, when the turn got
-            // far enough to start it, was ended with the runtime.
-            if let Ok(text) = std::fs::read_to_string(fixture.root.path().join("descendant")) {
-                let pid: u32 = text.parse().unwrap();
-                let deadline = Instant::now() + Duration::from_secs(10);
-                while running(pid) {
-                    assert!(Instant::now() < deadline, "descendant {pid} survived");
+        }
+    }
+    /// One turn of the test above with deadlines `scale` times the usual;
+    /// whether the runtime started before the turn ended.
+    fn pipe_holder_turn(cancelled: bool, scale: u64) -> bool {
+        let fixture = Fixture::new("hang");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let notify = cancel.clone();
+        let ready = fixture.root.path().join("descendant");
+        let sender = cancelled.then(|| {
+            std::thread::spawn(move || {
+                let wait = Instant::now();
+                while !ready.exists() && wait.elapsed() < Duration::from_secs(2 * scale) {
                     std::thread::sleep(Duration::from_millis(10));
                 }
+                notify.store(true, Ordering::Release);
+            })
+        });
+        let mut request = fixture.request("text", Some(&cancel));
+        request.timeout = Duration::from_secs(if cancelled { 3 } else { 1 } * scale);
+        let started = Instant::now();
+        let failure = complete(&fixture.cfg, request).unwrap_err();
+        assert_eq!(
+            failure.kind,
+            if cancelled {
+                FailureKind::Cancelled
+            } else {
+                FailureKind::Timeout
+            }
+        );
+        assert!(started.elapsed() < Duration::from_secs(4 * scale));
+        if let Some(sender) = sender {
+            sender.join().unwrap();
+        }
+        if !fixture.root.path().join("cwd").exists() {
+            return false;
+        }
+        fixture.assert_private_cwd_removed();
+        // The descendant holding the runtime's pipes, when the turn got
+        // far enough to start it, was ended with the runtime.
+        if let Ok(text) = std::fs::read_to_string(fixture.root.path().join("descendant")) {
+            let pid: u32 = text.parse().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while running(pid) {
+                assert!(Instant::now() < deadline, "descendant {pid} survived");
+                std::thread::sleep(Duration::from_millis(10));
             }
         }
+        true
     }
     /// Whether `pid` names a process that has not ended (a Unix zombie has).
     fn running(pid: u32) -> bool {
