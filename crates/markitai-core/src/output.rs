@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 static OUTPUT_LOCK: Mutex<()> = Mutex::new(());
@@ -928,6 +928,7 @@ pub(crate) fn write_document_mode(
         ".markitai/assets"
     };
     let mut replacements = HashMap::with_capacity(assets.len());
+    let mut published: Vec<(PathBuf, &Vec<u8>)> = Vec::new();
     for asset in assets {
         let extension = Path::new(&asset.name)
             .extension()
@@ -943,7 +944,9 @@ pub(crate) fn write_document_mode(
         let path = join_relative(dir, asset_prefix).join(&filename);
         check_path(&path, allow_symlinks)?;
         std::fs::create_dir_all(path.parent().unwrap())?;
-        crate::asset_store::insert_or_verify(&path, &asset.bytes)?;
+        if !result.assets.contains(&path) {
+            published.push((path.clone(), &asset.bytes));
+        }
         let before = format!("{asset_prefix}/{}", asset.name);
         let after = format!("{asset_prefix}/{filename}");
         replacements.entry(before).or_insert(after);
@@ -951,6 +954,7 @@ pub(crate) fn write_document_mode(
             result.assets.push(path);
         }
     }
+    crate::asset_store::insert_or_verify_all(&published)?;
     if !replacements.is_empty() {
         result.markdown = rewrite_asset_references(&result.markdown, &replacements);
         if let Some(source) = &mut result.enhancement_source {

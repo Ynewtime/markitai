@@ -1,6 +1,7 @@
 //! Bounded image decoding and shared asset preparation.
 
 mod heif;
+mod resize;
 mod svg;
 mod tiff;
 
@@ -127,6 +128,13 @@ fn filtered(image: &DynamicImage, cfg: &Value) -> bool {
                 .unwrap_or(5000)
 }
 
+/// Whether `image` is 8-bit RGBA with every pixel fully opaque.
+fn opaque_rgba(image: &DynamicImage) -> bool {
+    image
+        .as_rgba8()
+        .is_some_and(|rgba| rgba.pixels().all(|pixel| pixel.0[3] == 255))
+}
+
 fn rgb_on_white(image: &DynamicImage) -> RgbImage {
     if !image.color().has_alpha() {
         return image.to_rgb8();
@@ -157,19 +165,45 @@ fn encode_limited(
 ) -> Result<(Vec<u8>, &'static str, &'static str)> {
     let width = dimension(cfg, "/image/max_width", 1920).max(1);
     let height = dimension(cfg, "/image/max_height", 99999).max(1);
-    let resized;
-    let image = if !force_png && (image.width() > width || image.height() > height) {
-        resized = image.resize(width, height, image::imageops::FilterType::Lanczos3);
-        &resized
-    } else {
-        image
-    };
     let format = if force_png {
         "png"
     } else {
         cfg.pointer("/image/format")
             .and_then(Value::as_str)
             .unwrap_or("jpeg")
+    };
+    let jpeg = !matches!(format, "png" | "webp");
+    let resized;
+    let image = if !force_png && (image.width() > width || image.height() > height) {
+        // JPEG has no alpha, so a picture whose alpha is all opaque is
+        // resized as the RGB it becomes, on several threads and to the same
+        // bytes `image` gives.
+        let (new_width, new_height) = resize::fit((image.width(), image.height()), width, height);
+        let jpeg = jpeg && (new_width, new_height) != (image.width(), image.height());
+        resized = match image {
+            DynamicImage::ImageRgb8(rgb) if jpeg => DynamicImage::ImageRgb8(resize::lanczos3_rgb(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                3,
+                new_width,
+                new_height,
+            )),
+            DynamicImage::ImageRgba8(rgba) if jpeg && opaque_rgba(image) => {
+                DynamicImage::ImageRgb8(resize::lanczos3_rgb(
+                    rgba.as_raw(),
+                    rgba.width(),
+                    rgba.height(),
+                    4,
+                    new_width,
+                    new_height,
+                ))
+            }
+            _ => image.resize(width, height, image::imageops::FilterType::Lanczos3),
+        };
+        &resized
+    } else {
+        image
     };
     let mut buffer = EncodedBuffer {
         inner: Cursor::new(Vec::new()),
@@ -420,11 +454,104 @@ pub(crate) fn prepare_mail_assets(doc: &mut Document, cfg: &Value, originals: &H
 }
 
 /// Prepare embedded raster assets without touching the input or fetching URLs.
+/// What decoding, filtering and compressing one embedded image comes to.
+struct Converted {
+    heif: Option<heif::Info>,
+    outcome: Outcome,
+}
+
+enum Outcome {
+    Filtered,
+    Encoded(Vec<u8>, &'static str),
+    EncodeFailed,
+    Relabeled(&'static str),
+}
+
+/// `None` when the image cannot be decoded within the native limits.
+fn convert(bytes: &[u8], cfg: &Value) -> Option<Converted> {
+    let (image, format) = decode(bytes).ok()?;
+    let (heif, raster) = match format {
+        DecodedFormat::Heif(info) => (Some(info), None),
+        DecodedFormat::Raster(format) => (None, Some(format)),
+    };
+    if filtered(&image, cfg) {
+        return Some(Converted {
+            heif,
+            outcome: Outcome::Filtered,
+        });
+    }
+    let compress = config::enabled(cfg, "/image/compress");
+    let outcome = match raster {
+        Some(format) if !compress => Outcome::Relabeled(format.extensions_str()[0]),
+        _ => match encode(&image, cfg, !compress) {
+            Ok((bytes, extension, _)) => Outcome::Encoded(bytes, extension),
+            Err(_) => Outcome::EncodeFailed,
+        },
+    };
+    Some(Converted { heif, outcome })
+}
+
+/// Images decoded at once: each holds its decoded pixels (up to
+/// `MAX_DECODED`) while it is converted.
+const CONVERT_THREADS: usize = 4;
+
+/// The conversions of the assets that will reach [`convert`], by index, made
+/// on several threads (decoding, resizing and encoding dominate a document
+/// with pictures, and each image is independent). A duplicate of an earlier
+/// asset and a TIFF are left to the caller, which converts them on demand
+/// with the same function, so the results are those of a serial run.
+fn convert_ahead(assets: &[Asset], cfg: &Value) -> HashMap<usize, Option<Converted>> {
+    let deduplicate = config::enabled(cfg, "/image/filter/deduplicate");
+    let mut seen = HashSet::new();
+    let todo: Vec<usize> = assets
+        .iter()
+        .enumerate()
+        .filter(|(_, asset)| {
+            let extension = Path::new(&asset.name)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            (is_image_extension(extension)
+                || image::guess_format(&asset.bytes).is_ok()
+                || heif::signature(&asset.bytes))
+                && !tiff::signature(&asset.bytes)
+                && (!deduplicate || seen.insert(Sha256::digest(&asset.bytes)))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(CONVERT_THREADS)
+        .min(todo.len());
+    if workers < 2 {
+        return HashMap::new();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done = std::sync::Mutex::new(HashMap::with_capacity(todo.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                while let Some(&index) =
+                    todo.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                {
+                    let converted = convert(&assets[index].bytes, cfg);
+                    done.lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(index, converted);
+                }
+            });
+        }
+    });
+    done.into_inner().unwrap_or_else(|e| e.into_inner())
+}
+
 pub(crate) fn prepare_assets(doc: &mut Document, cfg: &Value) {
     let mut prepared = Vec::with_capacity(doc.assets.len());
     let mut seen: HashMap<_, String> = HashMap::new();
     let mut replacements = HashMap::with_capacity(doc.assets.len());
-    for asset in std::mem::take(&mut doc.assets) {
+    let assets = std::mem::take(&mut doc.assets);
+    let mut ahead = convert_ahead(&assets, cfg);
+    for (index, asset) in assets.into_iter().enumerate() {
         let from = format!(".markitai/assets/{}", asset.name);
         let extension = Path::new(&asset.name)
             .extension()
@@ -473,50 +600,42 @@ pub(crate) fn prepare_assets(doc: &mut Document, cfg: &Value) {
             prepared.push(asset);
             continue;
         }
-        let (image, format) = match decode(&asset.bytes) {
-            Ok(value) => value,
-            Err(_) => {
-                notice(
-                    doc,
-                    "An embedded image could not be decoded within native limits; its original asset was retained without filtering or compression.",
-                );
-                replacements.entry(from.clone()).or_insert(from);
-                prepared.push(asset);
-                continue;
-            }
+        let converted = ahead
+            .remove(&index)
+            .unwrap_or_else(|| convert(&asset.bytes, cfg));
+        let Some(Converted { heif, outcome }) = converted else {
+            notice(
+                doc,
+                "An embedded image could not be decoded within native limits; its original asset was retained without filtering or compression.",
+            );
+            replacements.entry(from.clone()).or_insert(from);
+            prepared.push(asset);
+            continue;
         };
-        if let DecodedFormat::Heif(info) = format {
+        if let Some(info) = heif {
             primary_notice(doc, info);
         }
-        if filtered(&image, cfg) {
-            replacements.entry(from).or_default();
-            continue;
-        }
-        let compress = config::enabled(cfg, "/image/compress");
-        let asset = if compress || matches!(format, DecodedFormat::Heif(_)) {
-            match encode(&image, cfg, !compress) {
-                Ok((bytes, extension, _)) => Asset {
-                    name: format!("{}.{}", asset.name, extension),
-                    bytes,
-                },
-                Err(_) => {
-                    notice(
-                        doc,
-                        "An embedded image could not be encoded; its original asset was retained.",
-                    );
-                    asset
-                }
+        let asset = match outcome {
+            Outcome::Filtered => {
+                replacements.entry(from).or_default();
+                continue;
             }
-        } else {
+            Outcome::Encoded(bytes, extension) => Asset {
+                name: format!("{}.{}", asset.name, extension),
+                bytes,
+            },
+            Outcome::EncodeFailed => {
+                notice(
+                    doc,
+                    "An embedded image could not be encoded; its original asset was retained.",
+                );
+                asset
+            }
             // Correct mislabeled embedded payloads even when preserving their bytes.
-            let DecodedFormat::Raster(format) = format else {
-                unreachable!()
-            };
-            let suffix = format.extensions_str()[0];
-            Asset {
+            Outcome::Relabeled(suffix) => Asset {
                 name: format!("{}.{}", asset.name, suffix),
                 ..asset
-            }
+            },
         };
         if config::enabled(cfg, "/image/compress") && cfg["image"]["format"] == "webp" {
             notice(
@@ -1245,6 +1364,72 @@ mod tests {
                 .contains("`![literal](.markitai/assets/a.png.png)`")
         );
         assert!(doc.warnings.is_empty());
+    }
+
+    #[test]
+    fn many_assets_are_prepared_on_several_threads_as_one_by_one() {
+        let opaque = |width: u32, height: u32| {
+            let mut bytes = Vec::new();
+            DynamicImage::ImageRgba8(image::RgbaImage::from_fn(width, height, |x, y| {
+                image::Rgba([(x * 3) as u8, (y * 5) as u8, (x * y) as u8, 255])
+            }))
+            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+            .unwrap();
+            bytes
+        };
+        // Some wide enough to be resized, a tiny one to be filtered, a
+        // duplicate, a transparent one and a payload that is no image.
+        let mut parts: Vec<(String, Vec<u8>)> = (0..9)
+            .map(|n| (format!("p{n}.png"), opaque(60 + n * 40, 50 + n * 10)))
+            .collect();
+        for (name, bytes) in [
+            ("tiny.png", png(2, 2)),
+            ("again.png", parts[3].1.clone()),
+            ("clear.png", png(400, 90)),
+            ("broken.png", b"not an image".to_vec()),
+        ] {
+            parts.push((name.into(), bytes));
+        }
+        let assets = |parts: &[(String, Vec<u8>)]| -> Vec<Asset> {
+            parts
+                .iter()
+                .map(|(name, bytes)| Asset {
+                    name: name.clone(),
+                    bytes: bytes.clone(),
+                })
+                .collect()
+        };
+        let cfg = config::normalize(&json!({"image":{"max_width":200}})).unwrap();
+        let prepare = |assets: Vec<Asset>| {
+            let mut doc = Document {
+                markdown: "![x](.markitai/assets/p0.png)".into(),
+                assets,
+                ..Default::default()
+            };
+            prepare_assets(&mut doc, &cfg);
+            doc
+        };
+        let together = prepare(assets(&parts));
+        // Each alone (never on several threads) gives the same asset.
+        let alone: Vec<Asset> = parts
+            .iter()
+            .filter(|(name, _)| name != "again.png")
+            .flat_map(|part| prepare(assets(std::slice::from_ref(part))).assets)
+            .collect();
+        let names = |assets: &[Asset]| {
+            assets
+                .iter()
+                .map(|asset| (asset.name.clone(), asset.bytes.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&together.assets), names(&alone));
+        assert!(together.assets.iter().all(|a| !a.name.starts_with("tiny")));
+        let widest = together
+            .assets
+            .iter()
+            .find(|a| a.name.starts_with("p8"))
+            .unwrap();
+        assert_eq!(image::load_from_memory(&widest.bytes).unwrap().width(), 200);
     }
 
     #[test]

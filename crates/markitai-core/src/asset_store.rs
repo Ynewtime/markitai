@@ -3,7 +3,9 @@ use crate::platform::{self, Status};
 use crate::{Error, Result};
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BLOCK: usize = 32 * 1024;
 
@@ -15,6 +17,52 @@ pub(crate) fn insert_or_verify(path: &Path, bytes: &[u8]) -> Result<()> {
         return Ok(());
     }
     publish_new(path, bytes)
+}
+
+/// Files published at once: each waits for its own flush to the device, which
+/// overlaps, where one after another they add up.
+const PUBLISH_THREADS: usize = 4;
+
+/// [`insert_or_verify`] for each of `assets` (distinct paths), on several
+/// threads when there are several. The error of the earliest failing asset is
+/// returned, as it would be one by one; later assets may have been published.
+pub(crate) fn insert_or_verify_all(assets: &[(PathBuf, &Vec<u8>)]) -> Result<()> {
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(PUBLISH_THREADS)
+        .min(assets.len());
+    if threads < 2 {
+        return assets
+            .iter()
+            .try_for_each(|(path, bytes)| insert_or_verify(path, bytes));
+    }
+    let next = AtomicUsize::new(0);
+    let failed = Mutex::new(None::<(usize, Error)>);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some((path, bytes)) = assets.get(index) else {
+                        break;
+                    };
+                    if let Err(error) = insert_or_verify(path, bytes) {
+                        let mut first = failed.lock().unwrap_or_else(|e| e.into_inner());
+                        if first.as_ref().is_none_or(|(at, _)| index < *at) {
+                            *first = Some((index, error));
+                        }
+                        // Nothing later needs publishing once one has failed.
+                        next.store(assets.len(), Ordering::Relaxed);
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    match failed.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        Some((_, error)) => Err(error),
+        None => Ok(()),
+    }
 }
 
 fn mismatch(path: &Path) -> Error {
@@ -130,6 +178,28 @@ mod tests {
     use std::path::PathBuf;
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn assets_published_together_are_all_written_and_the_earliest_error_wins() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes: Vec<Vec<u8>> = (0..9u8).map(|n| vec![n; 1000 + usize::from(n)]).collect();
+        let jobs: Vec<(PathBuf, &Vec<u8>)> = bytes
+            .iter()
+            .enumerate()
+            .map(|(n, bytes)| (root.path().join(format!("a{n}.bin")), bytes))
+            .collect();
+        insert_or_verify_all(&jobs).unwrap();
+        for (path, expected) in &jobs {
+            assert_eq!(&fs::read(path).unwrap(), *expected);
+        }
+        // The same again verifies; a conflicting file at two paths fails with
+        // the first of them.
+        insert_or_verify_all(&jobs).unwrap();
+        fs::write(&jobs[2].0, b"other").unwrap();
+        fs::write(&jobs[6].0, b"other").unwrap();
+        let error = insert_or_verify_all(&jobs).unwrap_err().to_string();
+        assert!(error.contains("a2.bin"), "{error}");
+    }
 
     #[test]
     fn existing_asset_requires_exact_bytes_and_never_replaces_conflicting_content() {
