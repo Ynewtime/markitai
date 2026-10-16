@@ -123,7 +123,13 @@ With Vision, `ocr.lang=en` is a multilingual fallback policy, not English-only
 recognition.
 Vision first reads English, then tries supported Chinese, Japanese and Korean
 readings when the initial result is inadequate. Explicit `en-US` selects English
-alone. A forced language cannot make an unsupported Vision language available.
+alone. When no single language reads an image that is not plainly English, it is
+read once more with Chinese, Japanese, Korean and English asked for together and
+Vision detecting the language (macOS 13 or later), and that reading is used if
+it holds text. An image nothing read is marked unread with a warning.
+`MARKITAI_OCR_TRACE=1` prints one line per reading (language, lines, lines Vision
+is sure of, the verdict, or why a reading failed). A forced language cannot make
+an unsupported Vision language available.
 OS versions and installed language support can change the result.
 
 ## Bounds and reading order

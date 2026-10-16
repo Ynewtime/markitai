@@ -240,3 +240,40 @@ fn pdf_vision_page_cap_fails_before_model_or_publication() {
     assert!(error.to_string().contains("no pages were rendered or sent"));
     assert!(!output.exists());
 }
+
+/// The parity corpus's scanned page of Chinese, Japanese, Korean and a table
+/// (`corpus/ocr/cjk-scanned.pdf`), read by Vision on a real Mac. Vision does
+/// not run in a macOS virtual machine, so the runners skip this test by name;
+/// it needs `MARKITAI_TEST_CJK_SCANNED_PDF` to name the file and passes
+/// without it.
+#[cfg(target_os = "macos")]
+#[test]
+fn vision_reads_the_corpus_scanned_cjk_page() {
+    let Some(path) = std::env::var_os("MARKITAI_TEST_CJK_SCANNED_PDF") else {
+        return;
+    };
+    let mut config = cfg();
+    config["ocr"] = json!({"enabled":true});
+    let result = run(Path::new(&path), config, None);
+    if super::vision_unavailable_under_rosetta(&result) {
+        return;
+    }
+    let result = result.unwrap();
+    let text: String = result.markdown.split_whitespace().collect();
+    for phrase in [
+        "第一章概述",
+        "本文档用于测试中文文本提取",
+        "日本語のテキストも含まれています",
+        "日本の首都です",
+        "项目数量单价",
+        "苹果",
+        "所有字符都应该被正确保留",
+    ] {
+        assert!(text.contains(phrase), "{phrase}: {}", result.markdown);
+    }
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("could not read")),
+        "{:?}",
+        result.warnings
+    );
+}

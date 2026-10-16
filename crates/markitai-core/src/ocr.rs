@@ -384,12 +384,32 @@ struct Pass {
 #[cfg(target_os = "macos")]
 fn pass(image: &pixels::Prepared, language: &str) -> Result<Pass> {
     let space = (image.width, image.height);
-    let first = vision::recognize(image, language, space, true)?;
+    pass_with(image, |image, may_enlarge| {
+        vision::recognize(image, language, space, may_enlarge)
+    })
+}
+
+/// [`pass`] with all of Chinese, Japanese, Korean and English asked for at once
+/// and the language detected by Vision.
+#[cfg(target_os = "macos")]
+fn pass_detecting(image: &pixels::Prepared) -> Result<Pass> {
+    let space = (image.width, image.height);
+    pass_with(image, |image, may_enlarge| {
+        vision::recognize_detecting(image, space, may_enlarge)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn pass_with(
+    image: &pixels::Prepared,
+    read: impl Fn(&pixels::Prepared, bool) -> Result<vision::Reading>,
+) -> Result<Pass> {
+    let first = read(image, true)?;
     Ok(match first.enlarge {
         Some(factor) => {
             let larger = pixels::enlarge(image, factor)?;
             Pass {
-                lines: vision::recognize(&larger, language, space, false)?.lines,
+                lines: read(&larger, false)?.lines,
                 scale: factor,
             }
         }
@@ -455,6 +475,7 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     use cjk::Script;
     let english = pass(image, ENGLISH)?;
     let verdict = auto::judge(&english.lines);
+    trace_pass(ENGLISH, &Ok(&english), Some(verdict));
     if verdict == Verdict::Sound {
         return finish(image, english, ENGLISH, false);
     }
@@ -464,7 +485,9 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     let mut settled = false;
     // A Vision language this system lacks, or a failed reading, is not a
     // failure of the conversion: English has read the image.
-    if let Ok(chinese) = pass(image, CHINESE) {
+    let chinese = pass(image, CHINESE);
+    trace_pass(CHINESE, &chinese.as_ref(), None);
+    if let Ok(chinese) = chinese {
         elsewhere = auto::saw(&chinese.lines, &english.lines);
         if auto::reads(&chinese.lines, Script::Japanese) {
             settled = auto::credible(&chinese.lines, Script::Japanese) >= auto::CONVINCING;
@@ -472,10 +495,11 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
             best = Some((CHINESE, chinese, strength));
         }
     }
-    if verdict == Verdict::Failed
-        && !settled
-        && let Ok(korean) = pass(image, KOREAN)
-    {
+    let korean = (verdict == Verdict::Failed && !settled).then(|| pass(image, KOREAN));
+    if let Some(korean) = &korean {
+        trace_pass(KOREAN, &korean.as_ref(), None);
+    }
+    if let Some(Ok(korean)) = korean {
         elsewhere |= auto::saw(&korean.lines, &english.lines);
         let strength = auto::strength(&korean.lines, Script::Korean);
         if auto::reads(&korean.lines, Script::Korean)
@@ -492,6 +516,25 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
             best = Some((JAPANESE, japanese, strength));
         }
     }
+    // No single language read the image, yet it is not plainly English: a page
+    // that mixes Chinese, Japanese, Korean and Latin, or text that one
+    // language's recognizer gives up on, is read once more with all of them
+    // asked for and Vision detecting the language.
+    if best.is_none() && verdict != Verdict::Sound {
+        let all = pass_detecting(image);
+        trace_pass("detected", &all.as_ref(), None);
+        if let Ok(all) = all {
+            let strength = [Script::Chinese, Script::Japanese, Script::Korean]
+                .into_iter()
+                .filter(|script| auto::reads(&all.lines, *script))
+                .map(|script| auto::strength(&all.lines, script))
+                .fold(0.0, f32::max);
+            if strength > 0.0 || auto::judge(&all.lines) == Verdict::Sound {
+                elsewhere = true;
+                best = Some((CHINESE, all, strength));
+            }
+        }
+    }
     match best {
         Some((language, pass, _)) => finish(image, pass, language, false),
         None => {
@@ -504,6 +547,33 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
             }
             finish(image, english, ENGLISH, unread)
         }
+    }
+}
+
+/// One line of `MARKITAI_OCR_TRACE` for a reading of the default policy: what a
+/// language read, or why it could not, so that a page left unread can be told
+/// from a language this system lacks.
+#[cfg(target_os = "macos")]
+fn trace_pass(
+    language: &str,
+    pass: &std::result::Result<&Pass, &Error>,
+    verdict: Option<auto::Verdict>,
+) {
+    if !trace::enabled() {
+        return;
+    }
+    match pass {
+        Ok(pass) => {
+            let sure = pass.lines.iter().filter(|line| auto::sure(line)).count();
+            trace::line(format_args!(
+                "engine=vision language={language} lines={} sure={sure} scale={} verdict={verdict:?}",
+                pass.lines.len(),
+                pass.scale
+            ));
+        }
+        Err(error) => trace::line(format_args!(
+            "engine=vision language={language} failed: {error}"
+        )),
     }
 }
 
@@ -1276,6 +1346,48 @@ pub(crate) mod tests {
         // Vision's Chinese recognizer makes Han of Hangul; Korean is read too.
         default_reads("Arial Unicode MS", &korean, 24, "ko-KR", "ko");
         default_reads("Arial Unicode MS", &korean, 16, "ko-KR", "ko");
+    }
+
+    /// A scan-like page of Chinese with a table: drawn in a system font, then
+    /// blurred and recompressed as a poor JPEG, the way the parity corpus's
+    /// scanned pages are. Vision cannot run in a macOS virtual machine, so the
+    /// runners skip this test by name.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vision_reads_a_degraded_scan_of_chinese_with_a_table_by_default() {
+        let lines = [
+            "第一章 概述",
+            "本文档用于测试中文文本提取、表格识别和光学字符识别。",
+            "Markitai 将各种文档格式转换为 Markdown，并可选地使用大语言模型进行增强",
+            "第二章 数据表",
+            "项目    数量    单价",
+            "苹果    12    3.50",
+            "香蕉    30    1.20",
+            "结论：所有字符都应该被正确保留，没有乱码。",
+        ];
+        let page = system_font_lines("Hiragino Sans GB", &lines, 22);
+        let blurred = image::imageops::blur(&page, 0.8);
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 55)
+            .encode_image(&blurred)
+            .unwrap();
+        let scan = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+        let result = recognize_rgb(scan, &json!({"ocr":{"enabled":true}}));
+        if vision_unavailable_under_rosetta(&result) {
+            return;
+        }
+        let result = result.unwrap();
+        let text = squeezed(&result.text);
+        for phrase in [
+            "第一章概述",
+            "本文档用于测试中文文本提取",
+            "项目数量单价",
+            "苹果",
+            "所有字符都应该被正确保留",
+        ] {
+            assert!(text.contains(phrase), "{phrase}: {}", result.text);
+        }
+        assert!(!result.unread);
     }
 
     #[cfg(target_os = "macos")]

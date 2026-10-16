@@ -157,14 +157,61 @@ pub(super) fn recognize(
     space: (u32, u32),
     may_enlarge: bool,
 ) -> Result<Reading> {
+    recognize_in(image, requested, &[requested], false, space, may_enlarge)
+}
+
+/// The languages of the last-resort reading of an image no single language
+/// read, in the order Vision should prefer them: Chinese first (it also reads
+/// Latin and Japanese), then the other Chinese script, Japanese, Korean and
+/// English. Only those the system supports are asked for.
+const DETECTED: [&str; 5] = ["zh-Hans", "zh-Hant", "ja-JP", "ko-KR", "en-US"];
+
+/// [`recognize`] in all of [`DETECTED`] at once, letting Vision detect the
+/// language of the text (macOS 13 or later; before that the languages are only
+/// listed), with the aids of Chinese text.
+pub(super) fn recognize_detecting(
+    image: &Prepared,
+    space: (u32, u32),
+    may_enlarge: bool,
+) -> Result<Reading> {
+    recognize_in(image, DETECTED[0], &DETECTED, true, space, may_enlarge)
+}
+
+/// [`recognize`] asking Vision for `wanted` (each matched against the
+/// supported languages; `requested` must be among them and gives the script
+/// whose aids apply), with automatic language detection when `detect`.
+fn recognize_in(
+    image: &Prepared,
+    requested: &str,
+    wanted: &[&str],
+    detect: bool,
+    space: (u32, u32),
+    may_enlarge: bool,
+) -> Result<Reading> {
     // Vision and Foundation classes are looked up by name below.
     system_frameworks::open(Framework::Vision).map_err(|message| failure(&message))?;
     autoreleasepool(|_| {
         let probe = VNRecognizeTextRequest::new();
         probe.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
-        let selected = supported_language(requested, &supported(&probe)?)?;
-        let languages = NSArray::from_retained_slice(&[NSString::from_str(&selected)]);
+        let supported = supported(&probe)?;
+        let mut selected = vec![supported_language(requested, &supported)?];
+        for language in wanted {
+            if let Ok(found) = supported_language(language, &supported)
+                && !selected.contains(&found)
+            {
+                selected.push(found);
+            }
+        }
+        let languages = NSArray::from_retained_slice(
+            &selected
+                .iter()
+                .map(|language| NSString::from_str(language))
+                .collect::<Vec<_>>(),
+        );
         let request = request(&languages);
+        if detect && objc2::available!(macos = 13.0) {
+            request.setAutomaticallyDetectsLanguage(true);
+        }
         let data = NSData::with_bytes(&image.png);
         let handler = VNImageRequestHandler::initWithData_options(
             VNImageRequestHandler::alloc(),
