@@ -2,7 +2,7 @@
 
 The portable local OCR engine (Windows, Linux, and macOS builds with the
 `portable-media` feature) runs PaddleOCR's PP-OCR models in process with the
-pure-Rust `tract` inference engine. The models are not part of any Markitai
+pure-Rust `qppocr` and `tract` inference engines. The models are not part of any Markitai
 executable, library or package. `markitai doctor --fix`, or the first OCR that
 needs one, downloads each model file from the official mirror listed in
 [`crates/markitai-core/src/ocr/paddle/models.json`](../../crates/markitai-core/src/ocr/paddle/models.json)
@@ -12,6 +12,11 @@ published size and SHA-256.
 - **Models**: PaddleOCR, by the PaddlePaddle Authors, Apache License 2.0
   ([PaddleOCR-LICENSE](PaddleOCR-LICENSE), retrieved 2026-10-02 from
   `https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/LICENSE`).
+- **qppocr's line-direction classifier**: PaddlePaddle's own ONNX export
+  `PP-LCNet_x0_25_textline_ori_onnx` (Apache License 2.0, as PaddleOCR) on
+  Hugging Face, downloaded from
+  `https://huggingface.co/PaddlePaddle/PP-LCNet_x0_25_textline_ori_onnx/resolve/aea1f18d97338aaf84b463f90192f2820524a00a/inference.onnx`
+  (one pinned revision).
 - **ONNX conversion and mirror**: RapidOCR, by RapidAI, Apache License 2.0
   ([RapidOCR-LICENSE](RapidOCR-LICENSE), retrieved 2026-10-02 from
   `https://raw.githubusercontent.com/RapidAI/RapidOCR/main/LICENSE`). The
@@ -24,6 +29,7 @@ published size and SHA-256.
 | --- | --- | ---: | --- |
 | `ppocrv6-det-small` | `PP-OCRv6_det_small.onnx` | 9,929,594 | `090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f` |
 | `ppocr-cls-mobile-v2` | `ch_ppocr_mobile_v2.0_cls_mobile.onnx` | 585,532 | `e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c` |
+| `ppocr-lcnet-textline-ori` | `inference.onnx` | 1,019,454 | `94a6a0a0425f2b5f08b5df72086f2d72abe40f1d22f6d12d2cd83674f11f2ff3` |
 | `ppocrv6-rec-small` | `PP-OCRv6_rec_small.onnx` | 21,234,383 | `6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884` |
 | `korean-ppocrv5-rec-mobile` | `korean_PP-OCRv5_rec_mobile.onnx` | 13,488,748 | `cd6e2ea50f6943ca7271eb8c56a877a5a90720b7047fe9c41a2e541a25773c9b` |
 | `latin-ppocrv5-rec-mobile` | `latin_PP-OCRv5_rec_mobile.onnx` | 7,904,513 | `b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a` |
@@ -36,8 +42,8 @@ published size and SHA-256.
 | `ta-ppocrv5-rec-mobile` | `ta_PP-OCRv5_rec_mobile.onnx` | 7,909,926 | `a42448808b7dea87597336f12438935f40353f1949e8360acd9e06b4da21bfe1` |
 | `te-ppocrv5-rec-mobile` | `te_PP-OCRv5_rec_mobile.onnx` | 7,923,102 | `a3690451b50028a09a3316a1274f7c05728151ea3f8fd392696397a7fefcbd92` |
 
-The first four form the default set (`doctor --fix` installs them, about
-45.2 MB); the others are downloaded only when `ocr.lang` names their language.
+The first five form the default set (`doctor --fix` installs them, about
+46.3 MB); the others are downloaded only when `ocr.lang` names their language.
 Every digest above equals the one RapidOCR 3.9.2 publishes for the file.
 
 The inference engine itself (`tract-onnx` 0.23.8 and its `tract-*` crates,

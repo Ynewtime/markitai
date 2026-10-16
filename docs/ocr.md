@@ -162,16 +162,56 @@ recognition nor a successful exit certifies every character.
 ## The portable engine (Windows and Linux)
 
 Windows and Linux read images with PaddleOCR's PP-OCR models, run in the
-conversion process by the pure-Rust [`tract`](https://github.com/sonos/tract)
-inference engine (`tract-onnx` 0.23.8): no Python, ONNX Runtime, Tesseract or
-system service. A macOS build has it only with the `portable-media` feature
-(`cargo build -p markitai-cli --release --features portable-media`); Vision
-stays that build's default, the portable engine is chosen when Vision cannot
-run (macOS before 11, or an x86_64 build under Rosetta), and
+conversion process by pure-Rust inference engines: [`qppocr`](https://github.com/qinwenhui/qppocr)
+(`qppocr` 0.3.1) and, as the fallback, [`tract`](https://github.com/sonos/tract)
+(`tract-onnx` 0.23.8). No Python, ONNX Runtime, Tesseract or system service is
+needed. A macOS build has the portable engine only with the `portable-media`
+feature (`cargo build -p markitai-cli --release --features portable-media`);
+Vision stays that build's default, the portable engine is chosen when Vision
+cannot run (macOS before 11, or an x86_64 build under Rosetta), and
 `MARKITAI_OCR_BACKEND=paddle` or `vision` chooses one explicitly (any other
 value is a configuration error; `vision` is an unsupported-capability error
 where Vision is absent). Metadata records `ocr_path: paddle`, and `markitai
 doctor` names the engine in its `rapidocr` check.
+
+### Engines
+
+qppocr is the default on x86_64 (Linux and Windows): it detects the text
+regions, turns upside-down lines over and reads them in one pass with its own
+AVX2/FMA kernels, which are chosen at run time, so one executable also runs on
+a processor without them. It reads the default language and the languages of
+the multilingual recognizer (Chinese, Japanese, Latin script). tract reads
+everything else, and stands in for qppocr, with a notice on standard error
+(`Local OCR: …`) once per process, when:
+
+- the processor has no AVX2 and FMA (x86_64); qppocr's portable path would be
+  very slow there;
+- qppocr cannot start (a model fails to load or verify), or fails on an image:
+  that image is read with tract;
+- a line is Korean: lines of the default language the multilingual reading is
+  not sure of are read again with the Korean recognizer, which uses an
+  operator qppocr lacks (`HardSwish`), and so are all other single-script
+  recognizers (`ocr.lang` of `ko`, `ar`, `th`, …);
+- the image is nearly empty and its full-image pass keeps no text: the
+  overlapping-tiles retry below runs on tract.
+
+On aarch64 (Linux and Windows on Arm) tract stays the default: qppocr's NEON
+kernels read the same text but took about 45 % longer and 40 % more CPU time
+than tract on a 17-core Linux arm64 machine, at 4, 8 and 17 threads.
+`MARKITAI_OCR_ENGINE` chooses the engine for a process: `qppocr` (also on
+aarch64, or without AVX2), `tract`, or `auto` (the default); any other value is
+a configuration error. The same text is read by both engines except for a few
+characters per ten thousand and some blank lines between paragraphs (a scanned
+8-page and a 40-page book, and the OCR corpus: 0 to 5 characters in about
+31,000 differ); the classifier is qppocr's own, PP-LCNet_x0_25_textline_ori,
+because the v2.0 classifier turned an upright line of prose over. Spaces
+between a Chinese or Japanese letter and a Latin letter or digit follow the
+same rule with either engine.
+
+qppocr reads one image at a time with all of the OCR thread budget
+(`MARKITAI_OCR_THREADS`), rendering and laying out the other pages meanwhile.
+Its text detector shrinks an image whose long side is over 960 pixels, tract's
+to 1,600.
 
 ### Models
 
@@ -186,17 +226,18 @@ reference downloads. A model lives at
 | Role | Model | Bytes |
 | --- | --- | ---: |
 | Text detection | PP-OCRv6 small (`ppocrv6-det-small`) | 9,929,594 |
-| Line direction (0° or 180°) | PP-OCR mobile v2.0 classifier (`ppocr-cls-mobile-v2`) | 585,532 |
+| Line direction (0° or 180°), tract | PP-OCR mobile v2.0 classifier (`ppocr-cls-mobile-v2`) | 585,532 |
+| Line direction (0° or 180°), qppocr | PP-LCNet_x0_25_textline_ori (`ppocr-lcnet-textline-ori`), PaddlePaddle's ONNX export at a pinned Hugging Face revision | 1,019,454 |
 | Recognition, default and Latin/Chinese/Japanese languages | PP-OCRv6 small multilingual (`ppocrv6-rec-small`) | 21,234,383 |
 | Recognition, Korean | PP-OCRv5 mobile (`korean-ppocrv5-rec-mobile`) | 13,488,748 |
 | Recognition, other scripts | PP-OCRv5 mobile: Arabic, Thai, Greek, East Slavic, Cyrillic, Latin, Devanagari, Tamil, Telugu | 7.8–8.1 MB each |
 
 `markitai doctor --fix` installs the files the selected portable engine and
-configured `ocr.lang` need: the default set above is 45.2 MB; an explicit
-language needs the detector, classifier and its recognizer. It names each file
+configured `ocr.lang` need: the default set above is 46.3 MB; an explicit
+language needs the detector, the classifiers and its recognizer. It names each file
 installed. A normal OCR downloads missing models as needed, with a notice once
 per process on standard error (`Local OCR: downloading …`). It does not
-necessarily download all four default files before reading its first image.
+necessarily download all five default files before reading its first image.
 The default macOS Vision engine does not inspect or install portable models.
 
 `markitai doctor` checks paths, size and SHA-256 with bounded, no-follow reads;
@@ -290,8 +331,12 @@ still receives the ordinary no-text warning.
   free stayed reserved, and a 40-page scan peaked at 1.3 GB instead of 0.7 GB.
 - `MARKITAI_OCR_TRACE=1` (any value but empty, `0`, `false` or `no`) writes
   timing lines to stderr for the portable engine: per scanned PDF page the
-  render time, then detection, direction classification, recognition and
-  layout (`post`) in milliseconds, a line for each model prepared (its
+  render time, then (tract) detection, direction classification, recognition
+  and layout (`post`) in milliseconds, or (qppocr) its detection, crop,
+  direction, recognition (each with its preparation, inference and
+  post-processing), the second reading of doubtful lines and layout, after one
+  `engine=qppocr kernels=… threads=…` line naming the kernels it chose (`avx2`,
+  `neon`, `scalar`); tract's lines start with `engine=tract`. For tract also, a line for each model prepared (its
   optimization time and its operators with the matrix-kernel names tract
   chose, such as `fma_mmm_f32_16x6` on x86-64 with AVX2), and the ten operators
   that took longest so far (summed over threads; each line includes the ones
