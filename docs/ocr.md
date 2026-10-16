@@ -323,7 +323,7 @@ still receives the ordinary no-text warning.
   the last lines of a page are shared by all of them. The direction
   classifier and the first recognizer are prepared while the first image's
   text is detected, and a PDF's scanned pages are recognized several at a
-  time (a quarter of the thread count, two to four; two with Vision) while
+  time (a quarter of the thread count, two to four; two with Vision or qppocr) while
   the next page renders, the next page starting as soon as any of them is
   done. Results are the same as on one
   thread; detections take turns two at a time, so a multi-page scan holds at

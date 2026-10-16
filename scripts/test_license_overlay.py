@@ -703,6 +703,12 @@ class LicenseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Missing exact-version package evidence"):
             stage_overlay(self.vendor, self.destination, self.packages)
 
+    def test_a_qppocr_crate_that_gains_a_vcs_record_is_rejected(self):
+        directory = Path(self.qpp_packages[0]["manifest_path"]).parent
+        (directory / ".cargo_vcs_info.json").write_text("{}")
+        with self.assertRaisesRegex(RuntimeError, "has a VCS record the evidence lacks"):
+            stage_overlay(self.vendor, self.destination, self.packages + self.qpp_packages)
+
     def test_atomig_macro_terms_are_the_published_commit_root_licenses(self):
         self.assertEqual(len(self.avif_packages), 1)
         result = stage_overlay(self.vendor, self.destination, self.packages + self.avif_packages)

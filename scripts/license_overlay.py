@@ -492,6 +492,8 @@ def stage_overlay(source, destination, packages):
         if any(package.get(field) != entry[field] for field in ["name", "version"]) or package.get("license") != entry["declared_license"] or _repo(package.get("repository")) != repo:
             raise RuntimeError("License overlay package metadata differs")
         directory = Path(package["manifest_path"]).parent
+        if no_vcs and (directory / ".cargo_vcs_info.json").exists():
+            raise RuntimeError("Current package source has a VCS record the evidence lacks")
         for name in ["Cargo.toml.orig"] if no_vcs else [".cargo_vcs_info.json", "Cargo.toml.orig"]:
             if _read(directory, name) != data[original + name]:
                 raise RuntimeError("Current package source differs from exact-commit evidence")
