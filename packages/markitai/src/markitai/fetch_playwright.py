@@ -2053,9 +2053,13 @@ def _html_to_markdown(html: str) -> str:
     try:
         import io
 
-        from markitdown import MarkItDown, StreamInfo
+        from markitai.converter._patches import (
+            apply_markitdown_cell_patches,
+            import_markitdown,
+        )
 
-        from markitai.converter._patches import apply_markitdown_cell_patches
+        import_markitdown()
+        from markitdown import MarkItDown, StreamInfo
 
         apply_markitdown_cell_patches()
         md = MarkItDown()

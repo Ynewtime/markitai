@@ -14,6 +14,7 @@ from markitai.converter._patches import (
     apply_all_patches,
     apply_markitdown_cell_patches,
     apply_openpyxl_patches,
+    import_markitdown,
 )
 from markitai.converter.base import (
     BaseConverter,
@@ -89,6 +90,7 @@ class OfficeConverter(BaseConverter):
     def _convert_with_markitdown(self, input_path: Path) -> ConvertResult:
         """Convert using MarkItDown library."""
         if self._markitdown is None:
+            import_markitdown()
             from markitdown import MarkItDown
 
             apply_all_patches()

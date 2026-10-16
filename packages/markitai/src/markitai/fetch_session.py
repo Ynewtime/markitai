@@ -462,9 +462,13 @@ class FetchSession:
         Includes Accept header for CF Markdown for Agents content negotiation.
         """
         if self.markitdown_instance is None:
-            from markitdown import MarkItDown
+            from markitai.converter._patches import (
+                apply_markitdown_cell_patches,
+                import_markitdown,
+            )
 
-            from markitai.converter._patches import apply_markitdown_cell_patches
+            import_markitdown()
+            from markitdown import MarkItDown
 
             apply_markitdown_cell_patches()
             self.markitdown_instance = MarkItDown()
