@@ -583,9 +583,13 @@ mod tests {
         let models = parse(include_str!("models.json")).unwrap();
         assert_eq!(models.len(), manifest().len());
         for model in &models {
+            // The RapidOCR release, and qppocr's classifier from PaddlePaddle's
+            // own repository at one pinned revision.
             assert!(
                 model.url.starts_with(
                     "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/"
+                ) || model.url.starts_with(
+                    "https://huggingface.co/PaddlePaddle/PP-LCNet_x0_25_textline_ori_onnx/resolve/aea1f18d97338aaf84b463f90192f2820524a00a/"
                 ),
                 "{}",
                 model.url
@@ -601,6 +605,7 @@ mod tests {
             [
                 "ppocrv6-det-small",
                 "ppocr-cls-mobile-v2",
+                "ppocr-lcnet-textline-ori",
                 "ppocrv6-rec-small",
                 "korean-ppocrv5-rec-mobile"
             ]

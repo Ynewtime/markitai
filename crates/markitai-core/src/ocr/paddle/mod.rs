@@ -10,6 +10,13 @@
 //! steps as Vision's ([`super::assemble`]): turned pages, columns, rows,
 //! paragraphs, code and mended zeros.
 //!
+//! Two engines run these models. `qppocr` ([`qpp`]) is the default where it
+//! can run (x86_64 with AVX2 and FMA, aarch64): it detects, orients and reads
+//! the lines of the multilingual recognizer's languages in one pass, and
+//! `tract` reads the rest, takes over for a processor or a model qppocr
+//! cannot run, and re-reads doubtful lines of the default language with the
+//! Korean recognizer. `MARKITAI_OCR_ENGINE` (`qppocr`, `tract`) chooses one.
+//!
 //! The default language reads with the multilingual recognizer (Latin
 //! script, Chinese, Japanese) and, when that reading looks like another
 //! script, with the Korean one too, reusing the detected regions; see
@@ -19,6 +26,7 @@ mod classify;
 mod depthwise;
 mod detect;
 pub(crate) mod models;
+mod qpp;
 mod recognize;
 
 use super::{Line, OcrResult, Result, failure};
@@ -505,6 +513,8 @@ struct Cut {
     bounds: [f32; 4],
     /// The direction the text runs in the image.
     direction: [f32; 2],
+    /// The cut-out was turned a quarter because the region is tall.
+    turned: bool,
     /// The classifier found the line upside down. It is read both ways and
     /// the more confident reading kept: the classifier turns over a few
     /// upright lines of ordinary prose (one of 24 rendered 300 DPI pages
@@ -517,7 +527,8 @@ fn cut_of(image: &RgbImage, region: &detect::Region) -> Result<Cut> {
     let [tl, tr, _, bl] = region.corners;
     let mut cut = recognize::cut(image, &region.corners)?;
     let mut direction = [tr[0] - tl[0], tr[1] - tl[1]];
-    if cut.height() as f32 >= recognize::UPRIGHT_RATIO * cut.width() as f32 {
+    let turned = cut.height() as f32 >= recognize::UPRIGHT_RATIO * cut.width() as f32;
+    if turned {
         cut = recognize::turn_counter_clockwise(&cut);
         direction = [bl[0] - tl[0], bl[1] - tl[1]];
     }
@@ -534,6 +545,7 @@ fn cut_of(image: &RgbImage, region: &detect::Region) -> Result<Cut> {
         image: cut,
         bounds,
         direction,
+        turned,
         flagged: false,
     })
 }
@@ -831,6 +843,12 @@ pub(super) fn choice(spelling: &str) -> Result<Choice> {
 pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
     let choice = choice(spelling)?;
     models::preflight(&needed(spelling)?)?;
+    if matches!(choice, Choice::Default | Choice::Model(MULTILINGUAL))
+        && let Some(qpp) = qpp::engine()?
+        && let Some(found) = qpp.read(image)
+    {
+        return read_qpp(image, choice, found);
+    }
     let engine = engine()?;
     let reader = match choice {
         Choice::Model(name) => name,
@@ -840,9 +858,13 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
     let (cuts, capped) = cuts(&engine, image, reader)?;
     lap.ms();
     let (lines, language, unread) = recognize(choice, &cuts)?;
-    super::trace::line(format_args!("rec={:.0}ms lines={}", lap.ms(), cuts.len()));
+    super::trace::line(format_args!(
+        "engine=tract rec={:.0}ms lines={}",
+        lap.ms(),
+        cuts.len()
+    ));
     if !lines.iter().any(|line| line.confidence >= TEXT_SCORE)
-        && let Some(((lines, language, unread), capped)) = tiled(&engine, image, choice)?
+        && let Some(((lines, language, unread), capped)) = tiled(image, choice)?
     {
         let tile_ms = lap.ms();
         let mut result = finish(lines, image, language, unread, TILE_TEXT_SCORE)?;
@@ -855,6 +877,123 @@ pub(super) fn read(image: &RgbImage, spelling: &str) -> Result<OcrResult> {
     super::trace::line(format_args!("post={:.0}ms", lap.ms()));
     super::trace::report(10);
     Ok(result)
+}
+
+/// `image` read by qppocr: its lines, then (for the default language) the
+/// Korean pass on the doubtful ones and the tiled retry of a sparse image,
+/// both with tract.
+fn read_qpp(image: &RgbImage, choice: Choice, mut found: qpp::Found) -> Result<OcrResult> {
+    let mut lap = super::trace::Lap::start();
+    let capped = found.capped;
+    let (lines, language, unread) = match choice {
+        Choice::Default => qpp_default(image, found)?,
+        Choice::Model(name) => {
+            qpp_spaces(image, &mut found);
+            (found.lines, name, false)
+        }
+    };
+    let second_ms = lap.ms();
+    if !lines.iter().any(|line| line.confidence >= TEXT_SCORE)
+        && let Some(((lines, language, unread), capped)) = tiled(image, choice)?
+    {
+        let tile_ms = lap.ms();
+        let mut result = finish(lines, image, language, unread, TILE_TEXT_SCORE)?;
+        result.capped = capped;
+        super::trace::line(format_args!(
+            "engine=qppocr second={second_ms:.0}ms tiled(tract)={tile_ms:.0}ms post={:.0}ms",
+            lap.ms()
+        ));
+        return Ok(result);
+    }
+    let mut result = finish(lines, image, language, unread, TEXT_SCORE)?;
+    result.capped = capped;
+    super::trace::line(format_args!(
+        "engine=qppocr second={second_ms:.0}ms post={:.0}ms",
+        lap.ms()
+    ));
+    Ok(result)
+}
+
+/// The spaces between a Chinese or Japanese letter and a Latin letter or
+/// digit that the line's pixels show, which the recognizer leaves out, put
+/// into the text of each of qppocr's lines that has such a junction: the same
+/// rule as for tract's readings ([`recognize::spaced`]), on the line cut out
+/// of `image`, with the characters' places projected onto the line.
+fn qpp_spaces(image: &RgbImage, found: &mut qpp::Found) {
+    for index in 0..found.lines.len() {
+        let characters: Vec<char> = found.lines[index].text.chars().collect();
+        let places = &found.centers[index];
+        if characters.len() < 2
+            || characters.len() != places.len()
+            || super::layout::junctions(&characters).is_empty()
+        {
+            continue;
+        }
+        let corners = found.corners[index];
+        let region = detect::Region {
+            corners,
+            score: 1.0,
+        };
+        let Ok(cut) = cut_of(image, &region) else {
+            continue;
+        };
+        let [tl, tr, _, bl] = corners;
+        let axis = if cut.turned {
+            [bl[0] - tl[0], bl[1] - tl[1]]
+        } else {
+            [tr[0] - tl[0], tr[1] - tl[1]]
+        };
+        let length = (axis[0] * axis[0] + axis[1] * axis[1]).max(1.0);
+        let width = cut.image.width() as f32;
+        let mut centers: Vec<f32> = places
+            .iter()
+            .map(|p| ((p[0] - tl[0]) * axis[0] + (p[1] - tl[1]) * axis[1]) / length * width)
+            .collect();
+        // Characters of a line read upside down come in the other direction.
+        let mut line = cut.image;
+        if centers.first() > centers.last() {
+            line = image::imageops::rotate180(&line);
+            for center in &mut centers {
+                *center = width - *center;
+            }
+        }
+        let reading = recognize::Reading {
+            text: found.lines[index].text.clone(),
+            confidence: found.lines[index].confidence,
+            centers,
+        };
+        found.lines[index].text = recognize::spaced(&line, &reading, 1.0);
+    }
+}
+
+/// The default language's lines from qppocr: the doubtful ones are cut out of
+/// `image` and read again by [`second_reading`].
+fn qpp_default(image: &RgbImage, mut found: qpp::Found) -> Result<Reading> {
+    qpp_spaces(image, &mut found);
+    let mut doubtful = Vec::new();
+    let mut cuts = Vec::new();
+    for index in (0..found.lines.len()).filter(|&i| !sure(&found.lines[i])) {
+        let corners = found.corners[index];
+        let region = detect::Region {
+            corners,
+            score: 1.0,
+        };
+        // A region that cannot be cut out keeps its first reading.
+        let Ok(mut cut) = cut_of(image, &region) else {
+            continue;
+        };
+        let side =
+            |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+        let tall =
+            side(corners[0], corners[3]) >= recognize::UPRIGHT_RATIO * side(corners[0], corners[1]);
+        // qppocr turned the line over, or turned a tall one the other way:
+        // read it both ways.
+        cut.flagged = found.flipped[index] || tall;
+        doubtful.push(index);
+        cuts.push(cut);
+    }
+    let again: Vec<&Cut> = cuts.iter().collect();
+    second_reading(found.lines, &doubtful, &again)
 }
 
 /// The lines read, the recognizer that read them, and whether the default
@@ -889,7 +1028,7 @@ const TILE_TEXT_SCORE: f32 = 0.45;
 /// scaled up and searched for text, its regions are cut from the image itself
 /// and read, and a line two overlapping tiles both found is kept once (the
 /// more confident reading). `None` when the image is too small to tile.
-fn tiled(engine: &Engine, image: &RgbImage, choice: Choice) -> Result<Option<(Reading, bool)>> {
+fn tiled(image: &RgbImage, choice: Choice) -> Result<Option<(Reading, bool)>> {
     let tiles = detect::tiles(image.width(), image.height());
     if tiles.is_empty() {
         return Ok(None);
@@ -910,6 +1049,10 @@ fn tiled(engine: &Engine, image: &RgbImage, choice: Choice) -> Result<Option<(Re
     } else {
         f32::INFINITY
     };
+    if tiles.is_empty() {
+        return Ok(None);
+    }
+    let engine = engine()?;
     let found = spread_detections(tiles.len(), |index| {
         let [x0, y0, x1, y1] = tiles[index];
         let tile = image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image();
@@ -993,27 +1136,38 @@ fn distinct(lines: Vec<Line>) -> Vec<Line> {
 /// tried again in this process. When half of
 /// the lines or more stay doubtful, the image holds text of a script neither
 /// reads: only the sure lines are kept, and the result is marked unread.
-fn read_default(cuts: &[Cut]) -> Result<(Vec<Line>, &'static str, bool)> {
+fn read_default(cuts: &[Cut]) -> Result<Reading> {
     let all: Vec<&Cut> = cuts.iter().collect();
-    let mut lines = read_lines(&*recognizer(MULTILINGUAL)?, &all)?;
+    let lines = read_lines(&*recognizer(MULTILINGUAL)?, &all)?;
     let doubtful: Vec<usize> = (0..lines.len()).filter(|&i| !sure(&lines[i])).collect();
-    if doubtful.is_empty() {
+    let again: Vec<&Cut> = doubtful.iter().map(|&i| &cuts[i]).collect();
+    second_reading(lines, &doubtful, &again)
+}
+
+/// The rest of [`read_default`] after the multilingual recognizer read
+/// `lines`: the `doubtful` ones are read again, from the cut-outs `again`
+/// (one per doubtful line), with the Korean recognizer.
+fn second_reading(mut lines: Vec<Line>, doubtful: &[usize], again: &[&Cut]) -> Result<Reading> {
+    // Lines the first reading was not sure of, whether or not they could be
+    // cut out again.
+    let unsure = lines.iter().filter(|line| !sure(line)).count();
+    if unsure == 0 {
         return Ok((lines, MULTILINGUAL, false));
     }
     // Lines read with confidence by either recognizer.
     let mut read: Vec<bool> = lines.iter().map(sure).collect();
     let mut korean_lines = 0;
-    if let Some(korean) = optional_recognizer(KOREAN) {
-        let again: Vec<&Cut> = doubtful.iter().map(|&i| &cuts[i]).collect();
-        if let Ok(readings) = read_lines(&korean, &again) {
-            for (&i, reading) in doubtful.iter().zip(readings) {
-                // A first reading that covers little of its line (Hanja read
-                // from a line of Hangul) loses whatever its confidence.
-                if korean_replaces(&lines[i], &reading) {
-                    lines[i] = reading;
-                    read[i] = true;
-                    korean_lines += 1;
-                }
+    if !again.is_empty()
+        && let Some(korean) = optional_recognizer(KOREAN)
+        && let Ok(readings) = read_lines(&korean, again)
+    {
+        for (&i, reading) in doubtful.iter().zip(readings) {
+            // A first reading that covers little of its line (Hanja read
+            // from a line of Hangul) loses whatever its confidence.
+            if korean_replaces(&lines[i], &reading) {
+                lines[i] = reading;
+                read[i] = true;
+                korean_lines += 1;
             }
         }
     }
@@ -1114,10 +1268,13 @@ fn finish(
 pub(crate) fn needed(spelling: &str) -> Result<Vec<&'static models::Model>> {
     match choice(spelling)? {
         Choice::Default => Ok(models::defaults().collect()),
-        Choice::Model(name) => [DETECTOR, CLASSIFIER, name]
-            .into_iter()
-            .map(models::named)
-            .collect(),
+        Choice::Model(name) => {
+            let mut needed = vec![DETECTOR, CLASSIFIER, name];
+            if name == MULTILINGUAL {
+                needed.push(qpp::CLASSIFIER);
+            }
+            needed.into_iter().map(models::named).collect()
+        }
     }
 }
 
@@ -1181,7 +1338,7 @@ mod tests {
             assert!(matches!(error, crate::Error::Unsupported(_)), "{unknown}");
             assert!(error.to_string().contains("zh_tw"), "{error}");
         }
-        assert_eq!(needed("en").unwrap().len(), 4);
+        assert_eq!(needed("en").unwrap().len(), 5);
         assert_eq!(
             needed("ar")
                 .unwrap()
@@ -1298,6 +1455,28 @@ mod tests {
         assert!(blank.text.is_empty() && blank.boxes.is_empty() && !blank.unread);
         // A written language reads with its recognizer alone.
         assert_eq!(read(&rgb, "en-us").unwrap().language, MULTILINGUAL);
+    }
+
+    /// qppocr itself, whatever engine the process defaults to: the English
+    /// fixture upright and turned over, and the same spacing as tract's.
+    #[test]
+    #[ignore = "needs the PaddleOCR models installed under MARKITAI_HOME"]
+    fn qppocr_reads_the_english_fixture_either_way_up() {
+        for model in models::defaults() {
+            assert!(models::present(model), "install {} first", model.name);
+        }
+        let qpp = qpp::start().unwrap();
+        let fixture = include_bytes!("../fixtures/english.png");
+        let expected = include_str!("../fixtures/english.txt");
+        let rgb = super::super::pixels::upright(fixture).unwrap();
+        for image in [rgb.clone(), image::imageops::rotate180(&rgb)] {
+            let found = qpp.read(&image).unwrap();
+            let (lines, language, unread) = qpp_default(&image, found).unwrap();
+            let result = finish(lines, &image, language, unread, TEXT_SCORE).unwrap();
+            assert_eq!(words(&result.text), words(expected), "{}", result.text);
+            assert!(!result.unread && result.confidence > 0.9);
+            assert_eq!(result.boxes.len(), 3);
+        }
     }
 
     /// A caption a few pixels high on a large, mostly empty image (white ink

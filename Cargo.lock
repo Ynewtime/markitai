@@ -2175,6 +2175,7 @@ dependencies = [
  "objc2-vision",
  "pdf-inspector",
  "png",
+ "qppocr",
  "quick-xml",
  "rav1d",
  "rayon",
@@ -2935,6 +2936,30 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "qppocr"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d2371865f396bd4e55429da8d9ff0da40361f9974d16e11f9e45268b33db69b"
+dependencies = [
+ "qppocr-core",
+]
+
+[[package]]
+name = "qppocr-core"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06fcba73f1b8950a923497412621b03b36492ba66ae10b36a0622c06cabc35df"
+dependencies = [
+ "qppocr-kernels",
+]
+
+[[package]]
+name = "qppocr-kernels"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcafdf7cf67be0315c7dc7daa49db9c22f6ba436ac2a8212d40097092cf6e0bd"
 
 [[package]]
 name = "quick-error"

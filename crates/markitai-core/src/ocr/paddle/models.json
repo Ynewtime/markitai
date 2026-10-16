@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source": "PaddleOCR models (PaddlePaddle, Apache-2.0) as converted to ONNX and published by the RapidOCR project (RapidAI, Apache-2.0) on its official ModelScope mirror, release v3.9.2; the same files and digests RapidOCR 3.9.2 downloads.",
+  "source": "PaddleOCR models (PaddlePaddle, Apache-2.0) as converted to ONNX and published by the RapidOCR project (RapidAI, Apache-2.0) on its official ModelScope mirror, release v3.9.2; the same files and digests RapidOCR 3.9.2 downloads. The qppocr engine's line-direction classifier is PaddlePaddle's own ONNX export on Hugging Face, pinned to one revision.",
   "models": [
     {
       "name": "ppocrv6-det-small",
@@ -19,6 +19,16 @@
       "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
       "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
       "bytes": 585532,
+      "license": "Apache-2.0",
+      "default": true
+    },
+    {
+      "name": "ppocr-lcnet-textline-ori",
+      "role": "classify",
+      "file": "inference.onnx",
+      "url": "https://huggingface.co/PaddlePaddle/PP-LCNet_x0_25_textline_ori_onnx/resolve/aea1f18d97338aaf84b463f90192f2820524a00a/inference.onnx",
+      "sha256": "94a6a0a0425f2b5f08b5df72086f2d72abe40f1d22f6d12d2cd83674f11f2ff3",
+      "bytes": 1019454,
       "license": "Apache-2.0",
       "default": true
     },
