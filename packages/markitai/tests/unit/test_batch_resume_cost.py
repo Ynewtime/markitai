@@ -374,9 +374,19 @@ def test_json_lists_earlier_items_and_totals_the_whole_batch() -> None:
 
 
 def _report(output_dir: Path) -> dict[str, Any]:
-    """The newest report (each run of a URL list writes its own)."""
+    """The newest report (each run of a URL list writes its own).
+
+    Reports of one list differ by a ``.v<N>`` version before ``.report.json``;
+    the highest N is the newest. File times cannot tell: two runs a few
+    milliseconds apart get equal mtimes on Windows.
+    """
+
+    def version(path: Path) -> tuple[int, int]:
+        match = re.search(r"\.v(\d+)\.report\.json$", path.name)
+        return (int(match.group(1)) if match else 1, path.stat().st_mtime_ns)
+
     reports = (output_dir / ".markitai" / "reports").glob("*.json")
-    newest = max(reports, key=lambda path: path.stat().st_mtime_ns)
+    newest = max(reports, key=version)
     return json.loads(newest.read_text(encoding="utf-8"))
 
 
