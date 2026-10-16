@@ -51,6 +51,21 @@ terms of both options. The retrievals are listed under
 twenty-six versions, twenty-five raw exact manifest matches and forty-three
 overlay files. Legal review remains not_performed.
 
+## qppocr 0.3.1 crates
+
+qppocr, qppocr-core and qppocr-kernels 0.3.1 (the default local OCR engine on
+x86_64) publish no license file and no `.cargo_vcs_info.json`. Each exact
+published `Cargo.toml.orig` is byte-identical to the crate manifest of
+qinwenhui/qppocr at commit `3e53bbc2…` (the repository's only commit, version
+0.3.1), which inherits `license = "MIT OR Apache-2.0"` from its workspace
+manifest. The commit is therefore attributed by manifest identity, not by a VCS
+stamp: the validator accepts the missing record only for these three reviewed
+tuples (`vcs_record: "absent"`). The same-commit root LICENSE-MIT and
+LICENSE-APACHE are copied unchanged as the complete terms of both options; the
+retrievals are listed under `qppocr_license_collection` in the manifest. The
+repository NOTICE (remarks on the PP-OCR models, which are not distributed) is
+not copied. Legal review remains not_performed.
+
 ## Original seventeen-version collection and retained history
 
 Packaging validates this directory offline before copying it. Package manifests,

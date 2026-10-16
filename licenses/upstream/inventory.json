@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 7933,
-      "sha256": "45a8fb827f73591d9b28a5b5ac97f2ddcec2d800ccc78d8e58bc5407a58dcaab"
+      "bytes": 8846,
+      "sha256": "87fdf598f583eb8c342fa6f7d383a0bf19e938bb28ec306a96bf3f2e1b3803fd"
     },
     {
       "path": "input-manifest.json",
@@ -297,6 +297,21 @@
       "sha256": "9f7365ebd648c5ef1c23fe3cfd962bc7784b0316871cb7c2ebd4c9f6dc266e40"
     },
     {
+      "path": "local-evidence/qppocr-0.3.1/Cargo.toml.orig",
+      "bytes": 1543,
+      "sha256": "350b5274a211804e0f0a26626cc0b8951df549baa46592359bbeebd741db6291"
+    },
+    {
+      "path": "local-evidence/qppocr-core-0.3.1/Cargo.toml.orig",
+      "bytes": 837,
+      "sha256": "856f3420fd5cb9c637264540c095b6f16961e91ea6a0f14f0a94ab7edb8df8fb"
+    },
+    {
+      "path": "local-evidence/qppocr-kernels-0.3.1/Cargo.toml.orig",
+      "bytes": 480,
+      "sha256": "5cb1a405a87ac90cf55965ef7d486b15ec30ab5a9afa0823526d3510514efdeb"
+    },
+    {
       "path": "local-evidence/r-efi-5.3.0/.cargo_vcs_info.json",
       "bytes": 94,
       "sha256": "50e0c72ee0164f182d7b5db0213cdb1626bad950f2443b05d006c28c7f0641b5"
@@ -353,8 +368,8 @@
     },
     {
       "path": "manifest.json",
-      "bytes": 103833,
-      "sha256": "59cd09d02317e5f2e5595c450e6cbafb3f1bcea6d3b0a7a4e444041a1926c2e1"
+      "bytes": 115462,
+      "sha256": "52859a0d0d6bb815a90ad02ea7fd4c598bf36bce542a1a418d80eb8beb5ae10c"
     },
     {
       "path": "napi-license-provenance.json",
@@ -540,6 +555,36 @@
       "path": "overlay/licenses/objc2-vision-0.3.2/LICENSE.md",
       "bytes": 1339,
       "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+    },
+    {
+      "path": "overlay/licenses/qppocr-0.3.1/LICENSE-APACHE",
+      "bytes": 11345,
+      "sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15"
+    },
+    {
+      "path": "overlay/licenses/qppocr-0.3.1/LICENSE-MIT",
+      "bytes": 1062,
+      "sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001"
+    },
+    {
+      "path": "overlay/licenses/qppocr-core-0.3.1/LICENSE-APACHE",
+      "bytes": 11345,
+      "sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15"
+    },
+    {
+      "path": "overlay/licenses/qppocr-core-0.3.1/LICENSE-MIT",
+      "bytes": 1062,
+      "sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001"
+    },
+    {
+      "path": "overlay/licenses/qppocr-kernels-0.3.1/LICENSE-APACHE",
+      "bytes": 11345,
+      "sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15"
+    },
+    {
+      "path": "overlay/licenses/qppocr-kernels-0.3.1/LICENSE-MIT",
+      "bytes": 1062,
+      "sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001"
     },
     {
       "path": "overlay/licenses/r-efi-5.3.0/AUTHORS",
@@ -905,6 +950,36 @@
       "path": "upstream/napi-rs/napi-rs/a94cef33f62e74682963dd085e283f52dcec2600/crates/build/Cargo.toml",
       "bytes": 608,
       "sha256": "db03f6809e261fef67c4fad525bb43e7474c393845b7a129956dbac21cfed148"
+    },
+    {
+      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml",
+      "bytes": 617,
+      "sha256": "a49fb27846dbc37cc46c92cf78273f241e2ed59b7261e9592e135cf7c481b8f4"
+    },
+    {
+      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
+      "bytes": 11345,
+      "sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15"
+    },
+    {
+      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
+      "bytes": 1062,
+      "sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001"
+    },
+    {
+      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-core/Cargo.toml",
+      "bytes": 837,
+      "sha256": "856f3420fd5cb9c637264540c095b6f16961e91ea6a0f14f0a94ab7edb8df8fb"
+    },
+    {
+      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-kernels/Cargo.toml",
+      "bytes": 480,
+      "sha256": "5cb1a405a87ac90cf55965ef7d486b15ec30ab5a9afa0823526d3510514efdeb"
+    },
+    {
+      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr/Cargo.toml",
+      "bytes": 1543,
+      "sha256": "350b5274a211804e0f0a26626cc0b8951df549baa46592359bbeebd741db6291"
     },
     {
       "path": "upstream/r-efi/r-efi/7e1b0322d31d625f81a5656096330934f9cd835d/AUTHORS",

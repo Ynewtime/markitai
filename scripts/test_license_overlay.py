@@ -28,12 +28,15 @@ class LicenseOverlayTests(unittest.TestCase):
         self.packages = []
         self.node_packages = []
         self.heif_packages = []
+        self.qpp_packages = []
         self.avif_packages = []
         for item in self.manifest["packages"]:
             label = f"{item['name']}-{item['version']}"
             source = self.root / "registry" / label
             source.mkdir(parents=True)
             for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
+                if item.get("vcs_record") == "absent" and name == ".cargo_vcs_info.json":
+                    continue
                 shutil.copyfile(self.vendor / "local-evidence" / label / name, source / name)
             if item["name"] in {"nom-language", "tract-extra"}:
                 with tarfile.open(self.vendor / "source-archives" / (label + ".crate")) as archive:
@@ -47,6 +50,8 @@ class LicenseOverlayTests(unittest.TestCase):
                 target_packages = self.node_packages
             elif item["name"].startswith("heifer"):
                 target_packages = self.heif_packages
+            elif item["name"].startswith("qppocr"):
+                target_packages = self.qpp_packages
             elif item["name"] == "atomig-macro":
                 target_packages = self.avif_packages
             else:
@@ -406,7 +411,7 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
         result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 25)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 28)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
                     "tract-extra": ("reviewed_publication_version_stamp",
@@ -634,7 +639,7 @@ class LicenseOverlayTests(unittest.TestCase):
         result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages)
         self.assertEqual(result["record"]["matched_packages"], 21)
         self.assertEqual(result["record"]["complete_text_packages"], 21)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 25)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 28)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         self.assertEqual(len(result["record"]["source_archives"]), 7)
         for entry in self.manifest["packages"]:
@@ -666,6 +671,37 @@ class LicenseOverlayTests(unittest.TestCase):
             self.assertTrue(record["complete_text"])
             self.assertEqual(sorted(Path(text["path"]).name for text in record["texts"]),
                              ["LICENSE-APACHE", "LICENSE-MIT"])
+
+    def test_qppocr_terms_cover_crates_published_without_a_vcs_record(self):
+        self.assertEqual(len(self.qpp_packages), 3)
+        result = stage_overlay(self.vendor, self.destination, self.packages + self.qpp_packages)
+        self.assertEqual(result["record"]["matched_packages"], 20)
+        for package in self.qpp_packages:
+            entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
+            self.assertEqual(entry["vcs_record"], "absent")
+            self.assertFalse((self.vendor / "local-evidence" / f"{package['name']}-{package['version']}"
+                              / ".cargo_vcs_info.json").exists())
+            record = result["packages"][package["id"]]
+            self.assertEqual(record["manifest_provenance"], "raw_exact_match")
+            self.assertTrue(record["complete_text"])
+            self.assertEqual(sorted(Path(text["path"]).name for text in record["texts"]),
+                             ["LICENSE-APACHE", "LICENSE-MIT"])
+
+    def test_a_missing_vcs_record_is_accepted_only_for_the_reviewed_qppocr_tuples(self):
+        # Another package cannot claim the exception ...
+        entry = next(p for p in self.manifest["packages"] if p["name"] == "heifer")
+        entry["vcs_record"] = "absent"
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "Unreviewed package without a VCS record"):
+            stage_overlay(self.vendor, self.destination, self.packages)
+
+    def test_a_qppocr_crate_cannot_drop_its_exception_marker(self):
+        # ... and a reviewed package without the marker needs its VCS record.
+        entry = next(p for p in self.manifest["packages"] if p["name"] == "qppocr-core")
+        del entry["vcs_record"]
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "Missing exact-version package evidence"):
+            stage_overlay(self.vendor, self.destination, self.packages)
 
     def test_atomig_macro_terms_are_the_published_commit_root_licenses(self):
         self.assertEqual(len(self.avif_packages), 1)
