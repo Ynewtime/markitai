@@ -188,12 +188,13 @@ column centred in the window: 820 px, wider as the window grows (56 % of its
 width, at most 1120 px); every table keeps to that column (its width and left
 edge), and one whose cells need more scrolls sideways inside its own box. Rendered starts with
 the conversion's notices (collapsed to one line) and the front matter as one light
-line above the body: a tag icon, the tags inline (`gardening · community beds · …`;
-else the summary) and Summary at its end, with no title of its own (the body's
-heading is the title). Summary (a button, Enter or Space) opens it into a
+line above the body: a tag icon, `Properties · N` (the number of properties), the
+tags inline (`gardening · community beds · …`; else the summary) and Summary at its
+end when there is one, with no title of its own (the body's heading is the title).
+The whole line is one button (a click anywhere on it, Enter or Space) that opens it into a
 two-column properties table (closing with its own rule; a rule that opens the body right after the front matter is not drawn a second time) (Summary, Tags as chips, Source, Processed and every
 other key; one key width with a rule between key and value, long keys and values
-wrapped) whose `Properties · N` header folds it again; the
+wrapped) whose `Properties · N` header row, anywhere on it, folds it again; the
 choice holds for the tab's session (`sessionStorage['markitai.front']`) and in
 Preview, Compare and the Details excerpt alike. Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";

@@ -693,7 +693,6 @@ export const zh: Dict = {
   frontTags: (n) => `${n} 个标签`,
   frontSummary: "简介",
   frontProperties: (n) => `属性 · ${n}`,
-  frontShowAll: (n) => `显示文档的 ${n} 项属性`,
   frontKey: (key) =>
     ({
       title: "标题",

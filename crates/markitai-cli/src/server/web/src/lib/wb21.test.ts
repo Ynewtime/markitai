@@ -63,3 +63,14 @@ test("the sidebar and the phone Settings list show the build's date and time in 
   const settings = readFileSync(new URL("../components/settings-page.tsx", import.meta.url), "utf8");
   for (const source of [shell, settings]) assert.match(source, /\{version\.parts\.date\}/);
 });
+
+test("folded front matter is one button across the row, its property count before the tags", () => {
+  const card = readFileSync(new URL("../components/front-matter.tsx", import.meta.url), "utf8");
+  const folded = card.slice(card.lastIndexOf("return ("));
+  assert.match(folded, /<button type="button" class="front-fold" aria-expanded="false"/);
+  // the count comes first, then the tags, then the Summary mark (a span inside the button, not a second button)
+  assert.ok(folded.indexOf("front-count") < folded.indexOf("front-line"));
+  assert.ok(folded.indexOf("front-line") < folded.indexOf("front-toggle"));
+  assert.equal((folded.match(/<button/g) ?? []).length, 1);
+  assert.match(/\n\.front-fold \{\n([^}]*)\}/.exec(css)?.[1] ?? "", /flex: 1;/);
+});

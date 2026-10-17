@@ -1783,15 +1783,39 @@ main:focus {
   font-size: var(--text-sm);
   color: var(--text-3);
 }
-.front-meta > svg,
+.front-fold > svg:first-child,
 .front-head > svg:first-child {
   flex: none;
   color: var(--text-4);
 }
+/* folded, the whole line is the button: a click anywhere on it opens the properties */
+.front-fold {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.front-count {
+  flex: none;
+  white-space: nowrap;
+}
+/* the tags after the count, a hairline between them */
 .front-meta .front-line {
   flex: 1;
   overflow: hidden;
   min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--hairline-strong);
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-2);
@@ -1817,10 +1841,13 @@ main:focus {
   flex: none;
   margin-left: auto;
 }
-.front-toggle:hover,
+.front-fold:hover .front-toggle,
+.front-fold:hover .front-count,
 .front-head:hover {
-  background: var(--row-hover);
   color: var(--text-1);
+}
+.front-fold:hover .front-toggle {
+  background: var(--row-hover);
 }
 .front-meta.is-open {
   display: block;
@@ -5868,6 +5895,8 @@ input[type="password"],
 .doc-body a:focus-visible,
 .doc-body pre:focus-visible,
 .doc-body .table-scroll:focus-visible,
+.front-fold:focus-visible,
+.front-head:focus-visible,
 .toc-link:focus-visible,
 .toc-fab:focus-visible,
 .diff-fold:focus-visible,
