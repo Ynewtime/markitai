@@ -172,6 +172,10 @@ class TestCapabilitiesAndRoot:
             "convert_defaults": True,
             "pdf_outline": True,
         }
+        # Features Rust has and Python lacks (the shared workbench shows them
+        # only when announced): Document JSON results and text-only runs
+        assert "document_json" not in data["features"]
+        assert "text_only" not in data["features"]
         # Loopback without a token is the admin (no user tokens without one)
         assert data["access"] == {"role": "admin", "label": None}
         # Loopback is trusted: Cloudflare's state is reported, not hidden
