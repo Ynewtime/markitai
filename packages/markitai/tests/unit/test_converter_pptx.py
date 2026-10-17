@@ -497,6 +497,35 @@ class TestPptxLocalOcr:
         assert result.metadata["ocr_used"] is False
 
 
+class TestLibreOfficeInputArgument:
+    """A deck's name never reaches LibreOffice as an option."""
+
+    def test_a_dash_name_is_passed_as_an_absolute_path(self, tmp_path: Path) -> None:
+        converter = _make_pptx_converter(screenshot=True)
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_: Any) -> Any:
+            calls.append(command)
+            return Mock(returncode=1, stderr="refused")
+
+        name = Path("--accept=socket,host=0.0.0.0,port=2002;urp;.pptx")
+        with (
+            patch(
+                "markitai.converter.office.find_libreoffice",
+                return_value="/usr/bin/soffice",
+            ),
+            patch("markitai.converter.office.has_ms_office", return_value=False),
+            patch("subprocess.run", side_effect=fake_run),
+        ):
+            assert converter._render_slides_via_pdf(name, tmp_path, "jpg") == ([], [])
+
+        assert len(calls) == 1
+        argument = calls[0][-1]
+        assert Path(argument).is_absolute()
+        assert not argument.startswith("-")
+        assert Path(argument).name == name.name
+
+
 class TestPptxRenderFailuresAreUserNotices:
     """A deck whose slides cannot be rendered says so on the default console."""
 

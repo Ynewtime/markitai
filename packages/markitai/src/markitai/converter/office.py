@@ -639,7 +639,10 @@ class PptxConverter(OfficeConverter):
                             "pdf",
                             "--outdir",
                             str(temp_path),
-                            str(input_path),
+                            # Absolute: a relative name starting with '-'
+                            # (e.g. "--accept=socket,...;urp;.pptx" found in
+                            # the current folder) would be read as an option
+                            str(input_path.absolute()),
                         ],
                         capture_output=True,
                         text=True,
