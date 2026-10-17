@@ -809,8 +809,21 @@ class PdfConverter(BaseConverter):
 
             # Advisory only: warn when pages look scanned or garbled so the
             # user can re-run with --ocr (behavior is never changed here)
-            self._warn_scanned_or_garbled(
-                input_path, total_pages=len(page_numbers), prescanned=advisory_scan
+            # With an LLM that will be sent the page images, the model may
+            # read those pages: the workflow then says it (or not) once it
+            # knows, see ``workflow.core.settle_scan_notice``.
+            config = self.config
+            scan_notice = self._warn_scanned_or_garbled(
+                input_path,
+                total_pages=len(page_numbers),
+                prescanned=advisory_scan,
+                defer=bool(
+                    config is not None
+                    and config.llm.enabled
+                    and not config.llm.pure
+                    and config.screenshot.enabled
+                    and output_dir
+                ),
             )
 
             # Fix image paths in markdown: pymupdf4llm uses absolute/full paths,
@@ -956,12 +969,20 @@ class PdfConverter(BaseConverter):
                 metadata["page_images"] = page_images
                 metadata["pages"] = len(page_images)
                 metadata["extracted_text"] = markdown
+                if scan_notice is not None:
+                    if page_images:
+                        metadata["scan_notice"] = list(scan_notice)
+                        scan_notice = None
                 if not (self.config and self.config.llm.enabled):
                     # Without LLM nothing else points at the renders (the
                     # vision path adds its own references to .llm.md)
                     markdown = append_screenshot_comments(
                         markdown, page_images, PAGE_MARKER_RE, "Page"
                     )
+
+            if scan_notice is not None:
+                # Nothing was rendered for the model to read: say it now
+                user_notice(*scan_notice)
 
             # Clean up temporary directory if used
             if temp_dir and temp_dir.exists():
@@ -1184,7 +1205,8 @@ class PdfConverter(BaseConverter):
         *,
         total_pages: int,
         prescanned: _Pending[tuple[list[int], list[int]] | None] | None = None,
-    ) -> None:
+        defer: bool = False,
+    ) -> tuple[Any, ...] | None:
         """Emit one consolidated warning when pages look scanned or garbled:
         ``[PDF] plan.pdf: 4 of 120 pages look scanned/garbled (pages 3–5,
         9); consider re-running with --ocr`` (the serve workbench reads it,
@@ -1199,6 +1221,8 @@ class PdfConverter(BaseConverter):
             total_pages: How many pages the document has
             prescanned: The check already started in the background
                 (``_start_prescan``); run here when None.
+            defer: Return the notice's ``user_notice`` arguments instead of
+                logging it (None when there is nothing to say).
         """
         advisories = (
             prescanned.result()
@@ -1206,12 +1230,12 @@ class PdfConverter(BaseConverter):
             else _scan_advisories(input_path)
         )
         if advisories is None:
-            return
+            return None
         scanned_pages, garbled_pages = advisories
 
         flagged = sorted(set(scanned_pages) | set(garbled_pages))
         if not flagged:
-            return
+            return None
 
         # OCR is an optional extra. Recommending --ocr to someone who does not
         # have the backend costs them a second round trip (run --ocr, hit the
@@ -1226,7 +1250,7 @@ class PdfConverter(BaseConverter):
         # A user notice: the default single-file console only shows errors,
         # and this is the one line that says how to get the missing text.
         _count, listed = _pages_phrases(flagged)
-        user_notice(
+        notice = (
             "[PDF] {}: {} of {} pages look scanned/garbled ({}); {}",
             input_path.name,
             len(flagged),
@@ -1234,6 +1258,10 @@ class PdfConverter(BaseConverter):
             listed,
             remedy,
         )
+        if defer:
+            return notice
+        user_notice(*notice)
+        return None
 
     def _render_pages_parallel(
         self,

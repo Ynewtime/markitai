@@ -29,6 +29,7 @@ from markitai.converter.base import (
     get_converter,
     unsupported_format_message,
 )
+from markitai.notices import user_notice
 from markitai.security import (
     atomic_write_text,
     check_symlink_safety,
@@ -918,6 +919,30 @@ async def process_image_with_vision_pure(
     return ConversionStepResult(success=True)
 
 
+_NOT_PROSE_RE = re.compile(r"<!--.*?-->|!\[[^\]]*\]\([^)]*\)", re.DOTALL)
+
+
+def _has_prose(markdown: str) -> bool:
+    """Whether *markdown* holds text beyond picture references and comments."""
+    return re.search(r"\w", _NOT_PROSE_RE.sub("", markdown)) is not None
+
+
+def settle_scan_notice(ctx: ConversionContext) -> None:
+    """Say "pages look scanned, re-run with --ocr" unless the model read them.
+
+    The PDF converter hands the notice over (``metadata["scan_notice"]``)
+    when an LLM is going to be sent the page images. Once the vision step
+    has returned text, the advice is moot and the notice is dropped; with no
+    answer text (the step failed, or the model returned only pictures) it is
+    raised as the converter would have.
+    """
+    if ctx.conversion_result is None:
+        return
+    notice = ctx.conversion_result.metadata.pop("scan_notice", None)
+    if notice and not ctx.conversion_result.metadata.pop("scan_read", False):
+        user_notice(*notice)
+
+
 async def process_with_vision_llm(
     ctx: ConversionContext,
 ) -> ConversionStepResult:
@@ -1001,6 +1026,8 @@ async def process_with_vision_llm(
             commented_images
         )
 
+    if _has_prose(cleaned_content):
+        ctx.conversion_result.metadata["scan_read"] = True
     ctx.conversion_result.markdown = cleaned_content + commented_images_str
     ctx.conversion_result.markdown = append_reference_image_comments(
         ctx.conversion_result.markdown,
@@ -1305,6 +1332,7 @@ async def run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
             with llm_usage_scope(str(ctx.input_path.resolve())):
                 return await _run_llm_enhancement(ctx)
         finally:
+            settle_scan_notice(ctx)
             # The image cache only pays off within a document (its keys are
             # this file's pages and images); free it so a batch's shared
             # processor does not hold up to 500 MB of finished documents.
