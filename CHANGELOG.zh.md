@@ -52,6 +52,7 @@
 
 ### 修复
 
+- **`markitai serve` 现在在每个含无价格请求的任务上都提示成本不完整**，用工作台能识别的句式 `Cost is incomplete: 2 requests to <model> have no reviewed price…`（会被翻译，并带价格帮助链接）。以前只有最先回答的那个任务带一条英文提示。
 - **中文终端下 `markitai doctor` 全部显示中文。** 各项检查的说明和修复方法（`RapidOCR：v3.9.2，可识别中文、英文…`、`Playwright：已安装，但尚未下载其 Chromium 浏览器`，以及 LLM、视觉模型和登录各行）与 Rust 版 doctor 语气一致；检查名称、命令和 `--json` 仍为英文。
 - **`markitai doctor` 的标题下不再空一行。**
 - **模型把页面/截图引用并进前一段文字时，现在会恢复成独立的一块。** LLM 的回答把 `<!-- ![Page 1](…) -->`（或“Page images for reference”标题）粘在段落末尾时，还原步骤以前会让它留在段落里；现在会在前后补上空行，与 Rust 一致。模型本来就单独成行的注释不变。
