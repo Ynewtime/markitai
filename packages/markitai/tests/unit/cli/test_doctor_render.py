@@ -357,6 +357,33 @@ class TestSummary:
         assert "    export GEMINI_API_KEY=your_key" in out.splitlines()
         assert out.splitlines()[-1].endswith("Playwright, LibreOffice, 3 LLM models")
 
+    def test_a_vision_model_left_out_for_its_key_is_not_a_vision_model(self) -> None:
+        """Gemini is the only model that reads images and its key is unset:
+        the run leaves it out, so Vision Model and VLM OCR must not tick."""
+        with (
+            _doctor_env(
+                _config("deepseek/deepseek-chat", "gemini/gemini-2.5-flash"),
+                env={"DEEPSEEK_API_KEY": "fake"},
+            ),
+            patch(
+                "markitai.model_catalog.supports_vision",
+                side_effect=lambda model: model.startswith("gemini/"),
+            ),
+        ):
+            out, code = _run(None)
+        assert code == 0
+        lines = out.splitlines()
+        assert (
+            "  ! LLM API: not set: GEMINI_API_KEY; 1 model left out, 1 still used"
+            in lines
+        )
+        assert not any(line.startswith("  ✓ Vision Model") for line in lines)
+        assert not any(line.startswith("  ✓ VLM OCR") for line in lines)
+        assert (
+            "  ! Vision Model: the vision models are left out until "
+            "GEMINI_API_KEY is set (see LLM API)"
+        ) in lines
+
     def test_gemini_accepts_google_api_key(self) -> None:
         with _doctor_env(
             _config("gemini/gemini-flash-lite-latest"),

@@ -966,10 +966,14 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     missing_llm_env_vars: set[str] = set()
     left_out = 0
+    # The models the run leaves out for want of a key (by identity), and the
+    # variable each one lacks: they read no images either
+    keyless: dict[int, str] = {}
     for model in active_api_models:
         lacking = missing_api_key(model.litellm_params)
         if lacking is not None:
             missing_llm_env_vars.add(lacking.env_var)
+            keyless[id(model)] = lacking.env_var
             left_out += 1
     llm_extra: dict[str, Any] = {}
 
@@ -1179,7 +1183,16 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
         return supports_vision(model_config.litellm_params.model)
 
-    vision_models = [m for m in active_models if is_vision_model(m)]
+    vision_models = [
+        m for m in active_models if id(m) not in keyless and is_vision_model(m)
+    ]
+    keyless_vision = sorted(
+        {
+            keyless[id(m)]
+            for m in active_models
+            if id(m) in keyless and is_vision_model(m)
+        }
+    )
     if vision_models:
         vision_model_names = [m.litellm_params.model for m in vision_models]
         display_names = ", ".join(vision_model_names[:2])
@@ -1199,7 +1212,10 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "description": "Image analysis (alt text, descriptions)",
             "status": "warning",
             "message": (
-                "none of the active models reads images "
+                f"the vision models are left out until {', '.join(keyless_vision)} "
+                "is set (see LLM API)"
+                if keyless_vision
+                else "none of the active models reads images "
                 "(or set model_info.supports_vision)"
                 if active_models
                 else "needs an LLM model (see LLM API)"
