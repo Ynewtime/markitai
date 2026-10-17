@@ -9,7 +9,7 @@ license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11,<3.14"
 authors = [
-    { name = "Ynewtime", email = "27655771+Ynewtime@users.noreply.github.com" }
+    { name = "Ynewtime" }
 ]
 # version is single-sourced from src/markitai/__init__.py (tool.hatch.version)
 dynamic = ["readme", "version"]
