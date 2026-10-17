@@ -56,16 +56,52 @@ fn context(markdown: &str) -> String {
     body.chars().take(200).collect()
 }
 
-/// The document's assets that its Markdown references, in asset order.
-fn referenced(doc: &Document) -> Vec<&crate::Asset> {
+/// The document's assets that its Markdown references, in asset order,
+/// except the `skip`ped ones.
+fn referenced<'a>(doc: &'a Document, skip: &HashSet<String>) -> Vec<&'a crate::Asset> {
     let referenced: HashSet<_> = output_profiles::image_references(&doc.markdown)
         .iter()
         .filter_map(|target| resources::asset_name(target))
         .collect();
     doc.assets
         .iter()
-        .filter(|asset| referenced.contains(&asset.name))
+        .filter(|asset| referenced.contains(&asset.name) && !skip.contains(&asset.name))
         .collect()
+}
+
+/// The pictures of the `unread` pages of a PDF whose Markdown has page markers
+/// (`<!-- Page number: N -->`): a scanned page's picture is the page itself,
+/// which a model that reads the page image transcribes, so it is not analysed
+/// as a picture of its own.
+pub(crate) fn scan_assets(markdown: &str, unread: &[usize]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut page = None;
+    let mut text = String::new();
+    let mut flush = |page: Option<usize>, text: &mut String| {
+        if page.is_some_and(|page| unread.contains(&page)) {
+            names.extend(
+                output_profiles::image_references(text)
+                    .iter()
+                    .filter_map(|target| resources::asset_name(target)),
+            );
+        }
+        text.clear();
+    };
+    for line in markdown.split_inclusive('\n') {
+        let marker = line
+            .trim()
+            .strip_prefix("<!-- Page number:")
+            .and_then(|rest| rest.strip_suffix("-->"))
+            .and_then(|number| number.trim().parse::<usize>().ok());
+        if let Some(number) = marker {
+            flush(page, &mut text);
+            page = Some(number);
+        } else {
+            text.push_str(line);
+        }
+    }
+    flush(page, &mut text);
+    names
 }
 
 /// Starts analysing each distinct referenced image of a (non-image) document
@@ -77,12 +113,13 @@ pub(crate) fn start(
     source: &str,
     cfg: &Value,
     runtime: &LlmRuntime,
+    skip: &HashSet<String>,
 ) -> Option<Pending> {
     if !enabled(source, cfg) {
         return None;
     }
     let mut seen = HashSet::new();
-    let images: Vec<_> = referenced(doc)
+    let images: Vec<_> = referenced(doc, skip)
         .into_iter()
         .filter_map(|asset| {
             let digest = crate::hex(Sha256::digest(&asset.bytes));
@@ -197,6 +234,7 @@ pub(crate) fn analyze(
     cfg: &Value,
     runtime: Option<&LlmRuntime>,
     pending: Option<Pending>,
+    skip: &HashSet<String>,
 ) -> Result<bool> {
     if !enabled(source, cfg) {
         return Ok(false);
@@ -212,7 +250,7 @@ pub(crate) fn analyze(
     let mut responses = pending.map(Pending::finish).unwrap_or_default();
     let mut captions = HashMap::new();
     let mut first_answer = None;
-    let selected = referenced(doc);
+    let selected = referenced(doc, skip);
     // Multipage TIFF previews are one standalone image document. Analyze all
     // previews together rather than discarding the later pages' descriptions.
     let standalone_answer = if standalone && !selected.is_empty() {
@@ -397,6 +435,44 @@ fn longest_ticks(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_pictures_of_unread_pages_are_found_by_their_page_markers() {
+        let markdown = "<!-- Page number: 1 -->\n\n![Image on page 1](.markitai/assets/scan1.jpg)\n\n<!-- Page number: 2 -->\n\nText and a ![chart](.markitai/assets/chart.png) here.\n\n<!-- Page number: 3 -->\n\n![Image on page 3](.markitai/assets/scan3.jpg)\n";
+        let scans = scan_assets(markdown, &[1, 3]);
+        assert_eq!(
+            scans,
+            HashSet::from(["scan1.jpg".to_owned(), "scan3.jpg".to_owned()])
+        );
+        assert!(scan_assets(markdown, &[]).is_empty());
+        // Without page markers nothing can be placed on a page.
+        assert!(scan_assets("![x](.markitai/assets/a.jpg)", &[1]).is_empty());
+    }
+
+    #[test]
+    fn skipped_assets_are_not_analysed() {
+        let doc = Document {
+            markdown: "![a](.markitai/assets/a.jpg)\n\n![b](.markitai/assets/b.jpg)\n".into(),
+            assets: vec![
+                crate::Asset {
+                    name: "a.jpg".into(),
+                    bytes: vec![1],
+                },
+                crate::Asset {
+                    name: "b.jpg".into(),
+                    bytes: vec![2],
+                },
+            ],
+            ..Default::default()
+        };
+        let names = |skip: &HashSet<String>| {
+            referenced(&doc, skip)
+                .iter()
+                .map(|a| a.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&HashSet::new()), ["a.jpg", "b.jpg"]);
+        assert_eq!(names(&HashSet::from(["a.jpg".to_owned()])), ["b.jpg"]);
+    }
     #[test]
     fn pure_nonimage_local_preserves_reference_priority_but_url_images_remain_eligible() {
         let cfg = json!({"llm":{"enabled":true,"pure":true},"image":{"alt_enabled":true}});

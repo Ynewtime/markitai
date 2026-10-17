@@ -74,7 +74,18 @@ pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
             | "claude-mythos-5-1",
             Protocol::Anthropic,
         ) => (false, true),
-        ("gemini", "gemini-3.8-flash", Protocol::Chat) => (false, true),
+        // Gemini Flash answers the forced function call that LiteLLM (Python
+        // markitai) sends, and that shape got a transcription of a widely
+        // copied scanned sample through where a plain-text answer was withheld
+        // as a recitation (live check of 2026-10-17); the JSON-schema mode
+        // follows it when a tool answer is unusable. `gemini-flash-latest` is the
+        // alias of `gemini-3.8-flash`, and `gemini-3.6-flash` is priced like it
+        // in the catalog; flash-lite models are not listed.
+        (
+            "gemini",
+            "gemini-3.8-flash" | "gemini-3.6-flash" | "gemini-flash-latest",
+            Protocol::Chat,
+        ) => (true, true),
         _ => (false, false),
     }
 }
@@ -345,6 +356,15 @@ pub(super) struct Request<'a> {
     pub prompts: &'a Prompts,
     pub schema: Schema,
     pub stop: Option<&'a AtomicBool>,
+    /// A transcription of pages no reader recovered: an answer the provider
+    /// withheld as a recitation is requested once more in the next answer mode
+    /// of the ladder, never more than once.
+    pub resend_recitation: bool,
+}
+
+/// Whether `failure` is a provider's recitation stop.
+fn recitation(failure: &VisionFailure) -> bool {
+    failure.kind == FailureKind::Refusal && failure.error.to_string().contains("RECITATION")
 }
 
 pub(super) fn run<T>(
@@ -361,7 +381,9 @@ pub(super) fn run<T>(
     let ladder = modes(request.prompts, cfg, env)?;
     let mut last = Error::Conversion("LLM returned no valid structured result".into());
     let mut rejected: Option<(Mode, String)> = None;
-    for mode in ladder {
+    let mut resent = false;
+    let modes = ladder.len();
+    for (position, mode) in ladder.into_iter().enumerate() {
         let attempts = if mode == Mode::JsonText { 3 } else { 1 };
         // A rejected answer is never answered by the same request again: a
         // later attempt names the rejection, so it is a different request.
@@ -392,6 +414,22 @@ pub(super) fn run<T>(
             ) {
                 Ok((text, _)) => text,
                 Err(failure) => {
+                    if request.resend_recitation
+                        && !resent
+                        && position + 1 < modes
+                        && recitation(&failure)
+                        && !document_exhausted()
+                    {
+                        resent = true;
+                        // The refusal stopped the document's other requests;
+                        // this one request is wanted anyway.
+                        if let Some(stop) = request.stop {
+                            stop.store(false, Ordering::Release);
+                        }
+                        rejected = Some((mode, failure.error.to_string()));
+                        last = failure.error;
+                        break;
+                    }
                     // Transport already exhausted its configured routing policy.
                     // Preserve its disposition for callers (a web page may still
                     // use text fallback), but never restart it in another mode.

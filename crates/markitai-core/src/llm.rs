@@ -415,6 +415,7 @@ pub(crate) fn analyze_images_with_runtime(
             prompts: &prompts,
             schema: structured::Schema::ImageAnalysis,
             stop,
+            resend_recitation: false,
         },
         cfg,
         &env,

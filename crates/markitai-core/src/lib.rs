@@ -708,9 +708,20 @@ fn convert_inner(
     };
     // Image prompts read the base Markdown, so a document's images are
     // analysed while its text is enhanced, under the same request budget.
-    let pending_analysis = llm_runtime
-        .filter(|_| !image_input)
-        .and_then(|runtime| image_enrichment::start(&doc, &result.markdown, source, &cfg, runtime));
+    // The scan pictures of scanned pages the model reads from the page images
+    // are not analysed as pictures: the transcription is their content.
+    let scan_assets = if pdf_input
+        && !screenshots.is_empty()
+        && !config::enabled(&cfg, "/llm/pure")
+        && config::enabled(&cfg, "/llm/enabled")
+    {
+        image_enrichment::scan_assets(&doc.markdown, &unread_pdf_pages(&doc))
+    } else {
+        std::collections::HashSet::new()
+    };
+    let pending_analysis = llm_runtime.filter(|_| !image_input).and_then(|runtime| {
+        image_enrichment::start(&doc, &result.markdown, source, &cfg, runtime, &scan_assets)
+    });
     // Whether a model answered for this file (fresh, shared or cached), and
     // the failed step's warning that the no-answer summary may restate.
     let mut model_answered = false;
@@ -744,18 +755,11 @@ fn convert_inner(
             metadata: None,
         };
         // Scanned pages the model is to read from the page images it is sent.
-        let unread_pages: Vec<usize> = doc
-            .metadata
-            .get(formats::UNREAD_PAGES)
-            .and_then(Value::as_array)
-            .filter(|_| pdf_input && send_pdf_images && !pure)
-            .map(|pages| {
-                pages
-                    .iter()
-                    .filter_map(|page| usize::try_from(page.as_u64()?).ok())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let unread_pages = if pdf_input && send_pdf_images && !pure {
+            unread_pdf_pages(&doc)
+        } else {
+            Vec::new()
+        };
         let enhanced = if (is_url && !pure || send_pdf_images) && !screenshots.is_empty() {
             let image_refs: Vec<_> = screenshots
                 .iter()
@@ -1005,6 +1009,7 @@ fn convert_inner(
         &cfg,
         llm_runtime,
         pending_analysis,
+        &scan_assets,
     ) {
         Ok(answered) => model_answered |= answered,
         Err(error) => {
@@ -1247,6 +1252,20 @@ fn json_output_value(result: ConversionOutput) -> DetailedResult<Value> {
         ),
         usage: result.usage,
     })
+}
+
+/// The pages of a PDF whose text no reader recovered.
+fn unread_pdf_pages(doc: &Document) -> Vec<usize> {
+    doc.metadata
+        .get(formats::UNREAD_PAGES)
+        .and_then(Value::as_array)
+        .map(|pages| {
+            pages
+                .iter()
+                .filter_map(|page| usize::try_from(page.as_u64()?).ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Whether Markdown has text of its own, beyond comments and picture

@@ -318,3 +318,158 @@ fn a_repeated_rejection_is_never_answered_by_the_same_request() {
         }
     }
 }
+
+fn doc_tool_answer(markdown: &str) -> Value {
+    tool_answer(
+        &json!({"cleaned_markdown":markdown,"frontmatter":{"description":"A scan","tags":["scan"]}}),
+    )
+}
+
+fn scanned_frames() -> Vec<VisionFrame<'static>> {
+    (1..=3)
+        .map(|number| VisionFrame {
+            number,
+            mime: "image/png",
+            bytes: b"scanned page",
+        })
+        .collect()
+}
+
+fn read_scans(
+    frames: &[VisionFrame<'_>],
+    cfg: &Value,
+    unread: &[usize],
+) -> std::result::Result<Enhancement, VisionFailure> {
+    process_vision_with_runtime(
+        VisionRequest {
+            markdown: "",
+            source_label: "scan.pdf",
+            cache_context: "scan.pdf",
+            kind: VisionKind::PagedDocument,
+            frames,
+            unread_pages: unread,
+        },
+        cfg,
+        None,
+    )
+}
+
+#[test]
+fn gemini_flash_names_and_aliases_answer_in_a_forced_tool_call_first() {
+    for model in [
+        "gemini/gemini-3.8-flash",
+        "gemini/gemini-3.6-flash",
+        "gemini/gemini-flash-latest",
+    ] {
+        let server = Mock::new(vec![(
+            200,
+            doc_tool_answer("# Scan\n\nThe recovered page text."),
+        )]);
+        let cfg = cfg(model, &server.base);
+        let scope = DocumentScope::new(&cfg);
+        let answer = read_scans(&scanned_frames(), &cfg, &[]).unwrap();
+        assert!(
+            answer.markdown.contains("The recovered page text."),
+            "{model}"
+        );
+        drop(scope);
+        let requests = server.finish();
+        assert_eq!(requests.len(), 1, "{model}");
+        let body = &requests[0].1;
+        assert_eq!(
+            body["tools"][0]["function"]["name"], "MarkitaiDocument",
+            "{model}"
+        );
+        assert_eq!(
+            body["tool_choice"]["function"]["name"], "MarkitaiDocument",
+            "{model}"
+        );
+        assert!(body.get("response_format").is_none(), "{model}");
+    }
+}
+
+#[test]
+fn a_recitation_stop_on_a_scan_is_requested_once_more_in_the_next_mode() {
+    let server = Mock::new(vec![
+        (200, recitation_answer()),
+        (200, document_answer("# Scan\n\nThe recovered page text.")),
+    ]);
+    let mut cfg = cfg("gemini/gemini-flash-latest", &server.base);
+    cfg["llm"]["max_requests_per_document"] = json!(5);
+    let scope = DocumentScope::new(&cfg);
+    let answer = read_scans(&scanned_frames(), &cfg, &[1, 2, 3]).unwrap();
+    assert!(answer.markdown.contains("The recovered page text."));
+    let requests = server.finish();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].1.get("tools").is_some() && requests[0].1.get("response_format").is_none());
+    assert!(requests[1].1.get("tools").is_none());
+    assert_eq!(requests[1].1["response_format"]["type"], "json_schema");
+    assert_eq!(scope.usage().requests, 2);
+    let mut warnings = answer.warnings.clone();
+    warnings.extend(scope.take_warnings());
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("RECITATION") && w.contains("sent again in JSON-schema mode")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_second_recitation_stop_fails_after_exactly_one_extra_request() {
+    let server = Mock::new(vec![(200, recitation_answer()), (200, recitation_answer())]);
+    let mut cfg = cfg("gemini/gemini-flash-latest", &server.base);
+    cfg["llm"]["max_requests_per_document"] = json!(5);
+    let scope = DocumentScope::new(&cfg);
+    let failure = read_scans(&scanned_frames(), &cfg, &[1, 2, 3]).unwrap_err();
+    assert_eq!(failure.error.to_string(), RECITATION);
+    assert_eq!(server.finish().len(), 2);
+    assert_eq!(scope.usage().requests, 2);
+}
+
+#[test]
+fn a_recitation_stop_without_unread_pages_or_another_mode_is_not_sent_again() {
+    // Pages with text: the stop is final, as before.
+    let server = Mock::new(vec![(200, recitation_answer())]);
+    let cfg_text = cfg("gemini/gemini-flash-latest", &server.base);
+    let scope = DocumentScope::new(&cfg_text);
+    assert!(read_scans(&scanned_frames(), &cfg_text, &[]).is_err());
+    assert_eq!(server.finish().len(), 1);
+    drop(scope);
+    // A model with no other answer mode to try.
+    let server = Mock::new(vec![(200, recitation_answer())]);
+    let cfg_other = cfg("gemini/gemini-2.5-flash", &server.base);
+    let scope = DocumentScope::new(&cfg_other);
+    assert!(read_scans(&scanned_frames(), &cfg_other, &[1, 2, 3]).is_err());
+    assert_eq!(server.finish().len(), 1);
+    drop(scope);
+}
+
+#[test]
+fn scanned_pages_are_asked_for_in_the_cleanup_framing_with_the_rules_once() {
+    let server = Mock::new(vec![(
+        200,
+        doc_tool_answer("# Scan\n\nThe recovered page text."),
+    )]);
+    let cfg = cfg("gemini/gemini-flash-latest", &server.base);
+    let scope = DocumentScope::new(&cfg);
+    read_scans(&scanned_frames(), &cfg, &[1, 2, 3]).unwrap();
+    drop(scope);
+    let requests = server.finish();
+    let system = requests[0].1["messages"][0]["content"].as_str().unwrap();
+    assert!(
+        system.contains("Frames 1, 2, 3 are scanned pages"),
+        "{system}"
+    );
+    assert!(
+        system.contains("Supplement the missing content from the page image"),
+        "{system}"
+    );
+    assert!(system.contains("original language and wording"), "{system}");
+    assert!(!system.contains("transcribe all of its text"), "{system}");
+    assert_eq!(
+        system.matches("Read every attached image in order").count(),
+        1,
+        "{system}"
+    );
+}

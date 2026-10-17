@@ -316,6 +316,7 @@ fn run_chunk(
             prompts: &item.prompts,
             schema: structured::Schema::Document,
             stop: None,
+            resend_recitation: false,
         },
         cfg,
         env,

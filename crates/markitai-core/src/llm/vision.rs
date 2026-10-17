@@ -62,6 +62,8 @@ struct Work<'a> {
     key: Option<String>,
     cached: Option<BatchAnswer>,
     first: bool,
+    /// Some frame is a scanned page the model transcribes.
+    unread: bool,
     context: &'a str,
 }
 struct BatchAnswer {
@@ -169,6 +171,9 @@ pub(crate) fn process_vision_with_runtime(
             key,
             cached: None,
             first: index == 0,
+            unread: frames
+                .iter()
+                .any(|f| request.unread_pages.contains(&f.number)),
             context: request.cache_context,
         };
         if let (Some(cache), Some(key)) = (&cache, &item.key) {
@@ -413,7 +418,7 @@ fn unread_rule(pages: &[usize]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "Frames {list} are scanned pages: no reader recovered their text, so the extracted text holds only their pictures. A picture token on such a page is the scan of the page, not its content: read the page image and transcribe all of its text, headings, lists and tables as Markdown, then keep the token once after the transcription (the application hides it)."
+        "Frames {list} are scanned pages: no reader recovered their text, so the extracted text holds only their pictures and is clearly incomplete. A picture token on such a page is the scan of the page, not its content. Supplement the missing content from the page image: its text, headings, lists and tables, in the original language and wording (do not translate, rewrite or summarize), formatted like the text already extracted. Keep the token once after the supplemented content (the application hides it)."
     )
 }
 
@@ -447,7 +452,7 @@ fn visual_prompts(
         format!("\n{}", unread_rule(&unread))
     };
     let scope = llm_cache::prompt_scope(&[
-        "visual-structured-transport-v2",
+        "visual-structured-transport-v3",
         kind,
         &unread,
         &system,
@@ -469,9 +474,16 @@ fn visual_prompts(
         .map(|f| f.number.to_string())
         .collect::<Vec<_>>()
         .join(", ");
+    // The general rules are in a template that names `{mode_rules}`; one that
+    // does not gets them appended.
+    let common = if system.contains("{mode_rules}") {
+        String::new()
+    } else {
+        format!("\n{COMMON}")
+    };
     Ok(Prompts {
         system: format!(
-            "{}\n{COMMON}\n{rules}{unread}\nThe attached images are {kind} frames in this exact order: {numbers}.",
+            "{}{common}\n{rules}{unread}\nThe attached images are {kind} frames in this exact order: {numbers}.",
             render(&system)
         ),
         user: render(&user),
@@ -676,6 +688,7 @@ fn run_batch(
                 prompts: &prompts,
                 schema: structured::Schema::Document,
                 stop: Some(stop),
+                resend_recitation: item.unread,
             },
             cfg,
             env,
@@ -789,6 +802,7 @@ mod tests {
             key: None,
             cached: None,
             first: true,
+            unread: false,
             context: "test",
         };
         assert!(cached_answer(&item,&json!({"markdown":"I cannot process the image.","metadata":{"description":"x","tags":["x"]}})).is_err());
