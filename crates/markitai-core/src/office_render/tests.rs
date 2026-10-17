@@ -690,3 +690,130 @@ fn windows_fixed_discovery_prefers_console_entry_and_keeps_exe_fallback() {
     fs::remove_file(gui).unwrap();
     assert_eq!(select(), None);
 }
+
+/// A PNG of `width` x `height` pixels, white with a dark square.
+#[cfg(unix)]
+fn png(width: u32, height: u32) -> Vec<u8> {
+    let image = image::RgbImage::from_fn(width, height, |x, y| {
+        if (40..60).contains(&x) && (40..60).contains(&y) {
+            image::Rgb([20, 20, 20])
+        } else {
+            image::Rgb([255, 255, 255])
+        }
+    });
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    bytes
+}
+
+#[cfg(unix)]
+#[test]
+fn a_metafile_is_drawn_as_a_png_in_a_process_of_its_own_within_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = dir.path().join("drawn.png");
+    fs::write(&fixture, png(100, 80)).unwrap();
+    // The fake reads the metafile it is given and writes picture.png.
+    let program = mock(
+        dir.path(),
+        &format!(
+            "test -s \"$(dirname \"$out\")/picture.emf\"\ncp {} \"$out/picture.png\"",
+            quote(&fixture)
+        ),
+    );
+    let limit = 64 * 1024;
+    let made = metafile_png_with(
+        &program,
+        b"emf bytes",
+        "emf",
+        Duration::from_secs(5),
+        limit,
+        1 << 20,
+    )
+    .unwrap();
+    assert_eq!(made, fs::read(&fixture).unwrap());
+    // The private workspace is gone with the call.
+    assert!(
+        fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .flatten()
+            .all(|entry| !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("markitai-metafile-")
+                || !entry.path().join("picture.emf").exists()),
+    );
+    // What is refused: another extension, a picture over the input limit.
+    assert!(
+        metafile_png_with(
+            &program,
+            b"x",
+            "png",
+            Duration::from_secs(5),
+            limit,
+            1 << 20
+        )
+        .is_err()
+    );
+    assert!(
+        metafile_png_with(
+            &program,
+            &vec![0; limit + 1],
+            "wmf",
+            Duration::from_secs(5),
+            limit,
+            1 << 20
+        )
+        .is_err()
+    );
+    // What a bad LibreOffice leaves: nothing, a failure, no PNG, too many pixels, too many bytes.
+    let huge = dir.path().join("huge.png");
+    fs::write(&huge, png(8000, 8000)).unwrap();
+    for script in [
+        "exit 0".to_owned(),
+        "exit 9".into(),
+        "printf nope > \"$out/picture.png\"".into(),
+        format!("cp {} \"$out/picture.png\"", quote(&huge)),
+        format!("cp {} \"$out/unexpected.png\"", quote(&fixture)),
+    ] {
+        let program = mock(dir.path(), &script);
+        assert!(
+            metafile_png_with(
+                &program,
+                b"emf bytes",
+                "emf",
+                Duration::from_secs(5),
+                limit,
+                1 << 20
+            )
+            .is_err(),
+            "{script}"
+        );
+    }
+    let program = mock(
+        dir.path(),
+        &format!("cp {} \"$out/picture.png\"", quote(&fixture)),
+    );
+    assert!(
+        metafile_png_with(&program, b"emf", "emf", Duration::from_secs(5), limit, 100).is_err()
+    );
+    // A hung LibreOffice is stopped by the time limit.
+    let program = mock(dir.path(), "sleep 30");
+    let started = Instant::now();
+    assert!(
+        metafile_png_with(
+            &program,
+            b"emf",
+            "emf",
+            Duration::from_millis(500),
+            limit,
+            1 << 20
+        )
+        .is_err()
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+}

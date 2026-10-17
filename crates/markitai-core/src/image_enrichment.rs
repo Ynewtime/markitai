@@ -77,21 +77,9 @@ fn referenced<'a>(doc: &'a Document, skip: &HashSet<String>) -> Vec<&'a crate::A
         .filter(|asset| {
             referenced.contains(&asset.name)
                 && !skip.contains(&asset.name)
-                && !metafile(&asset.bytes)
+                && crate::images::metafile(&asset.bytes).is_none()
         })
         .collect()
-}
-
-/// Whether `bytes` are an Enhanced Metafile (`EMR_HEADER` with the " EMF"
-/// signature) or a Windows Metafile (placeable, or a standard header).
-fn metafile(bytes: &[u8]) -> bool {
-    let emf = bytes.len() >= 44 && bytes[..4] == [1, 0, 0, 0] && &bytes[40..44] == b" EMF";
-    let placeable = bytes.starts_with(&[0xD7, 0xCD, 0xC6, 0x9A]);
-    let standard = bytes.len() >= 18
-        && matches!(bytes[..2], [1, 0] | [2, 0])
-        && bytes[2..4] == [9, 0]
-        && matches!(bytes[4..6], [0, 1] | [0, 3]);
-    emf || placeable || standard
 }
 
 /// The pictures of the `unread` pages of a PDF whose Markdown has page markers

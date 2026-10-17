@@ -372,3 +372,15 @@ The implementation uses the bounded decoder interfaces in
 No codec downloads or external executable installation occur during conversion.
 SVG uses [resvg 0.48.1](https://docs.rs/resvg/0.48.1/resvg/) with explicit text,
 system-font and raster-image features.
+
+## Windows metafile pictures (EMF, WMF)
+
+A Word or PowerPoint chart is often an EMF or WMF picture, which no decoder in
+Markitai reads. When LibreOffice is installed, each such picture is drawn as a PNG
+by LibreOffice in a process of its own (private profile, 30 seconds, a 16 MiB
+metafile at most, a 64 MiB and 32-megapixel PNG at most, up to 20 pictures in one
+document), cropped to what it draws, and then goes through the ordinary image
+steps: filtering, compression to the output format and, with a model, analysis.
+Without LibreOffice the file is kept as it is, is not analysed and gets no
+notice; if LibreOffice is there and fails or is refused by a limit, the file is
+kept and one notice says so.

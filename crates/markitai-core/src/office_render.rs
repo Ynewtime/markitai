@@ -177,6 +177,78 @@ pub(crate) fn export_pdf(input: &Path, requested_kind: OfficeKind) -> Result<Off
     export_with(&program, input, requested_kind, TIMEOUT, MAX_BYTES)
 }
 
+/// A Windows metafile picture (EMF or WMF) at most this large is converted.
+const METAFILE_INPUT: usize = 16 * 1024 * 1024;
+/// The PNG LibreOffice makes of it at most this large, and this many pixels.
+const METAFILE_PNG: u64 = 64 * 1024 * 1024;
+const METAFILE_PIXELS: u64 = 32_000_000;
+const METAFILE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A Windows metafile picture (`extension` is `emf` or `wmf`) drawn as a PNG
+/// by LibreOffice in a process of its own, with a private profile, a time limit
+/// and size limits: the picture's pixels for image analysis, which no decoder
+/// here reads from the metafile itself. `Ok(None)` when LibreOffice is not
+/// installed.
+pub(crate) fn metafile_png(bytes: &[u8], extension: &str) -> Result<Option<Vec<u8>>> {
+    let Some(program) = discover() else {
+        return Ok(None);
+    };
+    metafile_png_with(
+        &program,
+        bytes,
+        extension,
+        METAFILE_TIMEOUT,
+        METAFILE_INPUT,
+        METAFILE_PNG,
+    )
+    .map(Some)
+}
+
+fn metafile_png_with(
+    program: &Path,
+    bytes: &[u8],
+    extension: &str,
+    timeout: Duration,
+    input_limit: usize,
+    output_limit: u64,
+) -> Result<Vec<u8>> {
+    if bytes.len() > input_limit || !matches!(extension, "emf" | "wmf") {
+        return Err(failure("metafile picture is too large or of another type"));
+    }
+    let workspace = private_workspace("markitai-metafile-")?;
+    let (profile, output) = (
+        workspace.path().join("profile"),
+        workspace.path().join("out"),
+    );
+    fs::create_dir(&profile)?;
+    fs::create_dir(&output)?;
+    let input = workspace.path().join(format!("picture.{extension}"));
+    fs::write(&input, bytes)?;
+    let deadline = Instant::now() + timeout;
+    let _permit = process::acquire(deadline)?;
+    process::convert(
+        program,
+        &input,
+        &output,
+        &profile,
+        "png",
+        deadline,
+        output_limit,
+    )?;
+    let png = expected_file(&output, "picture.png", output_limit)?;
+    // The PNG signature and a header whose size is a picture, not a bomb.
+    let header = png
+        .get(..24)
+        .filter(|header| header.starts_with(b"\x89PNG\r\n\x1a\n") && &header[12..16] == b"IHDR")
+        .ok_or_else(|| failure("LibreOffice did not make a PNG of the picture"))?;
+    let width = u64::from(u32::from_be_bytes(header[16..20].try_into().unwrap()));
+    let height = u64::from(u32::from_be_bytes(header[20..24].try_into().unwrap()));
+    if width == 0 || height == 0 || width * height > METAFILE_PIXELS {
+        return Err(failure("the picture's PNG has no usable size"));
+    }
+    Ok(png)
+}
+
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path).map_err(|_| failure("expected file is missing"))?;
     if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > limit {

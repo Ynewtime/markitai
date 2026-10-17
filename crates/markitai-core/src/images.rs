@@ -545,14 +545,98 @@ fn convert_ahead(assets: &[Asset], cfg: &Value) -> HashMap<usize, Option<Convert
     done.into_inner().unwrap_or_else(|e| e.into_inner())
 }
 
+/// `emf` or `wmf` when `bytes` are a Windows metafile: an Enhanced Metafile
+/// (`EMR_HEADER` with the " EMF" signature), or a Windows Metafile (placeable,
+/// or a standard header).
+pub(crate) fn metafile(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 44 && bytes[..4] == [1, 0, 0, 0] && &bytes[40..44] == b" EMF" {
+        return Some("emf");
+    }
+    let placeable = bytes.starts_with(&[0xD7, 0xCD, 0xC6, 0x9A]);
+    let standard = bytes.len() >= 18
+        && matches!(bytes[..2], [1, 0] | [2, 0])
+        && bytes[2..4] == [9, 0]
+        && matches!(bytes[4..6], [0, 1] | [0, 3]);
+    (placeable || standard).then_some("wmf")
+}
+
+/// A PNG LibreOffice drew of a metafile is its whole page, the picture small
+/// on it: cropped to what is drawn (anything not white), with a margin. The
+/// PNG as it is when nothing is drawn, when it is all picture, or when it
+/// cannot be read.
+fn trim_page(png: Vec<u8>) -> Vec<u8> {
+    const MARGIN: u32 = 12;
+    let Ok(image) = image::load_from_memory_with_format(&png, ImageFormat::Png) else {
+        return png;
+    };
+    let rgba = image.to_rgba8();
+    let drawn = |pixel: &image::Rgba<u8>| pixel.0[3] > 8 && pixel.0[..3].iter().any(|c| *c < 246);
+    let (width, height) = rgba.dimensions();
+    let (mut left, mut top, mut right, mut bottom) = (width, height, 0, 0);
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        if drawn(pixel) {
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x);
+            bottom = bottom.max(y);
+        }
+    }
+    if left > right || top > bottom {
+        return png;
+    }
+    let left = left.saturating_sub(MARGIN);
+    let top = top.saturating_sub(MARGIN);
+    let right = (right + MARGIN).min(width - 1);
+    let bottom = (bottom + MARGIN).min(height - 1);
+    let (cropped_width, cropped_height) = (right - left + 1, bottom - top + 1);
+    if u64::from(cropped_width) * u64::from(cropped_height) * 100
+        >= u64::from(width) * u64::from(height) * 95
+    {
+        return png;
+    }
+    let cropped = image.crop_imm(left, top, cropped_width, cropped_height);
+    let mut bytes = Vec::new();
+    match cropped.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png) {
+        Ok(()) => bytes,
+        Err(_) => png,
+    }
+}
+
+/// Metafile pictures converted in one document at most: each is a LibreOffice
+/// process of its own.
+const MAX_METAFILES: usize = 20;
+
 pub(crate) fn prepare_assets(doc: &mut Document, cfg: &Value) {
     let mut prepared = Vec::with_capacity(doc.assets.len());
     let mut seen: HashMap<_, String> = HashMap::new();
     let mut replacements = HashMap::with_capacity(doc.assets.len());
     let assets = std::mem::take(&mut doc.assets);
     let mut ahead = convert_ahead(&assets, cfg);
-    for (index, asset) in assets.into_iter().enumerate() {
+    let mut metafiles = 0;
+    for (index, mut asset) in assets.into_iter().enumerate() {
         let from = format!(".markitai/assets/{}", asset.name);
+        // A Windows metafile (a Word chart) is drawn as a PNG by LibreOffice,
+        // when it is installed, so that it can be analysed like any picture.
+        // Without it the file is kept as it was, with no notice.
+        if let Some(kind) = metafile(&asset.bytes)
+            && metafiles < MAX_METAFILES
+            && crate::office_render::available()
+        {
+            metafiles += 1;
+            match crate::office_render::metafile_png(&asset.bytes, kind) {
+                Ok(Some(png)) => {
+                    asset = Asset {
+                        name: format!("{}.png", asset.name),
+                        bytes: trim_page(png),
+                    };
+                }
+                Ok(None) => {}
+                Err(_) => notice(
+                    doc,
+                    "A Windows metafile picture could not be converted to PNG by LibreOffice; it was kept as a file and not analysed.",
+                ),
+            }
+        }
         let extension = Path::new(&asset.name)
             .extension()
             .and_then(|s| s.to_str())
@@ -1372,6 +1456,51 @@ mod tests {
                 .contains("`![literal](.markitai/assets/a.png.png)`")
         );
         assert!(doc.warnings.is_empty());
+    }
+
+    #[test]
+    fn metafiles_are_recognised_by_their_headers() {
+        let mut emf = vec![0u8; 88];
+        emf[0] = 1;
+        emf[40..44].copy_from_slice(b" EMF");
+        assert_eq!(metafile(&emf), Some("emf"));
+        assert_eq!(metafile(&[0xD7, 0xCD, 0xC6, 0x9A, 0, 0]), Some("wmf"));
+        let mut wmf = vec![1, 0, 9, 0, 0, 3];
+        wmf.resize(18, 0);
+        assert_eq!(metafile(&wmf), Some("wmf"));
+        assert_eq!(metafile(&png(10, 10)), None);
+        assert_eq!(metafile(b""), None);
+    }
+
+    #[test]
+    fn a_page_drawn_with_a_small_picture_is_cropped_to_the_picture() {
+        let mut image = image::RgbImage::from_pixel(400, 300, image::Rgb([255; 3]));
+        for y in 100..140 {
+            for x in 150..230 {
+                image.put_pixel(x, y, image::Rgb([200, 30, 30]));
+            }
+        }
+        let mut bytes = Vec::new();
+        DynamicImage::ImageRgb8(image)
+            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+            .unwrap();
+        let cropped = image::load_from_memory(&trim_page(bytes)).unwrap();
+        // the drawing and a 12-pixel margin on every side
+        assert_eq!((cropped.width(), cropped.height()), (80 + 24, 40 + 24));
+        // A blank page, and a picture that fills the page, stay as they are.
+        let blank = png_of(&image::RgbImage::from_pixel(50, 50, image::Rgb([255; 3])));
+        assert_eq!(trim_page(blank.clone()), blank);
+        let full = png_of(&image::RgbImage::from_pixel(50, 50, image::Rgb([10; 3])));
+        assert_eq!(trim_page(full.clone()), full);
+        assert_eq!(trim_page(b"not a png".to_vec()), b"not a png");
+    }
+
+    fn png_of(image: &image::RgbImage) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        DynamicImage::ImageRgb8(image.clone())
+            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+            .unwrap();
+        bytes
     }
 
     #[test]
