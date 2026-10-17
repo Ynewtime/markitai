@@ -240,8 +240,10 @@ failed retry; deleting the item deletes them.
 network request and returns no credentials, account ID or endpoint. It does not
 verify cloud permissions, quota or service availability. `reason` is null when
 ready, otherwise `not_configured`, `invalid_configuration`, `disabled_by_policy`
-or `client_not_trusted`. An untrusted caller gets a fixed unavailable response
-without resolving credentials.
+or `client_not_trusted`. Cloudflare bills the server's account, so only the
+admin (the server token, or a loopback client of a `--no-auth` server) may use
+it: a user token or an untrusted caller gets a fixed `client_not_trusted`
+response without resolving credentials.
 
 A trusted request must select `strategy: "cloudflare"` or
 `backend: "cloudflare"` and explicitly include `remote_processing: "cloudflare"`
@@ -268,8 +270,8 @@ there is no terminal prompt and no implicit authorization of remote fallback in
 `auto`. Remote fallback of `auto` (defuddle.md, Jina Reader, and Cloudflare when
 configured) runs only when the server's configuration file or `--config-json`
 writes `fetch.remote_consent: always`, as in the CLI ([consent](fetch.md#consent));
-the default leaves `auto` local. The server returns 403 `remote_processing_forbidden` for an untrusted
-caller, 422 `remote_processing_confirmation_required` without current consent,
+the default leaves `auto` local. The server returns 403 `remote_processing_forbidden` for any caller
+other than the admin (a user token included), 422 `remote_processing_confirmation_required` without current consent,
 422 `remote_processing_disabled` when policy forbids it, and 422
 `cloudflare_unavailable` when local prerequisites are missing. Unknown enum
 values, or consent without a Cloudflare selection, return 422 `invalid_options`.
