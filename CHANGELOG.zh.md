@@ -3,6 +3,7 @@
 ## [1.3.0]
 
 ### 新增
+- `-f json`（`--format json`，`output.format`）把每个转换后的文档写成字段稳定、带版本的 JSON：`schema_version` 1.0、`tool`（版本、提交）、`source`（路径或 URL、类型、大小、SHA-256）、`title`、`properties`（frontmatter）、`markdown.base`/`markdown.llm`、纯文本 `text`、`pages`（页码、文本、Markdown、图片、截图）、`images`（路径、alt、描述、图中识别的文字、所在页）、`tables`（表头与各行）、`notices`（稳定的 `code`、`level`、消息原文及其涉及的页、图片或工作表）、`usage` 和 `timings`。每个键总是存在（不适用时为 `null`），1.x 版本只会新增键；见 `docs/json-output.md` 与 `docs/schema/document-v1.schema.json`，测试固定了字段集合。不带 `-o` 时输出到 stdout；带 `-o` 时以同名写在每个 Markdown 文件旁（`-o x.json` 指定文件名），批量另写列出全部条目的 `markitai.index.json`。`markitai serve` 在 `GET /api/jobs/{job_id}/items/{item_id}/document` 提供每个已完成条目的文档 JSON（`features.document_json`）。
 - 订阅类提供商的官方运行时无法列出模型时会说明原因：`POST /api/settings/llm/model-discovery`（及用户路由）返回 `reason` 为 `runtime_missing`、`runtime_unsupported`、`not_signed_in` 或 `runtime_failed`（另有 `timeout`），并附 `runtime`（`name`、`required`、`installed`）和 `next_step`（`install`：固定版本的 `npm install -g …` 命令；`sign_in`：`markitai auth <provider> login`），Claude、Copilot、ChatGPT 一致，不再一律是 `provider_error`。工作台显示原因、带复制按钮的命令和设置指南，并在运行时缺失、版本不支持或未登录时关闭「按 ID 添加模型」（运行时出错但原因不明时只给出提醒）。工作台契约 v1.18。
 - 工作台转换列表中提交头部的展开箭头更大，其整个前导区域（宽屏 32 × 38 px，手机 40 × 44 px）都可点击展开或折叠。
 - 工作台支持数学公式：「渲染」视图、标题和目录中的 `$…$` 行内公式与 `$$…$$` 独立公式（含 aligned 等环境）。KaTeX 0.19.0 打包为单独的 `math.js`，连同样式表和 woff2 字体都由二进制提供，仅当文档含公式时才加载；无法绘制的公式保留为源码，`$5 and $6` 这类价格仍是文本。

@@ -409,6 +409,11 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
     ),
     (
         ROOT,
+        "format",
+        "markdown（默认），或 json：一个带版本、字段稳定的文档；输出到 stdout，或在 -o 时写在每个 Markdown 文件旁（批量时另有 markitai.index.json）",
+    ),
+    (
+        ROOT,
         "dry_run",
         "预览要处理的输入，不转换，也不写出任何输出",
     ),

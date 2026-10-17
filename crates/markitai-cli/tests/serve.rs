@@ -651,6 +651,25 @@ fn successful_and_failed_items_keep_public_types_and_asset_archives_self_contain
     let result = server.json(&format!("/api/jobs/{id}/items/i1/result"));
     let artifacts = result["artifacts"].as_array().unwrap();
     assert_eq!(artifacts.len(), 2, "{result}");
+    // The document JSON names the upload as the user did, not its stored path.
+    let document = server.json(&format!("/api/jobs/{id}/items/i1/document"));
+    assert_eq!(document["schema_version"], "1.0");
+    assert_eq!(document["source"]["path"], "letter.eml");
+    assert_eq!(document["source"]["size"], eml.len());
+    assert!(
+        document["images"][0]["path"]
+            .as_str()
+            .unwrap()
+            .starts_with(".markitai/assets/"),
+        "{document}"
+    );
+    let failed = server.request(
+        "GET",
+        &format!("/api/jobs/{id}/items/i2/document"),
+        &[],
+        &[],
+    );
+    assert_eq!(failed.status, 404);
     let mut expected = HashMap::new();
     for artifact in artifacts {
         let name = artifact["relpath"].as_str().unwrap();

@@ -6,7 +6,8 @@
     "report": null,
     "profile": null,
     "wikilinks": false,
-    "page_markers": false
+    "page_markers": false,
+    "format": "markdown"
   },
   "llm": {
     "enabled": false,

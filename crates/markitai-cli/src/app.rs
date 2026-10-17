@@ -50,6 +50,8 @@ mod build_info;
 mod compat;
 #[path = "app/doctor.rs"]
 mod doctor;
+#[path = "app/document_output.rs"]
+mod document_output;
 #[path = "app/dry_run.rs"]
 mod dry_run;
 #[path = "app/guided.rs"]
@@ -159,6 +161,9 @@ struct Cli {
     #[arg(long, conflicts_with_all=["dry_run","llm_batch_collect"], help_heading = OUTPUT_HELP)]
     /// Print one JSON result on stdout; requires -o. Usage errors remain on stderr.
     json: bool,
+    #[arg(short = 'f', long = "format", value_name = "FORMAT", value_parser=["markdown","md","json"], ignore_case=true, help_heading = OUTPUT_HELP)]
+    /// markdown (default), or json: one versioned document with stable fields; on stdout, or beside each Markdown file with -o (plus markitai.index.json for a batch).
+    format: Option<String>,
     #[arg(long, help_heading = OUTPUT_HELP)]
     /// Preview discovery without conversion or output publication.
     dry_run: bool,
@@ -931,6 +936,10 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
     {
         cfg["llm"]["pure"] = json!(true);
     }
+    if let Some(format) = &cli.format {
+        let format = format.to_ascii_lowercase();
+        cfg["output"]["format"] = json!(if format == "json" { "json" } else { "markdown" });
+    }
     if cli.keep_base {
         cfg["llm"]["keep_base"] = json!(true);
     }
@@ -1058,6 +1067,26 @@ fn execute_conversion(
             1,
             "A directory or .urls batch needs an output directory: pass -o DIR or set output.dir in the configuration".into(),
         ));
+    }
+    // `-f json -o report.json` names the JSON: the Markdown beside it is report.md.
+    if document_output::wanted(&cfg)
+        && let Some(path) = &output
+        && path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        && !path.is_dir()
+        && !path
+            .as_os_str()
+            .to_string_lossy()
+            .ends_with(std::path::is_separator)
+    {
+        if batch {
+            return Err((
+                2,
+                "A batch requires an output directory, not a .json file".into(),
+            ));
+        }
+        output = Some(path.with_extension("md"));
     }
     if let Some(path) = &output
         && path
@@ -1343,6 +1372,11 @@ fn execute_conversion(
                         } else if task.output.is_some()
                             && let Some(path) = &record.output
                         {
+                            // With `-f json` the JSON is what was asked for.
+                            let json = document_output::wanted(&cfg)
+                                .then(|| document_output::path_beside(&result))
+                                .flatten();
+                            let path = json.as_ref().unwrap_or(path);
                             // The name can differ from the input's (rename on conflict).
                             let existing = renamed_because_of(path, &task.report_key);
                             let path = path.display();
@@ -1480,9 +1514,11 @@ fn reserve_batch_names(tasks: &mut [Task], cfg: &Value) -> CliResult<()> {
                 },
             )
         };
+        let json = document_output::wanted(cfg);
         let occupied = |stem: &str| {
-            [".md", ".llm.md"].iter().any(|suffix| {
-                std::fs::symlink_metadata(directory.join(format!("{stem}{suffix}"))).is_ok()
+            [".md", ".llm.md", ".json"].iter().any(|suffix| {
+                (json || *suffix != ".json")
+                    && std::fs::symlink_metadata(directory.join(format!("{stem}{suffix}"))).is_ok()
             })
         };
         let members = |stem: &str| [key(&format!("{stem}.md")), key(&format!("{stem}.llm.md"))];
@@ -1654,6 +1690,21 @@ fn complete_item(
     progress: ItemProgress,
     result: markitai_core::DetailedResult<ConversionOutput>,
 ) -> (RunItem, markitai_core::DetailedResult<ConversionOutput>) {
+    // `--format json` asked for the JSON document: an item without it failed.
+    let result = match (result, task.output.as_deref()) {
+        (Ok(output), Some(directory))
+            if document_output::wanted(cfg) && output.skip_reason.is_none() =>
+        {
+            match document_output::write_beside(&output, directory, cfg) {
+                Ok(_) => Ok(output),
+                Err(error) => Err(markitai_core::ConversionFailure {
+                    error: markitai_core::Error::Conversion(error),
+                    usage: output.usage,
+                }),
+            }
+        }
+        (result, _) => result,
+    };
     let mut record = recorded(task, index, progress.clock, progress.started_at, &result);
     record.history_eligible = progress.history_eligible;
     match &result {
@@ -1897,11 +1948,15 @@ fn emit_json(items: &[Value], error: Option<&str>) {
 /// Write the document to stdout and return what was rendered. A failed write
 /// is not returned: it is settled with the rest of the run (`settle_stdout`).
 fn print_stdout(result: &ConversionOutput, cfg: &Value) -> io::Result<String> {
-    if result.skip_reason.is_some() {
+    let rendered = if document_output::wanted(cfg) {
+        // A skip is a document too: its status says so.
+        document_output::render_stdout(result)
+    } else if result.skip_reason.is_some() {
         return Ok(String::new());
-    }
-    let rendered = markitai_core::output::content(result, cfg, result.llm_markdown.is_some())
-        .map_err(io::Error::other)?;
+    } else {
+        markitai_core::output::content(result, cfg, result.llm_markdown.is_some())
+            .map_err(io::Error::other)?
+    };
     with_stdout(|stdout| {
         stdout.write_all(rendered.as_bytes())?;
         if !rendered.ends_with('\n') {
@@ -1969,7 +2024,8 @@ pub(crate) fn renamed_because_of(written: &Path, source: &str) -> Option<String>
     let (stem, suffix) = name
         .strip_suffix(".llm.md")
         .map(|stem| (stem, ".llm.md"))
-        .or_else(|| name.strip_suffix(".md").map(|stem| (stem, ".md")))?;
+        .or_else(|| name.strip_suffix(".md").map(|stem| (stem, ".md")))
+        .or_else(|| name.strip_suffix(".json").map(|stem| (stem, ".json")))?;
     let version = stem.strip_prefix(source)?.strip_prefix(".v")?;
     (version.parse::<u64>().is_ok() && !version.starts_with('+'))
         .then(|| format!("{source}{suffix}"))

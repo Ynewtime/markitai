@@ -114,7 +114,10 @@ pub(super) fn claim(
                 .map(|name| present(&parent.join(name)))
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
-                .any(|yes| yes);
+                .any(|yes| yes)
+                // The JSON document of an earlier run is not overwritten either.
+                || (document_output::wanted(cfg)
+                    && present(&parent.join(format!("{candidate}.json")))?);
             if occupied && mode == "rename" {
                 continue;
             }
@@ -1452,6 +1455,12 @@ fn run_with_namespace(
         && let Some(plan) = history
     {
         plan.record(&records);
+    }
+    if document_output::wanted(cfg)
+        && let Err(error) = document_output::write_index(output, &records, cfg)
+    {
+        eprintln!("Error: {error}");
+        fatal.get_or_insert(error);
     }
     if signal.is_none()
         && let Some(received) = crate::signals::interrupted()

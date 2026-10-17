@@ -42,6 +42,7 @@ full repository checkout; internal work records are not copied into packages.
 | Enhance with a model | `markitai report.pdf --llm -o out/` | [LLM](llm.md), [pricing](pricing.md) |
 | Image captions | `markitai report.docx --llm --alt --desc -o out/` | [Image enrichment](image-enrichment.md) |
 | RAG / Obsidian layout | `markitai report.docx --profile rag -o out/` | [Output](output.md) |
+| JSON for scripts | `markitai report.pdf -f json` | [JSON output](json-output.md) |
 | Machine-readable result | `markitai report.docx -o out/ --json` | [CLI](cli.md) |
 | Browser workspace | `markitai serve` | [REST service](serve.md), [workspace](web-ui.md) |
 | MCP server | `markitai mcp` | [MCP](mcp.md) |
@@ -81,6 +82,7 @@ full repository checkout; internal work records are not copied into packages.
 ## Output and records
 
 - [Output](output.md): frontmatter, pure mode, file names and assets.
+- [JSON output](json-output.md): the versioned document JSON, its schema and the batch index.
 - [Grouped publication](grouped-publication.md) and
   [output ownership](output-ownership.md): how results are written safely.
 - [Reports](reports.md): batch reports.

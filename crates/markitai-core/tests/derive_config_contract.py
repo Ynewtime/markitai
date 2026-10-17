@@ -47,6 +47,10 @@ def main() -> None:
 
     # Rust-only page/slide marker preference; the reference remains read-only.
     schema["$defs"]["OutputConfig"]["properties"]["page_markers"] = {"default": False, "type": "boolean"}
+    # Rust-only document format (docs/json-output.md).
+    schema["$defs"]["OutputConfig"]["properties"]["format"] = {
+        "default": "markdown", "enum": ["markdown", "json"], "type": "string",
+    }
     # Rust-only reasoning control of a deployment, after max_tokens.
     params = schema["$defs"]["LiteLLMParams"]["properties"]
     efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -57,6 +61,7 @@ def main() -> None:
     }
     defaults = reference.MarkitaiConfig().model_dump(mode="json")
     defaults["output"]["page_markers"] = False
+    defaults["output"]["format"] = "markdown"
 
     root = Path(__file__).resolve().parents[1]
     expected = {

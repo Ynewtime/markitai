@@ -652,7 +652,7 @@ reads, described by the server's [OpenAPI document](serve.md#machine-readable-ap
 What a backend offers beyond the base job API is announced in
 `GET /api/capabilities` under `features` (`cancel`, `download_tickets`,
 `url_lists`, `history_items`, `original`, `result_excerpt`, `job_labels`,
-`item_assets`); a missing feature hides its control instead of failing (no Stop
+`item_assets`, `document_json`); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation.

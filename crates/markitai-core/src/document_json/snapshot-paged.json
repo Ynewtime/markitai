@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.0",
+  "tool": {
+    "name": "markitai",
+    "version": "VERSION",
+    "commit": "COMMIT"
+  },
+  "source": {
+    "kind": "url",
+    "path": null,
+    "url": "https://example.test/report.pdf?token=REDACTED",
+    "name": "example_test_report.pdf",
+    "type": null,
+    "size": null,
+    "sha256": null
+  },
+  "status": "completed",
+  "skip_reason": null,
+  "title": "Report",
+  "properties": {
+    "title": "Report",
+    "source": "report.pdf",
+    "description": "A short report.",
+    "tags": [
+      "report"
+    ],
+    "markitai_processed": "2026-10-17T12:00:00.000+08:00"
+  },
+  "markdown": {
+    "base": "# Report\n\nBase text.\n",
+    "llm": "# Report\n\nIntro with a [link](https://example.test) and `code`.\n\n![A chart](.markitai/assets/chart.png)\n\n<!-- ![Page 1](.markitai/screenshots/report.pdf.page0001.jpg) -->\n\n| Name | Value |\n|---|---|\n| a | 1 |\n| b | 2 |\n\n```text\n<!-- Page number: 9 -->\n```\n\n<!-- Page images for reference -->\n<!-- ![Page 2](.markitai/screenshots/report.pdf.page0002.jpg) -->\n"
+  },
+  "text": "Report\n\nIntro with a link and code.\n\nName\tValue\na\t1\nb\t2\n\n<!-- Page number: 9 -->",
+  "pages": [
+    {
+      "number": 1,
+      "text": "Report\n\nIntro with a link and code.",
+      "markdown": "# Report\n\nIntro with a [link](https://example.test) and `code`.\n\n![A chart](.markitai/assets/chart.png)",
+      "images": [
+        ".markitai/assets/chart.png"
+      ],
+      "screenshot": ".markitai/screenshots/report.pdf.page0001.jpg"
+    },
+    {
+      "number": 2,
+      "text": "Name\tValue\na\t1\nb\t2\n\n<!-- Page number: 9 -->",
+      "markdown": "| Name | Value |\n|---|---|\n| a | 1 |\n| b | 2 |\n\n```text\n<!-- Page number: 9 -->\n```",
+      "images": [],
+      "screenshot": ".markitai/screenshots/report.pdf.page0002.jpg"
+    }
+  ],
+  "images": [
+    {
+      "path": ".markitai/assets/chart.png",
+      "alt": "A chart",
+      "description": "Bars rising to the right.",
+      "text": null,
+      "page": 1
+    }
+  ],
+  "tables": [
+    {
+      "page": 2,
+      "header": [
+        "Name",
+        "Value"
+      ],
+      "rows": [
+        [
+          "a",
+          "1"
+        ],
+        [
+          "b",
+          "2"
+        ]
+      ]
+    }
+  ],
+  "notices": [
+    {
+      "code": "pdf.page_without_text",
+      "level": "warning",
+      "message": "PDF page 2: native text was not recovered (no text layer); OCR is required for this page.",
+      "items": [
+        "2"
+      ]
+    },
+    {
+      "code": "other",
+      "level": "warning",
+      "message": "Something nobody classified yet.",
+      "items": []
+    }
+  ],
+  "usage": {
+    "requests": 2,
+    "input_tokens": 100,
+    "output_tokens": 40,
+    "cost_usd": 0.0012,
+    "cost_complete": true,
+    "models": [
+      {
+        "model": "openai/gpt-test",
+        "requests": 2,
+        "input_tokens": 100,
+        "output_tokens": 40,
+        "cost_usd": 0.0012
+      }
+    ]
+  },
+  "timings": {
+    "duration_s": 1.235
+  },
+  "outputs": {
+    "markdown": null,
+    "llm_markdown": "report.pdf.llm.md",
+    "assets": [
+      ".markitai/assets/chart.png"
+    ],
+    "screenshots": [
+      ".markitai/screenshots/report.pdf.page0001.jpg",
+      ".markitai/screenshots/report.pdf.page0002.jpg"
+    ]
+  }
+}

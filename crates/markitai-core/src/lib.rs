@@ -4,6 +4,7 @@ mod browser_install;
 mod browser_runtime;
 pub mod build_info;
 pub mod config;
+pub mod document_json;
 mod fetch;
 pub mod fetch_cache;
 pub mod formats;
@@ -13,6 +14,7 @@ mod llm;
 pub mod llm_cache;
 mod llm_runtime;
 mod markdown;
+pub mod notices;
 mod ocr;
 mod office_media;
 mod office_render;
@@ -49,6 +51,7 @@ mod system_frameworks;
 mod types;
 
 pub use browser_runtime::BrowserRuntime;
+pub use document_json::{DocumentJson, DocumentJsonContext, document_json};
 pub use fetch::cloudflare::cloudflare_capabilities;
 /// Remote-fallback consent a host installs once per process (the CLI does;
 /// without it `auto` never sends a URL to a remote service).

@@ -19,6 +19,10 @@ settings writes unavailable until restart without those overrides.
 
 ## Machine-readable API description
 
+Each finished item's [document JSON](json-output.md), the same object `markitai -f json`
+writes, is served by `GET /api/jobs/{job_id}/items/{item_id}/document`
+(`features.document_json`).
+
 `GET /api/openapi.json` returns an OpenAPI 3.1 document of every `/api/` route
 (jobs, history, downloads, settings, provider discovery and tests) with its
 parameters, request bodies, response schemas, the error body and its `reason`

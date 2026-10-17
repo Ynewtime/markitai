@@ -93,7 +93,7 @@ pub(super) async fn capabilities(
             "item_archive":true,"token_regenerate":state.auth_enabled(),
             "user_tokens":state.auth_enabled(),"config_edit":true,"batch_delete":true,
             "user_models":state.auth_enabled(),"user_config":state.auth_enabled(),
-            "convert_defaults":true,"pdf_outline":true},
+            "convert_defaults":true,"pdf_outline":true,"document_json":true},
     }))
 }
 
