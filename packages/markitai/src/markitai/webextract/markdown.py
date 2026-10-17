@@ -299,7 +299,7 @@ def html_to_markdown(html: str, md_instance: object | None = None) -> str:
     # Preserve compatibility with callers supplying a MarkItDown-like adapter.
     import io
 
-    from markitai.converter._patches import import_markitdown
+    from markitai.utils.markitdown_import import import_markitdown
 
     import_markitdown()
     from markitdown import StreamInfo
