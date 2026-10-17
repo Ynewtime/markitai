@@ -51,6 +51,7 @@
 
 ### 修复
 
+- **订阅类服务商（Claude、Copilot、ChatGPT）取不到模型列表时，模型发现现在会说明原因**：`reason` 为 `runtime_missing`（程序或其 Python 可选依赖未安装）、`not_signed_in`、`runtime_failed` 或 `timeout`，并附 `runtime` 和 `next_step`（安装命令，或 `markitai auth <provider> login`），与 Rust API 一致（契约 v1.18）。工作台会显示原因，并在必然失败时关闭按 ID 添加模型。
 - 批量转换时多个线程同时首次导入 markitdown，偶尔让某个文件（常见是 `.msg`）失败，报 `_DeadlockError: deadlock detected by _ModuleLock('markitdown.converters')`：现在 markitdown 在任何转换器使用前、加锁只导入一次。
 - **在提供商页面勾选一个模型、取消勾选另一个，不再因 `settings_entry_missing` 失败**（工作台 b7a19af，契约 v1.17）。页面原来先删除，这会让手写条目重新编号，或删掉提供商卡片所代表的模型，随后的保存就找不到它的卡片。`POST /api/settings/llm/deployments/batch` 和 `POST /api/me/models/deployments/batch` 现在也接受 `remove`（部署 id），并对页面读取的版本同时应用添加和删除，要么全部成功要么全部不做（视图中 `batch_remove: true`）。路由权重是 0 到 100 的整数（0 表示关闭，模型仍保留），所有写入权重的路由都按此检查，其他值返回 422 `invalid_weight`，Edit config 会指出具体条目。文件里已有的同一条目的权重可以保留，所以旧文件照常保存。
 - **长文档转换后不再让 `markitai serve` 卡住一分钟。** Markdown 清理中有一步会把跨行断开的链接文字接回去（`[Title\n\nDescription](/url)` → `[Title](/url)`）：对每个后面没有 `]` 的 `[`，它把后文的每个换行都试作断点，并从每个断点一直读到文末。一本 490 页、带三个孤立 `[` 的 OCR 书籍在这一步花了 50 秒；这期间它占着 Python 解释器锁，工作台和 API 都停止响应（一次状态请求等了 80 秒），CLI 则多花 50 秒。现在只把文本读一遍，结果相同，耗时以毫秒计。
