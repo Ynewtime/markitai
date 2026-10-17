@@ -125,6 +125,12 @@ pub fn browser_diagnostic() -> Result<Option<PathBuf>> {
     browser::diagnostic()
 }
 
+/// Whether [`browser_diagnostic`] only asked this browser for its version
+/// instead of launching it (a browser inside a macOS application bundle).
+pub fn browser_diagnostic_leaves_app_untouched(executable: &Path) -> bool {
+    browser::diagnostic_leaves_app_untouched(executable)
+}
+
 /// Explicitly install and validate the official headless browser in Markitai's private home.
 pub fn install_browser() -> Result<PathBuf> {
     browser_install::install()

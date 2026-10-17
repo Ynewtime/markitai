@@ -202,7 +202,7 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
 }
 
 /// The title, then the version and configuration lines.
-fn heading(path: Option<&Path>, lang: Lang, style: Style) -> [String; 4] {
+fn heading(path: Option<&Path>, lang: Lang, style: Style) -> [String; 3] {
     let version = markitai_core::VERSION;
     let source = match path {
         Some(path) => path.display().to_string(),
@@ -217,7 +217,6 @@ fn heading(path: Option<&Path>, lang: Lang, style: Style) -> [String; 4] {
     };
     [
         style.title(&text!(lang => "System Check", "系统检查")),
-        String::new(),
         style.item(
             Mark::Info,
             &text!(lang => "Version: markitai {version} (native)", "版本：markitai {version}（原生）"),
@@ -409,11 +408,7 @@ fn local_ocr_check(available: bool, translated: bool) -> Check {
             "macOS Vision API is present, but this x86_64 build runs under Rosetta on Apple silicon, where Vision text recognition fails",
             "Use the native arm64 build of markitai for local OCR",
         ),
-        (true, false) => (
-            "ok",
-            "macOS Vision API is available; this check does not warm up OCR or establish recognition accuracy",
-            "",
-        ),
+        (true, false) => ("ok", "macOS Vision API is available", ""),
     };
     let mut check = Check::new(
         "Local OCR",
@@ -494,7 +489,7 @@ fn portable_ocr_check(
                 (
                     "ok",
                     format!(
-                        "Portable PaddleOCR engine ({engine}): the {} model files the configured ocr.lang needs have verified size and SHA-256; this check does not load ONNX graphs or establish recognition accuracy",
+                        "Portable PaddleOCR engine ({engine}): the {} model files the configured ocr.lang needs are installed and match their SHA-256",
                         models.len()
                     ),
                     String::new(),
@@ -657,6 +652,14 @@ fn checks(
         "Launch and CDP connection succeeded in a private profile; no remote page was opened",
         "Run markitai doctor --fix to install the official headless shell, or set MARKITAI_BROWSER_EXECUTABLE to an installed Chrome/Chromium executable",
     );
+    if browser.status == "ok"
+        && browser
+            .path
+            .as_deref()
+            .is_some_and(markitai_core::browser_diagnostic_leaves_app_untouched)
+    {
+        browser.message = "Installed browser app found and it answers --version; doctor does not start it, so your apps are left untouched".into();
+    }
     let strategy = cfg
         .pointer("/fetch/strategy")
         .and_then(Value::as_str)
@@ -702,7 +705,7 @@ fn checks(
         "LibreOffice",
         "Office page and slide rendering",
         office,
-        "Installed executable responds to --version in an isolated profile; document export fidelity is not tested",
+        "Installed, and it answers --version",
         office_install_hint(std::env::consts::OS),
     );
     if office.status != "ok" {
@@ -714,7 +717,7 @@ fn checks(
         "Native Office readers",
         "Legacy Office text extraction (.doc/.ppt)",
         "ok",
-        "Rust readers are included; no Python anydoc package is required",
+        "Old .doc and .ppt files are read by built-in readers; nothing to install",
         "",
     );
     legacy.optional = Some(true);
@@ -1335,7 +1338,6 @@ mod tests {
             lines(plain),
             format!(
                 "◆ System Check
-
   • Version: markitai {version} (native)
   • Config: /cfg/config.json
 

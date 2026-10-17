@@ -241,12 +241,12 @@ fn environment_models_and_text_summary_match_what_a_conversion_uses() {
     let text = String::from_utf8(output.stdout).unwrap();
     // The title, then the version and where the configuration came from.
     assert!(
-        text.starts_with("◆ System Check\n\n  • Version: markitai "),
+        text.starts_with("◆ System Check\n  • Version: markitai "),
         "{text}"
     );
     assert!(
         text.lines()
-            .nth(3)
+            .nth(2)
             .is_some_and(|line| line.starts_with("  • Config: defaults (no config file found")),
         "{text}"
     );

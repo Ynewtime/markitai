@@ -216,12 +216,68 @@ pub fn available() -> bool {
 
 /// Launch a private blank page and verify its protocol connection without user settings.
 /// Startup is bounded to 15 seconds, followed by a five-second protocol deadline.
+/// A browser inside a macOS application bundle is not launched: running it from
+/// a terminal can make macOS report that the terminal tried to modify an app, so
+/// it is only asked for its version (see [`diagnostic_leaves_app_untouched`]).
 pub fn diagnostic() -> Result<Option<PathBuf>> {
     let Some(executable) = discover() else {
         return Ok(None);
     };
-    diagnostic_with(&executable)?;
+    if diagnostic_leaves_app_untouched(&executable) {
+        version_probe(&executable)?;
+    } else {
+        diagnostic_with(&executable)?;
+    }
     Ok(Some(executable))
+}
+
+/// Whether [`diagnostic`] only asks this browser for its version: it is an
+/// application bundle on macOS, which a launch would run from the user's apps.
+pub fn diagnostic_leaves_app_untouched(executable: &Path) -> bool {
+    cfg!(target_os = "macos") && inside_app_bundle(executable)
+}
+
+fn inside_app_bundle(path: &Path) -> bool {
+    path.components().any(|part| {
+        Path::new(part.as_os_str())
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+    })
+}
+
+/// Run `executable --version` in an empty private directory, with no profile
+/// and a bounded wait; the program prints its version and exits without
+/// starting a browser.
+fn version_probe(executable: &Path) -> Result<()> {
+    let failed = || Error::Fetch("Chromium diagnostic could not read the browser version".into());
+    let directory = tempfile::tempdir().map_err(|_| failed())?;
+    let mut command = std::process::Command::new(executable);
+    command
+        .arg("--version")
+        .env_clear()
+        .current_dir(directory.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    let group = crate::process_groups::Slot::reserve().ok_or_else(failed)?;
+    let mut child = group.spawn(&mut command).map_err(|_| failed())?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match group.try_reap(&mut child) {
+            Ok(Some(status)) => return status.success().then_some(()).ok_or_else(failed),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                group.kill_tree(&child);
+                let _ = child.wait();
+                return Err(failed());
+            }
+        }
+    }
 }
 
 pub(crate) fn diagnostic_with(executable: &Path) -> Result<()> {

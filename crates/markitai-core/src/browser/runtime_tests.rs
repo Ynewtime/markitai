@@ -757,3 +757,47 @@ mod bounded_fixture_io {
         "/../../tests/support/bounded_read.rs"
     ));
 }
+
+#[cfg(unix)]
+mod app_bundle_diagnostic {
+    use super::super::{inside_app_bundle, version_probe};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[test]
+    fn only_a_path_inside_an_app_bundle_is_one() {
+        assert!(inside_app_bundle(Path::new(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        )));
+        assert!(inside_app_bundle(Path::new(
+            "/x/ms-playwright/chromium-1/chrome-mac/Chromium.APP/Contents/MacOS/Chromium"
+        )));
+        assert!(!inside_app_bundle(Path::new("/usr/bin/chromium")));
+        assert!(!inside_app_bundle(Path::new(
+            "/opt/chrome.application/chrome"
+        )));
+    }
+
+    #[test]
+    fn the_version_probe_runs_the_browser_with_only_version_and_writes_nothing_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        // Fails unless it is asked for exactly `--version`, and records any
+        // file it would create in its working directory.
+        let program = script(
+            dir.path(),
+            "browser",
+            "[ \"$#\" = 1 ] && [ \"$1\" = --version ] && [ -z \"$(ls -A)\" ] && exit 0; exit 3",
+        );
+        version_probe(&program).unwrap();
+        assert!(std::fs::read_dir(dir.path()).unwrap().count() == 1);
+        let failing = script(dir.path(), "broken", "exit 1");
+        assert!(version_probe(&failing).is_err());
+    }
+}

@@ -113,6 +113,7 @@
 
 ### 修复
 - 网络请求失败时，操作系统层面的原因以类型和错误码表述（`connection refused (os error 111)`），不再使用系统自带的文字（Windows 上是用户语言），各机器上的提示一致。
+- `markitai doctor` 不再启动位于 macOS `.app` 包内的浏览器（只让它报告 `--version`），doctor 运行后 macOS 不再提示“终端被阻止修改你 Mac 上的 App”；标题下不再多一行空行，三条检查信息改为平实的陈述（“macOS Vision API is available”、PaddleOCR 模型文件“are installed and match their SHA-256”、“Old .doc and .ppt files are read by built-in readers; nothing to install”）。需要浏览器的转换仍照常启动它。
 - Anthropic 响应带 `usage.speed: "standard"` 时按普通请求计价（此前被判为没有价格，提示“No reviewed price for claude-haiku-5-5”）；`fast` 响应仍不计价。“Cost is incomplete”提示现在会说明请求为何没有价格（未知模型、不是供应商自有地址的端点、响应模型不同、不支持的计费类别）以及可以怎么改。
 - LLM 输出不再把页码注释或页面截图注释与相邻文字连成一行（`<!-- Page number: 1 -->` 与 `# 标题` 同一行会使标题无法渲染；`…trade-offs.<!-- ![Page 1](…) -->`）：模型把这类保留的注释或图片粘在邻近文字上时，还原时会让它成为前后空行的独立块。不经 LLM 的路径本来就把它们写在独立的行上。
 - 带 LLM 和页面截图、但没有 `--ocr` 转换的扫描版 PDF，现在由模型根据页面图片转写成文字，而不再只剩图片：请求会点明没有任何读取器取得文字的页面并要求模型读取（其图片仍在文字后保留一次），回答含文字后不再显示“PDF 是扫描件：请加 --ocr 重新运行”的提示。“内嵌图片排在所在页文字之后”的提示在已写出页面截图时不再显示，否则会提示添加 `--screenshot`。

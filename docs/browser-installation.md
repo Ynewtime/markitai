@@ -1,7 +1,9 @@
 # Native browser installation
 
 The CLI includes its browser control code. Dynamic webpages still require a
-Chrome-compatible executable. `markitai doctor` checks a private browser launch;
+Chrome-compatible executable. `markitai doctor` checks a private browser launch (a browser inside a macOS
+`.app` bundle is only asked for `--version`, because starting it from a terminal can make macOS
+report that the terminal tried to modify an app);
 `markitai doctor --fix` installs the official Chrome for Testing headless shell
 when no discovered browser can start. A healthy browser needs no download.
 Normal conversions and diagnostics never install software implicitly.
