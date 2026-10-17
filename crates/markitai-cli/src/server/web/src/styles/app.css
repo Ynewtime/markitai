@@ -572,7 +572,10 @@ textarea {
 }
 .sidebar-foot .version {
   padding: 6px 10px 0;
-  overflow-wrap: normal;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: -0.02em;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--text-3);
@@ -2823,6 +2826,9 @@ kbd {
 }
 .settings-page > .version {
   margin-top: 20px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   text-align: center;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -5139,10 +5145,6 @@ input[type="password"],
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
 }
-/* the version line breaks only between its parts, never inside a commit or a date */
-.version-part {
-  white-space: nowrap;
-}
 /* a linked video poster played in place: the picture's frame, at most the
    column's width and 70% of the view's height, letterboxed on the surface */
 .doc-body .doc-video {
@@ -5769,11 +5771,6 @@ input[type="password"],
     background: color-mix(in srgb, var(--bg) 92%, transparent);
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
-  }
-  .phone-top .version {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--text-3);
   }
   .tabbar {
     position: fixed;

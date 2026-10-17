@@ -6,7 +6,6 @@
 // gives way to a top bar and a bottom tab bar.
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { VersionText } from "./version-text.tsx";
 import type { VersionLine } from "../lib/build.ts";
 import type { Dict } from "../i18n/index.ts";
 import { ownClick, routePath, type Route, type Section } from "../lib/route.ts";
@@ -197,7 +196,7 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
         <div class="sidebar-foot">
           <External href={docsUrl} label={t.docsLabel} icon="BookOpen" note={t.opensNewTab} />
           <External href={sourceUrl} label="GitHub" icon="GithubLogo" note={t.opensNewTab} />
-          {version && <p class="version" title={t.buildTitle(version.parts)}><VersionText text={version.text} /></p>}
+          {version && <p class="version" title={t.buildTitle(version.parts)}>{version.text}</p>}
         </div>
       </aside>
       <div class="main-col">
@@ -215,7 +214,6 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
             <Logo size={26} />
             <span class="brand-name">Markitai</span>
           </a>
-          {version && <span class="version" title={t.buildTitle(version.parts)}>{version.short}</span>}
         </header>
         <main id="main" tabIndex={-1}>
           {children}

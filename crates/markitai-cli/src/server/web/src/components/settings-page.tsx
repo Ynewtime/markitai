@@ -7,7 +7,6 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createUserToken, fetchUserTokens, regenerateToken, revokeUserToken } from "../api/client.ts";
 import { hasToken, setToken } from "../api/token.ts";
 import type { RegeneratedToken, UserToken } from "../api/types.ts";
-import { VersionText } from "./version-text.tsx";
 import type { VersionLine } from "../lib/build.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { LOCALES } from "../i18n/locale.ts";
@@ -527,7 +526,7 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
           </a>
         </li>
       </ul>
-      {version && <p class="version" title={t.buildTitle(version.parts)}><VersionText text={version.text} /></p>}
+      {version && <p class="version" title={t.buildTitle(version.parts)}>{version.text}</p>}
     </section>
   );
 }
