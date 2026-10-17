@@ -1,6 +1,6 @@
 """Titles are plain text that names the document, the same in both outputs.
 
-Owner report (2026-10-12): a policy PDF's base output was titled
+Seen in practice: a policy PDF's base output was titled
 ``币值单位：人民币元`` (a small bold caption, its first heading) and its LLM
 output ``<sup>投保人拥有的重要权益</sup>`` behind two private-use glyphs (its
 first H1, through another extractor, markup kept). A PDF is now titled by
@@ -56,7 +56,7 @@ class TestCleanTitle:
     @pytest.mark.parametrize(
         ("raw", "clean"),
         [
-            # The owner's LLM-path title: glyphs a PDF font maps to the
+            # An LLM-path title: glyphs a PDF font maps to the
             # private-use area, then a superscript tag
             (" <sup>投保人拥有的重要权益</sup>", "投保人拥有的重要权益"),
             ("**<mark>特别约定</mark>**", "特别约定"),

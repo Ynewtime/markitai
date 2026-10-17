@@ -143,7 +143,7 @@ _VT = term._ENABLE_VIRTUAL_TERMINAL_PROCESSING
 
 
 class TestWindowsMarks:
-    """Marks mean the same on every platform (owner rule, as in markitai-rust).
+    """Marks mean the same on every platform (as in markitai-rust).
 
     A console that reads escape sequences gets the Unicode marks, after
     markitai switches them on; only a console that refuses (legacy conhost)
@@ -267,7 +267,7 @@ class TestWindowsMarks:
 
 
 class TestWindowsCodePage:
-    """Windows pipes and files follow the console's output code page (owner
+    """Windows pipes and files follow the console's output code page (
     rule, 2026-10-11, as in markitai-rust): Windows PowerShell decodes a
     program's piped output with ``[Console]::OutputEncoding``, so at code page
     437 the UTF-8 bytes of ``✓`` read as ``Γ£ô``. Each case is faked."""
@@ -400,7 +400,7 @@ class TestWindowsCodePage:
 
 
 class TestGlyphsFollowTheMarks:
-    """Progress bars, rules, boxes and spinners use the marks' choice (owner
+    """Progress bars, rules, boxes and spinners use the marks' choice (
     rule, 2026-10-11): a classic console showed `✓ •` beside ASCII bars, where
     Rich's own guess and markitai's rule disagreed."""
 

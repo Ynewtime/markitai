@@ -1,6 +1,6 @@
 """Windows pipes and files follow the console's output code page (real consoles).
 
-Owner rule (2026-10-11), the same in markitai-rust: redirected output gets the
+Project rule, the same in markitai-rust: redirected output gets the
 Unicode marks only while the attached console's output code page is UTF-8
 (65001), the ASCII set otherwise, because Windows PowerShell decodes a
 program's piped output with that code page. Each run starts ``cmd`` in a

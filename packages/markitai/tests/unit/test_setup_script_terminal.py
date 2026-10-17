@@ -1348,7 +1348,7 @@ def test_setup_ps1_marks_follow_markitais_rule(
     term: str,
     unicode: bool,
 ) -> None:
-    """Marks mean the same as in markitai (Python and Rust, owner rule
+    """Marks mean the same as in markitai (Python and Rust, project rule
     2026-10-11): ASCII for TERM=dumb, a console without escape sequences, and
     a redirect while the console's code page is not UTF-8 (Windows
     PowerShell decodes piped output with it); no console keeps Unicode."""

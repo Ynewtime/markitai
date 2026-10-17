@@ -1,4 +1,4 @@
-"""How long `markitai doctor` and `markitai --version` take (owner, 2026-10-12).
+"""How long `markitai doctor` and `markitai --version` take.
 
 On runner-win (Windows 11 on Arm, x64 Python under emulation) the first
 `markitai doctor` after an install took minutes and a warm one 5.9 s,
@@ -63,7 +63,7 @@ def test_version_does_not_load_the_cli(tmp_path: Path) -> None:
 
 
 def test_doctor_with_api_models_does_not_import_litellm(tmp_path: Path) -> None:
-    """The owner's four models: three API models and Claude Code."""
+    """Four models: three API models and Claude Code."""
     config = tmp_path / ".markitai" / "config.json"
     config.parent.mkdir()
     models = [

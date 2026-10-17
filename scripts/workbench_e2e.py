@@ -106,9 +106,9 @@ REFUSALS = {
 BASE_SECRETS = ("e2e-user", "e2e-pass-0000", "e2e-base-secret-0000")
 # The server's own OpenAI key, behind the environment card
 ENV_KEY = ("OPENAI_API_KEY", "sk-e2e-env-0000")
-# A model entry without a key, as the owner wrote deepseek/deepseek-flash
+# A model entry without a key, as a user wrote deepseek/deepseek-flash
 HAND_MODEL = "openai/fake-hand"
-# The owner's case: a DeepSeek entry written by hand, at DeepSeek's own
+# The case: a DeepSeek entry written by hand, at DeepSeek's own
 # endpoint, served by the server's DEEPSEEK_API_KEY (one saved row, contract
 # v1.11). Its list goes to api.deepseek.com, which the dead proxy refuses.
 # Conversions balance over every configured model, so its chat requests go
@@ -676,7 +676,7 @@ def run_server(
                     "model_info": {"id": "00000000-0000-4000-8000-0000000000e2"},
                 },
                 # Written by hand: no key, the server's OPENAI_API_KEY serves
-                # it, as LiteLLM does for its conversions (owner, 2026-10-12).
+                # it, as LiteLLM does for its conversions.
                 # Its own address text: Edit opens the first connection of
                 # the model's provider at the model's address, and the others
                 # here are at 127.0.0.1
@@ -2252,8 +2252,8 @@ def browse(
 
         # 12b. Why a model test failed, one model per reason (contract v1.10):
         # the server's answer and the workbench's translated block. A model
-        # whose key the server lacks (no MISTRAL_API_KEY here) sends nothing
-        # (owner, 2026-10-12); the others are refused by the fake LLM or
+        # whose key the server lacks (no MISTRAL_API_KEY here) sends nothing;
+        # the others are refused by the fake LLM or
         # aimed at a port nothing listens on. A timeout (15 s) is left to the
         # unit tests.
         def settings_test_reasons() -> str:
@@ -2772,7 +2772,7 @@ def browse(
         run.step(page, "settings-environment-card", environment_card)
 
         # 13c'. A model written into the config without a key, served by the
-        # server's own OPENAI_API_KEY (the owner's deepseek/deepseek-flash
+        # server's own OPENAI_API_KEY (a hand-written deepseek/deepseek-flash
         # with DEEPSEEK_API_KEY, 2026-10-12): its connection shows the
         # variable, not "Not set", and its model list loads with that key
         def environment_key() -> str:
@@ -2819,7 +2819,7 @@ def browse(
 
         run.step(page, "settings-environment-key", environment_key)
 
-        # 13c''. The owner's case itself: a DeepSeek entry written by hand at
+        # 13c''. The case itself: a DeepSeek entry written by hand at
         # DeepSeek's endpoint, served by DEEPSEEK_API_KEY. Edit names the
         # variable; its list, sent with that key, cannot reach DeepSeek here
         # and the page says why (contract v1.11 reasons)

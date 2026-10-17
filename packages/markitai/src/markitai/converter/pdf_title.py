@@ -1,6 +1,6 @@
 """A PDF's title: its own (Info) title, else its most prominent text.
 
-Owner report (2026-10-12): a policy PDF with no Info title was named after
+Seen in practice: a policy PDF with no Info title was named after
 its first Markdown heading, ``币值单位：人民币元``, a 10 pt bold caption the
 layout analysis made a heading, while the page shows ``电子保险单`` at 20 pt
 at its top. The title is what a reader sees as the title:

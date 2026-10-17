@@ -1,6 +1,6 @@
 """PDF headings are plain text, symbol-font glyphs are no boxes.
 
-Owner report (2026-10-13): the workbench's table of contents for a Chinese
+Seen in practice: the workbench's table of contents for a Chinese
 policy listed ``▯▯<sup>…</sup>`` (two Wingdings glyphs, then text PyMuPDF
 flagged superscript beside a 26 pt icon) and bold or underlined sentences
 the layout model had made headings. The PDFs here are built with invented
@@ -136,7 +136,7 @@ class _Page:
 
 def _icon_headings(path: Path) -> Path:
     """Framed sections titled after a 26 pt Wingdings 2 hand, ToC lines after
-    Wingdings diamonds: the owner's page, in invented words."""
+    Wingdings diamonds: a real page's shape, in invented words."""
     doc = pymupdf.open()
     page = _Page(doc)
     page.page.insert_text((60, 40), "服务说明", fontname=CJK, fontsize=16)
@@ -324,7 +324,7 @@ class TestRules:
 
 class TestHeadingText:
     def test_icon_glyphs_and_superscript_tags_are_dropped(self) -> None:
-        # pymupdf4llm's line for the owner's shape, in invented words
+        # pymupdf4llm's line for that shape, in invented words
         page = f"#  {HAND}{SPACE}<sup>会员享有的主要权利</sup> \n\n正文。"
         expected = "# 会员享有的主要权利\n\n正文。"
         assert repair_page_markdown(page, GLYPHS) == expected

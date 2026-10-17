@@ -1,6 +1,6 @@
 """POST /api/settings/llm/test: why a failed model test failed, by category.
 
-Owner report (2026-10-12): a DeepSeek test in Settings -> Models failed with
+Seen in practice: a DeepSeek test in Settings -> Models failed with
 "AuthenticationError: litellm.AuthenticationError: AuthenticationError:
 DeepseekException - Authentication Fails (governor)" on a server that had no
 DEEPSEEK_API_KEY at all: the test sent the request without a key, and the

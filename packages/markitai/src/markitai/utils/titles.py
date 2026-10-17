@@ -11,7 +11,7 @@ document (:func:`meaningful_title`): not an application's default name
 not a page number. A candidate that fails is skipped for the next source,
 down to the file name.
 
-Owner report (2026-10-12): an insurance policy PDF got ``币值单位：人民币元``
+Seen in practice: an insurance policy PDF got ``币值单位：人民币元``
 (a small bold caption, the first heading) in its base output and
 ``<sup>投保人拥有的重要权益</sup>`` with two private-use glyphs in its LLM
 output (the first H1, through a second, different extractor).
