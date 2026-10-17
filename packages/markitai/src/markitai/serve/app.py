@@ -2929,6 +2929,10 @@ def _add_job_outputs_to_zip(
             file.name.startswith(".") and file.name.endswith(".tmp")
         ):
             continue
+        # Never follow a symlink out of the job tree into the rest of the disk:
+        # archive only real files whose resolved path stays under out_dir.
+        if file.is_symlink() or not file.resolve().is_relative_to(out_dir):
+            continue
         relative = file.relative_to(out_dir)
         try:
             archive.write(file, relative if prefix is None else prefix / relative)

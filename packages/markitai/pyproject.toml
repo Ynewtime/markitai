@@ -126,7 +126,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.4"]  # pinned to avoid a surprise build backend
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
@@ -139,7 +139,11 @@ path = "src/markitai/__init__.py"
 [tool.hatch.build.hooks.custom]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/benchmarks/results/latest.json"]
+# The sdist carries the source needed to build and the license texts, not the
+# test suite or benchmark tooling: tests/ held third-party web captures (other
+# people's e-mail addresses among them) and is large, and benchmarks/ is dev
+# tooling. Downstream installs build from src/ and do not run these.
+exclude = ["/tests", "/benchmarks", "/benchmark_data"]
 
 # LICENSE and NOTICE need no entry here: `license-files` above already puts
 # the package-local copies into both the sdist and the wheel's dist-info.
