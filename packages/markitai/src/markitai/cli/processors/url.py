@@ -1393,6 +1393,9 @@ async def process_url_batch(
                     record_outcome("failed", result, error=result.error)
                     _print_url_error(url, result.error or "Unknown error", diag_console)
                     failed += 1
+                    # A failed URL's LLM spend was paid all the same
+                    total_llm_cost += result.cost_usd
+                    _merge_llm_usage(total_llm_usage, result.llm_usage)
                     return
 
                 if result.error and result.error.startswith("skipped ("):

@@ -714,6 +714,53 @@ class TestRealProcessorCollect:
         state = BatchRunState.load(BatchRunState.state_dir_for(out, "batch_real"))
         assert state.collected_at is not None
 
+    async def test_a_rejected_batch_answer_is_still_counted(
+        self, tmp_path: Path, create_test_image
+    ) -> None:
+        """The batch answer was billed even though it did not parse; only
+        counting the live re-run would report the document as cheaper."""
+        from markitai.cli.processors.batch_llm import run_batch_llm_enhancement
+        from markitai.runs.types import Outcome
+
+        out = tmp_path / "out"
+        base, _image = _doc_with_image(out, create_test_image(8, 8, "red"))
+        items = [
+            Outcome(
+                kind="file", source="report.pdf", status="completed", output_path=base
+            )
+        ]
+        with (
+            patch(
+                "markitai.cli.processors.batch_llm.submit_openai_batch",
+                new_callable=AsyncMock,
+                return_value="batch_rej",
+            ),
+            patch(
+                "markitai.cli.processors.batch_llm.poll_openai_batch",
+                new_callable=AsyncMock,
+                return_value="completed",
+            ),
+            patch(
+                "markitai.cli.processors.batch_llm.download_openai_batch_output",
+                side_effect=_fake_download,
+            ),
+            patch(
+                "markitai.cli.processors.batch_llm.parse_batch_result",
+                side_effect=ValueError("not the schema"),
+            ),
+            patch(
+                "markitai.llm.document.DocumentEnhancer.process_document",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("live re-run refused"),
+            ),
+        ):
+            await run_batch_llm_enhancement(
+                _failing_cfg(), out, items=items, quiet=True
+            )
+
+        # the document's and the image's batch answers: both billed
+        assert items[0].llm_usage["gpt-4o-mini"]["requests"] == 2
+
     async def test_handoff_then_collect_then_collect_again(
         self, tmp_path: Path, create_test_image
     ) -> None:
