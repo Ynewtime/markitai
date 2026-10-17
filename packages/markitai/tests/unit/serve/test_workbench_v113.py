@@ -1161,3 +1161,18 @@ def test_access_store_path_is_beside_the_jobs_root(tmp_path: Path) -> None:
     # ~/.markitai/serve/access.json for the default ~/.markitai/serve/jobs
     app = _make_app(tmp_path)
     assert app.state.access_tokens.path == tmp_path / "access.json"
+
+
+def test_a_duplicated_key_is_refused_so_no_secret_is_shown_unmasked() -> None:
+    """JSON keeps the last of two equal keys, so the first secret was shown
+    in plain text; the file is refused with the position instead."""
+    from markitai.serve import config_editor
+
+    text = (
+        '{"llm":{"model_list":[{"litellm_params":{"model":"openai/x",'
+        '"api_key":"sk-first-secret-1234","api_key":"sk-second-secret-5678"}}]}}'
+    )
+    view = config_editor.view("c.json", "user", text.encode(), read_only=False)
+    assert view["text"] is None
+    assert "appears twice" in view["problem"]
+    assert "sk-first-secret-1234" not in str(view)

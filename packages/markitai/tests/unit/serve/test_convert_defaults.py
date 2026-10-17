@@ -299,3 +299,16 @@ async def test_an_anonymous_caller_reads_and_cannot_save(tmp_path: Path) -> None
         )
     assert got.json()["can_save"] is False and got.json()["scope"] == "server"
     assert (put.status_code, put.json()["reason"]) == (403, "settings_forbidden")
+
+
+async def test_an_oversized_defaults_body_is_refused_while_streaming(
+    tmp_path: Path,
+) -> None:
+    async with _server(_app(tmp_path, {})) as client:
+        response = await client.put(
+            URL,
+            content=b'{"expected_revision": "' + b"x" * 70_000 + b'", "defaults": {}}',
+            headers={**ADMIN, "content-type": "application/json"},
+        )
+    assert response.status_code == 413
+    assert response.json()["reason"] == "request_too_large"

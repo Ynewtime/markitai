@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import sys
+import time
 import uuid
 import zipfile
 from contextlib import asynccontextmanager, suppress
@@ -1423,6 +1424,27 @@ def _shown_base(sent: str | None, stored: Any) -> bool:
 
 _CONFIG_TEXT_LIMIT = 1024 * 1024
 _CONFIG_BODY_LIMIT = 3 * 512 * 1024
+
+
+def _sweep_download_leftovers(job_dir: Path, older_than_s: float = 3600) -> None:
+    """Remove archives an interrupted download left in the job folder.
+
+    Their normal removal is a response background task, which does not run
+    when the client disconnects mid-stream; until then they count towards the
+    job's size.
+    """
+    cutoff = time.time() - older_than_s
+    for pattern in (".item-archive.*.zip", ".job-archive.*.zip"):
+        for leftover in job_dir.glob(pattern):
+            try:
+                if leftover.stat().st_mtime < cutoff:
+                    leftover.unlink(missing_ok=True)
+            except OSError:
+                continue
+
+
+#: A few option fields: far below what a request may carry
+_CONVERT_DEFAULTS_BODY_LIMIT = 64 * 1024
 
 
 def _config_too_large() -> ApiError:
@@ -5218,8 +5240,13 @@ def create_app(
         shape = convert_defaults.invalid(
             'send a JSON body {"expected_revision": string, "defaults": object}'
         )
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > _CONVERT_DEFAULTS_BODY_LIMIT:
+                raise ApiError(413, "request_too_large", "the defaults exceed 64 KiB")
         try:
-            body = json.loads(await request.body())
+            body = json.loads(bytes(data))
         except ValueError:
             raise shape from None
         if (
@@ -5977,7 +6004,11 @@ def create_app(
         job = _get_job(request, job_id)
         if job.status == "running":
             raise ApiError(409, "job_running", "job is still running; retry when done")
-        archive_path = job.job_dir / "archive.zip"
+        await asyncio.to_thread(_sweep_download_leftovers, job.job_dir)
+        # One file per download, removed when it has been sent: two downloads
+        # of one job (a double click) never share a file, which on Windows
+        # cannot be replaced while the first is still being read
+        archive_path = job.job_dir / f".job-archive.{uuid.uuid4().hex}.zip"
 
         def build() -> None:
             # Unique temp path + os.replace: readers never observe a
@@ -5999,6 +6030,7 @@ def create_app(
             media_type="application/zip",
             content_disposition_type="attachment",
             headers={"X-Content-Type-Options": "nosniff"},
+            background=BackgroundTask(archive_path.unlink, missing_ok=True),
         )
 
     @app.get("/api/jobs/{job_id}/items/{item_id}/archive")
@@ -6021,6 +6053,7 @@ def create_app(
         if located is None:
             raise ApiError(404, "result_unavailable", "item result not available")
         out_dir, base_name, base_path, llm_path, _variant, _markdown = located
+        await asyncio.to_thread(_sweep_download_leftovers, job.job_dir)
         archive_path = job.job_dir / f".item-archive.{uuid.uuid4().hex}.zip"
 
         def build() -> None:

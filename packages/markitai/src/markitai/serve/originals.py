@@ -97,6 +97,9 @@ MAX_SOURCE_PIXELS = 100_000_000
 MIN_WIDTH, MAX_WIDTH, DEFAULT_WIDTH = 160, 2400, 1200
 
 _MEDIA_TYPES = {
+    # Not in every platform's mimetypes table
+    ".msg": "application/vnd.ms-outlook",
+    ".ipynb": "application/x-ipynb+json",
     ".pdf": "application/pdf",
     ".png": "image/png",
     ".jpg": "image/jpeg",
