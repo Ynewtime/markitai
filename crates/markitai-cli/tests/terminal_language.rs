@@ -79,13 +79,13 @@ fn doctor_frame_is_chinese_while_check_values_and_exit_status_are_unchanged() {
         lines[2].starts_with("  • 配置文件：默认配置（未找到配置文件；可运行 'markitai init' 在 "),
         "{text}"
     );
-    // The frame is translated; the name and message are the JSON values.
+    // The frame and the messages are translated; the names are the JSON values.
     for line in [
         "\n可选能力\n",
         "\nLLM\n",
-        "  ! LLM API：No models configured in llm.model_list\n",
-        "  ✓ Serve：Native server and embedded web interface are included\n",
-        "  ! Vision Model：No routable vision model is configured\n",
+        "  ! LLM API：llm.model_list 中没有配置模型\n",
+        "  ✓ Serve：已包含原生服务和内嵌的网页界面\n",
+        "  ! Vision Model：没有配置可路由的视觉模型\n",
         "\n启用缺失的功能\n",
     ] {
         assert!(text.contains(line), "{line}\n{text}");
@@ -144,7 +144,7 @@ fn doctor_summary_joins_several_blocked_checks() {
         "{text}"
     );
     assert!(
-        text.contains("  ✗ LLM API：Missing environment variable(s) used by active models: I18N_ABSENT_KEY（配置要求）"),
+        text.contains("  ✗ LLM API：活跃模型用到的环境变量未设置：I18N_ABSENT_KEY（配置要求）"),
         "{text}"
     );
     let english = stdout(&run(

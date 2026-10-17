@@ -627,6 +627,12 @@ export const zh: Dict = {
         if (/drift guard/.test(sample))
           return count === 1 ? "没有采用模型的回答：它与文档的页面逐页对不上。转换得到的 Markdown 原样保留" : `${count} 个模型回答没有采用：与文档的页面逐页对不上。转换得到的 Markdown 原样保留`;
         return count === 1 ? "没有采用模型的回答：它删掉或改动了太多原文内容。转换得到的 Markdown 原样保留" : `${count} 个模型回答没有采用：删掉或改动了太多原文内容。转换得到的 Markdown 原样保留`;
+      case "pdf_images_placed":
+        return /screenshots keep/.test(sample) ? "PDF 内嵌图片排在所在页文字之后；页截图保留了每页的外观" : "PDF 内嵌图片排在所在页文字之后，不保留确切位置；开启“页截图”可保留每页的外观";
+      case "word_picture_metadata":
+        return "Office 文件的图片记录数量不一致，已从完整的记录中恢复图片";
+      case "hidden_sheet":
+        return "隐藏的工作表不会出现在输出中";
       case "pdf_scanned":
         return count === 1 ? "这个 PDF 是扫描件：请开启 OCR 后重新转换" : `${count} 个 PDF 是扫描件：请开启 OCR 后重新转换`;
       case "ocr_blank":

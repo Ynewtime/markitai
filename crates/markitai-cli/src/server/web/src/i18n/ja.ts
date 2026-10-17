@@ -663,6 +663,12 @@ export const ja: Dict = {
         return count === 1
           ? "モデルの回答は使いませんでした。文書の内容を削りすぎたか、変えすぎていました。変換した Markdown はそのまま残しています"
           : `モデルの回答 ${count} 件は使いませんでした。文書の内容を削りすぎたか、変えすぎていました。変換した Markdown はそのまま残しています`;
+      case "pdf_images_placed":
+        return /screenshots keep/.test(sample) ? "PDF の埋め込み画像は各ページの本文の後ろに置かれます。ページのスクリーンショットが各ページの見た目を残しています" : "PDF の埋め込み画像は各ページの本文の後ろに置かれ、正確な位置は保たれません。「スクリーンショット」をオンにすると各ページの見た目を残せます";
+      case "word_picture_metadata":
+        return "Office ファイルの図の記録の件数が一致しなかったため、完全な記録から画像を復元しました";
+      case "hidden_sheet":
+        return "非表示のワークシートは出力に含まれません";
       case "pdf_scanned":
         return count === 1 ? "この PDF はスキャンです。OCR をオンにして変換し直してください" : `${count} 件の PDF はスキャンです。OCR をオンにして変換し直してください`;
       case "ocr_blank":

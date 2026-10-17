@@ -667,6 +667,14 @@ export const en = {
         return count === 1
           ? "The model's answer was not used: it left out or changed too much of the document. The converted Markdown is kept as it was"
           : `${count} model answers were not used: they left out or changed too much of the document. The converted Markdown is kept as it was`;
+      case "pdf_images_placed":
+        return /screenshots keep/.test(sample)
+          ? "Embedded PDF images follow their page's text; the page screenshots keep each page's appearance"
+          : "Embedded PDF images follow their page's text and their exact position is not kept; turn on Page Screenshots to keep each page's appearance";
+      case "word_picture_metadata":
+        return "The picture records of an Office file disagreed in count; the images were recovered from the complete records";
+      case "hidden_sheet":
+        return "Hidden worksheets are left out of the output";
       case "pdf_scanned":
         return count === 1 ? "This PDF is scanned: turn on OCR and convert again" : `${count} PDFs are scanned: turn on OCR and convert them again`;
       case "ocr_blank":

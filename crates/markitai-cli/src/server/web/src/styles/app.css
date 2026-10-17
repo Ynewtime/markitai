@@ -5950,9 +5950,23 @@ input[type="password"],
     order: 1;
     margin-top: 4px;
   }
+  /* the header's buttons are one compact size: New conversion and "⋯" are 32 px high, with the tap
+     area of a finger kept by an invisible margin */
+  .conv-head .head-actions .btn {
+    height: 32px;
+  }
+  .conv-head .head-actions .btn::before {
+    content: "";
+    position: absolute;
+    inset: -6px -2px;
+  }
   .conv-head .head-actions .btn:not(.btn-icon) {
-    gap: 5px;
-    padding-inline: 8px;
+    gap: 4px;
+    padding-inline: 6px;
+    font-size: var(--text-sm);
+  }
+  .conv-head .head-actions .btn-icon {
+    width: 32px;
   }
   .conv-head .head-stop {
     order: 2;
@@ -6728,4 +6742,14 @@ input[type="password"],
   flex: 1 1 0;
   min-width: 0;
   margin-right: auto;
+}
+@media (max-width: 760px) {
+  /* a problem is a sentence: it takes the row above the two actions instead of a column beside them */
+  .config-actions.is-foot:has(.config-check.is-error) {
+    flex-wrap: wrap;
+  }
+  .config-actions.is-foot .config-check.is-error {
+    flex: 1 0 100%;
+    margin-bottom: 2px;
+  }
 }

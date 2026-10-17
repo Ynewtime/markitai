@@ -16,6 +16,9 @@ export type NoticeKind =
   | "pdf_scanned"
   | "pdf_ocr_pages"
   | "ocr_blank"
+  | "pdf_images_placed"
+  | "word_picture_metadata"
+  | "hidden_sheet"
   | "other";
 
 export interface NoticeEntry {
@@ -60,6 +63,9 @@ const SHAPES: [NoticeKind, RegExp][] = [
   ["deployment_skipped", /^LLM deployment \S+ [\s\S]* is skipped for this run$/],
   // A model's answer that a guard refused, the base Markdown kept: Python's page drift guard,
   // Rust's cleanup check (its old and its plain wording).
+  ["pdf_images_placed", /^(?:Embedded )?PDF images are placed after their page's text/],
+  ["word_picture_metadata", /^(?:Word picture metadata had an inconsistent count|The picture bank's declared slot count differs)/],
+  ["hidden_sheet", /^Hidden worksheet [\s\S]* is omitted by the native spreadsheet reader/],
   ["answer_rejected", /page drift guard|LLM answer discarded or replaced too much source content|answer left out or changed too much of the document/],
 ];
 
@@ -154,8 +160,18 @@ export function noticeModels(kind: NoticeKind, text: string): string[] {
 /** The cost warning is the Cost fact in other words: rows do not mark it again. */
 export const isCostWarning = (text: string): boolean => /^Cost is incomplete: /.test(text);
 
-/** Warnings a row marks and the Notices filter counts. */
-export const rowWarnings = (warnings: string[]): string[] => warnings.filter((text) => !isCostWarning(text));
+/** The CLI's advice names a flag; the workbench says the same in its own words. */
+export const uiWording = (text: string): string => text.replace(/\bAdd --screenshot to keep each page's appearance\./, "Turn on Page Screenshots to keep each page's appearance.");
+
+/** The note that embedded images follow their page's text: a scanned page's picture *is* the page, so a
+ * document that has pages without readable text is already told so, and not told this as well. */
+const isPlacementNotice = (text: string): boolean => /^(?:Embedded )?PDF images are placed after their page's text/.test(text);
+
+/** Warnings a row marks and the Notices filter counts, in the workbench's words. */
+export function rowWarnings(warnings: string[]): string[] {
+  const scanned = warnings.some((text) => pdfPageNotice(text) !== null || ocrBlankNotice(text) !== null);
+  return warnings.filter((text) => !isCostWarning(text) && !(scanned && isPlacementNotice(text))).map(uiWording);
+}
 
 export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
   const groups = new Map<string, NoticeGroup>();
@@ -163,9 +179,10 @@ export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
   // reason adds up to the document's set, judged once all are read.
   const pdf = new Map<string, { name: string; pages: Set<number>; total: number | null; texts: string[]; count: number }>();
   const paged = new Map<string, { pages: Set<number>; rest: string } | null>();
+  const scannedItems = new Set(entries.filter((entry) => pdfPageNotice(entry.text.trim()) !== null || ocrBlankNotice(entry.text.trim()) !== null).map((entry) => entry.itemKey));
   for (const entry of entries) {
-    const text = entry.text.trim();
-    if (!text) continue;
+    const text = uiWording(entry.text.trim());
+    if (!text || (scannedItems.has(entry.itemKey) && isPlacementNotice(text))) continue;
     const pages = pdfPageNotice(text);
     if (pages) {
       let document = pdf.get(entry.itemKey);
