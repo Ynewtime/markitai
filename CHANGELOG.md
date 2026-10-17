@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Smaller command-line fixes.** `markitai-mcp` without the `mcp` extra says how to install it instead of printing a traceback; `LC_ALL` now beats `LANG` when choosing the terminal language (POSIX order); `doctor --help` describes LibreOffice as PPTX slide rendering.
 - **Smaller `markitai serve` fixes.** Edit config refuses a file with a repeated key (the first of two `api_key` values was shown unmasked); `PUT /api/convert-defaults` stops reading a body at 64 KiB (413); a job's archive download gets its own file, so two downloads of one job at once cannot fail on Windows; archives left by interrupted downloads are removed; `.msg` and `.ipynb` originals are served with their own media types.
 - **The release checks the wheel that ships, byte for byte.** `scripts/check_wheel.py` now compares every vendored workbench file with its manifest digest and size (and each `.gz` with its plain file) and runs on the built distribution that is uploaded, in CI and in the release workflow.
 - **Retrying an item can no longer bring back a job that was just deleted.** The retry now takes the job's delete lock and looks again before it queues the work, so a delete that lands while the retry waits wins; before, the item could be converted again (and paid for) into a folder that was gone.

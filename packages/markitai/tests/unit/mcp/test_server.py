@@ -78,9 +78,14 @@ class TestServerSmoke:
         scripts = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
             "scripts"
         ]
+        import importlib
+
         module_name, _, attribute = scripts["markitai-mcp"].partition(":")
-        assert module_name == server_module.__name__
-        assert callable(getattr(server_module, attribute))
+        # The script is a small launcher that checks for the extra, then runs
+        # the server's own main
+        assert module_name == "markitai.mcp"
+        assert callable(getattr(importlib.import_module(module_name), attribute))
+        assert callable(server_module.main)
 
 
 # =============================================================================
