@@ -16,7 +16,7 @@ const MAX_SHOTS_BYTES: usize = 100 * 1024 * 1024;
 const MIN_PICTURE_PIXELS: u64 = 40_000;
 /// The extraction warning of a PDF with images: they follow their page's
 /// text rather than sit where the page shows them.
-pub(crate) const IMAGE_PLACEMENT: &str = "Embedded PDF images are placed after their page's text; their exact position is not reconstructed.";
+pub(crate) const IMAGE_PLACEMENT: &str = "Embedded PDF images are placed after their page's text; their exact position is not reconstructed. Add --screenshot to keep each page's appearance.";
 
 fn failure(message: impl std::fmt::Display) -> Error {
     Error::Conversion(format!("PDF page media: {message}"))
@@ -46,14 +46,12 @@ impl PreparedPdf {
         } else {
             self.pages.finish()?
         };
-        // This replaces the image placement statement, never a routing signal. All page-specific extraction and inspection diagnostics remain.
-        // It names the screenshots only when some were written.
+        // The placement notice offers page screenshots; once some were
+        // written there is nothing left for the user to do, so it goes.
         if self.media_requested && !self.screenshots.is_empty() {
-            for warning in &mut document.warnings {
-                if warning == IMAGE_PLACEMENT {
-                    *warning = "Embedded PDF images are placed after their page's text; the page screenshots keep each page's appearance.".into();
-                }
-            }
+            document
+                .warnings
+                .retain(|warning| warning != IMAGE_PLACEMENT);
         }
         Ok((document, self.screenshots))
     }
@@ -1315,7 +1313,7 @@ mod tests {
     }
 
     #[test]
-    fn placement_names_screenshots_only_when_some_were_written() {
+    fn placement_notice_stays_only_without_screenshots() {
         // Local OCR alone renders pages but publishes no screenshot.
         let prepared = PreparedPdf {
             pages: pages(),
@@ -1649,7 +1647,7 @@ mod tests {
         assert_eq!(document.metadata["ocr_pages_nonempty"], 1);
         assert_eq!(document.metadata["ocr_pages_blank"], 1);
         assert_eq!(document.metadata["ocr_used"], true);
-        assert_eq!(document.metadata["ocr_path"], "vision");
+        assert_eq!(document.metadata["ocr_path"], crate::ocr::backend());
         assert_eq!(document.markdown.matches("<!-- Page number:").count(), 3);
         assert!(document.warnings.iter().any(|warning| {
             warning == "PDF page 3 (1 of 3): OCR found no text; it is blank in the output."

@@ -245,7 +245,8 @@ between them), or after the text when it lies below every line. The paragraph is
 digits of that line, which must occur exactly once in the page's Markdown. An
 image drawn inside a form, twice on one page, beside text with no line above it,
 or whose line cannot be found follows the page's text as before, and only then
-does the warning that images are placed after their page's text appear.
+does the warning that images are placed after their page's text appear
+(it suggests `--screenshot` and is not shown once page screenshots are written).
 
 The ordinary `extract` entrypoint calls `finish`, which preserves page markers,
 image-reference order, metadata, inspection diagnostics and the final empty-content

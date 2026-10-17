@@ -463,6 +463,7 @@ fn a_looping_visual_batch_is_salvaged_and_not_cached() {
                 cache_context: "scan.png",
                 kind: VisionKind::PagedDocument,
                 frames: &frames,
+                unread_pages: &[],
             },
             &cfg,
             None,

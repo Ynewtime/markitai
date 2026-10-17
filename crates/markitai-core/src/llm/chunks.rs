@@ -126,6 +126,9 @@ pub(super) struct Protected {
     pub text: String,
     prefix: String,
     literals: Vec<(String, String)>,
+    /// Whether the literal at the same index stood alone on its line: a
+    /// comment or picture that is a block of its own.
+    blocks: Vec<bool>,
     pub page_starts: Vec<(usize, usize)>,
     ranges: Vec<std::ops::Range<usize>>,
 }
@@ -219,6 +222,7 @@ impl Protected {
         }
         let mut text = String::new();
         let mut literals = Vec::new();
+        let mut blocks = Vec::new();
         cursor = 0;
         let source_ranges = merged.clone();
         for range in merged {
@@ -230,6 +234,7 @@ impl Protected {
                 text.push('\n');
             }
             literals.push((token, source[range.clone()].to_owned()));
+            blocks.push(stands_alone(source, &range));
             cursor = range.end;
         }
         text.push_str(&source[cursor..]);
@@ -237,6 +242,7 @@ impl Protected {
             text,
             prefix,
             literals,
+            blocks,
             page_starts,
             ranges: source_ranges,
         }
@@ -335,19 +341,52 @@ impl Protected {
         self.validate(&self.text, answer)?;
         let mut rest = answer;
         let mut output = String::with_capacity(answer.len());
-        for (token, literal) in &self.literals {
+        for ((token, literal), &block) in self.literals.iter().zip(&self.blocks) {
             let Some(at) = rest.find(token) else {
                 unreachable!("validated marker")
             };
             output.push_str(&rest[..at]);
+            if block && !output.is_empty() && !output.ends_with('\n') {
+                // The model glued the block to the text before it: it needs
+                // a blank line to stay a block of its own.
+                let kept = output.trim_end_matches([' ', '\t']).len();
+                output.truncate(kept);
+                if !output.is_empty() && !output.ends_with('\n') {
+                    output.push_str("\n\n");
+                }
+            }
             output.push_str(literal);
             let end = at + token.len();
             let skip = usize::from(literal.ends_with('\n') && rest[end..].starts_with('\n'));
             rest = &rest[end + skip..];
+            if block && !literal.ends_with('\n') {
+                let text = rest.trim_start_matches([' ', '\t']);
+                if !text.is_empty() && !text.starts_with('\n') {
+                    rest = text;
+                    output.push_str("\n\n");
+                }
+            }
         }
         output.push_str(rest);
         Ok(output)
     }
+}
+
+/// Whether the range is one whole line of `source`, and an HTML comment or a
+/// picture: a block (a page marker, a screenshot reference) rather than a
+/// part of a sentence.
+fn stands_alone(source: &str, range: &std::ops::Range<usize>) -> bool {
+    let literal = source[range.clone()].trim_end_matches('\n');
+    let single = !literal.contains('\n');
+    let begins = range.start == 0 || source[..range.start].ends_with('\n');
+    let ends = range.end >= source.len()
+        || source[range.end..].starts_with('\n')
+        || literal.len() < range.len();
+    single
+        && begins
+        && ends
+        && ((literal.starts_with("<!--") && literal.ends_with("-->"))
+            || (literal.starts_with("![") && literal.ends_with(')')))
 }
 
 fn line_prefix(mut line: &str) -> (&str, usize) {
@@ -603,6 +642,43 @@ fn split(text: &str, protected_prefix: Option<&str>, limit: Limit) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_block_the_model_glued_to_text_gets_its_own_lines_back() {
+        let source = "<!-- Page number: 1 -->\n\n# Language comparison\n\nEach language has trade-offs.\n\n<!-- ![Page 1](.markitai/screenshots/a.jpg) -->\n\n![Image](.markitai/assets/x.jpg)\n";
+        let protected = Protected::new(source);
+        assert_eq!(protected.blocks, [true, true, true]);
+        let token = |n: usize| protected.literals[n].0.clone();
+        // The model's answer with every token run into its neighbour.
+        let glued = format!(
+            "{}# Language comparison\n\nEach language has trade-offs.{}{} After",
+            token(0),
+            token(1),
+            token(2)
+        );
+        assert_eq!(
+            protected.restore(&glued).unwrap(),
+            "<!-- Page number: 1 -->\n\n# Language comparison\n\nEach language has trade-offs.\n\n<!-- ![Page 1](.markitai/screenshots/a.jpg) -->\n\n![Image](.markitai/assets/x.jpg)\n\nAfter"
+        );
+        // Tokens the model kept on their own lines are not changed.
+        assert_eq!(protected.restore(&protected.text).unwrap(), source);
+        let single = format!("{}\n# T\n\nText\n{}\n{}\n", token(0), token(1), token(2));
+        assert_eq!(
+            protected.restore(&single).unwrap(),
+            format!(
+                "{}\n# T\n\nText\n{}\n{}\n",
+                protected.literals[0].1, protected.literals[1].1, protected.literals[2].1
+            )
+        );
+    }
+
+    #[test]
+    fn a_comment_inside_a_sentence_is_not_a_block() {
+        let source = "A sentence <!-- note --> goes on.\n\n- ![x](y)\n";
+        let protected = Protected::new(source);
+        assert_eq!(protected.blocks, [false, false]);
+        assert_eq!(protected.restore(&protected.text).unwrap(), source);
+    }
     #[test]
     fn unmatched_wide_markup_keeps_bytes_and_later_valid_links() {
         let source = format!(

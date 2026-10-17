@@ -257,7 +257,7 @@ fn the_incomplete_cost_warning_names_each_model_and_its_reason() {
     assert_eq!(
         usage.unpriced_warning().as_deref(),
         Some(
-            "Cost is incomplete: 1 request to openai/gpt-4.1-mini has no reviewed price. cost_usd is the known priced subtotal; the complete cost is unknown."
+            "Cost is incomplete: 1 request to openai/gpt-4.1-mini has no reviewed price (model has no exact reviewed tariff). cost_usd is the known priced subtotal; the complete cost is unknown. The model is not in the bundled price list: use a listed model, or update markitai if a newer release lists it."
         )
     );
     // Several unpriced requests to one model read as a population, not as "some".
@@ -279,7 +279,20 @@ fn the_incomplete_cost_warning_names_each_model_and_its_reason() {
     assert_eq!(
         twice.unpriced_warning().as_deref(),
         Some(
-            "Cost is incomplete: 2 requests to openai/gpt-4.1-mini have no reviewed price. cost_usd is the known priced subtotal; the complete cost is unknown."
+            "Cost is incomplete: 2 requests to openai/gpt-4.1-mini have no reviewed price (model has no exact reviewed tariff). cost_usd is the known priced subtotal; the complete cost is unknown. The model is not in the bundled price list: use a listed model, or update markitai if a newer release lists it."
+        )
+    );
+    // A relay or proxy address says so, and what to do about it.
+    let relayed = response(
+        "claude-haiku-5-5",
+        10,
+        5,
+        Quote::Unknown(UnknownPrice::Endpoint),
+    );
+    assert_eq!(
+        relayed.unpriced_warning().as_deref(),
+        Some(
+            "Cost is incomplete: 1 request to claude-haiku-5-5 has no reviewed price (endpoint has no verified first-party tariff). cost_usd is the known priced subtotal; the complete cost is unknown. Prices are known only for the provider's own API address: remove a custom api_base (a proxy or relay) to have the cost counted."
         )
     );
     // A subscription row keeps its own notice and never appears here.
@@ -307,7 +320,7 @@ fn the_incomplete_cost_warning_names_each_model_and_its_reason() {
     assert_eq!(
         uncounted.unpriced_warning().as_deref(),
         Some(
-            "Cost is incomplete: 3 requests to local/vllm-x reported no usage counts. cost_usd is the known priced subtotal; the complete cost is unknown."
+            "Cost is incomplete: 3 requests to local/vllm-x reported no usage counts. cost_usd is the known priced subtotal; the complete cost is unknown. The provider or its proxy did not return token counts, so nothing can be priced."
         )
     );
     // More models than the warning names are counted instead of listed.

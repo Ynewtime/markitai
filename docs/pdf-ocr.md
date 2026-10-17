@@ -4,8 +4,8 @@ The PDF media layer combines typed native page results with a native renderer
 and local OCR. It operates in memory; the output layer owns safe file publication.
 The Rust core does not start Python, Node, PyMuPDF or a rendering command. The
 renderer uses CoreGraphics on macOS and hayro on Windows/Linux. Local OCR uses
-Vision on macOS by default, or the portable engine on Windows/Linux with its
-separately installed model weights. See [renderer selection](pdf-rendering.md)
+the portable engine everywhere (macOS Vision with `MARKITAI_OCR_BACKEND=vision`)
+with its separately installed model weights. See [renderer selection](pdf-rendering.md)
 and [OCR prerequisites](ocr.md); the portable engine downloads missing models when needed. A failed required
 model download/load or an unavailable selected backend produces an explicit error.
 
@@ -44,6 +44,13 @@ independently of `screenshot.enabled`. The local routing setting does not select
 which pages the VLM receives. Explicit screenshots remain a separate request:
 with VLM OCR disabled, local OCR plus screenshot enhancement still sends page
 images, and the warning explains how to keep those images local.
+
+A scanned page is also read when OCR is off but the LLM is sent page images
+(a preset or flag with screenshots): the request names the pages no reader
+recovered and tells the model to transcribe them from their images, keeping
+their picture once after the text. The "PDF is scanned … run again with
+`--ocr`" notice is dropped once the answer has text; without page images or a
+model it stays. Pure mode sends no such instruction.
 
 For PDF files, pure mode without screenshot-only selects text enhancement even
 if OCR+LLM produced page images. When page images exist, screenshot-only takes

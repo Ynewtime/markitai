@@ -37,8 +37,8 @@ the English `Error:` and `Warning:` labels instead, so a search finds them; the
 **An image produces no output.** A standalone image has no text unless you ask
 for recognition; Markitai says on stderr that it skipped the image, by file
 name (`! Skipped photo.png: an image has no text to extract …`), and exits 0
-because nothing went wrong. Add `--ocr` (Vision on macOS; Paddle on Windows/Linux
-with prepared models) or `--llm`
+because nothing went wrong. Add `--ocr` (Paddle, with prepared models;
+Vision on macOS with `MARKITAI_OCR_BACKEND=vision`) or `--llm`
 (vision model). With `--json` the item shows `"skip_reason": "image_only"`; the
 batch summary words it as `images with no text`. A skipped image creates no
 output directory and no ownership files. A file that only has an image's
@@ -120,8 +120,10 @@ cannot be decoded, it is reported as `native text was not recovered
 whose fonts are not embedded (Shift-JIS, GBK, Big5, UHC and Unicode CMaps) are
 read directly and need neither.
 
-**The first local OCR is slow.** On macOS, Vision may compile and cache
-recognition models after installation or an update. Startup and per-page time
+**The first local OCR is slow.** The first OCR downloads the Paddle models
+(`markitai doctor --fix` does it ahead of time) and loads them. On macOS with
+`MARKITAI_OCR_BACKEND=vision`, Vision may instead compile and cache
+recognition models after installation or an update (about 20 seconds). Startup and per-page time
 depend on the OS, image and language; earlier measurements are not a timing
 guarantee. A sandbox that blocks the Vision cache can cause `missingError`.
 On Windows/Linux, run `markitai doctor` to check Paddle models and explicitly
@@ -194,7 +196,9 @@ Lower or remove `litellm_params.reasoning_effort`, or raise `max_tokens`; see
 **`! Cost is incomplete: …`.** The named model or endpoint is not in the
 bundled [price catalog](pricing.md), so `cost_usd` only counts the requests whose
 price is known. It does not mean the call was free. The warning names the model
-the provider reports and how many requests are affected; `reported no usage
+the provider reports and how many requests are affected, then gives the reason
+in parentheses (for example an endpoint that is not the provider's own, such as
+a proxy or relay set as `api_base`) and what to change; `reported no usage
 counts` instead means the provider's answer carried no token counts to price.
 Documents served by a subscription runtime carry its own notice instead of this
 one.

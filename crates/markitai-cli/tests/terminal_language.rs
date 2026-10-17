@@ -73,10 +73,10 @@ fn doctor_frame_is_chinese_while_check_values_and_exit_status_are_unchanged() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let text = stdout(&output);
     let lines: Vec<_> = text.lines().collect();
-    assert_eq!(lines[..2], ["◆ 系统检查", ""], "{text}");
-    assert!(lines[2].starts_with("  • 版本：markitai "), "{text}");
+    assert_eq!(lines[0], "◆ 系统检查", "{text}");
+    assert!(lines[1].starts_with("  • 版本：markitai "), "{text}");
     assert!(
-        lines[3].starts_with("  • 配置文件：默认配置（未找到配置文件；可运行 'markitai init' 在 "),
+        lines[2].starts_with("  • 配置文件：默认配置（未找到配置文件；可运行 'markitai init' 在 "),
         "{text}"
     );
     // The frame is translated; the name and message are the JSON values.
@@ -104,7 +104,7 @@ fn doctor_frame_is_chinese_while_check_values_and_exit_status_are_unchanged() {
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
     assert!(
-        text.lines().nth(3).unwrap().starts_with("  • 配置文件："),
+        text.lines().nth(2).unwrap().starts_with("  • 配置文件："),
         "{text}"
     );
     assert!(text.contains("markitai.json"), "{text}");

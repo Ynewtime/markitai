@@ -242,10 +242,11 @@ fn pdf_vision_page_cap_fails_before_model_or_publication() {
 }
 
 /// The parity corpus's scanned page of Chinese, Japanese, Korean and a table
-/// (`corpus/ocr/cjk-scanned.pdf`), read by Vision on a real Mac. Vision does
-/// not run in a macOS virtual machine, so the runners skip this test by name;
-/// it needs `MARKITAI_TEST_CJK_SCANNED_PDF` to name the file and passes
-/// without it.
+/// (`corpus/ocr/cjk-scanned.pdf`), read by the default engine (the portable
+/// one; Vision does not run in a macOS virtual machine, so the runners skip
+/// this test by name); it needs `MARKITAI_TEST_CJK_SCANNED_PDF` to name the
+/// file and passes without it. `ocr_corpus.rs` holds the same file's line, Korean
+/// and table checks for every platform.
 #[cfg(target_os = "macos")]
 #[test]
 fn vision_reads_the_corpus_scanned_cjk_page() {

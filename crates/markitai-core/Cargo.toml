@@ -54,8 +54,8 @@ htmd = { version = "0.5", default-features = false }
 quick-xml = "0.42"
 mail-parser = { version = "0.11", features = ["full_encoding"] }
 # Portable page renderer (docs/pdf-rendering.md). Always compiled where
-# CoreGraphics is unavailable; on macOS only with `portable-media`, so the
-# default macOS build is unchanged. `embed-fonts` adds the standard-14
+# CoreGraphics is unavailable; on macOS through the default `portable-media`
+# feature, which brings the portable OCR engine that macOS reads with by default. `embed-fonts` adds the standard-14
 # substitutes (PDFium's Foxit faces, BSD-3-Clause, ~264 KB) and `embed-cmaps`
 # the 61 predefined CJK CMaps (Adobe, BSD-3-Clause, ~251 KB compressed).
 hayro = { version = "=0.7.1", default-features = false, features = ["embed-fonts", "embed-cmaps"], optional = true }
@@ -63,8 +63,11 @@ memchr = { version = "2", optional = true }
 
 [features]
 # Pure-Rust page rendering (and, with the OCR package, recognition) that
-# Windows and Linux always use; on macOS it is compiled beside the native
-# frameworks for development and comparison.
+# Windows and Linux always use. macOS builds it too, by default: its local OCR
+# reads with the portable engine (Vision is chosen with
+# `MARKITAI_OCR_BACKEND=vision`, and is the fallback when the models cannot be
+# downloaded); page rendering stays CoreGraphics there.
+default = ["portable-media"]
 portable-media = ["dep:hayro", "dep:memchr", "dep:tract-onnx", "dep:tract-linalg", "dep:rayon", "dep:qppocr"]
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]

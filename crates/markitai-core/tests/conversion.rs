@@ -3,9 +3,13 @@ use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
+#[path = "conversion/ocr_corpus.rs"]
+mod ocr_corpus;
 #[cfg(target_os = "macos")]
 #[path = "conversion/pdf_media.rs"]
 mod pdf_media;
+#[path = "conversion/pdf_scan_notice.rs"]
+mod pdf_scan_notice;
 
 #[path = "conversion/url_pdf.rs"]
 mod url_pdf;
