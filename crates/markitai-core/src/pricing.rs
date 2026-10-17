@@ -187,6 +187,19 @@ fn resolve(identity: &Identity<'_>) -> Result<(Provider, Option<catalog::Tariff>
     Ok((provider, Some(tariff)))
 }
 
+/// `(max_output_tokens, max_input_tokens)` of a reviewed model: limits of the
+/// model itself, whatever endpoint serves it.
+pub(crate) fn token_limits(provider: &str, model: &str) -> Option<(u64, u64)> {
+    let provider = match provider {
+        "openai" => Provider::OpenAi,
+        "anthropic" => Provider::Anthropic,
+        "gemini" => Provider::Gemini,
+        "deepseek" => Provider::DeepSeek,
+        _ => return None,
+    };
+    catalog::limits(provider, model)
+}
+
 /// Preflight checks tariff identity only; quote validates observed counters,
 /// returned model, context size and service tier after the request completes.
 pub(crate) fn preflight(identity: &Identity<'_>, _class: BillingClass) -> Result<(), UnknownPrice> {

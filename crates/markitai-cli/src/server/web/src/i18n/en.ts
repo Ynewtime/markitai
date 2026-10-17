@@ -128,6 +128,8 @@ export const en = {
   helpSource:
     "Read rendered screenshots with a vision model when LLM is on; otherwise URLs only capture screenshots and files convert normally.",
   advPure: "Plain Mode",
+  advTextOnly: "Text Only",
+  helpTextOnly: "Images and PDFs: write only the text read in them, without a title, pictures, a description or front matter.",
   helpPure: "Skip normal metadata and image processing, pausing image analysis and excluding screenshot-source mode.",
   advNoCache: "Skip Cache",
   helpCache: "Fetch and process afresh instead of reading cache, possibly incurring new model costs while still saving results.",
@@ -598,6 +600,8 @@ export const en = {
   preview: "Preview",
   compare: "Compare",
   downloadShort: "Download",
+  downloadJson: "JSON",
+  downloadJsonTitle: "Download the conversion as a JSON document (what markitai -f json writes)",
   downloadZip: "Download .zip",
   runAgain: "Run again",
   enhance: "Enhance with LLM",

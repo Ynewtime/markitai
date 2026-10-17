@@ -162,6 +162,7 @@ export function OptionsPanel({
   onFiles,
   onFolder,
   openRequest = 0,
+  textOnly = false,
 }: {
   t: Dict;
   state: Composer;
@@ -186,6 +187,8 @@ export function OptionsPanel({
   onFolder: (files: File[], hidden: number) => void;
   /** Counts up each time something outside asks for the options to be shown (Re-convert). */
   openRequest?: number;
+  /** The backend offers Text only (`features.text_only`). */
+  textOnly?: boolean;
 }) {
   const [id] = useState(() => `opts-${++panels}`);
   const modelNote = needsModel ?? t.advNeedsModel;
@@ -265,6 +268,7 @@ export function OptionsPanel({
     screenshot: { label: t.advScreenshot, text: t.helpScreenshot, note: a.screenshotOnly ? t.advImpliedBySource : undefined },
     screenshotOnly: { label: t.advScreenshotOnly, text: t.helpSource },
     pure: { label: t.advPure, text: t.helpPure },
+    textOnly: { label: t.advTextOnly, text: t.helpTextOnly },
     noCache: { label: t.advNoCache, text: t.helpCache },
     noCompress: { label: t.advNoCompress, text: t.helpCompress },
   } satisfies Record<string, HelpItem>;
@@ -459,7 +463,7 @@ export function OptionsPanel({
                       id={`${id}-other`}
                       text={t.advOther}
                       hint={t.helpOther}
-                      items={[help.screenshotOnly, help.pure, help.noCache, help.noCompress]}
+                      items={[help.screenshotOnly, help.pure, ...(textOnly ? [help.textOnly] : []), help.noCache, help.noCompress]}
                       helpLabel={t.helpLabel}
                     />
                     <div class="opt-controls">
@@ -471,6 +475,9 @@ export function OptionsPanel({
                         onToggle={(value) => set("screenshotOnly", value)}
                       />
                       <Chip id={`${id}-pure`} label={t.advPure} on={a.pure} help={help.pure} onToggle={(value) => set("pure", value)} />
+                      {textOnly && (
+                        <Chip id={`${id}-text-only`} label={t.advTextOnly} on={a.textOnly} help={help.textOnly} onToggle={(value) => set("textOnly", value)} />
+                      )}
                       <Chip id={`${id}-no-cache`} label={t.advNoCache} on={a.noCache} help={help.noCache} onToggle={(value) => set("noCache", value)} />
                       <Chip
                         id={`${id}-no-compress`}

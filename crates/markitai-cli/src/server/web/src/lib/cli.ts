@@ -51,6 +51,7 @@ export function cliCommand(inputs: string[], options: JobOptions, table: PresetT
   // Not part of a preset; false is the documented default and stays implicit.
   if (options.screenshot_only) words.push("--screenshot-only");
   if (options.pure) words.push("--pure");
+  if (options.text_only) words.push("--text-only");
   if (options.no_cache) words.push("--no-cache");
   if (options.no_compress) words.push("--no-compress");
   if (options.strategy !== null && options.strategy !== "auto") words.push("--strategy", options.strategy);

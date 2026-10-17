@@ -12,6 +12,7 @@ pub(crate) mod fence;
 mod image_metadata;
 mod iri;
 pub(crate) mod stdout_assets;
+pub(crate) mod text_only;
 
 /// Relocate complete asset destinations when archiving Markdown and its assets.
 #[doc(hidden)]
@@ -305,7 +306,7 @@ pub(crate) const DOCUMENT_FIELDS: [&str; 5] =
 
 /// Front matter keys in the order they are written, the reference's order;
 /// other keys follow in name order.
-const FIELD_ORDER: [&str; 14] = [
+pub(crate) const FIELD_ORDER: [&str; 14] = [
     "title",
     "source",
     "author",
@@ -347,6 +348,9 @@ pub fn content(result: &ConversionOutput, cfg: &Value, enhanced: bool) -> Result
     } else {
         (result.markdown.as_str(), result.pure_prefix.as_deref())
     };
+    if result.text_only {
+        return Ok(body.to_owned());
+    }
     if config::enabled(cfg, "/llm/pure") && cfg["output"]["profile"] != "okf" {
         Ok(format!("{}{body}", prefix.unwrap_or("")))
     } else {
@@ -402,6 +406,11 @@ pub(crate) fn apply_profiles(result: &mut ConversionOutput, cfg: &Value) {
     // results and screenshot alignment). This is a final-output preference,
     // off unless `output.page_markers` asks for the comments.
     if cfg.pointer("/output/page_markers").and_then(Value::as_bool) != Some(true) {
+        // The document JSON still divides the final text into pages.
+        let final_body = result.llm_markdown.as_ref().unwrap_or(&result.markdown);
+        if final_body.contains("<!-- Page number:") || final_body.contains("<!-- Slide number:") {
+            result.paged_markdown = Some(final_body.clone());
+        }
         let filtered = crate::output_profiles::remove_page_markers(&result.markdown);
         if filtered != result.markdown {
             let original = std::mem::replace(&mut result.markdown, filtered);
@@ -980,6 +989,10 @@ pub(crate) fn write_document_mode(
         result.markdown = rewrite_asset_references(&result.markdown, &replacements);
         if let Some(source) = &mut result.enhancement_source {
             *source = rewrite_asset_references(source, &replacements);
+        }
+        if let Some(paged) = &mut result.paged_markdown {
+            *paged = rewrite_asset_references(paged, &replacements);
+            *paged = rewrite_hidden_pictures(paged, &replacements);
         }
         if let Some(md) = &mut result.llm_markdown {
             *md = rewrite_asset_references(md, &replacements);

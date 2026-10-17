@@ -68,6 +68,16 @@ persistent screenshot paths. The media object supplies `has_reliable_text` so
 fallback decisions use recovered content rather than page markers or comments.
 The caller owns the LLM request and public result shaping.
 
+## Text only
+
+`--text-only` (`output.text_only`) writes a PDF (a scan read by local OCR or a
+vision model, or a born-digital one) as its text alone: no front matter, no
+pictures, no page-screenshot comments and no "Page images for reference" block.
+Headings, lists and tables the reader or model produced stay: they are the text's
+structure. Embedded pictures are not analysed, since none is written;
+`--screenshot` still saves page images on disk when asked for, unlinked. See
+[images](images.md#text-only) for image inputs.
+
 ## Hidden text and media
 
 The [hidden text policy](pdf.md#hidden-text-policy) is applied before native page

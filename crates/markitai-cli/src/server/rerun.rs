@@ -459,6 +459,14 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             if kept {
                 super::snapshots::prune(&worker.folder, &work.prior.item_id);
             }
+            super::documents::keep(
+                &worker.folder,
+                &work.prior.item_id,
+                &work.prior.name,
+                &converted,
+                &out,
+                Some(started.elapsed().as_secs_f64()),
+            );
             let assets = converted
                 .assets
                 .iter()
@@ -690,6 +698,7 @@ pub(super) async fn delete_item(
             return Err(ApiError::internal(error));
         }
         transaction::committed(&job.folder, &mut data);
+        super::documents::forget(&job.folder, &item_id);
         super::snapshots::prune(&job.folder, &item_id);
         let progress = data.progress();
         *job.data.lock().unwrap() = data;

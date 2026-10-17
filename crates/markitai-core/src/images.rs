@@ -700,10 +700,7 @@ pub(crate) fn extract(
         if recognized.text.trim().is_empty() {
             // An image with text that could not be read has its own warning.
             if !recognized.unread {
-                doc.warnings.push(
-                    "Local OCR found no readable text; the output retains the image reference."
-                        .into(),
-                );
+                doc.warnings.push(no_text_warning(cfg));
             }
         } else {
             doc.markdown.push('\n');
@@ -837,10 +834,7 @@ fn extract_heif(
         if recognized.text.trim().is_empty() {
             // An image with text that could not be read has its own warning.
             if !recognized.unread {
-                doc.warnings.push(
-                    "Local OCR found no readable text; the output retains the image reference."
-                        .into(),
-                );
+                doc.warnings.push(no_text_warning(cfg));
             }
         } else {
             doc.markdown.push('\n');
@@ -947,7 +941,11 @@ fn extract_tiff(
             }
             if recognized.text.trim().is_empty() {
                 if !recognized.unread {
-                    doc.warnings.push(format!("Local OCR found no readable text on TIFF page {}; the output retains its image reference.", index + 1));
+                    doc.warnings.push(if config::enabled(cfg, "/output/text_only") {
+                        format!("Local OCR found no readable text on TIFF page {}.", index + 1)
+                    } else {
+                        format!("Local OCR found no readable text on TIFF page {}; the output retains its image reference.", index + 1)
+                    });
                 }
             } else {
                 if doc.markdown.len().saturating_add(recognized.text.len()) > 64 * 1024 * 1024 {
@@ -985,6 +983,16 @@ fn extract_tiff(
     }
     webp_notice(&mut doc, cfg);
     Ok((doc, vision))
+}
+
+/// An image local OCR found no text in: a text-only document is then empty,
+/// any other keeps the picture.
+fn no_text_warning(cfg: &Value) -> String {
+    if config::enabled(cfg, "/output/text_only") {
+        "Local OCR found no readable text in the image; the text-only document is empty.".into()
+    } else {
+        "Local OCR found no readable text; the output retains the image reference.".into()
+    }
 }
 
 fn image_document(path: &Path, asset_name: &str, bytes: Vec<u8>) -> Document {

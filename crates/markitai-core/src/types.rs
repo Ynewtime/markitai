@@ -348,6 +348,14 @@ pub struct ConversionOutput {
     /// Base text before output-only filtering, retained for chained enhancement.
     #[serde(skip)]
     pub(crate) enhancement_source: Option<String>,
+    /// The final body with its page and slide markers, when the output
+    /// leaves them out: the document JSON's pages.
+    #[serde(skip)]
+    pub(crate) paged_markdown: Option<String>,
+    /// `--text-only` reduced the bodies to their text: written without front
+    /// matter.
+    #[serde(skip)]
+    pub(crate) text_only: bool,
     #[serde(skip)]
     pub(crate) llm_cache_hit: bool,
     #[serde(skip)]

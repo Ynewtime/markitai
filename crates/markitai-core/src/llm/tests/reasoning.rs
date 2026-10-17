@@ -102,7 +102,7 @@ fn a_budget_spent_on_reasoning_is_named_in_the_truncation_error() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].1["thinking"], json!({"type":"disabled"}));
 
-    // Without reasoning counts the message stays general.
+    // Without reasoning counts it names the count and the setting to raise.
     let server = Mock::new(vec![(
         200,
         json!({"choices":[{"message":{"content":"cut"},"finish_reason":"length"}],"usage":{"prompt_tokens":5,"completion_tokens":9}}),
@@ -116,7 +116,7 @@ fn a_budget_spent_on_reasoning_is_named_in_the_truncation_error() {
     .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "LLM output was truncated by its token limit"
+        "LLM output was truncated by its token limit after 9 output tokens; raise litellm_params.max_tokens for this model"
     );
     server.finish();
 }

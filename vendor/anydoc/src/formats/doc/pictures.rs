@@ -74,9 +74,8 @@ impl<'a> Pictures<'a> {
             output.reject("picture store is missing or malformed");
             return Ok(output);
         };
-        if blips.count_mismatch {
-            output.warnings.push("Word picture metadata had an inconsistent count; images were recovered from complete records.".into());
-        }
+        // A stale slot count loses nothing: complete records define the slots,
+        // and an anchored picture that cannot be read has its own warning.
         output.blips = blips.records;
         Ok(output)
     }
@@ -119,7 +118,6 @@ impl<'a> Pictures<'a> {
 /// pib is a one-based slot number, not an index of successfully decoded images.
 struct BlipStore<'a> {
     records: Vec<Option<&'a [u8]>>,
-    count_mismatch: bool,
 }
 
 fn blip_store<'a>(
@@ -153,10 +151,7 @@ fn blip_store<'a>(
             }
             // Some producers leave recInstance stale. Complete records inside
             // the declared container still define unambiguous numbered slots.
-            store = Some(BlipStore {
-                count_mismatch: entries.len() != (version >> 4) as usize,
-                records: entries,
-            });
+            store = Some(BlipStore { records: entries });
         }
         cursor += 8 + body.len();
     }

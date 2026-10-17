@@ -35,6 +35,8 @@ export interface ItemActionsApi {
   preview(item: SessionItem): void;
   compare(item: SessionItem): void;
   download(item: SessionItem, path: string): void;
+  /** v1.19: save the item's document JSON. */
+  downloadJson(item: SessionItem): void;
   copyFailed(item: SessionItem): void;
   retry(item: SessionItem): void;
   retryPlain(item: SessionItem): void;
@@ -115,6 +117,8 @@ export interface InspectorContext {
   locale: Locale;
   llmReady: boolean;
   excerpts: boolean;
+  /** v1.19: the server keeps each item's document JSON (`features.document_json`). */
+  documentJson: boolean;
   compare: boolean;
   cancel: boolean;
   retentionDays: number | null;
@@ -404,6 +408,8 @@ export function itemActs(ctx: InspectorContext, item: SessionItem, actions: Item
     more.push({ key: "plain", label: t.retryPlain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retryPlain(item) });
   } else if (noModel && retryable) shown.push({ key: "plain", label: t.retryPlain, icon: "ArrowCounterClockwise", primary: true, disabled: busy, run: () => actions.retryPlain(item) });
   if (imageOnly && retryable) shown.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
+  if (previewable && item.status === "done" && ctx.documentJson)
+    more.push({ key: "json", label: t.downloadJson, title: t.downloadJsonTitle, icon: "DownloadSimple", run: () => actions.downloadJson(item) });
   if (previewable && !item.llmEnhanced && item.retryable && ctx.llmReady) more.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
   if (previewable && retryable === false && item.retryable) more.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retry(item) });
   if (item.status !== "running" && item.status !== "queued")

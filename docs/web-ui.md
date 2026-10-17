@@ -48,6 +48,9 @@ Reset to defaults returns to them, and Save as default makes the current choices
 the defaults: the admin's go into `config.json` (the command line reads them
 too), a user token's into its own settings (Use the server's defaults removes
 them). Cloudflare is never a default: it asks for a confirmation each time.
+Other also offers Text only (images and PDFs as the recognised text alone, see
+[images](images.md#text-only)) when the backend reports `features.text_only`;
+it is sent as `text_only` only when chosen and is not one of the saved defaults.
 Files and folders waiting for Convert appear in it relative to the folder that
 holds them (`./notes.pdf`, a picked folder as `./Field trip/`, quoted for the
 shell), with an (i) beside Copy: run it in that folder, since a browser never
@@ -659,7 +662,8 @@ reads, described by the server's [OpenAPI document](serve.md#machine-readable-ap
 What a backend offers beyond the base job API is announced in
 `GET /api/capabilities` under `features` (`cancel`, `download_tickets`,
 `url_lists`, `history_items`, `original`, `result_excerpt`, `job_labels`,
-`item_assets`); a missing feature hides its control instead of failing (no Stop
+`item_assets`, `document_json`, `text_only`; the last two arrived with contract v1.19: the
+item menu's JSON entry saves `…/document`, the options' Text only sets `text_only`); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation.

@@ -6,12 +6,13 @@
 //! it. This layer works only on the text of the warnings it is given, so a
 //! changed converter message merely stops being collapsed.
 
-/// A note about how the output was produced rather than something to act on.
-/// The terminal shows it with `-v`; reports and `--json` always carry it.
+/// A note about how the output was produced rather than something to act on
+/// (an `info` notice, `markitai_core::notices`): a hidden sheet left out, a
+/// request answered on its second try, pictures placed after their page's
+/// text. The terminal shows it with `-v`; reports, `--json` and the document
+/// JSON always carry it.
 fn is_explanatory(warning: &str) -> bool {
-    warning.starts_with("PDF images are placed after their page's text")
-        || warning.starts_with("Embedded PDF images are placed after their page's text")
-        || (warning.starts_with("PDF page ") && warning.contains(": read as plain text because "))
+    markitai_core::notices::classify(warning).level == markitai_core::notices::Level::Info
 }
 
 /// `(page, reason)` of a per-page "native text was not recovered" warning.
@@ -227,6 +228,7 @@ mod tests {
             "PDF page 5: read as plain text because it looked like a scan but draws no image. Reading order, paragraph breaks and text styling may differ.",
             "PDF images are placed after their page's text and vector graphics are not reconstructed; the page screenshots keep each page's appearance.",
             "Merged table cells are represented by their origin cell with empty covered cells in Markdown.",
+            "Hidden worksheet \"Notes\" is omitted by the native spreadsheet reader.",
         ]);
         assert_eq!(
             present(&warnings, false),

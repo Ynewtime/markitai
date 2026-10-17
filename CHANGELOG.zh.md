@@ -3,6 +3,9 @@
 ## [1.3.0]
 
 ### 新增
+- `--text-only`（`output.text_only`；工作台「其它」中的「仅文字」，任务选项 `text_only`，见 `features.text_only`）把图片或 PDF 只写成其中识别到的文字：没有 frontmatter、标题、图片链接、图片描述和代码围栏。本地 OCR 给出识别文字；视觉模型给出逐字转写（图片分析的 extracted_text，即使未开启 alt 和描述也会请求）；PDF 保留文字的标题和表格，去掉图片和页面截图注释。不会为此发布图片；图片中没有可读文字时得到空文档和一条警告。
+- 工作台的条目菜单新增“JSON”项（服务器声明 `document_json` 时显示，接口契约 v1.19），保存 `markitai -f json` 输出的文档。
+- `-f json`（`--format json`，`output.format`）把每个转换后的文档写成字段稳定、带版本的 JSON：`schema_version` 1.0、`tool`（版本、提交）、`source`（路径或 URL、类型、大小、SHA-256）、`title`、`properties`（frontmatter）、`markdown.base`/`markdown.llm`、纯文本 `text`、`pages`（页码、文本、Markdown、图片、截图）、`images`（路径、alt、描述、图中识别的文字、所在页）、`tables`（表头与各行）、`notices`（稳定的 `code`、`level`、消息原文及其涉及的页、图片或工作表）、`usage` 和 `timings`。每个键总是存在（不适用时为 `null`），1.x 版本只会新增键；见 `docs/json-output.md` 与 `docs/schema/document-v1.schema.json`，测试固定了字段集合。不带 `-o` 时输出到 stdout；带 `-o` 时以同名写在每个 Markdown 文件旁（`-o x.json` 指定文件名），批量另写列出全部条目的 `markitai.index.json`。`markitai serve` 在 `GET /api/jobs/{job_id}/items/{item_id}/document` 提供每个已完成条目的文档 JSON（`features.document_json`）。
 - 订阅类提供商的官方运行时无法列出模型时会说明原因：`POST /api/settings/llm/model-discovery`（及用户路由）返回 `reason` 为 `runtime_missing`、`runtime_unsupported`、`not_signed_in` 或 `runtime_failed`（另有 `timeout`），并附 `runtime`（`name`、`required`、`installed`）和 `next_step`（`install`：固定版本的 `npm install -g …` 命令；`sign_in`：`markitai auth <provider> login`），Claude、Copilot、ChatGPT 一致，不再一律是 `provider_error`。工作台显示原因、带复制按钮的命令和设置指南，并在运行时缺失、版本不支持或未登录时关闭「按 ID 添加模型」（运行时出错但原因不明时只给出提醒）。工作台契约 v1.18。
 - 工作台转换列表中提交头部的展开箭头更大，其整个前导区域（宽屏 32 × 38 px，手机 40 × 44 px）都可点击展开或折叠。
 - 工作台支持数学公式：「渲染」视图、标题和目录中的 `$…$` 行内公式与 `$$…$$` 独立公式（含 aligned 等环境）。KaTeX 0.19.0 打包为单独的 `math.js`，连同样式表和 woff2 字体都由二进制提供，仅当文档含公式时才加载；无法绘制的公式保留为源码，`$5 and $6` 这类价格仍是文本。
@@ -122,6 +125,12 @@
 - 开启页截图时，扫描版 PDF 页面不再把同一页写两次（`![Image on page 1](…assets…)` 和 `<!-- ![Page 1](…screenshots…) -->`）：保留页截图，省去扫描图片及其资源文件；未开启页截图时，扫描图片仍是该页的图片。页截图注释现在位于所在页的开头，紧跟 `<!-- Page number: N -->` 标记之后，文字页和扫描页一致，`.md` 中如此，`.llm.md` 也随之一致（以前扫描页在文字之前，文字页却在页末）。
 - 扫描版 PDF 页面的图片不再带出“PDF 内嵌图片排在所在页文字之后”的提示（工作台中为“开启‘页截图’可保留每页的外观”）：无论该页由 OCR 读取、没有恢复出文字，还是文字来自扫描件的 OCR 文本层，这张图片就是页面本身，这条提示在这里既不成立也无可操作。页面文字之间的图片仍会带出这条提示。
 - 本地 OCR 把扫描页写成 Markdown，而不再是一行行裸文字（查看器会把它们连成一段）：没有写到文字右边缘的一行结束所在段落；明显高于页面正文的短行是标题（连同折行的第二行）；按列排布或由识别为 `|` 的竖线分隔的各行单元格成为 Markdown 表格（折行的单元格并入原单元格，数字单元格去掉多余空格：`1. 20` 读作 `1.20`）；字母间隔排印或全角的拉丁文字被合拢（`M a r k i t a i` 读作 `Markitai`）。语料中的 `cjk-scanned.pdf` 现在与它所打印自的文本 PDF 读法一致，命令行和工作台都一样。
+- 终端只在 `-v` 时显示仅说明输出如何产生的提示（隐藏工作表被略过、模型答案在第二次请求时被采用、图片放在其页面文字之后）；报告、`--json` 和文档 JSON 仍以 `info` 级别保留它们。
+- 模型答案丢掉了单页 PDF 开头的页码标记或结尾的截图注释时（Gemini Flash 工具调用模式处理 `cjk-text.pdf`、`rtl-text.pdf`），如同 Python markitai，在唯一合适的位置补回该标记，不再拒绝答案并为第二次请求付费；被重发的结构化请求在结果确定后才报告：采用了后续答案时是 `info` 提示，且不再有嵌套括号。
+- 未配置 `max_tokens` 的 Gemini 和 DeepSeek 请求，如同 Python markitai，按价格目录中该模型的输出上限（在上下文剩余空间内）请求（Gemini Flash 为 65,536），不再沿用曾截断 `large-sample-x15.pdf` 十页视觉批次的服务商默认值；文字密集的页面使用更小的视觉批次，截断提示会给出输出 token 数和 `litellm_params.max_tokens`。
+- Office 页面截图提示不再提及内置的 PDF 页面渲染器，并给出本系统的 LibreOffice 安装命令（winget、brew 或发行版包管理器）。
+- 图片存储声明了过时数量的 Word `.doc` 不再警告：图片按完整记录恢复，确实无法读取的图片仍有自己的警告。
+- EMF 和 WMF 图片（Word 图表）保留为文件，不再发出图片分析请求，也不再有 “Cannot decode” 警告。
 - 工作台的提示气泡左对齐；提交头部的复选框和展开箭头与其下各项的复选框、状态标记对齐，并在行内垂直居中；侧边栏的版本号显示在「文档」右侧、提交号显示在 GitHub 右侧，不再单独占一行；属性卡片与以分隔线开头的正文不再画出两条线；提示中的文件名成为可点击的按钮（先显示三个，其余为「另 N 项」）并始终列出，「查看这些项」会把转换列表限定为该提示涉及的那些项。
 - 用真实的 Gemini Flash 转换 `scanned-sample-p1-3.pdf`（一次请求，没有提示）时，每页文字都在各自的 `<!-- Page number: N -->` 标记之下，而第一次实测时每页文字都排在标记前一页。
 - 工作台：内嵌图片、Word 图片记录和隐藏工作表这几条提示现在也有中文和日文，内嵌图片的提示改为“开启页截图”而不是命令行参数，且已被告知为扫描件的文档不再重复这条；手机上页头的“新建转换”和“⋯”按钮统一为紧凑的 32 px，编辑配置的 JSON 错误提示单独占一行，不再挤成三行的窄栏。

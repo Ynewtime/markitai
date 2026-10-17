@@ -367,12 +367,62 @@ fn recitation(failure: &VisionFailure) -> bool {
     failure.kind == FailureKind::Refusal && failure.error.to_string().contains("RECITATION")
 }
 
+/// A request sent again in another mode: the discarded answer's mode, why it
+/// was discarded, and the next mode.
+struct Resend {
+    previous: Mode,
+    reason: String,
+    next: Mode,
+}
+
+impl Resend {
+    /// The document's notice once the outcome is known. A discarded answer is
+    /// paid and the second request counts toward the budget, so it is always
+    /// recorded; when a later answer was used it is an `info` notice
+    /// (`llm.answer_retried`): nothing is missing from the document.
+    fn notice(&self, used: bool) -> String {
+        let (previous, next) = (self.previous.label(), self.next.label());
+        match (self.reason.contains("RECITATION"), used) {
+            (true, true) => format!(
+                "The provider withheld the {previous} answer as a recitation of published text; the request was sent again in {next} mode and a later answer was used"
+            ),
+            (true, false) => format!(
+                "The provider withheld the {previous} answer as a recitation of published text; the request was sent again in {next} mode"
+            ),
+            (false, true) => format!(
+                "The model's {previous} answer was not used ({}); the request was sent again in {next} mode and a later answer was used",
+                self.reason
+            ),
+            (false, false) => format!(
+                "LLM {previous} answer was rejected ({}); the request was sent again in {next} mode",
+                self.reason
+            ),
+        }
+    }
+}
+
 pub(super) fn run<T>(
     request: Request<'_>,
     cfg: &Value,
     env: &HashMap<String, String>,
     runtime: Option<&LlmRuntime>,
     validate: impl Fn(&Value) -> Result<T>,
+) -> std::result::Result<(T, ConversionUsage), VisionFailure> {
+    let mut resends = Vec::new();
+    let outcome = ladder(request, cfg, env, runtime, validate, &mut resends);
+    for resend in &resends {
+        note_document_warning(resend.notice(outcome.is_ok()));
+    }
+    outcome
+}
+
+fn ladder<T>(
+    request: Request<'_>,
+    cfg: &Value,
+    env: &HashMap<String, String>,
+    runtime: Option<&LlmRuntime>,
+    validate: impl Fn(&Value) -> Result<T>,
+    resends: &mut Vec<Resend>,
 ) -> std::result::Result<(T, ConversionUsage), VisionFailure> {
     let _own_scope = DocumentScope::shared()
         .is_none()
@@ -390,22 +440,15 @@ pub(super) fn run<T>(
         let mut corrected = None;
         for attempt in 0..attempts {
             // A discarded answer is paid and its follow-up request is another
-            // one: both are visible as a warning, and the budget counts both.
+            // one: both are noticed once the outcome is known (`run`), and the
+            // budget counts both.
             if let Some((previous, reason)) = rejected.take()
                 && !document_exhausted()
             {
-                note_document_warning(if reason.contains("RECITATION") {
-                    format!(
-                        "The provider withheld the {} answer as a recitation of published text; the request was sent again in {} mode",
-                        previous.label(),
-                        mode.label()
-                    )
-                } else {
-                    format!(
-                        "LLM {} answer was rejected ({reason}); the request was sent again in {} mode",
-                        previous.label(),
-                        mode.label()
-                    )
+                resends.push(Resend {
+                    previous,
+                    reason,
+                    next: mode,
                 });
             }
             let text = match run_mode(

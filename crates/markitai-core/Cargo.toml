@@ -53,6 +53,8 @@ unicode-properties = { version = "0.1.4", default-features = false, features = [
 htmd = { version = "0.5", default-features = false }
 quick-xml = "0.42"
 mail-parser = { version = "0.11", features = ["full_encoding"] }
+# Plain text, pages and tables of the document JSON (docs/json-output.md).
+pulldown-cmark = { version = "0.13.4", default-features = false }
 # Portable page renderer (docs/pdf-rendering.md). Always compiled where
 # CoreGraphics is unavailable; on macOS through the default `portable-media`
 # feature, which brings the portable OCR engine that macOS reads with by default. `embed-fonts` adds the standard-14

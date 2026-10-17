@@ -337,6 +337,8 @@ export const fetchHistory = (items = false) => json<HistoryEntry[]>(items ? "/ap
 
 const itemPath = (job: string, item: string) => `/api/jobs/${enc(job)}/items/${enc(item)}`;
 export const fetchOriginal = (job: string, item: string) => json<OriginalDescriptor>(`${itemPath(job, item)}/original`);
+/** v1.19: the item's document JSON (`GET …/document`), the file `markitai -f json` writes. */
+export const documentPath = (job: string, item: string) => `${itemPath(job, item)}/document`;
 export const originalFilePath = (job: string, item: string) => `${itemPath(job, item)}/original/file`;
 /** v1.14: the page's block boxes on its screenshots, at the descriptor's `blocks` path. */
 export const fetchShotBlocks = (path: string) => json<ShotBlocks>(path);

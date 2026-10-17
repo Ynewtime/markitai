@@ -751,6 +751,81 @@ fn standalone_multiframe_tiff_sends_every_preview_once_and_keeps_original_downlo
     );
 }
 
+#[test]
+fn text_only_image_writes_only_what_the_model_read() {
+    if isolated("text_only_image_writes_only_what_the_model_read") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("english.png");
+    std::fs::write(&path, png()).unwrap();
+    let empty = Reply::model(
+        &json!({"caption":"Blank","description":"A blank square.","extracted_text":""}).to_string(),
+    );
+    let server = Server::new(vec![analysis(), empty]);
+    let mut config = cfg(&server);
+    config["output"]["text_only"] = json!(true);
+    // Text only reads the text with the analysis request even without alt or desc.
+    config["image"]["alt_enabled"] = json!(false);
+    config["image"]["desc_enabled"] = json!(false);
+    let output = dir.path().join("out");
+    let result = run(path.to_str().unwrap(), config.clone(), Some(output.clone())).unwrap();
+    // No front matter, title, picture, description or fence: the text.
+    let written = std::fs::read_to_string(output.join("english.png.llm.md")).unwrap();
+    assert_eq!(written, "Literal ``` fence\n42\n");
+    // The kept base has no text without OCR, and no picture is published.
+    assert_eq!(
+        std::fs::read_to_string(output.join("english.png.md")).unwrap(),
+        ""
+    );
+    assert!(result.images.is_empty());
+    assert!(result.assets.is_empty());
+    assert!(!output.join(".markitai/assets").exists());
+    assert_eq!(result.usage.requests, 1);
+    // Nothing read: an empty document, and a warning that says so.
+    let blank = run(path.to_str().unwrap(), config, None).unwrap();
+    assert_eq!(body(&blank), "");
+    assert!(
+        blank
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("No text was recognised in the image")),
+        "{:?}",
+        blank.warnings
+    );
+}
+
+#[test]
+fn text_only_multiframe_tiff_is_the_text_of_its_pages() {
+    if isolated("text_only_multiframe_tiff_is_the_text_of_its_pages") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("pages.tiff");
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    {
+        let mut encoder = tiff::encoder::TiffEncoder::new(&mut bytes).unwrap();
+        for color in [[200, 20, 30], [20, 200, 30]] {
+            let pixels: Vec<u8> = (0..100 * 100).flat_map(|_| color).collect();
+            encoder
+                .write_image::<tiff::encoder::colortype::RGB8>(100, 100, &pixels)
+                .unwrap();
+        }
+    }
+    std::fs::write(&source, bytes.into_inner()).unwrap();
+    let server = Server::new(vec![Reply::model(&json!({"caption":"Two pages", "description":"First red page, then green page.","extracted_text":"Page one\nPage two"}).to_string())]);
+    let mut config = cfg(&server);
+    config["output"]["text_only"] = json!(true);
+    let output = run(source.to_str().unwrap(), config, None).unwrap();
+    assert_eq!(body(&output), "Page one\nPage two\n");
+    // The base keeps its page markers (`--page-markers` here) and nothing else.
+    assert_eq!(
+        output.markdown,
+        "<!-- Page number: 1 -->\n\n<!-- Page number: 2 -->\n"
+    );
+    assert!(output.images.is_empty());
+}
+
 fn mime_part(headers: &str, content: &[u8]) -> String {
     use base64::Engine;
     format!(

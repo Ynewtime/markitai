@@ -23,6 +23,8 @@ export interface JobOptions {
   screenshot: boolean | null;
   screenshot_only: boolean | null;
   pure: boolean | null;
+  /** Rust backends with `features.text_only`: images and PDFs as their recognised text only. */
+  text_only?: boolean | null;
   no_cache: boolean | null;
   no_compress: boolean | null;
   strategy: FetchStrategy | null;
@@ -241,6 +243,10 @@ export interface Features {
   user_config?: boolean;
   /** v1.17: GET /api/jobs/{id}/items/{item}/original/outline (a PDF's own bookmarks). */
   pdf_outline?: boolean;
+  /** v1.19: GET /api/jobs/{job_id}/items/{item_id}/document (the item's document JSON; the item menu's JSON entry). */
+  document_json?: boolean;
+  /** v1.19: `text_only` in job options (Markdown without picture references, the Text only option). */
+  text_only?: boolean;
   /** v1.17: GET/PUT /api/convert-defaults, the composer's defaults (the server's, a user's own). */
   convert_defaults?: boolean;
 }

@@ -4,6 +4,7 @@ mod browser_install;
 mod browser_runtime;
 pub mod build_info;
 pub mod config;
+pub mod document_json;
 mod fetch;
 pub mod fetch_cache;
 pub mod formats;
@@ -13,6 +14,7 @@ mod llm;
 pub mod llm_cache;
 mod llm_runtime;
 mod markdown;
+pub mod notices;
 mod ocr;
 mod office_media;
 mod office_render;
@@ -49,6 +51,7 @@ mod system_frameworks;
 mod types;
 
 pub use browser_runtime::BrowserRuntime;
+pub use document_json::{DocumentJson, DocumentJsonContext, document_json};
 pub use fetch::cloudflare::cloudflare_capabilities;
 /// Remote-fallback consent a host installs once per process (the CLI does;
 /// without it `auto` never sends a URL to a remote service).
@@ -600,19 +603,27 @@ fn convert_inner(
         doc.warnings.push("The Cloudflare backend was not used for this file: OCR and screenshots need the native reader's pages, so it was converted natively.".into());
     }
     if office_ocr_without_renderer {
-        let install = "Install LibreOffice (macOS: brew install --cask libreoffice)";
+        // The page renderer is built in; LibreOffice alone decides this, so
+        // the notice names only it, with this system's install command.
+        let install = if cfg!(target_os = "macos") {
+            "Install LibreOffice (brew install --cask libreoffice)"
+        } else if cfg!(windows) {
+            "Install LibreOffice (winget install --id TheDocumentFoundation.LibreOffice --exact)"
+        } else {
+            "Install LibreOffice with your distribution's package manager"
+        };
         let warning = match (
             config::enabled(&cfg, "/screenshot/enabled"),
             config::enabled(&cfg, "/ocr/enabled"),
         ) {
             (true, true) => format!(
-                "Page screenshots and OCR of Office pages need LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without them. {install}, or pass --no-screenshot and --no-ocr to skip them."
+                "Page screenshots and OCR of Office pages need LibreOffice (soffice on PATH); the document's own text was converted without them. {install}, or pass --no-screenshot and --no-ocr to skip them."
             ),
             (true, false) => format!(
-                "Page screenshots of Office documents need LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without them. {install}, or pass --no-screenshot to skip them."
+                "Page screenshots of Office documents need LibreOffice (soffice on PATH); the document's own text was converted without them. {install}, or pass --no-screenshot to skip them."
             ),
             _ => format!(
-                "OCR of Office pages needs LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without page OCR. {install}, or pass --no-ocr to skip it."
+                "OCR of Office pages needs LibreOffice (soffice on PATH); the document's own text was converted without page OCR. {install}, or pass --no-ocr to skip it."
             ),
         };
         doc.warnings.push(warning);
@@ -694,6 +705,19 @@ fn convert_inner(
     let mut result = output::prepare(source, &name, &mut doc, &cfg);
     result.fetch_cache_hit = fetch_cache_hit;
     result.fetch_strategy = fetch_strategy;
+    // `--text-only`: an image's or a PDF's recognised text is all that is
+    // written (`output/text_only.rs`), so a PDF's pictures are not analysed.
+    let text_only = config::enabled(&cfg, "/output/text_only") && (image_input || pdf_input);
+    if text_only && !image_input {
+        cfg["image"]["alt_enabled"] = json!(false);
+        cfg["image"]["desc_enabled"] = json!(false);
+    }
+    let image_title = doc
+        .metadata
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|_| image_input)
+        .map(str::to_owned);
     let standalone_analysis = image_input && image_enrichment::enabled(source, &cfg);
     if config::enabled(&cfg, "/llm/enabled") {
         result.base_frontmatter = Some(result.frontmatter.clone());
@@ -989,13 +1013,16 @@ fn convert_inner(
                     return Err(error);
                 }
                 if cfg["llm"]["on_failure"] == "fail" {
+                    if text_only {
+                        output::text_only::apply(&mut result, image_title.as_deref());
+                    }
                     output::apply_profiles(&mut result, &cfg);
                     if let Some(dir) = &output_dir {
                         output::write_document_mode(
                             dir,
                             &name,
                             &mut result,
-                            &doc.assets,
+                            if text_only { &[] } else { &doc.assets },
                             if pdf_input || office_media_requested {
                                 output::Screenshots::PublishedPages(&screenshots)
                             } else {
@@ -1050,13 +1077,16 @@ fn convert_inner(
                 return Err(error);
             }
             if cfg["llm"]["on_failure"] == "fail" {
+                if text_only {
+                    output::text_only::apply(&mut result, image_title.as_deref());
+                }
                 output::apply_profiles(&mut result, &cfg);
                 if let Some(dir) = &output_dir {
                     output::write_document_mode(
                         dir,
                         &name,
                         &mut result,
-                        &doc.assets,
+                        if text_only { &[] } else { &doc.assets },
                         if pdf_input || office_media_requested {
                             output::Screenshots::PublishedPages(&screenshots)
                         } else {
@@ -1109,10 +1139,15 @@ fn convert_inner(
             result.warnings.insert(at, NO_MODEL_SUCCEEDED.into());
         }
     }
+    // Nothing links a picture of a text-only document: none is published.
+    let assets: &[Asset] = if text_only { &[] } else { &doc.assets };
+    if text_only {
+        output::text_only::apply(&mut result, image_title.as_deref());
+    }
     if let Some(store) = stdout_assets {
         // Before profiles: persisted images become `file://` links, which
         // the visible-asset and wikilink profiles leave as they are.
-        output::stdout_assets::persist(store, &mut result, &doc.assets, &screenshots, &cfg);
+        output::stdout_assets::persist(store, &mut result, assets, &screenshots, &cfg);
     }
     output::apply_profiles(&mut result, &cfg);
     if let Some(dir) = output_dir {
@@ -1120,7 +1155,7 @@ fn convert_inner(
             &dir,
             &name,
             &mut result,
-            &doc.assets,
+            assets,
             if pdf_input || office_media_requested {
                 output::Screenshots::PublishedPages(&screenshots)
             } else {

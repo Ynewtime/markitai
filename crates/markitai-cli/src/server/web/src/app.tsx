@@ -3,7 +3,7 @@
 // keeps the selected item and the open preview in its address, so reloads and
 // Back return to them. Notices sit in the page, never over its buttons.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, fetchBlob, fetchCapabilities, fetchOriginal, filePath, itemArchivePath, NetworkError, setItemAssets, setTicketDownloads } from "./api/client.ts";
+import { ApiError, documentPath, fetchBlob, fetchCapabilities, fetchOriginal, filePath, itemArchivePath, NetworkError, setItemAssets, setTicketDownloads } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
 import type { Capabilities, ConvertDefaultsView, JobOptions } from "./api/types.ts";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
@@ -455,6 +455,11 @@ export function App() {
       clearFailure(item.key);
       void download(filePath(item.jobId, path), basename(path)).catch((error: unknown) => failAction(item.key, dicts[localeRef.current].downloadFailedFile, error));
     },
+    downloadJson: (item) => {
+      clearFailure(item.key);
+      const stem = basename(item.output ?? item.name).replace(/\.[^.]*$/, "").replace(/\.(llm|v\d+)$/, "");
+      void download(documentPath(item.jobId, item.itemId), `${stem}.json`).catch((error: unknown) => failAction(item.key, dicts[localeRef.current].downloadFailedFile, error));
+    },
     copyFailed: (item) => failAction(item.key, dicts[localeRef.current].copyFailed),
     retry: (item) => void retry(item),
     retryPlain: (item) => void retry(item, { ...savedOptions(item), llm: false, alt: null, desc: null }),
@@ -668,6 +673,7 @@ export function App() {
       announce={announce}
       busy={submitting || cloudflare.pending !== null}
       openRequest={optionsRequest}
+      textOnly={features?.text_only === true}
       defaults={defaults.control}
       onChange={(next) => {
         defaults.touch();
@@ -697,6 +703,7 @@ export function App() {
     locale,
     llmReady,
     excerpts: features?.result_excerpt === true,
+    documentJson: features?.document_json === true,
     compare: features?.original === true,
     cancel: features?.cancel === true,
     retentionDays: caps?.limits.history_retention_days ?? null,

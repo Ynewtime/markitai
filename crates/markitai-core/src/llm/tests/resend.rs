@@ -198,7 +198,7 @@ fn a_discarded_structured_answer_and_its_second_request_are_warned_and_counted()
     assert_eq!(
         enhanced.warnings,
         [
-            "LLM tool-call answer was rejected (LLM document response requires cleaned_markdown plus nonempty description and string tags); the request was sent again in JSON-schema mode"
+            "The model's tool-call answer was not used (LLM document response requires cleaned_markdown plus nonempty description and string tags); the request was sent again in JSON-schema mode and a later answer was used"
         ]
     );
     let requests = server.finish();

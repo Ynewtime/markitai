@@ -44,6 +44,13 @@ Use `--no-llm` to disable model processing. Directory and `.urls` batches suppor
 `--resume` on macOS, Linux and Windows; single inputs do not.
 Final Markdown omits PDF page and slide-number comments by default; `--page-markers`
 keeps them, and the equivalent configuration is `output.page_markers=true`.
+`-f json` prints each document as JSON with stable fields instead of Markdown (with
+`-o`, `<name>.json` beside each Markdown file plus `markitai.index.json` for a batch):
+`schema_version`, `source` (path or URL, type, size, sha256), `title`, `properties`,
+`markdown.base`/`markdown.llm`, `text`, `pages`, `images`, `tables`, `notices` (stable
+`code`, `level`, `message`, `items`), `usage`, `timings`, `outputs`. Every key is always
+present (null when not applicable) and 1.x versions only add keys; see
+[JSON output](docs/json-output.md).
 See [CLI](docs/cli.md) for options and the complete envelope.
 
 ## MCP

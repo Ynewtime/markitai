@@ -25,6 +25,10 @@ Output:
           Output directory, or exact .md path for a single input. Omit for Markdown on stdout
       --json
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
+  -f, --format <FORMAT>
+          markdown (default), or json: one versioned document with stable fields; on stdout, or
+          beside each Markdown file with -o (plus markitai.index.json for a batch) [possible values:
+          markdown, md, json]
       --dry-run
           Preview discovery without conversion or output publication
       --page-markers
@@ -66,6 +70,9 @@ LLM, OCR and screenshots:
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+      --text-only
+          Images and PDFs: write only the recognised text, without frontmatter, title, picture links
+          or description (--no-text-only disables)
       --keep-base
           Keep the base Markdown alongside enhanced output
       --llm-concurrency <N>
@@ -170,6 +177,12 @@ Output:
       --json
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
 
+  -f, --format <FORMAT>
+          markdown (default), or json: one versioned document with stable fields; on stdout, or
+          beside each Markdown file with -o (plus markitai.index.json for a batch)
+          
+          [possible values: markdown, md, json]
+
       --dry-run
           Preview discovery without conversion or output publication
 
@@ -224,6 +237,10 @@ LLM, OCR and screenshots:
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+
+      --text-only
+          Images and PDFs: write only the recognised text, without frontmatter, title, picture links
+          or description (--no-text-only disables)
 
       --keep-base
           Keep the base Markdown alongside enhanced output
@@ -1357,6 +1374,10 @@ Output:
           Output directory, or exact .md path for a single input. Omit for Markdown on stdout
       --json
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
+  -f, --format <FORMAT>
+          markdown (default), or json: one versioned document with stable fields; on stdout, or
+          beside each Markdown file with -o (plus markitai.index.json for a batch) [possible values:
+          markdown, md, json]
       --dry-run
           Preview discovery without conversion or output publication
       --page-markers
@@ -1398,6 +1419,9 @@ LLM, OCR and screenshots:
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+      --text-only
+          Images and PDFs: write only the recognised text, without frontmatter, title, picture links
+          or description (--no-text-only disables)
       --keep-base
           Keep the base Markdown alongside enhanced output
       --llm-concurrency <N>
@@ -1499,6 +1523,10 @@ Output:
           Output directory, or exact .md path for a single input. Omit for Markdown on stdout
       --json
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
+  -f, --format <FORMAT>
+          markdown (default), or json: one versioned document with stable fields; on stdout, or
+          beside each Markdown file with -o (plus markitai.index.json for a batch) [possible values:
+          markdown, md, json]
       --dry-run
           Preview discovery without conversion or output publication
       --page-markers
@@ -1540,6 +1568,9 @@ LLM, OCR and screenshots:
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+      --text-only
+          Images and PDFs: write only the recognised text, without frontmatter, title, picture links
+          or description (--no-text-only disables)
       --keep-base
           Keep the base Markdown alongside enhanced output
       --llm-concurrency <N>

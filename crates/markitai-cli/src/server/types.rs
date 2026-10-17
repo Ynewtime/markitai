@@ -35,6 +35,7 @@ pub(super) struct JobOptions {
     pub screenshot: Option<bool>,
     pub screenshot_only: Option<bool>,
     pub pure: Option<bool>,
+    pub text_only: Option<bool>,
     pub no_cache: Option<bool>,
     pub no_compress: Option<bool>,
     pub strategy: Option<String>,
@@ -44,7 +45,7 @@ pub(super) struct JobOptions {
 
 /// Option names the service accepts, by value type. Anything else is rejected
 /// by name, so a caller never reads a JSON parser's position-in-text message.
-const BOOLEAN_OPTIONS: [&str; 9] = [
+const BOOLEAN_OPTIONS: [&str; 10] = [
     "llm",
     "ocr",
     "alt",
@@ -52,6 +53,7 @@ const BOOLEAN_OPTIONS: [&str; 9] = [
     "screenshot",
     "screenshot_only",
     "pure",
+    "text_only",
     "no_cache",
     "no_compress",
 ];
@@ -282,6 +284,7 @@ impl JobOptions {
             ("/screenshot/enabled", self.screenshot),
             ("/screenshot/screenshot_only", self.screenshot_only),
             ("/llm/pure", self.pure),
+            ("/output/text_only", self.text_only),
             ("/cache/no_cache", self.no_cache),
         ] {
             if let Some(value) = value {
@@ -624,7 +627,7 @@ mod error_tests {
         let detail = |text: &str| JobOptions::parse(text.as_bytes()).unwrap_err().detail;
         assert_eq!(
             detail(r#"{"bogus":true}"#),
-            "unknown option 'bogus'; supported options: preset, profile, strategy, backend, remote_processing, llm, ocr, alt, desc, screenshot, screenshot_only, pure, no_cache, no_compress"
+            "unknown option 'bogus'; supported options: preset, profile, strategy, backend, remote_processing, llm, ocr, alt, desc, screenshot, screenshot_only, pure, text_only, no_cache, no_compress"
         );
         assert_eq!(
             detail(r#"{"llm":"yes"}"#),

@@ -381,6 +381,14 @@ async fn convert_one(
     item.finished_at = Some(now());
     match result {
         Ok(Ok(result)) => {
+            super::documents::keep(
+                &job.folder,
+                &item.item_id,
+                &item.name,
+                &result,
+                &job.folder.join("out"),
+                item.duration_ms.map(|ms| ms as f64 / 1000.0),
+            );
             item.status = "done".into();
             item.skipped = result.skip_reason.is_some();
             item.skip_reason = result.skip_reason;

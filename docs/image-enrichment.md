@@ -58,6 +58,13 @@ The reference's established precedence is retained:
   without a preview or generated frontmatter. Its public `images` list is empty.
 - A pure URL may still localize images and replace image captions after the raw
   document-model response.
+- [Text only](images.md#text-only) (`output.text_only`) makes a standalone
+  image's enhanced document only the analysis's extracted text, requests the
+  analysis even with alt and descriptions off, and records no image entry.
+
+Windows metafiles (EMF and WMF pictures, such as a chart in a Word `.doc`) are
+not analysed and give no warning: no decoder here reads them, so they stay files
+with their author alt text.
 
 Standalone no-model and unsupported-backend errors retain their error categories.
 Other standalone failures use the document's `llm.on_failure` policy; an in-memory

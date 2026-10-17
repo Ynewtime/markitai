@@ -9,6 +9,7 @@ markitai report.docx                         # Markdown 到 stdout
 markitai report.docx --pure                  # 不生成 frontmatter
 markitai report.docx -o out/                 # out/report.docx.md
 markitai report.docx -o chosen.md --json      # 产物写文件，stdout 为 JSON
+markitai report.docx -f json                 # 文档 JSON 到 stdout（字段稳定、带版本）
 markitai ./documents -o out/ -j 4 -g '**/*.pdf'
 markitai links.urls -o out/ --url-concurrency 3
 markitai ./documents -o out/ --resume
@@ -43,11 +44,13 @@ OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 |---|---|
 | `-o/--output PATH` | 指定输出目录或准确的 `.md` 文件名 |
 | `--json` | 转换输出 version 1.0 JSON envelope；必须同时指定 `-o`，不能与 `--dry-run` 合用 |
+| `-f/--format markdown\|json` | `json` 把每个文档写成带 `schema_version` 的 JSON：无 `-o` 时输出到 stdout，有 `-o` 时写在 Markdown 旁（`-o x.json` 指定确切文件名），批量另写 `markitai.index.json`；见 [JSON 输出](json-output.md) |
 | `-c/--config PATH`、`--config-json JSON` | 选择配置文件、叠加本次临时配置 |
 | `-p/--preset minimal\|standard\|rich` | minimal 关闭增强；standard 开 LLM/alt/desc；rich 再开截图；均不开 OCR |
 | `--llm`、`--ocr`、`--screenshot` | 模型增强、本地识别、页面图像；各有 `--no-*` 反向开关 |
 | `--alt`、`--desc`、`--keep-base` | 图片说明、描述及保留基础 Markdown；需 LLM |
 | `--profile rag\|obsidian\|okf` | 选择[输出形态](output.md) |
+| `--text-only`、`--no-text-only` | 图片和 PDF 只写出识别到的文字：无 frontmatter、标题、图片链接、描述和代码围栏；见[图片](images.md#text-only) |
 | `--page-markers`、`--no-page-markers` | 保留或关闭最终 Markdown 中的 PDF 页码与幻灯片编号注释；默认关闭，显式参数覆盖 `output.page_markers` |
 | `-s/--strategy` | URL 抓取策略；远程策略/授权见[抓取](fetch.md) |
 | `-b/--backend native\|cloudflare` | 文件后端；Cloudflare 使用自己的账户并上传支持的文件 |

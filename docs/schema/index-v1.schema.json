@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ynewtime/markitai-rust/blob/main/docs/schema/index-v1.schema.json",
+  "title": "markitai batch index (markitai.index.json), schema version 1",
+  "description": "The items of a batch converted with --format json -o DIR. Every listed key is always present; null means not applicable. Later 1.x versions only add keys.",
+  "type": "object",
+  "required": ["schema_version", "tool", "items"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "commit"],
+      "properties": {
+        "name": {"const": "markitai"},
+        "version": {"type": "string"},
+        "commit": {"type": "string"}
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "status", "document", "markdown", "error", "skip_reason"],
+        "properties": {
+          "source": {"type": "string", "description": "The item as the batch report names it (a path relative to the input folder, or a URL)."},
+          "status": {"enum": ["completed", "skipped", "failed", "pending"]},
+          "document": {"type": ["string", "null"], "description": "The item's document JSON, relative to the index."},
+          "markdown": {"type": ["string", "null"], "description": "The Markdown the JSON sits beside, relative to the index."},
+          "error": {"type": ["string", "null"]},
+          "skip_reason": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

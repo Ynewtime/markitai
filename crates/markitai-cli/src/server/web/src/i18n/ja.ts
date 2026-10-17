@@ -125,6 +125,8 @@ export const ja: Dict = {
   helpSource:
     "LLM がオンのときは、レンダリングしたスクリーンショットをビジョンモデルで読み取ります。オフのときは、URL はスクリーンショットの取得のみ行い、ファイルは通常どおり変換します。",
   advPure: "プレーンモード",
+  advTextOnly: "テキストのみ",
+  helpTextOnly: "画像と PDF: 読み取った文字だけを書き出します。タイトル、画像、説明、フロントマターは含みません。",
   helpPure: "通常のメタデータと画像の処理をスキップします。画像の分析は一時停止し、スクリーンショットをソースにするモードとは併用できません。",
   advNoCache: "キャッシュを使わない",
   helpCache: "キャッシュを読まずに取得と処理をやり直します。モデルの費用が新たに発生する場合があります。結果は引き続き保存されます。",
@@ -594,6 +596,8 @@ export const ja: Dict = {
   preview: "プレビュー",
   compare: "比較",
   downloadShort: "ダウンロード",
+  downloadJson: "JSON",
+  downloadJsonTitle: "変換結果を JSON ドキュメントとしてダウンロード（markitai -f json の出力）",
   downloadZip: ".zip をダウンロード",
   runAgain: "再実行",
   enhance: "LLM で強化",
