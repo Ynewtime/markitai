@@ -34,6 +34,30 @@ upload; then local OCR supplies text for enhancement without image blocks.
 the in-process hayro renderer on Windows/Linux.
 [Browser screenshots](browser.md) are available with an installed Chromium executable.
 
+## Text only
+
+`--text-only` (`output.text_only`, the workbench's Text only under Other) writes
+only the text recognised in an image: no front matter, no `# title` heading, no
+picture link, no description and no code fence.
+
+```sh
+markitai scan.png --ocr --text-only            # local OCR, stdout: the text
+markitai scan.png --llm --text-only -o out/    # out/scan.png.llm.md: what the model read
+```
+
+- With local OCR the document is the OCR text (a multi-page TIFF's pages
+  separated by a blank line; `--page-markers` keeps their page comments).
+- With a vision model the document is the model's literal transcription (the
+  `extracted_text` of the [image analysis](image-enrichment.md) request, made
+  even with `--no-alt --no-desc`), not its description. A kept base
+  (`--keep-base`) holds the OCR text, or nothing without OCR.
+- No picture is published (nothing links it) and no `images.json` entry is
+  written.
+- An image with no recognisable text gives an empty document and a warning that
+  says so.
+- [PDFs](pdf-ocr.md#text-only) take the option too; other document types and
+  web pages ignore it. It wins over `--pure` for images and PDFs.
+
 ## HEIF and AVIF
 
 The macOS decoder accepts bytes in memory, validates the ISO BMFF container's

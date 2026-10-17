@@ -663,6 +663,7 @@ export function App() {
       announce={announce}
       busy={submitting || cloudflare.pending !== null}
       openRequest={optionsRequest}
+      textOnly={features?.text_only === true}
       defaults={defaults.control}
       onChange={(next) => {
         defaults.touch();

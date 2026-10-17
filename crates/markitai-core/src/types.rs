@@ -352,6 +352,10 @@ pub struct ConversionOutput {
     /// leaves them out: the document JSON's pages.
     #[serde(skip)]
     pub(crate) paged_markdown: Option<String>,
+    /// `--text-only` reduced the bodies to their text: written without front
+    /// matter.
+    #[serde(skip)]
+    pub(crate) text_only: bool,
     #[serde(skip)]
     pub(crate) llm_cache_hit: bool,
     #[serde(skip)]

@@ -487,6 +487,11 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
         "pure",
         "保留源文本，不生成常规元数据；对 URL，pure 优先于视觉 LLM 输入（--no-pure 关闭）",
     ),
+    (
+        ROOT,
+        "text_only",
+        "图片和 PDF：只写出识别到的文字，不含 frontmatter、标题、图片链接和描述（--no-text-only 关闭）",
+    ),
     (ROOT, "keep_base", "增强输出之外，同时保留基础 Markdown"),
     (ROOT, "llm_concurrency", "本次转换共享的最大并发模型请求数"),
     (

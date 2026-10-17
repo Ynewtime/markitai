@@ -70,6 +70,9 @@ LLM, OCR and screenshots:
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+      --text-only
+          Images and PDFs: write only the recognised text, without frontmatter, title, picture links
+          or description (--no-text-only disables)
       --keep-base
           Keep the base Markdown alongside enhanced output
       --llm-concurrency <N>
@@ -234,6 +237,10 @@ LLM, OCR and screenshots:
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+
+      --text-only
+          Images and PDFs: write only the recognised text, without frontmatter, title, picture links
+          or description (--no-text-only disables)
 
       --keep-base
           Keep the base Markdown alongside enhanced output
@@ -1412,6 +1419,9 @@ LLM, OCR and screenshots:
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+      --text-only
+          Images and PDFs: write only the recognised text, without frontmatter, title, picture links
+          or description (--no-text-only disables)
       --keep-base
           Keep the base Markdown alongside enhanced output
       --llm-concurrency <N>
@@ -1558,6 +1568,9 @@ LLM, OCR and screenshots:
       --pure
           Preserve source text without ordinary generated metadata; URL pure takes precedence over
           visual LLM input (--no-pure disables)
+      --text-only
+          Images and PDFs: write only the recognised text, without frontmatter, title, picture links
+          or description (--no-text-only disables)
       --keep-base
           Keep the base Markdown alongside enhanced output
       --llm-concurrency <N>

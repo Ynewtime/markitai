@@ -75,3 +75,34 @@ fn pdf_scan_notice_stays_when_no_model_reads_the_pages() {
         result.warnings
     );
 }
+
+#[test]
+fn text_only_pdf_is_its_text_without_pictures_or_page_images() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = source(dir.path());
+    let (base, server) = llm_server(
+        200,
+        r##"{"choices":[{"message":{"content":"# Verified pages\n\nAll pages reviewed.\n\n![Image on page 2](.markitai/assets/scan.jpg)"}}]}"##,
+    );
+    let mut config = cfg();
+    model(&mut config, &base);
+    config["screenshot"] = json!({"enabled":true});
+    config["output"] = json!({"text_only":true});
+    let result = run(&path, config).unwrap();
+    server.join().unwrap();
+    for markdown in [result.llm_markdown.as_deref().unwrap(), &result.markdown] {
+        assert!(!markdown.contains("!["), "{markdown}");
+        assert!(
+            !markdown.contains("Page images for reference"),
+            "{markdown}"
+        );
+        assert!(!markdown.starts_with("---"), "{markdown}");
+    }
+    assert!(result.llm_markdown.unwrap().contains("All pages reviewed."));
+    // Without a model: the native text of the PDF, pictures left out.
+    let mut config = cfg();
+    config["output"] = json!({"text_only":true});
+    let plain = run(&path, config).unwrap();
+    assert!(!plain.markdown.contains("!["), "{}", plain.markdown);
+    assert!(plain.images.is_empty());
+}

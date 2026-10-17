@@ -687,6 +687,19 @@ fn convert_inner(
     let mut result = output::prepare(source, &name, &mut doc, &cfg);
     result.fetch_cache_hit = fetch_cache_hit;
     result.fetch_strategy = fetch_strategy;
+    // `--text-only`: an image's or a PDF's recognised text is all that is
+    // written (`output/text_only.rs`), so a PDF's pictures are not analysed.
+    let text_only = config::enabled(&cfg, "/output/text_only") && (image_input || pdf_input);
+    if text_only && !image_input {
+        cfg["image"]["alt_enabled"] = json!(false);
+        cfg["image"]["desc_enabled"] = json!(false);
+    }
+    let image_title = doc
+        .metadata
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|_| image_input)
+        .map(str::to_owned);
     let standalone_analysis = image_input && image_enrichment::enabled(source, &cfg);
     if config::enabled(&cfg, "/llm/enabled") {
         result.base_frontmatter = Some(result.frontmatter.clone());
@@ -982,13 +995,16 @@ fn convert_inner(
                     return Err(error);
                 }
                 if cfg["llm"]["on_failure"] == "fail" {
+                    if text_only {
+                        output::text_only::apply(&mut result, image_title.as_deref());
+                    }
                     output::apply_profiles(&mut result, &cfg);
                     if let Some(dir) = &output_dir {
                         output::write_document_mode(
                             dir,
                             &name,
                             &mut result,
-                            &doc.assets,
+                            if text_only { &[] } else { &doc.assets },
                             if pdf_input || office_media_requested {
                                 output::Screenshots::PublishedPages(&screenshots)
                             } else {
@@ -1043,13 +1059,16 @@ fn convert_inner(
                 return Err(error);
             }
             if cfg["llm"]["on_failure"] == "fail" {
+                if text_only {
+                    output::text_only::apply(&mut result, image_title.as_deref());
+                }
                 output::apply_profiles(&mut result, &cfg);
                 if let Some(dir) = &output_dir {
                     output::write_document_mode(
                         dir,
                         &name,
                         &mut result,
-                        &doc.assets,
+                        if text_only { &[] } else { &doc.assets },
                         if pdf_input || office_media_requested {
                             output::Screenshots::PublishedPages(&screenshots)
                         } else {
@@ -1102,10 +1121,15 @@ fn convert_inner(
             result.warnings.insert(at, NO_MODEL_SUCCEEDED.into());
         }
     }
+    // Nothing links a picture of a text-only document: none is published.
+    let assets: &[Asset] = if text_only { &[] } else { &doc.assets };
+    if text_only {
+        output::text_only::apply(&mut result, image_title.as_deref());
+    }
     if let Some(store) = stdout_assets {
         // Before profiles: persisted images become `file://` links, which
         // the visible-asset and wikilink profiles leave as they are.
-        output::stdout_assets::persist(store, &mut result, &doc.assets, &screenshots, &cfg);
+        output::stdout_assets::persist(store, &mut result, assets, &screenshots, &cfg);
     }
     output::apply_profiles(&mut result, &cfg);
     if let Some(dir) = output_dir {
@@ -1113,7 +1137,7 @@ fn convert_inner(
             &dir,
             &name,
             &mut result,
-            &doc.assets,
+            assets,
             if pdf_input || office_media_requested {
                 output::Screenshots::PublishedPages(&screenshots)
             } else {

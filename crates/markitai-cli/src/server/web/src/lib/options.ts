@@ -18,6 +18,8 @@ export interface Advanced {
   screenshot: boolean | null;
   screenshotOnly: boolean;
   pure: boolean;
+  /** Images and PDFs: only the recognised text (`features.text_only` backends). */
+  textOnly: boolean;
   noCache: boolean;
   noCompress: boolean;
   strategy: FetchStrategy;
@@ -30,6 +32,7 @@ export const ADVANCED_DEFAULTS: Advanced = {
   screenshot: null,
   screenshotOnly: false,
   pure: false,
+  textOnly: false,
   noCache: false,
   noCompress: false,
   strategy: "auto",
@@ -90,6 +93,8 @@ export function resolveOptions(state: Composer, table: PresetTable = BUILTIN_PRE
     no_compress: a.noCompress,
     strategy: a.strategy,
     backend: a.backend,
+    // Sent only when chosen: a backend without the option never sees the key.
+    ...(a.textOnly ? { text_only: true } : {}),
   };
 }
 
@@ -112,7 +117,7 @@ export function changeAdvanced<K extends keyof Advanced>(value: Advanced, key: K
 }
 
 export function hasAdvancedChoices(value: Advanced): boolean {
-  return (["screenshotOnly", "pure", "noCache", "noCompress", "strategy", "backend"] as const).some(
+  return (["screenshotOnly", "pure", "textOnly", "noCache", "noCompress", "strategy", "backend"] as const).some(
     (key) => value[key] !== ADVANCED_DEFAULTS[key],
   );
 }
@@ -151,6 +156,7 @@ export function publicOptions(raw: unknown): JobOptions {
   if (typeof value.profile === "string" && PROFILES.includes(value.profile)) options.profile = value.profile as OutputProfile;
   if (typeof value.strategy === "string" && STRATEGIES.includes(value.strategy)) options.strategy = value.strategy as FetchStrategy;
   if (typeof value.backend === "string" && BACKENDS.includes(value.backend)) options.backend = value.backend as ConversionBackend;
+  if (value.text_only === true) options.text_only = true;
   return options;
 }
 
@@ -266,6 +272,7 @@ export function composerFromDefaults(defaults: ConvertDefaults, table: PresetTab
       screenshot: differs("screenshot"),
       screenshotOnly: defaults.screenshot_only,
       pure: defaults.pure,
+      textOnly: false,
       noCache: defaults.no_cache,
       noCompress: defaults.no_compress,
       strategy: defaults.strategy,

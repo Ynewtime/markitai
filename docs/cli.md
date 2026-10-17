@@ -50,6 +50,7 @@ OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 | `--llm`、`--ocr`、`--screenshot` | 模型增强、本地识别、页面图像；各有 `--no-*` 反向开关 |
 | `--alt`、`--desc`、`--keep-base` | 图片说明、描述及保留基础 Markdown；需 LLM |
 | `--profile rag\|obsidian\|okf` | 选择[输出形态](output.md) |
+| `--text-only`、`--no-text-only` | 图片和 PDF 只写出识别到的文字：无 frontmatter、标题、图片链接、描述和代码围栏；见[图片](images.md#text-only) |
 | `--page-markers`、`--no-page-markers` | 保留或关闭最终 Markdown 中的 PDF 页码与幻灯片编号注释；默认关闭，显式参数覆盖 `output.page_markers` |
 | `-s/--strategy` | URL 抓取策略；远程策略/授权见[抓取](fetch.md) |
 | `-b/--backend native\|cloudflare` | 文件后端；Cloudflare 使用自己的账户并上传支持的文件 |

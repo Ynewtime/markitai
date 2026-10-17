@@ -1006,7 +1006,7 @@
       "Features": {
         "type": "object",
         "description": "What this service implements beyond the base job API, for a client shared with other backends",
-        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete", "user_models", "user_config", "pdf_outline", "convert_defaults", "document_json"],
+        "required": ["cancel", "download_tickets", "url_lists", "history_items", "original", "result_excerpt", "job_labels", "item_assets", "item_archive", "token_regenerate", "user_tokens", "config_edit", "batch_delete", "user_models", "user_config", "pdf_outline", "convert_defaults", "document_json", "text_only"],
         "properties": {
           "cancel": { "type": "boolean", "description": "POST /api/jobs/{job_id}/cancel" },
           "download_tickets": { "type": "boolean", "description": "POST /api/download-tickets" },
@@ -1025,7 +1025,8 @@
           "user_config": { "type": "boolean", "description": "GET and PUT /api/me/config (a user token's Edit config); false when the server runs without a token (--no-auth)" },
           "pdf_outline": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/original/outline (a PDF's bookmarks)" },
           "convert_defaults": { "type": "boolean", "description": "GET and PUT /api/convert-defaults (the composer's defaults)" },
-          "document_json": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/document (the item's document JSON)" }
+          "document_json": { "type": "boolean", "description": "GET /api/jobs/{job_id}/items/{item_id}/document (the item's document JSON)" },
+          "text_only": { "type": "boolean", "description": "`text_only` in job options (images and PDFs: only the recognised text)" }
         }
       },
       "CloudflareCapabilities": {
@@ -1146,6 +1147,7 @@
           "screenshot": { "type": ["boolean", "null"] },
           "screenshot_only": { "type": ["boolean", "null"] },
           "pure": { "type": ["boolean", "null"] },
+          "text_only": { "type": ["boolean", "null"], "description": "Images and PDFs: write only the recognised text (`output.text_only`); offered when `features.text_only`" },
           "no_cache": { "type": ["boolean", "null"] },
           "no_compress": { "type": ["boolean", "null"] },
           "strategy": { "type": ["string", "null"] },

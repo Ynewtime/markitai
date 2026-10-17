@@ -236,6 +236,12 @@ struct Cli {
     #[arg(long, overrides_with = "pure", hide = true)]
     /// Disable pure mode.
     no_pure: bool,
+    #[arg(long, overrides_with = "no_text_only", help_heading = ENHANCE_HELP)]
+    /// Images and PDFs: write only the recognised text, without frontmatter, title, picture links or description (--no-text-only disables).
+    text_only: bool,
+    #[arg(long, overrides_with = "text_only", hide = true)]
+    /// Disable text-only output.
+    no_text_only: bool,
     #[arg(long, help_heading = ENHANCE_HELP)]
     /// Keep the base Markdown alongside enhanced output.
     keep_base: bool,
@@ -921,6 +927,7 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
             "page_markers",
             tri(cli.page_markers, cli.no_page_markers),
         ),
+        ("output", "text_only", tri(cli.text_only, cli.no_text_only)),
     ] {
         if let Some(value) = value {
             cfg[section][field] = json!(value);

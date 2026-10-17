@@ -119,6 +119,8 @@ export const zh: Dict = {
   advScreenshotOnly: "仅用截图",
   helpSource: "用视觉模型读取渲染后的截图，未开启 LLM 时网页仅截图、文件仍常规转换。",
   advPure: "纯净模式",
+  advTextOnly: "仅文字",
+  helpTextOnly: "图片和 PDF：只写出其中识别到的文字，不含标题、图片、描述和 frontmatter。",
   helpPure: "跳过常规元数据与图片后处理，暂停图片分析，且不能同时以截图为内容源。",
   advNoCache: "不用缓存",
   helpCache: "跳过缓存读取并重新获取和处理，可能产生新的模型费用，结果仍可缓存。",

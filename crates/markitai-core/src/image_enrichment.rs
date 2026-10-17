@@ -200,9 +200,17 @@ pub(crate) fn enabled(source: &str, cfg: &Value) -> bool {
             .extension()
             .and_then(|s| s.to_str())
             .is_some_and(images::is_image_extension);
+    // Text only reads a standalone image's text with the same request, unless
+    // images must not be uploaded (local OCR supplies the text then).
+    let text_only = standalone
+        && config::enabled(cfg, "/output/text_only")
+        && !config::environment()
+            .get("MARKITAI_NO_VLM_OCR")
+            .is_some_and(|value| config::env_opt_out(value));
     config::enabled(cfg, "/llm/enabled")
         && (config::enabled(cfg, "/image/alt_enabled")
-            || config::enabled(cfg, "/image/desc_enabled"))
+            || config::enabled(cfg, "/image/desc_enabled")
+            || text_only)
         && !(config::enabled(cfg, "/llm/pure") && !crate::is_url(source) && !standalone)
 }
 
@@ -305,7 +313,7 @@ pub(crate) fn analyze(
                 }
                 if first_answer.is_none() { first_answer = Some(answer.clone()); }
                 answer["asset"] = json!(target);
-                if !(standalone && config::enabled(cfg, "/llm/pure")) { result.images.push(answer); }
+                if !(standalone && (config::enabled(cfg, "/llm/pure") || config::enabled(cfg, "/output/text_only"))) { result.images.push(answer); }
             }
             Err(message) => result.warnings.push(format!("Image analysis failed for {}: {message}; existing alt text was retained and no analysis entry was produced.", asset.name)),
         }
@@ -324,6 +332,23 @@ pub(crate) fn analyze(
         let caption = answer["alt"].as_str().unwrap_or("Image");
         let description = answer["desc"].as_str().unwrap_or("");
         let text = answer["text"].as_str().unwrap_or("");
+        if config::enabled(cfg, "/output/text_only") {
+            // Only what the model read in the image: no title, preview,
+            // description or fence.
+            let text = text.trim_matches(['\n', '\r']).trim_end();
+            if text.trim().is_empty() {
+                result.warnings.push(
+                    "No text was recognised in the image; the text-only document is empty.".into(),
+                );
+            }
+            result.llm_markdown = Some(if text.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{text}\n")
+            });
+            result.text_only = true;
+            return Ok(answered);
+        }
         let mut markdown = format!("# {}\n\n", stem.replace(['\n', '\r'], " "));
         if config::enabled(cfg, "/llm/pure") {
             if !description.trim().is_empty() {
