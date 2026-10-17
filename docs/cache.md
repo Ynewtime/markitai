@@ -20,6 +20,9 @@ this cache. Non-pure page/browser visual processing uses a separate batch namesp
 The default state path honors `MARKITAI_HOME`. An explicitly configured custom
 path keeps its ordinary meaning. Development and tests must select a private
 state directory; they do not need to read an existing user's cache or credentials.
+`cache.db` holds document text and model answers, so it is created readable by
+its owner only (a directory it creates too), and a store an earlier version left
+readable to others is narrowed on the next write; a link in its place is refused.
 Disabled caching never opens or creates the database during conversion. Cache
 inspection remains available when caching is disabled.
 
