@@ -198,6 +198,32 @@ def protect_content(content: str) -> tuple[str, dict[str, str]]:
     return result, mapping
 
 
+_BLOCK_PLACEHOLDER_RE = re.compile(r"__MARKITAI_PAGE_\d+__")
+
+
+def _restore_block(result: str, placeholder: str, original: str) -> str:
+    """Put a page/screenshot comment back as a block of its own.
+
+    These comments stood alone on their line. A model that runs one into the
+    text before or after it (``...trade-offs.<!-- ![Page 1](...) -->``) would
+    leave it inside a paragraph, so blank lines are put back around it;
+    placeholders the model kept on their own lines are restored unchanged.
+    """
+    position = result.find(placeholder)
+    if position < 0:
+        return result
+    before = result[:position]
+    after = result[position + len(placeholder) :]
+    if before and not before.endswith("\n"):
+        before = before.rstrip(" \t")
+        if before and not before.endswith("\n"):
+            before += "\n\n"
+    text = after.lstrip(" \t")
+    if text and not text.startswith("\n"):
+        after = "\n\n" + text
+    return before + original + after.replace(placeholder, original)
+
+
 def unprotect_content(
     content: str,
     mapping: dict[str, str],
@@ -256,6 +282,8 @@ def unprotect_content(
                 result = re.sub(pattern, f"\n\n{original}\n\n", result, count=1)
             else:
                 result = result.replace(placeholder, original)
+        elif _BLOCK_PLACEHOLDER_RE.fullmatch(placeholder):
+            result = _restore_block(result, placeholder, original)
         else:
             result = result.replace(placeholder, original)
 
