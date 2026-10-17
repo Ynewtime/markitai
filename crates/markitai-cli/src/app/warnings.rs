@@ -7,9 +7,8 @@
 //! changed converter message merely stops being collapsed.
 
 /// A note about how the output was produced rather than something to act on
-/// (an `info` notice, `markitai_core::notices`): a hidden sheet left out, a
-/// request answered on its second try, pictures placed after their page's
-/// text. The terminal shows it with `-v`; reports, `--json` and the document
+/// (an `info` notice, `markitai_core::notices`): a request answered on its
+/// second try, pictures placed after their page's text. The terminal shows it with `-v`; reports, `--json` and the document
 /// JSON always carry it.
 fn is_explanatory(warning: &str) -> bool {
     markitai_core::notices::classify(warning).level == markitai_core::notices::Level::Info

@@ -139,11 +139,9 @@ fn read_workbook(data: &[u8]) -> Result<(bool, Vec<(String, String)>), ConvertEr
                 f.u32()?; // iTabID
                 let rid = f.nullable_wide_string()?;
                 let name = clean_text(&f.wide_string()?);
-                // hsState 1 is hidden, 2 is veryHidden: omitted entirely,
-                // heading included, exactly as in xlsx.
-                if state == 1 || state == 2 {
-                    continue;
-                }
+                // hsState 1 is hidden, 2 is veryHidden: markitai converts
+                // them too, heading marked, exactly as in xlsx.
+                let name = if state == 1 || state == 2 { super::hidden_name(&name) } else { name };
                 match rid {
                     Some(rid) => sheets.push((name, rid)),
                     None => log::warn!("skipping sheet {name:?} with no worksheet relationship"),
@@ -794,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_rows_columns_and_sheets_are_omitted() {
+    fn hidden_rows_and_columns_are_omitted_and_hidden_sheets_marked() {
         let mut visible = col_info(1, 1, true);
         visible.extend(row_hdr(0, false));
         visible.extend(real_cell(0, 0, 1.0));
@@ -815,7 +813,9 @@ mod tests {
             ..Wb::default()
         };
         let doc = parse(&wb.build()).unwrap();
-        assert_eq!(doc.blocks.len(), 1, "hidden sheets must add no heading and no table");
+        assert_eq!(doc.blocks.len(), 6, "three headings and three tables");
+        let blocks = format!("{:?}", doc.blocks);
+        assert!(blocks.contains("\"Hidden (hidden sheet)\"") && blocks.contains("VeryHidden (hidden sheet)"), "{blocks}");
         assert_eq!(texts(first_table(&doc)), vec![vec!["1", "3"], vec!["5", ""]]);
     }
 

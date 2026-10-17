@@ -659,8 +659,12 @@ grid assembly, so a workbook saved in any container converts the same:
   A cached value, an empty string result included, is always what shows; no
   formula is evaluated. A shared formula's later cells, which carry no text of
   their own, stay empty but are counted.
-- Hidden rows and columns are omitted, as hidden sheets are, and a warning
-  names how many held content (`Worksheet "Data" has 1 hidden row and 1
+- Hidden and very hidden sheets are converted in workbook order, as Python
+  markitai converts them, under a heading that says so (`## Notes (hidden
+  sheet)`); there is no warning. ODS sheets with `table:display="false"` are
+  marked the same way.
+- Hidden rows and columns are omitted, and a warning names how many held
+  content (`Worksheet "Data" has 1 hidden row and 1
   hidden column holding content; …`); hidden empty rows and columns are not
   counted.
 - A cell's hyperlink to an `http`, `https` or `mailto` address is a

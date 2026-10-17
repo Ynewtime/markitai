@@ -51,18 +51,20 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
     let styles =
         Styles::read(sibling_part(pkg, &wb_rels, wb_part, rel_type::STYLES, "styles.xml")?);
 
-    // Visible sheets in workbook order; hidden and veryHidden sheets are
-    // omitted entirely, heading included.
+    // Sheets in workbook order; markitai: hidden and veryHidden sheets too,
+    // their heading marked (`hidden_name`).
     let mut sheets: Vec<(String, String)> = Vec::new();
     for sheet in workbook
         .first_descendant(ns::SML, "sheets")
         .into_iter()
         .flat_map(|s| s.find_all(ns::SML, "sheet"))
     {
-        if matches!(sheet.attr_unqualified("state"), Some("hidden" | "veryHidden")) {
-            continue;
-        }
         let name = sheet.attr_unqualified("name").unwrap_or_default().to_string();
+        let name = if matches!(sheet.attr_unqualified("state"), Some("hidden" | "veryHidden")) {
+            super::hidden_name(&name)
+        } else {
+            name
+        };
         let Some(target) =
             sheet.attr_qualified(ns::R, "id").and_then(|rid| wb_rels.internal_target(rid))
         else {
@@ -1466,10 +1468,10 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
     }
 
     #[test]
-    fn hidden_rows_columns_and_sheets_are_omitted() {
-        // Hidden content is invisible to someone opening the workbook, so
-        // passing it on would make it look authoritative. One visible sheet
-        // remains, so no sheet heading is emitted either.
+    fn hidden_rows_and_columns_are_omitted_and_hidden_sheets_marked() {
+        // Hidden rows and columns are left out. markitai: a hidden sheet is
+        // converted, as Python markitai converts it, under a heading that
+        // says it is hidden.
         let visible = r#"<cols><col min="2" max="2" hidden="1"/></cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="B1" t="inlineStr"><is><t>hidden col</t></is></c><c r="C1" t="inlineStr"><is><t>c</t></is></c></row><row r="2" hidden="1"><c r="A2" t="inlineStr"><is><t>hidden row</t></is></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>d</t></is></c></row></sheetData>"#;
         let secret = r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>secret</t></is></c></row></sheetData>"#;
         let wb = Wb {
@@ -1477,7 +1479,9 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
             ..Wb::default()
         };
         let doc = parse(&wb.build()).unwrap();
-        assert_eq!(doc.blocks.len(), 1, "hidden sheet must add no heading and no table");
+        assert_eq!(doc.blocks.len(), 4, "two headings and two tables");
+        let blocks = format!("{:?}", doc.blocks);
+        assert!(blocks.contains("Secret (hidden sheet)") && blocks.contains("secret"), "{blocks}");
         assert_eq!(texts(first_table(&doc)), vec![vec!["a", "c"], vec!["d", ""]]);
     }
 

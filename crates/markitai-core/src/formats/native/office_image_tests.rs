@@ -50,7 +50,11 @@ fn ooxml_diagram_stays_in_budget_sheet_and_original_cells_survive() {
     let image = d.markdown.find("(.markitai/assets/").unwrap();
     assert!(d.markdown.find("## Budget").unwrap() < image);
     assert!(d.markdown.find("## Facts").unwrap() < d.markdown.find("## Budget").unwrap());
-    assert!(!d.markdown.contains("Hidden notes"));
+    // The hidden sheet follows in workbook order, as Python markitai writes it, marked.
+    assert!(
+        d.markdown.find("## Budget").unwrap()
+            < d.markdown.find("## Hidden notes (hidden sheet)").unwrap()
+    );
 }
 #[test]
 fn biff_template_diagram_resolves_its_embedded_slot_without_changing_cached_values() {
@@ -60,7 +64,11 @@ fn biff_template_diagram_resolves_its_embedded_slot_without_changing_cached_valu
     );
     budget(&d.markdown, true);
     assert!(d.markdown.find("## Budget").unwrap() < d.markdown.find("(.markitai/assets/").unwrap());
-    assert!(!d.markdown.contains("Hidden notes"));
+    assert!(
+        d.markdown.contains("## Hidden notes (hidden sheet)"),
+        "{}",
+        d.markdown
+    );
 }
 #[test]
 fn legacy_presentation_references_only_the_second_slide_diagram_not_the_orphan_bank_slot() {
