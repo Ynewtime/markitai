@@ -22,6 +22,27 @@ pub fn rewrite_asset_references(
     crate::output_profiles::rewrite_asset_references(markdown, replacements)
 }
 
+/// A picture the model's answer keeps hidden (`<!-- ![alt](path) -->`, the scan
+/// of a page it transcribed) still names the asset's published file: comments
+/// are not rewritten with the visible references, so these are, by their exact
+/// target.
+fn rewrite_hidden_pictures(markdown: &str, replacements: &HashMap<String, String>) -> String {
+    let mut output = String::with_capacity(markdown.len());
+    for line in markdown.split_inclusive('\n') {
+        let body = line.trim();
+        if body.starts_with("<!-- ![") && body.ends_with("-->") {
+            let mut line = line.to_owned();
+            for (before, after) in replacements {
+                line = line.replace(&format!("]({before})"), &format!("]({after})"));
+            }
+            output.push_str(&line);
+        } else {
+            output.push_str(line);
+        }
+    }
+    output
+}
+
 /// `base` joined with a `/`-separated relative location (as Markdown links,
 /// reports and indexes spell it) one component at a time, so the path uses the
 /// platform's separator throughout (`\` on Windows) instead of a mix.
@@ -962,6 +983,7 @@ pub(crate) fn write_document_mode(
         }
         if let Some(md) = &mut result.llm_markdown {
             *md = rewrite_asset_references(md, &replacements);
+            *md = rewrite_hidden_pictures(md, &replacements);
         }
     }
     for image in &mut result.images {
@@ -1173,6 +1195,19 @@ fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_hidden_picture_names_the_published_asset_and_other_comments_stay() {
+        let replacements = HashMap::from([(
+            ".markitai/assets/a.jpg".to_owned(),
+            ".markitai/assets/0123.jpg".to_owned(),
+        )]);
+        let markdown = "<!-- ![Image on page 1](.markitai/assets/a.jpg) -->\n\n<!-- note ![x](.markitai/assets/a.jpg) -->\n\n![Seen](.markitai/assets/a.jpg)\n";
+        assert_eq!(
+            rewrite_hidden_pictures(markdown, &replacements),
+            "<!-- ![Image on page 1](.markitai/assets/0123.jpg) -->\n\n<!-- note ![x](.markitai/assets/a.jpg) -->\n\n![Seen](.markitai/assets/a.jpg)\n"
+        );
+    }
+
     #[test]
     fn masked_urls_hide_userinfo_and_secret_parameters_and_keep_the_rest() {
         for (source, shown) in [

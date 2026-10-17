@@ -310,9 +310,10 @@ fn report(
         for (names, remedy) in remedies {
             let mut rest = remedy.iter();
             match rest.next() {
-                Some(Fix::Text(text)) => {
-                    lines.push(style.item(Mark::Info, &format!("{names}{colon}{}", localized(text, lang))))
-                }
+                Some(Fix::Text(text)) => lines.push(style.item(
+                    Mark::Info,
+                    &format!("{names}{colon}{}", localized(text, lang)),
+                )),
                 Some(Fix::Command(command)) => {
                     lines.push(style.item(Mark::Info, &format!("{names}{}", colon.trim_end())));
                     lines.push(style.command(4, command));
