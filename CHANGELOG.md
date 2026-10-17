@@ -122,6 +122,7 @@
 
 ### Fixed
 
+- Workbench on Python markitai: the pricing and subscription guide links open their pages on the Python docs site (`https://markitai.dev/guide/…`) instead of its home page; a docs address ending in `index.md` still opens the page beside it.
 - A workbook converted with `--screenshot` no longer fails as a whole when a sheet's text runs far past its right edge, or when LibreOffice's page rendering fails: the sheet keeps its layout (or the document its text) and one notice says what is missing.
 - A text PDF whose rows are divided by `|` (the native reader) now gives a real Markdown table, and the lines around it stay paragraphs of their own, where they were run into one paragraph; a line that runs past the page's right edge no longer sends its page to the plain reader that cannot do this.
 - Hidden and very hidden worksheets (XLSX, XLSM, XLSB, XLS and templates) are converted in workbook order, as Python markitai converts them, under a heading marked `(hidden sheet)`, instead of being left out with a warning; hidden ODS sheets get the same heading.

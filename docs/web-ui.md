@@ -667,7 +667,9 @@ What a backend offers beyond the base job API is announced in
 item menu's JSON entry saves `…/document`, the options' Text only sets `text_only`); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
-`docs_url` points the Docs link at the backend's own documentation.
+`docs_url` points the Docs link at the backend's own documentation. The guide links
+(pricing, subscriptions) open the page beside an `index.md` address, or `guide/<page>`
+under a site root (`https://markitai.dev` or `https://markitai.dev/`).
 
 `node scripts/package.mjs OUTDIR` packages a build for the other backend: a
 reproducible tar.gz with `index.html`, every file served under `/ui/`, the
