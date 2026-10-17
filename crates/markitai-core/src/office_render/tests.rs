@@ -427,25 +427,32 @@ fn unrepaired_workbooks_keep_their_layout_when_overflow_cannot_be_planned() {
             MAX_BYTES,
         )
     };
-    // ODS is never repaired: overflow too distant to repair is a warning.
+    // Overflow too distant to repair is a warning for a workbook of either format.
     let result = export("source.ods", include_bytes!("fixtures/whole-workbook.ods")).unwrap();
     assert_eq!(result.pages, 4);
     assert!(
         result
             .warnings
             .iter()
-            .any(|warning| warning.contains("could not be measured")),
+            .any(|warning| warning.contains("too distant")
+                || warning.contains("could not be measured")),
         "{:?}",
         result.warnings
     );
-    // XLSX repair still refuses to guess.
-    let error = export(
+    // XLSX repair still does not guess: the sheet keeps its layout, with a notice.
+    let result = export(
         "source.xlsx",
         include_bytes!("fixtures/whole-workbook.xlsx"),
     )
-    .err()
     .unwrap();
-    assert!(error.to_string().contains("too distant"), "{error}");
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("too distant for bounded layout repair")),
+        "{:?}",
+        result.warnings
+    );
 }
 
 #[cfg(unix)]

@@ -383,7 +383,7 @@ fn convert_inner(
         .is_some_and(|extension| extension.eq_ignore_ascii_case("numbers"));
     let office_ocr_without_renderer =
         office_media_wanted && !office_numbers && !office_render_available();
-    let office_media_requested = office_media_wanted && !office_ocr_without_renderer;
+    let mut office_media_requested = office_media_wanted && !office_ocr_without_renderer;
     if !is_url {
         let path = &input_path;
         output::check_user_path(path, config::enabled(&cfg, "/output/allow_symlinks"))?;
@@ -629,7 +629,7 @@ fn convert_inner(
         doc.warnings.push(warning);
     }
     if office_media_requested {
-        let (captured, reliable) = office_media::prepare(
+        match office_media::prepare(
             &mut doc,
             &input_path,
             office_kind.expect("Office media requires a known format"),
@@ -637,9 +637,22 @@ fn convert_inner(
             output_dir.as_deref(),
             &cfg,
             vlm_disabled,
-        )?;
-        screenshots = captured;
-        pdf_has_reliable_text = reliable;
+        ) {
+            Ok((captured, reliable)) => {
+                screenshots = captured;
+                pdf_has_reliable_text = reliable;
+            }
+            // A request that cannot be met as written is the caller's to fix.
+            Err(error @ (Error::InvalidInput(_) | Error::Config(_))) => return Err(error),
+            // Rendering the pages is an addition to the document's own text:
+            // when it fails, the text is kept and one notice says what is
+            // missing.
+            Err(error) => {
+                doc.warnings.push(page_rendering_failed(&error, &cfg));
+                office_media_requested = false;
+                pdf_has_reliable_text = !doc.markdown.trim().is_empty();
+            }
+        }
     }
     let format = doc
         .metadata
@@ -1320,6 +1333,24 @@ fn json_output_value(result: ConversionOutput) -> DetailedResult<Value> {
     })
 }
 
+/// The one notice for an Office document whose pages could not be rendered:
+/// its own text was converted, without what the pages would have added.
+fn page_rendering_failed(error: &Error, cfg: &Value) -> String {
+    let reason = error.to_string();
+    let without = match (
+        config::enabled(cfg, "/screenshot/enabled"),
+        config::enabled(cfg, "/ocr/enabled"),
+    ) {
+        (true, true) => "page screenshots and OCR",
+        (true, false) => "page screenshots",
+        _ => "page OCR",
+    };
+    format!(
+        "Rendering this document's pages failed ({}); its own text was converted without {without}.",
+        reason.trim_end_matches('.')
+    )
+}
+
 /// The pages of a PDF whose text no reader recovered.
 fn unread_pdf_pages(doc: &Document) -> Vec<usize> {
     doc.metadata
@@ -1373,6 +1404,20 @@ fn has_prose(markdown: &str) -> bool {
 #[cfg(test)]
 mod json_output_tests {
     use super::*;
+
+    #[test]
+    fn a_failed_page_rendering_is_one_notice_naming_what_is_missing() {
+        let error = Error::Conversion("Office page rendering: something broke.".into());
+        let both = json!({"screenshot":{"enabled":true},"ocr":{"enabled":true}});
+        assert_eq!(
+            page_rendering_failed(&error, &both),
+            "Rendering this document's pages failed (Office page rendering: something broke); its own text was converted without page screenshots and OCR."
+        );
+        let shots = json!({"screenshot":{"enabled":true},"ocr":{"enabled":false}});
+        assert!(page_rendering_failed(&error, &shots).ends_with("without page screenshots."));
+        let ocr = json!({"screenshot":{"enabled":false},"ocr":{"enabled":true}});
+        assert!(page_rendering_failed(&error, &ocr).ends_with("without page OCR."));
+    }
 
     #[test]
     fn the_scan_notice_stays_while_an_unread_page_has_no_text_of_its_own() {

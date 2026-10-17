@@ -179,11 +179,12 @@ pub(super) fn inspect(bytes: &[u8], expected_pages: usize, deadline: Instant) ->
             && right[index] > width
         {
             // Very distant clipped text is not evidence that the user wants
-            // a huge viewport. Explicitly reject rather than guess or crop.
+            // a huge viewport: the sheet keeps its original layout, with the
+            // overflowing text cut at the page edge, and says so.
             if right[index] > width * 2. {
-                return Err(failure(
-                    "workbook right-edge text is too distant for bounded layout repair",
-                ));
+                plan.uncertain_pages.push(index + 1);
+                plan.warnings.push(format!("Workbook sheet {} has text far past its right edge (more than twice the page's width), too distant for bounded layout repair; its original LibreOffice layout is retained and that text may be cut", index + 1));
+                continue;
             }
             dimensions(right[index], height)?;
             plan.extensions.push(Extension {

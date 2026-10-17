@@ -40,9 +40,19 @@ fn pdf(lines: &[(i32, i32, i32, &str)]) -> Vec<u8> {
 fn page() -> Vec<(i32, i32, i32, &'static str)> {
     vec![
         (72, 770, 18, "Section Two Data"),
-        (72, 734, 12, "A sentence before the table, long enough to read as text."),
+        (
+            72,
+            734,
+            12,
+            "A sentence before the table, long enough to read as text.",
+        ),
         // Longer than the page is wide from x = 72 (the width is an estimate).
-        (72, 710, 12, "This line is deliberately far too long to fit between its left margin and the right edge of the page, and a producer need not wrap it."),
+        (
+            72,
+            710,
+            12,
+            "This line is deliberately far too long to fit between its left margin and the right edge of the page, and a producer need not wrap it.",
+        ),
         (72, 686, 12, "Item | Qty | Price"),
         (72, 662, 12, "Apple | 12 | 3.50"),
         (72, 638, 12, "Banana | 30 | 1.20"),
