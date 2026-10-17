@@ -255,11 +255,13 @@ mod tests {
                 .iter()
                 .map(|value| value.as_str().unwrap())
                 .collect::<Vec<_>>();
-            assert_eq!(
-                listed,
-                markitai_core::provider_management::probe_reasons().collect::<Vec<_>>(),
-                "{schema}"
-            );
+            let mut reasons =
+                markitai_core::provider_management::probe_reasons().collect::<Vec<_>>();
+            // Only discovery of a subscription runtime says its cause.
+            if schema == "DiscoveryResult" {
+                reasons.extend(markitai_core::provider_management::RUNTIME_REASONS);
+            }
+            assert_eq!(listed, reasons, "{schema}");
         }
     }
 

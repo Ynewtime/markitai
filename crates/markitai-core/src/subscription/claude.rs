@@ -229,6 +229,19 @@ fn version(
         .unwrap_or(value)
         .to_owned())
 }
+/// The release the installed runtime reports, to explain a mismatch; nothing when it cannot be asked.
+pub fn reported_version(config: &Config, timeout: Duration) -> Option<String> {
+    let deadline = RUNTIME.deadline(timeout).ok()?;
+    let (bytes, _) = small_command(config, &["--version"], deadline, None).ok()?;
+    let text = std::str::from_utf8(&bytes).ok()?.trim();
+    let version = text.strip_suffix(" (Claude Code)").unwrap_or(text);
+    (!version.is_empty()
+        && version.len() <= 40
+        && version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+')))
+    .then(|| version.to_owned())
+}
 pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure> {
     let deadline = RUNTIME.deadline(timeout)?;
     let installed = version(config, deadline, None)?;
