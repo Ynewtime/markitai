@@ -184,7 +184,8 @@ or server that dropped the request. `LLM request timed out: no response within
 Gemini filters answers that would reproduce published text; a scan of a widely
 copied sample or public document can trigger it, because its faithful
 transcription is that text. The same request is filtered again, so it is not
-resent. Use another provider or model for that document, or keep the base
+resent, except that a scanned page's transcription is tried once more in the next
+answer mode (forced tool call, then JSON schema). Use another provider or model for that document, or keep the base
 output (`llm.on_failure: fallback`). Other content filters are reported with
 their own finish reason.
 

@@ -827,7 +827,7 @@ The initial exact capability table is deliberately small:
 | Anthropic `claude-haiku-5-5` | Named tools, native JSON schema; in a live check (2026-10-09) its forced tool answer kept every protected marker of the presentation that Haiku 4.5 failed |
 | Anthropic `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Native JSON schema; Haiku 4.5's forced tool answers dropped the protected markers in live checks, costing a second request |
 | Anthropic `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, `claude-mythos-5-1` | Native JSON schema; these models restrict forced named tools |
-| Gemini `gemini-3.8-flash` through its OpenAI-compatible endpoint | JSON schema |
+| Gemini `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-flash-latest` through the OpenAI-compatible endpoint | Named tools (the forced function call LiteLLM sends; in a live check of 2026-10-17 it got a scan through that a plain-text answer lost to a recitation stop), JSON schema |
 | Other or unknown IDs, including Azure deployment aliases | JSON text |
 
 This fixed table was based on the official [OpenAI model page](https://developers.openai.com/api/docs/models/gpt-4.1),
@@ -855,7 +855,10 @@ Each non-final mode gets one schema-validation attempt. Rejection of tools/schem
 parameters with HTTP 400/422 descends without resending the same shape. A provider
 content filter (a finish reason starting with `content_filter`, such as Gemini's
 `content_filter: RECITATION`) is an explicit refusal and its error names the
-reason. Unrelated invalid-input errors, explicit refusal, token-limit truncation, quota and budget
+reason. The one exception is a request that transcribes scanned pages no reader
+recovered: a recitation stop there is sent once more in the next mode of the
+ladder (counted in the document's budget, named in a warning), and fails with the
+same error if it is withheld again. Unrelated invalid-input errors, explicit refusal, token-limit truncation, quota and budget
 failures stop the ladder; authentication failures first move to unexcluded
 sibling deployments and then configured routing fallbacks before stopping.
 Transport retries stay inside the router. Exhausted network/HTTP transport errors

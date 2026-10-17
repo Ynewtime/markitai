@@ -42,6 +42,7 @@
 - `markitai doctor` 的结尾总结不再把仅需首次 OCR 时下载模型的 Local OCR 列为不可用，而是单独写明“首次使用时自动准备：Local OCR（`markitai doctor --fix` 可立即完成）”，与真正不可用的可选功能分开。
 - Windows/Linux 通过进程内 hayro 渲染器提供 PDF 截图和扫描页 OCR；macOS 默认使用 CoreGraphics。可选 LibreOffice 导出提供 Office 截图和 OCR，另支持多页 TIFF、SVG 视觉预览及 macOS HEIF/AVIF 解码。
 - 由模型转写过的扫描页，其整页扫描图不再显示在文字下方，而是像页面截图一样保留为注释；模型未返回文字时，扫描图仍然可见。
+- Gemini Flash（`gemini-flash-latest`、`gemini-3.6-flash`、`gemini-3.8-flash`）现在像 Python markitai 的 LiteLLM 一样，用强制函数调用返回文档回答；扫描页的转写若因“复述”被供应商拦截，会在下一种回答模式下再请求一次；扫描页的指令改为“按页面图片补全缺失内容、保留原文措辞”，通用规则不再在提示词里出现两遍；这些页面的扫描图也不再作为图片单独分析（转写会把它们隐藏），每份扫描件省下一到三次图片请求。
 - PDF 隐藏文本策略 `security.pdf_sanitize` 提供 `off`、`warn`、`remove` 模式，可从提取正文中排除支持识别的可疑文本；保留原始资源，并报告检查不完整的情况。
 - 可选的隔离 Chromium 抓取、截图、按来源限定的 Basic/Digest 认证及认证 PDF 下载；支持通过 `doctor --fix` 显式安装浏览器、复用隔离会话和发现系统手动代理。
 - Cloudflare URL/文件转换及 Jina/Defuddle 抓取回退，遵循远程处理授权和仅本地策略。工作台按操作请求授权，隐私提示说明图片和 URL 何时发往远程服务。
