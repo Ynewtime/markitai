@@ -1256,6 +1256,13 @@ main:focus {
 .nm.has-host .mid-host {
   color: var(--text-3);
 }
+.warn-wrap {
+  display: inline-flex;
+}
+.warn-wrap .help-anchor {
+  padding: 2px 4px;
+  border-radius: var(--r-xs);
+}
 .warn-mark {
   display: inline-flex;
   flex: none;
@@ -1519,6 +1526,10 @@ main:focus {
 .notice-where {
   font-size: var(--text-sm);
   color: var(--text-3);
+}
+/* the count leads the file list, on its line */
+.notice-where > .notice-count {
+  margin-right: 8px;
 }
 .notice-details ul {
   max-height: 160px;
@@ -3270,6 +3281,14 @@ kbd {
 /* a row's help: one line on the row, then each choice and what it does */
 .help-bubble.is-list {
   width: min(360px, calc(100vw - 24px));
+  text-align: left;
+}
+.help-lines {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
   text-align: left;
 }
 .help-lede {

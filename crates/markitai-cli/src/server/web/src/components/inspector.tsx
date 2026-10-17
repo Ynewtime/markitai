@@ -196,6 +196,9 @@ function itemLine(ctx: InspectorContext, item: SessionItem, elapsed: number | nu
   );
 }
 
+/** One wording seen several times (a count to show, since the title does not say it). */
+const isRepeated = (group: NoticeGroup) => group.kind === "other" && group.count > 1 && group.pages === null;
+
 function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: NoticeGroup[]; docsUrl: string; where: boolean; onShow?: (group: NoticeGroup) => void }) {
   if (!groups.length) return null;
   return (
@@ -208,9 +211,14 @@ function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: No
           <div class="notice-body">
             <p class="notice-text">
               {t.noticeTitle(group.kind, group.count, group.models, group.sample, group.pages)}
-              {group.kind === "other" && group.count > 1 && group.pages === null && <span class="notice-count"> ×{group.count}</span>}
+              {isRepeated(group) && !where && <span class="notice-count"> ×{group.count}</span>}
             </p>
-            {where && <p class="notice-where">{t.noticeWhere(group.names)}</p>}
+            {where && (
+              <p class="notice-where">
+                {isRepeated(group) && <span class="notice-count">×{group.count}</span>}
+                {t.noticeWhere(group.names)}
+              </p>
+            )}
             {(group.samples.length > 1 || group.kind !== "other") && (
               <details class="notice-details">
                 <summary>{t.notificationDetails}</summary>

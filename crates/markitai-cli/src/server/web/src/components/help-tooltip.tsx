@@ -1,7 +1,8 @@
 // A help bubble for one control: shown on hover, focus or tap, positioned in
 // the viewport (above unless it does not fit), gone a few seconds after it
 // opens unless the pointer rests on it, on Escape, on a click elsewhere, or
-// when another help bubble opens. A row's bubble can also list its choices.
+// when another help bubble opens. A row's bubble can also list its choices, or
+// be a short list of lines (the warnings of a conversion).
 import type { ComponentChildren } from "preact";
 import { createPortal } from "preact/compat";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -24,11 +25,14 @@ export const helpItemText = (item: HelpItem): string => (item.note ? `${item.tex
 export function HelpTooltip({
   text,
   items,
+  lines,
   disabled = false,
   children,
 }: {
   text: string;
   items?: HelpItem[];
+  /** Separate sentences shown as a list; `text` then is their plain form for assistive technology. */
+  lines?: string[];
   /** A disabled control cannot take focus; the wrapper then takes it instead. */
   disabled?: boolean;
   /** Renders the control, given the id of its description. */
@@ -55,7 +59,7 @@ export function HelpTooltip({
     setOpen(true);
   };
 
-  useBubble({ open, setOpen, id, anchor, bubble, hovered, cap, cancelHide, extraMs: (items?.length ?? 0) * PER_ITEM_MS, deps: [text, items] });
+  useBubble({ open, setOpen, id, anchor, bubble, hovered, cap, cancelHide, extraMs: (items?.length ?? 0) * PER_ITEM_MS, deps: [text, items, lines] });
 
   useEffect(() => cancelHide, []);
 
@@ -99,7 +103,17 @@ export function HelpTooltip({
               hideSoon();
             }}
           >
-            {items?.length ? <p class="help-lede">{text}</p> : text}
+            {lines?.length ? (
+              <ul class="help-lines">
+                {lines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            ) : items?.length ? (
+              <p class="help-lede">{text}</p>
+            ) : (
+              text
+            )}
             {items?.length ? (
               <dl class="help-items">
                 {items.map((item) => (
