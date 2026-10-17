@@ -233,7 +233,8 @@ marked; a narrow window shows one column of changes. In Diff the Base | LLM
 switch shows both on (it compares both); choosing one shows that version. A document with four or more headings
 gets its **contents**: its top three heading levels (a lone title does not count
 as a level; each entry is the heading's plain words, without inline HTML tags or
-private-use glyphs, on two lines at most) beside the document on a wide window, marking the
+private-use glyphs, on one line cut with an ellipsis, the whole heading in its
+tooltip; formulas in it are drawn) beside the document on a wide window, marking the
 heading at the top of the reading area as it scrolls; a click goes to the heading
 and marks it until the reader scrolls (pictures loading below it do not move the mark). The contents button beside
 Base | LLM hides or shows them (remembered in this browser); on a phone or a

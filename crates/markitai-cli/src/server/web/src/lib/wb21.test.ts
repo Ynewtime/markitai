@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { mathTitle } from "./math-syntax.ts";
 import { entryOnly, listEntry } from "./route.ts";
 
 const css = readFileSync(new URL("../styles/app.css", import.meta.url), "utf8");
@@ -28,4 +29,14 @@ test("a row's notice mark stands on its name's line", () => {
   const mark = /\n\.warn-mark \{\n([^}]*)\}/.exec(css)?.[1] ?? "";
   assert.match(mark, /font-family: var\(--font-sans\);/);
   assert.match(/\n\.warn-wrap \{\n([^}]*)\}/.exec(css)?.[1] ?? "", /top: 1px;/);
+});
+
+test("contents entries keep to one line, the whole heading in their tooltip", () => {
+  const text = /\n\.toc-text \{\n([^}]*)\}/.exec(css)?.[1] ?? "";
+  assert.match(text, /white-space: nowrap;/);
+  assert.match(text, /text-overflow: ellipsis;/);
+  assert.ok(!text.includes("line-clamp"));
+  assert.equal(mathTitle("The probability of getting $k$ heads when flipping $n$ coins"), "The probability of getting k heads when flipping n coins");
+  assert.equal(mathTitle("Plain heading"), "Plain heading");
+  assert.equal(mathTitle("Area $$\\pi r^2$$"), "Area \\pi r^2");
 });

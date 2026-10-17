@@ -4889,14 +4889,12 @@ input[type="password"],
   text-align: left;
   transition: color var(--dur-fast) ease;
 }
-/* A button ignores line clamping, so its text clamps itself: two lines at most. */
+/* One line per entry, cut with an ellipsis (the whole heading is the link's tooltip); formulas stay drawn. */
 .toc-text {
-  display: -webkit-box;
+  display: block;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .toc-item.is-l0 .toc-link {
   font-weight: 500;
