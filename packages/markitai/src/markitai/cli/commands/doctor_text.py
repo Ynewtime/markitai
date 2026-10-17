@@ -114,6 +114,7 @@ _MESSAGES: list[tuple[re.Pattern[str], str]] = [
             r"Cannot determine login state: could not parse (.*)",
             "无法判断登录状态：无法解析 {0}",
         ),
+        (r"Unknown provider: (.*)", "未知的服务商：{0}"),
         (r"No logged in users found", "没有已登录的用户"),
         (
             r"Credentials file not found \((.*)\)",

@@ -249,3 +249,37 @@ def test_names_stay_comma_separated_in_english() -> None:
         assert _names(["A", "B"]) == "A, B"
     finally:
         i18n._lang = before
+
+
+def test_every_auth_status_error_doctor_can_show_has_a_chinese_form() -> None:
+    """Doctor prints ``AuthStatus.error`` of the ``_check*`` functions of
+    providers/auth.py as the check's message; those sentences are not in
+    doctor.py, so the source scan above cannot see them."""
+    import ast
+    from pathlib import Path
+
+    import markitai.providers.auth as auth_module
+
+    tree = ast.parse(Path(auth_module.__file__).read_text(encoding="utf-8"))
+    missing = []
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if not function.name.startswith("_check"):
+            continue
+        for node in ast.walk(function):
+            if not (isinstance(node, ast.keyword) and node.arg == "error"):
+                continue
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                text = value.value
+            elif isinstance(value, ast.JoinedStr):
+                text = "".join(
+                    str(part.value) if isinstance(part, ast.Constant) else "1"
+                    for part in value.values
+                )
+            else:
+                continue  # None, or a runtime value
+            if any(ch.isalpha() for ch in text) and zh_message(text) == text:
+                missing.append(f"auth.py:{node.value.lineno}: {text!r}")
+    assert not missing, "no Chinese form for:\n" + "\n".join(missing)

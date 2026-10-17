@@ -50,6 +50,7 @@
 
 ### 修复
 
+- **中文 `markitai doctor` 报告也覆盖了登录检查的错误**（`providers/auth.py` 报告的缺少凭据文件、令牌过期等），并有测试保证。
 - **命令行的几处小修复。** 没有安装 `mcp` 可选依赖时，`markitai-mcp` 会给出安装方法而不是打印错误堆栈；选择终端语言时 `LC_ALL` 优先于 `LANG`（POSIX 顺序）；`doctor --help` 把 LibreOffice 描述为 PPTX 幻灯片渲染。
 - **`markitai serve` 的几处小修复。** “编辑配置”会拒绝带重复键的文件（两个 `api_key` 中的第一个原本会明文显示）；`PUT /api/convert-defaults` 读到 64 KiB 就停止（返回 413）；作业压缩包的每次下载使用独立文件，同一作业同时下载两次不会在 Windows 上失败；被中断的下载留下的压缩包会被清理；`.msg` 和 `.ipynb` 原件使用各自的媒体类型。
 - **发布流程现在逐字节检查要发布的 wheel。** `scripts/check_wheel.py` 会把随包的每个工作台文件与清单中的摘要和大小比对（`.gz` 与对应的明文文件也比对），并在 CI 和发布工作流中对实际上传的构建产物运行。
