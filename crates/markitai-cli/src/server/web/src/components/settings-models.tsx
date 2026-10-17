@@ -9,7 +9,7 @@ import type { Deployment, DiscoveryResult, ModelShare, NewDeployment, ProviderCa
 import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
-import { listFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
+import { addingIsBlocked, listFailure, runtimeFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
 import { endpointFor, modelName, pickerRows, removals } from "../lib/models.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
@@ -25,6 +25,7 @@ import {
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker } from "./model-picker.tsx";
+import { RuntimeNotice } from "./runtime-notice.tsx";
 import { loadBrandMarks } from "./brand-icon.tsx";
 import { manageable, providerLabel, ProviderPicker } from "./provider-picker.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -264,9 +265,12 @@ export function ModelsSettings({
   onSaved,
   announce,
   describe,
+  docsUrl = "",
 }: {
   t: Dict;
   locale: Locale;
+  /** The backend's documentation index, for the setup guide of a subscription runtime. */
+  docsUrl?: string;
   /** Whose models: the admin's (the config file), or v1.15 a user token's own plus the shared ones. */
   scope?: ModelsScope;
   /** v1.15: the admin's saved models carry a Private/Shared toggle. */
@@ -1271,7 +1275,9 @@ export function ModelsSettings({
                     ))}
                   </div>
                 )}
-                {discovery && listFailure(discovery) ? (
+                {discovery && runtimeFailure(discovery) ? (
+                  <RuntimeNotice t={t} failure={runtimeFailure(discovery)!} provider={provider.provider} docsUrl={docsUrl} />
+                ) : discovery && listFailure(discovery) ? (
                   <div class="test-failure" role="alert">
                     <Icon name="WarningCircle" size={16} />
                     <div class="test-failure-copy">
@@ -1316,6 +1322,11 @@ export function ModelsSettings({
                     groups={!user}
                     defaultBase={provider.default_base ?? null}
                     onWeightValid={setWeightValid}
+                    {...(discovery && runtimeFailure(discovery)
+                      ? addingIsBlocked(runtimeFailure(discovery))
+                        ? { addBlocked: t.addBlockedByRuntime(runtimeFailure(discovery)!.name) }
+                        : { addWarning: t.addWarnByRuntime(runtimeFailure(discovery)!.name) }
+                      : {})}
                     {...(user ? { weightHint: t.userWeightHint } : {})}
                   />
                 )}

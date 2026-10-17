@@ -31,6 +31,8 @@ export function ModelPicker({
   weightHint,
   defaultBase,
   onWeightValid,
+  addBlocked,
+  addWarning,
 }: {
   t: Dict;
   /** The provider lists no models: manual entry is open and explained. */
@@ -43,6 +45,10 @@ export function ModelPicker({
   defaultBase?: string | null;
   /** Whether the weight field holds a weight Save may write (a whole number from 0 to 100). */
   onWeightValid?: (valid: boolean) => void;
+  /** Why a model cannot be added now (the provider's runtime cannot run): entry by hand is off, with this said. */
+  addBlocked?: string;
+  /** A caution for entry by hand that stays open: it may not work until the provider answers. */
+  addWarning?: string;
   provider: string;
   candidates: ModelCandidate[];
   deployments: Deployment[];
@@ -169,7 +175,7 @@ export function ModelPicker({
               </label>
             );
           })}
-          {visible.length === 0 && <p class="picker-note">{manualOnly && !needle ? t.manualModelsOnly : t.noModelsFound}</p>}
+          {visible.length === 0 && <p class="picker-note">{addBlocked ? t.noListUntilRuntime : manualOnly && !needle ? t.manualModelsOnly : t.noModelsFound}</p>}
         </div>
       </div>
       {/* Model IDs by hand and the routing settings, in plain sight on the same grid as the key and address. */}
@@ -187,6 +193,8 @@ export function ModelPicker({
                 id="manual-model"
                 type="text"
                 value={manual}
+                disabled={Boolean(addBlocked)}
+                aria-describedby={addBlocked || addWarning ? "manual-model-note" : undefined}
                 placeholder={provider === "azure" ? t.azureDeploymentPh : t.manualModelPh}
                 onInput={(event) => setManual(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -196,10 +204,15 @@ export function ModelPicker({
                   }
                 }}
               />
-              <button type="button" class="btn" disabled={!manual.trim()} onClick={addManual}>
+              <button type="button" class="btn" disabled={!manual.trim() || Boolean(addBlocked)} onClick={addManual}>
                 {t.addModelId}
               </button>
             </div>
+            {(addBlocked || addWarning) && (
+              <p id="manual-model-note" class="field-hint manual-note">
+                {addBlocked ?? addWarning}
+              </p>
+            )}
           </div>
           <span class="field-grid-gap" aria-hidden="true" />
           {groups && (

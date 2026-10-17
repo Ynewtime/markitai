@@ -17,6 +17,7 @@ import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, readable, timestamp
 import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
 import { FrontCard } from "./front-matter.tsx";
 import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
+import { docsPage } from "../lib/docs.ts";
 import { typeset } from "../lib/math.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
@@ -127,7 +128,6 @@ export interface InspectorContext {
   failure: ActionFailure | null;
 }
 
-const docsPage = (docsUrl: string, page: string) => (/\/index\.md$/.test(docsUrl) ? docsUrl.replace(/index\.md$/, `${page}.md`) : docsUrl);
 
 export function costText(t: Dict, state: CostState): string {
   switch (state.kind) {

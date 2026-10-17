@@ -6645,6 +6645,38 @@ input[type="password"],
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
+.runtime-notice .test-failure-copy {
+  grid-template-columns: minmax(0, 1fr);
+}
+.runtime-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--r-xs);
+  background: var(--strip);
+}
+.runtime-step code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.runtime-step-kind {
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+.runtime-links {
+  margin-top: 4px;
+  font-size: var(--text-sm);
+}
+.manual-note {
+  margin-top: 6px;
+}
 .config-actions {
   display: flex;
   flex-wrap: wrap;
