@@ -7,6 +7,9 @@ mod annotations;
 #[cfg(test)]
 #[path = "pdf/cjk_layout_tests.rs"]
 mod cjk_layout_tests;
+#[cfg(test)]
+#[path = "pdf/pipe_table_tests.rs"]
+mod pipe_table_tests;
 #[path = "pdf/continued.rs"]
 mod continued;
 #[path = "pdf/figures.rs"]

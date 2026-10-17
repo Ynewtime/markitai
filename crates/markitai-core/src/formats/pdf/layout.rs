@@ -1340,13 +1340,35 @@ fn flow(lines: &[Line], headings: &[f32], faces: &Faces, bullets: &Bullets) -> O
         blocks.push((format!("{prefix}{content}"), item.is_some()));
         paragraph.clear();
     };
+    // Lines up to this index were set as a table of rows divided by `|`.
+    let mut ruled_until = 0;
     for (index, line) in lines.iter().enumerate() {
+        if index < ruled_until {
+            continue;
+        }
         let mut current = runs(line);
         if current.is_empty() {
             continue;
         }
         if index > 0 && beside(&lines[index - 1], line) {
             return None;
+        }
+        // Rows of text divided by `|` (two lines or more) are a table; one
+        // such line, or the rows' neighbours, are blocks of their own, never
+        // run into the paragraph beside them.
+        if let Some(rows) = pipe_rows(lines, index)
+            && heading_level(line, headings) == 0
+        {
+            flush(&mut blocks, &mut paragraph, previous_level, item.as_deref());
+            item = None;
+            if let Some(marker) = pending.take() {
+                blocks.push((marker.number.unwrap_or_else(|| "-".into()), false));
+            }
+            ruled_until = index + rows.len();
+            blocks.push((pipe_table(&rows), false));
+            previous = None;
+            previous_level = 0;
+            continue;
         }
         // Code opens where a paragraph would: at the start, after a
         // heading, or set off from the text above. A single mono-set line
@@ -1525,6 +1547,48 @@ fn flow(lines: &[Line], headings: &[f32], faces: &Faces, bullets: &Bullets) -> O
         output.push_str(block);
     }
     Some(output)
+}
+
+/// The cells of a line of text divided by `|`: two cells or more, none of
+/// them a bare symbol run, else `None`.
+fn pipe_cells(line: &Line) -> Option<Vec<String>> {
+    let text = markdown(&runs(line));
+    if !text.contains('|') {
+        return None;
+    }
+    let cells: Vec<String> = text.split('|').map(|cell| cell.trim().to_owned()).collect();
+    let cells = if cells.first().is_some_and(String::is_empty) {
+        cells[1..].to_vec()
+    } else {
+        cells
+    };
+    let cells = if cells.last().is_some_and(String::is_empty) {
+        cells[..cells.len().saturating_sub(1)].to_vec()
+    } else {
+        cells
+    };
+    (cells.len() >= 2 && cells.iter().all(|cell| !cell.is_empty())).then_some(cells)
+}
+
+/// The rows of a table of `|`-divided lines that starts at `lines[start]`:
+/// consecutive such lines, at least two.
+fn pipe_rows(lines: &[Line], start: usize) -> Option<Vec<Vec<String>>> {
+    let rows: Vec<Vec<String>> = lines[start..].iter().map_while(pipe_cells).collect();
+    (rows.len() >= 2).then_some(rows)
+}
+
+/// Markdown for rows of cells: the first row is the header.
+fn pipe_table(rows: &[Vec<String>]) -> String {
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let row = |cells: &[String]| {
+        let mut cells = cells.to_vec();
+        cells.resize(columns, String::new());
+        format!("| {} |", cells.join(" | "))
+    };
+    let mut lines = vec![row(&rows[0])];
+    lines.push(format!("|{}|", vec![" --- "; columns].join("|")));
+    lines.extend(rows[1..].iter().map(|cells| row(cells)));
+    lines.join("\n")
 }
 
 struct Table {
@@ -1769,7 +1833,10 @@ fn render(
             !valid(i)
                 || i.x < -1.
                 || i.y < -1.
-                || i.x + i.width > frame.width + 2.
+                // A line may run past the right edge (its width is the
+                // reader's estimate, and a producer need not wrap): it must
+                // start on the page.
+                || i.x > frame.width + 2.
                 || i.y + i.height > frame.height + 2.
         })
     {
