@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
@@ -43,7 +44,7 @@ def zh() -> Iterator[None]:
             "Chromium 已安装，但无法启动：exit code 1",
         ),
         ("installed", "已安装"),
-        ("Authenticated (octocat)", "已认证 (octocat)"),
+        ("Authenticated (octocat)", "已认证（octocat）"),
         (
             "not set: OPENAI_API_KEY, GEMINI_API_KEY; 2 models left out, 1 still used",
             "未设置：OPENAI_API_KEY、GEMINI_API_KEY；2 个模型被忽略，仍有 1 个在用",
@@ -135,3 +136,116 @@ def test_json_stays_english_under_a_chinese_terminal(zh: None) -> None:
         results["playwright"]["message"]
         == "installed, but its Chromium browser is not downloaded"
     )
+
+
+def _doctor_strings() -> list[tuple[int, str, str]]:
+    """Every message / remedy sentence ``doctor.py`` builds, as a sample.
+
+    Found in the source rather than by driving each check, so a sentence
+    added for a state no test reaches is still caught. An f-string
+    placeholder becomes ``1`` (``1 model`` for a ``_count``); a sentence
+    made only of placeholders is skipped.
+    """
+    import ast
+    from pathlib import Path
+
+    import markitai.cli.commands.doctor as doctor_module
+
+    source = Path(doctor_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    wanted = {"message", "install_hint", "llm_hint", "ok_message"}
+
+    def sample(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for value in node.values:
+                if isinstance(value, ast.Constant):
+                    parts.append(str(value.value))
+                elif isinstance(value, ast.FormattedValue):
+                    call = value.value
+                    function = getattr(getattr(call, "func", None), "id", "")
+                    if function == "_count":
+                        noun = ast.literal_eval(call.args[1])  # type: ignore[attr-defined]
+                        parts.append(f"1 {noun}")
+                    elif function == "_them":
+                        parts.append("it")
+                    elif getattr(call, "id", "") == "target":
+                        parts.append("")
+                    else:
+                        parts.append("1")
+            return "".join(parts)
+        if isinstance(node, ast.IfExp):
+            return None
+        return None
+
+    found: list[tuple[int, str, str]] = []
+
+    def add(node: ast.AST, role: str) -> None:
+        if isinstance(node, ast.IfExp):
+            add(node.body, role)
+            add(node.orelse, role)
+            return
+        text = sample(node)
+        if text is not None and text.strip():
+            found.append((getattr(node, "lineno", 0), role, text))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if isinstance(key, ast.Constant) and key.value in wanted:
+                    add(value, str(key.value))
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in wanted:
+                    add(node.value, target.id)
+        elif isinstance(node, ast.keyword) and node.arg in wanted:
+            add(node.value, node.arg)
+    return found
+
+
+#: Sentences with nothing to translate: a command, a path or a bare value
+_NOTHING_TO_TRANSLATE = (
+    "curl -fsSL",
+    "export ",
+    "$env:",
+)
+
+
+def test_every_sentence_doctor_builds_has_a_chinese_form() -> None:
+    """The next English message added to doctor.py must come with its zh."""
+    missing = []
+    for line, role, text in _doctor_strings():
+        if (
+            not any(ch.isalpha() for ch in text)
+            or text.startswith(_NOTHING_TO_TRANSLATE)
+            or re.fullmatch(r"v\d+", text)  # a version
+        ):
+            continue
+        translate = zh_message if role in ("message", "ok_message") else zh_hint_line
+        if translate(text) == text:
+            missing.append(f"doctor.py:{line} {role}: {text!r}")
+    assert not missing, "no Chinese form for:\n" + "\n".join(missing)
+
+
+def test_summary_names_are_chinese_and_joined_with_the_enumeration_comma(
+    zh: None,
+) -> None:
+    from markitai.cli.commands.doctor import _names
+
+    assert (
+        _names(["Playwright (slow to start)", "1 LLM model", "VLM OCR"])
+        == "Playwright（启动慢）、1 个 LLM 模型、VLM OCR"
+    )
+
+
+def test_names_stay_comma_separated_in_english() -> None:
+    from markitai.cli.commands.doctor import _names
+
+    before = i18n._lang
+    i18n.set_language("en")
+    try:
+        assert _names(["A", "B"]) == "A, B"
+    finally:
+        i18n._lang = before

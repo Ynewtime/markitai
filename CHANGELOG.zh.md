@@ -52,6 +52,7 @@
 
 ### 修复
 
+- **中文 `markitai doctor` 报告更完整。** 摘要行用“、”连接名称，并翻译 `1 LLM model` 与 `Playwright (slow to start)`；进度文字、`--fix` 的失败详情、Claude 云服务商的修复说明、`# or:` 和括号补充说明也是中文，并有测试保证 `doctor.py` 新增的消息一定带中文形式。
 - **`markitai doctor` 不再为运行时会被忽略的模型打勾“视觉模型”和“VLM OCR”。** 没有设置 API 密钥的视觉模型不再计入，该行会说明它在等哪个环境变量。
 - **Claude、Copilot 和 ChatGPT 的模型发现更接近 Rust 的 API。** 失败原因不再缓存五分钟（登录后重新加载即可消除）；失败时不再返回过期的空列表，也不再错误地返回 `no_key`；Claude 登录过期会返回 `not_signed_in`；命令行过旧或没有响应会返回 `runtime_unsupported`（附 `runtime.installed`）或 `runtime_failed`，而不是“未登录”；安装命令固定到测试过的命令行版本，缺少 SDK 可选依赖时使用与 markitai 安装方式相符的安装命令；ChatGPT 从一开始就有连接卡片，“未登录”的帮助随时可达。
 - **URL 的文本阶段和图片阶段重新共用同一个请求预算。** 它们此前各开一个预算，一个页面在 serve、命令行和 API 中可能花掉两倍的 `llm.max_requests_per_document`（默认 100 次请求）。
