@@ -1,14 +1,18 @@
 # Local image OCR
 
-On macOS 11 or later, local OCR uses the operating system's Vision framework
-through Rust bindings. It runs in the current process without Python, Node,
-Tesseract, a browser, downloaded OCR weights, provider credentials or a remote
-recognition service. On Windows and Linux it uses the [portable
-engine](#the-portable-engine-windows-and-linux): PaddleOCR's models, downloaded
-once into the private Markitai home, run in process by a pure-Rust inference
-engine. The default macOS x86-64 build cannot use Vision under Rosetta 2 on
-Apple silicon; use the arm64 build. A macOS build with `portable-media` can
-instead fall back to the portable engine, as described below.
+Local OCR reads with the [portable
+engine](#the-portable-engine) on every platform, macOS included: PaddleOCR's
+models, downloaded once into the private Markitai home, run in process by a
+pure-Rust inference engine, without Python, Node, Tesseract, a browser,
+provider credentials or a remote recognition service. macOS also has the
+operating system's Vision framework (macOS 11 or later, through Rust bindings),
+chosen with `MARKITAI_OCR_BACKEND=vision`; it also reads when the portable
+engine's models cannot be downloaded. Vision is not the default because its
+first use of a program compiles its recognition models for about 20 seconds,
+and its default reading of a scan of Chinese, Japanese, Korean and Latin text
+and a table ran lines together, flattened the table and dropped a line, where
+the portable engine kept them. The sections on Vision below apply when it is
+chosen or used as that fallback.
 Vision and the portable engine have different language defaults; choose an
 explicit language when the automatic reading is incomplete. Both share bounded
 image preparation and reading-order handling.
@@ -71,8 +75,8 @@ the OCR text and does not guess replacement punctuation that could alter meaning
 
 ## Language selection
 
-The following table describes Vision. For Windows/Linux and macOS builds using
-Paddle, see [portable languages](#languages).
+The following table describes Vision (macOS, when chosen or as the fallback).
+For the default portable engine, see [portable languages](#languages).
 
 `ocr.lang` defaults to `en`, which is a policy of its own: [the default
 language](#the-default-language) reads English and, when that fails, Chinese,
@@ -165,16 +169,16 @@ preserve columns, but supported scripts do not guarantee exact transcription.
 Use an explicit `ocr.lang` when the default misses a script; neither repeated
 recognition nor a successful exit certifies every character.
 
-## The portable engine (Windows and Linux)
+## The portable engine
 
-Windows and Linux read images with PaddleOCR's PP-OCR models, run in the
+Every platform reads images with PaddleOCR's PP-OCR models, run in the
 conversion process by the pure-Rust [`tract`](https://github.com/sonos/tract)
 inference engine (`tract-onnx` 0.23.8), with an experimental opt-in alternative
 ([engines](#engines)). No Python, ONNX Runtime, Tesseract or system service is
-needed. A macOS build has the portable engine only with the `portable-media`
-feature (`cargo build -p markitai-cli --release --features portable-media`);
-Vision stays that build's default, the portable engine is chosen when Vision
-cannot run (macOS before 11, or an x86_64 build under Rosetta), and
+needed. The macOS build includes it through the default `portable-media`
+feature (PDF pages there still render with CoreGraphics); it is the default
+engine, Vision reads instead when its models cannot be downloaded (and the
+engine was not chosen), and
 `MARKITAI_OCR_BACKEND=paddle` or `vision` chooses one explicitly (any other
 value is a configuration error; `vision` is an unsupported-capability error
 where Vision is absent). Metadata records `ocr_path: paddle`, and `markitai
@@ -246,7 +250,7 @@ language needs the detector, the classifier and its recognizer. It names each fi
 installed. A normal OCR downloads missing models as needed, with a notice once
 per process on standard error (`Local OCR: downloading …`). It does not
 necessarily download all four default files before reading its first image.
-The default macOS Vision engine does not inspect or install portable models.
+Vision, when chosen, does not inspect or install portable models.
 
 `markitai doctor` checks paths, size and SHA-256 with bounded, no-follow reads;
 it creates no model state, downloads nothing and does not parse or run ONNX.

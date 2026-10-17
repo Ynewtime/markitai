@@ -1,10 +1,14 @@
 //! Local, bounded OCR. Platform engines receive pixels, never source paths.
 //!
-//! macOS reads with the system's Vision framework (`vision`). Windows and
-//! Linux read with the portable engine (`paddle`): PaddleOCR models run in
-//! process by a pure-Rust inference engine. A macOS build with the
-//! `portable-media` feature has both; Vision stays the default there, and
-//! `MARKITAI_OCR_BACKEND` (`vision` or `paddle`) chooses one.
+//! Every platform reads with the portable engine (`paddle`) by default:
+//! PaddleOCR models run in process by a pure-Rust inference engine. macOS
+//! also has the system's Vision framework (`vision`): `MARKITAI_OCR_BACKEND`
+//! (`vision` or `paddle`) chooses one, and Vision reads when the portable
+//! engine's models cannot be downloaded. (Vision's first use of a binary
+//! compiles its models for some 23 seconds, and its default reading of a page
+//! of Chinese, Japanese and Korean text lost lines, table rows and characters
+//! that the portable engine reads: see docs/ocr.md.) A macOS build without the
+//! `portable-media` feature has Vision only.
 
 use crate::{Error, Result};
 use serde_json::Value;
@@ -293,21 +297,14 @@ fn budget_from(requested: Option<&str>, processors: usize) -> usize {
 const BACKEND_VARIABLE: &str = "MARKITAI_OCR_BACKEND";
 
 /// The engine this process reads with: `MARKITAI_OCR_BACKEND` when set, else
-/// Vision on macOS 11 or later (unless this x86_64 build runs under Rosetta,
-/// where Vision fails), else the portable engine.
+/// the portable engine.
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 fn selected() -> Result<Backend> {
     let requested = std::env::var(BACKEND_VARIABLE).unwrap_or_default();
     #[cfg(target_os = "macos")]
     let vision = objc2::available!(macos = 11.0);
     match requested.trim().to_ascii_lowercase().as_str() {
-        "" => {
-            #[cfg(target_os = "macos")]
-            if vision && !crate::system_frameworks::translated() {
-                return Ok(Backend::Vision);
-            }
-            Ok(Backend::Paddle)
-        }
+        "" => Ok(Backend::Paddle),
         "paddle" => Ok(Backend::Paddle),
         "vision" => {
             #[cfg(target_os = "macos")]
@@ -349,8 +346,39 @@ pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
     match backend {
         #[cfg(target_os = "macos")]
         Backend::Vision => read(&pixels::prepare(bytes)?, &spelling),
-        Backend::Paddle => paddle::read(&pixels::upright(bytes)?, &spelling),
+        Backend::Paddle => {
+            let read_models = paddle::read(&pixels::upright(bytes)?, &spelling);
+            #[cfg(target_os = "macos")]
+            if let Err(error) = &read_models
+                && vision_instead(error)
+            {
+                return read(&pixels::prepare(bytes)?, &spelling);
+            }
+            read_models
+        }
     }
+}
+
+/// Whether Vision should read in place of the portable engine, which is the
+/// default on macOS: only when its models could not be downloaded, the engine
+/// was not chosen by the user and Vision works here.
+#[cfg(all(target_os = "macos", feature = "portable-media"))]
+fn vision_instead(error: &Error) -> bool {
+    static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let download_failed = matches!(error, Error::Unsupported(message)
+        if message.starts_with("Local OCR download of"));
+    let chosen = std::env::var(BACKEND_VARIABLE).is_ok_and(|value| !value.trim().is_empty());
+    let works = objc2::available!(macos = 11.0) && !crate::system_frameworks::translated();
+    if !download_failed || chosen || !works {
+        return false;
+    }
+    if !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!(
+            "Local OCR: the portable engine's models could not be downloaded; reading with macOS Vision instead \
+             (the first Vision use of this program takes about 20 seconds). `markitai doctor --fix` installs the models."
+        );
+    }
+    true
 }
 
 /// Recognize upright RGB pixels already composited over white by a renderer.
@@ -363,7 +391,14 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
         Backend::Vision => read(&pixels::prepare_rgb(image)?, &spelling),
         Backend::Paddle => {
             pixels::check_rgb(&image)?;
-            paddle::read(&image, &spelling)
+            let read_models = paddle::read(&image, &spelling);
+            #[cfg(target_os = "macos")]
+            if let Err(error) = &read_models
+                && vision_instead(error)
+            {
+                return read(&pixels::prepare_rgb(image)?, &spelling);
+            }
+            read_models
         }
     }
 }
@@ -384,9 +419,12 @@ struct Pass {
 #[cfg(target_os = "macos")]
 fn pass(image: &pixels::Prepared, language: &str) -> Result<Pass> {
     let space = (image.width, image.height);
-    pass_with(image, |image, may_enlarge| {
+    let mut lap = trace::Lap::start();
+    let read = pass_with(image, |image, may_enlarge| {
         vision::recognize(image, language, space, may_enlarge)
-    })
+    });
+    trace::line(format_args!("vision pass {language} ms={:.0}", lap.ms()));
+    read
 }
 
 /// [`pass`] with all of Chinese, Japanese, Korean and English asked for at once
@@ -394,9 +432,12 @@ fn pass(image: &pixels::Prepared, language: &str) -> Result<Pass> {
 #[cfg(target_os = "macos")]
 fn pass_detecting(image: &pixels::Prepared) -> Result<Pass> {
     let space = (image.width, image.height);
-    pass_with(image, |image, may_enlarge| {
+    let mut lap = trace::Lap::start();
+    let read = pass_with(image, |image, may_enlarge| {
         vision::recognize_detecting(image, space, may_enlarge)
-    })
+    });
+    trace::line(format_args!("vision pass detected ms={:.0}", lap.ms()));
+    read
 }
 
 #[cfg(target_os = "macos")]
@@ -442,6 +483,12 @@ fn finish(image: &pixels::Prepared, pass: Pass, language: &str, unread: bool) ->
 #[cfg(target_os = "macos")]
 fn read(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
     if spelling == "en" {
+        // `MARKITAI_OCR_VISION_POLICY=detect`: one request asking for all the
+        // languages with detection, instead of the passes below (for
+        // measuring what the passes cost and add).
+        if std::env::var("MARKITAI_OCR_VISION_POLICY").is_ok_and(|value| value.trim() == "detect") {
+            return finish(image, pass_detecting(image)?, CHINESE, false);
+        }
         return read_default(image);
     }
     let language = tag(spelling);
@@ -974,6 +1021,18 @@ fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, conf
 pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    // The macOS tests below are about Vision, which is no longer what the
+    // public entry points read with by default.
+    #[cfg(target_os = "macos")]
+    fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrResult> {
+        read(&pixels::prepare_rgb(image)?, &configured(cfg)?)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
+        read(&pixels::prepare(bytes)?, &configured(cfg)?)
+    }
 
     #[test]
     fn the_thread_budget_is_the_processors_unless_a_valid_number_is_set() {

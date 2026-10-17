@@ -125,7 +125,7 @@ untested. Consult [native CI](ci.md) for validation scope and
 | Capability | macOS | Linux x86-64 | Windows x64 / ARM64 |
 |---|---|---|---|
 | Native text readers, `serve`, CLI and MCP | Available; x86-64 checked under Rosetta 2 | Available | Available |
-| Local OCR | Vision by default; optional portable Paddle build | Paddle; models must be prepared | Paddle; models must be prepared |
+| Local OCR | Paddle by default; Vision with `MARKITAI_OCR_BACKEND=vision` | Paddle; models must be prepared | Paddle; models must be prepared |
 | PDF page rendering | System CoreGraphics; optional portable hayro build | Built-in hayro | Built-in hayro |
 | HEIF / HEIC decoding | System ImageIO | Built-in decoder | Built-in decoder |
 | AVIF decoding | System ImageIO | Built-in decoder | Built-in decoder |
@@ -141,8 +141,8 @@ LibreOffice, browser or OCR model installations part of the archive. Neither a
 CLI archive nor a passing version probe proves all Node/Python/Go bindings work; Windows Go/cgo
 package acceptance remains separate and unverified.
 
-On Apple silicon, use the arm64 archive. The default x86-64 build under Rosetta
-cannot use Vision OCR; portable builds can use Paddle. Run `markitai doctor`
+On Apple silicon, use the arm64 archive. Under Rosetta, Vision OCR does not work;
+the default Paddle engine does. Run `markitai doctor`
 to inspect the backends selected by your build and configuration. It does not
 download models. `markitai doctor --fix` explicitly prepares missing Paddle
 models and can repair safely managed corrupt models; unsafe model paths are

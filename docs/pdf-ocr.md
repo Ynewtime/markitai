@@ -4,8 +4,8 @@ The PDF media layer combines typed native page results with a native renderer
 and local OCR. It operates in memory; the output layer owns safe file publication.
 The Rust core does not start Python, Node, PyMuPDF or a rendering command. The
 renderer uses CoreGraphics on macOS and hayro on Windows/Linux. Local OCR uses
-Vision on macOS by default, or the portable engine on Windows/Linux with its
-separately installed model weights. See [renderer selection](pdf-rendering.md)
+the portable engine everywhere (macOS Vision with `MARKITAI_OCR_BACKEND=vision`)
+with its separately installed model weights. See [renderer selection](pdf-rendering.md)
 and [OCR prerequisites](ocr.md); the portable engine downloads missing models when needed. A failed required
 model download/load or an unavailable selected backend produces an explicit error.
 

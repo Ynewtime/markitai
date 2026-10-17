@@ -40,8 +40,8 @@ For a separate trial state, set `MARKITAI_HOME` before using the CLI:
 `export MARKITAI_HOME="$PWD/.local/try-home"`. Plain document conversion does
 not need a model connection. Existing configuration still applies; use
 `--no-llm -b native` for local document processing without model enhancement.
-URL inputs still need the network, even with `--no-remote-fetch`. Local OCR uses macOS Vision by default on macOS,
-and Paddle on Windows and Linux; `doctor --fix` can prepare missing Paddle
+URL inputs still need the network, even with `--no-remote-fetch`. Local OCR uses the portable Paddle engine on every
+platform (macOS Vision with `MARKITAI_OCR_BACKEND=vision`); `doctor --fix` can prepare missing Paddle
 models before offline use. JavaScript pages need Chrome/Chromium; Office page
 images need LibreOffice. Model enhancement (`--llm`) uses configured provider
 credentials or a subscription runtime.

@@ -1647,7 +1647,7 @@ mod tests {
         assert_eq!(document.metadata["ocr_pages_nonempty"], 1);
         assert_eq!(document.metadata["ocr_pages_blank"], 1);
         assert_eq!(document.metadata["ocr_used"], true);
-        assert_eq!(document.metadata["ocr_path"], "vision");
+        assert_eq!(document.metadata["ocr_path"], crate::ocr::backend());
         assert_eq!(document.markdown.matches("<!-- Page number:").count(), 3);
         assert!(document.warnings.iter().any(|warning| {
             warning == "PDF page 3 (1 of 3): OCR found no text; it is blank in the output."
