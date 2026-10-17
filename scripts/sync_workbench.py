@@ -13,7 +13,7 @@ so installing or building markitai never needs Node or Rust.
 
 Usage::
 
-    python scripts/sync_workbench.py --from ../workbench-builds/dist   # latest.tar.gz
+    python scripts/sync_workbench.py --from ../workbench-builds/dist      # latest.tar.gz
     python scripts/sync_workbench.py --from markitai-workbench-x.tar.gz
     python scripts/sync_workbench.py --check                 # vendored copy vs its manifest
     python scripts/sync_workbench.py --check --from DIST     # ... and vs a published bundle

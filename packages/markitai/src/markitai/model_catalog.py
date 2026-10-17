@@ -179,7 +179,7 @@ def model_row(model: str) -> dict[str, Any] | None:
     LiteLLM's own lookup for a prefixed model: the full name, then the id
     alone when that row belongs to the same provider. For ``markitai doctor``,
     which asks what a configured model can do without importing LiteLLM (its
-    import takes about 8 s on the Windows machine).
+    import takes about 8 s on Windows on Arm).
     """
     table = _model_table()
     row = table.get(model)

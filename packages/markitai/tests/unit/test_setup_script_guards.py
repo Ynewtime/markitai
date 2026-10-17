@@ -503,7 +503,7 @@ def test_user_install_selects_serve_before_installing_markitai() -> None:
 
 
 def test_markitai_installs_once_with_every_chosen_extra() -> None:
-    """Seen in practice: setup.ps1 took over ten minutes on the Windows machine.
+    """Seen in practice: setup.ps1 took over ten minutes on Windows 11 on Arm.
 
     It installed markitai, asked the new install which extras to add
     (`markitai doctor --suggest-extras`, a first run of an uncompiled
@@ -1119,7 +1119,7 @@ def test_powershell_probe_matches_the_shell_probe(
 
 def test_setup_scripts_prepare_the_first_run_in_the_background() -> None:
     """The first run after an install compiled every module it imported: on
-    the Windows machine 44 s for the first URL conversion against 4.6 s for the next.
+    Windows on Arm 44 s for the first URL conversion against 4.6 s for the next.
 
     UV_COMPILE_BYTECODE fixed that by compiling all 13,400 files of the
     environment at install time, most of which markitai never imports, and
