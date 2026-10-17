@@ -37,6 +37,7 @@
 - REST 转换任务、事件流和 OpenAPI 文档；通过 `markitai mcp` 或 `markitai-mcp` 提供原生 stdio MCP 转换工具及有界批量任务。
 - 原生 RST、Org、TeX 和 Outlook MSG 读取，笔记本输出、Numbers 表格及目录包、按 MIME 处理的邮件附件，以及 Office 元数据提取。
 - 使用 macOS Vision 或便携 PaddleOCR 在本地识别图片/PDF，支持指定语言及默认英中日韩路由。便携模型单独安装并校验完整性；`doctor` 检查模型，`doctor --fix` 修复模型。
+- `markitai doctor` 的中文输出现在把每条检查信息和修复建议都译成中文（JSON 中的值仍为英文），macOS 上的浏览器一行改为“已找到已安装的浏览器应用（只检查了版本）”。
 - `markitai doctor` 的结尾总结不再把仅需首次 OCR 时下载模型的 Local OCR 列为不可用，而是单独写明“首次使用时自动准备：Local OCR（`markitai doctor --fix` 可立即完成）”，与真正不可用的可选功能分开。
 - Windows/Linux 通过进程内 hayro 渲染器提供 PDF 截图和扫描页 OCR；macOS 默认使用 CoreGraphics。可选 LibreOffice 导出提供 Office 截图和 OCR，另支持多页 TIFF、SVG 视觉预览及 macOS HEIF/AVIF 解码。
 - 由模型转写过的扫描页，其整页扫描图不再显示在文字下方，而是像页面截图一样保留为注释；模型未返回文字时，扫描图仍然可见。

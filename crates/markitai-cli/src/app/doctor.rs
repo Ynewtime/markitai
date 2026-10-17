@@ -7,6 +7,8 @@ use indexmap::IndexMap;
 use markitai_core::config;
 use serde::Serialize;
 use serde_json::Value;
+#[path = "doctor_zh.rs"]
+mod doctor_zh;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -269,7 +271,7 @@ fn report(
             lines.push(style.item(mark(check), &check_line(check, lang)));
             // An optional next step for a check that is ready.
             if check.status == "ok" && !check.install_hint.is_empty() {
-                lines.push(style.detail(&check.install_hint));
+                lines.push(style.detail(&localized(&check.install_hint, lang)));
             }
             shown.push(check);
         }
@@ -309,7 +311,7 @@ fn report(
             let mut rest = remedy.iter();
             match rest.next() {
                 Some(Fix::Text(text)) => {
-                    lines.push(style.item(Mark::Info, &format!("{names}{colon}{text}")))
+                    lines.push(style.item(Mark::Info, &format!("{names}{colon}{}", localized(text, lang))))
                 }
                 Some(Fix::Command(command)) => {
                     lines.push(style.item(Mark::Info, &format!("{names}{}", colon.trim_end())));
@@ -319,7 +321,7 @@ fn report(
             }
             for line in rest {
                 lines.push(match line {
-                    Fix::Text(text) => style.line(4, None, text, None),
+                    Fix::Text(text) => style.line(4, None, &localized(text, lang), None),
                     Fix::Command(command) => style.command(4, command),
                 });
             }
@@ -345,12 +347,24 @@ fn mark(check: &Check) -> Mark {
 /// message and hint are the JSON values and stay in English; the note follows
 /// the terminal language.
 fn check_line(check: &Check, lang: Lang) -> String {
-    let (name, message) = (check.name, &check.message);
+    let name = check.name;
+    let message = &match lang {
+        Lang::En => check.message.clone(),
+        Lang::Zh => doctor_zh::zh(&check.message),
+    };
     match (lang, check.required) {
         (Lang::En, false) => format!("{name}: {message}"),
         (Lang::En, true) => format!("{name}: {message} (required by the configuration)"),
         (Lang::Zh, false) => format!("{name}：{message}"),
         (Lang::Zh, true) => format!("{name}：{message}（配置要求）"),
+    }
+}
+
+/// A message or remedy in the terminal language; the JSON values stay English.
+fn localized(text: &str, lang: Lang) -> String {
+    match lang {
+        Lang::En => text.to_owned(),
+        Lang::Zh => doctor_zh::zh(text),
     }
 }
 
@@ -686,7 +700,7 @@ fn checks(
             .as_deref()
             .is_some_and(markitai_core::browser_diagnostic_leaves_app_untouched)
     {
-        browser.message = "Installed browser app found and it answers --version; doctor does not start it, so your apps are left untouched".into();
+        browser.message = "Installed browser app found (version check only)".into();
     }
     let strategy = cfg
         .pointer("/fetch/strategy")
