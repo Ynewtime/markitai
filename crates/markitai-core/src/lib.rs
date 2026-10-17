@@ -642,8 +642,12 @@ fn convert_inner(
                 screenshots = captured;
                 pdf_has_reliable_text = reliable;
             }
-            // A request that cannot be met as written is the caller's to fix.
-            Err(error @ (Error::InvalidInput(_) | Error::Config(_))) => return Err(error),
+            // A request that cannot be met as written (invalid input or
+            // configuration, a capability the format does not have, as for
+            // Numbers) is the caller's to fix.
+            Err(error @ (Error::InvalidInput(_) | Error::Config(_) | Error::Unsupported(_))) => {
+                return Err(error);
+            }
             // Rendering the pages is an addition to the document's own text:
             // when it fails, the text is kept and one notice says what is
             // missing.
