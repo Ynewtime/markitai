@@ -99,16 +99,19 @@ def _plain(text: str) -> str:
     return escape(text)
 
 
-def title(text: str, *, console: Console | None = None) -> None:
+def title(text: str, *, console: Console | None = None, spaced: bool = True) -> None:
     """Display a title with diamond symbol.
 
     Args:
         text: The title text to display.
         console: Optional console for output (defaults to shared console).
+        spaced: Leave a blank line under the title (False: the lines that
+            follow start right under it).
     """
     c = console or get_console()
     c.print(f"[cyan]{MARK_TITLE}[/] [bold]{_plain(text)}[/]")
-    c.print()
+    if spaced:
+        c.print()
 
 
 def success(text: str, *, console: Console | None = None) -> None:

@@ -65,6 +65,31 @@ class TestDoctorCommand:
                 or "系统检查" in result.output
             )
 
+    def test_doctor_has_no_blank_line_under_its_title(
+        self, runner: CliRunner, mock_config: MagicMock
+    ) -> None:
+        """The first check follows the title directly."""
+        from markitai.cli.commands.doctor import doctor
+
+        with (
+            patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
+            patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed"
+            ) as mock_browser,
+            patch("markitai.fetch_playwright.clear_browser_cache"),
+            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
+        ):
+            MockConfigManager.return_value.load.return_value = mock_config
+            mock_pw.return_value = False
+            mock_browser.return_value = False
+            result = runner.invoke(doctor)
+
+        lines = result.output.splitlines()
+        start = next(i for i, line in enumerate(lines) if line.strip())
+        assert lines[start + 1].strip(), result.output
+
     def test_doctor_json_output_valid(
         self, runner: CliRunner, mock_config: MagicMock
     ) -> None:
