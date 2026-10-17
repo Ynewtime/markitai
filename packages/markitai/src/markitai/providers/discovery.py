@@ -150,33 +150,48 @@ def _result(
 
 #: The subscription runtimes whose list can fail for a cause the user fixes on
 #: the server's machine (contract v1.18): the program, the release the adapter
-#: speaks and what to run.
-_SUBSCRIPTIONS: dict[str, dict[str, str]] = {
+#: speaks and what to run. ``required`` names the CLI release the install
+#: command pins (the releases the SDKs were tested with, as Rust pins them),
+#: ``minimum`` the oldest ``--version`` markitai accepts.
+_SUBSCRIPTIONS: dict[str, dict[str, Any]] = {
     "claude-agent": {
-        "name": "Claude Code",
-        "required": "claude-agent-sdk>=0.1.50",
-        "install": "npm install -g @anthropic-ai/claude-code",
+        "name": "Claude Code CLI",
+        "program": "claude",
+        "required": "2.1.284 or a later release",
+        "minimum": (2, 1, 0),
+        "install": "npm install -g @anthropic-ai/claude-code@2.1.284",
         "sign_in": "markitai auth claude login",
     },
     "copilot": {
         "name": "GitHub Copilot CLI",
-        "required": "github-copilot-sdk>=0.2.0",
-        "install": "npm install -g @github/copilot",
+        "program": "copilot",
+        "required": "1.0.90 or a later release",
+        "minimum": (1, 0, 0),
+        "install": "npm install -g @github/copilot@1.0.90-2",
         "sign_in": "markitai auth copilot login",
     },
     "chatgpt": {
         "name": "ChatGPT",
-        "required": "Codex OAuth sign-in",
+        "program": None,
+        "required": "a ChatGPT sign-in (Codex OAuth)",
+        "minimum": None,
         "install": "",
         "sign_in": "markitai auth chatgpt login",
     },
 }
 
-#: The extras that install each provider's Python SDK
-_SDK_EXTRAS: dict[str, tuple[str, str]] = {
-    "claude-agent": ("Claude Agent SDK", "claude-agent"),
-    "copilot": ("GitHub Copilot SDK", "copilot"),
+#: The extras that install each provider's Python SDK, and the SDK release
+_SDK_EXTRAS: dict[str, tuple[str, str, str]] = {
+    "claude-agent": ("Claude Agent SDK", "claude-agent", "claude-agent-sdk>=0.1.50"),
+    "copilot": ("GitHub Copilot SDK", "copilot", "github-copilot-sdk>=0.2.0"),
 }
+
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-(\d+))?")
+_VERSION_TIMEOUT_S = 4.0
+
+
+class SubscriptionSignedOut(Exception):
+    """A subscription login that is gone or can no longer be renewed."""
 
 
 def _runtime_unavailable(
@@ -188,13 +203,15 @@ def _runtime_unavailable(
     command: str | None = None,
     runtime_name: str | None = None,
     required: str | None = None,
+    installed: str | None = None,
 ) -> dict[str, Any]:
     """An unavailable subscription list that says its cause (contract v1.18).
 
-    ``reason`` is ``runtime_missing``, ``not_signed_in``, ``runtime_failed``
-    or ``timeout``; ``runtime`` names the program and the release the adapter
-    speaks, ``next_step`` (``install`` or ``sign_in``) what to run where the
-    server runs.
+    ``reason`` is ``runtime_missing``, ``runtime_unsupported``,
+    ``not_signed_in``, ``runtime_failed`` or ``timeout``; ``runtime`` names
+    the program, the release the adapter speaks and, when it could be asked,
+    the release installed; ``next_step`` (``install`` or ``sign_in``) is what
+    to run where the server runs.
     """
     row = _SUBSCRIPTIONS[provider]
     payload = _result(
@@ -206,10 +223,13 @@ def _runtime_unavailable(
         detail=detail,
     )
     payload["reason"] = reason
-    payload["runtime"] = {
+    runtime = {
         "name": runtime_name or row["name"],
         "required": required or row["required"],
     }
+    if installed:
+        runtime["installed"] = installed
+    payload["runtime"] = runtime
     if kind is not None and command:
         payload["next_step"] = {"kind": kind, "command": command}
     return payload
@@ -220,23 +240,55 @@ def _sdk_missing(provider: str) -> dict[str, Any] | None:
     sdk = _SDK_EXTRAS.get(provider)
     if sdk is None or _local_runtime_available(provider):
         return None
-    name, extra = sdk
+    from markitai.utils.errors import extra_install_command
+
+    name, extra, requirement = sdk
     return _runtime_unavailable(
         provider,
         "runtime_missing",
         f"{name} is not installed on the server",
         kind="install",
-        command=f'pip install "markitai[{extra}]"',
+        command=extra_install_command(extra),
         runtime_name=name,
-        required=_SUBSCRIPTIONS[provider]["required"],
+        required=requirement,
     )
 
 
-def _not_signed_in(provider: str, detail: str) -> dict[str, Any]:
-    """Signed out: the CLI is missing (install it) or only needs a login."""
+def _cli_version(program: str) -> str | None:
+    """What ``<program> --version`` prints, or None when it does not answer."""
+    import subprocess
+
+    path = shutil.which(program)
+    if path is None:
+        return None
+    try:
+        done = subprocess.run(  # noqa: S603 - the CLI the user installed
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=_VERSION_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return (done.stdout or done.stderr).strip() or None
+
+
+async def _runtime_problem(provider: str) -> dict[str, Any] | None:
+    """The cause when the provider's CLI is absent, broken or too old.
+
+    A signed-out account is only told to sign in when the program can: a CLI
+    that is missing, does not answer ``--version`` or is older than the
+    release the adapter speaks needs installing first. None when it is fine
+    (or the provider has no CLI).
+    """
     row = _SUBSCRIPTIONS[provider]
-    cli = {"claude-agent": "claude", "copilot": "copilot"}.get(provider)
-    if cli is not None and shutil.which(cli) is None:
+    program = row["program"]
+    if program is None:
+        return None
+    if shutil.which(program) is None:
         return _runtime_unavailable(
             provider,
             "runtime_missing",
@@ -244,44 +296,72 @@ def _not_signed_in(provider: str, detail: str) -> dict[str, Any]:
             kind="install",
             command=row["install"],
         )
+    printed = await asyncio.to_thread(_cli_version, program)
+    match = _VERSION_RE.search(printed or "")
+    if match is None:
+        return _runtime_unavailable(
+            provider,
+            "runtime_failed",
+            f"{row['name']} is installed but does not answer --version",
+        )
+    found = tuple(int(part) for part in match.groups()[:3])
+    if found < row["minimum"]:
+        return _runtime_unavailable(
+            provider,
+            "runtime_unsupported",
+            f"{row['name']} {match.group(0)} is older than markitai supports",
+            kind="install",
+            command=row["install"],
+            installed=match.group(0),
+        )
+    return None
+
+
+async def _signed_out(provider: str, detail: str) -> dict[str, Any]:
+    """Signed out: the CLI needs installing first, or the account only a login."""
+    problem = await _runtime_problem(provider)
+    if problem is not None:
+        return problem
+    row = _SUBSCRIPTIONS[provider]
     return _runtime_unavailable(
         provider, "not_signed_in", detail, kind="sign_in", command=row["sign_in"]
     )
 
 
-def subscription_failure(
+async def subscription_failure(
     provider: str, error: BaseException, failure: dict[str, Any]
 ) -> dict[str, Any]:
     """Say a subscription list's failure with its cause (contract v1.18).
 
-    A refused token is a signed-out account, a timeout stays one, anything
-    else that is not about the network or the quota is the runtime failing.
+    A refused token or a login that cannot be renewed is a signed-out account,
+    a timeout stays one, anything else that is not about the network or the
+    quota is the runtime failing.
     """
     if provider not in _SUBSCRIPTIONS:
         return failure
-    if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in (
-        401,
-        403,
-    ):
-        answer = _not_signed_in(
-            provider, f"{_SUBSCRIPTIONS[provider]['name']} is not signed in"
-        )
+    row = _SUBSCRIPTIONS[provider]
+    refused = isinstance(
+        error, httpx.HTTPStatusError
+    ) and error.response.status_code in (401, 403)
+    if refused or isinstance(error, SubscriptionSignedOut):
+        answer = await _signed_out(provider, f"{row['name']} is not signed in")
         return {
             key: value
             for key, value in answer.items()
             if key in ("reason", "detail", "runtime", "next_step")
         }
-    row = _SUBSCRIPTIONS[provider]
+    runtime = {"name": row["name"], "required": row["required"]}
     if failure.get("reason") == "timeout":
-        return {
-            **failure,
-            "runtime": {"name": row["name"], "required": row["required"]},
-        }
+        return {**failure, "runtime": runtime}
     if failure.get("reason") == "provider_error":
         return {
             "reason": "runtime_failed",
-            "detail": f"{row['name']} is installed but could not list models",
-            "runtime": {"name": row["name"], "required": row["required"]},
+            "detail": (
+                f"{row['name']} is installed but could not list models"
+                if row["program"]
+                else f"{row['name']} could not list models"
+            ),
+            "runtime": runtime,
         }
     return failure
 
@@ -475,11 +555,13 @@ async def detect_provider_connections(
     present = {card["provider"] for card in cards}
     # A subscription runtime installed with its extra but not detected (no
     # CLI on PATH, not signed in yet) can still be connected: its runtime
-    # signs in and lists the account's models. ChatGPT signs in with a
-    # device code only `markitai auth login chatgpt` can show, so it is
-    # offered once signed in (the card above)
-    for provider in ("claude-agent", "copilot"):
-        if provider not in present and _local_runtime_available(provider):
+    # signs in and lists the account's models. ChatGPT has no SDK to install:
+    # its card is always offered, and discovery says "not signed in" with the
+    # command (`markitai auth chatgpt login`) until the account is
+    for provider in ("claude-agent", "copilot", "chatgpt"):
+        if provider not in present and (
+            provider == "chatgpt" or _local_runtime_available(provider)
+        ):
             cards.append(
                 {
                     "id": f"common:{provider}",
@@ -546,9 +628,12 @@ async def _copilot_models() -> dict[str, Any]:
         return missing
     from markitai.providers.auth import _check_copilot_config_auth
 
+    problem = await _runtime_problem("copilot")
+    if problem is not None:
+        return problem
     status = await asyncio.to_thread(_check_copilot_config_auth)
     if not status.authenticated:
-        return _not_signed_in("copilot", "GitHub Copilot is not signed in")
+        return await _signed_out("copilot", "GitHub Copilot is not signed in")
     from copilot import CopilotClient  # type: ignore[import-not-found]
 
     client: Any = None
@@ -595,7 +680,7 @@ async def _refresh_claude_oauth_credentials(
 
     refresh_token = credentials.get("refreshToken")
     if not isinstance(refresh_token, str) or not refresh_token:
-        raise RuntimeError("Claude Code OAuth refresh token is unavailable")
+        raise SubscriptionSignedOut("Claude Code OAuth refresh token is unavailable")
 
     async with httpx.AsyncClient(
         timeout=_REMOTE_TIMEOUT, follow_redirects=False
@@ -608,6 +693,9 @@ async def _refresh_claude_oauth_credentials(
                 "client_id": _CLAUDE_OAUTH_CLIENT_ID,
             },
         )
+        if response.status_code in (400, 401, 403):
+            # invalid_grant and friends: the login can no longer be renewed
+            raise SubscriptionSignedOut("Claude Code OAuth refresh was refused")
         response.raise_for_status()
         body = response.json()
 
@@ -637,7 +725,7 @@ async def _oauth_models(provider: str) -> dict[str, Any]:
         credentials = await asyncio.to_thread(_claude_oauth_credentials)
         token = credentials.get("accessToken") if credentials is not None else None
         if credentials is None or not isinstance(token, str) or not token:
-            return _not_signed_in(provider, "Claude Code is not signed in")
+            return await _signed_out(provider, "Claude Code is not signed in")
         missing = _sdk_missing(provider)
         if missing is not None:
             return missing
@@ -661,7 +749,7 @@ async def _oauth_models(provider: str) -> dict[str, Any]:
     credentials = await asyncio.to_thread(_chatgpt_oauth_credentials)
     token = credentials.get("access_token") if credentials is not None else None
     if credentials is None or not isinstance(token, str) or not token:
-        return _not_signed_in(provider, "ChatGPT is not signed in")
+        return await _signed_out(provider, "ChatGPT is not signed in")
     account_id = credentials.get("account_id")
     return await _http_models(
         provider,
@@ -1110,7 +1198,12 @@ async def discover_models(
                 # address) says why; one the provider does not publish is
                 # no failure
                 result.setdefault("reason", "provider_error")
-            _cache[key] = _CacheEntry(value=result, fetched_at=time.monotonic())
+            if not (
+                provider in _SUBSCRIPTIONS and result.get("status") == "unavailable"
+            ):
+                # A subscription's cause is asked for again every time (as
+                # Rust does): the user fixes it on the machine, then reloads
+                _cache[key] = _CacheEntry(value=result, fetched_at=time.monotonic())
             return result
         except Exception as error:
             failure = discovery_failure(
@@ -1120,8 +1213,25 @@ async def discover_models(
                 key_variable=key_variable,
                 secrets=(api_key or "",),
             )
+            failure = await subscription_failure(provider, error, failure)
             cached = _cache.get(key)
-            if cached is not None and now - cached.fetched_at < _STALE_CACHE_S:
+            # Models loaded before are shown for a failure that may pass (the
+            # network, the quota, a hiccup), never for a cause the user has
+            # to fix (not signed in, a runtime that is missing or too old),
+            # and only when there were models to show
+            if (
+                cached is not None
+                and cached.value.get("models")
+                and failure.get("reason")
+                in (
+                    "network",
+                    "timeout",
+                    "rate_limited",
+                    "runtime_failed",
+                    "provider_error",
+                )
+                and now - cached.fetched_at < _STALE_CACHE_S
+            ):
                 result = dict(cached.value)
                 result.update(
                     {
@@ -1135,7 +1245,6 @@ async def discover_models(
                     }
                 )
                 return result
-            failure = subscription_failure(provider, error, failure)
             result = _result(
                 provider,
                 status="unavailable",

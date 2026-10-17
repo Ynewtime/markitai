@@ -852,7 +852,10 @@ class TestConnectableProviderCards:
             for card in await discovery.detect_provider_connections(refresh=True)
             if card["kind"] == "common"
         }
-        assert set(cards) == {row.provider for row in CONNECTABLE} - {"vertex_ai"}
+        # ChatGPT has no SDK, so its card is always offered
+        assert set(cards) == ({row.provider for row in CONNECTABLE} - {"vertex_ai"}) | {
+            "chatgpt"
+        }
         assert {card["id"] for card in cards.values()} == {
             f"common:{provider}" for provider in cards
         }
@@ -892,9 +895,10 @@ class TestConnectableProviderCards:
             for card in cards
             if card["provider"] in {"claude-agent", "copilot", "chatgpt"}
         }
-        # Copilot's runtime is not installed; ChatGPT signs in with a device
-        # code only the CLI can show, so it waits for `markitai auth login`
-        assert set(subscriptions) == {"claude-agent"}
+        # Copilot's runtime is not installed; ChatGPT has none to install,
+        # so its card leads to "not signed in" and the login command
+        assert set(subscriptions) == {"claude-agent", "chatgpt"}
+        assert subscriptions["chatgpt"]["supports_discovery"] is True
         claude = subscriptions["claude-agent"]
         assert (claude["kind"], claude["status"], claude["key_optional"]) == (
             "common",
