@@ -51,6 +51,7 @@
 
 ### 修复
 
+- **由视觉模型读过的扫描版 PDF，不再提示“页面看起来是扫描件，请加 --ocr 重新运行”。** 使用 LLM 和页面截图时，该提示会等模型回答之后再决定：回答里有文字就不再提示；模型只返回图片或这一步失败时仍会提示。
 - **订阅类服务商（Claude、Copilot、ChatGPT）取不到模型列表时，模型发现现在会说明原因**：`reason` 为 `runtime_missing`（程序或其 Python 可选依赖未安装）、`not_signed_in`、`runtime_failed` 或 `timeout`，并附 `runtime` 和 `next_step`（安装命令，或 `markitai auth <provider> login`），与 Rust API 一致（契约 v1.18）。工作台会显示原因，并在必然失败时关闭按 ID 添加模型。
 - 批量转换时多个线程同时首次导入 markitdown，偶尔让某个文件（常见是 `.msg`）失败，报 `_DeadlockError: deadlock detected by _ModuleLock('markitdown.converters')`：现在 markitdown 在任何转换器使用前、加锁只导入一次。
 - **在提供商页面勾选一个模型、取消勾选另一个，不再因 `settings_entry_missing` 失败**（工作台 b7a19af，契约 v1.17）。页面原来先删除，这会让手写条目重新编号，或删掉提供商卡片所代表的模型，随后的保存就找不到它的卡片。`POST /api/settings/llm/deployments/batch` 和 `POST /api/me/models/deployments/batch` 现在也接受 `remove`（部署 id），并对页面读取的版本同时应用添加和删除，要么全部成功要么全部不做（视图中 `batch_remove: true`）。路由权重是 0 到 100 的整数（0 表示关闭，模型仍保留），所有写入权重的路由都按此检查，其他值返回 422 `invalid_weight`，Edit config 会指出具体条目。文件里已有的同一条目的权重可以保留，所以旧文件照常保存。

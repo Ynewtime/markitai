@@ -2104,7 +2104,10 @@ class TestGetMarkitdown:
         fetch.get_default_session().markitdown_instance = None
 
         try:
-            with patch.dict("sys.modules", {"markitdown": MagicMock()}):
+            with patch.dict(
+                "sys.modules",
+                {"markitdown": MagicMock(), "markitdown.converters": MagicMock()},
+            ):
                 import sys
 
                 mock_markitdown_class = MagicMock()
