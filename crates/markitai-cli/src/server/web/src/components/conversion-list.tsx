@@ -342,7 +342,7 @@ export function ConversionList({
           >
             <CheckBox check={check} label={t.selectBusy} />
             <span class="group-caret" aria-hidden="true">
-              <Icon name={open ? "CaretDown" : "CaretRight"} size={11} />
+              <Icon name={open ? "CaretDown" : "CaretRight"} size={14} />
             </span>
             <span class="group-label">
               <b>{label}</b>

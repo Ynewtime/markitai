@@ -1133,7 +1133,7 @@ main:focus {
   justify-self: end;
 }
 .group-head.has-check {
-  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  grid-template-columns: 16px 32px minmax(0, 1fr) auto;
   gap: 10px;
 }
 .row-check {
@@ -1287,7 +1287,7 @@ main:focus {
 }
 .group-head {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 14px 8px 6px;
@@ -1296,15 +1296,19 @@ main:focus {
   color: var(--text-3);
   cursor: pointer;
 }
-/* the chevron sits in the status glyphs' column: one left edge with a lone
-   conversion's mark below it */
+/* the chevron's cell is the leading area of the header, as tall as the row (the padding above and
+   below it is taken back): a click anywhere in it opens or closes the submission */
 .group-caret {
-  display: inline-grid;
-  align-self: center;
+  display: grid;
+  align-self: stretch;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  margin-block: -14px -6px;
+  border-radius: var(--r-xs);
   color: var(--text-3);
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.group-head:hover .group-caret {
+  color: var(--text-1);
 }
 .group-label {
   min-width: 0;
@@ -5943,6 +5947,14 @@ input[type="password"],
   }
   .row {
     min-height: 44px;
+  }
+  /* a finger: the chevron's cell is 40 px wide and the header 44 px tall */
+  .group-head {
+    min-height: 44px;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+  .group-head.has-check {
+    grid-template-columns: 16px 40px minmax(0, 1fr) auto;
   }
   /* Select mode on a phone: the bar sits over the tab bar's top edge, and the
      list leaves room for it under its last row */
