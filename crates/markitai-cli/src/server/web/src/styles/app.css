@@ -1275,7 +1275,7 @@ main:focus {
 .group-head {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   padding: 14px 8px 6px;
   border-bottom: 1px solid var(--hairline);
@@ -1302,6 +1302,12 @@ main:focus {
 .group-label b {
   font-weight: 600;
   color: var(--text-1);
+}
+.group-side,
+.row-side {
+  /* the monospace figures ride a pixel above the sans names' centre */
+  position: relative;
+  top: 1px;
 }
 .group-side {
   font-family: var(--font-mono);
@@ -5862,7 +5868,11 @@ input[type="password"],
   .conv-head .conv-summary {
     flex: 1 0 100%;
     order: 1;
-    margin-top: -6px;
+    margin-top: 4px;
+  }
+  .conv-head .head-actions .btn:not(.btn-icon) {
+    gap: 5px;
+    padding-inline: 8px;
   }
   .conv-head .head-stop {
     order: 2;
