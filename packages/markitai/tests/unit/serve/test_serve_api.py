@@ -153,6 +153,10 @@ class TestCapabilitiesAndRoot:
         }
         assert data["implementation"] == "python"
         assert data["docs_url"] == "https://markitai.dev"
+        # The workbench opens its guide links at guide/<page> under a site root
+        guide = Path(__file__).resolve().parents[5] / "website" / "guide"
+        for page in ("pricing", "subscriptions", "subscription-chatgpt"):
+            assert (guide / f"{page}.md").is_file(), page
         assert data["features"] == {
             "cancel": True,
             "download_tickets": True,
