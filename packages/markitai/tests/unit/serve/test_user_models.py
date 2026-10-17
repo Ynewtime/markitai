@@ -993,3 +993,96 @@ async def test_revoking_deletes_the_users_models_and_regenerating_keeps_them(
     )
     assert not orphan.exists()
     assert [row["model"] for row in b_view["deployments"]] == ["openai/b"]
+
+
+# ----------------------------------------------- the server's key variables
+
+
+def test_a_keyless_entry_is_sealed_with_the_placeholder() -> None:
+    """Saved without a key of its own or of its connection, a user's model
+    (from Edit config as much as from the routes) stores the placeholder:
+    LiteLLM would otherwise send the server's OPENAI_API_KEY to its address."""
+    linked = {"id": "p-own", "provider": "openai", "api_key": USER_A_KEY}
+    lists = Lists(
+        models=[
+            {"litellm_params": {"model": "openai/a", "api_base": USER_BASE}},
+            {
+                "litellm_params": {"model": "openai/b"},
+                "model_info": {"provider_id": "p-own"},
+            },
+        ],
+        providers=[
+            linked,
+            {"id": "p-bare", "provider": "custom", "api_base": USER_BASE},
+        ],
+    )
+    user_models.check(lists)
+    assert lists.models[0]["litellm_params"]["api_key"] == NO_KEY
+    assert "api_key" not in lists.models[1]["litellm_params"]
+    assert lists.providers[0]["api_key"] == USER_A_KEY
+    assert lists.providers[1]["api_key"] == NO_KEY
+
+
+def test_the_pool_never_leaves_a_user_model_to_the_environment_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file saved before the placeholder was stored still routes with the
+    entry's own key, its connection's, or the placeholder."""
+    monkeypatch.setenv("OPENAI_API_KEY", SENTINEL_KEY)
+    own = Lists(
+        models=[
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "openai/a", "api_base": USER_BASE},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "openai/b"},
+                "model_info": {"provider_id": "p-own"},
+            },
+        ],
+        providers=[
+            {
+                "id": "p-own",
+                "provider": "openai",
+                "api_key": USER_A_KEY,
+                "api_base": USER_BASE,
+            }
+        ],
+    )
+    pool = user_models.build_pool(_base(), own, [], [])
+    sent = [(m.litellm_params.api_key, m.litellm_params.api_base) for m in pool.models]
+    assert sent == [(NO_KEY, USER_BASE), (USER_A_KEY, USER_BASE)]
+
+
+async def test_edit_config_cannot_save_a_model_that_borrows_the_server_key(
+    tmp_path: Path,
+) -> None:
+    async with _server(_app(tmp_path)) as client:
+        user_id, headers = await _user(client, "Laptop A")
+        view = (await client.get("/api/me/config", headers=headers)).json()
+        text = json.dumps(
+            {
+                "models": [
+                    {
+                        "model_name": "default",
+                        "litellm_params": {
+                            "model": "openai/gpt-4o-mini",
+                            "api_base": USER_BASE,
+                        },
+                    }
+                ],
+                "providers": [],
+                "shared": [],
+            }
+        )
+        saved = await client.put(
+            "/api/me/config",
+            json={"expected_revision": view["revision"], "text": text},
+            headers=headers,
+        )
+        listed = (await client.get("/api/me/models", headers=headers)).json()
+    assert saved.status_code == 200, saved.text
+    stored = json.loads((tmp_path / "user-models" / f"{user_id}.json").read_text())
+    assert [m["litellm_params"]["api_key"] for m in stored["models"]] == [NO_KEY]
+    assert [row["api_key_configured"] for row in listed["deployments"]] == [False]

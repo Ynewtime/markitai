@@ -417,8 +417,15 @@ def check(lists: Lists) -> None:
     for entry in lists.models:
         params = entry.setdefault("litellm_params", {})
         params["use_environment_credentials"] = False
+        # Without a key of its own (or of its connection) LiteLLM would take
+        # the server's key variable for the provider and send it to the
+        # entry's address: the placeholder stands in, as the routes store it
+        if not real_key(_params(entry, lists.providers).get("api_key")):
+            params["api_key"] = _no_key()
     for connection in lists.providers:
         connection["use_environment_credentials"] = False
+        if not real_key(connection.get("api_key")):
+            connection["api_key"] = _no_key()
 
 
 def precheck(
@@ -848,6 +855,14 @@ def build_pool(
             model = ModelConfig.model_validate(entry)
         except (ApiError, ValidationError):
             continue
+        # The key and address it is sent with: its own, else its
+        # connection's, never the server's key variable (a file saved before
+        # the placeholder was stored may lack both)
+        merged = _params(entry, own.providers)
+        model.litellm_params.api_key = (
+            merged["api_key"] if real_key(merged.get("api_key")) else _no_key()
+        )
+        model.litellm_params.api_base = merged.get("api_base")
         if model.litellm_params.weight <= 0:
             continue
         model.model_name = "default"

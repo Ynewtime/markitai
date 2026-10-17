@@ -190,6 +190,7 @@
 - **服务器的 Google、watsonx 和 GigaChat 登录凭据不再发往设置调用方选定的地址。** 无论条目带什么 key，LiteLLM 都会用服务器自己的 Google 凭据（应用默认凭据、`gcloud` 登录或 `GOOGLE_APPLICATION_CREDENTIALS`）签署 Vertex AI 请求，用 `WATSONX_TOKEN` 签署 watsonx 请求，用 `GIGACHAT_ACCESS_TOKEN` 签署 GigaChat 请求，并发往条目的地址：通过 `markitai serve` 设置页面以调用方所选地址保存或测试的 Vertex AI 模型（包括 LiteLLM 会路由到 Vertex AI 的裸名称如 `gemini-2.5-pro`，以及保存在另一个连接地址下的模型），在测试和转换中都会把服务器的 Google 访问令牌带到那里。现在设置页面会拒绝带地址的此类模型（422 `invalid_settings_request`，以英文、中文和日文显示），**添加模型** 也不再为 Vertex AI 提供地址栏，而是用一行短说明告诉你它在 Vertex AI 自己的端点使用服务器的 Google 登录，已保存的 Vertex AI 连接也不再提供 key；不带地址时仍在服务商自己的端点使用服务器的登录凭据，手动写在配置文件中的地址照常使用。Amazon Bedrock 不受影响：带地址而无 key 时，它把占位 key `markitai-no-key` 作为 key 发送，从不发送服务器的 AWS 凭据。
 - **演示文稿的文件名不再被 LibreOffice 当作选项。** 渲染幻灯片时会把文件路径原样交给 `soffice`，因此文件名以 `-` 开头的文件（例如 `markitai ./--accept=socket,host=0.0.0.0,port=2002;urp;.pptx --screenshot`：Python 会去掉 `./`）会变成 LibreOffice 的一个选项，比如在转换期间打开网络监听的选项。现在传入的路径总是绝对路径。
 - **用户令牌的 URL 只从公网抓取。** 用户令牌的 URL 任务可以指向服务器所在网络中的地址，包括服务器自己的 API：在那里不带令牌的请求算作管理员，因此 `http://127.0.0.1:<端口>/api/history?include=items` 及随后的 `/api/jobs/<id>/files/<名称>` 能读到管理员和其他用户的全部转换。现在用户的 URL、它的重试（包括管理员发起的重试）以及它的文档引用的图片，都按原本用于 `--no-auth` 上传的公网策略抓取：私有、回环或链路本地地址（包括域名解析或重定向得到的此类地址）会让该条目以 `private_or_local_host` 失败。管理员自己的任务不变。
+- **用户令牌的模型不再使用服务器的 key 变量。** 用户令牌通过**编辑配置**（`PUT /api/me/config`）保存的模型如果有地址却没有 key，或链接到自己的某个连接却同样没有 key，会在不带 key 的情况下路由，LiteLLM 便读取服务器上该提供商的 key 变量（`OPENAI_API_KEY` 等）并发往用户的地址，或用服务器的 key 在提供商端点运行。现在这类条目会保存占位 key `markitai-no-key`（模型路由早已如此）；链接到连接的模型使用该连接的 key 和地址；此前保存的文件也按同样方式读取。
 
 ## [1.2.0] - 2026-09-28
 
