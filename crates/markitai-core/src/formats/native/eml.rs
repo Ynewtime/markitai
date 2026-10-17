@@ -2,13 +2,15 @@
 
 use crate::formats::mail::{self, ContentIds, header_id, link_text, safe_header};
 use crate::{Asset, Document, Error, Result};
-use mail_parser::{Message, MessagePart, MimeHeaders, PartType};
+use mail_parser::{HeaderName, HeaderValue, Message, MessagePart, MimeHeaders, PartType};
 use std::collections::{HashMap, HashSet};
 
 const MAX_INPUT: usize = 100 * 1024 * 1024;
 const MAX_PARTS: usize = 4096;
 const MAX_DEPTH: usize = 64;
 const MAX_DECODED: usize = 128 * 1024 * 1024;
+/// The encoded layers mail-parser decodes into nested messages.
+const ENCODED_LAYERS: usize = 3;
 
 fn error(message: &str) -> Error {
     Error::Conversion(format!("EML: {message}"))
@@ -27,6 +29,161 @@ fn attached(part: &MessagePart<'_>) -> bool {
     // attachment. Only an absent declaration or literal inline is a body resource.
     part.content_disposition()
         .is_some_and(|value| !value.c_type.eq_ignore_ascii_case("inline"))
+}
+
+/// A parsed message whose nested messages are dropped one at a time: the
+/// derived drop recurses once per nesting level.
+struct Parsed<'x>(Message<'x>);
+
+impl<'x> std::ops::Deref for Parsed<'x> {
+    type Target = Message<'x>;
+    fn deref(&self) -> &Message<'x> {
+        &self.0
+    }
+}
+
+impl Drop for Parsed<'_> {
+    fn drop(&mut self) {
+        let mut nested = Vec::new();
+        take_nested(&mut self.0, &mut nested);
+        while let Some(mut message) = nested.pop() {
+            take_nested(&mut message, &mut nested);
+        }
+    }
+}
+
+fn take_nested<'x>(message: &mut Message<'x>, into: &mut Vec<Message<'x>>) {
+    for part in &mut message.parts {
+        if matches!(part.body, PartType::Message(_))
+            && let PartType::Message(nested) = std::mem::take(&mut part.body)
+        {
+            into.push(nested);
+        }
+    }
+}
+
+/// Refuses message nesting deeper than the limit, counted before the real
+/// parse. mail-parser nests raw messages without recursion, but it makes a
+/// nested message it decoded (base64 or quoted-printable) owned by
+/// recursion, so a deep one would exhaust the stack inside the parser. This
+/// parse reads Content-Transfer-Encoding as another kind of header, so the
+/// parser decodes nothing; each message part the real parse would decode is
+/// decoded and counted here, to the layers the parser decodes.
+fn check_nesting(bytes: &[u8], layers: usize, above: usize) -> Result<()> {
+    let parser = mail_parser::MessageParser::new()
+        .with_mime_headers()
+        .header_content_type(HeaderName::ContentTransferEncoding);
+    let Some(message) = parser.parse(bytes).map(Parsed) else {
+        return Ok(());
+    };
+    let mut pending = vec![(&*message, above)];
+    while let Some((message, depth)) = pending.pop() {
+        if depth > MAX_DEPTH {
+            return Err(error("nested message depth exceeds 64"));
+        }
+        // A digest's parts are messages unless they say otherwise.
+        let mut in_digest = vec![false; message.parts.len()];
+        for part in &message.parts {
+            if let PartType::Multipart(children) = &part.body
+                && part.content_type().is_some_and(|kind| {
+                    kind.subtype()
+                        .is_some_and(|sub| sub.eq_ignore_ascii_case("digest"))
+                })
+            {
+                for &child in children {
+                    if let Some(slot) = in_digest.get_mut(child as usize) {
+                        *slot = true;
+                    }
+                }
+            }
+        }
+        for (id, part) in message.parts.iter().enumerate() {
+            let message_type = match part.content_type() {
+                Some(kind) => {
+                    kind.ctype().eq_ignore_ascii_case("message")
+                        && kind.subtype().is_some_and(|sub| {
+                            sub.eq_ignore_ascii_case("rfc822") || sub.eq_ignore_ascii_case("global")
+                        })
+                }
+                None => in_digest[id],
+            };
+            match (
+                message_type
+                    .then(|| transfer_encoding(part, bytes))
+                    .flatten(),
+                &part.body,
+            ) {
+                // The parser keeps a message below its last layer as bytes.
+                (Some(_), _) if layers == 0 => {}
+                (Some(decode), _) => {
+                    // A message part outside a multipart runs to the end.
+                    let (start, end) = (part.offset_body as usize, part.offset_end as usize);
+                    let body = bytes
+                        .get(start..if end > start { end } else { bytes.len() })
+                        .unwrap_or_default();
+                    check_nesting(&decode(body), layers - 1, depth + 1)?;
+                }
+                (None, PartType::Message(nested)) => pending.push((nested, depth + 1)),
+                (None, _) => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Decodes a part's body.
+type Decoder = fn(&[u8]) -> Vec<u8>;
+
+/// The decoder for a part whose Content-Transfer-Encoding the real parse
+/// decodes, read from the header's bytes as that parse reads it.
+fn transfer_encoding(part: &MessagePart<'_>, bytes: &[u8]) -> Option<Decoder> {
+    let header = part
+        .headers
+        .iter()
+        .rev()
+        .find(|header| header.name == HeaderName::ContentTransferEncoding)?;
+    let raw = bytes.get(header.offset_start as usize..header.offset_end as usize)?;
+    let HeaderValue::Text(value) =
+        mail_parser::parsers::MessageStream::new(raw).parse_unstructured()
+    else {
+        return None;
+    };
+    if value.eq_ignore_ascii_case("base64") {
+        Some(lenient_base64)
+    } else if value.eq_ignore_ascii_case("quoted-printable") {
+        // Undecodable input is counted as it stands.
+        Some(|body| {
+            mail_parser::decoders::quoted_printable::quoted_printable_decode(body)
+                .unwrap_or_else(|| body.to_vec())
+        })
+    } else {
+        None
+    }
+}
+
+/// Base64 that skips every byte outside the alphabet, so it yields at least
+/// what a stricter decoder of the same part would.
+fn lenient_base64(body: &[u8]) -> Vec<u8> {
+    let mut decoded = Vec::with_capacity(body.len() / 4 * 3);
+    let (mut bits, mut count) = (0u32, 0u32);
+    for &byte in body {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => continue,
+        };
+        bits = (bits << 6) | u32::from(value);
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            decoded.push((bits >> count) as u8);
+            bits &= (1 << count) - 1;
+        }
+    }
+    decoded
 }
 
 fn validate(message: &Message<'_>) -> Result<Vec<Option<usize>>> {
@@ -347,8 +504,10 @@ pub(super) fn extract_with_attachments(bytes: &[u8]) -> Result<(Document, HashSe
     if bytes.len() > MAX_INPUT {
         return Err(error("input exceeds 100 MiB"));
     }
+    check_nesting(bytes, ENCODED_LAYERS, 0)?;
     let message = mail_parser::MessageParser::default()
         .parse(bytes)
+        .map(Parsed)
         .ok_or_else(|| error("malformed message"))?;
     let parents = validate(&message)?;
     let mut warnings = Vec::new();
@@ -1062,6 +1221,72 @@ mod tests {
                 .contains("![Original](.markitai-mail-unresolved-0-0)")
         );
         assert!(doc.markdown.contains("![Missing](cid:missing)"));
+    }
+
+    /// `depth` raw message/rfc822 levels around a text part.
+    fn nested_messages(depth: usize) -> String {
+        let mut body = String::from("Content-Type: text/plain\r\n\r\nInnermost\r\n");
+        for _ in 0..depth {
+            body = format!("Content-Type: message/rfc822\r\n\r\nSubject: Level\r\n{body}");
+        }
+        body
+    }
+
+    #[test]
+    fn deep_message_nesting_is_refused_before_it_can_exhaust_the_stack() {
+        // Raw nesting is parsed without recursion but was dropped by it; a
+        // nested message mail-parser decodes is made owned by recursion
+        // inside the parser. Both are refused on a small stack.
+        let raw = message(nested_messages(5_000));
+        let encoded = message(format!(
+            "Content-Type: message/rfc822\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",
+            base64::engine::general_purpose::STANDARD.encode(nested_messages(5_000))
+        ));
+        let quoted = message(format!(
+            "Content-Type: message/rfc822\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n{}",
+            nested_messages(5_000)
+        ));
+        for (name, bytes) in [
+            ("raw", raw),
+            ("base64", encoded),
+            ("quoted-printable", quoted),
+        ] {
+            let outcome = std::thread::Builder::new()
+                .stack_size(512 * 1024)
+                .spawn(move || extract(&bytes).map(|_| ()).map_err(|e| e.to_string()))
+                .unwrap()
+                .join()
+                .unwrap();
+            let error = outcome.unwrap_err();
+            assert!(
+                error.contains("nested message depth exceeds 64"),
+                "{name}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_encoded_forwarded_message_within_the_limit_still_converts() {
+        let inner = "Subject: Forwarded note\r\nContent-Type: text/plain\r\n\r\nForwarded text\r\n";
+        let bytes = message(multipart(
+            "mixed",
+            "outer",
+            &[
+                part("Content-Type: text/plain", b"Outer text"),
+                part(
+                    "Content-Type: message/rfc822\r\nContent-Disposition: attachment; filename=note.eml",
+                    inner.as_bytes(),
+                ),
+            ],
+        ));
+        let doc = extract(&bytes).unwrap();
+        assert!(doc.markdown.contains("Outer text"), "{}", doc.markdown);
+        assert!(doc.markdown.contains("Forwarded note"), "{}", doc.markdown);
+        let deep = message(format!(
+            "Content-Type: message/rfc822\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",
+            base64::engine::general_purpose::STANDARD.encode(nested_messages(MAX_DEPTH - 1))
+        ));
+        assert!(extract(&deep).is_ok());
     }
 
     #[test]
