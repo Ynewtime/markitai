@@ -195,6 +195,7 @@
 - **LibreOffice 不再加载文档仅以链接方式引用的内容。** 幻灯片渲染和 EMF/WMF 回退以空白配置启动 LibreOffice，文档中的链接图片会被加载进导出结果：以转换机器上的 `file:` 路径链接的图片会被画进幻灯片图像（这些图像也会发给视觉模型，在 `markitai serve` 中还会返回给上传文档的人），http(s) 链接也会被抓取。现在私有配置会阻止链接内容和宏。
 - **文件夹自带的 `.env` 和 `markitai.json` 不再能让转换反过来对付你。** 在下载的文件夹中运行 markitai 时，它的 `.env` 会被加载进环境变量，`markitai.json` 会作为配置：`.env` 可以指定 markitai 作为 Claude Code 或 Copilot 启动的程序、AWS 或 Google 凭据文件、代理、`*_API_BASE` 地址或 `NODE_OPTIONS`/`PYTHONPATH`，配置则可以让模型指向它自带的地址，LiteLLM 会把你环境中该服务商的密钥发过去。现在 `./.env` 仍可设置密钥和选项，但不再能设置程序、路径、地址、代理、主目录、凭据文件、加载器或解释器钩子以及证书包（被忽略的名称会提示一次）。在当前文件夹找到的 `./markitai.json` 不会把环境中的密钥发往它自带的地址：这类模型只使用条目里写明的密钥（否则使用占位密钥 `markitai-no-key`，`env:` 引用同样如此，并会提示），自带地址的 Vertex AI、watsonx 或 GigaChat 模型会被略过。`markitai doctor` 和 `--verbose` 会注明配置文件是在当前文件夹找到的。用 `--config` 指定该文件，或把这些设置放在 `~/.markitai/`，即可照旧使用。
 - **Cloudflare 处理只供管理员使用。** 通过 `fetch.cloudflare` 的远程处理计入服务器的 Cloudflare 账户，但任何受信任的调用方都能请求它，包括用户令牌，而用户令牌在其他方面都无法使用管理员的凭据。现在 `GET /api/capabilities` 对管理员以外的调用方都报告 Cloudflare 为 `client_not_trusted`，请求它的任务或重试会得到 403 `remote_processing_forbidden`。
+- `serve`：用户令牌自己的模型只能到达公网地址。原先针对服务器本机地址的检查只看写出的主机名，所以解析到回环、服务器所在网络或云元数据的域名，在该用户的转换、模型发现和测试中都能通过。现在这些连接在建立时解析，地址不在公网上即拒绝；不跟随重定向，会经环境代理发出的请求也被拒绝。管理员共享的模型不变。
 
 ## [1.2.0] - 2026-09-28
 

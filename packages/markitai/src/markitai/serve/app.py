@@ -1201,6 +1201,8 @@ class _Conversion:
     routable: bool
     user: bool = False
     hidden_hosts: tuple[str, ...] = ()
+    #: The user's own model hosts: reached at public IPs only
+    own_hosts: tuple[str, ...] = ()
 
 
 def _require_model(conversion: _Conversion, opts: JobOptions) -> None:
@@ -3542,6 +3544,7 @@ def create_app(
             any(_is_deployment_routable(model) for model in pool.models),
             user=True,
             hidden_hosts=pool.hidden_hosts,
+            own_hosts=pool.own_hosts,
         )
 
     async def conversion_of(state: ServeState, owner: str | None) -> _Conversion:
@@ -3956,15 +3959,32 @@ def create_app(
                         "reason": "no_key",
                     }
                 raw_key = NO_KEY
-            return user_models.answer(
-                await discover_models(
-                    body.provider,
-                    api_key=raw_key,
-                    api_base=raw_base,
-                    refresh=body.refresh,
-                    key_variable=None,
-                )
-            )
+            from markitai.public_connect import host_of, restricted_hosts
+
+            # A user's discovery reaches public addresses only, checked when
+            # it connects; never answered from another caller's cached list
+            try:
+                with restricted_hosts([host_of(raw_base)]):
+                    found = await discover_models(
+                        body.provider,
+                        api_key=raw_key,
+                        api_base=raw_base,
+                        refresh=True,
+                        key_variable=None,
+                    )
+            except PermissionError as error:
+                return {
+                    "provider": provider,
+                    "status": "unavailable",
+                    "source": "live_api",
+                    "authoritative": False,
+                    "cached": False,
+                    "stale": False,
+                    "models": [],
+                    "detail": f"Model discovery request refused: {error}",
+                    "reason": "network",
+                }
+            return user_models.answer(found)
         api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
         api_base = resolve_env_value(raw_base, strict=False) if raw_base else None
         key_variable = (
@@ -5383,12 +5403,25 @@ def create_app(
                 # key, and the provider's 401 reads like a wrong key
                 failure = model_test.missing_key_failure(lacking).answer()
                 return user_models.answer(failure) if user else failure
+        from markitai.public_connect import REFUSED, host_of, refused, restricted_hosts
+
         try:
-            detail = await asyncio.wait_for(
-                _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S
-            )
-        except Exception as e:  # must never 500: ok flags the result
-            failure = _probe_failure(e, body)
+            # A user's test reaches public addresses only, checked when it
+            # connects (markitai.public_connect)
+            with restricted_hosts([host_of(body.api_base)] if user else []):
+                detail = await asyncio.wait_for(
+                    _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S
+                )
+        except Exception as e:
+            if not (isinstance(e, PermissionError) or (user and refused(e))):
+                failure = _probe_failure(e, body)
+                return user_models.answer(failure) if user else failure
+            reason = str(e) if isinstance(e, PermissionError) else REFUSED
+            failure = {
+                "ok": False,
+                "detail": f"Model connection request refused: {reason}",
+                "reason": "network",
+            }
             return user_models.answer(failure) if user else failure
         return {"ok": True, "detail": detail}
 
@@ -5465,6 +5498,7 @@ def create_app(
             options=_saved_options(opts), cfg=cfg, owner=owner
         )
         job.hidden_hosts = conversion.hidden_hosts
+        job.restricted_hosts = conversion.own_hosts
         # A user token's job fetches public addresses only: on the server's
         # own network (its loopback API included, where a tokenless request
         # is the admin) the user would act with the server's authority.
@@ -5709,6 +5743,9 @@ def create_app(
             )
             job.hidden_hosts = tuple(
                 dict.fromkeys((*job.hidden_hosts, *conversion.hidden_hosts))
+            )
+            job.restricted_hosts = tuple(
+                dict.fromkeys((*job.restricted_hosts, *conversion.own_hosts))
             )
             cfg.output.dir = str(job.out_dir)
             # The rerun reuses the job's out_dir, so it would otherwise hit

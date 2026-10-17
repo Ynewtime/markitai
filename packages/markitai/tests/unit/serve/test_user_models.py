@@ -1128,3 +1128,81 @@ async def test_cloudflare_processing_billed_to_the_server_is_the_admins_alone(
     assert user_caps["remote_services"]["cloudflare"]["available"] is False
     assert user_caps["remote_services"]["cloudflare"]["reason"] == "client_not_trusted"
     assert _why(refused) == (403, "remote_processing_forbidden")
+
+
+# ------------------------------------------- the server's machine and network
+
+
+def test_the_pool_restricts_only_the_users_own_model_hosts() -> None:
+    own = Lists(
+        models=[
+            {
+                "model_name": "default",
+                "litellm_params": {
+                    "model": "openai/a",
+                    "api_base": "http://model.test:8000/v1",
+                    "api_key": USER_A_KEY,
+                },
+            }
+        ]
+    )
+    pool = user_models.build_pool(_base(), own, [], [])
+    assert pool.own_hosts == ("model.test",)
+
+
+async def test_a_users_model_test_never_reaches_this_machine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket
+    import threading
+
+    seen: list[bytes] = []
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    listener.settimeout(0.2)
+    port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def accept() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                continue
+            with conn:
+                seen.append(conn.recv(4096))
+
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+    real = socket.getaddrinfo
+
+    def resolve(host: Any, *args: Any, **kwargs: Any) -> Any:
+        # A name that (re)binds to this machine
+        if host == "model.test":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    try:
+        async with _server(_app(tmp_path)) as client:
+            _, user = await _user(client, "guest")
+            tested = await client.post(
+                "/api/me/models/test",
+                json={
+                    "model": "openai/gpt-x",
+                    "api_base": f"http://model.test:{port}/v1",
+                    "api_key": USER_A_KEY,
+                },
+                headers=user,
+            )
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        listener.close()
+    answer = tested.json()
+    assert seen == []
+    assert answer["ok"] is False, answer
+    assert "not on the public internet" in answer["detail"], answer

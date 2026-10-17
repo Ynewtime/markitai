@@ -808,6 +808,9 @@ class Pool:
     #: Hosts of the shared models' addresses: a failure a user sees never
     #: names where the admin serves a model
     hidden_hosts: tuple[str, ...] = ()
+    #: Hosts of the user's own models' addresses: connections to them reach
+    #: public IPs only (:mod:`markitai.public_connect`)
+    own_hosts: tuple[str, ...] = ()
 
 
 def _host_forms(base: str | None) -> list[str]:
@@ -867,6 +870,7 @@ def build_pool(
             continue
         model.model_name = "default"
         models.append(model)
+    own_count = len(models)
     for index, saved in shared_models(admin_models):
         weight = own.shared_weights.get(
             shared_id(saved, index), saved.litellm_params.weight
@@ -903,10 +907,18 @@ def build_pool(
         return Pool(config=cfg, models=[])
     cfg.llm.model_list = models
     cfg.llm.providers = providers
+    from markitai.public_connect import host_of
+
+    own_hosts = {
+        host
+        for model in models[:own_count]
+        if (host := host_of(model.litellm_params.api_base)) is not None
+    }
     return Pool(
         config=cfg,
         models=list(models),
         hidden_hosts=tuple(sorted(set(hidden), key=len, reverse=True)),
+        own_hosts=tuple(sorted(own_hosts)),
     )
 
 
