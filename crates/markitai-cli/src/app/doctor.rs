@@ -25,6 +25,10 @@ struct Check {
     models: Option<Vec<String>>,
     #[serde(skip)]
     required: bool,
+    /// Not ready yet, but it sets itself up the first time it is used (the OCR
+    /// models download then), so the verdict does not call it unavailable.
+    #[serde(skip)]
+    first_use: bool,
     /// The remedy as the terminal shows it, with each command on its own line;
     /// empty when `install_hint` reads well as it is.
     #[serde(skip)]
@@ -66,6 +70,7 @@ impl Check {
             path: None,
             models: None,
             required: false,
+            first_use: false,
             fix: Vec::new(),
         }
     }
@@ -360,9 +365,17 @@ fn verdict(
         Lang::En => ", ",
         Lang::Zh => "、",
     };
+    let pending = |check: &&&Check| check.status != "ok" && !check.failed();
     let missing: Vec<&str> = shown
         .iter()
-        .filter(|check| check.status != "ok" && !check.failed())
+        .filter(pending)
+        .filter(|check| !check.first_use)
+        .map(|check| check.name)
+        .collect();
+    let on_first_use: Vec<&str> = shown
+        .iter()
+        .filter(pending)
+        .filter(|check| check.first_use)
         .map(|check| check.name)
         .collect();
     if !failed.is_empty() {
@@ -377,14 +390,24 @@ fn verdict(
             Mark::Error,
             text!(lang => "Repair failed: {names}", "修复失败：{names}"),
         )
-    } else if !missing.is_empty() {
+    } else if !missing.is_empty() || !on_first_use.is_empty() {
         // Ready is a success, as in Python markitai: what is missing is
-        // optional and already listed with its remedy above.
-        let names = missing.join(separator);
-        (
-            Mark::Success,
-            text!(lang => "Ready. Not available (optional): {names}", "已就绪。以下可选功能不可用：{names}"),
-        )
+        // optional and already listed with its remedy above. What only needs
+        // a download on first use is not missing.
+        let mut segments = Vec::new();
+        if !missing.is_empty() {
+            let names = missing.join(separator);
+            segments.push(text!(lang => "Not available (optional): {names}", "以下可选功能不可用：{names}"));
+        }
+        if !on_first_use.is_empty() {
+            let names = on_first_use.join(separator);
+            segments.push(text!(lang => "Set up on first use: {names} (`markitai doctor --fix` does it now)", "首次使用时自动准备：{names}（`markitai doctor --fix` 可立即完成）"));
+        }
+        let (lead, joint) = match lang {
+            Lang::En => ("Ready. ", ". "),
+            Lang::Zh => ("已就绪。", "；"),
+        };
+        (Mark::Success, format!("{lead}{}", segments.join(joint)))
     } else {
         (
             Mark::Success,
@@ -428,6 +451,7 @@ fn portable_ocr_check(
     models: markitai_core::Result<Vec<markitai_core::LocalOcrModel>>,
 ) -> Check {
     let mut fix = Vec::new();
+    let mut first_use = false;
     let (status, message, hint, path) = match models {
         Err(error) => (
             "warning",
@@ -476,6 +500,7 @@ fn portable_ocr_check(
                 ("warning", format!("Portable PaddleOCR engine ({engine}): {} damaged model file(s); {detail}; ordinary OCR will not overwrite them", corrupt.len()),
                     "Run markitai doctor --fix to replace only damaged managed model files, after verifying each new size and SHA-256".to_owned(), folder)
             } else if !missing.is_empty() {
+                first_use = true;
                 let bytes: u64 = missing.iter().map(|model| model.bytes).sum();
                 fix = vec![
                     Fix::text(
@@ -506,6 +531,7 @@ fn portable_ocr_check(
         hint,
     );
     check.optional = Some(true);
+    check.first_use = first_use;
     check.path = path;
     check.fix = fix;
     check
@@ -1135,6 +1161,9 @@ mod tests {
             missing.message
         );
         assert!(missing.install_hint.contains("markitai doctor --fix"));
+        // Models that only download on first use are not an unavailable
+        // capability; damaged files and a wrong language are.
+        assert!(missing.first_use && !ready.first_use);
         let wrong = portable_ocr_check(
             "tract",
             Err(markitai_core::Error::Unsupported(
@@ -1225,6 +1254,39 @@ mod tests {
         assert_eq!(
             verdict_of(&optional, &[], Lang::Zh),
             (Mark::Success, "已就绪。以下可选功能不可用：B、C".into())
+        );
+        // A check that sets itself up on first use is named apart from the
+        // unavailable ones, and alone it makes no "not available" claim.
+        let verdict_with_first_use = |lang| {
+            let mut checks = checks_of(&[("A", "ok", false), ("L", "missing", false)]);
+            let mut ocr = Check::new("Local OCR", "description", "warning", "message", "");
+            ocr.first_use = true;
+            checks.insert("Local OCR", ocr);
+            let shown: Vec<&Check> = checks.values().collect();
+            verdict(&shown, &[], &[], lang)
+        };
+        assert_eq!(
+            verdict_with_first_use(Lang::En),
+            (
+                Mark::Success,
+                "Ready. Not available (optional): L. Set up on first use: Local OCR (`markitai doctor --fix` does it now)".into()
+            )
+        );
+        assert_eq!(
+            verdict_with_first_use(Lang::Zh),
+            (
+                Mark::Success,
+                "已就绪。以下可选功能不可用：L；首次使用时自动准备：Local OCR（`markitai doctor --fix` 可立即完成）".into()
+            )
+        );
+        let mut only = checks_of(&[("A", "ok", false)]);
+        let mut ocr = Check::new("Local OCR", "description", "warning", "message", "");
+        ocr.first_use = true;
+        only.insert("Local OCR", ocr);
+        let shown: Vec<&Check> = only.values().collect();
+        assert_eq!(
+            verdict(&shown, &[], &[], Lang::En).1,
+            "Ready. Set up on first use: Local OCR (`markitai doctor --fix` does it now)"
         );
         let blocked = [("A", "missing", true), ("B", "error", true)];
         assert_eq!(
