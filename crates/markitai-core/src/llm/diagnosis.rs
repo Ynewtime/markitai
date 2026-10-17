@@ -41,31 +41,46 @@ pub(super) fn deployment(entry: &Deployment) -> String {
 /// The failure of a request that received no HTTP response, named by kind:
 /// a timeout, a refused connection, an unresolved host name, a failed TLS
 /// handshake or a connection closed before the response.
-pub(super) fn transport(error: reqwest::Error, timeout: u64) -> String {
+pub(super) fn transport(error: reqwest::Error, timeout: u64, proxy: Option<&str>) -> String {
     let error = error.without_url();
     if error.is_timeout() {
         return if error.is_connect() {
+            let via = proxy.map_or_else(String::new, |proxy| format!(" (to the proxy {proxy})"));
             format!(
-                "LLM request timed out: no connection within {} s",
+                "LLM request timed out: no connection within {} s{via}",
                 timeout.min(15)
             )
         } else {
             format!("LLM request timed out: no response within {timeout} s")
         };
     }
-    match cause(error) {
+    match cause(error, proxy) {
         Some(cause) => format!("LLM request failed: {cause}"),
         None => "LLM request failed".into(),
     }
 }
 
 /// Why a request that was not timed out received no HTTP response, such as
-/// `connection refused` or `TLS handshake failed (…)`.
-pub(super) fn cause(error: reqwest::Error) -> Option<String> {
+/// `connection refused` or `TLS handshake failed (…)`. `proxy` names the proxy
+/// (host, port and where it was set, never credentials) the request went
+/// through: a failure to reach it is then the proxy's, not the provider's.
+pub(super) fn cause(error: reqwest::Error, proxy: Option<&str>) -> Option<String> {
     let error = error.without_url();
     let chain = Chain::of(&error);
     if chain.refused() {
-        return Some("connection refused".into());
+        return Some(match proxy {
+            Some(proxy) => {
+                format!("connection refused by the proxy {proxy}; check that it is running")
+            }
+            None => "connection refused".into(),
+        });
+    }
+    if let Some(proxy) = proxy
+        && chain.unresolved()
+    {
+        return Some(format!(
+            "the proxy {proxy} could not be reached (its host name was not resolved)"
+        ));
     }
     let kind = if chain.unresolved() {
         Some("host name not resolved")
@@ -89,12 +104,30 @@ pub(super) fn cause(error: reqwest::Error) -> Option<String> {
         "broken pipe",
     ]);
     match (kind, chain.innermost()) {
-        (Some(kind), Some(detail)) if cut && chain.tls() => Some(format!(
-            "{kind} ({detail}; the connection was cut, which usually means a proxy or network problem: if a proxy is needed to reach this provider, set HTTPS_PROXY or turn on the system proxy)"
-        )),
-        (Some(kind), Some(detail)) if chain.says(&["tunnel error"]) => Some(format!(
-            "{kind} ({detail}; the proxy did not open a connection to the provider: check that it is running and allows this host)"
-        )),
+        (Some(kind), Some(detail)) if cut && chain.tls() => Some(match proxy {
+            Some(proxy) => format!(
+                "{kind} ({detail}; the connection was cut, through the proxy {proxy}: check that it allows this provider)"
+            ),
+            None => format!(
+                "{kind} ({detail}; connection cut: likely a proxy or network problem; set HTTPS_PROXY or turn on the system proxy, which a running service picks up within 30 s)"
+            ),
+        }),
+        (Some(kind), Some(detail)) if chain.says(&["407", "proxy authentication required"]) => {
+            let who = proxy.map_or_else(
+                || "the proxy".to_owned(),
+                |proxy| format!("the proxy {proxy}"),
+            );
+            Some(format!("{kind} ({detail}; {who} wants credentials)"))
+        }
+        (Some(kind), Some(detail)) if chain.says(&["tunnel error"]) => {
+            let who = proxy.map_or_else(
+                || "the proxy".to_owned(),
+                |proxy| format!("the proxy {proxy}"),
+            );
+            Some(format!(
+                "{kind} ({detail}; {who} did not open a connection to the provider: check that it allows this host)"
+            ))
+        }
         (Some(kind), Some(detail)) => Some(format!("{kind} ({detail})")),
         (Some(kind), None) => Some(kind.into()),
         (None, detail) => detail,

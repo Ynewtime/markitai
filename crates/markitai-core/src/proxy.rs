@@ -3,16 +3,19 @@
 //! As in the reference, the first nonempty of `HTTPS_PROXY`, `HTTP_PROXY`,
 //! `ALL_PROXY` and their lowercase forms is the single proxy for every scheme.
 //! An environment proxy prevents all operating-system reads. Otherwise manual
-//! macOS, Windows or supported Linux desktop settings are read once per process,
-//! when a static request is not already direct or a browser launches;
+//! macOS, Windows or supported Linux desktop settings are read when a static
+//! request is not already direct or a browser launches, and again at most every
+//! 30 seconds, so a system proxy turned on or off is followed by a running
+//! `markitai serve` (Python's aiohttp reads the settings on every request);
 //! PAC/WPAD, credentials and network probes are never used. `NO_PROXY` (or
 //! `no_proxy` when the former is unset or empty) always applies; the system
 //! exception list is merged only when the system proxy is selected. Loopback
 //! hosts are always direct. Model-provider clients (LLM requests, connection
 //! checks, model discovery) and the browser download use the same decision, as
-//! Python's httpx did through the environment and the system settings, except
-//! that a SOCKS environment proxy means a direct connection there (the client
-//! has no SOCKS support). Provider Batch clients are not affected.
+//! Python's aiohttp (LiteLLM) does through the environment variables and the
+//! system settings, except that a SOCKS environment proxy is an explicit error
+//! there (the client has no SOCKS support, and a silent direct connection would
+//! leak the user's address). Provider Batch clients are not affected.
 mod bypass;
 mod system;
 #[cfg(test)]
@@ -22,7 +25,8 @@ use crate::{Error, Result};
 pub(crate) use bypass::Bypass;
 use reqwest::blocking::ClientBuilder;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use url::Url;
 
 const ENV_ORDER: [&str; 6] = [
@@ -38,6 +42,8 @@ const MAX_SETTING: usize = 64 * 1024;
 #[derive(Clone, Debug)]
 struct Settings {
     environment: Option<Url>,
+    /// The variable `environment` came from.
+    source: Option<&'static str>,
     bypass: Bypass,
 }
 
@@ -96,13 +102,15 @@ impl Settings {
             env.get(*key)
                 .map(String::as_str)
                 .filter(|value| !value.trim().is_empty())
+                .map(|value| (*key, value))
         });
         let exceptions = env
             .get("NO_PROXY")
             .filter(|value| !value.is_empty())
             .or_else(|| env.get("no_proxy"));
         Ok(Self {
-            environment: raw.map(|raw| endpoint(raw, false)).transpose()?,
+            environment: raw.map(|(_, raw)| endpoint(raw, false)).transpose()?,
+            source: raw.map(|(key, _)| key),
             bypass: Bypass::parse(exceptions.map(String::as_str).unwrap_or(""))?,
         })
     }
@@ -119,18 +127,36 @@ impl Settings {
         system().and_then(|(endpoint, bypass)| (!bypass.matches(url)).then_some(endpoint))
     }
 
-    /// [`Settings::for_url`] for a client that cannot speak SOCKS: a SOCKS
-    /// environment proxy is left unused (and, being an environment proxy,
-    /// still prevents any operating-system read).
-    fn for_api_url(&self, url: &Url, system: impl FnOnce() -> System) -> Option<Url> {
+    /// A client that cannot speak SOCKS (model requests, the runtime download)
+    /// refuses a SOCKS environment proxy instead of going direct behind the
+    /// user's back.
+    fn api_client(&self) -> Result<()> {
         if self
             .environment
             .as_ref()
-            .is_some_and(|proxy| proxy.scheme().starts_with("socks"))
+            .is_some_and(|url| url.scheme().starts_with("socks"))
         {
-            return None;
+            return Err(Error::Unsupported(format!(
+                "SOCKS proxies are not used for model requests or downloads: {} is a SOCKS proxy, so set HTTPS_PROXY to an HTTP(S) proxy, or unset it to connect directly",
+                self.source.unwrap_or("the proxy setting")
+            )));
         }
-        self.for_url(url, system)
+        Ok(())
+    }
+
+    /// [`describe`] for these settings.
+    fn describe(&self, url: &Url, system: impl FnOnce() -> System) -> Option<String> {
+        let proxy = self.for_url(url, system)?;
+        let place = match proxy.port() {
+            Some(port) => format!("{}:{port}", proxy.host_str()?),
+            None => proxy.host_str()?.to_owned(),
+        };
+        Some(format!(
+            "{place} ({})",
+            self.source
+                .filter(|_| self.environment.is_some())
+                .unwrap_or("the system proxy")
+        ))
     }
 
     fn static_client(&self) -> Result<()> {
@@ -177,16 +203,45 @@ impl Settings {
     }
 }
 
-/// The process-wide manual system proxy, read on first need. Malformed or
-/// unavailable settings mean none, as in the reference.
+/// How long a read of the operating-system proxy settings is reused.
+const SYSTEM_TTL: Duration = Duration::from_secs(30);
+
+/// A system-proxy reading and when it was made.
+struct Reading {
+    at: Instant,
+    value: System,
+}
+
+/// `cell`'s reading when it is younger than `ttl`, else `read()`, kept.
+fn refreshed(
+    cell: &Mutex<Option<Reading>>,
+    ttl: Duration,
+    now: Instant,
+    read: impl FnOnce() -> System,
+) -> System {
+    let mut cell = cell.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(reading) = cell.as_ref()
+        && now.saturating_duration_since(reading.at) < ttl
+    {
+        return reading.value.clone();
+    }
+    let value = read();
+    *cell = Some(Reading {
+        at: now,
+        value: value.clone(),
+    });
+    value
+}
+
+/// The manual system proxy, read when first needed and again after
+/// [`SYSTEM_TTL`]. Malformed or unavailable settings mean none, as in the
+/// reference.
 fn system(env: &HashMap<String, String>) -> System {
-    static SYSTEM: OnceLock<System> = OnceLock::new();
-    SYSTEM
-        .get_or_init(|| {
-            let found = system::discover(env)?;
-            Some((found.endpoint, Bypass::parse(&found.bypass).ok()?))
-        })
-        .clone()
+    static SYSTEM: Mutex<Option<Reading>> = Mutex::new(None);
+    refreshed(&SYSTEM, SYSTEM_TTL, Instant::now(), || {
+        let found = system::discover(env)?;
+        Some((found.endpoint, Bypass::parse(&found.bypass).ok()?))
+    })
 }
 
 /// Apply the shared decision to a static-fetch client. Redirects are routed
@@ -207,9 +262,19 @@ pub(crate) fn http(builder: ClientBuilder) -> Result<ClientBuilder> {
 pub(crate) fn http_api(builder: ClientBuilder) -> Result<ClientBuilder> {
     let env = crate::config::environment();
     let settings = Settings::resolve(&env)?;
+    settings.api_client()?;
     Ok(builder.no_proxy().proxy(reqwest::Proxy::custom(move |url| {
-        settings.for_api_url(url, || system(&env))
+        settings.for_url(url, || system(&env))
     })))
+}
+
+/// The proxy a request to `url` goes through, for an error message: its host
+/// and port and where it was set (never credentials), or `None` when the
+/// request goes direct.
+pub(crate) fn describe(url: &str) -> Option<String> {
+    let env = crate::config::environment();
+    let settings = Settings::resolve(&env).ok()?;
+    settings.describe(&Url::parse(url).ok()?, || system(&env))
 }
 
 /// Chromium `--proxy-server` and `--proxy-bypass-list` values.

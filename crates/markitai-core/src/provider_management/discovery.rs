@@ -143,6 +143,7 @@ pub(super) fn load(
             "Cannot create model discovery client",
         )
     })?;
+    let proxy = crate::proxy::describe(url.as_str());
     let mut request = client.get(url).header("accept", "application/json");
     if let Some(key) = key {
         request = match provider {
@@ -161,7 +162,7 @@ pub(super) fn load(
         if error.is_timeout() {
             return fail(Reason::Timeout, "Model discovery timed out");
         }
-        match crate::llm::transport_cause(error) {
+        match crate::llm::transport_cause(error, proxy.as_deref()) {
             Some(cause) => fail(
                 Reason::Network,
                 &format!("Model discovery request failed: {cause}"),

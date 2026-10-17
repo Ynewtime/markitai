@@ -1791,7 +1791,11 @@ fn request_with_mode(
         let retryable = error.is_connect();
         Failure {
             kind: FailureKind::Transport,
-            error: Error::Conversion(diagnosis::transport(error, timeout)),
+            error: Error::Conversion(diagnosis::transport(
+                error,
+                timeout,
+                crate::proxy::describe(&entry.endpoint).as_deref(),
+            )),
             retryable,
             fatal: false,
             document_fatal: false,

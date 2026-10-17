@@ -76,8 +76,9 @@ fn a_handshake_cut_off_by_the_other_end_points_at_a_proxy_or_the_network() {
     server.join().unwrap();
     assert!(
         error.starts_with("LLM request failed: TLS handshake failed (")
-            && error.contains("usually means a proxy or network problem")
+            && error.contains("likely a proxy or network problem")
             && error.contains("set HTTPS_PROXY or turn on the system proxy")
+            && error.contains("within 30 s")
             && !error.contains("docs.rs")
             && error.ends_with(&format!(") (deployment openai/gpt-test at {address})")),
         "{error}"
@@ -103,7 +104,7 @@ fn the_proxy_not_opening_a_tunnel_is_named() {
         .unwrap();
     let error = client.get("https://example.invalid/").send().unwrap_err();
     server.join().unwrap();
-    let said = diagnosis::cause(error).unwrap();
+    let said = diagnosis::cause(error, None).unwrap();
     assert!(
         said.contains("the proxy did not open a connection to the provider"),
         "{said}"
@@ -226,4 +227,32 @@ fn a_retried_failure_is_warned_with_its_cause() {
             "LLM request to openai/gpt-test failed (LLM request failed: connection refused) and was sent again"
         ]
     );
+}
+
+#[test]
+fn a_refusing_proxy_is_named_without_its_credentials_and_the_provider_is_not_blamed() {
+    // Nothing listens on port 9 of loopback.
+    let proxy = reqwest::Proxy::all("http://alice:secret@127.0.0.1:9").unwrap();
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .proxy(proxy)
+        .build()
+        .unwrap();
+    let error = client
+        .get("https://api.example.test/v1")
+        .send()
+        .unwrap_err();
+    let said = diagnosis::cause(error, Some("127.0.0.1:9 (HTTPS_PROXY)")).unwrap();
+    assert_eq!(
+        said,
+        "connection refused by the proxy 127.0.0.1:9 (HTTPS_PROXY); check that it is running"
+    );
+    assert!(!said.contains("alice") && !said.contains("secret"));
+    // Without a proxy the wording is unchanged.
+    let direct = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap();
+    let error = direct.get("http://127.0.0.1:9/").send().unwrap_err();
+    assert_eq!(diagnosis::cause(error, None).unwrap(), "connection refused");
 }

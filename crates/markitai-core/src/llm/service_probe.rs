@@ -321,7 +321,7 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
         if error.is_timeout() {
             return failure(Reason::Timeout, "Model connection test timed out");
         }
-        match diagnosis::cause(error) {
+        match diagnosis::cause(error, crate::proxy::describe(&entry.endpoint).as_deref()) {
             Some(cause) => failure(
                 Reason::Network,
                 &format!("Model connection request failed: {cause}"),
@@ -415,8 +415,8 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
 }
 /// Why a request that was not timed out received no HTTP response, as a
 /// connection test names it (model discovery says the same).
-pub(crate) fn transport_cause(error: reqwest::Error) -> Option<String> {
-    diagnosis::cause(error)
+pub(crate) fn transport_cause(error: reqwest::Error, proxy: Option<&str>) -> Option<String> {
+    diagnosis::cause(error, proxy)
 }
 
 fn failure(reason: Reason, message: &str) -> Failure {

@@ -775,13 +775,14 @@ To read a site that wants your own signed-in session, see
 
 Static fetch, remote extraction requests, the native browser, LLM requests,
 model connection checks and discovery, and the browser download share one
-decision, following the reference (and Python's httpx, which read the same
-environment variables and the macOS system proxy). The first nonempty of `HTTPS_PROXY`,
+decision, following the reference (and Python's aiohttp, which LiteLLM uses and
+which reads the proxy variables and the system settings on every request). The first nonempty of `HTTPS_PROXY`,
 `HTTP_PROXY`, `ALL_PROXY`, `https_proxy`, `http_proxy` and `all_proxy` is used
 for every scheme; a value without a scheme means HTTP. An environment proxy
 prevents any operating-system read. Otherwise the manual system proxy is read
-once per process, only when a request is not already direct or when a browser
-launches: macOS `scutil --proxy` by key (the reference's line-order parser misses
+only when a request is not already direct or when a browser launches, and again
+at most every 30 seconds, so a running `markitai serve` follows a system proxy
+turned on or off: macOS `scutil --proxy` by key (the reference's line-order parser misses
 the usual sorted output), the Windows user Internet Settings registry values,
 and on Linux KDE (`kreadconfig6`/`kreadconfig5`, preferred for mixed markers) or
 GNOME/Unity through individual `gsettings get` keys that exclude stored
@@ -798,8 +799,11 @@ port-qualified host, another wildcard or malformed CIDR, is ignored on its own,
 as the reference ignores it. Loopback hosts are always direct. Proxy settings
 above 64 KiB are rejected. Static fetch accepts credentials in an environment
 proxy URL; a SOCKS proxy there is an explicit unsupported error, because only
-the browser can use it; LLM requests leave a SOCKS environment proxy unused and
-connect directly. Provider Batch clients keep their provider environment
+the browser can use it; LLM requests, model checks, discovery and the browser
+download refuse a SOCKS environment proxy by name (set `HTTPS_PROXY` to an HTTP(S)
+proxy or unset it) rather than connect directly behind the user's back. A
+connection failure to a proxy names it (host, port and the variable or system
+setting, never credentials) instead of blaming the provider. Provider Batch clients keep their provider environment
 handling. The Windows registry reader is compiled in native Windows
 builds. That and parser tests do not establish every actual registry/proxy
 configuration; verify proxy behavior in the deployment environment.

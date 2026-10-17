@@ -539,14 +539,14 @@ fn model_provider_clients_use_an_http_environment_proxy_else_the_system_one() {
     let api = |pairs: &[(&str, &str)], system: System| {
         Settings::resolve(&env(pairs))
             .unwrap()
-            .for_api_url(&target, || system)
+            .for_url(&target, || system)
             .map(|url| url.to_string())
     };
     // An environment proxy is used, and no system setting is read for it.
     let settings = Settings::resolve(&env(&[("HTTPS_PROXY", "http://127.0.0.1:7890")])).unwrap();
     assert_eq!(
         settings
-            .for_api_url(&target, no_discovery)
+            .for_url(&target, no_discovery)
             .map(|url| url.to_string()),
         Some("http://127.0.0.1:7890/".into())
     );
@@ -577,19 +577,66 @@ fn model_provider_clients_use_an_http_environment_proxy_else_the_system_one() {
     );
     let local = Settings::resolve(&env(&[("HTTPS_PROXY", "http://127.0.0.1:7890")])).unwrap();
     assert_eq!(
-        local.for_api_url(&url("http://127.0.0.1:11434/v1"), no_discovery),
+        local.for_url(&url("http://127.0.0.1:11434/v1"), no_discovery),
         None
     );
 }
 
 #[test]
-fn a_socks_environment_proxy_leaves_model_provider_requests_direct() {
-    let target = url("https://api.openai.com/v1/chat/completions");
+fn a_socks_environment_proxy_is_refused_for_model_requests_by_name() {
     for socks in ["socks5://127.0.0.1:7891", "socks5h://127.0.0.1:7891"] {
         let settings = Settings::resolve(&env(&[("ALL_PROXY", socks)])).unwrap();
-        // The client has no SOCKS support: direct, and no system read.
-        assert_eq!(settings.for_api_url(&target, no_discovery), None);
+        let message = settings.api_client().unwrap_err().to_string();
+        assert!(
+            message.contains("ALL_PROXY") && message.contains("HTTPS_PROXY"),
+            "{message}"
+        );
         // The static-fetch rule is unchanged.
         assert!(settings.static_client().is_err());
     }
+    let http = Settings::resolve(&env(&[("HTTPS_PROXY", "http://127.0.0.1:7890")])).unwrap();
+    assert!(http.api_client().is_ok());
+}
+
+#[test]
+fn the_proxy_in_an_error_is_named_without_credentials() {
+    let target = url("https://api.openai.com/v1/chat/completions");
+    let settings =
+        Settings::resolve(&env(&[("HTTPS_PROXY", "http://alice:secret@127.0.0.1:9")])).unwrap();
+    let said = settings.describe(&target, no_discovery).unwrap();
+    assert_eq!(said, "127.0.0.1:9 (HTTPS_PROXY)");
+    assert!(!said.contains("alice") && !said.contains("secret"));
+    let system = Settings::resolve(&env(&[])).unwrap();
+    assert_eq!(
+        system
+            .describe(&target, || found("http://proxy.local:7890", ""))
+            .as_deref(),
+        Some("proxy.local:7890 (the system proxy)")
+    );
+    assert_eq!(system.describe(&target, || None), None);
+    assert_eq!(
+        settings.describe(&url("http://127.0.0.1:11434/v1"), no_discovery),
+        None
+    );
+}
+
+#[test]
+fn the_system_proxy_is_read_again_after_its_time_to_live() {
+    let cell = Mutex::new(None);
+    let ttl = Duration::from_secs(30);
+    let start = Instant::now();
+    let on = || found("http://127.0.0.1:7890", "");
+    // Off at first; turned on later; the read repeats only after the ttl.
+    assert!(refreshed(&cell, ttl, start, || None).is_none());
+    assert!(
+        refreshed(&cell, ttl, start + Duration::from_secs(10), on).is_none(),
+        "a young reading is reused"
+    );
+    assert_eq!(
+        refreshed(&cell, ttl, start + Duration::from_secs(31), on)
+            .map(|(endpoint, _)| endpoint.to_string()),
+        Some("http://127.0.0.1:7890/".into())
+    );
+    // And off again.
+    assert!(refreshed(&cell, ttl, start + Duration::from_secs(62), || None).is_none());
 }
