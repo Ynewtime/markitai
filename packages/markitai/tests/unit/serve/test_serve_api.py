@@ -2916,3 +2916,26 @@ class TestItemEnhancedSignal:
         assert enhanced.output_path == str(out_dir / "doc.txt.llm.md")
         assert missing.success is False
         assert missing.llm_enhanced is False
+
+
+def test_interrupted_download_archives_are_swept_when_old(tmp_path: Path) -> None:
+    import os
+
+    from markitai.serve.app import _sweep_download_leftovers
+
+    tmp_path = tmp_path / "job"
+    tmp_path.mkdir()
+    old = tmp_path / ".item-archive.aaaa.zip"
+    older = tmp_path / ".job-archive.bbbb.zip"
+    fresh = tmp_path / ".item-archive.cccc.zip"
+    result = tmp_path / "doc.md"
+    for path in (old, older, fresh, result):
+        path.write_bytes(b"x")
+    long_ago = time.time() - 7200
+    os.utime(old, (long_ago, long_ago))
+    os.utime(older, (long_ago, long_ago))
+    _sweep_download_leftovers(tmp_path)
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        ".item-archive.cccc.zip",
+        "doc.md",
+    ]

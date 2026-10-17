@@ -174,15 +174,42 @@ def _refuse_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON")
 
 
+class _DuplicateKey(ValueError):
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.key = key
+
+
 def parse(text: str) -> Any:
     """Parse *text* as strict JSON (no NaN or Infinity).
 
     ``json.JSONDecodeError`` (a ``ValueError``) when it is not JSON.
     """
+
+    def refuse_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        seen: set[str] = set()
+        for key, _value in pairs:
+            if key in seen:
+                # Two values for one key: JSON keeps the last, so a secret
+                # written first would be shown unmasked
+                raise _DuplicateKey(key)
+            seen.add(key)
+        return dict(pairs)
+
     try:
-        return json.loads(text, parse_constant=_refuse_constant)
+        return json.loads(
+            text,
+            parse_constant=_refuse_constant,
+            object_pairs_hook=refuse_duplicates,
+        )
     except json.JSONDecodeError:
         raise
+    except _DuplicateKey as e:
+        raise json.JSONDecodeError(
+            f"the key {e.key!r} appears twice in one object",
+            text,
+            max(text.rfind(json.dumps(e.key)), 0),
+        ) from None
     except ValueError as e:
         # A NaN/Infinity constant: report it where the text has it
         name = str(e).split(" ", 1)[0]
