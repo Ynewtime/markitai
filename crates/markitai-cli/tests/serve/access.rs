@@ -13,7 +13,10 @@ fn start(root: &Path) -> Server {
         root,
         &[
             ("MARKITAI_SERVE_TOKEN", std::ffi::OsStr::new(ADMIN)),
-            ("MARKITAI_TEST_PUBLIC_NET_ALLOW", std::ffi::OsStr::new("127.0.0.1")),
+            (
+                "MARKITAI_TEST_PUBLIC_NET_ALLOW",
+                std::ffi::OsStr::new("127.0.0.1"),
+            ),
         ],
     )
 }

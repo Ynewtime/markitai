@@ -270,10 +270,9 @@ fn git_checkout() -> Option<(PathBuf, PathBuf)> {
         // built inside an unrelated git repository does not take that repo's
         // commit (or run its hooks). The worktree root holds the workspace
         // Cargo.toml; a package directory on the way up does not.
-        let is_workspace = fs::read_to_string(directory.join("Cargo.toml"))
-            .is_ok_and(|manifest| {
-                manifest.contains("[workspace]") && manifest.contains("\"crates/*\"")
-            });
+        let is_workspace = fs::read_to_string(directory.join("Cargo.toml")).is_ok_and(|manifest| {
+            manifest.contains("[workspace]") && manifest.contains("\"crates/*\"")
+        });
         if !is_workspace {
             directory = directory.parent()?.to_path_buf();
             continue;
