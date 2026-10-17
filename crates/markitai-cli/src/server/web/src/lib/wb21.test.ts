@@ -40,3 +40,12 @@ test("contents entries keep to one line, the whole heading in their tooltip", ()
   assert.equal(mathTitle("Plain heading"), "Plain heading");
   assert.equal(mathTitle("Area $$\\pi r^2$$"), "Area \\pi r^2");
 });
+
+test("a submission's header takes a single item's columns: box, then chevron over the status marks", () => {
+  const block = (selector: string) => new RegExp(`\\n${selector.replace(/[.]/g, "\\.")} \\{\\n([^}]*)\\}`).exec(css)?.[1] ?? "";
+  const columns = (selector: string) => /grid-template-columns: ([^;]+);/.exec(block(selector))?.[1];
+  assert.equal(columns(".group-head"), columns(".row"));
+  assert.equal(columns(".group-head.has-check"), columns(".row.has-check"));
+  assert.match(block(".group-caret"), /place-items: center start;/);
+  assert.match(block(".group-caret"), /padding-left: 2px;/);
+});

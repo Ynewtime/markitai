@@ -1193,8 +1193,9 @@ main:focus {
   justify-self: end;
 }
 .group-head.has-check {
-  /* the same columns as its members' rows: the box above their boxes, the chevron in the column their status marks end */
-  grid-template-columns: 16px 34px minmax(0, 1fr) auto;
+  /* the same columns as a single item's row: the box in the boxes' column, the chevron in the status marks' column,
+     the label where names start (the members sit 16px in below it) */
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
   gap: 10px;
 }
 .row-check {
@@ -1360,7 +1361,7 @@ main:focus {
 }
 .group-head {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 10px 8px;
@@ -1370,14 +1371,14 @@ main:focus {
   cursor: pointer;
 }
 /* the chevron's cell is the leading area of the header, as tall as the row (the padding above and
-   below it is taken back): a click anywhere in it opens or closes the submission. The chevron ends
-   where a member's 18px status mark ends (2px in from the cell's edge), so both centre on one line. */
+   below it is taken back): a click anywhere in it opens or closes the submission. The 14px chevron
+   stands 2px in, centred where a single item's 18px status mark is, and in the row's middle. */
 .group-caret {
   display: grid;
   align-self: stretch;
-  place-items: center end;
+  place-items: center start;
   margin-block: -10px;
-  padding-right: 2px;
+  padding-left: 2px;
   border-radius: var(--r-xs);
   color: var(--text-3);
   transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
@@ -6028,13 +6029,13 @@ input[type="password"],
     min-height: 44px;
   }
   /* a finger: the header is 44 px tall and, outside Select mode, its chevron's cell reaches the screen's
-     edge (42 px wide) while the chevron stays above its members' marks */
+     edge (30 px wide) while the chevron stays in the status marks' column */
   .group-head {
     min-height: 44px;
   }
   .group-head:not(.has-check) .group-caret {
     margin-left: -8px;
-    padding-left: 8px;
+    padding-left: 10px;
   }
   /* Select mode on a phone: the bar sits over the tab bar's top edge, and the
      list leaves room for it under its last row */
