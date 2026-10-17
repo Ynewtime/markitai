@@ -463,6 +463,11 @@ class TestOcrBackendMissingIsNotSilent:
         from markitai.converter.image import ImageConverter
 
         monkeypatch.setattr(ocr_module, "is_ocr_available", lambda: False)
+        # No shared engine yet: one an earlier test built for the same OCR
+        # settings would be reused without asking whether RapidOCR is there
+        monkeypatch.setattr(ocr_module.OCRProcessor, "_global_engine", None)
+        monkeypatch.setattr(ocr_module.OCRProcessor, "_global_config", None)
+        monkeypatch.setattr(ocr_module.OCRProcessor, "_global_threads", None)
         converter = ImageConverter(config=self._config())
 
         with pytest.raises(ocr_module.OCRBackendMissing) as excinfo:
