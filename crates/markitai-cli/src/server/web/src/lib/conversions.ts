@@ -59,7 +59,7 @@ function activity(job: ConvJob, items: SessionItem[]): number {
 }
 
 /** Submissions newest activity first (running first); empty ones dropped when filtered. */
-export function submissions(jobs: Record<string, ConvJob>, items: SessionItem[], filter: Filter = "all", query = ""): Submission[] {
+export function submissions(jobs: Record<string, ConvJob>, items: SessionItem[], filter: Filter = "all", query = "", only: ReadonlySet<string> | null = null): Submission[] {
   const byJob = new Map<string, SessionItem[]>();
   for (const item of items) {
     const list = byJob.get(item.jobId);
@@ -70,8 +70,8 @@ export function submissions(jobs: Record<string, ConvJob>, items: SessionItem[],
   const result: (Submission & { at: number; created: number })[] = [];
   for (const [jobId, list] of byJob) {
     const job = jobs[jobId] ?? placeholderJob(jobId);
-    const shown = list.filter((item) => itemMatches(item, filter, needle));
-    if (!shown.length && (filter !== "all" || needle)) continue;
+    const shown = list.filter((item) => (only === null || only.has(item.key)) && itemMatches(item, filter, needle));
+    if (!shown.length && (filter !== "all" || needle || only !== null)) continue;
     result.push({ job, items: list, shown, at: activity(job, list), created: timestampMs(job.createdAt) ?? Number.POSITIVE_INFINITY });
   }
   result.sort((left, right) => right.at - left.at || right.created - left.created || left.job.jobId.localeCompare(right.job.jobId));

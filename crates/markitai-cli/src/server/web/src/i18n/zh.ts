@@ -639,7 +639,11 @@ export const zh: Dict = {
         return sample;
     }
   },
-  noticeWhere: (names: string[]) => (names.length <= 3 ? `位于 ${names.join("、")}` : `位于 ${names.length} 项`),
+  noticeIn: "位于 ",
+  noticeNameSep: "、",
+  noticeMore: (n: number) => `另 ${n} 项`,
+  showingItems: (n: number) => `${n} 项`,
+  showingItemsClear: "显示全部",
   addPrice: "如何添加价格",
   showItem: "查看该项",
   showItems: "查看这些项",

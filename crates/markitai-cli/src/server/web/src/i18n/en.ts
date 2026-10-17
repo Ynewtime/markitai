@@ -689,7 +689,11 @@ export const en = {
         return sample;
     }
   },
-  noticeWhere: (names: string[]) => (names.length === 1 ? `In ${names[0]}` : names.length <= 3 ? `In ${names.join(", ")}` : `In ${names.length} items`),
+  noticeIn: "In ",
+  noticeNameSep: ", ",
+  noticeMore: (n: number) => `+${n} more`,
+  showingItems: (n: number) => (n === 1 ? "1 item" : `${n} items`),
+  showingItemsClear: "Show all",
   addPrice: "How to add a price",
   showItem: "Show item",
   showItems: "Show items",

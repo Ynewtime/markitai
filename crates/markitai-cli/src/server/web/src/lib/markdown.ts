@@ -7,10 +7,15 @@
 import type { Artifact } from "../api/types.ts";
 import { mathExtensions } from "./math-syntax.ts";
 
-/** The leading YAML block; the rendered view leaves it to Source. */
+/** A thematic break (`---`, `***`, `___`) on the first line of a body, with the blank lines before it. */
+const LEADING_RULE = /^(?:[ \t]*\n)*[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*(?:\n|$)/;
+
+/** The leading YAML block; the rendered view leaves it to Source. A rule that opens the body right after it
+ * only separates it from the body, which the properties card already does, so it is not drawn twice. */
 export function splitFrontmatter(markdown: string): { frontmatter: string | null; body: string } {
   const match = /^---\n[\s\S]*?\n---(?=\n|$)/.exec(markdown);
-  return match ? { frontmatter: match[0], body: markdown.slice(match[0].length) } : { frontmatter: null, body: markdown };
+  if (!match) return { frontmatter: null, body: markdown };
+  return { frontmatter: match[0], body: markdown.slice(match[0].length).replace(LEADING_RULE, "\n") };
 }
 
 /** The exact base/LLM pair of one result; an ambiguous inventory has none. */
