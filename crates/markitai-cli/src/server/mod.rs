@@ -252,6 +252,12 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         .map_err(|e| startup::bind_error(lang, &options.host, options.port, &e))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
     let _ = state.address.set(address);
+    // The first OCR job would wait for the engine to load; with its models
+    // installed (once OCR has been used here) it loads now, beside startup.
+    let cfg = state.conversion_config(None);
+    let _ = std::thread::Builder::new()
+        .name("markitai-ocr-warm".into())
+        .spawn(move || markitai_core::warm_local_ocr(&cfg));
     let token = state.token();
     // Shown absolute: a relative MARKITAI_HOME would otherwise name nothing useful.
     let data = std::path::absolute(&state.root).unwrap_or_else(|_| state.root.clone());

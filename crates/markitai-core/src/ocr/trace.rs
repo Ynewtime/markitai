@@ -27,9 +27,21 @@ thread_local! {
     static PAGE: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
-/// Name the page this thread works on in its trace lines.
+/// Name the page this thread works on in its trace lines. The page number
+/// also orders the turns of the portable engine's detections (an earlier
+/// page goes first).
 pub(crate) fn set_page(number: usize) {
     PAGE.with(|page| page.set(Some(number)));
+}
+
+/// Forget the page this thread worked on: it goes on to other work.
+pub(crate) fn clear_page() {
+    PAGE.with(|page| page.set(None));
+}
+
+/// The page this thread works on, if a PDF page.
+pub(crate) fn page() -> Option<usize> {
+    PAGE.with(Cell::get)
 }
 
 /// Write one trace line (when tracing), tagged with the thread's page.

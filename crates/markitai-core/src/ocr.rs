@@ -259,6 +259,22 @@ pub(crate) fn install_portable_models(cfg: &Value) -> Result<Vec<std::path::Path
     ))
 }
 
+/// The sizes of a page the PDF reader renders for OCR at 150 DPI: A4 and
+/// Letter, upright.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+const PAGE_SIZES: [(u32, u32); 2] = [(1240, 1755), (1275, 1650)];
+
+/// Load the portable engine for `cfg`'s language and prepare its detection
+/// for [`PAGE_SIZES`] (see [`paddle::warm`]); whether it is ready.
+pub(crate) fn warm(cfg: &Value) -> bool {
+    #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+    if selected().is_ok_and(|backend| backend == Backend::Paddle) {
+        return configured(cfg).is_ok_and(|spelling| paddle::warm(&spelling, &PAGE_SIZES).is_ok());
+    }
+    let _ = cfg;
+    false
+}
+
 /// The engines a build can read with.
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

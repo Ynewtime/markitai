@@ -98,6 +98,16 @@ pub fn local_ocr_engine() -> &'static str {
     ocr::portable_engine()
 }
 
+/// Load the portable OCR engine's models for the configuration's `ocr.lang`
+/// and prepare them for a PDF page, as the first OCR job of this process
+/// would otherwise do while it waits (about a third of a second on a fast
+/// machine). They stay loaded for the life of the process. Never downloads;
+/// `false` when a model is not installed or this process reads with another
+/// engine.
+pub fn warm_local_ocr(config: &Value) -> bool {
+    ocr::warm(config)
+}
+
 /// Explicitly download the missing files [`local_ocr_models`] lists from the
 /// official PaddleOCR mirror, each verified by size and SHA-256, into the
 /// private Markitai home; returns the files installed.

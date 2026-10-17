@@ -871,6 +871,8 @@ fn prepare_with(
                 pixels.width(),
                 pixels.height()
             ));
+            // This thread goes on to other documents' images.
+            ocr::trace::clear_page();
             if pixels.dimensions() != size {
                 return Err(failure(
                     "rendered dimensions changed after budget validation",
