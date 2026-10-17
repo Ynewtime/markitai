@@ -1665,6 +1665,44 @@ class TestRetry:
             assert second["items"][0]["output"] == "page.html.md"
         assert calls == [(url, "page.html.md"), (url, "page.html.md")]
 
+    async def test_a_job_deleted_while_its_retry_waits_is_not_converted_again(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The retry route awaits (the fetch guard, a user's pool); a delete
+        that lands there must win, or the item is paid for again and written
+        into a folder that is gone."""
+        calls: list[str] = []
+
+        async def failing_url(url: str, *_args: Any, **_kwargs: Any):
+            from markitai.batch import ProcessResult
+
+            calls.append(url)
+            return ProcessResult(success=False, error="fetch failed")
+
+        monkeypatch.setattr("markitai.serve.jobs.process_url_item", failing_url)
+        url = "https://example.com/page.html"
+        app = _make_app(tmp_path)
+        async with _serve_client(app) as client:
+            created = await client.post("/api/jobs", files=_multipart(urls=[url]))
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+            registry = app.state.markitai.registry
+
+            async def guard_then_delete(*_args: Any, **_kwargs: Any) -> None:
+                job = registry.get(job_id)
+                assert job is not None
+                async with job.delete_lock:
+                    await asyncio.to_thread(registry.discard_job, job)
+
+            monkeypatch.setattr(
+                "markitai.serve.app._guard_fetch_targets", guard_then_delete
+            )
+            resp = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert resp.status_code == 404
+            assert registry.get(job_id) is None
+            assert not (tmp_path / "jobs" / job_id).exists()
+        assert calls == [url]  # the first run only
+
     async def test_explicit_llm_enhancement_reuses_row_and_records_cost(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
