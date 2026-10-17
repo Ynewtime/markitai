@@ -23,6 +23,13 @@ type Answers = HashMap<String, std::result::Result<Value, String>>;
 /// prompts read the base Markdown, not the enhanced one. Dropping it stops
 /// requests not yet sent and waits for those in flight, so no request
 /// outlives the conversion that pays for it.
+/// What the analysis of a document's images brings from before its enhancement:
+/// the requests already running and the assets that are not analysed.
+pub(crate) struct Analysis<'a> {
+    pub pending: Option<Pending>,
+    pub skip: &'a HashSet<String>,
+}
+
 pub(crate) struct Pending {
     stop: Arc<AtomicBool>,
     worker: Option<std::thread::JoinHandle<Answers>>,
@@ -233,9 +240,9 @@ pub(crate) fn analyze(
     standalone: bool,
     cfg: &Value,
     runtime: Option<&LlmRuntime>,
-    pending: Option<Pending>,
-    skip: &HashSet<String>,
+    analysis: Analysis<'_>,
 ) -> Result<bool> {
+    let Analysis { pending, skip } = analysis;
     if !enabled(source, cfg) {
         return Ok(false);
     }

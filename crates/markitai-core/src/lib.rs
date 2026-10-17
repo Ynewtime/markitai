@@ -1008,8 +1008,10 @@ fn convert_inner(
         image_input,
         &cfg,
         llm_runtime,
-        pending_analysis,
-        &scan_assets,
+        image_enrichment::Analysis {
+            pending: pending_analysis,
+            skip: &scan_assets,
+        },
     ) {
         Ok(answered) => model_answered |= answered,
         Err(error) => {
