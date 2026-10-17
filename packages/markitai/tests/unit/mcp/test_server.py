@@ -83,7 +83,7 @@ class TestServerSmoke:
         module_name, _, attribute = scripts["markitai-mcp"].partition(":")
         # The script is a small launcher that checks for the extra, then runs
         # the server's own main
-        assert module_name == "markitai.mcp"
+        assert module_name == "markitai.mcp_launcher"
         assert callable(getattr(importlib.import_module(module_name), attribute))
         assert callable(server_module.main)
 

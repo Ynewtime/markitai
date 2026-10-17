@@ -48,13 +48,14 @@ def _wheel(
 ) -> Path:
     """A wheel with every member the check looks for, less *without*; the
     workbench files are the vendored ones, except those in *altered*."""
-    if manifest is None:
-        manifest = json.loads(
-            (_WORKBENCH / "manifest.json").read_text(encoding="utf-8")
-        )
+    document: dict = (
+        manifest
+        if manifest is not None
+        else json.loads((_WORKBENCH / "manifest.json").read_text(encoding="utf-8"))
+    )
     members = {
         "markitai-1.2.1.dist-info/entry_points.txt": (
-            "[console_scripts]\nmarkitai-mcp = markitai.mcp:main\n"
+            "[console_scripts]\nmarkitai-mcp = markitai.mcp_launcher:main\n"
         ),
         "markitai-1.2.1.dist-info/licenses/LICENSE": "MIT",
         "markitai-1.2.1.dist-info/licenses/NOTICE": "NOTICE",
@@ -64,9 +65,9 @@ def _wheel(
             f"{check_wheel.WORKBENCH}{name}": (altered or {}).get(
                 name, (_WORKBENCH / name).read_bytes()
             )
-            for name in manifest["files"]
+            for name in document["files"]
         },
-        f"{check_wheel.WORKBENCH}manifest.json": json.dumps(manifest),
+        f"{check_wheel.WORKBENCH}manifest.json": json.dumps(document),
     }
     with zipfile.ZipFile(path, "w") as wheel:
         for name, text in members.items():

@@ -7,9 +7,7 @@ import sys
 
 
 def test_the_script_explains_the_missing_extra_instead_of_a_traceback() -> None:
-    code = (
-        "import sys; sys.modules['mcp'] = None; from markitai.mcp import main; main()"
-    )
+    code = "import sys; sys.modules['mcp'] = None; from markitai.mcp_launcher import main; main()"
     done = subprocess.run(
         [sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60
     )

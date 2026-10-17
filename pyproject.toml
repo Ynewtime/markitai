@@ -112,6 +112,7 @@ type = "forbidden"
 source_modules = [
     "markitai.api",
     "markitai.mcp",
+    "markitai.mcp_launcher",
     "markitai.batch",
     "markitai.build_info",
     "markitai.config",
