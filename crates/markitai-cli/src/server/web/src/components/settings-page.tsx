@@ -535,18 +535,13 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
             <span class="sr-only"> {t.opensNewTab}</span>
           </a>
         </li>
-        {version?.parts.date && (
-          <li>
-            <p class="index-meta" title={t.buildTitle(version.parts)}>
-              <Icon name="Clock" size={18} />
-              <span class="index-copy">
-                <span class="index-label">Build:</span>
-              </span>
-              <span class="nav-tag">{version.parts.date}</span>
-            </p>
-          </li>
-        )}
       </ul>
+      {/* not a list item: plain muted text centred under the list (one English label in every language) */}
+      {version?.parts.date && (
+        <p class="build-line" title={t.buildTitle(version.parts)}>
+          Build: {version.parts.date}
+        </p>
+      )}
     </section>
   );
 }

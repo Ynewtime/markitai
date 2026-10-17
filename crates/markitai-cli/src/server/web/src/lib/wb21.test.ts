@@ -61,11 +61,15 @@ test("the sidebar and the phone Settings list show the build's date and time in 
   assert.equal(versionLine({ version: "1.3.0-dev" })?.parts.date, null);
   const shell = readFileSync(new URL("../components/shell.tsx", import.meta.url), "utf8");
   const settings = readFileSync(new URL("../components/settings-page.tsx", import.meta.url), "utf8");
-  // the row reads "Build: 20261017 19:54" in every language: the label is not translated
+  // plain text "Build: 20261017 19:54" in every language (the label is not translated), not a row with an icon
   for (const source of [shell, settings]) {
-    assert.match(source, /\{version\.parts\.date\}/);
-    assert.match(source, />Build:</);
+    assert.match(source, /<p class="build-line" title=\{t\.buildTitle\(version\.parts\)\}>\s*Build: \{version\.parts\.date\}\s*<\/p>/);
   }
+  // on the phone it sits under the list, not in it
+  assert.ok(settings.indexOf('class="build-line"') > settings.indexOf("</ul>"));
+  const block = (selector: string) => new RegExp(`\\n${selector.replace(/[.[\]]/g, "\\$&")} \\{\\n([^}]*)\\}`).exec(css)?.[1] ?? "";
+  assert.match(block(".build-line"), /text-align: center;/);
+  assert.match(block(":root[data-rail] .build-line"), /display: none;/);
 });
 
 test("folded front matter is one button across the row, its property count before the tags", () => {

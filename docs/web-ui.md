@@ -14,9 +14,10 @@ everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
 its own Models and Edit config for them, see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
 (`1.3.0-dev`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
-it when built with uncommitted changes), and a quiet third row, `Build: 20261017 19:54`, with the build's date and time in the
-viewer's time zone (the label stays `Build:` in every language; the full stamp with seconds and offset is the
-tooltip). The Settings list on a phone ends with the same three rows; the icon rail leaves the Build row out. Its button collapses it to a 60px icon rail; each entry
+it when built with uncommitted changes), and under them, as small muted text centred rather than a row,
+`Build: 20261017 19:54`, the build's date and time in the viewer's time zone (the label stays `Build:` in every
+language; the full stamp with seconds and offset is the tooltip). The Settings list on a phone ends with the Docs
+and GitHub rows and the same centred `Build:` line under the list; the icon rail leaves it out. Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
 keyboard focus, and the choice is remembered in this browser. On phones the
 sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
