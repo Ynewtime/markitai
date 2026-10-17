@@ -298,6 +298,7 @@ pub(super) fn document_prompts(
         system: format!("{}\n{SCHEMA}", render(&system)),
         user: render(&user),
         image: None,
+        labels: Vec::new(),
         cache_scope,
     })
 }

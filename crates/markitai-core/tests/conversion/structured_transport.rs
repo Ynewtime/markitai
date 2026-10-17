@@ -522,10 +522,13 @@ fn first_visual_batch_uses_tools_and_later_cleaners_remain_plain() {
                     .unwrap()
                     .contains("MARKITAI_VISION_JSON_V1")
             );
-            assert_eq!(
-                request["messages"][1]["content"].as_array().unwrap().len(),
-                11
-            );
+            // The extracted text, then each of the ten pages after its label
+            let parts = request["messages"][1]["content"].as_array().unwrap();
+            assert_eq!(parts.len(), 21);
+            for (page, pair) in parts[1..].chunks(2).enumerate() {
+                assert_eq!(pair[0]["text"], format!("Page {}:", page + 1));
+                assert_eq!(pair[1]["type"], "image_url");
+            }
             (200, tools(request, document(request)))
         } else {
             assert!(
@@ -536,10 +539,9 @@ fn first_visual_batch_uses_tools_and_later_cleaners_remain_plain() {
             );
             assert!(request.get("tools").is_none());
             assert!(request.get("response_format").is_none());
-            assert_eq!(
-                request["messages"][1]["content"].as_array().unwrap().len(),
-                2
-            );
+            let parts = request["messages"][1]["content"].as_array().unwrap();
+            assert_eq!(parts.len(), 3);
+            assert_eq!(parts[1]["text"], "Page 11:");
             (200, reply(user(request)))
         }
     });

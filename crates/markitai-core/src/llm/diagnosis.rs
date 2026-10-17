@@ -603,6 +603,7 @@ mod tests {
             system: "Clean up the document.".into(),
             user: user.into(),
             image: None,
+            labels: Vec::new(),
             cache_scope: String::new(),
         }
     }

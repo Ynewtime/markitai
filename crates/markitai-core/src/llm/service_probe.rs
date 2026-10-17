@@ -279,6 +279,7 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
         system: String::new(),
         user: "Reply with exactly OK.".into(),
         image: None,
+        labels: Vec::new(),
         cache_scope: String::new(),
     };
     let mut body = payload(entry, &prompts);

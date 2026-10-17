@@ -433,6 +433,7 @@ mod tests {
             user: "source".into(),
             cache_scope: "v1".into(),
             image: None,
+            labels: Vec::new(),
         };
         let env = HashMap::from([("FLIGHT_KEY".into(), "secret-one".into())]);
         let make = |cfg: &Value, env: &HashMap<String, String>, prompt: &Prompts, bytes: &[u8]| {

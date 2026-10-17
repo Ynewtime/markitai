@@ -658,6 +658,7 @@ mod tests {
             system: "system".into(),
             user: "user".into(),
             image: None,
+            labels: Vec::new(),
             cache_scope: String::new(),
         };
         let body = Wire {

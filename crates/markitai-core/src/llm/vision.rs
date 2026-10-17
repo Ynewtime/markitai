@@ -486,7 +486,7 @@ fn visual_prompts(
         format!("\n{}", unread_rule(&unread))
     };
     let scope = llm_cache::prompt_scope(&[
-        "visual-structured-transport-v3",
+        "visual-structured-transport-v4",
         kind,
         &unread,
         &system,
@@ -522,6 +522,20 @@ fn visual_prompts(
         ),
         user: render(&user),
         image: None,
+        labels: frames
+            .iter()
+            .map(|f| {
+                format!(
+                    "{} {}:",
+                    if kind == "web-capture" {
+                        "Frame"
+                    } else {
+                        "Page"
+                    },
+                    f.number
+                )
+            })
+            .collect(),
         cache_scope: scope,
     })
 }
@@ -708,6 +722,7 @@ fn run_batch(
         system: item.prompts.system.clone(),
         user: item.prompts.user.clone(),
         cache_scope: item.prompts.cache_scope.clone(),
+        labels: item.prompts.labels.clone(),
         image: Some(
             item.frames
                 .iter()
@@ -849,6 +864,7 @@ mod tests {
                 system: String::new(),
                 user: String::new(),
                 image: None,
+                labels: Vec::new(),
                 cache_scope: String::new(),
             },
             key: None,

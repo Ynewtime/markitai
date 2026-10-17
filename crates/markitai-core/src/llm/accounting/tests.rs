@@ -159,6 +159,7 @@ fn invalid_or_unknown_budget_admission_never_contacts_loopback_or_spends_attempt
         system: "s".into(),
         user: "u".into(),
         image: None,
+        labels: Vec::new(),
         cache_scope: String::new(),
     };
     let error = run_with_runtime(

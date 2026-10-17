@@ -122,6 +122,7 @@
 
 ### Fixed
 
+- A scanned page read from its image no longer gets a sentence the page repeats written once more: each page image of a visual request now follows a `Page N:` label, as Python markitai sends it (Gemini Flash on a page repeating one sentence six times per paragraph: 7 copies per paragraph in 3 of 3 runs before; 6, as Python, in 2 of 2 replays of the same request with the labels). Cached visual answers from earlier builds are not reused.
 - Workbench on Python markitai: the pricing and subscription guide links open their pages on the Python docs site (`https://markitai.dev/guide/…`) instead of its home page; a docs address ending in `index.md` still opens the page beside it.
 - A workbook converted with `--screenshot` no longer fails as a whole when a sheet's text runs far past its right edge, or when LibreOffice's page rendering fails: the sheet keeps its layout (or the document its text) and one notice says what is missing.
 - A text PDF whose rows are divided by `|` (the native reader) now gives a real Markdown table, and the lines around it stay paragraphs of their own, where they were run into one paragraph; a line that runs past the page's right edge no longer sends its page to the plain reader that cannot do this.

@@ -483,6 +483,26 @@ fn scanned_pages_are_asked_for_in_the_cleanup_framing_with_the_rules_once() {
         1,
         "{system}"
     );
+    // Each page image comes right after its own label, as Python labels them.
+    let content = requests[0].1["messages"][1]["content"].as_array().unwrap();
+    let parts: Vec<String> = content[1..]
+        .iter()
+        .map(|part| match part["type"].as_str().unwrap() {
+            "text" => part["text"].as_str().unwrap().to_owned(),
+            other => other.to_owned(),
+        })
+        .collect();
+    assert_eq!(
+        parts,
+        [
+            "Page 1:",
+            "image_url",
+            "Page 2:",
+            "image_url",
+            "Page 3:",
+            "image_url"
+        ]
+    );
 }
 
 #[test]

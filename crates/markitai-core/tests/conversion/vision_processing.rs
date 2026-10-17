@@ -173,11 +173,19 @@ fn options_cfg(config: Value) -> ConvertOptions {
 
 fn frames(request: &Value) -> Vec<u8> {
     use base64::Engine;
-    request["messages"][1]["content"]
-        .as_array()
-        .unwrap()
+    let parts = request["messages"][1]["content"].as_array().unwrap();
+    // After the extracted text, each page image follows its own label.
+    for pair in parts[1..].chunks(2) {
+        let label = pair[0]["text"].as_str().unwrap();
+        assert!(
+            label.starts_with("Page ") && label.ends_with(':'),
+            "{label}"
+        );
+    }
+    parts
         .iter()
-        .skip(1)
+        .skip(2)
+        .step_by(2)
         .map(|block| {
             let uri = block["image_url"]["url"].as_str().unwrap();
             let (mime, encoded) = uri.split_once(',').unwrap();

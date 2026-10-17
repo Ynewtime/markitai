@@ -907,6 +907,11 @@ Canonical title, source and time remain application-owned. The original base
 body does not receive model metadata. Standalone alt/description analysis keeps
 its separate existing image-analysis schema.
 
+Each image is sent right after a text label naming its page (`Page 3:`, or
+`Frame 2:` for a web capture's frames), as Python markitai labels them; subscription
+runtimes, which receive the images as attachments, keep only the order listed in
+the system prompt.
+
 Paged documents use at most ten images per request, fewer when the pages' text
 is dense: a batch carries about 8,000 estimated tokens of extracted text at most
 (at least one page), since its answer repeats that text and adds what it reads in
