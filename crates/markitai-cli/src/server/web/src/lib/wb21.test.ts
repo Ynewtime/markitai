@@ -22,3 +22,10 @@ test("Show items narrows the list with a bar over it, not a chip in the filter r
   assert.match(page, /showingItems\(onlyLeft\)/);
   assert.ok(!page.includes("showingItems(props.only.length)"));
 });
+
+test("a row's notice mark stands on its name's line", () => {
+  // a monospace figure rode ~3 px above the name; the Inter figure moves down the 1 px its smaller size leaves
+  const mark = /\n\.warn-mark \{\n([^}]*)\}/.exec(css)?.[1] ?? "";
+  assert.match(mark, /font-family: var\(--font-sans\);/);
+  assert.match(/\n\.warn-wrap \{\n([^}]*)\}/.exec(css)?.[1] ?? "", /top: 1px;/);
+});

@@ -1330,21 +1330,33 @@ main:focus {
 .nm.has-host .mid-host {
   color: var(--text-3);
 }
+/* Both texts are Inter: centred boxes leave the 11 px figure's baseline 1 px above the 14 px name's,
+   so the mark moves down that pixel and the figure stands on the name's line. */
 .warn-wrap {
+  position: relative;
+  top: 1px;
   display: inline-flex;
 }
 .warn-wrap .help-anchor {
   padding: 2px 4px;
   border-radius: var(--r-xs);
 }
+/* the count in Inter: a monospace figure sat ~3 px above the name's centre */
 .warn-mark {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 2px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   color: var(--warning);
+}
+/* the triangle's ink sits low in its box: a pixel up puts it level with the figure */
+.warn-mark > svg {
+  position: relative;
+  top: -1px;
 }
 .group-head {
   display: grid;
