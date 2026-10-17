@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A CLI run recorded with `--record-history` keeps an unknown cost unknown in `markitai serve`.** The recorded items now carry `pricing` and `models`, so a model without a price no longer shows as $0 or as no model used.
 - **In `markitai serve`, an unknown price is reported on every item that has an unpriced request,** as `Cost is incomplete: 2 requests to <model> have no reviewed price…`, the wording the workbench recognises (translated, with its price-help link). Before, only the first item that answered carried an English notice.
 - **`markitai doctor` speaks Chinese under a Chinese terminal.** The check messages and remedies (`RapidOCR：v3.9.2，可识别中文、英文…`, `Playwright：已安装，但尚未下载其 Chromium 浏览器`, the LLM, vision and sign-in lines) are shown in Chinese, in the tone of Rust's doctor; check names, commands and `--json` stay English.
 - **`markitai doctor` no longer leaves a blank line under its title.**
