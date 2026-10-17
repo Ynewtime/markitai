@@ -744,7 +744,6 @@ export const en = {
   frontTags: (n: number) => plural(n, "1 tag", `${n} tags`),
   frontSummary: "Summary",
   frontProperties: (n: number) => `Properties · ${n}`,
-  frontShowAll: (n: number) => plural(n, "Show the document's property", `Show the document's ${n} properties`),
   frontKey: (key: string) =>
     ({
       title: "Title",

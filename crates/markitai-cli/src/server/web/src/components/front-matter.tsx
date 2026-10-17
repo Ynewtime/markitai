@@ -1,7 +1,8 @@
 // A document's front matter above its body. Folded (the default): one light line,
-// the tags inline and a "Summary" control at its end, no title (the body's own heading
-// is the title). Open: a two-column properties table whose header folds it again.
-// One disclosure button with aria-expanded; the choice lasts for the tab's session.
+// "Properties · N", the tags inline and a "Summary" mark at its end, no title (the body's
+// own heading is the title). Open: a two-column properties table whose header folds it
+// again. Either way the whole header row is one disclosure button with aria-expanded;
+// the choice lasts for the tab's session.
 import { useEffect, useId, useState } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import { frontOpen, onFrontOpen, setFrontOpen } from "../lib/front-pref.ts";
@@ -76,21 +77,25 @@ export function FrontCard({ t, front, compact = false }: { t: Dict; front: Front
     );
   return (
     <section class={classes} aria-label={t.frontLabel}>
-      <Icon name="Tag" size={13} />
-      <span class="front-line">
-        {line?.kind === "tags"
-          ? line.tags.map((tag, index) => (
-              <span key={tag} class="front-inline-tag">
-                {index > 0 && <span class="front-sep" aria-hidden="true"> · </span>}
-                {tag}
-              </span>
-            ))
-          : line?.text}
-      </span>
-      <button type="button" class="front-toggle" aria-expanded="false" onClick={() => setOpen(true)}>
-        <span>{front.description ? t.frontSummary : t.frontProperties(rows.length)}</span>
-        <span class="sr-only"> {t.frontShowAll(rows.length)}</span>
-        <Icon name="CaretDown" size={12} />
+      <button type="button" class="front-fold" aria-expanded="false" onClick={() => setOpen(true)}>
+        <Icon name="Tag" size={13} />
+        <span class="front-count">{t.frontProperties(rows.length)}</span>
+        {line && (
+          <span class="front-line">
+            {line.kind === "tags"
+              ? line.tags.map((tag, index) => (
+                  <span key={tag} class="front-inline-tag">
+                    {index > 0 && <span class="front-sep" aria-hidden="true"> · </span>}
+                    {tag}
+                  </span>
+                ))
+              : line.text}
+          </span>
+        )}
+        <span class="front-toggle">
+          {front.description && <span>{t.frontSummary}</span>}
+          <Icon name="CaretDown" size={12} />
+        </span>
       </button>
     </section>
   );

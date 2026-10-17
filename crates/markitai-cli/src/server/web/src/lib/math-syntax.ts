@@ -64,3 +64,10 @@ export function splitMath(label: string): MathPiece[] {
   if (from < label.length) pieces.push({ text: label.slice(from), math: false });
   return pieces;
 }
+
+/** A heading's label as plain text, for a tooltip: each formula's source without its `$` signs. */
+export function mathTitle(label: string): string {
+  return splitMath(label)
+    .map((piece) => (piece.math ? piece.text.replace(/^\$+|\$+$/g, "").trim() : piece.text))
+    .join("");
+}

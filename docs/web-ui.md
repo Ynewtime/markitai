@@ -14,8 +14,9 @@ everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
 its own Models and Edit config for them, see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
 (`1.3.0-dev`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
-it when built with uncommitted changes; the build time in the viewer's time zone and the full version are the
-tooltip; the Settings list on a phone shows the same two tags). Its button collapses it to a 60px icon rail; each entry
+it when built with uncommitted changes), and a quiet third row, `Build: 20261017 19:54`, with the build's date and time in the
+viewer's time zone (the label stays `Build:` in every language; the full stamp with seconds and offset is the
+tooltip). The Settings list on a phone ends with the same three rows; the icon rail leaves the Build row out. Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
 keyboard focus, and the choice is remembered in this browser. On phones the
 sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
@@ -127,7 +128,10 @@ files wait on Convert); typing URLs is Convert's job.
   Back button and the trackpad's back swipe (opening the window from the list adds
   one history entry, so Back returns to the list instead of leaving the page; a
   window opened from a link or from another page closes without adding one).
-  Summary's window does the same. (The docked
+  Summary's window does the same. Each Back goes one level back: an item opened
+  from the summary or a submission's window (a notice's name) returns to that
+  window, and so does the list narrowed by Show items; Escape and ✕ close every
+  level at once. (The docked
   side-panel layout of earlier builds is gone; a browser that chose it opens the
   window.)
 - **Details** shows the item: its state in a sentence
@@ -142,7 +146,8 @@ files wait on Convert); typing URLs is Convert's job.
   the cost, its failures and the notices of all its items (each notice names the
   items it covers, the first three as buttons that open that item and "+N more" for
   the rest; Show item opens the one item, and Show items closes the window and narrows
-  the list to exactly those items, with a "N items ×" chip that shows all again); Summary opens the same
+  the list to exactly those items, with a thin "N items" bar over the list (its count drops
+  as items are deleted; × shows all again); Summary opens the same
   overview for the whole list.
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N
@@ -183,12 +188,13 @@ column centred in the window: 820 px, wider as the window grows (56 % of its
 width, at most 1120 px); every table keeps to that column (its width and left
 edge), and one whose cells need more scrolls sideways inside its own box. Rendered starts with
 the conversion's notices (collapsed to one line) and the front matter as one light
-line above the body: a tag icon, the tags inline (`gardening · community beds · …`;
-else the summary) and Summary at its end, with no title of its own (the body's
-heading is the title). Summary (a button, Enter or Space) opens it into a
+line above the body: a tag icon, `Properties · N` (the number of properties), the
+tags inline (`gardening · community beds · …`; else the summary) and Summary at its
+end when there is one, with no title of its own (the body's heading is the title).
+The whole line is one button (a click anywhere on it, Enter or Space) that opens it into a
 two-column properties table (closing with its own rule; a rule that opens the body right after the front matter is not drawn a second time) (Summary, Tags as chips, Source, Processed and every
 other key; one key width with a rule between key and value, long keys and values
-wrapped) whose `Properties · N` header folds it again; the
+wrapped) whose `Properties · N` header row, anywhere on it, folds it again; the
 choice holds for the tab's session (`sessionStorage['markitai.front']`) and in
 Preview, Compare and the Details excerpt alike. Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
@@ -229,7 +235,8 @@ marked; a narrow window shows one column of changes. In Diff the Base | LLM
 switch shows both on (it compares both); choosing one shows that version. A document with four or more headings
 gets its **contents**: its top three heading levels (a lone title does not count
 as a level; each entry is the heading's plain words, without inline HTML tags or
-private-use glyphs, on two lines at most) beside the document on a wide window, marking the
+private-use glyphs, on one line cut with an ellipsis, the whole heading in its
+tooltip; formulas in it are drawn) beside the document on a wide window, marking the
 heading at the top of the reading area as it scrolls; a click goes to the heading
 and marks it until the reader scrolls (pictures loading below it do not move the mark). The contents button beside
 Base | LLM hides or shows them (remembered in this browser); on a phone or a

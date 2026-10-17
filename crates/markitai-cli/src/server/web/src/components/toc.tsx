@@ -4,6 +4,7 @@
 // marked as the document scrolls; choosing one scrolls the document to it.
 import { useEffect, useRef } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
+import { mathTitle } from "../lib/math-syntax.ts";
 import type { TocEntry } from "../lib/toc.ts";
 import { Icon } from "./icons.tsx";
 import { MathText } from "./math-text.tsx";
@@ -17,7 +18,7 @@ function TocList({ entries, active, onPick, listRef }: { entries: TocEntry[]; ac
             type="button"
             class={position === active ? "toc-link is-on" : "toc-link"}
             aria-current={position === active ? "location" : undefined}
-            title={entry.text}
+            title={mathTitle(entry.text)}
             onClick={() => onPick(entry.index)}
           >
             <MathText class="toc-text" text={entry.text} />

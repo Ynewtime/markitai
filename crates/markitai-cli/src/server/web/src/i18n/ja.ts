@@ -729,7 +729,6 @@ export const ja: Dict = {
   frontTags: (n) => `タグ ${n} 件`,
   frontSummary: "概要",
   frontProperties: (n) => `プロパティ · ${n}`,
-  frontShowAll: (n) => `文書のプロパティ ${n} 件を表示`,
   frontKey: (key) =>
     ({
       title: "タイトル",

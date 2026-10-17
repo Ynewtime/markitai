@@ -585,6 +585,24 @@ textarea {
 .settings-index .nav-tag {
   margin-left: auto;
 }
+/* the build's date and time under Docs and GitHub: the same row, but plain text, quieter */
+.nav-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-3);
+}
+.nav-meta svg {
+  flex: none;
+  color: var(--text-3);
+}
+:root[data-rail] .nav-meta {
+  display: none;
+}
 .settings-index a > .nav-tag + svg:last-of-type {
   margin-left: 0;
 }
@@ -1072,21 +1090,38 @@ main:focus {
   font-weight: 600;
   color: var(--text-1);
 }
-.subset-chip {
-  display: inline-flex;
+/* "Show items" narrowed the list: a thin tinted bar on top of it, its full width (the filter row keeps
+   its place, Select stays on the right), the count with a filter mark and × to show everything again */
+.subset-bar {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 8px 0 10px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-xs);
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 2px 2px 10px;
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
   background: var(--sel-strong);
   font-size: var(--text-ui);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--text-1);
 }
-.subset-chip:hover {
-  background: var(--row-hover);
+.subset-bar > svg {
+  flex: none;
+  color: var(--text-3);
+}
+.subset-text {
+  flex: 1;
+  min-width: 0;
+}
+.subset-bar .subset-clear {
+  width: 28px;
+  height: 28px;
+}
+/* a finger's 40 px target around the small ×, without making the bar taller */
+.subset-clear::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 .notice-name {
   display: inline;
@@ -1176,8 +1211,9 @@ main:focus {
   justify-self: end;
 }
 .group-head.has-check {
-  /* the same columns as its members' rows: the box above their boxes, the chevron in the column their status marks end */
-  grid-template-columns: 16px 34px minmax(0, 1fr) auto;
+  /* the same columns as a single item's row: the box in the boxes' column, the chevron in the status marks' column,
+     the label where names start (the members sit 16px in below it) */
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
   gap: 10px;
 }
 .row-check {
@@ -1313,25 +1349,37 @@ main:focus {
 .nm.has-host .mid-host {
   color: var(--text-3);
 }
+/* Both texts are Inter: centred boxes leave the 11 px figure's baseline 1 px above the 14 px name's,
+   so the mark moves down that pixel and the figure stands on the name's line. */
 .warn-wrap {
+  position: relative;
+  top: 1px;
   display: inline-flex;
 }
 .warn-wrap .help-anchor {
   padding: 2px 4px;
   border-radius: var(--r-xs);
 }
+/* the count in Inter: a monospace figure sat ~3 px above the name's centre */
 .warn-mark {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 2px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   color: var(--warning);
+}
+/* the triangle's ink sits low in its box: a pixel up puts it level with the figure */
+.warn-mark > svg {
+  position: relative;
+  top: -1px;
 }
 .group-head {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 10px 8px;
@@ -1341,14 +1389,14 @@ main:focus {
   cursor: pointer;
 }
 /* the chevron's cell is the leading area of the header, as tall as the row (the padding above and
-   below it is taken back): a click anywhere in it opens or closes the submission. The chevron ends
-   where a member's 18px status mark ends (2px in from the cell's edge), so both centre on one line. */
+   below it is taken back): a click anywhere in it opens or closes the submission. The 14px chevron
+   stands 2px in, centred where a single item's 18px status mark is, and in the row's middle. */
 .group-caret {
   display: grid;
   align-self: stretch;
-  place-items: center end;
+  place-items: center start;
   margin-block: -10px;
-  padding-right: 2px;
+  padding-left: 2px;
   border-radius: var(--r-xs);
   color: var(--text-3);
   transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
@@ -1735,15 +1783,39 @@ main:focus {
   font-size: var(--text-sm);
   color: var(--text-3);
 }
-.front-meta > svg,
+.front-fold > svg:first-child,
 .front-head > svg:first-child {
   flex: none;
   color: var(--text-4);
 }
+/* folded, the whole line is the button: a click anywhere on it opens the properties */
+.front-fold {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.front-count {
+  flex: none;
+  white-space: nowrap;
+}
+/* the tags after the count, a hairline between them */
 .front-meta .front-line {
   flex: 1;
   overflow: hidden;
   min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--hairline-strong);
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-2);
@@ -1769,10 +1841,13 @@ main:focus {
   flex: none;
   margin-left: auto;
 }
-.front-toggle:hover,
+.front-fold:hover .front-toggle,
+.front-fold:hover .front-count,
 .front-head:hover {
-  background: var(--row-hover);
   color: var(--text-1);
+}
+.front-fold:hover .front-toggle {
+  background: var(--row-hover);
 }
 .front-meta.is-open {
   display: block;
@@ -2889,7 +2964,8 @@ kbd {
 .settings-index {
   border-top: 1px solid var(--hairline);
 }
-.settings-index a {
+.settings-index a,
+.settings-index .index-meta {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -2900,6 +2976,18 @@ kbd {
 .settings-index a > svg:first-child {
   flex: none;
   color: var(--text-2);
+}
+/* plain text, quieter, its date in the tags' column (the links end with their 14 px arrow) */
+.settings-index .index-meta {
+  padding-right: 32px;
+  color: var(--text-2);
+}
+.settings-index .index-meta > svg:first-child {
+  flex: none;
+  color: var(--text-3);
+}
+.index-meta .index-label {
+  font-weight: 500;
 }
 .settings-index a > svg:last-of-type {
   margin-left: auto;
@@ -4860,14 +4948,12 @@ input[type="password"],
   text-align: left;
   transition: color var(--dur-fast) ease;
 }
-/* A button ignores line clamping, so its text clamps itself: two lines at most. */
+/* One line per entry, cut with an ellipsis (the whole heading is the link's tooltip); formulas stay drawn. */
 .toc-text {
-  display: -webkit-box;
+  display: block;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .toc-item.is-l0 .toc-link {
   font-weight: 500;
@@ -5809,6 +5895,8 @@ input[type="password"],
 .doc-body a:focus-visible,
 .doc-body pre:focus-visible,
 .doc-body .table-scroll:focus-visible,
+.front-fold:focus-visible,
+.front-head:focus-visible,
 .toc-link:focus-visible,
 .toc-fab:focus-visible,
 .diff-fold:focus-visible,
@@ -6001,13 +6089,13 @@ input[type="password"],
     min-height: 44px;
   }
   /* a finger: the header is 44 px tall and, outside Select mode, its chevron's cell reaches the screen's
-     edge (42 px wide) while the chevron stays above its members' marks */
+     edge (30 px wide) while the chevron stays in the status marks' column */
   .group-head {
     min-height: 44px;
   }
   .group-head:not(.has-check) .group-caret {
     margin-left: -8px;
-    padding-left: 8px;
+    padding-left: 10px;
   }
   /* Select mode on a phone: the bar sits over the tab bar's top edge, and the
      list leaves room for it under its last row */
