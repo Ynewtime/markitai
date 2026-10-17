@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`markitai doctor` speaks Chinese under a Chinese terminal.** The check messages and remedies (`RapidOCR：v3.9.2，可识别中文、英文…`, `Playwright：已安装，但尚未下载其 Chromium 浏览器`, the LLM, vision and sign-in lines) are shown in Chinese, in the tone of Rust's doctor; check names, commands and `--json` stay English.
 - **`markitai doctor` no longer leaves a blank line under its title.**
 - **A page or screenshot reference the model ran into the text before it is a block of its own again.** When an LLM answer glued `<!-- ![Page 1](…) -->` (or the "Page images for reference" header) to the end of a paragraph, the restore step left it inside the paragraph; it now gets blank lines around it, as Rust does. Comments the model kept on their own lines are unchanged.
 - **A scanned PDF read by a vision model no longer ends with "pages look scanned, re-run with --ocr".** With an LLM and page screenshots the notice waits for the model's answer and is dropped once the answer has text; it is still raised when the model returned nothing but pictures or the step failed.

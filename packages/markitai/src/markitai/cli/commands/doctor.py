@@ -124,6 +124,26 @@ def _them(items: list[str]) -> str:
     return "it" if len(items) == 1 else "them"
 
 
+def _zh() -> bool:
+    from markitai.cli.i18n import get_language
+
+    return get_language() == "zh"
+
+
+def _shown(message: str) -> str:
+    """A check message as the terminal shows it (--json keeps the English)."""
+    if not _zh():
+        return message
+    from markitai.cli.commands.doctor_text import zh_message
+
+    return zh_message(message)
+
+
+def _label(name: str) -> str:
+    """``Name:`` in the terminal's own punctuation."""
+    return f"{name}：" if _zh() else f"{name}:"
+
+
 def _render_hint(info: dict[str, Any]) -> None:
     """One check's fix: commands on their own lines, prose with a bullet.
 
@@ -131,14 +151,21 @@ def _render_hint(info: dict[str, Any]) -> None:
     command per distribution, the login instructions) lost its bullet and
     indentation from the second line on.
     """
+    zh_line = None
+    if _zh():
+        from markitai.cli.commands.doctor_text import zh_hint_line as zh_line
     commands = info.get("install_commands")
     if commands:
-        ui.print_marked(f"{info['name']}:", mark=ui.MARK_INFO)
+        ui.print_marked(_label(info["name"]), mark=ui.MARK_INFO)
         for command in commands:
-            ui.print_command(command)
+            ui.print_command(zh_line(command) if zh_line else command)
         return
     lines = [line for line in str(info["install_hint"]).splitlines() if line.strip()]
-    ui.print_marked(f"{info['name']}: {lines[0]}", mark=ui.MARK_INFO)
+    if zh_line:
+        lines = [line if line.startswith("  ") else zh_line(line) for line in lines]
+    ui.print_marked(
+        f"{_label(info['name'])}{'' if _zh() else ' '}{lines[0]}", mark=ui.MARK_INFO
+    )
     for line in lines[1:]:
         if line.startswith("  "):
             ui.print_command(line.strip(), indent=6)
@@ -1284,7 +1311,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     def render_item(info: dict[str, Any], *, blocking: bool = False) -> None:
         """Render one check result inline: '<glyph> Name: message'."""
-        line = f"{info['name']}: {info['message']}"
+        line = f"{_label(info['name'])}{'' if _zh() else ' '}{_shown(info['message'])}"
         if info["status"] == "ok":
             ui.success(line)
         elif blocking:
@@ -1293,10 +1320,16 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             ui.warning(line)
         unused = info.get("unused_api_keys")
         if unused:
-            ui.info(
-                f"Not used: {', '.join(unused)} "
-                f"(set, but no model in llm.model_list uses {_them(unused)})"
-            )
+            if _zh():
+                ui.info(
+                    f"未使用：{'、'.join(unused)}（已设置，但 llm.model_list "
+                    "中没有模型用到它）"
+                )
+            else:
+                ui.info(
+                    f"Not used: {', '.join(unused)} "
+                    f"(set, but no model in llm.model_list uses {_them(unused)})"
+                )
 
     def render_section(header: str, keys: list[str]) -> None:
         """Render a section preceded by exactly one blank line."""
@@ -1370,7 +1403,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                             )
                             if runtime_detail == SMOKE_SLOW:
                                 # Downloaded; only its first launch was slow
-                                ui.warning(verification["message"])
+                                ui.warning(_shown(verification["message"]))
                             else:
                                 ui.error(
                                     t(
