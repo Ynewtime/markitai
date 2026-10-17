@@ -54,7 +54,7 @@ def _wheel(
         )
     members = {
         "markitai-1.2.1.dist-info/entry_points.txt": (
-            "[console_scripts]\nmarkitai-mcp = markitai.mcp.server:main\n"
+            "[console_scripts]\nmarkitai-mcp = markitai.mcp:main\n"
         ),
         "markitai-1.2.1.dist-info/licenses/LICENSE": "MIT",
         "markitai-1.2.1.dist-info/licenses/NOTICE": "NOTICE",

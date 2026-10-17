@@ -71,7 +71,7 @@ Changelog = "https://github.com/Ynewtime/markitai/blob/main/CHANGELOG.md"
 
 [project.scripts]
 markitai = "markitai.launcher:main"
-markitai-mcp = "markitai.mcp.server:main"
+markitai-mcp = "markitai.mcp:main"
 mkai = "markitai.launcher:main"  # short alias (checked: no PyPI/homebrew/system conflict)
 
 [project.optional-dependencies]

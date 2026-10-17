@@ -38,6 +38,23 @@ class TestDetectLanguage:
         with patch.dict("os.environ", {"LC_ALL": "zh_TW.UTF-8"}, clear=True):
             assert i18n.detect_language() == "zh"
 
+    def test_lc_all_beats_lc_messages_beats_lang(self) -> None:
+        """POSIX order: LC_ALL, then LC_MESSAGES, then LANG."""
+        with patch.dict(
+            "os.environ", {"LANG": "C.UTF-8", "LC_ALL": "zh_CN.UTF-8"}, clear=True
+        ):
+            assert i18n.detect_language() == "zh"
+        with patch.dict(
+            "os.environ", {"LANG": "zh_CN.UTF-8", "LC_MESSAGES": "en_US"}, clear=True
+        ):
+            assert i18n.detect_language() == "en"
+        with patch.dict(
+            "os.environ",
+            {"LC_ALL": "en_US", "LC_MESSAGES": "zh_CN", "LANG": "zh_CN"},
+            clear=True,
+        ):
+            assert i18n.detect_language() == "en"
+
     def test_markitai_lang_overrides_lang(self) -> None:
         """MARKITAI_LANG should override LANG."""
         with patch.dict(

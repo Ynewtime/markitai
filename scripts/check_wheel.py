@@ -121,7 +121,7 @@ def check_wheel(wheel_path: Path) -> None:
         raise SystemExit(f"wheel contains path-traversal entries: {traversal}")
 
     # The bundled MCP server must ship its console script and module.
-    if "markitai-mcp = markitai.mcp.server:main" not in entry_points:
+    if "markitai-mcp = markitai.mcp:main" not in entry_points:
         raise SystemExit(f"wheel is missing the markitai-mcp script:\n{entry_points}")
     if not any(name.startswith("markitai/mcp/") for name in names):
         raise SystemExit("wheel is missing the markitai/mcp/ package")

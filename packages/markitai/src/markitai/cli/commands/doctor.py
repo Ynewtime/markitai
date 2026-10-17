@@ -1586,7 +1586,7 @@ def doctor(as_json: bool, fix: bool, suggest: bool, timings: bool) -> None:
         Optional capabilities:
         - RapidOCR (for scanned document processing, `markitai[ocr]`)
         - Playwright (for dynamic URL fetching)
-        - LibreOffice (for Office document conversion)
+        - LibreOffice (PPTX slide rendering)
         - LLM API configuration (for content enhancement)
         - Auth status for local providers (Claude, Copilot, ChatGPT)
 

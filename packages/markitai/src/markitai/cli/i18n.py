@@ -131,14 +131,18 @@ TEXTS: dict[str, dict[str, str]] = {
 def detect_language() -> str:
     """Detect user language preference from environment variables.
 
-    Priority: MARKITAI_LANG > LANG/LC_ALL > default (en)
+    Priority: MARKITAI_LANG > LC_ALL > LC_MESSAGES > LANG (POSIX order) > default (en)
 
     Returns:
         Language code: "en" or "zh"
     """
     lang = os.environ.get("MARKITAI_LANG", "")
     if not lang:
-        lang = os.environ.get("LANG", "") or os.environ.get("LC_ALL", "")
+        lang = (
+            os.environ.get("LC_ALL", "")
+            or os.environ.get("LC_MESSAGES", "")
+            or os.environ.get("LANG", "")
+        )
 
     if lang.lower().startswith("zh"):
         return "zh"
