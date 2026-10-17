@@ -37,7 +37,7 @@ import { basename, displayName, fmtBytes } from "./lib/format.ts";
 import { useConvertDefaults } from "./hooks/use-convert-defaults.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
-import { ADMIN_SECTIONS, listQuery, OPEN_MODE, parseListState, parseRoute, routePath, type PaneMode, type Route, type Section } from "./lib/route.ts";
+import { ADMIN_SECTIONS, DIALOG_ENTRY, entryOnly, listEntry, listQuery, ONLY_ENTRY, OPEN_MODE, parseListState, parseRoute, routePath, SUMMARY_ENTRY, type PaneMode, type Route, type Section } from "./lib/route.ts";
 import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
 import { parseUrls } from "./lib/urls.ts";
 
@@ -52,9 +52,6 @@ interface Upload {
 }
 
 let noteSequence = 0;
-
-/** The history state of the entry that opened a conversion's window over the list. */
-const DIALOG_ENTRY = "dialog";
 
 export function App() {
   const [locale, setLocale] = useState<Locale>(() => detectLocale());
@@ -200,7 +197,8 @@ export function App() {
   const [listState, setListState] = useState(() => parseListState(location.search));
   const navigate = useCallback((next: Route) => {
     const path = routePath(next);
-    if (location.pathname !== path || location.search) history.pushState(null, "", path);
+    const narrowed = next.view === "jobs" ? onlyRef.current : null;
+    if (location.pathname !== path || location.search) history.pushState(narrowed ? { wb: ONLY_ENTRY, only: narrowed } : null, "", path);
     setRoute(next);
     if (next.view !== "jobs") setListState({ selected: null, mode: OPEN_MODE });
     requestAnimationFrame(() => document.getElementById("main")?.focus({ preventScroll: true }));
@@ -209,26 +207,31 @@ export function App() {
     const onPop = () => {
       setRoute(parseRoute(location.pathname));
       setListState(parseListState(location.search));
+      setOnly(location.pathname === "/jobs" ? entryOnly(listEntry()) : null);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   /** Opening a conversion's window from the list adds a history entry (marked, so the page knows it is its own):
-   * Back, the trackpad swipe and Esc then all close the window the same way. Moving between conversions and tabs
-   * replaces the address; closing a window that has its entry goes back to the list instead of adding another. */
+   * Back, the trackpad swipe and Esc then all close the window the same way. An item opened from the summary or
+   * from a submission's window (a notice's name, Preview) adds one more level: Back returns to that window, while
+   * ✕ and Esc go back over every level to the list. Moving between conversions and tabs replaces the address. */
   const updateList = useCallback((next: { selected: string | null; mode: PaneMode }, push = false) => {
     setListState(next);
     const url = `/jobs${listQuery(next)}`;
     if (location.pathname + location.search === url) return;
     const onList = location.pathname === "/jobs";
     const wasOpen = onList && parseListState(location.search).selected !== null;
+    const entry = listEntry();
+    const narrowed = onList ? entryOnly(entry) : null;
     if (next.selected === null) {
-      if (wasOpen && (history.state as { wb?: string } | null)?.wb === DIALOG_ENTRY) history.back();
-      else history.replaceState(null, "", url);
+      if (wasOpen && entry?.wb === DIALOG_ENTRY) history.go(-Math.max(1, entry.depth ?? 1));
+      else history.replaceState(narrowed ? { wb: ONLY_ENTRY, only: narrowed } : null, "", url);
       return;
     }
-    if (onList && !wasOpen) history.pushState({ wb: DIALOG_ENTRY }, "", url);
-    else if (push) history.pushState(null, "", url);
+    if (onList && !wasOpen) history.pushState({ wb: DIALOG_ENTRY, depth: entry?.wb === SUMMARY_ENTRY ? 2 : 1, only: narrowed ?? undefined }, "", url);
+    else if (onList && push && entry?.wb === DIALOG_ENTRY) history.pushState({ wb: DIALOG_ENTRY, depth: Math.max(1, entry.depth ?? 1) + 1, only: narrowed ?? undefined }, "", url);
+    else if (push) history.pushState(narrowed ? { wb: ONLY_ENTRY, only: narrowed } : null, "", url);
     else history.replaceState(history.state, "", url);
   }, []);
   // A wide screen never shows the phone's settings index.
@@ -246,7 +249,9 @@ export function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   // Exactly these items are listed (a notice's "Show items"): item keys, or none.
-  const [only, setOnly] = useState<string[] | null>(null);
+  const [only, setOnly] = useState<string[] | null>(() => (location.pathname === "/jobs" ? entryOnly(listEntry()) : null));
+  const onlyRef = useRef(only);
+  onlyRef.current = only;
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
   const mark = (key: string, on: boolean) =>
@@ -784,12 +789,20 @@ export function App() {
           })
         }
         only={only}
-        onOnly={setOnly}
-        // One item opens at once; several are the list, narrowed to exactly them.
+        onOnly={(keys) => {
+          setOnly(keys);
+          // Showing everything again keeps the entry: Back still returns to the window "Show items" came from.
+          const entry = listEntry();
+          if (keys === null && entryOnly(entry)) history.replaceState(entry?.wb === ONLY_ENTRY ? null : { ...entry, only: undefined }, "");
+        }}
+        // One item opens at once, one level deeper; several are the list, narrowed to exactly them, as an entry
+        // of its own, so Back returns to the summary or submission it came from.
         onShowItems={(keys) => {
           const first = keys[0];
-          if (keys.length === 1 && first) updateList({ selected: first, mode: "inspector" });
+          if (keys.length === 1 && first) updateList({ selected: first, mode: "inspector" }, true);
           else if (keys.length > 1) {
+            history.pushState({ wb: ONLY_ENTRY, only: keys }, "", "/jobs");
+            setListState({ selected: null, mode: OPEN_MODE });
             setOnly(keys);
             setFilter("all");
             setQuery("");

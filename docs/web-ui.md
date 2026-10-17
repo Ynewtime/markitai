@@ -127,7 +127,10 @@ files wait on Convert); typing URLs is Convert's job.
   Back button and the trackpad's back swipe (opening the window from the list adds
   one history entry, so Back returns to the list instead of leaving the page; a
   window opened from a link or from another page closes without adding one).
-  Summary's window does the same. (The docked
+  Summary's window does the same. Each Back goes one level back: an item opened
+  from the summary or a submission's window (a notice's name) returns to that
+  window, and so does the list narrowed by Show items; Escape and ✕ close every
+  level at once. (The docked
   side-panel layout of earlier builds is gone; a browser that chose it opens the
   window.)
 - **Details** shows the item: its state in a sentence
@@ -142,7 +145,8 @@ files wait on Convert); typing URLs is Convert's job.
   the cost, its failures and the notices of all its items (each notice names the
   items it covers, the first three as buttons that open that item and "+N more" for
   the rest; Show item opens the one item, and Show items closes the window and narrows
-  the list to exactly those items, with a "N items ×" chip that shows all again); Summary opens the same
+  the list to exactly those items, with a thin "N items" bar over the list (its count drops
+  as items are deleted; × shows all again); Summary opens the same
   overview for the whole list.
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N

@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { counts, FILTERS, isJobKey, itemOrder, submissionLabel, submissions, type ConvJob, type Filter, type LabelWords } from "../lib/conversions.ts";
 import { groupNotices } from "../lib/notices.ts";
-import type { PaneMode } from "../lib/route.ts";
+import { listEntry, SUMMARY_ENTRY, type PaneMode } from "../lib/route.ts";
 import { waitingJobs, type SessionItem } from "../lib/session.ts";
 import { ActionMenu } from "./action-menu.tsx";
 import { ConfirmPopover } from "./confirm-popover.tsx";
@@ -85,6 +85,8 @@ const TAB_MODE: Record<PeekTab, PaneMode> = { details: "inspector", preview: "pr
 export function ConversionsPage(props: ConversionsPageProps) {
   const { t, locale, phone, jobs, items, loaded, selected, mode, filter, query, collapsed, ctx } = props;
   const onlySet = useMemo(() => (props.only === null ? null : new Set(props.only)), [props.only]);
+  // The bar counts the narrowed items still there (a deleted one drops out).
+  const onlyLeft = useMemo(() => (onlySet === null ? 0 : items.filter((item) => onlySet.has(item.key)).length), [onlySet, items]);
   const list = useMemo(() => submissions(jobs, items, filter, query, onlySet), [jobs, items, filter, query, onlySet]);
   const order = useMemo(() => itemOrder(list), [list]);
   const tally = useMemo(() => counts(items), [items]);
@@ -98,17 +100,18 @@ export function ConversionsPage(props: ConversionsPageProps) {
     const next = order[position + delta];
     return next ? () => props.onSelect(next.key, "keyboard") : null;
   };
-  // The summary of everything listed opens in the same window as a conversion.
-  const [overview, setOverview] = useState(false);
+  // The summary of everything listed opens in the same window as a conversion, with a history entry of its
+  // own: Back from an item or a narrowed list opened from it comes back to it.
+  const [overview, setOverview] = useState(() => listEntry()?.wb === SUMMARY_ENTRY);
   useEffect(() => {
-    const leave = () => setOverview(false);
-    window.addEventListener("popstate", leave);
-    return () => window.removeEventListener("popstate", leave);
+    const follow = () => setOverview(listEntry()?.wb === SUMMARY_ENTRY);
+    window.addEventListener("popstate", follow);
+    return () => window.removeEventListener("popstate", follow);
   }, []);
 
-  /** Several items are the list narrowed to them, so the window over it closes first. */
+  /** Several items are the list narrowed to them (a history entry over the window's), so the window closes. */
   const showItems = (keys: string[]) => {
-    if (keys.length > 1) close();
+    if (keys.length > 1) setOverview(false);
     props.onShowItems(keys);
   };
 
@@ -116,7 +119,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
   const close = () => {
     const key = selected;
     // The summary's window has a history entry of its own (Back closes it): closing by hand goes back over it.
-    if (overview && (history.state as { wb?: string } | null)?.wb === "summary") history.back();
+    if (overview && listEntry()?.wb === SUMMARY_ENTRY) history.back();
     setOverview(false);
     props.onSelect(null);
     if (key) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true }));
@@ -244,7 +247,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
               {(kinds > 0 || tally.failed > 0) && (
                 <>
                   {" · "}
-                  <button type="button" class="text-link" onClick={() => (props.onSelect(null), history.pushState({ wb: "summary" }, "", location.href), setOverview(true))}>
+                  <button type="button" class="text-link" onClick={() => (props.onSelect(null), history.pushState({ wb: SUMMARY_ENTRY, only: props.only ?? undefined }, "", location.href), setOverview(true))}>
                     {t.overviewLink}
                   </button>
                 </>
@@ -305,7 +308,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
           {props.only !== null && items.length > 0 && (
             <div class="subset-bar">
               <Icon name="FunnelSimple" size={14} />
-              <span class="subset-text">{t.showingItems(props.only.length)}</span>
+              <span class="subset-text">{t.showingItems(onlyLeft)}</span>
               <button type="button" class="icon-btn subset-clear" title={t.showingItemsClear} aria-label={t.showingItemsClear} onClick={() => props.onOnly(null)}>
                 <Icon name="X" size={14} />
               </button>

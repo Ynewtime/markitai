@@ -59,6 +59,29 @@ export function listQuery(state: ListState): string {
   return text ? `?${text}` : "";
 }
 
+/** The history entries the Conversions list adds, so each Back goes one level back: a conversion's
+ * window (`depth`: the window levels it stands on, the summary or a submission's window below an item
+ * opened from it, so closing goes back over all of them), the summary of everything listed, and the list
+ * narrowed by a notice's "Show items". `only` rides along, so an entry comes back narrowed as it was. */
+export const DIALOG_ENTRY = "dialog";
+export const SUMMARY_ENTRY = "summary";
+export const ONLY_ENTRY = "only";
+
+export interface ListEntry {
+  wb?: string;
+  depth?: number;
+  only?: string[];
+}
+
+export function listEntry(state: unknown = history.state): ListEntry | null {
+  return state !== null && typeof state === "object" ? (state as ListEntry) : null;
+}
+
+/** The items a history entry narrows the list to, or null. */
+export function entryOnly(entry: ListEntry | null): string[] | null {
+  return Array.isArray(entry?.only) && entry.only.every((key) => typeof key === "string") ? entry.only : null;
+}
+
 /** A plain left click on a same-origin link: the page handles it instead of the browser. */
 export function ownClick(event: MouseEvent): boolean {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.defaultPrevented;
