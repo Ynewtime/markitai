@@ -13,7 +13,8 @@ conversions and a grey pulsing dot while something converts, which turns green a
 everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
 its own Models and Edit config for them, see [Access token](#access-token)), and Docs, GitHub and the
-version line at the bottom: the version, the commit it was built from and the build time
+version line at the bottom (one line; on a phone, where the sidebar gives way to a
+top bar, it ends Settings instead): the version, the commit it was built from and the build time
 in the viewer's time zone (`1.3.0-dev 36583fe 10-14 22:48`; `-dirty` after the commit
 when it was built with uncommitted changes; the full time and zone on hover). Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
@@ -87,10 +88,19 @@ files wait on Convert); typing URLs is Convert's job.
   conversions to delete together: the rows carry `aria-checked`, Space checks
   the focused row, Shift (with Space or a click) extends from the last one,
   Ctrl/⌘+A checks every listed row, Escape clears and Delete asks. A bar at the
-  bottom of the window then says how many are checked, with Select all, Clear and
-  Delete; Delete asks first ("Delete 3 conversions? Their Markdown, pictures and
+  bottom of the window then says how many are checked, with Select all, Clear,
+  Delete and, to its right, Re-convert (below); Delete asks first ("Delete 3 conversions? Their Markdown, pictures and
   kept originals are deleted too.") and one notice reports the result, naming
-  what could not be deleted. Items still converting cannot be checked. On a
+  what could not be deleted. Items still converting cannot be checked.
+  **Re-convert** takes the checked items back to Convert with their originals
+  staged and the options open, so they can be converted again with other options
+  (LLM enhancement included: with no model set up, an inline note and a notice
+  say so and where to add one); Convert then records a new submission and leaves the
+  first results as they were. Each kept upload is read back through the item's
+  original route (`GET …/original`, then its `download`), a URL item is added
+  by its address, and an original that is no longer kept (a CLI-recorded job, a
+  removed upload) is named in a notice and left out. A conversion's "⋯" menu
+  has the same Re-convert for that one item. On a
   phone the boxes appear in Select mode (beside the filters; a tap then checks a
   row, Done leaves). The server deletes them in one request
   (`POST /api/history/delete`), or, on a backend without it, the page asks for
@@ -107,14 +117,18 @@ files wait on Convert); typing URLs is Convert's job.
   long name gives up its middle at about 34 characters and shows in full on
   hover), the actions that matter (Download, which opens Preview's Files; Retry,
   Add a model or Enable OCR and retry when that is the fix) and "⋯" (Enhance
-  with LLM, Run again, Retry without LLM, Delete), then Preview, Compare and
+  with LLM, Run again, Re-convert, Retry without LLM, Delete), then Preview, Compare and
   Details as tabs; a conversion opens on Preview (a submission, or a
   conversion without a result, on Details; one just submitted shows Details while
   it converts and turns to Preview when it is done, or stays on Details if it
   failed; `?view=details` is Details' own address). The expand button (or F) grows the window to the whole
   viewport and back, remembered in this browser. Up and Down (outside the
   scrolling document) move between items, C switches Compare, Escape, ✕ or a
-  click on the dimmed list closes it and returns to the row. (The docked
+  click on the dimmed list closes it and returns to the row; so do the browser's
+  Back button and the trackpad's back swipe (opening the window from the list adds
+  one history entry, so Back returns to the list instead of leaving the page; a
+  window opened from a link or from another page closes without adding one).
+  Summary's window does the same. (The docked
   side-panel layout of earlier builds is gone; a browser that chose it opens the
   window.)
 - **Details** shows the item: its state in a sentence
@@ -171,7 +185,8 @@ line above the body: a tag icon, the tags inline (`gardening · community beds �
 else the summary) and Summary at its end, with no title of its own (the body's
 heading is the title). Summary (a button, Enter or Space) opens it into a
 two-column properties table (Summary, Tags as chips, Source, Processed and every
-other key, values wrapped) whose `Properties · N` header folds it again; the
+other key; one key width with a rule between key and value, long keys and values
+wrapped) whose `Properties · N` header folds it again; the
 choice holds for the tab's session (`sessionStorage['markitai.front']`) and in
 Preview, Compare and the Details excerpt alike. Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
@@ -185,7 +200,13 @@ as a linked poster (`[![Video](poster.jpg)](https://…/clip.mp4)`) plays in pla
 (`https` only, loaded only when played, no referrer, with its poster: the link's
 picture, from the web or the item's own copy through its asset route);
 one that cannot play turns back into its link. Code blocks are highlighted by a 3 KB module loaded only when
-a preview contains code. While a result loads, Rendered, Source and Files show
+a preview contains code. Formulas, `$…$` inline and `$$…$$` as a display (also
+on lines of their own, blank lines and `aligned` environments included), are
+drawn by KaTeX 0.19.0 in a separate module (`/ui/math.js`, with `/ui/math.css`
+and the woff2 fonts `/ui/KaTeX_*.woff2`, all vendored and served by the binary)
+fetched only when a preview holds one; they also draw in headings and in the
+Contents. A `$` follows Pandoc's rules, so `$5 and $6` stays text, and a formula
+that does not parse stays as its source. While a result loads, Rendered, Source and Files show
 its shape in grey lines inside the same frame (with the size of a large result),
 so nothing moves when it arrives.
 
