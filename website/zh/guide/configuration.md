@@ -539,7 +539,7 @@ X/Twitter 的补充抓取（FxTwitter、Twitter oEmbed）和其他远程服务�
 | `wait_for_selector` | `null` | 等待的 CSS 选择器 |
 | `cookies` | `null` | `[{name, value, domain, path}]` |
 | `reject_resource_patterns` | `null` | 拦截匹配的请求，如 `["**/*.css"]` |
-| `extra_http_headers` | `null` | `{"Accept-Language": "zh-CN"}` |
+| `extra_http_headers` | `null` | `{"Accept-Language": "zh-CN"}`；只发送到初始来源，机密请求头不会到达跨来源子资源或重定向目标 |
 | `user_agent` | `null` | 自定义 User-Agent |
 | `http_credentials` | `null` | HTTP 认证的 `{username, password}` |
 

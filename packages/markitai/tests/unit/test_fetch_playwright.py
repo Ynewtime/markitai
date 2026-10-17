@@ -2152,8 +2152,9 @@ class TestPlaywrightRendererEnhanced:
         assert mock_page.route.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_extra_http_headers_passed_to_context(self):
-        """extra_http_headers are passed to new_context."""
+    async def test_extra_http_headers_bind_to_the_initial_origin(self):
+        """extra_http_headers are bound to the initial origin through a context
+        route, not set on the context (which would leak them to every origin)."""
         from markitai.fetch_playwright import PlaywrightRenderer
 
         mock_context = AsyncMock()
@@ -2187,8 +2188,14 @@ class TestPlaywrightRendererEnhanced:
             )
 
         ctx_call = mock_browser.new_context.call_args
-        assert ctx_call.kwargs.get("extra_http_headers") == {"Accept-Language": "zh-CN"}
+        # The caller's headers are not set context-wide (every origin) anymore.
+        assert "extra_http_headers" not in ctx_call.kwargs
         assert ctx_call.kwargs.get("user_agent") == "MyBot/1.0"
+        # They are bound to the initial origin by a catch-all context route.
+        assert any(
+            call.args and call.args[0] == "**/*"
+            for call in mock_context.route.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_no_new_params_preserves_existing_behavior(self):

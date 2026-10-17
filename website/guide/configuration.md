@@ -539,7 +539,7 @@ The X/Twitter enrichment path (FxTwitter, Twitter oEmbed) follows the same conse
 | `wait_for_selector` | `null` | CSS selector to wait for |
 | `cookies` | `null` | `[{name, value, domain, path}]` |
 | `reject_resource_patterns` | `null` | Block matching requests, e.g. `["**/*.css"]` |
-| `extra_http_headers` | `null` | `{"Accept-Language": "zh-CN"}` |
+| `extra_http_headers` | `null` | `{"Accept-Language": "zh-CN"}`; sent to the initial origin only, so a secret header never reaches a cross-origin subresource or redirect target |
 | `user_agent` | `null` | Custom User-Agent |
 | `http_credentials` | `null` | `{username, password}` for HTTP auth |
 

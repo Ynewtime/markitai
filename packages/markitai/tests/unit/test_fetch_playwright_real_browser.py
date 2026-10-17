@@ -211,3 +211,74 @@ async def test_a_complete_page_does_not_sit_out_the_render_bound() -> None:
     assert "Everything on this page" in result.content
     # It used to sleep 3 s, scroll for 0.6 s and pause another 0.8 s
     assert elapsed < 2.5
+
+
+@pytest.mark.slow
+async def test_extra_http_headers_reach_the_initial_origin_only() -> None:
+    """A secret in extra_http_headers reaches the page's own origin and its
+    same-origin subresources, never a cross-origin subresource."""
+    _skip_if_no_playwright_browser()
+    import threading
+    from http.server import BaseHTTPRequestHandler
+
+    from markitai.fetch_playwright import PlaywrightRenderer
+    from tests.local_http import LocalHTTPServer
+
+    other_seen: list[tuple[str, str]] = []
+    main_seen: list[tuple[str, str]] = []
+
+    def make_handler(seen: list[tuple[str, str]], page: str | None):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 (http.server API)
+                seen.append((self.path, self.headers.get("X-Account", "")))
+                if page is not None and self.path == "/":
+                    body = page.encode()
+                    mime = "text/html; charset=utf-8"
+                else:
+                    body = b"GIF87a"
+                    mime = "image/gif"
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args: object) -> None:
+                pass
+
+        return Handler
+
+    other = LocalHTTPServer(("127.0.0.1", 0), make_handler(other_seen, None))
+    other_port = other.server_address[1]
+    page = (
+        "<!doctype html><html><head><title>Origins</title></head><body>"
+        "<main><p>A page with a same-origin image and a cross-origin one.</p>"
+        "<img src='/same.gif'>"
+        f"<img src='http://127.0.0.1:{other_port}/other.gif'></main></body></html>"
+    )
+    main = LocalHTTPServer(("127.0.0.1", 0), make_handler(main_seen, page))
+    main_port = main.server_address[1]
+    for server in (main, other):
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
+    try:
+        async with PlaywrightRenderer() as renderer:
+            await renderer.fetch(
+                f"http://127.0.0.1:{main_port}/",
+                timeout=15000,
+                extra_wait_ms=1500,
+                skip_auto_scroll=True,
+                extra_http_headers={"X-Account": "private-token"},
+            )
+    finally:
+        for server in (main, other):
+            server.shutdown()
+            server.server_close()
+
+    # The document and its same-origin image carry the header.
+    assert ("/", "private-token") in main_seen
+    assert ("/same.gif", "private-token") in main_seen
+    # The other origin was reached but never saw the header.
+    assert any(path == "/other.gif" for path, _ in other_seen), other_seen
+    assert all(account == "" for _, account in other_seen), other_seen
