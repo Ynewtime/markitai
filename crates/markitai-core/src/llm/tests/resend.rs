@@ -482,3 +482,36 @@ fn scanned_pages_are_asked_for_in_the_cleanup_framing_with_the_rules_once() {
         "{system}"
     );
 }
+
+#[test]
+fn a_later_batch_of_scanned_pages_is_resent_once_after_a_recitation_stop() {
+    // Twelve pages are two batches; page 11 is a scan in the second. One
+    // request at a time, so the answers arrive in the order given.
+    let server = Mock::new(vec![
+        (
+            200,
+            doc_tool_answer("# First ten pages\n\nText of the first batch."),
+        ),
+        (200, recitation_answer()),
+        (200, document_answer("Text of the scanned page eleven.")),
+    ]);
+    let mut cfg = cfg("gemini/gemini-flash-latest", &server.base);
+    cfg["llm"]["max_requests_per_document"] = json!(6);
+    cfg["llm"]["concurrency"] = json!(1);
+    let frames: Vec<_> = (1..=12)
+        .map(|number| VisionFrame {
+            number,
+            mime: "image/png",
+            bytes: b"page",
+        })
+        .collect();
+    let scope = DocumentScope::new(&cfg);
+    let answer = read_scans(&frames, &cfg, &[11]).unwrap();
+    assert!(answer.markdown.contains("Text of the first batch."));
+    assert!(answer.markdown.contains("Text of the scanned page eleven."));
+    let requests = server.finish();
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1].1.get("tools").is_some());
+    assert_eq!(requests[2].1["response_format"]["type"], "json_schema");
+    assert_eq!(scope.usage().requests, 3);
+}

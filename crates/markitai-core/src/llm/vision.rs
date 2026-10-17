@@ -61,9 +61,12 @@ struct Work<'a> {
     prompts: Prompts,
     key: Option<String>,
     cached: Option<BatchAnswer>,
-    first: bool,
     /// Some frame is a scanned page the model transcribes.
     unread: bool,
+    /// The answer is a structured document (the first batch, whose answer
+    /// carries the metadata, and any batch with scanned pages, whose request
+    /// is resent after a recitation stop in the next answer mode).
+    structured: bool,
     context: &'a str,
 }
 struct BatchAnswer {
@@ -147,13 +150,16 @@ pub(crate) fn process_vision_with_runtime(
         .enumerate()
     {
         let protected = chunks::Protected::new(source);
+        let unread = frames
+            .iter()
+            .any(|f| request.unread_pages.contains(&f.number));
         let prompts = visual_prompts(
             &protected.text,
             request.source_label,
             request.kind,
             frames,
             request.unread_pages,
-            index == 0,
+            index == 0 || unread,
             cfg,
         )?;
         let key = cache.as_ref().filter(|_| pool != "pool:none").map(|_| {
@@ -170,10 +176,8 @@ pub(crate) fn process_vision_with_runtime(
             prompts,
             key,
             cached: None,
-            first: index == 0,
-            unread: frames
-                .iter()
-                .any(|f| request.unread_pages.contains(&f.number)),
+            unread,
+            structured: index == 0 || unread,
             context: request.cache_context,
         };
         if let (Some(cache), Some(key)) = (&cache, &item.key) {
@@ -591,7 +595,7 @@ fn cached_answer(item: &Work<'_>, value: &Value) -> Result<BatchAnswer> {
         .and_then(Value::as_str)
         .ok_or_else(invalid)?
         .to_owned();
-    let metadata = if item.first {
+    let metadata = if item.structured {
         let metadata = value.get("metadata").ok_or_else(invalid)?;
         Some(
             document::parse_value(
@@ -618,7 +622,7 @@ fn complete(
     pool: &str,
 ) -> (VisualResult<BatchAnswer>, Option<String>, bool) {
     let key = item
-        .first
+        .structured
         .then(|| {
             flight::key(
                 runtime,
@@ -684,7 +688,7 @@ fn run_batch(
                 .collect(),
         ),
     };
-    if item.first {
+    if item.structured {
         return structured::run(
             structured::Request {
                 prompts: &prompts,
@@ -803,8 +807,8 @@ mod tests {
             },
             key: None,
             cached: None,
-            first: true,
             unread: false,
+            structured: true,
             context: "test",
         };
         assert!(cached_answer(&item,&json!({"markdown":"I cannot process the image.","metadata":{"description":"x","tags":["x"]}})).is_err());

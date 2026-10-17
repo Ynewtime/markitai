@@ -856,7 +856,7 @@ parameters with HTTP 400/422 descends without resending the same shape. A provid
 content filter (a finish reason starting with `content_filter`, such as Gemini's
 `content_filter: RECITATION`) is an explicit refusal and its error names the
 reason. The one exception is a request that transcribes scanned pages no reader
-recovered: a recitation stop there is sent once more in the next mode of the
+recovered (in any batch of ten pages: a batch with scanned pages is asked for as a structured document too): a recitation stop there is sent once more in the next mode of the
 ladder (counted in the document's budget, named in a warning), and fails with the
 same error if it is withheld again. Unrelated invalid-input errors, explicit refusal, token-limit truncation, quota and budget
 failures stop the ladder; authentication failures first move to unexcluded
