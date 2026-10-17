@@ -57,6 +57,18 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
     'How markitai fetches URLs: the static, Playwright, Defuddle, Jina and Cloudflare strategy cascade, domain profiles and remote-fetch consent.',
   '/zh/guide/fetch-policy':
     'markitai 如何抓取 URL：static、Playwright、Defuddle、Jina 与 Cloudflare 的策略级联、域名配置与远程抓取同意。',
+  '/guide/subscriptions':
+    'Use a Claude Code or GitHub Copilot subscription with markitai: install the CLI, sign in, and fix what the web workbench reports.',
+  '/zh/guide/subscriptions':
+    '在 markitai 中使用 Claude Code 或 GitHub Copilot 订阅：安装命令行、登录，并处理网页工作台给出的提示。',
+  '/guide/subscription-chatgpt':
+    'Use a ChatGPT subscription with markitai: sign in with the device code flow.',
+  '/zh/guide/subscription-chatgpt':
+    '在 markitai 中使用 ChatGPT 订阅：用设备码流程登录。',
+  '/guide/pricing':
+    'How markitai prices a conversion, what an unknown price means, and how to get a cost for a model.',
+  '/zh/guide/pricing':
+    'markitai 如何为转换计费、价格未知意味着什么，以及怎样让某个模型显示费用。',
   '/changelog':
     'Release history for markitai — every added, changed, removed and fixed item, newest first.',
   '/zh/changelog':
@@ -200,6 +212,9 @@ export default defineConfig({
               text: '指南',
               items: [
                 { text: '网页工作台', link: '/zh/guide/serve' },
+                { text: 'Claude 与 Copilot 订阅', link: '/zh/guide/subscriptions' },
+                { text: 'ChatGPT 订阅', link: '/zh/guide/subscription-chatgpt' },
+                { text: '价格与费用显示', link: '/zh/guide/pricing' },
                 { text: '抓取策略', link: '/zh/guide/fetch-policy' },
                 { text: '转换性能', link: '/zh/guide/performance' },
                 { text: '输出 Profile', link: '/zh/guide/output-profiles' },
@@ -318,6 +333,9 @@ export default defineConfig({
           text: 'Guide',
           items: [
             { text: 'Web Workspace', link: '/guide/serve' },
+            { text: 'Claude and Copilot', link: '/guide/subscriptions' },
+            { text: 'ChatGPT', link: '/guide/subscription-chatgpt' },
+            { text: 'Prices and Cost', link: '/guide/pricing' },
             { text: 'Fetch Policy', link: '/guide/fetch-policy' },
             { text: 'Performance', link: '/guide/performance' },
             { text: 'Output Profiles', link: '/guide/output-profiles' },
