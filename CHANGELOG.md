@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The release checks the wheel that ships, byte for byte.** `scripts/check_wheel.py` now compares every vendored workbench file with its manifest digest and size (and each `.gz` with its plain file) and runs on the built distribution that is uploaded, in CI and in the release workflow.
 - **Retrying an item can no longer bring back a job that was just deleted.** The retry now takes the job's delete lock and looks again before it queues the work, so a delete that lands while the retry waits wins; before, the item could be converted again (and paid for) into a folder that was gone.
 - **The Chinese `markitai doctor` report is complete.** The summary joins names with `、` and translates `1 LLM model` and `Playwright (slow to start)`; the progress text, the `--fix` failure detail, the Claude cloud-provider remedy, `# or:` and parenthesised tails are Chinese too, and a test fails when a message added to `doctor.py` has no Chinese form.
 - **`markitai doctor` no longer ticks Vision Model and VLM OCR for a model the run leaves out.** A vision model whose API key is not set is not counted; the row says which variable it waits for.

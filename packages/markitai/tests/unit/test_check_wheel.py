@@ -38,9 +38,20 @@ def check_wheel() -> ModuleType:
     return _load()
 
 
-def _wheel(path: Path, check_wheel: ModuleType, *, without: str = "") -> Path:
-    """A wheel with every member the check looks for, less *without*."""
-    manifest = json.loads((_WORKBENCH / "manifest.json").read_text(encoding="utf-8"))
+def _wheel(
+    path: Path,
+    check_wheel: ModuleType,
+    *,
+    without: str = "",
+    altered: dict[str, bytes] | None = None,
+    manifest: dict | None = None,
+) -> Path:
+    """A wheel with every member the check looks for, less *without*; the
+    workbench files are the vendored ones, except those in *altered*."""
+    if manifest is None:
+        manifest = json.loads(
+            (_WORKBENCH / "manifest.json").read_text(encoding="utf-8")
+        )
     members = {
         "markitai-1.2.1.dist-info/entry_points.txt": (
             "[console_scripts]\nmarkitai-mcp = markitai.mcp.server:main\n"
@@ -49,7 +60,12 @@ def _wheel(path: Path, check_wheel: ModuleType, *, without: str = "") -> Path:
         "markitai-1.2.1.dist-info/licenses/NOTICE": "NOTICE",
         "markitai/mcp/__init__.py": "",
         **dict.fromkeys(check_wheel.REQUIRED_FILES, ""),
-        **{f"{check_wheel.WORKBENCH}{name}": "" for name in manifest["files"]},
+        **{
+            f"{check_wheel.WORKBENCH}{name}": (altered or {}).get(
+                name, (_WORKBENCH / name).read_bytes()
+            )
+            for name in manifest["files"]
+        },
         f"{check_wheel.WORKBENCH}manifest.json": json.dumps(manifest),
     }
     with zipfile.ZipFile(path, "w") as wheel:
@@ -82,4 +98,37 @@ def test_every_file_the_workbench_manifest_lists_is_required(
         tmp_path / "markitai.whl", check_wheel, without=f"{check_wheel.WORKBENCH}{name}"
     )
     with pytest.raises(SystemExit, match=name):
+        check_wheel.check_wheel(wheel)
+
+
+def test_a_workbench_file_that_differs_from_its_manifest_fails(
+    tmp_path: Path, check_wheel: ModuleType
+) -> None:
+    """The server refuses the whole UI on one wrong byte; the gate must too."""
+    plain = (_WORKBENCH / "ui" / "boot.js").read_bytes()
+    wheel = _wheel(
+        tmp_path / "markitai.whl", check_wheel, altered={"ui/boot.js": plain + b"\n"}
+    )
+    with pytest.raises(SystemExit, match="ui/boot.js"):
+        check_wheel.check_wheel(wheel)
+
+
+def test_a_gzip_copy_that_is_not_its_plain_file_fails(
+    tmp_path: Path, check_wheel: ModuleType
+) -> None:
+    import gzip
+    import hashlib
+
+    manifest = json.loads((_WORKBENCH / "manifest.json").read_text(encoding="utf-8"))
+    twin = next(name for name in manifest["files"] if name.endswith(".js.gz"))
+    other = gzip.compress(b"console.log('not the same file');\n")
+    # listed with its own (matching) digest, so only the twin rule can object
+    manifest["files"][twin] = {
+        "bytes": len(other),
+        "sha256": hashlib.sha256(other).hexdigest(),
+    }
+    wheel = _wheel(
+        tmp_path / "markitai.whl", check_wheel, altered={twin: other}, manifest=manifest
+    )
+    with pytest.raises(SystemExit, match=twin):
         check_wheel.check_wheel(wheel)
