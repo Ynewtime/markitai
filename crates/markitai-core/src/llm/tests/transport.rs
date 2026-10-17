@@ -63,6 +63,54 @@ fn a_failed_tls_handshake_is_named() {
 }
 
 #[test]
+fn a_handshake_cut_off_by_the_other_end_points_at_a_proxy_or_the_network() {
+    // The peer closes the connection without a word, as a blocked route does.
+    let (address, server) = serve(|mut stream| {
+        use std::io::Read;
+        let mut hello = [0u8; 4096];
+        let _ = stream.read(&mut hello);
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        drain(stream);
+    });
+    let error = failure(&format!("https://{address}/v1"), 3);
+    server.join().unwrap();
+    assert!(
+        error.starts_with("LLM request failed: TLS handshake failed (")
+            && error.contains("usually means a proxy or network problem")
+            && error.contains("set HTTPS_PROXY or turn on the system proxy")
+            && !error.contains("docs.rs")
+            && error.ends_with(&format!(") (deployment openai/gpt-test at {address})")),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_proxy_not_opening_a_tunnel_is_named() {
+    use crate::llm::diagnosis;
+    // The proxy answers the CONNECT with a refusal.
+    let (address, server) = serve(|mut stream| {
+        use std::io::Read;
+        let mut request = [0u8; 2048];
+        let _ = stream.read(&mut request);
+        let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+        drain(stream);
+    });
+    let proxy = reqwest::Proxy::all(format!("http://{address}")).unwrap();
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .proxy(proxy)
+        .build()
+        .unwrap();
+    let error = client.get("https://example.invalid/").send().unwrap_err();
+    server.join().unwrap();
+    let said = diagnosis::cause(error).unwrap();
+    assert!(
+        said.contains("the proxy did not open a connection to the provider"),
+        "{said}"
+    );
+}
+
+#[test]
 fn a_timeout_names_its_limit() {
     let (address, server) = serve(|mut stream| {
         read_request(&mut stream);

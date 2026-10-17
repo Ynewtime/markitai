@@ -532,3 +532,64 @@ mod process {
         assert!(reader.read("tool", &["value"], Instant::now()).is_none());
     }
 }
+
+#[test]
+fn model_provider_clients_use_an_http_environment_proxy_else_the_system_one() {
+    let target = url("https://generativelanguage.googleapis.com/v1beta/models");
+    let api = |pairs: &[(&str, &str)], system: System| {
+        Settings::resolve(&env(pairs))
+            .unwrap()
+            .for_api_url(&target, || system)
+            .map(|url| url.to_string())
+    };
+    // An environment proxy is used, and no system setting is read for it.
+    let settings = Settings::resolve(&env(&[("HTTPS_PROXY", "http://127.0.0.1:7890")])).unwrap();
+    assert_eq!(
+        settings
+            .for_api_url(&target, no_discovery)
+            .map(|url| url.to_string()),
+        Some("http://127.0.0.1:7890/".into())
+    );
+    // Without one, the system's manual proxy applies, as Python's httpx did.
+    assert_eq!(
+        api(&[], found("http://127.0.0.1:7890", "")),
+        Some("http://127.0.0.1:7890/".into())
+    );
+    assert_eq!(api(&[], None), None);
+    // The system exception list applies to the system proxy only.
+    assert_eq!(
+        api(
+            &[],
+            found("http://127.0.0.1:7890", "generativelanguage.googleapis.com")
+        ),
+        None
+    );
+    // NO_PROXY and loopback addresses are direct either way.
+    assert_eq!(
+        api(
+            &[
+                ("HTTPS_PROXY", "http://127.0.0.1:7890"),
+                ("NO_PROXY", ".googleapis.com")
+            ],
+            None
+        ),
+        None
+    );
+    let local = Settings::resolve(&env(&[("HTTPS_PROXY", "http://127.0.0.1:7890")])).unwrap();
+    assert_eq!(
+        local.for_api_url(&url("http://127.0.0.1:11434/v1"), no_discovery),
+        None
+    );
+}
+
+#[test]
+fn a_socks_environment_proxy_leaves_model_provider_requests_direct() {
+    let target = url("https://api.openai.com/v1/chat/completions");
+    for socks in ["socks5://127.0.0.1:7891", "socks5h://127.0.0.1:7891"] {
+        let settings = Settings::resolve(&env(&[("ALL_PROXY", socks)])).unwrap();
+        // The client has no SOCKS support: direct, and no system read.
+        assert_eq!(settings.for_api_url(&target, no_discovery), None);
+        // The static-fetch rule is unchanged.
+        assert!(settings.static_client().is_err());
+    }
+}

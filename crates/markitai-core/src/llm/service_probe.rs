@@ -261,17 +261,20 @@ fn subscription(kind: crate::subscription::FailureKind, error: Error) -> Failure
 }
 
 fn perform(entry: &Deployment) -> Result<(), Failure> {
-    let client = Client::builder()
-        .redirect(Policy::none())
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|_| {
-            failure(
-                Reason::ProviderError,
-                "Cannot create model connection client",
-            )
-        })?;
+    let client = crate::proxy::http_api(
+        Client::builder()
+            .redirect(Policy::none())
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(Duration::from_secs(15)),
+    )
+    .map_err(|_| failure(Reason::ProviderError, "Proxy settings are malformed"))?
+    .build()
+    .map_err(|_| {
+        failure(
+            Reason::ProviderError,
+            "Cannot create model connection client",
+        )
+    })?;
     let prompts = Prompts {
         system: String::new(),
         user: "Reply with exactly OK.".into(),

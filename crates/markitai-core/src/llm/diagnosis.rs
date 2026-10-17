@@ -78,7 +78,23 @@ pub(super) fn cause(error: reqwest::Error) -> Option<String> {
     } else {
         None
     };
+    // A handshake the other end cut off, or a connection reset, is most often
+    // a proxy that is needed and not used, or one that does not pass TLS.
+    let cut = chain.says(&[
+        "close_notify",
+        "peer closed",
+        "unexpected eof",
+        "handshake eof",
+        "connection reset",
+        "broken pipe",
+    ]);
     match (kind, chain.innermost()) {
+        (Some(kind), Some(detail)) if cut && chain.tls() => Some(format!(
+            "{kind} ({detail}; the connection was cut, which usually means a proxy or network problem: if a proxy is needed to reach this provider, set HTTPS_PROXY or turn on the system proxy)"
+        )),
+        (Some(kind), Some(detail)) if chain.says(&["tunnel error"]) => Some(format!(
+            "{kind} ({detail}; the proxy did not open a connection to the provider: check that it is running and allows this host)"
+        )),
         (Some(kind), Some(detail)) => Some(format!("{kind} ({detail})")),
         (Some(kind), None) => Some(kind.into()),
         (None, detail) => detail,
@@ -535,6 +551,11 @@ impl<'a> Chain<'a> {
         let text = self.0.last()?.to_string();
         let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let text = without_credentials(&text);
+        // rustls ends this wording with a link to its manual.
+        let text = match text.find(": https://docs.rs/rustls") {
+            Some(at) => text[..at].to_owned(),
+            None => text,
+        };
         let text: String = text.chars().take(SAID_CHARS).collect();
         (!text.is_empty()).then_some(text)
     }

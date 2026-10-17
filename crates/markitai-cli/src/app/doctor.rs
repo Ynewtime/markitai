@@ -397,7 +397,9 @@ fn verdict(
         let mut segments = Vec::new();
         if !missing.is_empty() {
             let names = missing.join(separator);
-            segments.push(text!(lang => "Not available (optional): {names}", "以下可选功能不可用：{names}"));
+            segments.push(
+                text!(lang => "Not available (optional): {names}", "以下可选功能不可用：{names}"),
+            );
         }
         if !on_first_use.is_empty() {
             let names = on_first_use.join(separator);

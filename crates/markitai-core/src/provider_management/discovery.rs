@@ -129,17 +129,20 @@ pub(super) fn load(
         }
         _ => {}
     }
-    let client = Client::builder()
-        .redirect(Policy::none())
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(TIMEOUT)
-        .build()
-        .map_err(|_| {
-            fail(
-                Reason::ProviderError,
-                "Cannot create model discovery client",
-            )
-        })?;
+    let client = crate::proxy::http_api(
+        Client::builder()
+            .redirect(Policy::none())
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(TIMEOUT),
+    )
+    .map_err(|_| fail(Reason::ProviderError, "Proxy settings are malformed"))?
+    .build()
+    .map_err(|_| {
+        fail(
+            Reason::ProviderError,
+            "Cannot create model discovery client",
+        )
+    })?;
     let mut request = client.get(url).header("accept", "application/json");
     if let Some(key) = key {
         request = match provider {
