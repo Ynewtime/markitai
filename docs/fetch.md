@@ -773,8 +773,10 @@ To read a site that wants your own signed-in session, see
 
 ## Proxies
 
-Static fetch, remote extraction requests and the native browser share one
-decision, following the reference. The first nonempty of `HTTPS_PROXY`,
+Static fetch, remote extraction requests, the native browser, LLM requests,
+model connection checks and discovery, and the browser download share one
+decision, following the reference (and Python's httpx, which read the same
+environment variables and the macOS system proxy). The first nonempty of `HTTPS_PROXY`,
 `HTTP_PROXY`, `ALL_PROXY`, `https_proxy`, `http_proxy` and `all_proxy` is used
 for every scheme; a value without a scheme means HTTP. An environment proxy
 prevents any operating-system read. Otherwise the manual system proxy is read
@@ -796,7 +798,8 @@ port-qualified host, another wildcard or malformed CIDR, is ignored on its own,
 as the reference ignores it. Loopback hosts are always direct. Proxy settings
 above 64 KiB are rejected. Static fetch accepts credentials in an environment
 proxy URL; a SOCKS proxy there is an explicit unsupported error, because only
-the browser can use it. Model and Provider Batch clients keep their provider
-environment handling. The Windows registry reader is compiled in native Windows
+the browser can use it; LLM requests leave a SOCKS environment proxy unused and
+connect directly. Provider Batch clients keep their provider environment
+handling. The Windows registry reader is compiled in native Windows
 builds. That and parser tests do not establish every actual registry/proxy
 configuration; verify proxy behavior in the deployment environment.

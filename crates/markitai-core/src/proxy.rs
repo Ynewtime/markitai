@@ -8,7 +8,11 @@
 //! PAC/WPAD, credentials and network probes are never used. `NO_PROXY` (or
 //! `no_proxy` when the former is unset or empty) always applies; the system
 //! exception list is merged only when the system proxy is selected. Loopback
-//! hosts are always direct. LLM and Provider Batch clients are not affected.
+//! hosts are always direct. Model-provider clients (LLM requests, connection
+//! checks, model discovery) and the browser download use the same decision, as
+//! Python's httpx did through the environment and the system settings, except
+//! that a SOCKS environment proxy means a direct connection there (the client
+//! has no SOCKS support). Provider Batch clients are not affected.
 mod bypass;
 mod system;
 #[cfg(test)]
@@ -115,6 +119,20 @@ impl Settings {
         system().and_then(|(endpoint, bypass)| (!bypass.matches(url)).then_some(endpoint))
     }
 
+    /// [`Settings::for_url`] for a client that cannot speak SOCKS: a SOCKS
+    /// environment proxy is left unused (and, being an environment proxy,
+    /// still prevents any operating-system read).
+    fn for_api_url(&self, url: &Url, system: impl FnOnce() -> System) -> Option<Url> {
+        if self
+            .environment
+            .as_ref()
+            .is_some_and(|proxy| proxy.scheme().starts_with("socks"))
+        {
+            return None;
+        }
+        self.for_url(url, system)
+    }
+
     fn static_client(&self) -> Result<()> {
         if self
             .environment
@@ -180,6 +198,17 @@ pub(crate) fn http(builder: ClientBuilder) -> Result<ClientBuilder> {
     settings.static_client()?;
     Ok(builder.no_proxy().proxy(reqwest::Proxy::custom(move |url| {
         settings.for_url(url, || system(&env))
+    })))
+}
+
+/// Apply the shared decision to a client that talks to a model provider or
+/// downloads a runtime: HTTP(S) proxies from the environment, else the manual
+/// system proxy. A malformed setting is a configuration error.
+pub(crate) fn http_api(builder: ClientBuilder) -> Result<ClientBuilder> {
+    let env = crate::config::environment();
+    let settings = Settings::resolve(&env)?;
+    Ok(builder.no_proxy().proxy(reqwest::Proxy::custom(move |url| {
+        settings.for_api_url(url, || system(&env))
     })))
 }
 

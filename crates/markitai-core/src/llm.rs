@@ -1339,13 +1339,15 @@ fn run_mode(
         .iter()
         .map(|entry| runtime.routing().key(entry))
         .collect();
-    let client = Client::builder()
-        .timeout(Duration::from_secs(timeout))
-        .connect_timeout(Duration::from_secs(timeout.min(15)))
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|_| Error::Conversion("Cannot initialize LLM HTTP client".into()))?;
+    let client = crate::proxy::http_api(
+        Client::builder()
+            .timeout(Duration::from_secs(timeout))
+            .connect_timeout(Duration::from_secs(timeout.min(15)))
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION"))),
+    )?
+    .build()
+    .map_err(|_| Error::Conversion("Cannot initialize LLM HTTP client".into()))?;
     let mut attempts = 0u64;
     let mut slept = 0u64;
     let mut usage = ConversionUsage::default();

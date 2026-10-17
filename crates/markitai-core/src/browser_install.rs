@@ -284,13 +284,16 @@ pub(crate) fn install() -> Result<PathBuf> {
     let root = config::home().join("browsers/native");
     private_directory(&root)?;
     let _lock = lock(&root)?;
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(600))
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|_| failure("cannot initialize download client"))?;
+    let client = crate::proxy::http_api(
+        Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(600))
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION"))),
+    )
+    .map_err(|_| failure("proxy settings are malformed"))?
+    .build()
+    .map_err(|_| failure("cannot initialize download client"))?;
     let mut manifest = Vec::new();
     download(&client, MANIFEST, MANIFEST_LIMIT, &mut manifest)?;
     let chosen = select(&manifest, platform)?;
