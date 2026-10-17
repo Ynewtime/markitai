@@ -52,6 +52,7 @@
 
 ### 修复
 
+- **Claude、Copilot 和 ChatGPT 的模型发现更接近 Rust 的 API。** 失败原因不再缓存五分钟（登录后重新加载即可消除）；失败时不再返回过期的空列表，也不再错误地返回 `no_key`；Claude 登录过期会返回 `not_signed_in`；命令行过旧或没有响应会返回 `runtime_unsupported`（附 `runtime.installed`）或 `runtime_failed`，而不是“未登录”；安装命令固定到测试过的命令行版本，缺少 SDK 可选依赖时使用与 markitai 安装方式相符的安装命令；ChatGPT 从一开始就有连接卡片，“未登录”的帮助随时可达。
 - **URL 的文本阶段和图片阶段重新共用同一个请求预算。** 它们此前各开一个预算，一个页面在 serve、命令行和 API 中可能花掉两倍的 `llm.max_requests_per_document`（默认 100 次请求）。
 - **已付费的 LLM 请求不再从合计中漏掉。** 无法解析或校验的 Batch API 答案仍会计入（它已被计费）；URL 列表的报告包含失败 URL 的花费；`--llm-batch-collect` 会打印该批次的成本（部分请求无价格时显示“至少”）。
 - **用 `--record-history` 记录的命令行运行，在 `markitai serve` 中不再把未知成本显示为 $0。** 记录的任务现在带有 `pricing` 和 `models`，没有价格的模型不再显示成 $0 或“没有使用模型”。

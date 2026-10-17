@@ -68,7 +68,7 @@ async def test_the_picker_gets_the_groups_rust_offers(tmp_path: Path) -> None:
     cards = await _cards(tmp_path)
     offered = {card["provider"]: card for card in cards if card["kind"] == "common"}
     routable = connectable.routable_providers()
-    expected = routable | {"claude-agent", "copilot"}
+    expected = routable | {"claude-agent", "copilot", "chatgpt"}
     assert set(offered) == expected
     # Every group of the catalog has members, as in the Rust server's picker
     assert {card["group"] for card in offered.values()} == PROVIDER_GROUP
@@ -169,7 +169,12 @@ async def test_a_provider_this_litellm_cannot_route_is_not_offered(
         card["provider"] for card in await _cards(tmp_path) if card["kind"] == "common"
     }
     # markitai's first eight stay, and the subscription runtimes it routes
-    assert offered == connectable.BUILT_IN | {"groq", "claude-agent", "copilot"}
+    assert offered == connectable.BUILT_IN | {
+        "groq",
+        "claude-agent",
+        "copilot",
+        "chatgpt",
+    }
 
 
 async def test_morph_and_gradient_ai_are_never_offered(tmp_path: Path) -> None:
