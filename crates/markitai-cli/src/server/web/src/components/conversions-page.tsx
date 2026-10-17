@@ -94,10 +94,17 @@ export function ConversionsPage(props: ConversionsPageProps) {
   };
   // The summary of everything listed opens in the same window as a conversion.
   const [overview, setOverview] = useState(false);
+  useEffect(() => {
+    const leave = () => setOverview(false);
+    window.addEventListener("popstate", leave);
+    return () => window.removeEventListener("popstate", leave);
+  }, []);
 
   /** Close the window and give the keyboard back to the row it was opened from. */
   const close = () => {
     const key = selected;
+    // The summary's window has a history entry of its own (Back closes it): closing by hand goes back over it.
+    if (overview && (history.state as { wb?: string } | null)?.wb === "summary") history.back();
     setOverview(false);
     props.onSelect(null);
     if (key) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true }));
@@ -225,7 +232,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
               {(kinds > 0 || tally.failed > 0) && (
                 <>
                   {" · "}
-                  <button type="button" class="text-link" onClick={() => (props.onSelect(null), setOverview(true))}>
+                  <button type="button" class="text-link" onClick={() => (props.onSelect(null), history.pushState({ wb: "summary" }, "", location.href), setOverview(true))}>
                     {t.overviewLink}
                   </button>
                 </>

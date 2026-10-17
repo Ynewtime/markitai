@@ -53,6 +53,9 @@ interface Upload {
 
 let noteSequence = 0;
 
+/** The history state of the entry that opened a conversion's window over the list. */
+const DIALOG_ENTRY = "dialog";
+
 export function App() {
   const [locale, setLocale] = useState<Locale>(() => detectLocale());
   const t = dicts[locale];
@@ -210,13 +213,23 @@ export function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  /** Selection and pane changes replace the address; opening a preview adds a history entry so Back closes it. */
+  /** Opening a conversion's window from the list adds a history entry (marked, so the page knows it is its own):
+   * Back, the trackpad swipe and Esc then all close the window the same way. Moving between conversions and tabs
+   * replaces the address; closing a window that has its entry goes back to the list instead of adding another. */
   const updateList = useCallback((next: { selected: string | null; mode: PaneMode }, push = false) => {
     setListState(next);
     const url = `/jobs${listQuery(next)}`;
     if (location.pathname + location.search === url) return;
-    if (push) history.pushState(null, "", url);
-    else history.replaceState(null, "", url);
+    const onList = location.pathname === "/jobs";
+    const wasOpen = onList && parseListState(location.search).selected !== null;
+    if (next.selected === null) {
+      if (wasOpen && (history.state as { wb?: string } | null)?.wb === DIALOG_ENTRY) history.back();
+      else history.replaceState(null, "", url);
+      return;
+    }
+    if (onList && !wasOpen) history.pushState({ wb: DIALOG_ENTRY }, "", url);
+    else if (push) history.pushState(null, "", url);
+    else history.replaceState(history.state, "", url);
   }, []);
   // A wide screen never shows the phone's settings index.
   const phone = useMedia(PHONE);
