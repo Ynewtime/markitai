@@ -72,7 +72,7 @@ jobs:
         run: python scripts/check.py
       - name: Install wheel build tool
         if: matrix.lane == 'packages'
-        run: python -m pip install "maturin>=1.9,<2"
+        run: python -m pip install "maturin==1.15.0"  # pinned; see also bindings/python/pyproject.toml
       - name: Build and exercise installable artifacts
         if: matrix.lane == 'packages'
         run: python scripts/ci_packages.py --expected-host ${{ env.TARGET }} --output .local/ci-artifacts
