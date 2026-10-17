@@ -2219,7 +2219,7 @@ def _probe_failure(exc: BaseException, body: LLMSettingsUpdate) -> dict[str, Any
 CredentialPair = tuple[str | None, str | None]
 
 #: The key a connection or deployment saved through the settings API stores
-#: when it has none but names an address (owner rule, 2026-10-11). Without a
+#: when it has none but names an address. Without a
 #: key LiteLLM reads the server's own key variable (OPENAI_API_KEY,
 #: GROQ_API_KEY, LM_STUDIO_API_KEY, ...) and sends it to whatever address the
 #: entry names, an address a settings caller can choose; with this one it
@@ -2240,7 +2240,7 @@ def _keyless_placeholder(api_key: Any, api_base: Any, model: Any) -> Any:
     :data:`NO_KEY` when there is none while *api_base* names an address.
 
     Without an address the provider's own endpoint gets the environment's
-    key, as configured by the owner; the subscription runtimes (claude-agent,
+    key, as configured by the server's admin; the subscription runtimes (claude-agent,
     copilot, chatgpt) take neither key nor address.
     """
     from markitai.providers import is_local_provider_model
@@ -2260,7 +2260,7 @@ def _keyless_placeholder(api_key: Any, api_base: Any, model: Any) -> Any:
 #: fake credentials and a capture server). Bedrock is not here: given the
 #: placeholder it sends it as its bearer key and never signs with the AWS
 #: chain. Without an address these use the cloud's own endpoint, as
-#: configured by the owner.
+#: configured by the server's admin.
 _AMBIENT_LOGIN: dict[str, tuple[str, str]] = {
     "vertex_ai": ("Vertex AI", "Google credentials"),
     "vertex_ai_beta": ("Vertex AI", "Google credentials"),
@@ -2303,7 +2303,7 @@ def _ambient_login_provider(model: Any) -> str | None:
 
 def _refuse_ambient_login_address(model: Any, api_base: Any) -> None:
     """Refuse an entry the settings API writes or tests that would carry the
-    server's own cloud login to an address (owner decision, contract v1.9)."""
+    server's own cloud login to an address (contract v1.9)."""
     if not api_base:
         return
     provider = _ambient_login_provider(model)
@@ -2338,7 +2338,7 @@ def _refuse_keyless_move(
     """Refuse turning a connection with a key into a keyless one aimed at
     another host it names: its requests would leave with the placeholder (or,
     for an entry written by hand, the server's own key variable) for a server
-    the owner never paired a key with. A new connection for that server says
+    the admin never paired a key with. A new connection for that server says
     so. Dropping the address too (back to the provider's endpoint) is fine.
     """
     if not _real_key(old[0]) or _real_key(new[0]):
@@ -5318,7 +5318,7 @@ def create_app(
                 configured=_configured_credential_pairs(state),
             )
             asked_base = body.api_base
-            # An address the caller names; a stored one is the owner's
+            # An address the caller names; a stored one is the admin's
             _refuse_ambient_login_address(body.model, asked_base)
             body = _fill_stored_credentials(state, body)
             if asked_base is not None:

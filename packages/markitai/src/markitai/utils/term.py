@@ -141,7 +141,7 @@ def _msys_terminal(std_handle: int) -> bool:
 def _windows_unicode(
     kind: str, *, vt: bool = True, code_page: int | None = None
 ) -> bool:
-    """Whether one Windows output stream gets the Unicode marks (owner rule,
+    """Whether one Windows output stream gets the Unicode marks (project rule,
     2026-10-11, the same in markitai-rust's ``term::windows_unicode``).
 
     ``kind`` is what the stream is:

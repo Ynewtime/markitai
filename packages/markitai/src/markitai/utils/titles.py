@@ -11,7 +11,7 @@ document (:func:`meaningful_title`): not an application's default name
 not a page number. A candidate that fails is skipped for the next source,
 down to the file name.
 
-Owner report (2026-10-12): a policy-style PDF got ``面积单位：平方千米``
+Seen in practice: a policy-style PDF got ``面积单位：平方千米``
 (a small bold caption, the first heading) in its base output and
 ``<sup>申请人享有的主要权利</sup>`` with two private-use glyphs in its LLM
 output (the first H1, through a second, different extractor).

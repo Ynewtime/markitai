@@ -1,6 +1,6 @@
 """A connection with no key of its own is served by the server's key variable.
 
-Owner report (2026-10-12): a hand-written ``deepseek/deepseek-flash`` entry
+Seen in practice: a hand-written ``deepseek/deepseek-flash`` entry
 with ``DEEPSEEK_API_KEY`` set where ``markitai serve`` runs passed its model
 test, yet Edit showed "API key: Not set" and the model list failed with
 "model discovery failed (HTTPStatusError)": discovery sent no key while

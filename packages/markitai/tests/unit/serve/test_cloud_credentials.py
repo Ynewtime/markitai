@@ -4,9 +4,9 @@ LiteLLM signs Vertex AI requests with the server's Google application default
 credentials, watsonx ones with ``WATSONX_TOKEN`` and GigaChat ones with
 ``GIGACHAT_ACCESS_TOKEN``, whatever key the entry carries, and sends them to
 the entry's ``api_base``; the ``markitai-no-key`` placeholder does not stop
-it. The settings API therefore refuses such an entry with an address (owner
-decision, 2026-10-12), while one without an address keeps using the cloud's
-own endpoint with the server's login, as LiteLLM does. Bedrock takes the
+it. The settings API therefore refuses such an entry with an address (contract v1.9), while one
+without an address keeps using the cloud's own endpoint with the server's
+login, as LiteLLM does. Bedrock takes the
 placeholder as its bearer key and never signs with the AWS chain, so it keeps
 its address. Requests go to a stubbed transport: nothing leaves the machine.
 """
@@ -246,7 +246,7 @@ async def test_bedrock_at_an_address_sends_the_placeholder_not_the_aws_chain(
 async def test_a_hand_written_vertex_address_is_left_to_the_owner(
     tmp_path: Path,
 ) -> None:
-    """A config-file entry with an address is the owner's choice: editing
+    """A config-file entry with an address is the admin's choice: editing
     something else keeps it, nothing refuses it."""
     cfg = MarkitaiConfig()
     cfg.llm.model_list = [_model_entry(VERTEX, api_base="https://vertex.corp.example")]

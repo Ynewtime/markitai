@@ -1,6 +1,6 @@
 """A page address in front matter reads as an IRI, not percent-escapes.
 
-Owner report (2026-10-12): a URL item's ``source`` and ``canonical_url``
+Seen in practice: a URL item's ``source`` and ``canonical_url``
 were ``https://ynewtime.com/posts/20251223-ai-%E5%BA%94%E7%94%A8…``. They are
 written with the characters decoded, the same address: turning the IRI back
 into a URI (RFC 3987 §3.1) gives the original.

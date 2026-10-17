@@ -1,6 +1,6 @@
 """An e-book's metadata goes to the front matter, not into the body.
 
-Owner report (2026-10-12): the base Markdown of an EPUB started with
+Seen in practice: the base Markdown of an EPUB started with
 markitdown's ``**Title:** … **Authors:** … **Language:** … **Publisher:** …
 **Date:** … **Description:** …`` block. The book's facts are front matter:
 ``authors`` (a list), ``language``, ``publisher``, ``date``,
@@ -110,27 +110,28 @@ class TestRealBooks:
 
 class TestOpfShapes:
     def test_an_epubbuilder_book(self, tmp_path: Path) -> None:
-        # The owner's book's shape: EPUB 2, an empty ISBN, a description
-        # indented with ideographic spaces, empty elements
+        # The shape an e-book generator writes (invented values): EPUB 2, an
+        # empty ISBN, a description indented with ideographic spaces, empty
+        # elements
         book = _opf_book(
             tmp_path / "book.epub",
-            "<dc:title>人月神话(二十周年纪念版)</dc:title>"
+            "<dc:title>示例手册(第二版)</dc:title>"
             '<dc:identifier opf:scheme="ISBN"></dc:identifier>'
             "<dc:language>zh_CN</dc:language>"
-            "<dc:creator>[美] 弗雷德里克·布鲁克斯</dc:creator>"
-            "<dc:publisher>epub掌上书苑</dc:publisher>"
-            "<dc:description>　　本书讲软件工程。\n  第二句。</dc:description>"
-            "<dc:coverage></dc:coverage><dc:date>2011-03-03</dc:date>"
+            "<dc:creator>[英] 示例作者</dc:creator>"
+            "<dc:publisher>示例出版社</dc:publisher>"
+            "<dc:description>　　本书讲示例。\n  第二句。</dc:description>"
+            "<dc:coverage></dc:coverage><dc:date>2012-04-05</dc:date>"
             "<dc:contributor></dc:contributor>",
         )
         result = EpubConverter().convert(book)
-        assert result.metadata["title"] == "人月神话(二十周年纪念版)"
+        assert result.metadata["title"] == "示例手册(第二版)"
         assert result.metadata["document_meta"] == {
-            "authors": ["[美] 弗雷德里克·布鲁克斯"],
+            "authors": ["[英] 示例作者"],
             "language": "zh_CN",
-            "publisher": "epub掌上书苑",
-            "date": "2011-03-03",
-            "description": "本书讲软件工程。 第二句。",
+            "publisher": "示例出版社",
+            "date": "2012-04-05",
+            "description": "本书讲示例。 第二句。",
         }
         assert result.markdown.startswith("# 第一章")
 
@@ -169,10 +170,10 @@ class TestOpfShapes:
 
 class TestLlmOutput:
     _META = {
-        "authors": ["[美] 弗雷德里克·布鲁克斯"],
+        "authors": ["[英] 示例作者"],
         "language": "zh_CN",
-        "publisher": "epub掌上书苑",
-        "date": "2011-03-03",
+        "publisher": "示例出版社",
+        "date": "2012-04-05",
         "description": "出版社的长简介。",
     }
 
@@ -181,7 +182,7 @@ class TestLlmOutput:
             frontmatter_to_yaml(
                 build_frontmatter_dict(
                     source="book.epub",
-                    title="人月神话(二十周年纪念版)",
+                    title="示例手册(第二版)",
                     description="模型写的摘要。",
                     tags=["软件工程"],
                     document_meta=self._META,
@@ -198,7 +199,7 @@ class TestLlmOutput:
             "description",
         ]
         assert data["description"] == "模型写的摘要。"
-        assert data["date"] == "2011-03-03"
+        assert data["date"] == "2012-04-05"
 
     def test_the_books_description_when_the_model_gives_none(self) -> None:
         data = build_frontmatter_dict(

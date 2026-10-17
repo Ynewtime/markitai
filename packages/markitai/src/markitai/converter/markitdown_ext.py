@@ -350,7 +350,7 @@ def _convert_epub(input_path: Path) -> ConvertResult:
     Each spine document through markitdown's HTML converter, as markitdown
     does; the book's metadata goes to the front matter (``document_meta``,
     see ``_epub_document_meta``), not into the body as markitdown's bold
-    ``**Title:** …`` block (owner report, 2026-10-12). Also: a spine entry
+    ``**Title:** …`` block. Also: a spine entry
     the OPF percent-encodes (``Text/%E7%AC%AC1%E7%AB%A0.xhtml``) is found
     rather than skipped, each picture the book holds is kept (see
     ``_epub_chapter_markdown``), and a cover the OPF names but no page shows

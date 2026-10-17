@@ -13,7 +13,7 @@ failed: <cause>``), with the provider's own words sanitized.
 A key the server does not have is found before anything is sent: LiteLLM
 sends a request without a key when it finds none, and DeepSeek then answers
 "Authentication Fails (governor)", which read as a wrong key although the
-server had none at all (owner report, 2026-10-12).
+server had none at all.
 """
 
 from __future__ import annotations

@@ -66,7 +66,7 @@ def _doctor_env(
     libreoffice_missing: bool = True,
     platform: str = "linux",
 ) -> Iterator[None]:
-    """Doctor with fixed capability rows, the owner's machine in 1.2.1.
+    """Doctor with fixed capability rows, a typical machine.
 
     That machine runs Ubuntu: the install and key hints are Linux's whatever
     OS runs the tests (macOS printed brew, Windows winget and $env:).
@@ -156,13 +156,13 @@ def _run(width: int | None) -> tuple[str, int]:
     return buf.getvalue(), code
 
 
-OWNER_MODELS = (
+TYPICAL_MODELS = (
     "claude-agent/haiku",
     "deepseek/deepseek-flash",
     "gemini/gemini-flash-lite-latest",
     "openai/gpt-6-luna",
 )
-OWNER_KEYS: dict[str, str] = dict.fromkeys(
+TYPICAL_KEYS: dict[str, str] = dict.fromkeys(
     _ALL_KEYS[:4] + ("OPENROUTER_API_KEY",), "sk-fake"
 )
 
@@ -172,7 +172,7 @@ class TestWrapping:
 
     @pytest.mark.parametrize("width", [80, 40])
     def test_terminal_lines_fit_and_hang_under_the_text(self, width: int) -> None:
-        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS):
+        with _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS):
             out, code = _run(width)
 
         assert code == 0
@@ -199,7 +199,7 @@ class TestWrapping:
         assert lines[vlm + 1].startswith("    ") and lines[vlm + 1][4] != " "
 
     def test_piped_output_is_one_line_per_item(self) -> None:
-        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS):
+        with _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS):
             out, _ = _run(None)
 
         vlm = [line for line in out.splitlines() if "VLM OCR" in line]
@@ -254,7 +254,7 @@ class TestHints:
         assert python == r'& "C:\Users\A B\uv\tools\markitai\python.exe"'
 
     def test_hints_render_commands_on_their_own_lines(self) -> None:
-        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS):
+        with _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS):
             out, _ = _run(80)
 
         lines = out.splitlines()
@@ -290,9 +290,9 @@ class TestHints:
     def test_each_platform_gets_its_own_commands(
         self, platform: str, libreoffice: str, playwright: str, key: str
     ) -> None:
-        keys = {k: v for k, v in OWNER_KEYS.items() if k != "DEEPSEEK_API_KEY"}
+        keys = {k: v for k, v in TYPICAL_KEYS.items() if k != "DEEPSEEK_API_KEY"}
         with _doctor_env(
-            _config(*OWNER_MODELS),
+            _config(*TYPICAL_MODELS),
             env={**keys, "PSModulePath": r"C:\Modules"},
             platform=platform,
         ):
@@ -328,7 +328,7 @@ class TestSummary:
     """Ready or not, said plainly, with a mark that matches."""
 
     def test_ready_with_optional_gaps_is_a_success(self) -> None:
-        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS):
+        with _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS):
             out, code = _run(80)
         assert code == 0
         assert out.rstrip().endswith(
@@ -337,7 +337,7 @@ class TestSummary:
         assert "required/configured" not in out and "Core check" not in out
 
     def test_missing_provider_key_is_not_ready(self) -> None:
-        """deepseek/ with no DEEPSEEK_API_KEY: the owner's new terminal."""
+        """deepseek/ with no DEEPSEEK_API_KEY: a new terminal."""
         with _doctor_env(_config("deepseek/deepseek-flash"), env={}):
             out, code = _run(None)
         assert code == 1
@@ -347,7 +347,7 @@ class TestSummary:
 
     def test_some_keys_missing_leaves_those_models_out(self) -> None:
         """The run uses the models that have keys, so doctor is not red."""
-        with _doctor_env(_config(*OWNER_MODELS), env={}):
+        with _doctor_env(_config(*TYPICAL_MODELS), env={}):
             out, code = _run(None)
         assert code == 0
         assert (
@@ -414,7 +414,7 @@ class TestUnusedKeys:
     """Keys that are set but used by no model are named, with why."""
 
     def test_owner_setup_names_anthropic_and_openrouter(self) -> None:
-        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS):
+        with _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS):
             out, _ = _run(None)
         assert (
             "  • Not used: ANTHROPIC_API_KEY, OPENROUTER_API_KEY "
@@ -427,7 +427,7 @@ class TestUnusedKeys:
     def test_json_lists_them(self) -> None:
         buf = io.StringIO()
         with (
-            _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS),
+            _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS),
             patch.object(doctor_mod.click, "echo", lambda s: buf.write(s)),
         ):
             doctor_mod._doctor_impl(as_json=True)
@@ -489,7 +489,7 @@ class TestWindowsDoctor:
         }
         buf = io.StringIO()
         with (
-            _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS),
+            _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS),
             patch.object(doctor_mod, "_check_playwright", return_value=slow),
             patch.object(doctor_mod.click, "echo", lambda s: buf.write(s)),
         ):
@@ -507,7 +507,7 @@ class TestWindowsDoctor:
         """Vision Model and VLM OCR both asked for a vision-capable model."""
         vision_hint = "Use vision-capable models like gemini-*, gpt-6*, claude-*"
         with (
-            _doctor_env(_config("deepseek/deepseek-flash"), env=OWNER_KEYS),
+            _doctor_env(_config("deepseek/deepseek-flash"), env=TYPICAL_KEYS),
             patch("markitai.model_catalog.supports_vision", return_value=False),
         ):
             out, _ = _run(None)
@@ -538,7 +538,7 @@ class TestWindowsDoctor:
 
     @pytest.mark.parametrize("width", [80, 40])
     def test_no_trailing_spaces(self, width: int) -> None:
-        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS):
+        with _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS):
             out, _ = _run(width)
         assert not [line for line in out.splitlines() if line.endswith(" ")]
 
@@ -577,7 +577,10 @@ class TestMissingExtras:
 
     @contextmanager
     def _checks(self, rows: dict[str, dict[str, Any]]) -> Iterator[None]:
-        with _doctor_env(_config(*OWNER_MODELS), env=OWNER_KEYS), ExitStack() as stack:
+        with (
+            _doctor_env(_config(*TYPICAL_MODELS), env=TYPICAL_KEYS),
+            ExitStack() as stack,
+        ):
             for name, row in rows.items():
                 stack.enter_context(patch.object(doctor_mod, name, return_value=row))
             yield

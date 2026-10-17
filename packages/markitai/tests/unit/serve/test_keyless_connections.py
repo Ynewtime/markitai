@@ -2,7 +2,7 @@
 
 Without a key, LiteLLM reads the server's own key variable (OPENAI_API_KEY,
 GROQ_API_KEY, LM_STUDIO_API_KEY, ...) and sends it to whatever address the
-entry names, which a settings caller can choose. Owner rule (2026-10-11,
+entry names, which a settings caller can choose. Project rule (
 "no env: reference aimed at a host the caller picks"): a connection or
 deployment saved through the settings API without a key, or tested that way,
 uses the placeholder ``markitai-no-key`` instead; entries written by hand in

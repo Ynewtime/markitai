@@ -57,7 +57,7 @@ def test_openrouter_is_skipped_where_claude_haiku_is_reached_directly() -> None:
     assert _models([("OpenRouter API", True)]) == [openrouter]
 
 
-# The owner's dev machine: Claude Code signed in, all five provider keys set
+# A typical machine: Claude Code signed in, all five provider keys set
 _ALL_DETECTED = [
     ("Claude CLI", True),
     ("GitHub Copilot CLI", False),

@@ -503,7 +503,7 @@ def test_user_install_selects_serve_before_installing_markitai() -> None:
 
 
 def test_markitai_installs_once_with_every_chosen_extra() -> None:
-    """Owner report (2026-10-12): setup.ps1 took over ten minutes on the Windows machine.
+    """Seen in practice: setup.ps1 took over ten minutes on the Windows machine.
 
     It installed markitai, asked the new install which extras to add
     (`markitai doctor --suggest-extras`, a first run of an uncompiled

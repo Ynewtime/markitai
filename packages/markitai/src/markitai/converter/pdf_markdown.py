@@ -1,6 +1,6 @@
 """Repairs to the page Markdown pymupdf4llm writes: symbol glyphs and headings.
 
-Owner report (2026-10-13): a Chinese policy's table of contents in the
+Seen in practice: a Chinese policy's table of contents in the
 workbench listed headings such as ``▯▯<sup>…</sup>`` and whole lines of body
 text. Three shapes of pymupdf4llm's output, repaired here for every PDF path
 (the base conversion, the native pages of an OCR run, the text the vision
