@@ -149,8 +149,14 @@ is composited on white. OCR uses the original image, independently of output
 preview compression or size settings. PDF, TIFF and Office workflows also have
 their own page and document budgets.
 
-The reader groups lines and columns and retains page order; it is not a full
-layout reconstruction engine. Small text, handwriting, vertical writing,
+The reader groups lines and columns and retains page order, and writes them as
+Markdown: a row that stops short of the text's right edge ends its paragraph
+(rows that run to the edge wrap on), a short row much taller than the page's
+text is a heading, rows of cells in columns or divided by drawn rules (read as
+`|`) are a table, and letter-spaced Latin (`M a r k i t a i`, Latin set in
+full-width cells) is closed up. It is not a full layout reconstruction engine:
+heading levels are judged per page, and a cell read together with its
+neighbour stays in one cell. Small text, handwriting, vertical writing,
 complex tables and marginal notes can be incomplete or misordered. Vision
 recognition has no hard wall-clock cancellation deadline. A resource limit is
 not a peak-RSS or accuracy guarantee.

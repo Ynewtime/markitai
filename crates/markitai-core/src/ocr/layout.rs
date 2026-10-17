@@ -1,7 +1,8 @@
 //! Reading aids that need only the recognized lines: turning a page whose
 //! text runs sideways or upside down upright, finding table cells that a
 //! reading missed or garbled so that `vision` can read them again, mending
-//! zeros read as look-alike letters, and keeping the indentation of code.
+//! zeros read as look-alike letters, keeping the indentation of code,
+//! closing up letter-spaced text and splitting table rows into cells.
 // Off macOS the portable engine uses the turned pages, zeros, code and
 // joining steps; the readings again of table cells serve Vision.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -843,9 +844,154 @@ pub(super) fn touching(left: &Line, right: &Line) -> bool {
             || wide(right.text.trim_start().chars().next()))
 }
 
+/// Letter-spaced runs this many characters long or longer are closed up.
+const MIN_SPACED: usize = 4;
+
+/// `text` with its letter-spaced runs closed up: letters set one by one
+/// with a space between each (`M a r k i t a i`, `3 . 5 0`), as a
+/// letter-spaced line or Latin set in full-width cells reads. A run is at
+/// least [`MIN_SPACED`] single letters or digits (the first may be two: the
+/// recognizer sometimes keeps the first pair together), each followed by a
+/// single space, between characters that are not Latin letters or digits;
+/// its single units hold a letter, or it is a decimal number (`3 . 5 0`).
+/// A row of digits alone (`1 2 3 4 5`, a scale) is kept.
+pub(super) fn closed_up(text: &str) -> Option<String> {
+    let characters: Vec<char> = text.chars().collect();
+    let alnum = |i: usize| characters.get(i).is_some_and(char::is_ascii_alphanumeric);
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+    let mut i = 0;
+    while i < characters.len() {
+        if alnum(i) && (i == 0 || !alnum(i - 1)) {
+            // The first unit, one or two letters, then single letters, digits
+            // or a decimal point, each after one space.
+            let mut end = i + 1 + usize::from(alnum(i + 1));
+            let mut units = 1;
+            // Whether the single units hold a letter or a decimal point.
+            let mut letters = false;
+            let mut point = false;
+            while characters.get(end) == Some(&' ') {
+                let next = end + 1;
+                let unit = match characters.get(next) {
+                    Some(c) if c.is_ascii_alphanumeric() => true,
+                    // A decimal point between two digits.
+                    Some('.' | ',') => {
+                        characters[end - 1].is_ascii_digit()
+                            && characters.get(next + 1) == Some(&' ')
+                            && characters.get(next + 2).is_some_and(char::is_ascii_digit)
+                    }
+                    _ => false,
+                };
+                if !unit || alnum(next + 1) {
+                    break;
+                }
+                letters |= characters[next].is_ascii_alphabetic();
+                point |= !characters[next].is_ascii_alphanumeric();
+                units += 1;
+                end = next + 1;
+            }
+            if units >= MIN_SPACED && (letters || point) && !alnum(end) {
+                out.extend(characters[i..end].iter().filter(|c| **c != ' '));
+                changed = true;
+                i = end;
+                continue;
+            }
+        }
+        out.push(characters[i]);
+        i += 1;
+    }
+    changed.then_some(out)
+}
+
+/// The rules a table drawn with vertical lines reads as.
+fn rule(character: char) -> bool {
+    matches!(character, '|' | '｜' | '丨' | '│')
+}
+
+/// A row's text as table cells: split at the vertical rules the recognizer
+/// read (`|`) and at wide gaps (two spaces or more), without the empty
+/// cells of rules at either end. Also whether a rule divided it.
+pub(super) fn table_cells(text: &str) -> (Vec<String>, bool) {
+    let ruled = text.contains(rule);
+    let mut cells: Vec<String> = text
+        .split(rule)
+        .flat_map(|part| part.split("  "))
+        .map(str::trim)
+        .map(str::to_owned)
+        .collect();
+    // Two spaces or more leave empty pieces between the words.
+    if !ruled {
+        cells.retain(|cell| !cell.is_empty());
+    }
+    while cells.first().is_some_and(String::is_empty) {
+        cells.remove(0);
+    }
+    while cells.last().is_some_and(String::is_empty) {
+        cells.pop();
+    }
+    (cells, ruled)
+}
+
+/// A table cell that holds a number with spaces in it (`1 2`, `1. 20`,
+/// `3 . 5 0`) without them.
+pub(super) fn number_cell(cell: &str) -> Option<String> {
+    let squeezed: String = cell.split_whitespace().collect();
+    (squeezed.len() != cell.len()
+        && squeezed.chars().any(|c| c.is_ascii_digit())
+        && squeezed
+            .chars()
+            .all(|c| c.is_ascii_digit() || numeric_mark(c)))
+    .then_some(squeezed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn letter_spaced_runs_close_up_and_words_and_digit_rows_stay() {
+        for (spaced, closed) in [
+            (
+                "M a r k i t a i 将各种文档格式转换为 Ma r k d o w n，并可选地",
+                "Markitai 将各种文档格式转换为 Markdown，并可选地",
+            ),
+            ("单价 3 . 5 0 元", "单价 3.50 元"),
+            ("T I T L E", "TITLE"),
+        ] {
+            assert_eq!(closed_up(spaced).as_deref(), Some(closed), "{spaced}");
+        }
+        for kept in [
+            "I am a test of words",
+            "Rate it 1 2 3 4 5",
+            "x y z",
+            "a b c dog",
+            "1 2",
+            "한국어 문장도 포함합니다",
+        ] {
+            assert_eq!(closed_up(kept), None, "{kept}");
+        }
+    }
+
+    #[test]
+    fn rows_split_into_cells_at_rules_and_wide_gaps() {
+        assert_eq!(
+            table_cells("苹果 | 1 2 | 3.50"),
+            (vec!["苹果".into(), "1 2".into(), "3.50".into()], true)
+        );
+        assert_eq!(
+            table_cells("项目  数量   单价"),
+            (vec!["项目".into(), "数量".into(), "单价".into()], false)
+        );
+        assert_eq!(
+            table_cells("| a | | c |"),
+            (vec!["a".into(), String::new(), "c".into()], true)
+        );
+        assert_eq!(table_cells("one plain sentence").0.len(), 1);
+        assert_eq!(number_cell("1 2").as_deref(), Some("12"));
+        assert_eq!(number_cell("1. 20").as_deref(), Some("1.20"));
+        assert_eq!(number_cell("3.50"), None);
+        assert_eq!(number_cell("香 蕉"), None);
+    }
 
     fn line(text: &str, bounds: [f32; 4]) -> Line {
         Line {

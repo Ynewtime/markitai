@@ -118,6 +118,7 @@
 
 ### Fixed
 
+- Local OCR writes a scanned page as Markdown instead of bare lines, which a viewer ran into one paragraph: a row that stops short of the text's right edge ends its paragraph, a short row much taller than the page's text is a heading (with its wrapped second row), rows of cells in columns or divided by the rules read as `|` are a Markdown table (a wrapped cell joins its cell, number cells lose stray spaces: `1. 20` reads `1.20`), and letter-spaced or full-width Latin is closed up (`M a r k i t a i` reads `Markitai`). The corpus's `cjk-scanned.pdf` now reads like the text PDF it was printed from, in the CLI and the workbench alike.
 - A real Gemini Flash run on `scanned-sample-p1-3.pdf` (one request, no notices) puts every page's text under its own `<!-- Page number: N -->` marker, where the first live run had each page's text one marker too high.
 - Workbench: the embedded-images, Word picture-record and hidden-worksheet notices are worded in Chinese and Japanese too, and the embedded-images notice says "turn on Page Screenshots" instead of naming the CLI flag and is left out for a document already told it is scanned; on a phone the header's New conversion and "⋯" buttons are one compact 32 px size, and the Edit config JSON problem takes its own row above the buttons instead of a three-line column.
 - `markitai doctor` in Chinese now words every check message and remedy in Chinese (the JSON values stay English), and the macOS browser line says `Installed browser app found (version check only)`.
