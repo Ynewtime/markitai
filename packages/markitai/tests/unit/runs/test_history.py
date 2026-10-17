@@ -89,6 +89,8 @@ class TestRecordCliJob:
             "finished_at": done["finished_at"],
             "cost_usd": 0.5,
             "llm_enhanced": False,
+            "pricing": None,
+            "models": [],
             "operation": "convert",
             "skipped": False,
             "skip_reason": None,
@@ -322,6 +324,45 @@ class TestRehydrateRoundtrip:
         # A second pass (as /api/history does) neither duplicates nor errors.
         assert rehydrate_jobs(registry, MarkitaiConfig()) == 0
         assert len(registry.jobs) == 1
+
+    def test_an_unpriced_cost_stays_unknown_in_serve(self, tmp_path: Path) -> None:
+        """A CLI run with an unpriced model must not read as $0 / no model."""
+        pytest.importorskip("fastapi")
+        from markitai.config import MarkitaiConfig
+        from markitai.serve.jobs import JobRegistry, aggregate_pricing, rehydrate_jobs
+
+        out = tmp_path / "doc.llm.md"
+        out.write_text("# doc\n", encoding="utf-8")
+        usage = {
+            "mystery-model": {"requests": 2, "unpriced_requests": 2, "cost_usd": 0.0}
+        }
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="file",
+                    source="doc.md",
+                    status="completed",
+                    output_path=out,
+                    cost_usd=0.0,
+                    llm_usage=usage,
+                )
+            ],
+            options=OPTIONS,
+            jobs_root=tmp_path / "jobs",
+        )
+        assert job_dir is not None
+        registry = JobRegistry(tmp_path / "jobs")
+        rehydrate_jobs(registry, MarkitaiConfig())
+        job = registry.get(job_dir.name)
+        assert job is not None
+        item = job.items[0]
+        assert item.pricing == {
+            "priced_requests": 0,
+            "unpriced_requests": 2,
+            "cost_status": "unknown",
+        }
+        assert item.models == ["mystery-model"]
+        assert aggregate_pricing(job.items) == item.pricing
 
     def test_tmp_dir_is_never_registered(self, tmp_path: Path) -> None:
         pytest.importorskip("fastapi")

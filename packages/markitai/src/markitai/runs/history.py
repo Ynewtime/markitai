@@ -40,6 +40,7 @@ from markitai.constants import (
     SCREENSHOTS_REL_PATH,
     VISIBLE_ASSETS_REL_PATH,
 )
+from markitai.runs.pricing import models_from_usage, pricing_from_usage
 from markitai.runs.types import Outcome
 from markitai.security import atomic_write_json
 from markitai.utils.clock import now_iso
@@ -276,6 +277,9 @@ def _item_to_payload(
     if output is not None:
         stem, suffix = _split_markdown_suffix(output)
         output_name = f"{stem}.md" if suffix in (".md", ".llm.md") else output
+    llm_enhanced = bool(
+        not skipped and output is not None and output.endswith(".llm.md")
+    )
     return {
         "item_id": f"i{index}",
         "name": item.source,
@@ -289,9 +293,11 @@ def _item_to_payload(
         ),
         "finished_at": finished_at,
         "cost_usd": item.cost_usd,
-        "llm_enhanced": bool(
-            not skipped and output is not None and output.endswith(".llm.md")
-        ),
+        "llm_enhanced": llm_enhanced,
+        # What serve shows of the cost: a request without a price makes the
+        # cost unknown, not $0 (and a base-only result names no model)
+        "pricing": pricing_from_usage(item.llm_usage),
+        "models": models_from_usage(item.llm_usage) if llm_enhanced else [],
         "operation": "convert",
         "skipped": skipped,
         "skip_reason": PENDING_BATCH_SKIP_REASON if pending else item.skip_reason,
