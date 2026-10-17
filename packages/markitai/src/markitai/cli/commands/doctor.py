@@ -1264,7 +1264,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         return
 
     # Unified UI output
-    ui.title(t("doctor.title"))
+    ui.title(t("doctor.title"), spaced=False)
     optional_deps = [
         "rapidocr",
         "vlm-ocr",
