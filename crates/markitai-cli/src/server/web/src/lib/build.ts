@@ -16,6 +16,13 @@ export function buildTime(value: string, now: Date = new Date()): string | null 
   return `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/** The build's date and time in local time, `2026-10-17 19:54`: the sidebar's third row and the phone Settings list. */
+export function buildDate(value: string): string | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /** The full local time, with the offset, for the line's tooltip. */
 export function buildStamp(value: string): string | null {
   const date = new Date(value);
@@ -37,7 +44,7 @@ export interface VersionLine {
   /** The phone header's: version and commit. */
   short: string;
   /** Spelled out, for the tooltip. */
-  parts: { version: string; commit: string | null; dirty: boolean; built: string | null };
+  parts: { version: string; commit: string | null; dirty: boolean; built: string | null; date: string | null };
 }
 
 export function versionLine(caps: Pick<Capabilities, "version" | "build"> | null, now: Date = new Date()): VersionLine | null {
@@ -53,6 +60,6 @@ export function versionLine(caps: Pick<Capabilities, "version" | "build"> | null
   return {
     text: [short, when].filter(Boolean).join(" "),
     short,
-    parts: { version, commit, dirty, built: build?.built_at ? buildStamp(build.built_at) : null },
+    parts: { version, commit, dirty, built: build?.built_at ? buildStamp(build.built_at) : null, date: build?.built_at ? buildDate(build.built_at) : null },
   };
 }

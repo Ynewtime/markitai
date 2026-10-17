@@ -8,6 +8,8 @@ export const en = {
   // header and footer
   homeAria: "Markitai home",
   docsLabel: "Docs",
+  /** The sidebar row with the build date and time. */
+  builtLabel: "Built",
   opensNewTab: "(Opens in new tab)",
   langAria: "Language",
   themeAria: "Theme",

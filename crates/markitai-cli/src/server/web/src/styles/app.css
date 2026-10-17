@@ -585,6 +585,24 @@ textarea {
 .settings-index .nav-tag {
   margin-left: auto;
 }
+/* the build's date and time under Docs and GitHub: the same row, but plain text, quieter */
+.nav-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-3);
+}
+.nav-meta svg {
+  flex: none;
+  color: var(--text-3);
+}
+:root[data-rail] .nav-meta {
+  display: none;
+}
 .settings-index a > .nav-tag + svg:last-of-type {
   margin-left: 0;
 }
@@ -2919,7 +2937,8 @@ kbd {
 .settings-index {
   border-top: 1px solid var(--hairline);
 }
-.settings-index a {
+.settings-index a,
+.settings-index .index-meta {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -2930,6 +2949,18 @@ kbd {
 .settings-index a > svg:first-child {
   flex: none;
   color: var(--text-2);
+}
+/* plain text, quieter, its date in the tags' column (the links end with their 14 px arrow) */
+.settings-index .index-meta {
+  padding-right: 32px;
+  color: var(--text-2);
+}
+.settings-index .index-meta > svg:first-child {
+  flex: none;
+  color: var(--text-3);
+}
+.index-meta .index-label {
+  font-weight: 500;
 }
 .settings-index a > svg:last-of-type {
   margin-left: auto;

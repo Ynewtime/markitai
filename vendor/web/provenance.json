@@ -156,9 +156,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 23706,
-    "sha256": "87ffdd8c8d2f908024240b0adef36f0fde4cd825930efb5490956e9d611d09a4",
-    "obtained": "generated: the SVG path strings of 64 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 23908,
+    "sha256": "00dfe65c1e2c01e053e584c60ff1f8192869a5de7f0b125ae6c808bc6efaedf0",
+    "obtained": "generated: the SVG path strings of 65 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -469,6 +469,11 @@
         "member": "package/dist/defs/FunnelSimple.es.js",
         "bytes": 2065,
         "sha256": "07065eed6e81e0ca7a8710c218baf58fd54c25b047d8de29940d6adea9906b28"
+      },
+      {
+        "member": "package/dist/defs/Clock.es.js",
+        "bytes": 2048,
+        "sha256": "1db4e03aa31f5d479be3a48ba5c2a36ac5f6116eba0ab6565a32cbdd68175caa"
       }
     ]
   },
