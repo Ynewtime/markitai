@@ -194,7 +194,9 @@ Lower or remove `litellm_params.reasoning_effort`, or raise `max_tokens`; see
 **`! Cost is incomplete: …`.** The named model or endpoint is not in the
 bundled [price catalog](pricing.md), so `cost_usd` only counts the requests whose
 price is known. It does not mean the call was free. The warning names the model
-the provider reports and how many requests are affected; `reported no usage
+the provider reports and how many requests are affected, then gives the reason
+in parentheses (for example an endpoint that is not the provider's own, such as
+a proxy or relay set as `api_base`) and what to change; `reported no usage
 counts` instead means the provider's answer carried no token counts to price.
 Documents served by a subscription runtime carry its own notice instead of this
 one.

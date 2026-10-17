@@ -211,7 +211,11 @@ impl ConversionUsage {
                 rows.push((model.clone(), unreported, UnpricedReason::NoCounts));
             }
             if unpriced > 0 {
-                rows.push((model.clone(), unpriced, UnpricedReason::NoTariff));
+                let why = row
+                    .get("unpriced_reason")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                rows.push((model.clone(), unpriced, UnpricedReason::NoTariff(why)));
             }
             if unreported == 0 && unpriced == 0 {
                 // Observations without counts, without a quote and without a
@@ -219,7 +223,7 @@ impl ConversionUsage {
                 rows.push((
                     model.clone(),
                     count("requests").max(1),
-                    UnpricedReason::NoTariff,
+                    UnpricedReason::NoTariff(None),
                 ));
             }
         }
@@ -247,9 +251,14 @@ impl ConversionUsage {
                     format!("{requests} requests")
                 };
                 match reason {
-                    UnpricedReason::NoTariff => {
+                    UnpricedReason::NoTariff(why) => {
                         let verb = if *requests == 1 { "has" } else { "have" };
-                        format!("{count} to {model} {verb} no reviewed price")
+                        match why {
+                            Some(why) => {
+                                format!("{count} to {model} {verb} no reviewed price ({why})")
+                            }
+                            None => format!("{count} to {model} {verb} no reviewed price"),
+                        }
                     }
                     UnpricedReason::NoCounts => {
                         format!("{count} to {model} reported no usage counts")
@@ -260,18 +269,49 @@ impl ConversionUsage {
         if rows.len() > NAMED {
             parts.push(format!("{} more models", rows.len() - NAMED));
         }
-        Some(format!(
+        let mut text = format!(
             "Cost is incomplete: {}. cost_usd is the known priced subtotal; the complete cost is unknown.",
             parts.join("; ")
-        ))
+        );
+        // What the reader can do depends on why the price is missing.
+        let mut advice: Vec<&str> = Vec::new();
+        for (_, _, reason) in rows.iter().take(NAMED) {
+            let hint = match reason {
+                UnpricedReason::NoCounts => {
+                    "The provider or its proxy did not return token counts, so nothing can be priced."
+                }
+                UnpricedReason::NoTariff(Some(why)) if why.starts_with("endpoint ") => {
+                    "Prices are known only for the provider's own API address: remove a custom api_base (a proxy or relay) to have the cost counted."
+                }
+                UnpricedReason::NoTariff(Some(why)) if why.starts_with("model ") => {
+                    "The model is not in the bundled price list: use a listed model, or update markitai if a newer release lists it."
+                }
+                UnpricedReason::NoTariff(Some(why)) if why.starts_with("response model ") => {
+                    "The provider answered with a different model than requested: pin an exact model name in litellm_params.model."
+                }
+                UnpricedReason::NoTariff(Some(why)) if why.starts_with("provider ") => {
+                    "Only OpenAI, Anthropic, Gemini, DeepSeek and OpenRouter requests are priced."
+                }
+                _ => continue,
+            };
+            if !advice.contains(&hint) {
+                advice.push(hint);
+            }
+        }
+        for hint in advice {
+            text.push(' ');
+            text.push_str(hint);
+        }
+        Some(text)
     }
 }
 
 /// Why an observed request has no complete price.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UnpricedReason {
-    /// The request was observed with counts, but no reviewed tariff covers it.
-    NoTariff,
+    /// The request was observed with counts, but no reviewed tariff covers it;
+    /// the row says why when it recorded the reason.
+    NoTariff(Option<String>),
     /// The provider reported no usage counts for the request.
     NoCounts,
 }

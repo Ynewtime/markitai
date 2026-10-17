@@ -132,6 +132,9 @@ pub(super) fn response(model: &str, input: u64, output: u64, quote: Quote) -> Co
     let mut detail =
         json!({"requests":1,"input_tokens":input,"output_tokens":output,"cost_usd":amount});
     annotate(&mut detail, priced, 1 - priced, snapshots);
+    if let Quote::Unknown(reason) = quote {
+        detail["unpriced_reason"] = json!(reason.reason());
+    }
     let mut usage = ConversionUsage {
         cost_usd: amount,
         requests: 1,
@@ -176,6 +179,11 @@ pub(super) fn merge(target: &mut ConversionUsage, source: &ConversionUsage) {
             entry[name] = json!(count(entry, name).saturating_add(count(values, name)));
         }
         entry["cost_usd"] = json!(cost(entry) + cost(values));
+        if entry.get("unpriced_reason").is_none()
+            && let Some(reason) = values.get("unpriced_reason")
+        {
+            entry["unpriced_reason"] = reason.clone();
+        }
         annotate(
             entry,
             old_priced.saturating_add(priced),

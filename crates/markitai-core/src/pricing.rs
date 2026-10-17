@@ -447,8 +447,16 @@ fn calculate(
                     "total_tokens",
                     "service_tier",
                     "inference_geo",
+                    "speed",
                 ],
             )?;
+            // The Messages API reports the speed it ran at; fast mode is
+            // billed at a premium that the catalog does not list.
+            match usage.get("speed") {
+                None | Some(Value::Null) => {}
+                Some(value) if value.as_str() == Some("standard") => {}
+                Some(_) => return Err(UnknownPrice::UnsupportedUsage),
+            }
             // The Messages API reports where it ran; US-only inference is
             // billed at a premium, so only an unrestricted placement keeps the
             // listed rates.
@@ -814,6 +822,22 @@ mod tests {
         assert_eq!(
             quote(&haiku_5_5(), &other, BillingClass::Standard),
             Quote::Unknown(UnknownPrice::ResponseModel)
+        );
+    }
+
+    #[test]
+    fn a_standard_speed_response_is_priced_and_a_fast_one_is_not() {
+        let response = |speed: &str| {
+            json!({"model":"claude-haiku-5-5","usage":{"input_tokens":1000,"output_tokens":100,
+                "speed":speed,"service_tier":"standard","inference_geo":"global"}})
+        };
+        assert_eq!(
+            amount(&haiku_5_5(), &response("standard"), BillingClass::Standard),
+            1000 * 100_000 + 100 * 500_000
+        );
+        assert_eq!(
+            quote(&haiku_5_5(), &response("fast"), BillingClass::Standard),
+            Quote::Unknown(UnknownPrice::UnsupportedUsage)
         );
     }
 
