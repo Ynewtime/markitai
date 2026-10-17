@@ -648,6 +648,13 @@ class ModelDiscoveryResult(BaseModel):
     # would come from (a name, never a value)
     reason: str | None = None
     key_variable: str | None = None
+    # A subscription runtime (Claude, Copilot, ChatGPT) that gave no list
+    # says its cause (contract v1.18): reason is then runtime_missing,
+    # not_signed_in, runtime_failed or timeout, ``runtime`` names the program
+    # and the release the adapter speaks, ``next_step`` what to run on the
+    # machine where the server runs
+    runtime: dict[str, str] | None = None
+    next_step: dict[str, str] | None = None
 
 
 class LLMTestResult(BaseModel):

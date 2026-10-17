@@ -148,6 +148,144 @@ def _result(
     return payload
 
 
+#: The subscription runtimes whose list can fail for a cause the user fixes on
+#: the server's machine (contract v1.18): the program, the release the adapter
+#: speaks and what to run.
+_SUBSCRIPTIONS: dict[str, dict[str, str]] = {
+    "claude-agent": {
+        "name": "Claude Code",
+        "required": "claude-agent-sdk>=0.1.50",
+        "install": "npm install -g @anthropic-ai/claude-code",
+        "sign_in": "markitai auth claude login",
+    },
+    "copilot": {
+        "name": "GitHub Copilot CLI",
+        "required": "github-copilot-sdk>=0.2.0",
+        "install": "npm install -g @github/copilot",
+        "sign_in": "markitai auth copilot login",
+    },
+    "chatgpt": {
+        "name": "ChatGPT",
+        "required": "Codex OAuth sign-in",
+        "install": "",
+        "sign_in": "markitai auth chatgpt login",
+    },
+}
+
+#: The extras that install each provider's Python SDK
+_SDK_EXTRAS: dict[str, tuple[str, str]] = {
+    "claude-agent": ("Claude Agent SDK", "claude-agent"),
+    "copilot": ("GitHub Copilot SDK", "copilot"),
+}
+
+
+def _runtime_unavailable(
+    provider: str,
+    reason: str,
+    detail: str,
+    *,
+    kind: str | None = None,
+    command: str | None = None,
+    runtime_name: str | None = None,
+    required: str | None = None,
+) -> dict[str, Any]:
+    """An unavailable subscription list that says its cause (contract v1.18).
+
+    ``reason`` is ``runtime_missing``, ``not_signed_in``, ``runtime_failed``
+    or ``timeout``; ``runtime`` names the program and the release the adapter
+    speaks, ``next_step`` (``install`` or ``sign_in``) what to run where the
+    server runs.
+    """
+    row = _SUBSCRIPTIONS[provider]
+    payload = _result(
+        provider,
+        status="unavailable",
+        source="live_api",
+        authoritative=False,
+        models=[],
+        detail=detail,
+    )
+    payload["reason"] = reason
+    payload["runtime"] = {
+        "name": runtime_name or row["name"],
+        "required": required or row["required"],
+    }
+    if kind is not None and command:
+        payload["next_step"] = {"kind": kind, "command": command}
+    return payload
+
+
+def _sdk_missing(provider: str) -> dict[str, Any] | None:
+    """The answer when the provider's Python SDK is not installed."""
+    sdk = _SDK_EXTRAS.get(provider)
+    if sdk is None or _local_runtime_available(provider):
+        return None
+    name, extra = sdk
+    return _runtime_unavailable(
+        provider,
+        "runtime_missing",
+        f"{name} is not installed on the server",
+        kind="install",
+        command=f'pip install "markitai[{extra}]"',
+        runtime_name=name,
+        required=_SUBSCRIPTIONS[provider]["required"],
+    )
+
+
+def _not_signed_in(provider: str, detail: str) -> dict[str, Any]:
+    """Signed out: the CLI is missing (install it) or only needs a login."""
+    row = _SUBSCRIPTIONS[provider]
+    cli = {"claude-agent": "claude", "copilot": "copilot"}.get(provider)
+    if cli is not None and shutil.which(cli) is None:
+        return _runtime_unavailable(
+            provider,
+            "runtime_missing",
+            f"{row['name']} was not found on the server's PATH",
+            kind="install",
+            command=row["install"],
+        )
+    return _runtime_unavailable(
+        provider, "not_signed_in", detail, kind="sign_in", command=row["sign_in"]
+    )
+
+
+def subscription_failure(
+    provider: str, error: BaseException, failure: dict[str, Any]
+) -> dict[str, Any]:
+    """Say a subscription list's failure with its cause (contract v1.18).
+
+    A refused token is a signed-out account, a timeout stays one, anything
+    else that is not about the network or the quota is the runtime failing.
+    """
+    if provider not in _SUBSCRIPTIONS:
+        return failure
+    if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in (
+        401,
+        403,
+    ):
+        answer = _not_signed_in(
+            provider, f"{_SUBSCRIPTIONS[provider]['name']} is not signed in"
+        )
+        return {
+            key: value
+            for key, value in answer.items()
+            if key in ("reason", "detail", "runtime", "next_step")
+        }
+    row = _SUBSCRIPTIONS[provider]
+    if failure.get("reason") == "timeout":
+        return {
+            **failure,
+            "runtime": {"name": row["name"], "required": row["required"]},
+        }
+    if failure.get("reason") == "provider_error":
+        return {
+            "reason": "runtime_failed",
+            "detail": f"{row['name']} is installed but could not list models",
+            "runtime": {"name": row["name"], "required": row["required"]},
+        }
+    return failure
+
+
 def provider_key_variables(provider: str) -> tuple[tuple[str, ...], str | None]:
     """The variables LiteLLM reads *provider*'s key from, and the main one.
 
@@ -403,15 +541,14 @@ def startup_model_candidates(connections: list[dict[str, Any]]) -> list[dict[str
 
 
 async def _copilot_models() -> dict[str, Any]:
-    if importlib.util.find_spec("copilot") is None:
-        return _result(
-            "copilot",
-            status="unavailable",
-            source="copilot_sdk",
-            authoritative=False,
-            models=[],
-            detail="GitHub Copilot SDK is required for live model discovery",
-        )
+    missing = _sdk_missing("copilot")
+    if missing is not None:
+        return missing
+    from markitai.providers.auth import _check_copilot_config_auth
+
+    status = await asyncio.to_thread(_check_copilot_config_auth)
+    if not status.authenticated:
+        return _not_signed_in("copilot", "GitHub Copilot is not signed in")
     from copilot import CopilotClient  # type: ignore[import-not-found]
 
     client: Any = None
@@ -500,14 +637,10 @@ async def _oauth_models(provider: str) -> dict[str, Any]:
         credentials = await asyncio.to_thread(_claude_oauth_credentials)
         token = credentials.get("accessToken") if credentials is not None else None
         if credentials is None or not isinstance(token, str) or not token:
-            return _result(
-                provider,
-                status="unavailable",
-                source="live_api",
-                authoritative=False,
-                models=[],
-                detail="Claude Code OAuth credentials are unavailable",
-            )
+            return _not_signed_in(provider, "Claude Code is not signed in")
+        missing = _sdk_missing(provider)
+        if missing is not None:
+            return missing
         expires_at = credentials.get("expiresAt")
         refreshed = False
         if (
@@ -528,14 +661,7 @@ async def _oauth_models(provider: str) -> dict[str, Any]:
     credentials = await asyncio.to_thread(_chatgpt_oauth_credentials)
     token = credentials.get("access_token") if credentials is not None else None
     if credentials is None or not isinstance(token, str) or not token:
-        return _result(
-            provider,
-            status="unavailable",
-            source="live_api",
-            authoritative=False,
-            models=[],
-            detail="ChatGPT OAuth credentials are unavailable",
-        )
+        return _not_signed_in(provider, "ChatGPT is not signed in")
     account_id = credentials.get("account_id")
     return await _http_models(
         provider,
@@ -1009,6 +1135,7 @@ async def discover_models(
                     }
                 )
                 return result
+            failure = subscription_failure(provider, error, failure)
             result = _result(
                 provider,
                 status="unavailable",
