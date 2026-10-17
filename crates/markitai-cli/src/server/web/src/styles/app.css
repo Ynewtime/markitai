@@ -585,7 +585,7 @@ textarea {
 .settings-index .nav-tag {
   margin-left: auto;
 }
-.settings-index .nav-tag + svg {
+.settings-index a > .nav-tag + svg:last-of-type {
   margin-left: 0;
 }
 /* The rail: icons only, each name kept for assistive technology and shown as a tooltip. */
