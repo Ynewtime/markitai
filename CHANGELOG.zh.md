@@ -51,6 +51,7 @@
 
 ### 修复
 
+- **模型把页面/截图引用并进前一段文字时，现在会恢复成独立的一块。** LLM 的回答把 `<!-- ![Page 1](…) -->`（或“Page images for reference”标题）粘在段落末尾时，还原步骤以前会让它留在段落里；现在会在前后补上空行，与 Rust 一致。模型本来就单独成行的注释不变。
 - **由视觉模型读过的扫描版 PDF，不再提示“页面看起来是扫描件，请加 --ocr 重新运行”。** 使用 LLM 和页面截图时，该提示会等模型回答之后再决定：回答里有文字就不再提示；模型只返回图片或这一步失败时仍会提示。
 - **订阅类服务商（Claude、Copilot、ChatGPT）取不到模型列表时，模型发现现在会说明原因**：`reason` 为 `runtime_missing`（程序或其 Python 可选依赖未安装）、`not_signed_in`、`runtime_failed` 或 `timeout`，并附 `runtime` 和 `next_step`（安装命令，或 `markitai auth <provider> login`），与 Rust API 一致（契约 v1.18）。工作台会显示原因，并在必然失败时关闭按 ID 添加模型。
 - 批量转换时多个线程同时首次导入 markitdown，偶尔让某个文件（常见是 `.msg`）失败，报 `_DeadlockError: deadlock detected by _ModuleLock('markitdown.converters')`：现在 markitdown 在任何转换器使用前、加锁只导入一次。

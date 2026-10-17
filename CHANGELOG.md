@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A page or screenshot reference the model ran into the text before it is a block of its own again.** When an LLM answer glued `<!-- ![Page 1](…) -->` (or the "Page images for reference" header) to the end of a paragraph, the restore step left it inside the paragraph; it now gets blank lines around it, as Rust does. Comments the model kept on their own lines are unchanged.
 - **A scanned PDF read by a vision model no longer ends with "pages look scanned, re-run with --ocr".** With an LLM and page screenshots the notice waits for the model's answer and is dropped once the answer has text; it is still raised when the model returned nothing but pictures or the step failed.
 - **A subscription provider (Claude, Copilot, ChatGPT) that lists no models now says why** in model discovery: `reason` is `runtime_missing` (the program or its Python extra is not installed), `not_signed_in`, `runtime_failed` or `timeout`, with `runtime` and a `next_step` (the install command, or `markitai auth <provider> login`), as the Rust API does (contract v1.18). The workbench shows the cause and switches off Add a model by ID when it is certain to fail.
 - A batch converting files in several threads could fail a file (often `.msg`) with `_DeadlockError: deadlock detected by _ModuleLock('markitdown.converters')`: markitdown is now imported once, under a lock, before any converter uses it.

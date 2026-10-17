@@ -487,3 +487,37 @@ class TestImplausibleCleaningReason:
         cleaned = source.replace("。", "。\n")
 
         assert implausible_cleaning_reason(source, cleaned) is None
+
+
+class TestPageCommentsStayBlocks:
+    """A model may run a kept page/screenshot comment into its neighbours."""
+
+    SOURCE = (
+        "<!-- Page number: 1 -->\n\n# Language comparison\n\n"
+        "Each language has trade-offs.\n\n"
+        "<!-- Page images for reference -->\n"
+        "<!-- ![Page 1](screenshots/a.jpg) -->\n"
+    )
+
+    def test_a_comment_glued_to_the_text_before_it_gets_its_own_block(self) -> None:
+        protected, mapping = protect_content(self.SOURCE)
+        names = [name for name in mapping if "_PAGE_" in name]
+        assert len(names) == 2
+        glued = (
+            "__MARKITAI_PAGENUM_0__\n\n# Language comparison\n\n"
+            f"Each language has trade-offs.{names[0]}{names[1]} After"
+        )
+        restored = unprotect_content(glued, mapping)
+        assert restored == (
+            "\n\n<!-- Page number: 1 -->\n\n# Language comparison\n\n"
+            "Each language has trade-offs.\n\n"
+            "<!-- Page images for reference -->\n\n"
+            "<!-- ![Page 1](screenshots/a.jpg) -->\n\nAfter"
+        )
+
+    def test_comments_the_model_kept_on_their_own_lines_are_unchanged(self) -> None:
+        source = self.SOURCE.split("\n\n", 1)[
+            1
+        ]  # page number markers have their own spacing
+        protected, mapping = protect_content(source)
+        assert unprotect_content(protected, mapping) == source
