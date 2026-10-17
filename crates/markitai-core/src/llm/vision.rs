@@ -294,7 +294,19 @@ pub(crate) fn process_vision_with_runtime(
     let markdown = work
         .iter()
         .zip(&answers)
-        .map(|(item, answer)| item.protected.restore(&answer.markdown))
+        .map(|(item, answer)| {
+            // A model that read a scanned page has its text: the page's scan
+            // is then hidden as a comment, like the page screenshots. When the
+            // answer holds no text, the scan stays as the page's content.
+            let scans = item.protected.scan_pictures(request.unread_pages);
+            let read = item
+                .protected
+                .without_markers(&answer.markdown)
+                .chars()
+                .any(char::is_alphanumeric);
+            let hidden: &[usize] = if read { &scans } else { &[] };
+            item.protected.restore_hiding(&answer.markdown, hidden)
+        })
         .collect::<Result<Vec<_>>>()?
         .join("\n\n");
     if markdown.trim().is_empty() {
@@ -401,7 +413,7 @@ fn unread_rule(pages: &[usize]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "Frames {list} are scanned pages: no reader recovered their text, so the extracted text holds only their pictures. A picture token on such a page is the scan of the page, not its content: read the page image and transcribe all of its text, headings, lists and tables as Markdown, then keep the token once after the transcription."
+        "Frames {list} are scanned pages: no reader recovered their text, so the extracted text holds only their pictures. A picture token on such a page is the scan of the page, not its content: read the page image and transcribe all of its text, headings, lists and tables as Markdown, then keep the token once after the transcription (the application hides it)."
     )
 }
 

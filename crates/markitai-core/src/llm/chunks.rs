@@ -337,13 +337,52 @@ impl Protected {
         Ok(())
     }
 
+    /// The pictures (by literal index) that are the scans of the `unread`
+    /// pages: the picture blocks before the screenshot comment
+    /// (`<!-- ![Page N](…) -->`) that closes page N.
+    pub fn scan_pictures(&self, unread: &[usize]) -> Vec<usize> {
+        let mut found = Vec::new();
+        let mut pictures = Vec::new();
+        for (index, ((_, literal), &block)) in self.literals.iter().zip(&self.blocks).enumerate() {
+            let literal = literal.trim();
+            if block && literal.starts_with("![") {
+                pictures.push(index);
+            } else if let Some(page) = literal
+                .strip_prefix("<!-- ![Page ")
+                .and_then(|rest| rest.split_once(']'))
+                .and_then(|(number, _)| number.parse::<usize>().ok())
+            {
+                if unread.contains(&page) {
+                    found.append(&mut pictures);
+                }
+                pictures.clear();
+            }
+        }
+        found
+    }
+
     pub fn restore(&self, answer: &str) -> Result<String> {
+        self.restore_hiding(answer, &[])
+    }
+
+    /// [`Protected::restore`], writing the literals in `hidden` (indices) as
+    /// HTML comments, so a picture stays in the file without being shown.
+    pub fn restore_hiding(&self, answer: &str, hidden: &[usize]) -> Result<String> {
         self.validate(&self.text, answer)?;
         let mut rest = answer;
         let mut output = String::with_capacity(answer.len());
-        for ((token, literal), &block) in self.literals.iter().zip(&self.blocks) {
+        for (index, ((token, literal), &block)) in
+            self.literals.iter().zip(&self.blocks).enumerate()
+        {
             let Some(at) = rest.find(token) else {
                 unreachable!("validated marker")
+            };
+            let hidden_literal;
+            let literal = if hidden.contains(&index) {
+                hidden_literal = format!("<!-- {} -->", literal.trim());
+                &hidden_literal
+            } else {
+                literal
             };
             output.push_str(&rest[..at]);
             if block && !output.is_empty() && !output.ends_with('\n') {
@@ -642,6 +681,24 @@ fn split(text: &str, protected_prefix: Option<&str>, limit: Limit) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_scan_of_an_unread_page_is_hidden_as_a_comment_and_other_pictures_stay() {
+        let source = "![Image on page 1](.markitai/assets/a.jpg)\n\n<!-- ![Page 1](.markitai/screenshots/p1.jpg) -->\n\nNative text.\n\n![A chart](.markitai/assets/b.jpg)\n\n<!-- ![Page 2](.markitai/screenshots/p2.jpg) -->\n";
+        let protected = Protected::new(source);
+        // Page 1 is unread: its picture is the first literal; page 2 is not.
+        assert_eq!(protected.scan_pictures(&[1]), [0]);
+        assert_eq!(protected.scan_pictures(&[2]), [2]);
+        assert!(protected.scan_pictures(&[]).is_empty());
+        let answer = protected.text.replace("Native text.", "Transcribed.");
+        let shown = protected.restore_hiding(&answer, &[]).unwrap();
+        let hidden = protected.restore_hiding(&answer, &[0]).unwrap();
+        assert!(
+            shown.contains("\n![Image on page 1](") || shown.starts_with("![Image on page 1](")
+        );
+        assert!(hidden.starts_with("<!-- ![Image on page 1](.markitai/assets/a.jpg) -->"));
+        assert!(hidden.contains("\n![A chart](.markitai/assets/b.jpg)"));
+    }
 
     #[test]
     fn a_block_the_model_glued_to_text_gets_its_own_lines_back() {

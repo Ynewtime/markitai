@@ -48,7 +48,9 @@ images, and the warning explains how to keep those images local.
 A scanned page is also read when OCR is off but the LLM is sent page images
 (a preset or flag with screenshots): the request names the pages no reader
 recovered and tells the model to transcribe them from their images, keeping
-their picture once after the text. The "PDF is scanned … run again with
+their picture once after the text. Once the answer has text, that scan is
+written as a comment (`<!-- ![Image on page 1](…) -->`), as the page screenshots
+are, so only the text shows; an answer without text leaves the scan visible. The "PDF is scanned … run again with
 `--ocr`" notice is dropped once the answer has text; without page images or a
 model it stays. Pure mode sends no such instruction.
 
