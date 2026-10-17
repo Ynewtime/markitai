@@ -1284,6 +1284,27 @@ class TestPricing:
             _, data = await _job(client, files=[("a.txt", b"a")])
         assert data["items"][0]["pricing"]["cost_status"] == "unknown"
 
+    async def test_every_unpriced_item_carries_the_incomplete_cost_notice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Not only the item that answered first (the processor warns once per
+        run), and in the words the workbench classifies."""
+        usage = {
+            "fake-model": {"requests": 2, "unpriced_requests": 2},
+            "gpt-4o-mini": {"requests": 1, "cost_usd": 0.01},
+        }
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", _converter(usage=usage)
+        )
+        async with _client(_make_app(tmp_path)) as client:
+            _, data = await _job(client, files=[("a.txt", b"a"), ("b.txt", b"b")])
+        for item in data["items"]:
+            assert item["warnings"] == [
+                "Cost is incomplete: 2 requests to fake-model have no reviewed "
+                "price. cost_usd is the known priced subtotal; the complete "
+                "cost is unknown."
+            ]
+
     async def test_no_model_no_pricing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
