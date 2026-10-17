@@ -235,9 +235,13 @@ async def convert_url_cascade(
     screenshot_only_mode = uses_screenshot_only(cfg, fetch_result)
     # The URL's text and image stages share one request budget: the block
     # spans both, so a page cannot spend the cap twice
-    from markitai.llm.engine import llm_document_budget
+    budget: contextlib.AbstractContextManager[None] = contextlib.nullcontext()
+    if cfg.llm.enabled:
+        # Only now: importing the engine loads the LLM stack
+        from markitai.llm.engine import llm_document_budget
 
-    with llm_document_budget() if cfg.llm.enabled else contextlib.nullcontext():
+        budget = llm_document_budget()
+    with budget:
         if cfg.llm.enabled:
             from markitai.llm.engine import track_llm_spend
             from markitai.utils.text import format_error_message
