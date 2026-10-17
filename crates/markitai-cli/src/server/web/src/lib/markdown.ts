@@ -5,6 +5,7 @@
 // plan of chunks and drawn a chunk at a time (`renderChunk`), so the first
 // screen never waits for the last.
 import type { Artifact } from "../api/types.ts";
+import { mathExtensions } from "./math-syntax.ts";
 
 /** The leading YAML block; the rendered view leaves it to Source. */
 export function splitFrontmatter(markdown: string): { frontmatter: string | null; body: string } {
@@ -89,6 +90,9 @@ type TokenList = Token[] & { links?: unknown };
 
 export interface Libraries {
   marked: {
+    use(options: { extensions: typeof mathExtensions }): void;
+    /** The options `use` has changed: the static lexer and parser take only the options they are given. */
+    defaults?: Record<string, unknown>;
     parse(markdown: string, options: { async: false; gfm: boolean }): string;
     lexer(markdown: string, options: { gfm: boolean }): TokenList;
     parser(tokens: TokenList, options: { async: false; gfm: boolean }): string;
@@ -111,10 +115,11 @@ let libraries: Promise<Libraries> | null = null;
 
 /** marked and DOMPurify are separate same-origin files, fetched the first time a preview opens. */
 export function loadLibraries(): Promise<Libraries> {
-  libraries ??= Promise.all([import("/ui/marked.js"), import("/ui/purify.js")]).then(([markedModule, purifyModule]) => ({
-    marked: markedModule.marked,
-    purify: purifyModule.default,
-  }));
+  libraries ??= Promise.all([import("/ui/marked.js"), import("/ui/purify.js")]).then(([markedModule, purifyModule]) => {
+    // Formulas are read as `.math` elements (drawn later, by lib/math.ts), not as Markdown.
+    markedModule.marked.use({ extensions: mathExtensions });
+    return { marked: markedModule.marked, purify: purifyModule.default };
+  });
   libraries.catch(() => {
     libraries = null;
   });
@@ -257,12 +262,12 @@ export function countTableRows(markdown: string): number {
  * `tables` numbers its tables among the document's. */
 export function renderChunk({ marked, purify }: Libraries, plan: DocumentPlan, index: number, context: RenderContext, tables: { offset: number }): DocumentFragment {
   const tokens = plan.chunks[index] ?? [];
-  return sanitized(purify, marked.parser(tokens, { async: false, gfm: true }), context, { offset: tables.offset, total: plan.tables }, tables);
+  return sanitized(purify, marked.parser(tokens, { ...marked.defaults, async: false, gfm: true }), context, { offset: tables.offset, total: plan.tables }, tables);
 }
 
 /** Read one piece of a document into its plan. */
 export function readPiece({ marked }: Libraries, plan: DocumentPlan, piece: string): void {
-  extendPlan(plan, marked.lexer(piece, { gfm: true }));
+  extendPlan(plan, marked.lexer(piece, { ...marked.defaults, gfm: true }));
 }
 
 /** The text a heading shows, without its Markdown. */

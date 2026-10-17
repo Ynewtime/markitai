@@ -17,11 +17,12 @@ Reference test fixtures remain in the reference checkout; audit reports record
 fixture hashes and never redistribute them as newly authored fixtures.
 
 The embedded browser workspace includes Marked 18.0.14 (MIT), DOMPurify
-3.4.16 (Apache-2.0), Preact 10.29.8 (MIT), icon path data from Phosphor Icons
-2.1.10 (MIT) and the Inter 5.3.0 variable font (SIL Open Font License 1.1).
+3.4.16 (Apache-2.0), Preact 10.29.8 (MIT), KaTeX 0.19.0 with the web fonts its package ships (MIT),
+icon path data from Phosphor Icons 2.1.10 (MIT) and the Inter 5.3.0 variable
+font (SIL Open Font License 1.1).
 Their complete notices are in vendor/web/marked-LICENSE,
 vendor/web/DOMPurify-LICENSE, vendor/web/preact-LICENSE,
-vendor/web/phosphor-LICENSE and vendor/web/Inter-OFL.txt. Download provenance,
+vendor/web/KaTeX-LICENSE, vendor/web/phosphor-LICENSE and vendor/web/Inter-OFL.txt. Download provenance,
 upstream package integrity and embedded-file hashes are recorded in
 vendor/web/provenance.json.
 

@@ -5179,6 +5179,25 @@ input[type="password"],
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
 }
+/* formulas: drawn by the lazily loaded renderer (math.css holds KaTeX's own rules); until then, or when one
+   does not parse, the source text shows in the code face */
+.math:not(.is-typeset) {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+.math-display {
+  display: block;
+  margin: 12px 0;
+  padding-block: 2px;
+  overflow-x: auto;
+  text-align: center;
+}
+.math-display .katex-display {
+  margin: 0;
+}
+.toc-text .katex {
+  font-size: 1em;
+}
 /* a linked video poster played in place: the picture's frame, at most the
    column's width and 70% of the view's height, letterboxed on the surface */
 .doc-body .doc-video {

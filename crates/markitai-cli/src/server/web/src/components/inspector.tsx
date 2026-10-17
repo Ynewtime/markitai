@@ -17,6 +17,7 @@ import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, readable, timestamp
 import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
 import { FrontCard } from "./front-matter.tsx";
 import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
+import { typeset } from "../lib/math.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
@@ -294,6 +295,7 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
         // The excerpt clips its own overflow: its few pictures load at once.
         for (const image of fragment.querySelectorAll("img")) image.setAttribute("loading", "eager");
         target.replaceChildren(fragment);
+        void typeset(target);
         loads = loadArtifactImages(
           target,
           (path) => fetchBlob(imagePath(item.jobId, item.itemId, path)).then((file) => file.blob),

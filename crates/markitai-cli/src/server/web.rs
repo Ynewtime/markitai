@@ -92,6 +92,8 @@ static HIGHLIGHT_JS: Asset = Asset::gzip(dist!("highlight.js.gz"), JS);
 static BRANDS_JS: Asset = Asset::gzip(dist!("brands.js.gz"), JS);
 static I18N_ZH: Asset = Asset::gzip(dist!("i18n-zh.js.gz"), JS);
 static I18N_JA: Asset = Asset::gzip(dist!("i18n-ja.js.gz"), JS);
+static MATH_JS: Asset = Asset::gzip(dist!("math.js.gz"), JS);
+static MATH_CSS: Asset = Asset::gzip(dist!("math.css.gz"), "text/css; charset=utf-8");
 static LOGO: Asset = Asset::raw(dist!("logo.svg"), "image/svg+xml");
 static MARKED: Asset = Asset::gzip(dist!("marked.js.gz"), JS);
 static PURIFY: Asset = Asset::gzip(dist!("purify.js.gz"), JS);
@@ -109,6 +111,39 @@ static FONT_GREEK_EXT: Asset =
     Asset::raw(vendor!("inter-greek-ext-wght-normal.woff2"), "font/woff2");
 static FONT_VIETNAMESE: Asset =
     Asset::raw(vendor!("inter-vietnamese-wght-normal.woff2"), "font/woff2");
+
+/// The KaTeX faces `dist/math.css` names, each served at `/ui/<file name>`; a browser fetches only the
+/// faces a formula uses.
+macro_rules! katex_fonts {
+    ($($name:literal),* $(,)?) => {
+        &[$(($name, {
+            static FACE: Asset = Asset::raw(vendor!($name), "font/woff2");
+            &FACE
+        })),*]
+    };
+}
+static KATEX_FONTS: &[(&str, &Asset)] = katex_fonts![
+    "KaTeX_AMS-Regular.woff2",
+    "KaTeX_Caligraphic-Bold.woff2",
+    "KaTeX_Caligraphic-Regular.woff2",
+    "KaTeX_Fraktur-Bold.woff2",
+    "KaTeX_Fraktur-Regular.woff2",
+    "KaTeX_Main-Bold.woff2",
+    "KaTeX_Main-BoldItalic.woff2",
+    "KaTeX_Main-Italic.woff2",
+    "KaTeX_Main-Regular.woff2",
+    "KaTeX_Math-BoldItalic.woff2",
+    "KaTeX_Math-Italic.woff2",
+    "KaTeX_SansSerif-Bold.woff2",
+    "KaTeX_SansSerif-Italic.woff2",
+    "KaTeX_SansSerif-Regular.woff2",
+    "KaTeX_Script-Regular.woff2",
+    "KaTeX_Size1-Regular.woff2",
+    "KaTeX_Size2-Regular.woff2",
+    "KaTeX_Size3-Regular.woff2",
+    "KaTeX_Size4-Regular.woff2",
+    "KaTeX_Typewriter-Regular.woff2",
+];
 
 /// Whether the request accepts gzip (`gzip` or `*` with a nonzero weight).
 fn accepts_gzip(headers: &HeaderMap) -> bool {
@@ -207,7 +242,7 @@ pub(super) fn missing_page(
 }
 
 pub(super) fn routes() -> Router<Arc<State>> {
-    Router::new()
+    let mut router = Router::new()
         // Every view is a real address so reloads and Back keep it.
         .route("/", route(&INDEX))
         .route("/jobs", route(&INDEX))
@@ -221,6 +256,8 @@ pub(super) fn routes() -> Router<Arc<State>> {
         .route("/ui/boot.js", route(&BOOT_JS))
         .route("/ui/highlight.js", route(&HIGHLIGHT_JS))
         .route("/ui/brands.js", route(&BRANDS_JS))
+        .route("/ui/math.js", route(&MATH_JS))
+        .route("/ui/math.css", route(&MATH_CSS))
         .route("/ui/i18n-zh.js", route(&I18N_ZH))
         .route("/ui/i18n-ja.js", route(&I18N_JA))
         .route("/ui/logo.svg", route(&LOGO))
@@ -235,7 +272,11 @@ pub(super) fn routes() -> Router<Arc<State>> {
         .route("/ui/inter-greek-ext-wght.woff2", route(&FONT_GREEK_EXT))
         .route("/ui/inter-vietnamese-wght.woff2", route(&FONT_VIETNAMESE))
         .route("/ui/marked.js", route(&MARKED))
-        .route("/ui/purify.js", route(&PURIFY))
+        .route("/ui/purify.js", route(&PURIFY));
+    for (name, face) in KATEX_FONTS {
+        router = router.route(&format!("/ui/{name}"), route(face));
+    }
+    router
 }
 
 #[cfg(test)]
@@ -289,6 +330,8 @@ mod tests {
             &APP_CSS,
             &HIGHLIGHT_JS,
             &BRANDS_JS,
+            &MATH_JS,
+            &MATH_CSS,
             &I18N_ZH,
             &I18N_JA,
             &MARKED,

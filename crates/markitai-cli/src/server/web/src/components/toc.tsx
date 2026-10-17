@@ -6,6 +6,7 @@ import { useEffect, useRef } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import type { TocEntry } from "../lib/toc.ts";
 import { Icon } from "./icons.tsx";
+import { MathText } from "./math-text.tsx";
 
 function TocList({ entries, active, onPick, listRef }: { entries: TocEntry[]; active: number; onPick: (index: number) => void; listRef?: { current: HTMLOListElement | null } }) {
   return (
@@ -19,7 +20,7 @@ function TocList({ entries, active, onPick, listRef }: { entries: TocEntry[]; ac
             title={entry.text}
             onClick={() => onPick(entry.index)}
           >
-            <span class="toc-text">{entry.text}</span>
+            <MathText class="toc-text" text={entry.text} />
           </button>
         </li>
       ))}
