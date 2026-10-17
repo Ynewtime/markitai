@@ -2,8 +2,9 @@
 
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -100,6 +101,79 @@ def pytest_configure(config: pytest.Config) -> None:
         if page not in (0, 65001):
             _ORIGINAL_CODE_PAGE = page
             _console_code_page(65001)
+
+
+@pytest.fixture(autouse=True)
+def _litellm_registrations_stay_in_their_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Give back the LiteLLM model rows a test's registrations changed.
+
+    A LiteLLM Router registers each deployment's ``model_info`` into the
+    process-wide ``litellm.model_cost`` (and markitai caches what it reads
+    there in ``get_model_info_cached``): one test's
+    ``ModelInfo(supports_vision=False)`` for deepseek/deepseek-flash made the
+    model text-only for every later test. Rows that existed before the test
+    are put back; new rows stay, as markitai's own catalog rows may first be
+    registered inside a test.
+    """
+    litellm = sys.modules.get("litellm")
+    if litellm is None or not hasattr(litellm, "register_model"):
+        yield
+        return
+    real = litellm.register_model
+    before: dict[str, dict[str, Any]] = {}
+
+    def register_model(*args: Any, **kwargs: Any) -> Any:
+        if not before:
+            before.update({k: dict(v) for k, v in litellm.model_cost.items()})
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(litellm, "register_model", register_model)
+    yield
+    if not before:
+        return
+    for key, row in before.items():
+        if litellm.model_cost.get(key) != row:
+            litellm.model_cost[key] = row
+    # What register_model itself calls after changing the table: drops
+    # get_model_info's caches and the case-insensitive index
+    invalidate = getattr(
+        sys.modules.get("litellm.utils"), "_invalidate_model_cost_lowercase_map", None
+    )
+    if invalidate is not None:
+        invalidate()
+    models = sys.modules.get("markitai.llm.models")
+    if models is not None:
+        models._model_info_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _loguru_sinks_stay_in_their_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Remove the loguru sinks a test added (setup_logging run by the CLI).
+
+    A console sink left behind by a CLI test wrote every later test's log
+    lines too, so a test that adds its own sink saw each line twice.
+    """
+    from loguru import logger
+
+    real = logger.add
+    added: list[int] = []
+
+    def add(*args: Any, **kwargs: Any) -> int:
+        handler_id = real(*args, **kwargs)
+        added.append(handler_id)
+        return handler_id
+
+    monkeypatch.setattr(logger, "add", add)
+    yield
+    for handler_id in added:
+        try:
+            logger.remove(handler_id)
+        except ValueError:  # already removed by the test (or setup_logging)
+            pass
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
