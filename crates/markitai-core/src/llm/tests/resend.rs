@@ -466,6 +466,15 @@ fn scanned_pages_are_asked_for_in_the_cleanup_framing_with_the_rules_once() {
         "{system}"
     );
     assert!(system.contains("original language and wording"), "{system}");
+    // The content of page N follows page N's own tokens, not the page before it.
+    assert!(
+        system.contains("directly after that page's own tokens"),
+        "{system}"
+    );
+    assert!(
+        system.contains("the content after page marker N is page N's"),
+        "{system}"
+    );
     assert!(!system.contains("transcribe all of its text"), "{system}");
     assert_eq!(
         system.matches("Read every attached image in order").count(),
