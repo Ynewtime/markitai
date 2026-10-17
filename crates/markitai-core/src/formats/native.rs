@@ -1612,27 +1612,26 @@ mod tests {
 
     #[test]
     fn xlsb_sheets_read_like_xlsx_sheets() {
-        // A single visible sheet is headed by its name, and a hidden one is
-        // reported, as in XLSX and XLS.
-        let single = extract(
-            &xlsb(&[("Shown", 0, &[1.0, 2.0]), ("Secret", 1, &[9.0])]),
-            "xlsb",
-        )
-        .unwrap();
+        // A single sheet is headed by its name; a hidden one follows under a
+        // marked heading, without a warning, as in XLSX and XLS.
+        let single = extract(&xlsb(&[("Shown", 0, &[1.0, 2.0])]), "xlsb").unwrap();
         assert!(
             single.markdown.starts_with("## Shown\n| 1 | 2 |"),
             "{:?}",
             single.markdown
         );
-        assert!(!single.markdown.contains('9'));
+        let hidden = extract(
+            &xlsb(&[("Shown", 0, &[1.0, 2.0]), ("Secret", 1, &[9.0])]),
+            "xlsb",
+        )
+        .unwrap();
         assert!(
-            single
-                .warnings
-                .iter()
-                .any(|warning| warning.contains(r#"Hidden worksheet "Secret" is omitted"#)),
+            hidden.markdown.starts_with("## Shown\n| 1 | 2 |")
+                && hidden.markdown.contains("## Secret (hidden sheet)\n| 9 |"),
             "{:?}",
-            single.warnings
+            hidden.markdown
         );
+        assert!(hidden.warnings.is_empty(), "{:?}", hidden.warnings);
         // Each sheet's table follows its heading directly.
         let two = extract(&xlsb(&[("A", 0, &[1.0]), ("B", 0, &[2.0])]), "xlsb").unwrap();
         assert!(two.markdown.contains("## A\n| 1 |"), "{:?}", two.markdown);

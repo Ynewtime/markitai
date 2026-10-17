@@ -118,7 +118,7 @@ code keeps working when wording changes.
 | `office.renderer_missing` | warning | Office page screenshots or OCR need LibreOffice |
 | `office.page` | warning | A note about rendered Office pages |
 | `office.screenshot_format`, `office.count_verified` | info | Office rendering notes |
-| `spreadsheet.hidden_sheet` | info | A hidden worksheet left out; `items` the sheet |
+| `spreadsheet.hidden_sheet` | info | A hidden worksheet left out (older builds; hidden sheets are now converted under a marked heading); `items` the sheet |
 | `spreadsheet.screenshot_scope`, `spreadsheet.font_color`, `spreadsheet.numbers_formatting` | info | Workbook rendering notes |
 | `spreadsheet.rendering`, `spreadsheet.numbers_objects` | warning | Workbook content that could not be rendered or read |
 | `word.picture_records` | warning | Word picture records |

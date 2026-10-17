@@ -80,8 +80,9 @@ or current-sheet selection is supplied. A worksheet configured to print on
 several paper pages therefore produces one full-sized canvas by this explicit
 mode; its bottom/right content is not silently discarded or forced into A4.
 
-Hidden sheets can consequently appear in screenshots and, when visual LLM
-processing is enabled, in model requests. Hidden rows/columns retain the imported
+Hidden sheets consequently appear in screenshots and, when visual LLM
+processing is enabled, in model requests, as they do in the text, where each is
+headed `(hidden sheet)`. Hidden rows/columns retain the imported
 document's display behavior; complete-sheet export does not promise to reveal
 every hidden cell. Native table text remains the original Rust extraction, so
 its saved values and inclusion rules can differ from LibreOffice's displayed

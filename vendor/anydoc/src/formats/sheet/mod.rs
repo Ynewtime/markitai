@@ -283,3 +283,10 @@ mod tests {
         assert!(matches!(parse(&bytes), Err(ConvertError::Malformed { .. })));
     }
 }
+
+/// markitai: the heading name of a sheet the workbook hides. Hidden and
+/// veryHidden sheets are converted, as Python markitai converts them, in
+/// workbook order, and their heading says they are hidden.
+pub(super) fn hidden_name(name: &str) -> String {
+    format!("{name} (hidden sheet)")
+}

@@ -79,7 +79,8 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     let mut records = 0u64;
     let globals = read_globals(&data, &mut records)?;
 
-    let visible: Vec<&BoundSheet> = globals.sheets.iter().filter(|s| s.visible).collect();
+    // markitai: hidden sheets too, in workbook order, their heading marked.
+    let visible: Vec<&BoundSheet> = globals.sheets.iter().collect();
     let multi_sheet = visible.len() > 1;
     let mut doc = Document::default();
     let mut failed = 0usize;
@@ -95,7 +96,7 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         let figures = super::drawings::binary(&content.drawings, &content, &mut pictures)?;
         push_sheet_images(
             &mut doc,
-            &sheet.name,
+            &if sheet.visible { sheet.name.clone() } else { super::hidden_name(&sheet.name) },
             multi_sheet,
             build_table(content, &mut slots)?,
             figures,
@@ -1417,7 +1418,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_rows_columns_and_sheets_are_omitted() {
+    fn hidden_rows_and_columns_are_omitted_and_hidden_sheets_marked() {
         let mut records = label(0, 0, 0, "a");
         records.extend(label(0, 1, 0, "hidden col"));
         records.extend(label(0, 2, 0, "c"));
@@ -1438,7 +1439,9 @@ mod tests {
             ..Wb::default()
         };
         let doc = parse(&wb.build()).unwrap();
-        assert_eq!(doc.blocks.len(), 1, "hidden sheet must add no heading and no table");
+        assert_eq!(doc.blocks.len(), 4, "two headings and two tables");
+        let blocks = format!("{:?}", doc.blocks);
+        assert!(blocks.contains("Secret (hidden sheet)") && blocks.contains("secret"), "{blocks}");
         assert_eq!(texts(first_table(&doc)), vec![vec!["a", "c"], vec!["d", ""]]);
     }
 

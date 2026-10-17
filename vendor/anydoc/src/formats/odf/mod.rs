@@ -394,6 +394,27 @@ mod tests {
         assert_eq!(md, "|  |  |  |\n| --- | --- | --- |\n| 14 | L/R [x] Roof | [ ] Wall |\n");
     }
 
+    // markitai: a hidden sheet is converted with a heading that says so.
+    #[test]
+    fn a_hidden_sheet_keeps_its_table_under_a_marked_heading() {
+        let content = r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0">
+            <office:automatic-styles><style:style style:name="ta2" style:family="table">
+              <style:table-properties table:display="false"/></style:style></office:automatic-styles>
+            <office:body><office:spreadsheet>
+            <table:table table:name="Shown"><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>
+            <table:table table:name="Notes" table:style-name="ta2"><table:table-row><table:table-cell><text:p>secret</text:p></table:table-cell></table:table-row></table:table>
+            </office:spreadsheet></office:body>
+            </office:document-content>"#;
+        let doc = parse(&odt_with_content(content)).unwrap();
+        let md = crate::render::markdown::document_to_markdown(&doc);
+        assert!(md.contains("## Shown\n") && md.contains("## Notes (hidden sheet)\n"), "{md}");
+        assert!(md.contains("| secret |"), "{md}");
+    }
+
     // markitai: shapes are read where they stand in text documents only.
     #[test]
     fn a_shape_anchored_to_a_cell_is_not_the_cells_value() {

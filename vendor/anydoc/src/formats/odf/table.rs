@@ -483,6 +483,10 @@ pub fn parse_spreadsheet(sheet: &Element, ctx: &Ctx) -> Result<Vec<Block>, Conve
                 continue;
             }
             if multi_sheet {
+                // markitai: a hidden sheet (`table:display="false"`) is
+                // converted like any other, its heading marked, as for xlsx.
+                let hidden = ctx.styles.table_hidden(child.attr(ns::TABLE, "style-name").unwrap_or_default());
+                let name = if hidden { format!("{name} (hidden sheet)") } else { name.to_string() };
                 blocks.push(Block::heading(2, vec![Inline::plain(name)]));
             }
             blocks.extend(content);

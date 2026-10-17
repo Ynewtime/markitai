@@ -249,21 +249,7 @@ fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
             .into_iter()
             .filter(|el| el.name == "sheet")
         {
-            if sheet
-                .attributes
-                .get("state")
-                .is_some_and(|s| s != "visible")
-            {
-                result.warnings.push(format!(
-                    "Hidden worksheet {:?} is omitted by the native spreadsheet reader.",
-                    sheet
-                        .attributes
-                        .get("name")
-                        .map(String::as_str)
-                        .unwrap_or("")
-                ));
-                continue;
-            }
+            // Hidden sheets are converted too, under a marked heading.
             if let Some(name) = sheet.attributes.get("name") {
                 result.sheets.push(name.clone());
             }
@@ -484,21 +470,16 @@ fn biff_sheet_names(bytes: &[u8]) -> Result<Metadata, String> {
                 .0
                 .into_owned()
         };
-        if data[4] != 0 {
-            result.warnings.push(format!(
-                "Hidden worksheet {name:?} is omitted by the native spreadsheet reader."
-            ));
-        } else {
-            result.sheets.push(name);
-        }
+        result.sheets.push(name);
     }
     Ok(result)
 }
 
 /// Sheet names from an XLSB `workbook.bin`, a stream of records (MS-XLSB
 /// 2.1.4) whose type and size are little-endian groups of seven bits. Each
-/// BrtBundleSh names a sheet: its state (1 hidden, 2 very hidden, which the
-/// spreadsheet reader omits), tab id, relationship id and name.
+/// BrtBundleSh names a sheet: its state (1 hidden, 2 very hidden; the
+/// spreadsheet reader converts those too, under a marked heading), tab id,
+/// relationship id and name.
 fn xlsb_sheet_names(bytes: &[u8]) -> Result<Metadata, String> {
     const BRT_BUNDLE_SH: usize = 156;
     fn number(bytes: &[u8], position: &mut usize, groups: usize) -> Result<usize, String> {
@@ -557,17 +538,12 @@ fn xlsb_sheet_names(bytes: &[u8]) -> Result<Metadata, String> {
             continue;
         }
         let mut field = 0;
-        let state = u32_at(data, &mut field)?;
+        // hsState: hidden sheets are listed too.
+        u32_at(data, &mut field)?;
         u32_at(data, &mut field)?;
         wide(data, &mut field)?;
         let name = wide(data, &mut field)?.ok_or("worksheet has no name")?;
-        if matches!(state, 1 | 2) {
-            result.warnings.push(format!(
-                "Hidden worksheet {name:?} is omitted by the native spreadsheet reader."
-            ));
-        } else {
-            result.sheets.push(name);
-        }
+        result.sheets.push(name);
     }
     Ok(result)
 }
@@ -623,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn xlsx_names_follow_package_relationships_and_report_hidden_sheets() {
+    fn xlsx_names_follow_package_relationships_and_list_hidden_sheets() {
         let bytes = archive(&[
             (
                 "_rels/.rels",
@@ -635,9 +611,9 @@ mod tests {
             ),
         ]);
         let metadata = read(&bytes, "xlsx");
-        assert_eq!(metadata.sheets, ["A & B"]);
-        assert_eq!(metadata.warnings.len(), 1);
-        assert!(metadata.warnings[0].contains("Hidden"));
+        // A hidden sheet is converted (marked in its heading), not warned about.
+        assert_eq!(metadata.sheets, ["A & B", "Hidden"]);
+        assert!(metadata.warnings.is_empty());
     }
 
     #[test]
@@ -904,7 +880,7 @@ mod tests {
         bytes.extend(&record);
         assert_eq!(biff_sheet_names(&bytes).unwrap().sheets, ["数据"]);
         bytes[14] = 1;
-        assert!(biff_sheet_names(&bytes).unwrap().sheets.is_empty());
-        assert_eq!(biff_sheet_names(&bytes).unwrap().warnings.len(), 1);
+        assert_eq!(biff_sheet_names(&bytes).unwrap().sheets, ["数据"]);
+        assert!(biff_sheet_names(&bytes).unwrap().warnings.is_empty());
     }
 }
