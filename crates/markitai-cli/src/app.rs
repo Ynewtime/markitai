@@ -1284,6 +1284,7 @@ fn execute_conversion(
         llm_runtime: llm_runtime.as_ref(),
         browser_runtime: Some(&browser_runtime),
         stdout_assets: None,
+        public_only: false,
     };
     if !batch {
         let mut task = tasks.remove(0);

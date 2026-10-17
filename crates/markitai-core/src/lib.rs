@@ -501,6 +501,7 @@ fn convert_inner(
             context.explicit_fetch_strategy,
             output_dir.is_some(),
             context.browser_runtime,
+            context.public_only,
         )?;
         fetch_cache_hit = fetched.cache_hit;
         screenshots = fetched.screenshots;

@@ -792,6 +792,31 @@ fn the_callers_headers_reach_the_initial_origin_only() {
     assert_eq!(account(&other, "/asset"), "");
 }
 
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn a_restricted_browser_fetch_refuses_a_host_on_this_machine() {
+    if isolated("a_restricted_browser_fetch_refuses_a_host_on_this_machine") {
+        return;
+    }
+    assert!(available());
+    let site = Site::new();
+    let runtime = BrowserRuntime::new(1).unwrap();
+    let cfg = config(false);
+    // Without the restriction the loopback page renders.
+    assert!(html(&site, "/seed", &cfg, &runtime).contains("Runtime fixture"));
+    // A restricted fetch (a user token's job, or a public requested host)
+    // refuses the navigation, because the host is on this machine.
+    let _restriction = crate::public_net::restrict(true);
+    let error = fetch_with_runtime(&site.url("/seed"), &cfg, false, Some(&runtime))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("BlockedByClient") || error.contains("navigation failed"),
+        "{error}"
+    );
+}
+
 #[cfg(test)]
 mod bounded_fixture_io {
     include!(concat!(

@@ -1,5 +1,6 @@
 use crate::{
-    Asset, Document, Error, Result, browser, config, fetch_cache, formats, output, spa_domains,
+    Asset, Document, Error, Result, browser, config, fetch_cache, formats, output, public_net,
+    spa_domains,
 };
 use reqwest::blocking::{Client, Response};
 use serde_json::{Value, json};
@@ -21,15 +22,20 @@ use remote::{Service, Services};
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
 
 pub(crate) fn client(timeout: u64) -> Result<Client> {
-    crate::proxy::http(
-        Client::builder()
-            .timeout(Duration::from_secs(timeout))
-            .connect_timeout(Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION"))),
-    )?
-    .build()
-    .map_err(request_error)
+    let builder = Client::builder()
+        .timeout(Duration::from_secs(timeout))
+        .connect_timeout(Duration::from_secs(15))
+        .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION")));
+    // A restricted fetch (a user token's job, or any fetch whose requested
+    // host is public) reaches public addresses only, without a proxy and with
+    // every redirect target checked; others keep the proxy and follow up to
+    // ten redirects.
+    let builder = if public_net::restricted() {
+        public_net::following_client(builder)
+    } else {
+        crate::proxy::http(builder.redirect(reqwest::redirect::Policy::limited(10)))?
+    };
+    builder.build().map_err(request_error)
 }
 
 /// A request failure with the causes reqwest keeps behind its summary
@@ -504,7 +510,14 @@ fn fetch_with_context(
     explicit_strategy: Option<&str>,
     output_available: bool,
 ) -> Result<FetchOutcome> {
-    fetch_with_runtime(source, cfg, explicit_strategy, output_available, None)
+    fetch_with_runtime(
+        source,
+        cfg,
+        explicit_strategy,
+        output_available,
+        None,
+        false,
+    )
 }
 
 pub(crate) fn fetch_with_runtime(
@@ -513,6 +526,7 @@ pub(crate) fn fetch_with_runtime(
     explicit_strategy: Option<&str>,
     output_available: bool,
     runtime: Option<&crate::BrowserRuntime>,
+    public_only: bool,
 ) -> Result<FetchOutcome> {
     fetch_with_services(
         source,
@@ -520,6 +534,7 @@ pub(crate) fn fetch_with_runtime(
         explicit_strategy,
         output_available,
         runtime,
+        public_only,
         &Services::production(),
     )
 }
@@ -530,6 +545,7 @@ fn fetch_with_services(
     explicit_strategy: Option<&str>,
     output_available: bool,
     runtime: Option<&crate::BrowserRuntime>,
+    public_only: bool,
     services: &Services<'_>,
 ) -> Result<FetchOutcome> {
     let url = Url::parse(source).map_err(|_| Error::InvalidInput("Invalid URL".into()))?;
@@ -538,6 +554,15 @@ fn fetch_with_services(
             "An HTTP(S) URL with a hostname is required".into(),
         ));
     }
+    // A user token's URL job (`public_only`) reaches public addresses only, and
+    // its requested host must itself be public. Any fetch of a public host is
+    // held to public addresses for the rest of its hops, so a public page can
+    // no longer redirect, meta-refresh or navigate into this machine or its
+    // network; a deliberately local URL (loopback, LAN) stays unrestricted.
+    if public_only && !public_net::url_allowed(&url) {
+        return Err(Error::Fetch(public_net::REFUSED.into()));
+    }
+    let _restriction = public_net::restrict(public_only || public_net::public_host(&url));
     // An X post named through a mirror host answers with a redirect page; fetch the post itself.
     let canonical = formats::canonical_status_url(&url);
     let (url, source) = match &canonical {
@@ -1195,6 +1220,9 @@ fn follow_meta_refresh(client: &Client, page: &mut StaticPage, defer_pdf: bool) 
             return Err(Error::Fetch(format!(
                 "Too many <meta> refresh redirects (more than {MAX_REFRESHES})"
             )));
+        }
+        if public_net::restricted() && !public_net::url_allowed(&target) {
+            return Err(Error::Fetch(public_net::REFUSED.into()));
         }
         *page = decode_static(
             send(

@@ -107,6 +107,11 @@ pub struct ConvertContext<'a> {
     /// hashes and the Markdown links to them with `file://` URIs. Ignored when
     /// an output directory is given; library callers leave it unset.
     pub stdout_assets: Option<&'a std::path::Path>,
+    /// Whether a URL fetch may reach only public addresses: set for a serve
+    /// job a user token owns (or an untrusted caller submits), so its URL, the
+    /// hops it follows and the pictures it links to never reach the server's
+    /// own machine or network. Library and CLI callers leave it unset.
+    pub public_only: bool,
 }
 
 #[derive(Debug, Deserialize)]

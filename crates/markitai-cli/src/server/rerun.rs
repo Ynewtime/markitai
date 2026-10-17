@@ -257,6 +257,8 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
         work.operation,
         work.prior_options.clone(),
     );
+    // Read before the job moves into the blocking task.
+    let public_only = job.owner.is_some();
     let result = crate::task::blocking(move || {
         let _permit = permit;
         let started = Instant::now();
@@ -287,6 +289,8 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 browser_runtime: Some(&browser_runtime),
                 // A rerun publishes into its job folder.
                 stdout_assets: None,
+                // A user token's URL rerun stays on public addresses too.
+                public_only,
             };
             // A URL's newly kept page, its screenshots' blocks and compare
             // screenshots replace the old ones with the result, when the

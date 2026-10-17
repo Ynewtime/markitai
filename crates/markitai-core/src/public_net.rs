@@ -60,6 +60,95 @@ pub(crate) fn client(
         .dns_resolver(Arc::new(PublicResolver))
 }
 
+std::thread_local! {
+    /// Whether fetches on this thread must reach public addresses only.
+    static RESTRICTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the current fetch is restricted to public addresses (see
+/// [`restrict`]). [`crate::fetch::client`] builds a public-only client then.
+pub(crate) fn restricted() -> bool {
+    RESTRICTED.with(std::cell::Cell::get)
+}
+
+/// Restricts every fetch on this thread to public addresses until the returned
+/// guard drops. A fetch already restricted stays restricted (nesting keeps
+/// the stricter state).
+#[must_use]
+pub(crate) fn restrict(restricted: bool) -> Restriction {
+    Restriction(RESTRICTED.with(|cell| cell.replace(restricted || cell.get())))
+}
+
+pub(crate) struct Restriction(bool);
+
+impl Drop for Restriction {
+    fn drop(&mut self) {
+        RESTRICTED.with(|cell| cell.set(self.0));
+    }
+}
+
+/// Whether `url`'s host is on the public internet: a public IP literal, or a
+/// name that resolves to at least one public address. A fetch of such a host
+/// is held to public addresses for the rest of its hops; a private or local
+/// host (a deliberate local conversion) is not. Names that do not resolve
+/// count as not public, so they impose no restriction of their own.
+pub(crate) fn public_host(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(address)) => !refused_address(address.into()),
+        Some(url::Host::Ipv6(address)) => !refused_address(address.into()),
+        Some(url::Host::Domain(host)) => (host, url.port_or_known_default().unwrap_or(443))
+            .to_socket_addrs()
+            .map(|addresses| {
+                addresses
+                    .into_iter()
+                    .any(|address| !refused_address(address.ip()))
+            })
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
+/// Whether `url`'s host would connect only to public addresses: a public IP
+/// literal, or a name whose every resolved address is public (none private).
+/// Chromium resolves names itself and may pick any of them, so a host with any
+/// private address is refused for a restricted browser fetch.
+pub(crate) fn host_all_public(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(address)) => !refused_address(address.into()),
+        Some(url::Host::Ipv6(address)) => !refused_address(address.into()),
+        Some(url::Host::Domain(host)) => (host, url.port_or_known_default().unwrap_or(443))
+            .to_socket_addrs()
+            .map(|addresses| {
+                let mut addresses = addresses.peekable();
+                addresses.peek().is_some()
+                    && addresses.all(|address| !refused_address(address.ip()))
+            })
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
+/// `builder` restricted to public addresses but following redirects (up to
+/// ten), each target's literal address checked and its name resolved through
+/// the public resolver, without a proxy. For page fetches, where redirects are
+/// followed; model requests use [`client`], which follows none.
+pub(crate) fn following_client(
+    builder: reqwest::blocking::ClientBuilder,
+) -> reqwest::blocking::ClientBuilder {
+    builder
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                attempt.error("too many redirects")
+            } else if url_allowed(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.error(REFUSED)
+            }
+        }))
+        .dns_resolver(Arc::new(PublicResolver))
+}
+
 /// The public addresses among `addresses`, or an error naming none of them.
 fn public(addresses: impl Iterator<Item = SocketAddr>) -> std::io::Result<Vec<SocketAddr>> {
     let kept: Vec<_> = addresses
