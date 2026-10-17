@@ -65,7 +65,15 @@ def test_a_complete_wheel_passes(tmp_path: Path, check_wheel: ModuleType) -> Non
 
 @pytest.mark.parametrize(
     "name",
-    ["ui/brands.js", "LICENSES/lobehub-icons-LICENSE", "ui/inter-latin-wght.woff2"],
+    [
+        "ui/brands.js",
+        "LICENSES/lobehub-icons-LICENSE",
+        "ui/inter-latin-wght.woff2",
+        "ui/math.js",
+        "ui/math.css",
+        "ui/KaTeX_Main-Regular.woff2",
+        "LICENSES/KaTeX-LICENSE",
+    ],
 )
 def test_every_file_the_workbench_manifest_lists_is_required(
     tmp_path: Path, check_wheel: ModuleType, name: str

@@ -301,3 +301,6 @@ markitai/serve/workbench/LICENSES/ (named after the dash):
   their owners and only name the provider each one stands for.
 - Inter (SIL Open Font License 1.1), Copyright 2016 The Inter Project
   Authors - Inter-OFL.txt
+- KaTeX (MIT), Copyright (c) 2013-2020 Khan Academy and other contributors,
+  and KaTeX/katex-fonts (MIT): the formula renderer and its fonts, loaded only
+  for a document that holds a formula - KaTeX-LICENSE
