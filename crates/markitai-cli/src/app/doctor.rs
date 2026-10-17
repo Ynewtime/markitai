@@ -337,6 +337,9 @@ fn report(
 fn mark(check: &Check) -> Mark {
     if check.status == "ok" {
         Mark::Success
+    } else if check.first_use && !check.failed() {
+        // It works and sets itself up when used: information, not a warning.
+        Mark::Info
     } else if check.failed() {
         Mark::Error
     } else {
@@ -418,7 +421,8 @@ fn verdict(
         }
         if !on_first_use.is_empty() {
             let names = on_first_use.join(separator);
-            segments.push(text!(lang => "Set up on first use: {names} (`markitai doctor --fix` does it now)", "首次使用时自动准备：{names}（`markitai doctor --fix` 可立即完成）"));
+            segments
+                .push(text!(lang => "Set up on first use: {names}", "首次使用时自动准备：{names}"));
         }
         let (lead, joint) = match lang {
             Lang::En => ("Ready. ", ". "),
@@ -1233,6 +1237,115 @@ mod tests {
             .collect()
     }
 
+    /// Every message and remedy of every check the doctor builds without a
+    /// subscription runtime or a network has a Chinese wording: a changed
+    /// English string that falls out of the table fails here, instead of
+    /// showing as English in the Chinese terminal.
+    #[test]
+    fn every_check_message_and_remedy_has_a_chinese_wording() {
+        use markitai_core::{LocalOcrModel, LocalOcrModelState as State};
+        let cjk = |text: &str| text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
+        let mut seen: Vec<Check> = Vec::new();
+        // The configuration-dependent checks, with every backend outcome.
+        let off = config::normalize(&json!({"llm":{"model_list":[{"model_name":"off","litellm_params":{"model":"openai/test","weight":0,"api_key":"env:ABSENT_ROUND8"}}]}})).unwrap();
+        let absent = config::normalize(&json!({"llm":{"model_list":[{"model_name":"m","litellm_params":{"model":"openai/test","api_key":"env:ABSENT_ROUND8"}}]}})).unwrap();
+        let plain = config::normalize(&json!({})).unwrap();
+        let named = HashMap::from([("MODEL".to_owned(), "openai/gpt-x".to_owned())]);
+        let named_without_key = HashMap::from([("MODEL".to_owned(), "openai/gpt-x".to_owned())]);
+        // Not found, found, or a probe that failed.
+        let outcome = |kind: u8| -> markitai_core::Result<Option<PathBuf>> {
+            match kind {
+                0 => Ok(None),
+                1 => Ok(Some(PathBuf::from("/usr/bin/tool"))),
+                _ => Err(markitai_core::Error::Unsupported("x".into())),
+            }
+        };
+        for (cfg, env) in [
+            (&plain, HashMap::new()),
+            (&off, HashMap::new()),
+            (&absent, HashMap::new()),
+            (&plain, named),
+            (&plain, named_without_key),
+        ] {
+            for browser in 0..3 {
+                for office in 0..3 {
+                    seen.extend(
+                        checks(
+                            cfg,
+                            None,
+                            &env,
+                            outcome(browser),
+                            outcome(office),
+                            Vec::new(),
+                        )
+                        .into_values(),
+                    );
+                }
+            }
+        }
+        // The local OCR states.
+        for (available, translated) in [(false, false), (true, true), (true, false)] {
+            seen.push(local_ocr_check(available, translated));
+        }
+        let model = |state, detail: Option<&str>| {
+            LocalOcrModel::new(
+                "m".into(),
+                PathBuf::from("/home/models/ocr/m-0123/model.onnx"),
+                2_000_000,
+                state,
+                detail.map(str::to_owned),
+            )
+        };
+        for models in [
+            vec![model(State::Ready, None)],
+            vec![model(State::Missing, None), model(State::Ready, None)],
+            vec![model(State::Corrupt, Some("size differs"))],
+            vec![model(State::Unsafe, Some("a link"))],
+        ] {
+            seen.push(portable_ocr_check("tract", Ok(models)));
+        }
+        seen.push(portable_ocr_check(
+            "tract",
+            Err(markitai_core::Error::Unsupported(
+                "ocr.lang is not a language the portable OCR models read (xx)".into(),
+            )),
+        ));
+        for platform in ["windows", "macos", "linux"] {
+            let mut office = Check::new(
+                "LibreOffice",
+                "d",
+                "missing",
+                "No installed executable was found",
+                office_install_hint(platform),
+            );
+            office.fix = office_fix(platform);
+            seen.push(office);
+        }
+        assert!(seen.len() > 100);
+        // Texts that are a path, a command or a name the table need not translate.
+        let exempt = |text: &str| {
+            text.is_empty()
+                || text.starts_with("markitai ")
+                || text.starts_with("sudo ")
+                || text.starts_with("brew ")
+                || text.starts_with("winget ")
+        };
+        let mut missing = std::collections::BTreeSet::new();
+        for check in &seen {
+            let mut texts = vec![check.message.clone(), check.install_hint.clone()];
+            texts.extend(check.fix.iter().filter_map(|fix| match fix {
+                Fix::Text(text) => Some(text.clone()),
+                Fix::Command(_) => None,
+            }));
+            for text in texts {
+                if !exempt(&text) && !cjk(&doctor_zh::zh(&text)) {
+                    missing.insert(text);
+                }
+            }
+        }
+        assert!(missing.is_empty(), "no Chinese wording for: {missing:#?}");
+    }
+
     #[test]
     fn verdicts_state_the_same_outcome_in_both_languages() {
         let verdict_of = |states: &[(&'static str, &'static str, bool)], repair: &[&str], lang| {
@@ -1286,14 +1399,14 @@ mod tests {
             verdict_with_first_use(Lang::En),
             (
                 Mark::Success,
-                "Ready. Not available (optional): L. Set up on first use: Local OCR (`markitai doctor --fix` does it now)".into()
+                "Ready. Not available (optional): L. Set up on first use: Local OCR".into()
             )
         );
         assert_eq!(
             verdict_with_first_use(Lang::Zh),
             (
                 Mark::Success,
-                "已就绪。以下可选功能不可用：L；首次使用时自动准备：Local OCR（`markitai doctor --fix` 可立即完成）".into()
+                "已就绪。以下可选功能不可用：L；首次使用时自动准备：Local OCR".into()
             )
         );
         let mut only = checks_of(&[("A", "ok", false)]);
@@ -1303,7 +1416,7 @@ mod tests {
         let shown: Vec<&Check> = only.values().collect();
         assert_eq!(
             verdict(&shown, &[], &[], Lang::En).1,
-            "Ready. Set up on first use: Local OCR (`markitai doctor --fix` does it now)"
+            "Ready. Set up on first use: Local OCR"
         );
         let blocked = [("A", "missing", true), ("B", "error", true)];
         assert_eq!(
