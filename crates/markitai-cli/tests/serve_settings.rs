@@ -182,8 +182,10 @@ fn a_subscription_model_is_routable_in_settings_as_in_conversion() {
     // never run while the view is computed.
     let codex = dir.path().join("codex");
     fs::write(&codex, "").unwrap();
+    // In the user's own .env: a working folder's may not name programs.
+    fs::create_dir_all(dir.path().join("home")).unwrap();
     fs::write(
-        dir.path().join(".env"),
+        dir.path().join("home/.env"),
         format!("CODEX_CLI_PATH={}\n", codex.display()),
     )
     .unwrap();

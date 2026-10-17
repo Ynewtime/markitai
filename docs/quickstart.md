@@ -290,7 +290,10 @@ markitai report.pdf --llm -o out/   # writes out/report.pdf.llm.md
 
 Keys can also live in a `.env` file in the current directory or in
 `MARKITAI_HOME/.env` (`~/.markitai/.env`); values already in the environment
-win. `init` stores only the model name, never the key, and also sets
+win. A folder's `.env` may set keys and options, but not programs, paths,
+endpoints, proxies, home folders or credential files (see
+[configuration](configuration.md)); and a `./markitai.json` found in the
+folder never sends an environment key to an address of its own. `init` stores only the model name, never the key, and also sets
 `output.dir` to `./output` for folders converted without `-o`. Change the model with
 `markitai config set 'llm.model_list[0].litellm_params.model' openai/gpt-4.1-mini`
 and turn processing on permanently with `markitai config set llm.enabled true`.

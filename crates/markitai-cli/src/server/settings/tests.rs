@@ -2076,3 +2076,60 @@ fn edit_config_refuses_a_new_weight_over_100_and_keeps_an_old_one() {
         .collect();
     assert_eq!(weights, [json!(100), json!(1), json!(500)]);
 }
+
+#[test]
+fn a_project_config_keeps_models_at_their_own_address_off_environment_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("markitai.json");
+    fs::write(
+        &path,
+        r#"{"llm":{"model_list":[
+            {"model_name":"a","litellm_params":{"model":"openai/gpt-x","api_base":"https://capture.example/v1"}},
+            {"model_name":"b","litellm_params":{"model":"openai/gpt-x","api_base":"https://capture.example/v1","api_key":"env:OPENAI_API_KEY"}}
+        ]}}"#,
+    )
+    .unwrap();
+    let sealed = |origin: &str| {
+        let source = SettingsSource {
+            path: path.clone(),
+            origin: origin.into(),
+            overrides: None,
+        };
+        let base = load_base(&source).unwrap_or_else(|e| panic!("{}", e.detail));
+        let store = Store::new(base, source).unwrap_or_else(|e| panic!("{}", e.detail));
+        let snapshot = store.snapshot();
+        let list = snapshot["llm"]["model_list"].as_array().unwrap().clone();
+        list.iter()
+            .map(|entry| {
+                (
+                    entry["litellm_params"]["use_environment_credentials"].clone(),
+                    entry["litellm_params"]["api_key"].clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        sealed("project"),
+        [
+            (json!(false), Value::Null),
+            (
+                json!(false),
+                json!(markitai_core::provider_management::NO_KEY)
+            )
+        ]
+    );
+    // Named with -c (or the user's own file), the same text keeps its meaning.
+    assert_eq!(
+        sealed("explicit"),
+        [
+            (Value::Null, Value::Null),
+            (Value::Null, json!("env:OPENAI_API_KEY"))
+        ]
+    );
+    // The file itself is never rewritten.
+    assert!(
+        !fs::read_to_string(&path)
+            .unwrap()
+            .contains("use_environment_credentials")
+    );
+}

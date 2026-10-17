@@ -10,7 +10,7 @@ Markitai 的配置是一个 UTF-8 JSON 对象，只需写出与默认值不同�
 
 1. `-c/--config PATH`（必须存在；`config set/edit` 可以创建）
 2. 环境变量 `MARKITAI_CONFIG`
-3. 当前目录的 `markitai.json`
+3. 当前目录的 `markitai.json`：其中自带地址（`api_base`，不是服务商文档中的地址）的模型和连接不会使用环境中的密钥，既不回退到服务商的密钥变量，也不读取 `env:` 引用（改为占位密钥 `markitai-no-key` 并提示一次）；需要时把密钥直接写在条目里，或把这份配置放到用户配置中、用 `-c` 显式指定。`markitai doctor` 和 `--verbose` 会注明所用配置文件是在当前文件夹找到的
 4. 用户配置 `MARKITAI_HOME/config.json`，未设置 `MARKITAI_HOME` 时为 `~/.markitai/config.json`
 5. 都不存在时使用内建默认值
 
@@ -147,7 +147,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 | `COPILOT_CLI_PATH`、`COPILOT_HOME`、`COPILOT_CACHE_HOME`、`COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`、`CLAUDE_CLI_PATH`、`CLAUDE_CONFIG_DIR`、`CODEX_CLI_PATH`、`CODEX_HOME` | 订阅运行时的可执行文件、状态目录与令牌，见[订阅](subscriptions.md) |
 | `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY` | 代理，见[抓取](fetch.md#proxies) |
 
-配置解析使用环境快照：依次读取进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`），已存在的值优先，不修改宿主进程环境。`MARKITAI_HOME` 与 `MARKITAI_SERVE_TOKEN` 直接读取进程环境，应在启动前导出，不能靠 `.env` 设置。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 在本构建中不读取。
+配置解析使用环境快照：依次读取进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`），已存在的值优先，不修改宿主进程环境。当前目录可能来自下载或克隆，并非由你编写，因此它的 `.env` 不能设置程序、路径、地址、代理、主目录或凭据文件：`*_PATH`（含 `*_CLI_PATH`、`PATH`）、`*_EXECUTABLE`、`LD_*`、`DYLD_*`、`NODE_OPTIONS`、`PYTHON*`、`*_API_BASE`、`*_BASE_URL`、`*_ENDPOINT`、`HTTP(S)_PROXY`、`ALL_PROXY`、`NO_PROXY`（大小写均可）、`HOME`、`*_HOME`、`*_CONFIG_DIR`、`XDG_*`、`TMPDIR`/`TMP`/`TEMP`、`AWS_*_FILE`、`GOOGLE_APPLICATION_CREDENTIALS`、`CLOUDSDK_CONFIG`、`MARKITAI_CONFIG`/`MARKITAI_HOME`/`MARKITAI_LOG_DIR` 以及证书包变量；被忽略的名称会在 stderr 列出一次。这些值请放在进程环境或 `MARKITAI_HOME/.env` 中（在 `~/.markitai` 目录内运行时，该目录的 `.env` 即你自己的文件）。API 密钥、`MODEL`、`MARKITAI_LANG` 等仍可放在当前目录的 `.env`。`MARKITAI_HOME` 与 `MARKITAI_SERVE_TOKEN` 直接读取进程环境，应在启动前导出，不能靠 `.env` 设置。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 在本构建中不读取。
 
 `fetch.remote_consent` 的默认值 `always` 来自参考版本，`config list` 也这样显示；但运行时拿到的是填好默认值的配置，分不出这个 `always` 是默认值还是你写的。因此本构建中 `auto` 的远程回退只认 CLI 从所选配置文件和 `--config-json` 的原始内容中读到的、你亲手写出的 `always`（第一次回退时显示一次说明，每个 `MARKITAI_HOME` 只显示一次），或 `ask`（每次运行在终端询问一次；没有终端或使用 `--quiet` 时视为 `never` 并提示一次）。`serve` 同样读取它自己的配置文件和 `--config-json`：只有你写出的 `always` 才让 `auto` 回退到远程服务（说明写入服务日志），默认值和 `ask` 保持本地。`mcp` 和语言绑定中的 `auto` 从不回退到远程服务。`fetch.fallback_patterns` 同理：只有你在配置文件或 `--config-json` 中写出的列表才让其中的域名先用浏览器；默认列表（X、Instagram 等）虽在 `config list` 中显示但不生效，`serve`、`mcp` 和语言绑定也不应用任何列表。
 

@@ -267,3 +267,43 @@ fn environment_models_and_text_summary_match_what_a_conversion_uses() {
         "{text}"
     );
 }
+
+#[test]
+fn a_folders_env_and_config_are_named_and_kept_off_programs_and_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder that came with its own .env and markitai.json.
+    std::fs::write(
+        dir.path().join(".env"),
+        "COPILOT_CLI_PATH=./fake-copilot\nOPENAI_API_BASE=https://capture.example/v1\nMARKITAI_LANG=en\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("markitai.json"),
+        r#"{"llm":{"model_list":[{"model_name":"default","litellm_params":{"model":"openai/gpt-x","api_base":"https://capture.example/v1","api_key":"env:OPENAI_API_KEY"}}]}}"#,
+    )
+    .unwrap();
+    let output = command(dir.path(), json!({})).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("markitai.json (found in this folder: its models at their own address use no key from the environment)"),
+        "{stdout}"
+    );
+    let ignored: Vec<_> = stderr
+        .lines()
+        .filter(|line| line.starts_with("Warning: Ignored "))
+        .collect();
+    assert_eq!(ignored.len(), 1, "{stderr}");
+    assert!(
+        ignored[0].starts_with("Warning: Ignored COPILOT_CLI_PATH, OPENAI_API_BASE from ./.env"),
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.contains("its key reference env:OPENAI_API_KEY is not read"))
+            .count(),
+        1,
+        "{stderr}"
+    );
+}
