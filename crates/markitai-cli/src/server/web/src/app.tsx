@@ -3,7 +3,7 @@
 // keeps the selected item and the open preview in its address, so reloads and
 // Back return to them. Notices sit in the page, never over its buttons.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, fetchCapabilities, filePath, itemArchivePath, NetworkError, setItemAssets, setTicketDownloads } from "./api/client.ts";
+import { ApiError, fetchBlob, fetchCapabilities, fetchOriginal, filePath, itemArchivePath, NetworkError, setItemAssets, setTicketDownloads } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
 import type { Capabilities, ConvertDefaultsView, JobOptions } from "./api/types.ts";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
@@ -454,6 +454,7 @@ export function App() {
       setComposer((state) => ({ ...state, ocr: true }));
       void retry(item);
     },
+    reconvert: (item) => void reconvert([item]),
     enhance: (item) => {
       void (async () => {
         const authorized = await authorize({ ...savedOptions(item), llm: true }, [{ name: item.name, kind: item.kind }], true);
@@ -495,6 +496,71 @@ export function App() {
       }
     },
     [cloudflare.authorizeBatch, announce, note, clearFailure, failAction],
+  );
+  // ---- Re-convert: the originals of finished items go back to the Convert page, options open
+  const [optionsRequest, setOptionsRequest] = useState(0);
+  const reconverting = useRef(false);
+  const reconvert = useCallback(
+    async (items: SessionItem[]) => {
+      if (reconverting.current || !items.length) return;
+      reconverting.current = true;
+      const words = dicts[localeRef.current];
+      try {
+        // Kept uploads are read back from the server (a few at a time); a page is converted again from its address.
+        const found: ({ file: File } | { url: string } | null)[] = new Array(items.length).fill(null);
+        let next = 0;
+        const worker = async () => {
+          for (let at = next++; at < items.length; at = next++) {
+            const item = items[at];
+            if (!item) continue;
+            if (item.kind === "url") {
+              if (/^https?:\/\//i.test(item.name)) found[at] = { url: item.name };
+              continue;
+            }
+            try {
+              const original = await fetchOriginal(item.jobId, item.itemId);
+              if (!original.download) continue;
+              const { blob } = await fetchBlob(original.download);
+              found[at] = { file: new File([blob], item.name, { type: blob.type }) };
+            } catch {
+              // Not kept any more (or not readable): reported with the others below.
+            }
+          }
+        };
+        await Promise.all([worker(), worker(), worker(), worker()]);
+        const files = found.flatMap((entry) => (entry && "file" in entry ? [entry.file] : []));
+        const addresses = found.flatMap((entry) => (entry && "url" in entry ? [entry.url] : []));
+        const gone = items.filter((_, at) => found[at] === null).map((item) => displayName(item.name));
+        if (!files.length && !addresses.length) {
+          note({ id: "reconvert", tone: "error", text: words.reconvertNone, ...(gone.length ? { detail: gone.join("\n") } : {}) });
+          return;
+        }
+        // They join whatever already waits on the Convert page.
+        const { staged: joined } = addStaged(stagedRef.current, files, false, maxItems);
+        stagedRef.current = joined;
+        setStaged(joined);
+        setUrlText((text) => {
+          const lines = text.split(/\r?\n/).filter((line) => line.trim());
+          return [...lines, ...addresses.filter((address) => !lines.includes(address))].join("\n");
+        });
+        navigate({ view: "convert" });
+        setOptionsRequest((value) => value + 1);
+        const count = files.length + addresses.length;
+        announce(words.reconvertReady(count));
+        if (gone.length) note({ id: "reconvert", tone: "warning", text: words.reconvertGone(gone.length), detail: gone.join("\n") });
+        // LLM enhancement is one of the options the run may change: say at once when no model can serve it.
+        if (!llmReady)
+          note({
+            id: "reconvert-model",
+            tone: "warning",
+            text: words.reconvertNoModel,
+            ...(role === "admin" || userModels ? { action: { label: words.addModelAction, run: () => navigate({ view: "settings", section: "models" }) } } : {}),
+          });
+      } finally {
+        reconverting.current = false;
+      }
+    },
+    [maxItems, navigate, announce, note, llmReady, role, userModels],
   );
   const downloadArchive = useCallback(
     (path: string, name: string, key?: string) => {
@@ -593,6 +659,7 @@ export function App() {
       staged={staged?.files ?? []}
       announce={announce}
       busy={submitting || cloudflare.pending !== null}
+      openRequest={optionsRequest}
       defaults={defaults.control}
       onChange={(next) => {
         defaults.touch();
@@ -728,6 +795,7 @@ export function App() {
         }}
         announce={announce}
         describe={describe}
+        onReconvert={(chosen) => void reconvert(chosen)}
         onDeleteMany={async (jobIds, chosen) => {
           const words = dicts[localeRef.current];
           const { removed, failed } = await conversionsRef.current.removeMany(jobIds, chosen);

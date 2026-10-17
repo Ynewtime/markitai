@@ -39,6 +39,8 @@ export interface ItemActionsApi {
   retryPlain(item: SessionItem): void;
   retryWithOcr(item: SessionItem): void;
   enhance(item: SessionItem): void;
+  /** Convert this item's original again with options chosen on the Convert page: a new submission. */
+  reconvert(item: SessionItem): void;
   remove(item: SessionItem): Promise<boolean>;
   openModels(): void;
 }
@@ -372,6 +374,8 @@ export function itemActs(ctx: InspectorContext, item: SessionItem, actions: Item
   if (imageOnly && retryable) shown.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
   if (previewable && !item.llmEnhanced && item.retryable && ctx.llmReady) more.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
   if (previewable && retryable === false && item.retryable) more.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retry(item) });
+  if (item.status !== "running" && item.status !== "queued")
+    more.push({ key: "reconvert", label: t.reconvert, title: t.reconvertItemTitle, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.reconvert(item) });
   const danger: MenuDanger | null =
     item.status !== "running" && item.status !== "queued"
       ? {

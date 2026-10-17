@@ -1221,7 +1221,20 @@ main:focus {
   color: color-mix(in srgb, var(--accent-contrast) 62%, var(--accent));
   border-color: transparent;
 }
+.select-bar .select-reconvert {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent-contrast) 16%, var(--accent));
+  color: var(--accent-contrast);
+}
+.select-bar .select-reconvert:disabled {
+  background: color-mix(in srgb, var(--accent-contrast) 14%, var(--accent));
+  color: color-mix(in srgb, var(--accent-contrast) 62%, var(--accent));
+}
+.select-bar .select-reconvert:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent-contrast) 24%, var(--accent));
+}
 .select-link:focus-visible,
+.select-bar .select-reconvert:focus-visible,
 .select-bar .select-delete:focus-visible {
   outline: 2px solid var(--accent-contrast);
   outline-offset: 1px;
@@ -5942,6 +5955,14 @@ input[type="password"],
   }
   .select-bar .select-link {
     height: 36px;
+  }
+  /* an icon on a phone: the bar's room goes to the count and the two actions */
+  .select-bar .select-reconvert-text {
+    display: none;
+  }
+  .select-bar .select-reconvert {
+    width: 36px;
+    padding: 0;
   }
   .conv-list.is-selecting {
     margin-bottom: 76px;

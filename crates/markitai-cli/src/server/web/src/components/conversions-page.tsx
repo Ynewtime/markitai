@@ -66,6 +66,8 @@ export interface ConversionsPageProps {
   describe: (error: unknown) => { text: string; detail: string };
   /** Delete whole submissions and single items; resolves once every request has answered. */
   onDeleteMany: (jobIds: string[], items: SessionItem[]) => Promise<void>;
+  /** Take the originals of these items to the Convert page, options open, as a new conversion. */
+  onReconvert: (items: SessionItem[]) => void;
 }
 
 function summaryText(t: Dict, items: SessionItem[]): string {
@@ -343,6 +345,17 @@ export function ConversionsPage(props: ConversionsPageProps) {
               >
                 <Icon name="Trash" size={14} />
                 {t.deleteSelected}
+              </button>
+              <button
+                type="button"
+                class="btn select-reconvert"
+                disabled={chosen.length === 0}
+                title={t.reconvertTitle}
+                aria-label={t.reconvert}
+                onClick={() => props.onReconvert(chosen)}
+              >
+                <Icon name="ArrowCounterClockwise" size={14} />
+                <span class="select-reconvert-text">{t.reconvert}</span>
               </button>
               <ConfirmPopover
                 triggerLabel={t.deleteSelected}
