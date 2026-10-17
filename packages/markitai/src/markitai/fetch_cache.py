@@ -151,7 +151,9 @@ class FetchCache:
         self._connection: sqlite3.Connection | None = None
         self._lock = threading.Lock()  # Protect database operations (sync callers)
         self._async_lock = asyncio.Lock()  # Protect database operations (async callers)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        from markitai.security import prepare_private_sqlite
+
+        prepare_private_sqlite(self._db_path)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
