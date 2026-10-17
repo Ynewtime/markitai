@@ -139,6 +139,15 @@ def _shown(message: str) -> str:
     return zh_message(message)
 
 
+def _names(names: list[str]) -> str:
+    """Names joined for a sentence: ``、`` in Chinese, ``, `` otherwise."""
+    if not _zh():
+        return ", ".join(names)
+    from markitai.cli.commands.doctor_text import zh_summary_name
+
+    return "、".join(zh_summary_name(name) for name in names)
+
+
 def _label(name: str) -> str:
     """``Name:`` in the terminal's own punctuation."""
     return f"{name}：" if _zh() else f"{name}:"
@@ -162,7 +171,7 @@ def _render_hint(info: dict[str, Any]) -> None:
         return
     lines = [line for line in str(info["install_hint"]).splitlines() if line.strip()]
     if zh_line:
-        lines = [line if line.startswith("  ") else zh_line(line) for line in lines]
+        lines = [zh_line(line) for line in lines]
     ui.print_marked(
         f"{_label(info['name'])}{'' if _zh() else ' '}{lines[0]}", mark=ui.MARK_INFO
     )
@@ -885,7 +894,8 @@ def _run_checks(
                     names = ", ".join(checks[futures[f]][0] for f in pending)
                     seconds = time.perf_counter() - started
                     spinner.update(
-                        text=f"Checking {names}{ui.elapsed_suffix(0.0, seconds)}"
+                        text=(f"正在检查 {names}" if _zh() else f"Checking {names}")
+                        + ui.elapsed_suffix(0.0, seconds)
                     )
                 _done, pending = wait(pending, timeout=0.1)
         finally:
@@ -1404,7 +1414,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                             t(
                                 "doctor.fix_verification_failed",
                                 component=verification["name"],
-                                detail=verification["message"],
+                                detail=_shown(verification["message"]),
                             )
                         )
                         repair_failed_names.append(results[component]["name"])
@@ -1455,7 +1465,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             extras.append(info["install_extra"])
             remedy = ("extras", ())
         if remedy in by_fix:
-            by_fix[remedy]["name"] += f", {info['name']}"
+            by_fix[remedy]["name"] += f"{'、' if _zh() else ', '}{info['name']}"
         else:
             by_fix[remedy] = {**info}
     if len(extras) > 1:
@@ -1483,14 +1493,14 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         and not _is_blocking_failure(key, info)
     ]
     if required_failed:
-        ui.summary(t("doctor.not_ready", names=", ".join(failed_names)), ok=False)
+        ui.summary(t("doctor.not_ready", names=_names(failed_names)), ok=False)
     elif repair_failed_names:
         ui.summary(
-            t("doctor.summary_repair_failed", names=", ".join(repair_failed_names)),
+            t("doctor.summary_repair_failed", names=_names(repair_failed_names)),
             ok=False,
         )
     elif missing_names:
-        ui.summary(t("doctor.ready_missing", names=", ".join(missing_names)))
+        ui.summary(t("doctor.ready_missing", names=_names(missing_names)))
     else:
         ui.summary(t("doctor.all_good"))
 

@@ -28,7 +28,7 @@ _MODELS = re.compile(r"(\d+) (LLM model|vision model|model)s?")
 
 def _models(text: str) -> str:
     """``2 vision models`` -> ``2 个视觉模型``."""
-    nouns = {"LLM model": "LLM 模型", "vision model": "视觉模型", "model": "模型"}
+    nouns = {"LLM model": " LLM 模型", "vision model": "视觉模型", "model": "模型"}
     return _MODELS.sub(lambda m: f"{m.group(1)} 个{nouns[m.group(2)]}", text)
 
 
@@ -51,6 +51,10 @@ _MESSAGES: list[tuple[re.Pattern[str], str]] = [
             r"antivirus scans it, so run doctor again",
             "Chromium 已安装，但启动很慢（{0} 秒内未能无头启动）；安装后的首次启动"
             "可能因杀毒软件扫描而这么慢，请再运行一次 doctor",
+        ),
+        (
+            r"Chromium is installed but cannot launch: headless launch failed: (.*)",
+            "Chromium 已安装，但无法启动：无头启动失败：{0}",
         ),
         (
             r"Chromium is installed but cannot launch: (.*)",
@@ -79,6 +83,13 @@ _MESSAGES: list[tuple[re.Pattern[str], str]] = [
         (
             r"v([^,]+), reads (.+) text \(ocr\.lang: (.+)\)",
             "v{0}，可识别{1}文字（ocr.lang：{2}）",
+        ),
+        (
+            r"v([^,]+), Unsupported ocr\.lang (.+?): use en, zh, zh_tw, ja, ko, ar, "
+            r"th, latin, or a code such as fr/de/es \(see the OCR configuration "
+            r"docs\)",
+            "v{0}，不支持的 ocr.lang {1}：请使用 en、zh、zh_tw、ja、ko、ar、th、"
+            "latin，或 fr/de/es 这类代码（见 OCR 配置文档）",
         ),
         (r"v([^,]+), (.+)", "v{0}，{1}"),
         (
@@ -156,6 +167,10 @@ _MESSAGES: list[tuple[re.Pattern[str], str]] = [
             r"--ocr --llm sends page images to (\d+ vision models?) "
             r"\(MARKITAI_NO_VLM_OCR=1 keeps RapidOCR\)",
             "--ocr --llm 会把页面图片发给 {0}（MARKITAI_NO_VLM_OCR=1 则仍用 RapidOCR）",
+        ),
+        (
+            r"the vision models are left out until (.+) is set \(see LLM API\)",
+            "视觉模型被忽略，直到设置 {0}（见 LLM API）",
         ),
         (
             r"unavailable: needs a vision model \(see Vision Model\)",
@@ -236,6 +251,13 @@ _HINTS: list[tuple[re.Pattern[str], str]] = [
             "第一次调用 chatgpt/ 模型时也会自动触发登录。",
         ),
         (r"# or add (.+) to ~/\.markitai/\.env", "# 或把{0}写入 ~/.markitai/.env"),
+        (r"(.*)  # or: (.*)", "{0}  # 或：{1}"),
+        (
+            r"  CLAUDE_CODE_USE_BEDROCK=1, CLAUDE_CODE_USE_VERTEX=1, or "
+            r"CLAUDE_CODE_USE_FOUNDRY=1",
+            "  CLAUDE_CODE_USE_BEDROCK=1、CLAUDE_CODE_USE_VERTEX=1 或 "
+            "CLAUDE_CODE_USE_FOUNDRY=1",
+        ),
     ]
 ]
 
@@ -259,18 +281,27 @@ _WORDS = {
     "auth file": "认证文件",
 }
 
-_NAMES = re.compile(r"[A-Z][A-Z0-9_]+(?:, [A-Z][A-Z0-9_]+)+")
+_NAMES = re.compile(r"[A-Z][A-Z0-9_]+(?:, [A-Z][A-Z0-9_]+)+(?:, \.\.\.)?")
 _MORE = re.compile(r"(.*) \(\+(\d+) more\)")
+
+
+_PAREN_TAIL = re.compile(r" \((.*)\)")
 
 
 def _group(group: str) -> str:
     """One captured piece: a language, a model count, a tail or a plain word."""
+    target = _TARGET.fullmatch(group)
+    if target is not None:
+        return f"（会写入 {target.group(1)}）"
+    parenthesized = _PAREN_TAIL.fullmatch(group)
+    if parenthesized is not None:
+        return f"（{_group(parenthesized.group(1))}）"
     if group in _WORDS:
         return _WORDS[group]
     if group in _LANGUAGES:
         return _LANGUAGES[group]
     if _NAMES.fullmatch(group):
-        return group.replace(", ", "、")
+        return group.replace(", ...", "等").replace(", ", "、")
     more = _MORE.fullmatch(group)
     if more is not None:
         return f"{more.group(1)}（另有 {more.group(2)} 个）"
@@ -282,6 +313,14 @@ def _group(group: str) -> str:
 
 def _fill(template: str, groups: list[str]) -> str:
     return template.format(*[_group(group) for group in groups])
+
+
+_SUMMARY_NAMES = {"Playwright (slow to start)": "Playwright（启动慢）"}
+
+
+def zh_summary_name(name: str) -> str:
+    """A name in the "not available" summary: ``1 LLM model`` -> ``1 个 LLM 模型``."""
+    return _SUMMARY_NAMES.get(name) or _models(name)
 
 
 def zh_message(message: str) -> str:

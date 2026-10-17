@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Chinese `markitai doctor` report is complete.** The summary joins names with `、` and translates `1 LLM model` and `Playwright (slow to start)`; the progress text, the `--fix` failure detail, the Claude cloud-provider remedy, `# or:` and parenthesised tails are Chinese too, and a test fails when a message added to `doctor.py` has no Chinese form.
 - **`markitai doctor` no longer ticks Vision Model and VLM OCR for a model the run leaves out.** A vision model whose API key is not set is not counted; the row says which variable it waits for.
 - **Model discovery for Claude, Copilot and ChatGPT is closer to the Rust API.** A cause is no longer cached for five minutes (sign in, reload, and it clears); a failure never answers with a stale, empty list or the wrong `no_key`; an expired Claude login says `not_signed_in`; an old or non-answering CLI is `runtime_unsupported` (with `runtime.installed`) or `runtime_failed` instead of "not signed in"; install commands pin the tested CLI releases and a missing SDK extra uses the install command that matches how markitai was installed; ChatGPT has a connection card from the start, so its "not signed in" help is reachable.
 - **A URL's text and image stages share one request budget again.** They each opened their own, so a page could spend `llm.max_requests_per_document` twice (100 requests by default) in serve, the CLI and the API.
