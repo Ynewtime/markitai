@@ -672,7 +672,7 @@ export const en = {
           ? "Embedded PDF images follow their page's text; the page screenshots keep each page's appearance"
           : "Embedded PDF images follow their page's text and their exact position is not kept; turn on Page Screenshots to keep each page's appearance";
       case "word_picture_metadata":
-        return "The picture records of an Office file disagreed in count; the images were recovered from the complete records";
+        return "An Office file's image list was inconsistent; all images were recovered";
       case "hidden_sheet":
         return "Hidden worksheets are left out of the output";
       case "pdf_scanned":

@@ -408,9 +408,11 @@ fn a_recitation_stop_on_a_scan_is_requested_once_more_in_the_next_mode() {
     let mut warnings = answer.warnings.clone();
     warnings.extend(scope.take_warnings());
     assert!(
-        warnings
-            .iter()
-            .any(|w| w.contains("RECITATION") && w.contains("sent again in JSON-schema mode")),
+        warnings.iter().any(
+            |w| w.contains("withheld the tool-call answer as a recitation")
+                && !w.contains("((")
+                && w.contains("sent again in JSON-schema mode")
+        ),
         "{warnings:?}"
     );
 }

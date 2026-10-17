@@ -57,7 +57,7 @@ export const zh: Dict = {
   helpLabel: "帮助",
   helpMinimal: "直接转换内容，不使用模型增强或保存页面截图。",
   helpStandard: "用模型整理内容并描述图片。",
-  helpRich: "用模型整理内容、描述图片，并保存网页截图。",
+  helpRich: "用模型整理内容、描述图片，并保存页面截图。",
   helpServerPreset: "应用服务端为这套预设配置的转换选项。",
   advEnhance: "增强",
   helpEnhance: "用模型整理文字，或用 OCR 识别扫描内容。",
@@ -213,7 +213,7 @@ export const zh: Dict = {
   previewAria: "预览模式",
   rendered: "渲染",
   source: "源码",
-  diffTab: "对比",
+  diffTab: "差异",
   filesTab: "文件",
   versionAria: "Markdown 版本",
   loading: "加载中…",
@@ -630,7 +630,7 @@ export const zh: Dict = {
       case "pdf_images_placed":
         return /screenshots keep/.test(sample) ? "PDF 内嵌图片排在所在页文字之后；页截图保留了每页的外观" : "PDF 内嵌图片排在所在页文字之后，不保留确切位置；开启“页截图”可保留每页的外观";
       case "word_picture_metadata":
-        return "Office 文件的图片记录数量不一致，已从完整的记录中恢复图片";
+        return "Office 文件的图片列表不一致，已找回全部图片";
       case "hidden_sheet":
         return "隐藏的工作表不会出现在输出中";
       case "pdf_scanned":
@@ -833,7 +833,7 @@ export const zh: Dict = {
   shareSharedHint: "此工作台中用户的转换也可使用；密钥留在服务器上",
   shareNowShared: (model: string) => `${model} 已共享给用户`,
   shareNowPrivate: (model: string) => `${model} 已改回私有`,
-  shareNote: "共享的模型也会用于用户在此工作台中的转换，仅此而已。其密钥和地址留在服务器上，用户只能看到是哪个模型。",
+  shareNote: "共享的模型也会用于用户在此工作台中的转换。其密钥和地址留在服务器上，用户只能看到是哪个模型。",
   sharedByAdmin: "由管理员共享",
   sharedByAdminText: "你的转换也可以使用这些模型。它们的密钥留在服务器上。",
   userModelsNone: "还没有模型",

@@ -394,11 +394,19 @@ pub(super) fn run<T>(
             if let Some((previous, reason)) = rejected.take()
                 && !document_exhausted()
             {
-                note_document_warning(format!(
-                    "LLM {} answer was rejected ({reason}); the request was sent again in {} mode",
-                    previous.label(),
-                    mode.label()
-                ));
+                note_document_warning(if reason.contains("RECITATION") {
+                    format!(
+                        "The provider withheld the {} answer as a recitation of published text; the request was sent again in {} mode",
+                        previous.label(),
+                        mode.label()
+                    )
+                } else {
+                    format!(
+                        "LLM {} answer was rejected ({reason}); the request was sent again in {} mode",
+                        previous.label(),
+                        mode.label()
+                    )
+                });
             }
             let text = match run_mode(
                 corrected.as_ref().unwrap_or(request.prompts),

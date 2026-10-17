@@ -583,6 +583,9 @@ textarea {
   color: var(--text-3);
 }
 .settings-index .nav-tag {
+  margin-left: auto;
+}
+.settings-index .nav-tag + svg {
   margin-left: 0;
 }
 /* The rail: icons only, each name kept for assistive technology and shown as a tooltip. */
@@ -6270,11 +6273,20 @@ input[type="password"],
   /* the short text actions (Full details, Show items, How to add a price, the
      breadcrumb, Forget, Summary) reach 44 px high without moving */
   .text-link::before,
-  .notice-details summary::before,
   .crumbs button::before {
     content: "";
     position: absolute;
     inset: -13px -4px;
+  }
+  /* "Full details" sits under the line of clickable names: its tap area grows downward and, by as
+     much as the gap above it, upward, so it never covers a name */
+  .notice-details {
+    margin-top: 8px;
+  }
+  .notice-details summary::before {
+    content: "";
+    position: absolute;
+    inset: -8px -4px -18px;
   }
   .seg button::before {
     content: "";

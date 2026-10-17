@@ -157,3 +157,10 @@ replaces the bounded sidecar. Legacy `assets.json` / `assets` / `asset` spelling
 are accepted. Malformed existing metadata is preserved and reported as an error,
 rather than reset as in the reference implementation. Metadata merging does not
 claim a transaction spanning every Markdown and asset file.
+
+A PDF page no reader recovered the text of (a scan) is read by a model from the page
+image when the run sends page images. Its full-page scan picture is then not analysed
+as a picture of its own (no caption, description or extracted text is requested for
+it, as the transcription is its content), and it is written as a comment once the
+model has written text for that page. If the document request fails, or the model
+skips the page, the scan stays visible without an analysis.

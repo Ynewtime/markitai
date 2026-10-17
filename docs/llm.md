@@ -500,6 +500,11 @@ The client applies configured request timeouts and a connect timeout capped at
 unexpected endpoint. Provider error bodies are inspected for retry classification
 and structured token usage.
 
+The client goes through the proxy decision of [fetching](fetch.md#proxies): an HTTP(S)
+proxy from the environment, else the manual system proxy (re-read at most every
+30 seconds). A SOCKS environment proxy is refused by name, and a failure to reach a
+proxy names it (host, port, where it is set; never credentials).
+
 A failed request names its cause in the CLI message, the report and `--json`
 error and the log, and ends with the deployment and its host:
 

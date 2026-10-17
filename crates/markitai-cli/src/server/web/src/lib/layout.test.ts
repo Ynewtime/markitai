@@ -33,3 +33,13 @@ test("the window header's counter centres its figures on the header's line", () 
   assert.match(body, /font-variant-numeric: tabular-nums;/);
   assert.match(rule(".peek-head"), /align-items: center;/);
 });
+
+test("on a phone the tap area of Full details stays below the clickable notice names", () => {
+  // The names sit right above the summary: its extra area upward must fit in the gap between them.
+  const gap = /\n  \.notice-details \{\n    margin-top: (\d+)px;/.exec(css);
+  const area = /\.notice-details summary::before \{\n[^}]*inset: -(\d+)px -4px -(\d+)px;/.exec(css);
+  assert.ok(gap && area, "the phone rules exist");
+  assert.ok(Number(area[1]) <= Number(gap[1]), "the area above the summary reaches no further than the gap");
+  // Together with the line itself it is still a finger's height (44 px): 18 px of text and the margins.
+  assert.ok(Number(area[1]) + Number(area[2]) + 18 >= 44);
+});
