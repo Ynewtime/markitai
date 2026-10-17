@@ -5630,86 +5630,110 @@ def create_app(
         # A user's job reruns over that user's pool, whoever asks (a revoked
         # user's: the shared models only)
         conversion = await conversion_of(state, job.owner)
-        # Options inherited from the item were the caller's earlier choice;
-        # a retry that names model processing now needs a model now.
-        if explicit_options and operation == "retry":
-            _require_model(conversion, opts)
-        cfg = job_config(conversion, opts)
-        if operation == "enhance" and (not cfg.llm.enabled or not conversion.routable):
-            raise ApiError(
-                409,
-                "llm_unavailable",
-                "LLM enhancement is unavailable; enable a routable LLM first",
+        # The awaits above (a user's pool is read on a thread) let a delete of
+        # this job or item land: it must not be converted again, paid for, and
+        # written into a folder that is gone. Taking the lock a delete holds,
+        # and looking again, leaves no await between the check and the queue.
+        async with job.delete_lock:
+            if state.registry.get(job_id) is not job:
+                raise ApiError(404, "job_not_found", "job not found")
+            item = _get_item(job, item_id)
+            if item.status not in ("done", "error") or item_id in job.retry_pending:
+                raise ApiError(
+                    409,
+                    "item_busy",
+                    "item has not reached a terminal state yet; retry when done",
+                )
+            # Options inherited from the item were the caller's earlier choice;
+            # a retry that names model processing now needs a model now.
+            if explicit_options and operation == "retry":
+                _require_model(conversion, opts)
+            cfg = job_config(conversion, opts)
+            if operation == "enhance" and (
+                not cfg.llm.enabled or not conversion.routable
+            ):
+                raise ApiError(
+                    409,
+                    "llm_unavailable",
+                    "LLM enhancement is unavailable; enable a routable LLM first",
+                )
+            job.public_network_only = job.public_network_only or not trusted
+            job.hidden_hosts = tuple(
+                dict.fromkeys((*job.hidden_hosts, *conversion.hidden_hosts))
             )
-        job.public_network_only = job.public_network_only or not trusted
-        job.hidden_hosts = tuple(
-            dict.fromkeys((*job.hidden_hosts, *conversion.hidden_hosts))
-        )
-        cfg.output.dir = str(job.out_dir)
-        # The rerun reuses the job's out_dir, so it would otherwise hit
-        # on_conflict against its own prior output (rename → duplicate
-        # versioned files; skip → the enhance can never run). Always overwrite
-        # the item's own outputs; a failed rerun rolls back (RetryWork.prior_*).
-        cfg.output.on_conflict = "overwrite"
-        job.cfg = cfg
-        if operation != "enhance":
-            job.options = _saved_options(opts)
-            item.options = _saved_options(opts)
+            cfg.output.dir = str(job.out_dir)
+            # The rerun reuses the job's out_dir, so it would otherwise hit
+            # on_conflict against its own prior output (rename → duplicate
+            # versioned files; skip → the enhance can never run). Always overwrite
+            # the item's own outputs; a failed rerun rolls back (RetryWork.prior_*).
+            cfg.output.on_conflict = "overwrite"
+            job.cfg = cfg
+            if operation != "enhance":
+                job.options = _saved_options(opts)
+                item.options = _saved_options(opts)
 
-        # Snapshot the previous successful (non-skipped) result so a failed
-        # rerun can be rolled back to it instead of destroying a done output.
-        protect = item.status == "done" and item.output is not None and not item.skipped
-        work = RetryWork(
-            item_id=item_id,
-            cfg=cfg,
-            operation=operation,
-            prior_output=item.output if protect else None,
-            prior_cost_usd=item.cost_usd if protect else None,
-            prior_duration_ms=item.duration_ms if protect else None,
-            prior_finished_at=item.finished_at if protect else None,
-            prior_operation=item.operation if protect else "convert",
-            prior_llm_enhanced=item.llm_enhanced if protect else False,
-            prior_warnings=list(item.warnings) if protect else [],
-            prior_pricing=item.pricing if protect else None,
-            prior_models=list(item.models) if protect else [],
-        )
+            # Snapshot the previous successful (non-skipped) result so a failed
+            # rerun can be rolled back to it instead of destroying a done output.
+            protect = (
+                item.status == "done" and item.output is not None and not item.skipped
+            )
+            work = RetryWork(
+                item_id=item_id,
+                cfg=cfg,
+                operation=operation,
+                prior_output=item.output if protect else None,
+                prior_cost_usd=item.cost_usd if protect else None,
+                prior_duration_ms=item.duration_ms if protect else None,
+                prior_finished_at=item.finished_at if protect else None,
+                prior_operation=item.operation if protect else "convert",
+                prior_llm_enhanced=item.llm_enhanced if protect else False,
+                prior_warnings=list(item.warnings) if protect else [],
+                prior_pricing=item.pricing if protect else None,
+                prior_models=list(item.models) if protect else [],
+            )
 
-        # Reset only this item. The job keeps its identity and item ordering;
-        # the serial worker prevents rapid retries from racing output writes.
-        # meta.json is left intact: an unclean shutdown mid-rerun then
-        # rehydrates the job at its last persisted state rather than losing it.
-        item.status = "queued"
-        item.error = None
-        item.error_code = None
-        item.output = None
-        item.duration_ms = None
-        item.finished_at = None
-        item.cost_usd = None
-        item.pricing = None
-        item.models = []
-        item.llm_enhanced = False
-        item.operation = operation
-        item.skipped = False
-        item.skip_reason = None
-        item.warnings = []
-        job.status = "running"
-        job.generation += 1
-        job.finished_at = None
-        job.retry_pending.add(item_id)
-        job.retry_queue.put_nowait(work)
-        state.registry.publish_item(job, item)
-        state.registry.publish_job(job)
+            # Reset only this item. The job keeps its identity and item ordering;
+            # the serial worker prevents rapid retries from racing output writes.
+            # meta.json is left intact: an unclean shutdown mid-rerun then
+            # rehydrates the job at its last persisted state rather than losing it.
+            item.status = "queued"
+            item.error = None
+            item.error_code = None
+            item.output = None
+            item.duration_ms = None
+            item.finished_at = None
+            item.cost_usd = None
+            item.pricing = None
+            item.models = []
+            item.llm_enhanced = False
+            item.operation = operation
+            item.skipped = False
+            item.skip_reason = None
+            item.warnings = []
+            job.status = "running"
+            job.generation += 1
+            job.finished_at = None
+            job.retry_pending.add(item_id)
+            job.retry_queue.put_nowait(work)
+            state.registry.publish_item(job, item)
+            state.registry.publish_job(job)
 
-        # A dedicated drainer, independent of the initial run: retrying an item
-        # while sibling items are still converting must start the worker even
-        # though job.task (the initial run) is not yet done.
-        if job.retry_task is None or job.retry_task.done():
-            job.retry_task = asyncio.create_task(run_retry_queue(state.registry, job))
-        logger.info("[Serve] Job {} queued {} for item {}", job_id, operation, item_id)
-        return {
-            "job_id": job_id,
-            "items": [{"item_id": item.item_id, "name": item.name, "kind": item.kind}],
-        }
+            # A dedicated drainer, independent of the initial run: retrying an item
+            # while sibling items are still converting must start the worker even
+            # though job.task (the initial run) is not yet done.
+            if job.retry_task is None or job.retry_task.done():
+                job.retry_task = asyncio.create_task(
+                    run_retry_queue(state.registry, job)
+                )
+            logger.info(
+                "[Serve] Job {} queued {} for item {}", job_id, operation, item_id
+            )
+            return {
+                "job_id": job_id,
+                "items": [
+                    {"item_id": item.item_id, "name": item.name, "kind": item.kind}
+                ],
+            }
 
     @app.delete("/api/jobs/{job_id}/items/{item_id}", status_code=204)
     async def delete_job_item(request: Request, job_id: str, item_id: str) -> None:
