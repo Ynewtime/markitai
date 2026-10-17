@@ -64,7 +64,9 @@ fn context(markdown: &str) -> String {
 }
 
 /// The document's assets that its Markdown references, in asset order,
-/// except the `skip`ped ones.
+/// except the `skip`ped ones and Windows metafiles (EMF, WMF: a Word chart),
+/// which no decoder here reads: they stay files with their own alt text, as
+/// a picture that cannot be analysed is no failure of the document.
 fn referenced<'a>(doc: &'a Document, skip: &HashSet<String>) -> Vec<&'a crate::Asset> {
     let referenced: HashSet<_> = output_profiles::image_references(&doc.markdown)
         .iter()
@@ -72,8 +74,24 @@ fn referenced<'a>(doc: &'a Document, skip: &HashSet<String>) -> Vec<&'a crate::A
         .collect();
     doc.assets
         .iter()
-        .filter(|asset| referenced.contains(&asset.name) && !skip.contains(&asset.name))
+        .filter(|asset| {
+            referenced.contains(&asset.name)
+                && !skip.contains(&asset.name)
+                && !metafile(&asset.bytes)
+        })
         .collect()
+}
+
+/// Whether `bytes` are an Enhanced Metafile (`EMR_HEADER` with the " EMF"
+/// signature) or a Windows Metafile (placeable, or a standard header).
+fn metafile(bytes: &[u8]) -> bool {
+    let emf = bytes.len() >= 44 && bytes[..4] == [1, 0, 0, 0] && &bytes[40..44] == b" EMF";
+    let placeable = bytes.starts_with(&[0xD7, 0xCD, 0xC6, 0x9A]);
+    let standard = bytes.len() >= 18
+        && matches!(bytes[..2], [1, 0] | [2, 0])
+        && bytes[2..4] == [9, 0]
+        && matches!(bytes[4..6], [0, 1] | [0, 3]);
+    emf || placeable || standard
 }
 
 /// The pictures of the `unread` pages of a PDF whose Markdown has page markers
@@ -478,6 +496,30 @@ mod tests {
         assert!(scan_assets(markdown, &[]).is_empty());
         // Without page markers nothing can be placed on a page.
         assert!(scan_assets("![x](.markitai/assets/a.jpg)", &[1]).is_empty());
+    }
+
+    #[test]
+    fn windows_metafiles_are_kept_but_not_analysed() {
+        let mut emf = vec![0u8; 88];
+        emf[0] = 1;
+        emf[40..44].copy_from_slice(b" EMF");
+        let mut wmf = vec![1, 0, 9, 0, 0, 3];
+        wmf.resize(18, 0);
+        let doc = Document {
+            markdown: "![chart](.markitai/assets/chart.emf)\n\n![old](.markitai/assets/old.wmf)\n\n![p](.markitai/assets/placeable.wmf)\n\n![photo](.markitai/assets/photo.png)\n".into(),
+            assets: vec![
+                crate::Asset { name: "chart.emf".into(), bytes: emf },
+                crate::Asset { name: "old.wmf".into(), bytes: wmf },
+                crate::Asset { name: "placeable.wmf".into(), bytes: vec![0xD7, 0xCD, 0xC6, 0x9A, 0, 0] },
+                crate::Asset { name: "photo.png".into(), bytes: b"\x89PNG\r\n\x1a\n".to_vec() },
+            ],
+            ..Default::default()
+        };
+        let names: Vec<_> = referenced(&doc, &HashSet::new())
+            .iter()
+            .map(|asset| asset.name.clone())
+            .collect();
+        assert_eq!(names, ["photo.png"]);
     }
 
     #[test]

@@ -12,11 +12,14 @@ do not establish every accepted format on every platform or Microsoft Office
 layout parity; current findings and source boundaries are described below.
 
 When page OCR or page screenshots are requested (`--ocr`, `--screenshot`, or a
-preset that implies them such as `rich`) and LibreOffice or the page renderer is
-missing, an Office document is converted from its own text with one warning
-instead of failing, so a folder of mixed documents still converts. The warning
-names what was skipped and how to get it: install LibreOffice (on macOS
-`brew install --cask libreoffice`, or put `soffice` on `PATH`), or pass
+preset that implies them such as `rich`) and LibreOffice is missing (the page
+renderer is built in), an Office document is converted from its own text with one
+warning instead of failing, so a folder of mixed documents still converts; a batch
+names the files sharing it on one line. The warning names what was skipped and
+how to get it: install LibreOffice (with this system's command: `brew install
+--cask libreoffice` on macOS, `winget install --id
+TheDocumentFoundation.LibreOffice --exact` on Windows, the distribution's package
+manager on Linux, or put `soffice` on `PATH`), or pass
 `--no-screenshot` / `--no-ocr` to stop asking. With an LLM the text is still
 enhanced; only the page images are missing. Only `--screenshot-only`, where the
 screenshots are the whole requested output, keeps failing without them, with an

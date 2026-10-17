@@ -109,7 +109,8 @@ code keeps working when wording changes.
 | `ocr.no_text`, `ocr.unread`, `ocr.capped`, `ocr.unavailable` | warning | Local OCR found nothing, could not read a script, stopped at its region limit, or could not run |
 | `text_only.no_text` | warning | `--text-only` found no text |
 | `llm.enhancement_failed`, `llm.no_model_succeeded` | warning | Model processing failed; only the base Markdown was kept |
-| `llm.answer_retried` | warning | A model answer was rejected and the request sent again |
+| `llm.answer_retried` | info | A model answer was not used, and a later answer of the request sent again was (the extra request is paid and counted) |
+| `llm.answer_rejected` | warning | A model answer was rejected and the request sent again, without a usable answer |
 | `llm.cache_unavailable`, `llm.cache_entry_ignored`, `llm.text_fallback` | warning | Cache and fallback notes |
 | `llm.cost_incomplete` | warning | Some requests have no reviewed price |
 | `image.analysis_failed` | warning | A picture's analysis failed; `items` the picture |
@@ -121,7 +122,7 @@ code keeps working when wording changes.
 | `spreadsheet.screenshot_scope`, `spreadsheet.font_color`, `spreadsheet.numbers_formatting` | info | Workbook rendering notes |
 | `spreadsheet.rendering`, `spreadsheet.numbers_objects` | warning | Workbook content that could not be rendered or read |
 | `word.picture_records` | warning | Word picture records |
-| `table.merged_cells` | info | Merged cells shown by their first cell |
+| `table.merged_cells` | warning | Merged cells shown by their first cell |
 | `table.malformed` | warning | A pipe table with mismatched columns |
 | `mail.eml`, `mail.msg` | warning | E-mail decoding notes |
 | `browser.screenshot_failed`, `cloudflare.not_used` | warning | Web capture and backend notes |

@@ -120,6 +120,13 @@
 
 ### Fixed
 
+- The terminal shows notes that only explain how the output was produced (a hidden worksheet left out, a model answer used on its second try, pictures placed after their page's text) only with `-v`; reports, `--json` and the document JSON keep them as `info` notices.
+- A model answer that dropped the page marker opening a one-page PDF, or the screenshot comment closing it (Gemini Flash in tool-call mode on `cjk-text.pdf` and `rtl-text.pdf`), gets the marker back where only one place fits, as Python markitai does, instead of being rejected and paid for twice; a structured answer that is resent is reported once its outcome is known, as an `info` note when a later answer was used and without nested parentheses.
+- Gemini and DeepSeek requests without a configured `max_tokens` ask for the model's reviewed output limit within its context (Gemini Flash: 65,536), as Python markitai does, instead of the provider's default that truncated a ten-page visual batch of `large-sample-x15.pdf`; visual batches of text-dense pages take fewer pages so their answer fits, and a truncation names its output token count and `litellm_params.max_tokens`.
+- The Office page-screenshot notice no longer names the built-in PDF page renderer and gives this system's LibreOffice install command (winget, brew or the distribution's package manager).
+- A Word `.doc` whose picture store declares a stale count no longer warns: its pictures are recovered from complete records, and a picture that cannot be read keeps its own warning.
+- EMF and WMF pictures (a Word chart) are kept as files without an image-analysis request or a "Cannot decode" warning.
+
 - A real Gemini Flash run on `scanned-sample-p1-3.pdf` (one request, no notices) puts every page's text under its own `<!-- Page number: N -->` marker, where the first live run had each page's text one marker too high.
 - Workbench: the embedded-images, Word picture-record and hidden-worksheet notices are worded in Chinese and Japanese too, and the embedded-images notice says "turn on Page Screenshots" instead of naming the CLI flag and is left out for a document already told it is scanned; on a phone the header's New conversion and "⋯" buttons are one compact 32 px size, and the Edit config JSON problem takes its own row above the buttons instead of a three-line column.
 - `markitai doctor` in Chinese now words every check message and remedy in Chinese (the JSON values stay English), and the macOS browser line says `Installed browser app found (version check only)`.

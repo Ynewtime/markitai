@@ -260,7 +260,8 @@ fn complete_store_slots_survive_a_stale_count_and_an_empty_prior_slot() {
     let reader = reader(text, &word, &table);
     assert_eq!(assembled_debug(&reader).matches("Image {").count(), 1);
     assert_eq!(reader.assets.borrow().assets[0].bytes, PAYLOAD);
-    assert!(reader.pictures.warnings.iter().any(|warning| warning.contains("inconsistent count")));
+    // Nothing was lost, so nothing is reported.
+    assert!(reader.pictures.warnings.is_empty(), "{:?}", reader.pictures.warnings);
 }
 
 #[test]

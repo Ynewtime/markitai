@@ -384,10 +384,88 @@ pub(super) fn lookup(provider: Provider, model: &str) -> Option<Tariff> {
     Some(tariff)
 }
 
+/// `(max_output_tokens, max_input_tokens)` of a reviewed row
+/// (`licenses/pricing/source-rows.json`): the output cap a request asks for
+/// when none is configured, as Python markitai does from the same catalog.
+pub(super) fn limits(provider: Provider, model: &str) -> Option<(u64, u64)> {
+    Some(match (provider, model) {
+        (
+            Provider::OpenAi,
+            "gpt-4.1"
+            | "gpt-4.1-2025-04-14"
+            | "gpt-4.1-mini"
+            | "gpt-4.1-mini-2025-04-14"
+            | "gpt-4.1-nano"
+            | "gpt-4.1-nano-2025-04-14",
+        ) => (32_768, 1_047_576),
+        (
+            Provider::OpenAi,
+            "gpt-6-luna" | "gpt-6-astra" | "gpt-6.1-sol" | "gpt-6-sol" | "gpt-5.6-sol" | "gpt-5.6"
+            | "gpt-5.6-terra" | "gpt-5.6-luna",
+        ) => (128_000, 922_000),
+        (Provider::Anthropic, "claude-sonnet-4-5" | "claude-sonnet-4-5-20250929") => {
+            (64_000, 1_000_000)
+        }
+        (
+            Provider::Anthropic,
+            "claude-haiku-4-5" | "claude-haiku-4-5-20251001" | "claude-opus-4-5-20251101",
+        ) => (64_000, 200_000),
+        (
+            Provider::Anthropic,
+            "claude-haiku-5-5" | "claude-fable-5-1" | "claude-fable-5" | "claude-opus-5-5"
+            | "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6"
+            | "claude-sonnet-5-5" | "claude-sonnet-5" | "claude-sonnet-4-6",
+        ) => (128_000, 1_000_000),
+        (
+            Provider::Gemini,
+            "gemini-3.5-flash-lite"
+            | "gemini-flash-lite-latest"
+            | "gemini-3.1-flash-lite"
+            | "gemini-3.8-flash"
+            | "gemini-3.6-flash"
+            | "gemini-flash-latest",
+        ) => (65_536, 1_048_576),
+        (Provider::DeepSeek, "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4-pro") => {
+            (393_216, 1_000_000)
+        }
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{BillingClass, Identity, Provider, Quote, UnknownPrice, quote};
-    use super::{SNAPSHOT, Tariff, deepseek_peak, lookup};
+    use super::{SNAPSHOT, Tariff, deepseek_peak, limits, lookup};
+
+    #[test]
+    fn token_limits_are_the_reviewed_source_rows() {
+        let rows: Value = serde_json::from_str(include_str!(
+            "../../../../licenses/pricing/source-rows.json"
+        ))
+        .unwrap();
+        let rows = rows.as_object().unwrap();
+        assert_eq!(rows.len(), 37);
+        for (key, row) in rows {
+            let (provider, model) = if let Some(model) = key.strip_prefix("gemini/") {
+                (Provider::Gemini, model)
+            } else if let Some(model) = key.strip_prefix("deepseek/") {
+                (Provider::DeepSeek, model)
+            } else if key.starts_with("claude-") {
+                (Provider::Anthropic, key.as_str())
+            } else {
+                (Provider::OpenAi, key.as_str())
+            };
+            assert_eq!(
+                limits(provider, model),
+                Some((
+                    row["max_output_tokens"].as_u64().unwrap(),
+                    row["max_input_tokens"].as_u64().unwrap()
+                )),
+                "{key}"
+            );
+        }
+        assert_eq!(limits(Provider::OpenAi, "gpt-unknown"), None);
+    }
     use serde_json::{Value, json};
 
     // The compiled rates must be exactly the recorded source rows, field by field.

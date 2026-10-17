@@ -458,11 +458,18 @@ encodes the Azure deployment name as one URL segment.
 `litellm_params.max_tokens`, followed by explicit `model_info.max_tokens`, sets
 the output cap. OpenAI/Azure GPT-5 and o1/o3/o4 names use
 `max_completion_tokens`; other chat requests use `max_tokens`. Anthropic
-requires a cap and defaults to 8192 when none is supplied. Other providers use
-their own default when no cap is configured. Nonpositive explicit deployment
-caps fail before a request. This implementation does not ship LiteLLM's model
-catalog or tokenizer and does not size output caps from a context window; a
-declared `model_info.max_input_tokens` sizes document chunks instead (see
+requires a cap and defaults to 8192 when none is supplied. Without a configured
+cap, Gemini and DeepSeek models in the reviewed [price catalog](pricing.md) are
+asked for their listed output limit within the room their context window leaves
+after the prompt, as Python markitai does (an estimate of the prompt plus 1,600
+tokens per image and a fifth, at least 2,000, of headroom; at most 128,000 and at
+least 1,000): Gemini Flash gets 65,536 instead of a provider default that cut a
+ten-page visual batch off mid-answer. OpenAI and other providers use their own
+default (OpenAI's is the model's limit; OpenAI and Anthropic count the cap against
+per-minute rate limits). Nonpositive explicit deployment caps fail before a
+request. A truncated answer names its output token count and
+`litellm_params.max_tokens`. This implementation does not ship LiteLLM's
+tokenizer; a declared `model_info.max_input_tokens` sizes document chunks (see
 [below](#structured-documents-and-complete-long-text)).
 
 `litellm_params.reasoning_effort` controls how much a reasoning model thinks
@@ -596,10 +603,15 @@ Every request sent again is reported as a warning of its document, and each
 counts toward `llm.max_requests_per_document`: a transport retry (`LLM request
 to openai/gpt-5.6-luna failed (LLM returned HTTP 503) and was sent again`), a move
 to another deployment after an empty answer, a structured answer discarded by
-validation together with the mode of the next request (`LLM tool-call answer was
-rejected (…); the request was sent again in JSON-schema mode`), a rejected visual
+validation together with the mode of the next request, a rejected visual
 batch, and image analysis falling back to separate caption and description
-requests. A discarded answer is paid; its usage stays in the totals.
+requests. A discarded answer is paid; its usage stays in the totals. The
+structured resend is reported once its outcome is known: when a later answer
+was used, as an information note (`The model's tool-call answer was not used
+(…); the request was sent again in JSON-schema mode and a later answer was
+used`, notice `llm.answer_retried`, shown on the terminal with `-v` and always in
+reports and JSON); when none was, as a warning (`LLM tool-call answer was
+rejected (…); the request was sent again in JSON-schema mode`).
 
 `llm.max_requests_per_document` counts every HTTP attempt, including failed
 requests, transport retries and fallback groups. Zero disables this budget.
@@ -780,7 +792,7 @@ also fit the smallest declared window among them:
   does.
 - A window that leaves fewer than 256 tokens after the prompt, or a value that is
   not a positive integer, is a configuration error before any request.
-- Visual batches are not affected; they keep ten images each.
+- Visual batches are not affected; they are sized by pages and text (below).
 - For servers whose window holds both the prompt and the answer (Ollama's
   `num_ctx`, llama.cpp's context size), declare about half the window: LiteLLM
   defines `max_input_tokens` as the input side only, and so does this rule.
@@ -895,7 +907,11 @@ Canonical title, source and time remain application-owned. The original base
 body does not receive model metadata. Standalone alt/description analysis keeps
 its separate existing image-analysis schema.
 
-Paged documents use at most ten images per request. The first batch completes
+Paged documents use at most ten images per request, fewer when the pages' text
+is dense: a batch carries about 8,000 estimated tokens of extracted text at most
+(at least one page), since its answer repeats that text and adds what it reads in
+the images, unless the smaller batches would no longer fit the remaining request
+budget where ten-page ones do. The first batch completes
 before later batches begin; later requests use `MARKITAI_VISION_CLEAN_V1` and
 return plain Markdown without metadata. Workers share the caller's runtime and
 conversion accounting context. They may complete out of order, but their bodies
@@ -916,7 +932,13 @@ line/literal boundaries across batches; a warning explicitly declines precise
 text-to-page alignment. No frame is dropped in that fallback.
 
 Source literals use the same protected markers as text processing, separately
-for each visual batch. Each marker must survive exactly once and in order.
+for each visual batch. Each marker must survive exactly once and in order. A
+marker that stood alone on its line and that the answer dropped is put back
+where only one place fits, as Python markitai does: at the start or end of the
+chunk (models drop the page marker that opens a one-page PDF, or the screenshot
+comment that closes it, as noise) or between neighbouring lines that survived.
+A moved, altered or repeated marker, a lost inline one (code, a link, an inline
+picture) or one whose neighbours were rewritten still rejects the answer.
 Scanning an image with no extracted text is valid: the output need not overlap
 empty text. For substantial extracted prose, the existing deletion safeguard
 also checks the visible text after protected literals are removed. Short explicit

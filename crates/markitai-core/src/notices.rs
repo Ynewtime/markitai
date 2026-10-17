@@ -150,13 +150,34 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
     ),
     (
         "llm.answer_retried",
+        Level::Info,
+        "The model's ",
+        "and a later answer was used",
+        Subject::None,
+    ),
+    (
+        "llm.answer_retried",
+        Level::Info,
+        "The provider withheld the ",
+        "and a later answer was used",
+        Subject::None,
+    ),
+    (
+        "llm.answer_rejected",
         Level::Warning,
         "LLM ",
         " answer was rejected",
         Subject::None,
     ),
     (
-        "llm.answer_retried",
+        "llm.answer_rejected",
+        Level::Warning,
+        "The provider withheld the ",
+        "",
+        Subject::None,
+    ),
+    (
+        "llm.answer_rejected",
         Level::Warning,
         "A visual batch answer was rejected",
         "",
@@ -313,7 +334,7 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
     ),
     (
         "table.merged_cells",
-        Level::Info,
+        Level::Warning,
         "Merged table cells are represented",
         "",
         Subject::None,
@@ -462,6 +483,24 @@ mod tests {
         assert_eq!(
             code("No model succeeded for this document; only the base Markdown was kept.").0,
             "llm.no_model_succeeded"
+        );
+    }
+
+    #[test]
+    fn a_retry_that_was_used_is_info_and_one_that_failed_a_warning() {
+        assert_eq!(
+            code(
+                "The model's tool-call answer was not used (the answer changed a marker); the request was sent again in JSON-schema mode and a later answer was used"
+            ),
+            ("llm.answer_retried", Level::Info, Vec::new())
+        );
+        assert_eq!(
+            code("LLM tool-call answer was rejected (the answer changed a marker); the request was sent again in JSON-schema mode").0,
+            "llm.answer_rejected"
+        );
+        assert_eq!(
+            code("The provider withheld the tool-call answer as a recitation of published text; the request was sent again in JSON-schema mode").0,
+            "llm.answer_rejected"
         );
     }
 

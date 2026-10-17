@@ -443,7 +443,11 @@ fn protected_marker_loss_fails_instead_of_silently_losing_a_link() {
     let mut config = cfg(&server, dir.path());
     config["llm"]["max_requests_per_document"] = json!(1);
     let error = convert(path.to_str().unwrap(), options_cfg(config)).unwrap_err();
-    assert!(error.to_string().contains("protected document marker"));
+    assert!(
+        error
+            .to_string()
+            .contains("markers that keep the document's pages, pictures, links and code")
+    );
     assert_eq!(server.count(), 1);
 }
 

@@ -122,6 +122,14 @@ fn literal_core(literal: &str) -> String {
         .join("\n")
 }
 
+/// Where a dropped marker goes back.
+enum Place {
+    Start,
+    End,
+    /// Before the answer's only line equal to this source line.
+    Before(String),
+}
+
 pub(super) struct Protected {
     pub text: String,
     prefix: String,
@@ -299,23 +307,124 @@ impl Protected {
         split(&self.text, Some(&self.prefix), limit)
     }
 
-    pub fn validate(&self, original: &str, answer: &str) -> Result<()> {
-        let tokens = |text: &str| -> Vec<String> {
-            text.match_indices(&self.prefix)
-                .map(|(start, _)| {
-                    let end = text[start..]
-                        .find('⟧')
-                        .map(|end| start + end + '⟧'.len_utf8())
-                        .unwrap_or(text.len());
-                    text[start..end].to_owned()
-                })
+    fn tokens(&self, text: &str) -> Vec<String> {
+        text.match_indices(&self.prefix)
+            .map(|(start, _)| {
+                let end = text[start..]
+                    .find('⟧')
+                    .map(|end| start + end + '⟧'.len_utf8())
+                    .unwrap_or(text.len());
+                text[start..end].to_owned()
+            })
+            .collect()
+    }
+
+    /// Put back markers the answer dropped where only one place fits, as
+    /// Python markitai's `restore_dropped_placeholders` does: cleanup models
+    /// (Gemini Flash in tool-call mode, Claude Haiku 4.5) drop the page marker
+    /// that opens a one-page PDF or the screenshot comment that closes it as
+    /// noise, and rejecting the whole answer for that pays for a second
+    /// request. Only a marker that stood alone on its line goes back: at the
+    /// start or the end of the chunk, or between neighbours that survived (the
+    /// next line of the source occurs once in the answer, with the source's
+    /// previous line right above it). A moved, altered or repeated marker, a
+    /// lost inline one (code, a link, an inline picture) or one whose
+    /// neighbours were rewritten stays missing, so `validate` rejects the
+    /// answer; the content guards still judge the text. `None` when nothing
+    /// was put back.
+    pub fn repair(&self, original: &str, answer: &str) -> Option<String> {
+        let expected = self.tokens(original);
+        let actual = self.tokens(answer);
+        if expected == actual {
+            return None;
+        }
+        // The answer's markers must be the source's in order, some left out.
+        let mut missing = Vec::new();
+        let mut next = 0;
+        for token in &expected {
+            if actual.get(next) == Some(token) {
+                next += 1;
+            } else {
+                missing.push(token.clone());
+            }
+        }
+        if next != actual.len() || missing.is_empty() {
+            return None;
+        }
+        let lines = |text: &str| -> Vec<String> {
+            text.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
                 .collect()
         };
-        let expected = tokens(original);
-        let actual = tokens(answer);
+        let source = lines(original);
+        let mut repaired = answer.to_owned();
+        for token in &missing {
+            let block = self
+                .literals
+                .iter()
+                .position(|(literal, _)| literal == token)
+                .is_some_and(|index| self.blocks[index]);
+            let at = source.iter().position(|line| line == token)?;
+            if !block {
+                return None;
+            }
+            // Neighbours that are themselves still missing do not anchor.
+            let present =
+                |line: &&String| !missing.contains(line) || repaired.contains(line.as_str());
+            let above = source[..at].iter().rev().find(present).cloned();
+            let below = source[at + 1..].iter().find(present).cloned();
+            let current = lines(&repaired);
+            // At the start or the end of the chunk only one place fits.
+            let place = match (&above, &below) {
+                (None, _) => Some(Place::Start),
+                (_, None) => Some(Place::End),
+                (Some(_), Some(below)) => {
+                    let found: Vec<usize> = current
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, line)| *line == below)
+                        .map(|(index, _)| index)
+                        .collect();
+                    match found.as_slice() {
+                        [index]
+                            if index.checked_sub(1).map(|up| &current[up]) == above.as_ref() =>
+                        {
+                            Some(Place::Before(below.clone()))
+                        }
+                        _ => None,
+                    }
+                }
+            }?;
+            repaired = match place {
+                Place::Start => format!("{token}\n\n{}", repaired.trim_start()),
+                Place::End => format!("{}\n\n{token}\n", repaired.trim_end()),
+                Place::Before(below) => {
+                    // The line of `below` in the answer, by its byte offset.
+                    let mut offset = 0;
+                    let mut start = None;
+                    for line in repaired.split_inclusive('\n') {
+                        if line.trim() == below {
+                            start = Some(offset);
+                            break;
+                        }
+                        offset += line.len();
+                    }
+                    let start = start?;
+                    format!("{}{token}\n\n{}", &repaired[..start], &repaired[start..])
+                }
+            };
+        }
+        (self.tokens(&repaired) == expected).then_some(repaired)
+    }
+
+    pub fn validate(&self, original: &str, answer: &str) -> Result<()> {
+        let expected = self.tokens(original);
+        let actual = self.tokens(answer);
         if expected != actual {
             return Err(Error::Conversion(
-                "the model's answer changed, dropped, repeated or moved a part of the document that must stay exactly as it is (a protected document marker for code, a link, an image or a page), so it was not used".into(),
+                "the answer changed, dropped, repeated or moved one of the markers that keep the document's pages, pictures, links and code exactly as they are".into(),
             ));
         }
         Ok(())
@@ -706,6 +815,74 @@ fn split(text: &str, protected_prefix: Option<&str>, limit: Limit) -> Vec<String
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn markers_dropped_at_the_edges_of_a_one_page_pdf_go_back() {
+        let source = "<!-- Page number: 1 -->\n\n# مقدمة\n\nRust text.\n\n<!-- ![Page 1](.markitai/screenshots/a.pdf.page0001.jpg) -->\n";
+        let protected = Protected::new(source);
+        let text = &protected.text;
+        let tokens = protected.tokens(text);
+        assert_eq!(tokens.len(), 2);
+        let body = "# مقدمة\n\nRust text, cleaned.\n";
+        // Both dropped, then each one alone.
+        for answer in [
+            body.to_owned(),
+            format!("{}\n\n{body}", tokens[0]),
+            format!("{body}\n{}\n", tokens[1]),
+        ] {
+            let repaired = protected
+                .repair(text, &answer)
+                .unwrap_or_else(|| panic!("not repaired: {text:?} / {answer:?}"));
+            protected.validate(text, &repaired).unwrap();
+            assert!(repaired.starts_with(&tokens[0]), "{repaired}");
+            assert!(repaired.trim_end().ends_with(&tokens[1]), "{repaired}");
+            assert!(repaired.contains("Rust text, cleaned."));
+        }
+        // A complete answer needs nothing.
+        assert!(protected.repair(text, text).is_none());
+    }
+
+    #[test]
+    fn a_dropped_marker_between_surviving_neighbours_goes_back_in_its_place() {
+        let source = "Intro line.\n\n<!-- Page number: 2 -->\n\nSecond page.\n";
+        let protected = Protected::new(source);
+        let text = &protected.text;
+        let token = protected.tokens(text).remove(0);
+        let repaired = protected
+            .repair(text, "Intro line.\n\nSecond page.\n")
+            .unwrap();
+        assert_eq!(
+            repaired,
+            format!("Intro line.\n\n{token}\n\nSecond page.\n")
+        );
+        // Its neighbours were rewritten: no single place fits.
+        assert!(protected.repair(text, "Intro.\n\nSecond page.\n").is_none());
+        assert!(
+            protected
+                .repair(text, "Second page.\n\nIntro line.\n\nSecond page.\n")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn moved_altered_or_inline_markers_are_not_repaired() {
+        let source =
+            "<!-- Page number: 1 -->\n\nRun `cargo test` now.\n\n<!-- Page number: 2 -->\n\nEnd.\n";
+        let protected = Protected::new(source);
+        let text = &protected.text;
+        let tokens = protected.tokens(text);
+        assert_eq!(tokens.len(), 3);
+        // The inline code marker is gone: not a block, so the answer stays rejected.
+        let lost_code = format!("{}\n\nRun now.\n\n{}\n\nEnd.\n", tokens[0], tokens[2]);
+        assert!(protected.repair(text, &lost_code).is_none());
+        // Swapped markers.
+        let moved = format!(
+            "{}\n\nRun {} now.\n\n{}\n\nEnd.\n",
+            tokens[2], tokens[1], tokens[0]
+        );
+        assert!(protected.repair(text, &moved).is_none());
+        assert!(protected.validate(text, &moved).is_err());
+    }
+
     use super::*;
 
     #[test]

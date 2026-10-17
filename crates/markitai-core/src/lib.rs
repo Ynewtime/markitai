@@ -593,19 +593,27 @@ fn convert_inner(
         doc.warnings.push("The Cloudflare backend was not used for this file: OCR and screenshots need the native reader's pages, so it was converted natively.".into());
     }
     if office_ocr_without_renderer {
-        let install = "Install LibreOffice (macOS: brew install --cask libreoffice)";
+        // The page renderer is built in; LibreOffice alone decides this, so
+        // the notice names only it, with this system's install command.
+        let install = if cfg!(target_os = "macos") {
+            "Install LibreOffice (brew install --cask libreoffice)"
+        } else if cfg!(windows) {
+            "Install LibreOffice (winget install --id TheDocumentFoundation.LibreOffice --exact)"
+        } else {
+            "Install LibreOffice with your distribution's package manager"
+        };
         let warning = match (
             config::enabled(&cfg, "/screenshot/enabled"),
             config::enabled(&cfg, "/ocr/enabled"),
         ) {
             (true, true) => format!(
-                "Page screenshots and OCR of Office pages need LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without them. {install}, or pass --no-screenshot and --no-ocr to skip them."
+                "Page screenshots and OCR of Office pages need LibreOffice (soffice on PATH); the document's own text was converted without them. {install}, or pass --no-screenshot and --no-ocr to skip them."
             ),
             (true, false) => format!(
-                "Page screenshots of Office documents need LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without them. {install}, or pass --no-screenshot to skip them."
+                "Page screenshots of Office documents need LibreOffice (soffice on PATH); the document's own text was converted without them. {install}, or pass --no-screenshot to skip them."
             ),
             _ => format!(
-                "OCR of Office pages needs LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without page OCR. {install}, or pass --no-ocr to skip it."
+                "OCR of Office pages needs LibreOffice (soffice on PATH); the document's own text was converted without page OCR. {install}, or pass --no-ocr to skip it."
             ),
         };
         doc.warnings.push(warning);

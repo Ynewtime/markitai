@@ -1706,10 +1706,10 @@ fn payload(entry: &Deployment, prompts: &Prompts) -> Value {
         } else {
             json!(prompts.system)
         };
-        json!({"model":entry.model,"max_tokens":entry.max_tokens.unwrap_or(8192),"system":system,"messages":[{"role":"user","content":content}]})
+        json!({"model":entry.model,"max_tokens":output_cap(entry, prompts).unwrap_or(8192),"system":system,"messages":[{"role":"user","content":content}]})
     } else {
         let mut payload = json!({"model":entry.model,"messages":[{"role":"system","content":prompts.system},{"role":"user","content":content}]});
-        if let Some(max_tokens) = entry.max_tokens {
+        if let Some(max_tokens) = output_cap(entry, prompts) {
             let field = if matches!(entry.provider.as_str(), "openai" | "azure")
                 && ["gpt-5", "o1", "o3", "o4"]
                     .iter()
@@ -1733,6 +1733,31 @@ fn payload(entry: &Deployment, prompts: &Prompts) -> Value {
         }
         payload
     }
+}
+
+/// The output cap a request asks for: the configured `max_tokens`, else for
+/// Gemini and DeepSeek the reviewed model's output limit within the room its
+/// context leaves after the prompt, as Python markitai computes it (input
+/// estimate plus 1,600 tokens per image and a buffer of a fifth, at least
+/// 2,000; at most 128,000 and at least 1,000, never above the model's limit).
+/// Their defaults are small or unstated, and a long visual batch was cut off
+/// mid-answer under one. OpenAI's default already is the model's limit, and
+/// OpenAI and Anthropic count the cap against per-minute rate limits, so
+/// they keep theirs (Anthropic, which requires one, gets 8,192).
+fn output_cap(entry: &Deployment, prompts: &Prompts) -> Option<u64> {
+    if let Some(configured) = entry.max_tokens {
+        return Some(configured);
+    }
+    if !matches!(entry.provider.as_str(), "gemini" | "deepseek") {
+        return None;
+    }
+    let (output, context) = crate::pricing::token_limits(&entry.provider, &entry.model)?;
+    let images = prompts.image.as_ref().map_or(0, Vec::len) as u64;
+    let input = (chunks::estimate_tokens(&prompts.system) + chunks::estimate_tokens(&prompts.user))
+        as u64
+        + 1_600 * images;
+    let room = context.saturating_sub(input + (input / 5).max(2_000));
+    Some(output.min(room).clamp(1_000, 128_000).min(output))
 }
 
 fn request_with_mode(
@@ -2001,7 +2026,10 @@ fn truncation(data: &Value) -> String {
         (Some(output), Some(reasoning)) if reasoning > 0 && reasoning >= output => format!(
             "LLM output was truncated by its token limit: reasoning used all {output} output tokens; lower litellm_params.reasoning_effort or raise max_tokens"
         ),
-        _ => "LLM output was truncated by its token limit".into(),
+        (Some(output), _) => format!(
+            "LLM output was truncated by its token limit after {output} output tokens; raise litellm_params.max_tokens for this model"
+        ),
+        _ => "LLM output was truncated by its token limit; raise litellm_params.max_tokens for this model".into(),
     }
 }
 
@@ -3101,6 +3129,29 @@ mod tests {
         let selected = prompts("---\ntitle: raw\n---\n", "doc.md", &cfg, None).unwrap();
         assert!(selected.system.starts_with("pure Preserve"));
         assert_eq!(selected.user, "content=---\ntitle: raw\n---\n");
+    }
+
+    #[test]
+    fn a_reviewed_model_without_a_configured_cap_asks_for_its_output_limit() {
+        // Python markitai asks Gemini Flash for 65,536 tokens; a provider
+        // default could cut a ten-page batch off mid-answer.
+        let cap = |model: &str| {
+            let entry = deployments(&cfg(model, "http://127.0.0.1:9/v1"), &HashMap::new())
+                .unwrap()
+                .remove(0);
+            payload(&entry, &plain())
+        };
+        assert_eq!(cap("gemini/gemini-3.8-flash")["max_tokens"], 65_536);
+        // DeepSeek's 393,216 is held to the 128,000 ceiling.
+        assert_eq!(cap("deepseek/deepseek-flash")["max_tokens"], 128_000);
+        // A model the catalog does not know keeps the provider's default.
+        assert!(cap("gemini/gemini-unreviewed").get("max_tokens").is_none());
+        // OpenAI's default is the model's limit; Anthropic keeps 8,192.
+        let openai = cap("openai/gpt-5.6");
+        assert!(
+            openai.get("max_completion_tokens").is_none() && openai.get("max_tokens").is_none()
+        );
+        assert_eq!(cap("anthropic/claude-haiku-4-5")["max_tokens"], 8_192);
     }
 
     #[test]

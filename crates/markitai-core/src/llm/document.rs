@@ -441,6 +441,9 @@ pub(super) fn checked(
         answer.markdown = salvage.text;
     }
     if !metadata_only {
+        if let Some(repaired) = protected.repair(original, &answer.markdown) {
+            answer.markdown = repaired;
+        }
         protected.no_literal_copies(&answer.markdown)?;
     }
     validate_answer(
