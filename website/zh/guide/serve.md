@@ -148,4 +148,4 @@ Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不�
 | `/api/me/models*` | 用户令牌自己的模型，后缀和规则与 `/api/settings/llm*` 相同（其他调用者得到 403 `user_token_required`）；`PATCH /api/me/models/shared/{id}` 设置它对某个共享模型的权重，`POST /api/me/models/test` 带 `{"shared_id"}` 测试共享模型 |
 | `GET`/`PUT /api/me/config` | 用户令牌自己的模型，作为一份掩码后的 JSON 文档（`models`、`providers`、`shared`），按模型页的 `revision` 保存 |
 
-服务会拒绝来自其他网站来源的状态变更请求，所以随便一个网页没法借你的浏览器操作它。Cloudflare 处理（`strategy` 或 `backend` 为 `"cloudflare"`）要求同一请求的选项里带 `"remote_processing": "cloudflare"`（工作台在你确认后发送），没有令牌的调用方会被拒绝。用户令牌访问设置和令牌路由会得到 403 `settings_forbidden`，访问不是自己创建的转换会得到 404 `job_not_found`；`GET /api/capabilities` 会说明调用者是谁（`access.role`：`admin` 或 `user`）。
+服务会拒绝来自其他网站来源的状态变更请求，所以随便一个网页没法借你的浏览器操作它。Cloudflare 处理（`strategy` 或 `backend` 为 `"cloudflare"`）要求同一请求的选项里带 `"remote_processing": "cloudflare"`（工作台在你确认后发送）；由于它计入服务器的账户，除管理员外一律拒绝（403 `remote_processing_forbidden`）：没有令牌的调用方和用户令牌都不行。用户令牌访问设置和令牌路由会得到 403 `settings_forbidden`，访问不是自己创建的转换会得到 404 `job_not_found`；`GET /api/capabilities` 会说明调用者是谁（`access.role`：`admin` 或 `user`）。

@@ -1086,3 +1086,45 @@ async def test_edit_config_cannot_save_a_model_that_borrows_the_server_key(
     stored = json.loads((tmp_path / "user-models" / f"{user_id}.json").read_text())
     assert [m["litellm_params"]["api_key"] for m in stored["models"]] == [NO_KEY]
     assert [row["api_key_configured"] for row in listed["deployments"]] == [False]
+
+
+# ------------------------------------------------- Cloudflare processing
+
+
+async def test_cloudflare_processing_billed_to_the_server_is_the_admins_alone(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "fetch": {
+            "remote_consent": "ask",
+            "cloudflare": {
+                "api_token": "synthetic-token",
+                "account_id": "0123456789abcdef0123456789abcdef",
+                "convert_enabled": True,
+            },
+        }
+    }
+    async with _server(_app(tmp_path, config)) as client:
+        _, user = await _user(client, "guest")
+        admin_caps = (await client.get("/api/capabilities", headers=ADMIN)).json()
+        user_caps = (await client.get("/api/capabilities", headers=user)).json()
+        refused = await client.post(
+            "/api/jobs",
+            files=[
+                ("files", ("no.txt", b"local", "text/plain")),
+                (
+                    "options",
+                    (
+                        None,
+                        json.dumps(
+                            {"backend": "cloudflare", "remote_processing": "cloudflare"}
+                        ),
+                    ),
+                ),
+            ],
+            headers=user,
+        )
+    assert admin_caps["remote_services"]["cloudflare"]["reason"] != "client_not_trusted"
+    assert user_caps["remote_services"]["cloudflare"]["available"] is False
+    assert user_caps["remote_services"]["cloudflare"]["reason"] == "client_not_trusted"
+    assert _why(refused) == (403, "remote_processing_forbidden")

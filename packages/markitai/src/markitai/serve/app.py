@@ -1266,8 +1266,9 @@ def _check_remote_processing(
     """Cloudflare runs only with this request's own, informed consent.
 
     A Cloudflare strategy or backend in the request needs
-    ``remote_processing: "cloudflare"`` beside it, a trusted caller (it bills
-    the server's account) and a configured, allowed Cloudflare. The consent
+    ``remote_processing: "cloudflare"`` beside it, the admin as a trusted
+    caller (it bills the server's account; user tokens may not) and a
+    configured, allowed Cloudflare. The consent
     is never stored, so a saved selection cannot convey it again.
     """
     selected = opts.strategy == "cloudflare" or opts.backend == "cloudflare"
@@ -1284,7 +1285,8 @@ def _check_remote_processing(
         raise ApiError(
             403,
             "remote_processing_forbidden",
-            "Cloudflare processing requires a trusted authenticated request",
+            "Cloudflare processing bills the server's account and requires the "
+            "admin token",
         )
     if opts.remote_processing != "cloudflare":
         raise ApiError(
@@ -3635,8 +3637,10 @@ def create_app(
                 else {"role": "user", "label": caller.label}
             ),
             "remote_services": {
+                # Cloudflare bills the server's account: the admin's alone
                 "cloudflare": _cloudflare_capability(
-                    state.config, trusted=_is_trusted_request(request)
+                    state.config,
+                    trusted=_is_trusted_request(request) and caller.role == "admin",
                 )
             },
         }
@@ -5446,7 +5450,9 @@ def create_app(
         await _guard_fetch_targets(request, [url for url, _ in url_entries])
         _check_preset(state, opts)
         trusted = _is_trusted_request(request)
-        _check_remote_processing(state, opts, trusted=trusted)
+        _check_remote_processing(
+            state, opts, trusted=trusted and _caller(request).role == "admin"
+        )
         # Without a routable model every item would fail or silently skip the
         # model the user asked for: refuse before anything is stored. A
         # user's conversions route over its own pool (contract v1.15).
@@ -5665,7 +5671,9 @@ def create_app(
             raise ApiError(409, "no_source", "item has no supported original source")
 
         trusted = _is_trusted_request(request)
-        _check_remote_processing(state, opts, trusted=trusted)
+        _check_remote_processing(
+            state, opts, trusted=trusted and _caller(request).role == "admin"
+        )
         # A user's job reruns over that user's pool, whoever asks (a revoked
         # user's: the shared models only)
         conversion = await conversion_of(state, job.owner)
