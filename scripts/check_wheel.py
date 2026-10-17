@@ -10,6 +10,8 @@ away from the one that gates every pull request::
 from __future__ import annotations
 
 import argparse
+import gzip
+import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -32,6 +34,35 @@ REQUIRED_FILES = {
 }
 
 
+def _altered_files(
+    wheel_file: zipfile.ZipFile, names: set[str], listed: dict[str, dict]
+) -> list[str]:
+    """Workbench files whose size or sha256 is not the manifest's, and gzip
+    copies (``ui/x.js.gz``) that do not decompress to their plain file."""
+    altered = []
+    for name, entry in sorted(listed.items()):
+        member = f"{WORKBENCH}{name}"
+        if member not in names:
+            continue  # reported as missing
+        data = wheel_file.read(member)
+        if (
+            not isinstance(entry, dict)
+            or entry.get("bytes") != len(data)
+            or entry.get("sha256") != hashlib.sha256(data).hexdigest()
+        ):
+            altered.append(name)
+        elif name.endswith(".gz") and f"{WORKBENCH}{name[:-3]}" in names:
+            try:
+                same = gzip.decompress(data) == wheel_file.read(
+                    f"{WORKBENCH}{name[:-3]}"
+                )
+            except (OSError, EOFError):
+                same = False
+            if not same:
+                altered.append(name)
+    return altered
+
+
 def check_wheel(wheel_path: Path) -> None:
     """Raise ``SystemExit`` with a readable message on the first problem found."""
     with zipfile.ZipFile(wheel_path) as wheel_file:
@@ -47,6 +78,9 @@ def check_wheel(wheel_path: Path) -> None:
         listed = (
             json.loads(wheel_file.read(manifest))["files"] if manifest in names else {}
         )
+        # The server refuses the whole UI when one byte differs from the
+        # manifest (markitai.serve.workbench), so the wheel is held to it too
+        altered = _altered_files(wheel_file, names, listed)
 
     missing = sorted(REQUIRED_FILES - names)
     # Every file of the vendored workbench its manifest lists: brand marks,
@@ -65,6 +99,10 @@ def check_wheel(wheel_path: Path) -> None:
         missing.append("markitai/serve/workbench/LICENSES/")
     if missing:
         raise SystemExit(f"wheel is missing required files: {missing}")
+    if altered:
+        raise SystemExit(
+            f"wheel carries workbench files that differ from their manifest: {altered}"
+        )
     # The retired React build must not ride along next to the workbench.
     stale = sorted(name for name in names if name.startswith("markitai/serve/static/"))
     if stale:

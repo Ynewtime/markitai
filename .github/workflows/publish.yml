@@ -126,6 +126,10 @@ jobs:
       - name: Build package
         run: uv build --package markitai --out-dir dist --clear
 
+      # The artefact that is uploaded, not a separate build of the tree
+      - name: Check the built wheel
+        run: python3 scripts/check_wheel.py dist/markitai-*.whl
+
       - name: Verify tag matches built version
         run: |
           built_version=$(ls dist/markitai-*.tar.gz | sed -E 's|.*/markitai-(.+)\.tar\.gz|\1|')

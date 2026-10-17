@@ -86,6 +86,10 @@ jobs:
       - name: Verify package build
         run: uv build --package markitai --out-dir dist --clear
 
+      # The wheel that would ship, built from the sdist like the release does
+      - name: Check the built wheel
+        run: python3 scripts/check_wheel.py dist/markitai-*.whl
+
   # Quality gate for the webextract HTML->Markdown pipeline: scores the
   # local defuddle corpus (pure extraction, no network/LLM, ~10s) and fails
   # when any fixture or the corpus mean drops below its guardrail floor
