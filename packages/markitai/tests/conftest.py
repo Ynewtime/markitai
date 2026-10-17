@@ -88,6 +88,13 @@ def pytest_configure(config: pytest.Config) -> None:
     # tests that want them set it themselves
     if os.environ.get("TERM") == "dumb":
         del os.environ["TERM"]
+    # LiteLLM reads its model table once, at its first import: a test module
+    # that imports litellm before markitai.llm would otherwise give the whole
+    # session the upstream table fetched over the network (no openrouter/
+    # rows on 2026-10-18) instead of the bundled one markitai and doctor read
+    from markitai.utils.litellm_import import prepare_litellm_import
+
+    prepare_litellm_import()
     if sys.platform == "win32":
         page = _console_code_page()
         if page not in (0, 65001):
