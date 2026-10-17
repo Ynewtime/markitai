@@ -1072,21 +1072,38 @@ main:focus {
   font-weight: 600;
   color: var(--text-1);
 }
-.subset-chip {
-  display: inline-flex;
+/* "Show items" narrowed the list: a thin tinted bar on top of it, its full width (the filter row keeps
+   its place, Select stays on the right), the count with a filter mark and × to show everything again */
+.subset-bar {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 8px 0 10px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-xs);
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 2px 2px 10px;
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
   background: var(--sel-strong);
   font-size: var(--text-ui);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--text-1);
 }
-.subset-chip:hover {
-  background: var(--row-hover);
+.subset-bar > svg {
+  flex: none;
+  color: var(--text-3);
+}
+.subset-text {
+  flex: 1;
+  min-width: 0;
+}
+.subset-bar .subset-clear {
+  width: 28px;
+  height: 28px;
+}
+/* a finger's 40 px target around the small ×, without making the bar taller */
+.subset-clear::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 .notice-name {
   display: inline;

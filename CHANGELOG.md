@@ -118,6 +118,7 @@
 
 ### Fixed
 
+- Workbench: after a notice's Show items, the "N items" filter is a thin bar across the top of the list with a filter mark and × (on a phone, Select no longer drops to a row of its own).
 - A real Gemini Flash run on `scanned-sample-p1-3.pdf` (one request, no notices) puts every page's text under its own `<!-- Page number: N -->` marker, where the first live run had each page's text one marker too high.
 - Workbench: the embedded-images, Word picture-record and hidden-worksheet notices are worded in Chinese and Japanese too, and the embedded-images notice says "turn on Page Screenshots" instead of naming the CLI flag and is left out for a document already told it is scanned; on a phone the header's New conversion and "⋯" buttons are one compact 32 px size, and the Edit config JSON problem takes its own row above the buttons instead of a three-line column.
 - `markitai doctor` in Chinese now words every check message and remedy in Chinese (the JSON values stay English), and the macOS browser line says `Installed browser app found (version check only)`.

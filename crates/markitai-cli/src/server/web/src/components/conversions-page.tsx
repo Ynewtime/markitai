@@ -291,13 +291,6 @@ export function ConversionsPage(props: ConversionsPageProps) {
               </button>
             ))}
           </div>
-          {props.only !== null && (
-            <button type="button" class="subset-chip" title={t.showingItemsClear} onClick={() => props.onOnly(null)}>
-              {t.showingItems(props.only.length)}
-              <Icon name="X" size={12} />
-              <span class="sr-only"> {t.showingItemsClear}</span>
-            </button>
-          )}
           {/* Phones check rows in Select mode; wide screens always show the boxes. */}
           {phone && listed.length > 0 && (
             <button type="button" class="btn select-mode-btn" aria-pressed={selectMode} onClick={() => (selectMode ? leaveSelect() : setSelectMode(true))}>
@@ -308,6 +301,16 @@ export function ConversionsPage(props: ConversionsPageProps) {
       )}
       <div class="split is-single">
         <div class="list-col">
+          {/* A notice's "Show items" narrows the list: a thin bar over it, the width of the list, says so and clears it. */}
+          {props.only !== null && items.length > 0 && (
+            <div class="subset-bar">
+              <Icon name="FunnelSimple" size={14} />
+              <span class="subset-text">{t.showingItems(props.only.length)}</span>
+              <button type="button" class="icon-btn subset-clear" title={t.showingItemsClear} aria-label={t.showingItemsClear} onClick={() => props.onOnly(null)}>
+                <Icon name="X" size={14} />
+              </button>
+            </div>
+          )}
           {gone}
           {empty ? (
             <StateBlock icon="Tray" title={t.emptyTitle} text={ctx.retentionDays ? t.emptyTextKept(ctx.retentionDays) : t.emptyText} primary={{ label: t.newConversion, run: props.onNewConversion }} />
