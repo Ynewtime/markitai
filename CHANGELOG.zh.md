@@ -52,6 +52,7 @@
 
 ### 修复
 
+- **URL 的文本阶段和图片阶段重新共用同一个请求预算。** 它们此前各开一个预算，一个页面在 serve、命令行和 API 中可能花掉两倍的 `llm.max_requests_per_document`（默认 100 次请求）。
 - **已付费的 LLM 请求不再从合计中漏掉。** 无法解析或校验的 Batch API 答案仍会计入（它已被计费）；URL 列表的报告包含失败 URL 的花费；`--llm-batch-collect` 会打印该批次的成本（部分请求无价格时显示“至少”）。
 - **用 `--record-history` 记录的命令行运行，在 `markitai serve` 中不再把未知成本显示为 $0。** 记录的任务现在带有 `pricing` 和 `models`，没有价格的模型不再显示成 $0 或“没有使用模型”。
 - **`markitai serve` 现在在每个含无价格请求的任务上都提示成本不完整**，用工作台能识别的句式 `Cost is incomplete: 2 requests to <model> have no reviewed price…`（会被翻译，并带价格帮助链接）。以前只有最先回答的那个任务带一条英文提示。

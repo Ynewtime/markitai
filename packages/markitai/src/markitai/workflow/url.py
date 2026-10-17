@@ -14,6 +14,7 @@ to the caller, whose handling differs per surface.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import re
 from collections.abc import Awaitable, Callable
@@ -232,15 +233,18 @@ async def convert_url_cascade(
     llm_output_path: Path | None = None
     llm_error: str | None = None
     screenshot_only_mode = uses_screenshot_only(cfg, fetch_result)
-    if cfg.llm.enabled:
-        from markitai.llm.engine import llm_document_budget, track_llm_spend
-        from markitai.utils.text import format_error_message
+    # The URL's text and image stages share one request budget: the block
+    # spans both, so a page cannot spend the cap twice
+    from markitai.llm.engine import llm_document_budget
 
-        proc = processor if processor is not None else create_llm_processor(cfg)
-        with track_llm_spend() as llm_spend:
-            try:
-                # The URL's text and image stages share one request budget
-                with llm_document_budget():
+    with llm_document_budget() if cfg.llm.enabled else contextlib.nullcontext():
+        if cfg.llm.enabled:
+            from markitai.llm.engine import track_llm_spend
+            from markitai.utils.text import format_error_message
+
+            proc = processor if processor is not None else create_llm_processor(cfg)
+            with track_llm_spend() as llm_spend:
+                try:
                     if llm_stage is not None:
                         (
                             llm_output_path,
@@ -278,100 +282,106 @@ async def convert_url_cascade(
                             extra_meta=extra_meta,
                             title=title,
                         )
-            except Exception as e:
-                # Same policy as the file pipeline: write the base .md as a
-                # fallback below, then surface the failure per the policy.
-                llm_error = format_error_message(e)
-            finally:
-                proc.clear_context_usage(url)
-        if llm_spend.usage:
-            # Every request the stage paid for, a failed one's included
-            cost_usd = llm_spend.cost
-            llm_usage = copy.deepcopy(llm_spend.usage)
+                except Exception as e:
+                    # Same policy as the file pipeline: write the base .md as a
+                    # fallback below, then surface the failure per the policy.
+                    llm_error = format_error_message(e)
+                finally:
+                    proc.clear_context_usage(url)
+            if llm_spend.usage:
+                # Every request the stage paid for, a failed one's included
+                cost_usd = llm_spend.cost
+                llm_usage = copy.deepcopy(llm_spend.usage)
 
-    # Base .md: always without LLM; with LLM for keep_base or as fallback.
-    # Screenshot-only mode writes a screenshot-reference base instead of
-    # the (empty) extracted text.
-    output_path: Path | None = None
-    if llm_output_path is None or cfg.llm.keep_base:
+        # Base .md: always without LLM; with LLM for keep_base or as fallback.
+        # Screenshot-only mode writes a screenshot-reference base instead of
+        # the (empty) extracted text.
+        output_path: Path | None = None
+        if llm_output_path is None or cfg.llm.keep_base:
+            if (
+                screenshot_only_mode or capture_only
+            ) and fetch_result.screenshot_path is not None:
+                from markitai.utils.text import markdown_image_reference
+
+                ref_files = fetch_result.screenshot_tiles or [
+                    fetch_result.screenshot_path
+                ]
+                screenshot_ref = "\n\n".join(
+                    markdown_image_reference(
+                        f"Screenshot {i + 1}" if len(ref_files) > 1 else "Screenshot",
+                        f"{SCREENSHOTS_REL_PATH}/{t.name}",
+                    )
+                    for i, t in enumerate(ref_files)
+                )
+                if capture_only:
+                    markdown = screenshot_ref
+                base_content = add_basic_frontmatter(
+                    screenshot_ref,
+                    url,
+                    fetch_strategy=fetch_result.strategy_used,
+                    screenshot_path=None,  # referenced above, not twice
+                    output_dir=workdir,
+                    title=title,
+                    extra_meta=extra_meta,
+                )
+            elif cfg.llm.pure:
+                # --pure never adds frontmatter: not without LLM, and not to the
+                # keep_base copy or the LLM-failure fallback either
+                base_content = fetch_result.content
+            else:
+                base_markdown = (
+                    markdown if base_from_localized else fetch_result.content
+                )
+                base_content = add_basic_frontmatter(
+                    base_markdown,
+                    url,
+                    fetch_strategy=fetch_result.strategy_used,
+                    screenshot_path=fetch_result.screenshot_path,
+                    screenshot_tiles=list(fetch_result.screenshot_tiles or []),
+                    output_dir=workdir,
+                    title=title,
+                    extra_meta=extra_meta,
+                )
+            atomic_write_text(output_file, base_content)
+            _apply_profile(output_file, workdir, cfg)
+            output_path = output_file
+
+        # Image analysis (alt/desc) on the written .llm.md — previously a CLI
+        # only capability; the cascade runs it serially after the LLM stage.
+        warnings: list[str] = []
         if (
-            screenshot_only_mode or capture_only
-        ) and fetch_result.screenshot_path is not None:
-            from markitai.utils.text import markdown_image_reference
+            llm_output_path is not None
+            and llm_output_path.exists()
+            and (cfg.image.alt_enabled or cfg.image.desc_enabled)
+            and downloaded_images
+            and llm_error is None
+        ):
+            from markitai.utils.llm_spend import track_llm_spend
 
-            ref_files = fetch_result.screenshot_tiles or [fetch_result.screenshot_path]
-            screenshot_ref = "\n\n".join(
-                markdown_image_reference(
-                    f"Screenshot {i + 1}" if len(ref_files) > 1 else "Screenshot",
-                    f"{SCREENSHOTS_REL_PATH}/{t.name}",
-                )
-                for i, t in enumerate(ref_files)
-            )
-            if capture_only:
-                markdown = screenshot_ref
-            base_content = add_basic_frontmatter(
-                screenshot_ref,
-                url,
-                fetch_strategy=fetch_result.strategy_used,
-                screenshot_path=None,  # referenced above, not twice
-                output_dir=workdir,
-                title=title,
-                extra_meta=extra_meta,
-            )
-        elif cfg.llm.pure:
-            # --pure never adds frontmatter: not without LLM, and not to the
-            # keep_base copy or the LLM-failure fallback either
-            base_content = fetch_result.content
-        else:
-            base_markdown = markdown if base_from_localized else fetch_result.content
-            base_content = add_basic_frontmatter(
-                base_markdown,
-                url,
-                fetch_strategy=fetch_result.strategy_used,
-                screenshot_path=fetch_result.screenshot_path,
-                screenshot_tiles=list(fetch_result.screenshot_tiles or []),
-                output_dir=workdir,
-                title=title,
-                extra_meta=extra_meta,
-            )
-        atomic_write_text(output_file, base_content)
-        _apply_profile(output_file, workdir, cfg)
-        output_path = output_file
-
-    # Image analysis (alt/desc) on the written .llm.md — previously a CLI
-    # only capability; the cascade runs it serially after the LLM stage.
-    warnings: list[str] = []
-    if (
-        llm_output_path is not None
-        and llm_output_path.exists()
-        and (cfg.image.alt_enabled or cfg.image.desc_enabled)
-        and downloaded_images
-        and llm_error is None
-    ):
-        from markitai.utils.llm_spend import track_llm_spend
-
-        image_cost = 0.0
-        image_usage: dict[str, dict[str, Any]] = {}
-        with track_llm_spend() as image_spend:
-            try:
-                (
-                    image_cost,
-                    image_usage,
-                    image_failures,
-                ) = await _analyze_url_images_stage(
-                    cfg, workdir, llm_output_path, downloaded_images, proc, url
-                )
-                warnings.extend(image_failures)
-            except Exception as e:
-                logger.warning(
-                    f"[URL] Image analysis failed for {url}: {format_error_message(e)}"
-                )
-                warnings.append(image_analysis_error_warning(format_error_message(e)))
-        if image_spend.usage:
-            # A failed analysis was still paid for
-            image_cost, image_usage = image_spend.cost, image_spend.usage
-        cost_usd += image_cost
-        merge_llm_usage(llm_usage, image_usage)
+            image_cost = 0.0
+            image_usage: dict[str, dict[str, Any]] = {}
+            with track_llm_spend() as image_spend:
+                try:
+                    (
+                        image_cost,
+                        image_usage,
+                        image_failures,
+                    ) = await _analyze_url_images_stage(
+                        cfg, workdir, llm_output_path, downloaded_images, proc, url
+                    )
+                    warnings.extend(image_failures)
+                except Exception as e:
+                    logger.warning(
+                        f"[URL] Image analysis failed for {url}: {format_error_message(e)}"
+                    )
+                    warnings.append(
+                        image_analysis_error_warning(format_error_message(e))
+                    )
+            if image_spend.usage:
+                # A failed analysis was still paid for
+                image_cost, image_usage = image_spend.cost, image_spend.usage
+            cost_usd += image_cost
+            merge_llm_usage(llm_usage, image_usage)
 
     # The profile moves assets and rewrites their references, so it runs
     # after every stage that writes image links. Profile failures are not

@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A URL's text and image stages share one request budget again.** They each opened their own, so a page could spend `llm.max_requests_per_document` twice (100 requests by default) in serve, the CLI and the API.
 - **Paid LLM requests no longer go missing from the totals.** A Batch API answer that fails to parse or validate is still counted (it was billed), a URL list's report includes what its failed URLs spent, and `--llm-batch-collect` prints the batch's cost (at least, when some requests have no known price).
 - **A CLI run recorded with `--record-history` keeps an unknown cost unknown in `markitai serve`.** The recorded items now carry `pricing` and `models`, so a model without a price no longer shows as $0 or as no model used.
 - **In `markitai serve`, an unknown price is reported on every item that has an unpriced request,** as `Cost is incomplete: 2 requests to <model> have no reviewed price…`, the wording the workbench recognises (translated, with its price-help link). Before, only the first item that answered carried an English notice.

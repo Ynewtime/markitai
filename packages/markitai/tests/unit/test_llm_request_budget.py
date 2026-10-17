@@ -10,7 +10,7 @@ the unenhanced output.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from litellm.exceptions import RateLimitError
@@ -372,4 +372,61 @@ class TestDocumentBudget:
             processor=MagicMock(),
             llm_stage=stage,
         )
+        assert len(refused) == 1
+
+    @pytest.mark.asyncio
+    async def test_url_image_stage_spends_from_the_same_budget(self, tmp_path):
+        """The text stage and the image analysis of one URL share one cap."""
+        from types import SimpleNamespace
+
+        from markitai.config import MarkitaiConfig
+        from markitai.fetch_types import FetchResult
+        from markitai.workflow.url import convert_url_cascade
+
+        budget = RequestBudget(limit=2)
+        refused: list[str] = []
+        image = tmp_path / "out" / "a.png"
+
+        async def download(**_kwargs):
+            image.parent.mkdir(parents=True, exist_ok=True)
+            image.write_bytes(b"x")
+            return SimpleNamespace(
+                updated_markdown="# Page\n\nbody", downloaded_paths=[image]
+            )
+
+        async def stage(markdown, url, cfg, output_file, fetch_result, proc):
+            budget.spend(url)
+            llm_md = output_file.with_suffix(".llm.md")
+            llm_md.parent.mkdir(parents=True, exist_ok=True)
+            llm_md.write_text("# Page\n", encoding="utf-8")
+            return llm_md, 0.0, {}, None
+
+        async def images(cfg, workdir, llm_md, downloaded, proc, url):
+            budget.spend(f"{llm_md}:images")
+            try:
+                budget.spend(url)
+            except LLMRequestBudgetExceededError as exc:
+                refused.append(str(exc))
+            return 0.0, {}, []
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.image.alt_enabled = True
+        cfg.cache.enabled = False
+        with (
+            patch("markitai.image.download_url_images", download),
+            patch("markitai.workflow.url._analyze_url_images_stage", images),
+        ):
+            await convert_url_cascade(
+                "https://example.com/x",
+                cfg,
+                tmp_path / "out",
+                fetch_result=FetchResult(
+                    content="# Page\n\nbody",
+                    strategy_used="static",
+                    url="https://example.com/x",
+                ),
+                processor=MagicMock(),
+                llm_stage=stage,
+            )
         assert len(refused) == 1
