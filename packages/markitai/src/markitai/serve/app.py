@@ -5450,7 +5450,10 @@ def create_app(
             options=_saved_options(opts), cfg=cfg, owner=owner
         )
         job.hidden_hosts = conversion.hidden_hosts
-        job.public_network_only = not trusted
+        # A user token's job fetches public addresses only: on the server's
+        # own network (its loopback API included, where a tokenless request
+        # is the admin) the user would act with the server's authority.
+        job.public_network_only = not trusted or owner is not None
         job.label = job_label
         cfg.output.dir = str(job.out_dir)
 
@@ -5684,7 +5687,9 @@ def create_app(
                     "llm_unavailable",
                     "LLM enhancement is unavailable; enable a routable LLM first",
                 )
-            job.public_network_only = job.public_network_only or not trusted
+            job.public_network_only = (
+                job.public_network_only or not trusted or job.owner is not None
+            )
             job.hidden_hosts = tuple(
                 dict.fromkeys((*job.hidden_hosts, *conversion.hidden_hosts))
             )
