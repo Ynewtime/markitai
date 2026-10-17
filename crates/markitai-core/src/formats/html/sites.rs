@@ -817,14 +817,14 @@ fn clean_children(element: ElementRef<'_>, dialect: Dialect) -> String {
 /// The markup of an HTML fragment (JSON a site embeds for its own rendering),
 /// cleaned the way the site needs.
 fn clean_fragment(fragment: &str, dialect: Dialect) -> String {
-    let parsed = Html::parse_fragment(fragment);
+    let parsed = super::parse::fragment(fragment);
     clean_children(parsed.root_element(), dialect)
 }
 
 /// Whether there is text or an image to read.
 fn substantial(markup: &str) -> bool {
     markup.contains("<img") || markup.contains("<pre") || {
-        let fragment = Html::parse_fragment(markup);
+        let fragment = super::parse::fragment(markup);
         fragment
             .root_element()
             .text()

@@ -2159,6 +2159,7 @@ dependencies = [
  "hayro",
  "heifer",
  "htmd",
+ "html5ever",
  "image",
  "iwork",
  "libc",

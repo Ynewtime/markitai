@@ -48,7 +48,7 @@ fn fallback_images(noscript: ElementRef<'_>) -> Vec<scraper::node::Element> {
     if !markup.to_ascii_lowercase().contains("<img") {
         return Vec::new();
     }
-    let fragment = Html::parse_fragment(&markup);
+    let fragment = super::parse::fragment(&markup);
     let root = fragment.root_element();
     if root.text().any(|text| !text.trim().is_empty()) {
         return Vec::new();
@@ -155,7 +155,7 @@ pub(super) fn recover(document: &mut Html) {
                         }
                     }
                     markup.push_str("\">");
-                    let fragment = Html::parse_fragment(&markup);
+                    let fragment = super::parse::fragment(&markup);
                     let image = fragment
                         .root_element()
                         .descendants()

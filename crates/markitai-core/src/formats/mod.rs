@@ -12,6 +12,7 @@ mod text;
 pub(crate) use html::count_words as word_count;
 pub(crate) use html::decode_fetched as decode_fetched_html;
 pub use html::extract_html;
+pub(crate) use html::parse::{document as parse_html, fragment as parse_html_fragment};
 pub(crate) use html::{canonical_status_url, status_address, video_data_scripts};
 pub(crate) use native::extract_presentation_count;
 #[cfg(test)]

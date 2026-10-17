@@ -1724,7 +1724,7 @@ fn script_rendered(html: &str) -> bool {
         "q-app",
         "app-root",
     ];
-    let tree = scraper::Html::parse_document(html);
+    let tree = crate::formats::parse_html(html);
     let (mut scripts, mut inline, mut mount, mut noscript) = (0, 0, false, false);
     for node in tree.tree.nodes() {
         let Some(element) = scraper::ElementRef::wrap(node) else {
@@ -1788,7 +1788,7 @@ fn meta_refresh(html: &str, base: &Url) -> Option<Url> {
     use std::sync::LazyLock;
     static META: LazyLock<scraper::Selector> =
         LazyLock::new(|| scraper::Selector::parse("meta[http-equiv][content]").unwrap());
-    let tree = scraper::Html::parse_document(html);
+    let tree = crate::formats::parse_html(html);
     tree.select(&META).find_map(|meta| {
         let element = meta.value();
         element

@@ -173,7 +173,7 @@ fn text_element<'a>(
 
 /// A post's text as Markdown paragraphs, one per line of the post.
 fn text_markdown(element: ElementRef<'_>, base: Option<&Url>) -> Result<String> {
-    let tree = Html::parse_fragment(&element.html());
+    let tree = super::parse::fragment(&element.html());
     let markdown = render_clean(tree.root_element(), base)?;
     Ok(markdown
         .lines()
@@ -307,7 +307,7 @@ fn video_files(document: &Html) -> HashMap<String, String> {
 /// [`video_files`]), as markup to add to another copy of the page: the page a
 /// browser drew has run and removed them.
 pub(crate) fn video_data_scripts(html: &str) -> String {
-    let document = Html::parse_document(html);
+    let document = super::parse::document(html);
     let mut scripts = String::new();
     for script in document.select(&selector("script")) {
         let text = script.text().collect::<String>();
