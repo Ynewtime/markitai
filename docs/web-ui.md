@@ -367,7 +367,20 @@ its saved connection: it signs in with the server's own login, which the page
 names in a muted line, at its own endpoint, and takes no key either (a saved
 connection offers no Add key; a key a config entry still holds can be removed).
 A saved subscription offers no key or address. Bedrock keeps its optional key
-and address. A backend that sends
+and address. A subscription provider (Claude, Copilot, ChatGPT) whose official
+runtime cannot list models says the cause instead of one generic error
+(contract v1.18): not installed on the server (or its path variable names no
+file), not a release the adapter speaks (naming the installed one when known),
+not signed in, or installed but failing. It shows the command to run on the
+machine where the server runs (install the pinned release, or the sign-in
+command) with a copy button, a link to the setup guide and the server's own
+sentence under Provider's message. Adding a model by hand is switched off, with
+the reason beside it, for the first three: they are certain to fail until
+someone runs a command, so a saved model would only fail every conversion that
+routes to it, and reloading the list (the ↻ button) re-checks once the command
+has run. After a failure of unknown cause entry stays open with a caution that
+the model may not work until the runtime answers, because a transient failure
+should not stop a deliberate choice. A backend that sends
 no provider `group` gets the common eight by name and everything else under All. Appearance (its page is titled Appearance and language, first in the list) chooses English, 中文 or 日本語 and the
 theme (Auto, Light, Dark); for a user token it also says which token the tab uses, with Sign out (another token signs in from the sign-in screen that follows). Edit config (admin) shows the configuration file the Models page names as its source, in an editor that follows the theme and colours the JSON (keys, strings, numbers, `true`/`false`/`null`, punctuation; the text field itself stays a plain text area for the keyboard and screen readers, and Windows high-contrast mode shows the plain text): secrets masked (a masked value left where it is keeps the stored secret), the JSON checked as it is typed with the line and column of a mistake, Review changes as a line diff, then Save config, sent with the revision the edit started from and with the file's own line endings (CRLF on Windows; a byte order mark kept): Review shows only real changes, an unchanged line is saved byte for byte, a new line gets the file's ending, and a file that mixes endings says so, keeps each line's own and gives new lines the most common one (a file changed meanwhile offers Load current file; a configuration the server cannot use is refused with its reason). The model list applies at once; other settings after a restart, which the page says. Access token says whether this tab is signed in
 (with Sign out of this tab beside it, which forgets the token here only and
