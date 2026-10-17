@@ -103,6 +103,42 @@ def inventory(root):
     return files
 
 
+def _shorten_path(text, root):
+    """A local absolute path rewritten to a stable, machine-independent form so
+    a shipped manifest never carries the build machine's home or user name: the
+    checkout becomes a repo-relative path, a registry or toolchain source keeps
+    its crate/toolchain-relative tail, and any other path under the home folder
+    loses that prefix. Non-path strings and system paths are left as they are."""
+    import os
+
+    if not isinstance(text, str) or not text.startswith("/"):
+        return text
+    root_prefix = str(root).rstrip("/") + "/"
+    if text.startswith(root_prefix):
+        return text[len(root_prefix) :]
+    for anchor in ("/.cargo/registry/", "/registry/"):
+        found = text.find(anchor)
+        if found != -1:
+            return "registry/" + text[found + len(anchor) :]
+    found = text.find("/.rustup/")
+    if found != -1:
+        return "rustup/" + text[found + len("/.rustup/") :]
+    home_prefix = os.path.expanduser("~").rstrip("/") + "/"
+    if text.startswith(home_prefix):
+        return text[len(home_prefix) :]
+    return text
+
+
+def _relative_paths(value, root):
+    """`value` with every local absolute path shortened (see `_shorten_path`),
+    for a manifest that ships to users."""
+    if isinstance(value, dict):
+        return {key: _relative_paths(item, root) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_relative_paths(item, root) for item in value]
+    return _shorten_path(value, root)
+
+
 def json_file(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("x", encoding="utf-8") as stream:
@@ -639,7 +675,7 @@ def main(argv=None):
         license_record["codex_attribution"] = codex_record
         license_record["tailwind_attribution"] = tailwind_record
         license_record["portable_attribution"] = portable_record
-        json_file(module / "licenses.json", license_record)
+        json_file(module / "licenses.json", _relative_paths(license_record, root))
         record["unresolved_licenses"] = license_record["unresolved"]
         record["license_overlay"] = license_record["upstream_overlay"]
         requirement, system = STATIC_TEXT[target.goos]
@@ -648,7 +684,7 @@ def main(argv=None):
                     "build_record": record["build_record"], "inputs": record["inputs"],
                     "native_dependencies": native, "files": inventory(module),
                     "scope": "files excludes this manifest itself; compressed archive identity is recorded externally"}
-        json_file(module / "manifest.json", manifest)
+        json_file(module / "manifest.json", _relative_paths(manifest, root))
         archive = output / f"markitai-go-{target.goos}-{target.goarch}.tar.gz"
         expected = package_archive(module, archive)
         installed = work / "installed-module"

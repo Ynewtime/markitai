@@ -403,6 +403,34 @@ class StaticGoPackageTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "archive differs"):
                 verify_build(self.root, "a" * 40, build, {"archive": library})
 
+class ShortenPathTests(unittest.TestCase):
+    def test_shipped_paths_lose_the_build_machine(self):
+        from package_go_static import _relative_paths, _shorten_path
+
+        root = Path("/home/builder/checkout")
+        self.assertEqual(_shorten_path(str(root / "LICENSE"), root), "LICENSE")
+        self.assertEqual(
+            _shorten_path("/home/builder/.cargo/registry/src/idx/dep-1.0/LICENSE", root),
+            "registry/src/idx/dep-1.0/LICENSE",
+        )
+        self.assertEqual(
+            _shorten_path("/home/builder/.rustup/toolchains/stable/COPYRIGHT", root),
+            "rustup/toolchains/stable/COPYRIGHT",
+        )
+        import os as _os
+        home = _os.path.expanduser("~")
+        self.assertEqual(_shorten_path(f"{home}/elsewhere/x", root), "elsewhere/x")
+        # A system path and a non-path string are left alone.
+        self.assertEqual(_shorten_path("/lib/x86_64-linux-gnu/libc.so.6", root), "/lib/x86_64-linux-gnu/libc.so.6")
+        self.assertEqual(_shorten_path("MIT OR Apache-2.0", root), "MIT OR Apache-2.0")
+        shipped = _relative_paths(
+            {"manifest": str(root / "crates/x/Cargo.toml"),
+             "texts": [{"source": "/home/builder/.cargo/registry/src/idx/dep-1.0/LICENSE"}]},
+            root,
+        )
+        self.assertNotIn("/home/builder", repr(shipped))
+        self.assertEqual(shipped["manifest"], "crates/x/Cargo.toml")
+
 
 if __name__ == "__main__":
     unittest.main()
