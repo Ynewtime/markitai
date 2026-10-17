@@ -58,6 +58,18 @@ class TestHeifRegistration:
         assert isinstance(converter, ImageConverter)
 
 
+def _without_pillow_heif() -> dict[str, None]:
+    """sys.modules entries that make pillow-heif look uninstalled.
+
+    ``pillow_heif`` alone is not enough: once another test has imported
+    ``pillow_heif.as_plugin`` (what require_pillow_heif imports), the import
+    finds that submodule in sys.modules and never reaches the blocked parent.
+    """
+    names = {"pillow_heif", "pillow_heif.as_plugin"}
+    names.update(name for name in sys.modules if name.startswith("pillow_heif."))
+    return dict.fromkeys(names)
+
+
 class TestHeifNotInstalled:
     """Error path when the markitai[heif] extra is missing."""
 
@@ -71,7 +83,7 @@ class TestHeifNotInstalled:
 
         with (
             patch.object(heif_mod, "_opener_registered", False),
-            patch.dict(sys.modules, {"pillow_heif": None}),
+            patch.dict(sys.modules, _without_pillow_heif()),
             pytest.raises(ImportError, match=r"markitai\[heif\]"),
         ):
             converter.convert(heic, output_dir=tmp_path / "out")
@@ -90,7 +102,7 @@ class TestHeifNotInstalled:
 
         with (
             patch.object(heif_mod, "_opener_registered", False),
-            patch.dict(sys.modules, {"pillow_heif": None}),
+            patch.dict(sys.modules, _without_pillow_heif()),
         ):
             result = converter.convert(fake, output_dir=tmp_path / "out")
 
