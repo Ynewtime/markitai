@@ -1174,13 +1174,14 @@ async def _collect_image(
             if line.error is not None:
                 raise ConversionError(line.error)
             assert line.body is not None
+            # Paid for even when the answer cannot be parsed
+            usage = _account_batch_usage(processor, state, line, item.source)
             result = parse_batch_result(
                 line.body,
                 response_model=ImageAnalysisResult,
                 mode=mode,
                 provider=state.provider,
             )
-            usage = _account_batch_usage(processor, state, line, item.source)
             # The parser hands back the bare response model; the rest of the
             # pipeline (language rewrite, images.json) reads ImageAnalysis.
             analysis = ImageAnalysis(
@@ -1370,6 +1371,9 @@ async def _finish_batch(
             if line.error is not None:
                 raise ConversionError(line.error)
             assert line.body is not None
+            # Paid for whatever comes next: an answer that does not parse or
+            # validate is still billed, as a live request's is
+            _account_batch_usage(processor, state, line, item.source)
             result = parse_batch_result(
                 line.body,
                 response_model=plan.call.response_model,
@@ -1380,7 +1384,6 @@ async def _finish_batch(
                 result = plan.call.validate(result)
             cleaned, frontmatter = _finalize_doc(processor, plan, result, vision)
             processor._engine.write_cache(plan.call, result)
-            _account_batch_usage(processor, state, line, item.source)
             _write_llm_md(
                 processor, base_md, frontmatter, cleaned, cfg=cfg, written=written
             )
@@ -1539,12 +1542,28 @@ async def collect_batch_llm(
             )
         return 2
 
+    from markitai.runs.pricing import pricing_from_usage
+    from markitai.utils.llm_spend import track_llm_spend
     from markitai.workflow.helpers import create_llm_processor
 
     processor = create_llm_processor(cfg)
-    return await _finish_batch(
-        cfg, processor, output_dir, state, quiet=quiet, credentials=credentials
-    )
+    # The collect is where the batch is billed; it is its only record
+    with track_llm_spend() as spend:
+        code = await _finish_batch(
+            cfg, processor, output_dir, state, quiet=quiet, credentials=credentials
+        )
+    pricing = pricing_from_usage(spend.usage)
+    if pricing is not None and not quiet:
+        unknown = pricing["cost_status"] != "complete"
+        get_stderr_console().print(
+            f"Cost: {'at least ' if unknown else ''}${spend.cost:.4f}"
+            + (
+                f" ({pricing['unpriced_requests']} request(s) have no known price)"
+                if unknown
+                else ""
+            )
+        )
+    return code
 
 
 def _body_without_frontmatter(text: str) -> str:

@@ -564,3 +564,58 @@ async def test_resumed_url_list_reports_the_whole_list(
     assert [(o.source, o.cost_usd, o.earlier_run) for o in earlier] == [
         (one, 0.03, True)
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_url_s_spend_is_in_the_list_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The model answered and was paid, then the URL failed: the report counts
+    it, as a directory batch does for its failed files."""
+    from markitai.cli.processors.url import process_url_batch
+    from markitai.fetch_types import FetchResult
+    from markitai.utils.llm_spend import record_llm_spend
+
+    url = "https://example.com/one"
+
+    async def _fetch(url, *args, **kwargs):
+        return FetchResult(content="# Page\n\nBody\n", strategy_used="static", url=url)
+
+    async def _document_llm(markdown, url, cfg, output_file, *args, **kwargs):
+        record_llm_spend("gpt-4o-mini", 1000, 200, 0.04)
+        raise RuntimeError("provider exploded after answering")
+
+    monkeypatch.setattr("markitai.fetch.fetch_url", _fetch)
+    monkeypatch.setattr(
+        "markitai.cli.processors.url.run_url_document_llm", _document_llm
+    )
+    monkeypatch.setattr(
+        "markitai.workflow.helpers.create_llm_processor",
+        MagicMock(return_value=MagicMock()),
+    )
+
+    class _Entry:
+        def __init__(self, url: str) -> None:
+            self.url, self.output_name = url, None
+
+    source = tmp_path / "list.urls"
+    source.write_text(f"{url}\n")
+    out = tmp_path / "out"
+    cfg = MarkitaiConfig()
+    cfg.llm.enabled = True
+    cfg.llm.on_failure = "fail"
+    cfg.cache.enabled = False
+    with pytest.raises(SystemExit):
+        await process_url_batch(
+            [_Entry(url)],
+            out,
+            cfg,
+            dry_run=False,
+            verbose=False,
+            quiet=True,
+            resume=False,
+            source_file=source,
+        )
+    usage = _report(out)["llm_usage"]
+    assert usage["cost_usd"] == pytest.approx(0.04)
+    assert usage["requests"] == 1
