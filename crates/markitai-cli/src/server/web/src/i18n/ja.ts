@@ -5,7 +5,6 @@ export const ja: Dict = {
   // header and footer
   homeAria: "Markitai ホーム",
   docsLabel: "ドキュメント",
-  builtLabel: "ビルド",
   opensNewTab: "（新しいタブで開きます）",
   langAria: "言語",
   themeAria: "テーマ",

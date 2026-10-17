@@ -5,7 +5,6 @@ import type { Dict } from "./en.ts";
 export const zh: Dict = {
   homeAria: "Markitai 首页",
   docsLabel: "文档",
-  builtLabel: "构建",
   opensNewTab: "(在新标签页打开)",
   langAria: "语言",
   themeAria: "主题",

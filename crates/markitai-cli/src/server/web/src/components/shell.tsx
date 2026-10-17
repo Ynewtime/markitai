@@ -199,13 +199,13 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
           {sections.map((entry) => settingsLink(entry, SECTION_ICONS[entry], sectionLabels[entry]))}
         </nav>
         <div class="sidebar-foot">
-          {/* The version sits beside Docs, the commit beside GitHub and the build's date and time on a quiet row of its own, small and muted. */}
+          {/* The version sits beside Docs, the commit beside GitHub and "Build:" with the build's date and time (one English label in every language) on a quiet row of its own. */}
           <External href={docsUrl} label={t.docsLabel} icon="BookOpen" note={t.opensNewTab} tag={version?.parts.version ?? null} tagTitle={version ? t.buildTitle(version.parts) : undefined} />
           <External href={sourceUrl} label="GitHub" icon="GithubLogo" note={t.opensNewTab} tag={version ? commitLabel(version) : null} tagTitle={version ? t.buildTitle(version.parts) : undefined} />
           {version?.parts.date && (
             <p class="nav-meta" title={t.buildTitle(version.parts)}>
               <Icon name="Clock" size={17} />
-              <span class="nav-text">{t.builtLabel}</span>
+              <span class="nav-text">Build:</span>
               <span class="nav-tag">{version.parts.date}</span>
             </p>
           )}

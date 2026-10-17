@@ -540,7 +540,7 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
             <p class="index-meta" title={t.buildTitle(version.parts)}>
               <Icon name="Clock" size={18} />
               <span class="index-copy">
-                <span class="index-label">{t.builtLabel}</span>
+                <span class="index-label">Build:</span>
               </span>
               <span class="nav-tag">{version.parts.date}</span>
             </p>

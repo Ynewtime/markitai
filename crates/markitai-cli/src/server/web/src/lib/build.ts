@@ -16,11 +16,11 @@ export function buildTime(value: string, now: Date = new Date()): string | null 
   return `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** The build's date and time in local time, `2026-10-17 19:54`: the sidebar's third row and the phone Settings list. */
+/** The build's date and time in local time, `20261017 19:54`: the sidebar's "Build:" row and the phone Settings list. */
 export function buildDate(value: string): string | null {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /** The full local time, with the offset, for the line's tooltip. */
