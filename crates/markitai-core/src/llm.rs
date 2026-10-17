@@ -89,6 +89,9 @@ struct Deployment {
     /// (`model_info.hidden_endpoint`): a service sets it on a model shared
     /// with users who may not learn where it is served.
     hidden_endpoint: bool,
+    /// A service's user model (`model_info.public_only`): its requests reach
+    /// public addresses only (see `public_net`).
+    public_only: bool,
     group: String,
     model: String,
     provider: String,
@@ -114,6 +117,7 @@ impl std::fmt::Debug for Deployment {
             .field("id", &self.id)
             .field("explicit_id", &self.explicit_id)
             .field("hidden_endpoint", &self.hidden_endpoint)
+            .field("public_only", &self.public_only)
             .field("group", &self.group)
             .field("model", &self.model)
             .field("provider", &self.provider)
@@ -800,6 +804,14 @@ fn load_prompt(name: &str, cfg: &Value) -> Result<Option<String>> {
     Ok(None)
 }
 
+/// Whether an entry's requests may reach public addresses only.
+fn public_only(entry: &Value) -> bool {
+    entry
+        .pointer("/model_info/public_only")
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
 /// Whether an entry's failures may not name its endpoint's host.
 fn hidden_endpoint(entry: &Value) -> bool {
     entry
@@ -1057,6 +1069,7 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             id: model.into(),
             explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),
             hidden_endpoint: hidden_endpoint(entry),
+            public_only: public_only(entry),
             group: if grouped {
                 entry
                     .get("model_name")
@@ -1349,6 +1362,21 @@ fn run_mode(
     )?
     .build()
     .map_err(|_| Error::Conversion("Cannot initialize LLM HTTP client".into()))?;
+    // A user model's requests reach public addresses only, without proxy.
+    let public_client = if entries.iter().any(|entry| entry.public_only) {
+        Some(
+            crate::public_net::client(
+                Client::builder()
+                    .timeout(Duration::from_secs(timeout))
+                    .connect_timeout(Duration::from_secs(timeout.min(15)))
+                    .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION"))),
+            )
+            .build()
+            .map_err(|_| Error::Conversion("Cannot initialize LLM HTTP client".into()))?,
+        )
+    } else {
+        None
+    };
     let mut attempts = 0u64;
     let mut slept = 0u64;
     let mut usage = ConversionUsage::default();
@@ -1493,7 +1521,10 @@ fn run_mode(
                     )
                 } else {
                     request_with_mode(
-                        &client,
+                        match &public_client {
+                            Some(public) if entries[selected].public_only => public,
+                            _ => &client,
+                        },
                         &entries[selected],
                         prompts,
                         &mut usage,
@@ -1760,6 +1791,23 @@ fn output_cap(entry: &Deployment, prompts: &Prompts) -> Option<u64> {
     Some(output.min(room).clamp(1_000, 128_000).min(output))
 }
 
+/// A user model's request refused before it left: its address is not public.
+/// Never sent, so never retried; the router may try a sibling.
+fn public_refusal() -> Failure {
+    Failure {
+        kind: FailureKind::Transport,
+        error: Error::Conversion(format!(
+            "Model request refused: {}",
+            crate::public_net::REFUSED
+        )),
+        retryable: false,
+        fatal: false,
+        document_fatal: false,
+        retry_after: None,
+        deployment: None,
+    }
+}
+
 fn request_with_mode(
     client: &Client,
     entry: &Deployment,
@@ -1773,6 +1821,11 @@ fn request_with_mode(
         || payload(entry, prompts),
         |wire| wire.payload(entry, prompts),
     );
+    if entry.public_only
+        && !url::Url::parse(&entry.endpoint).is_ok_and(|url| crate::public_net::url_allowed(&url))
+    {
+        return Err(public_refusal().at(entry));
+    }
     let mut request = client.post(&entry.endpoint);
     let request = if let Some(cloud) = entry.cloud.as_deref() {
         // Signing or a token exchange that fails is this deployment's
@@ -1805,6 +1858,9 @@ fn request_with_mode(
     let started = observation.as_ref().map(|_| std::time::Instant::now());
     let sent = std::time::SystemTime::now();
     let response = request.send().map_err(|error| {
+        if entry.public_only && crate::public_net::refused(&error) {
+            return public_refusal().at(entry);
+        }
         if error.is_timeout()
             && let Some(observation) = observation.as_deref_mut()
         {

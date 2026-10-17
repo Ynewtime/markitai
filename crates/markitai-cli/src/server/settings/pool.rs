@@ -74,6 +74,13 @@ pub(super) fn build(base: &Value, own: &users::Lists, admin: &Data) -> Result<Va
         }
         let mut entry = relinked(grouped(entry), "user");
         entry["litellm_params"]["use_environment_credentials"] = json!(false);
+        // The user's own models reach public addresses only, checked when
+        // each request connects (a name resolving to this machine or its
+        // network fails); the admin's shared models are the admin's choice.
+        if !entry["model_info"].is_object() {
+            entry["model_info"] = json!({});
+        }
+        entry["model_info"]["public_only"] = json!(true);
         models.push(entry);
     }
     for (index, saved) in shared(admin) {
@@ -225,6 +232,10 @@ mod tests {
         assert_eq!(list[1]["litellm_params"]["weight"], 3);
         assert_eq!(list[1]["model_info"]["hidden_endpoint"], true);
         assert!(list[0]["model_info"].get("hidden_endpoint").is_none());
+        // The user's own model reaches public addresses only; the admin's
+        // shared one is the admin's choice.
+        assert_eq!(list[0]["model_info"]["public_only"], true);
+        assert!(list[1]["model_info"].get("public_only").is_none());
         let ids: Vec<_> = pool["llm"]["providers"]
             .as_array()
             .unwrap()

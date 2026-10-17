@@ -414,16 +414,26 @@ pub fn environment_key_variable(
 /// Discover model identifiers using a credential-isolated in-memory cache.
 /// The input contains provider, optional api_key/api_base and optional refresh.
 pub fn discover(request: &Value) -> Result<Value> {
-    discover_with_environment(request, true)
+    discover_with_environment(request, true, false)
 }
 
 /// Discover with literal request credentials only; no process key or endpoint fallback.
 /// Configuration-backed callers should use `discover` instead.
 pub fn discover_explicit(request: &Value) -> Result<Value> {
-    discover_with_environment(request, false)
+    discover_with_environment(request, false, false)
 }
 
-fn discover_with_environment(request: &Value, allow_environment: bool) -> Result<Value> {
+/// [`discover_explicit`] for a service's user: its request reaches public
+/// addresses only (see `public_net`) and never shares the result cache.
+pub fn discover_public(request: &Value) -> Result<Value> {
+    discover_with_environment(request, false, true)
+}
+
+fn discover_with_environment(
+    request: &Value,
+    allow_environment: bool,
+    public_only: bool,
+) -> Result<Value> {
     validate(request, &["provider", "api_key", "api_base", "refresh"])?;
     let provider = field(request, "provider")?
         .filter(|s| !s.trim().is_empty())
@@ -531,8 +541,15 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
     let keyless_variable = allow_environment
         .then(|| entry.key_variables.first().copied())
         .flatten();
+    if public_only {
+        // Never answered from, nor stored for, another caller's list.
+        return Ok(
+            discovery::load(&provider, &base, key.as_deref(), keyless_variable, true)
+                .unwrap_or_else(|failed| failed),
+        );
+    }
     cache::global().discover(&provider, &base, key.as_deref(), refresh, || {
-        discovery::load(&provider, &base, key.as_deref(), keyless_variable)
+        discovery::load(&provider, &base, key.as_deref(), keyless_variable, false)
     })
 }
 
@@ -581,15 +598,25 @@ fn missing_key(
 /// Make one short request to exactly the requested deployment, without retry,
 /// fallback, prompt loading, document conversion or persistent cache access.
 pub fn probe(request: &Value) -> Result<Value> {
-    probe_with_environment(request, true)
+    probe_with_environment(request, true, false)
 }
 
 /// Probe literal request credentials without inheriting process keys or endpoints.
 pub fn probe_explicit(request: &Value) -> Result<Value> {
-    probe_with_environment(request, false)
+    probe_with_environment(request, false, false)
 }
 
-fn probe_with_environment(request: &Value, allow_environment: bool) -> Result<Value> {
+/// [`probe_explicit`] for a service's user: its request reaches public
+/// addresses only (see `public_net`).
+pub fn probe_public(request: &Value) -> Result<Value> {
+    probe_with_environment(request, false, true)
+}
+
+fn probe_with_environment(
+    request: &Value,
+    allow_environment: bool,
+    public_only: bool,
+) -> Result<Value> {
     validate(request, &["model", "api_key", "api_base"])?;
     let model = field(request, "model")?
         .filter(|value| !value.trim().is_empty())
@@ -601,7 +628,7 @@ fn probe_with_environment(request: &Value, allow_environment: bool) -> Result<Va
             "Model contains invalid characters or exceeds 1024 bytes".into(),
         ));
     }
-    match crate::llm::service_probe(request, allow_environment) {
+    match crate::llm::service_probe(request, allow_environment, public_only) {
         Ok(()) => Ok(
             json!({"ok":true,"detail":format!("{} responded", model.chars().take(280).collect::<String>())}),
         ),

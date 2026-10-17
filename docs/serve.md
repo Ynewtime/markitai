@@ -677,7 +677,13 @@ a provider that signs in with the server's own account or cloud login
 (subscriptions, Vertex AI, watsonx, GigaChat, Bedrock without a key) is 422
 `server_credentials`; an address on the server's machine (`localhost`, loopback,
 `0.0.0.0`, `::`, also a provider's documented local address, so Ollama or LM
-Studio need another address) is 422 `server_address`. A user's models never use
+Studio need another address) is 422 `server_address`. Beyond that check, every request
+made for a user's own model (its conversions, model discovery and tests)
+reaches public addresses only: the name is resolved when the connection is
+made and an address outside the public internet (loopback, private, link-local
+such as cloud metadata, unique-local) is refused, so a name that points at the
+server's machine or network fails too; such requests use no proxy and follow
+no redirect. Models the admin shares are not restricted. A user's models never use
 the server's environment keys or detected models, and name only the user's own
 connections.
 

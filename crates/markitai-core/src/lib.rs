@@ -34,6 +34,7 @@ mod pricing;
 mod private_install;
 mod process_groups;
 mod proxy;
+mod public_net;
 #[doc(hidden)]
 pub mod sort;
 mod titles;

@@ -17,6 +17,9 @@ const NOTES: &[u8] = b"# Notes\n\nA paragraph the endpoint returns unchanged.\n"
 /// reach: a key, a model and an endpoint (`sentinel`) for automatic routing.
 fn start(root: &Path, sentinel: &Endpoint) -> Server {
     let base = format!("http://127.0.0.1:{}/v1", sentinel.port);
+    // A user's own models reach public addresses only; this debug build lets
+    // the tests stand their model servers on this machine's LAN address.
+    let lan = lan_address().map(|ip| ip.to_string()).unwrap_or_default();
     Server::start_with(
         root,
         &[
@@ -24,6 +27,7 @@ fn start(root: &Path, sentinel: &Endpoint) -> Server {
             ("OPENAI_API_KEY", std::ffi::OsStr::new(SENTINEL_KEY)),
             ("OPENAI_API_BASE", std::ffi::OsStr::new(&base)),
             ("MODEL", std::ffi::OsStr::new("openai/env-model")),
+            ("MARKITAI_TEST_PUBLIC_NET_ALLOW", std::ffi::OsStr::new(&lan)),
         ],
     )
 }

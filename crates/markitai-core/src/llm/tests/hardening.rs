@@ -320,6 +320,7 @@ fn entry(provider: &str, endpoint: &str) -> Deployment {
         id: format!("{provider}/model"),
         explicit_id: None,
         hidden_endpoint: false,
+        public_only: false,
         group: "default".into(),
         model: "model".into(),
         provider: provider.into(),

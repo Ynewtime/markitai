@@ -768,6 +768,7 @@ pub(in crate::server) fn resolve_discovery(
     }
     let mut request = store::resolve_discovery(&data(users.lists(id)), body)?;
     request["use_environment_credentials"] = json!(false);
+    request["public_only"] = json!(true);
     let provider = request["provider"].as_str().unwrap_or_default().to_owned();
     if provider == "bedrock" && !real(&request["api_key"]) {
         return Err(server_credentials());
@@ -785,6 +786,7 @@ pub(in crate::server) fn resolve_probe(users: &Users, id: &str, body: &Value) ->
     }
     let mut request = store::resolve_probe(&data(users.lists(id)), body)?;
     request["use_environment_credentials"] = json!(false);
+    request["public_only"] = json!(true);
     let name = request["model"].as_str().unwrap_or_default().to_owned();
     check_connection(
         &model::provider(&json!({"litellm_params":{"model":name}})),

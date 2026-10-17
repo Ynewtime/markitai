@@ -76,6 +76,7 @@ pub(super) fn deployment(
         id: id.into(),
         explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),
         hidden_endpoint: super::hidden_endpoint(entry),
+        public_only: super::public_only(entry),
         group: if grouped {
             entry
                 .get("model_name")

@@ -101,6 +101,7 @@ pub(super) fn load(
     base: &str,
     key: Option<&str>,
     keyless_variable: Option<&str>,
+    public_only: bool,
 ) -> std::result::Result<Value, Value> {
     let fail = |reason: Reason, detail: &str| failed(provider, reason, detail, None);
     let mut url = checked_url(base).map_err(|_| {
@@ -129,15 +130,27 @@ pub(super) fn load(
         }
         _ => {}
     }
-    let client = crate::proxy::http_api(
-        Client::builder()
-            .redirect(Policy::none())
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(TIMEOUT),
-    )
-    .map_err(|_| fail(Reason::ProviderError, "Proxy settings are malformed"))?
-    .build()
-    .map_err(|_| {
+    let builder = Client::builder()
+        .redirect(Policy::none())
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(TIMEOUT);
+    // A service's user reaches public addresses only, without proxy.
+    if public_only && !crate::public_net::url_allowed(&url) {
+        return Err(fail(
+            Reason::Network,
+            &format!(
+                "Model discovery request refused: {}",
+                crate::public_net::REFUSED
+            ),
+        ));
+    }
+    let builder = if public_only {
+        crate::public_net::client(builder)
+    } else {
+        crate::proxy::http_api(builder)
+            .map_err(|_| fail(Reason::ProviderError, "Proxy settings are malformed"))?
+    };
+    let client = builder.build().map_err(|_| {
         fail(
             Reason::ProviderError,
             "Cannot create model discovery client",
@@ -159,6 +172,15 @@ pub(super) fn load(
         request = request.header("anthropic-version", "2023-06-01");
     }
     let response = request.send().map_err(|error| {
+        if public_only && crate::public_net::refused(&error) {
+            return fail(
+                Reason::Network,
+                &format!(
+                    "Model discovery request refused: {}",
+                    crate::public_net::REFUSED
+                ),
+            );
+        }
         if error.is_timeout() {
             return fail(Reason::Timeout, "Model discovery timed out");
         }

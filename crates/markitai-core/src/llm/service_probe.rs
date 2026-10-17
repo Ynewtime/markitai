@@ -68,7 +68,11 @@ impl From<Error> for Failure {
     }
 }
 
-pub(crate) fn probe(request: &Value, allow_environment: bool) -> Result<(), Failure> {
+pub(crate) fn probe(
+    request: &Value,
+    allow_environment: bool,
+    public_only: bool,
+) -> Result<(), Failure> {
     // The same snapshot conversion reads: process variables, then `.env` files.
     let env: HashMap<String, String> = if allow_environment {
         crate::config::environment()
@@ -172,7 +176,8 @@ pub(crate) fn probe(request: &Value, allow_environment: bool) -> Result<(), Fail
             .map_or("2024-10-21", String::as_str)
             .into();
     }
-    let cfg = json!({"llm":{"model_list":[{"model_name":"default","litellm_params":params}]}});
+    let cfg = json!({"llm":{"model_list":[{"model_name":"default","litellm_params":params,
+        "model_info":{"public_only":public_only}}]}});
     let mut entries = deployments(&cfg, &env)?;
     if entries.len() != 1 {
         return Err(Error::Config("Connection test requires exactly one deployment".into()).into());
@@ -261,15 +266,32 @@ fn subscription(kind: crate::subscription::FailureKind, error: Error) -> Failure
 }
 
 fn perform(entry: &Deployment) -> Result<(), Failure> {
-    let client = crate::proxy::http_api(
-        Client::builder()
-            .redirect(Policy::none())
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(15)),
-    )
-    .map_err(|_| failure(Reason::ProviderError, "Proxy settings are malformed"))?
-    .build()
-    .map_err(|_| {
+    let refused = || {
+        failure(
+            Reason::Network,
+            &format!(
+                "Model connection request refused: {}",
+                crate::public_net::REFUSED
+            ),
+        )
+    };
+    let builder = Client::builder()
+        .redirect(Policy::none())
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(15));
+    // A service's user reaches public addresses only, without proxy.
+    if entry.public_only
+        && !url::Url::parse(&entry.endpoint).is_ok_and(|url| crate::public_net::url_allowed(&url))
+    {
+        return Err(refused());
+    }
+    let builder = if entry.public_only {
+        crate::public_net::client(builder)
+    } else {
+        crate::proxy::http_api(builder)
+            .map_err(|_| failure(Reason::ProviderError, "Proxy settings are malformed"))?
+    };
+    let client = builder.build().map_err(|_| {
         failure(
             Reason::ProviderError,
             "Cannot create model connection client",
@@ -318,6 +340,9 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
     // provider's own wording is never shown here: only its error type or
     // code, without the endpoint, the key or the probe's prompt.
     let response = call.send().map_err(|error| {
+        if entry.public_only && crate::public_net::refused(&error) {
+            return refused();
+        }
         if error.is_timeout() {
             return failure(Reason::Timeout, "Model connection test timed out");
         }

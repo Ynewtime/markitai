@@ -737,6 +737,13 @@ fn normalize_node(value: &Value, node: &Value, path: &str) -> Result<Value> {
                 {
                     result.insert("hidden_endpoint".into(), value.clone());
                 }
+                // Internal: a service's user model reaches public addresses
+                // only (see `public_net`); dropped unless a boolean.
+                if path.ends_with(".model_info")
+                    && let Some(value) = values.get("public_only").filter(|v| v.is_boolean())
+                {
+                    result.insert("public_only".into(), value.clone());
+                }
                 if path == "output" {
                     // Internal write targets are never emitted as public defaults.
                     for key in ["filename", "reserved_stem"] {
