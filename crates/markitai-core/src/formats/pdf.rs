@@ -798,6 +798,10 @@ impl PdfPages {
         let mut unrecovered_index = None;
         for (mut page, readable) in pages.into_iter().zip(readable) {
             readable_pages += usize::from(readable);
+            // A scanned page: OCR read it, no reader recovered its text, or
+            // its text is the OCR layer over its scan. Its pictures are the
+            // page itself, not pictures placed among its text.
+            let scan = page.ocr_completed || page.ocr_layer.is_some() || !readable;
             let mut warning = Vec::new();
             // A page whose text all continued the previous page's table
             // keeps only its marker.
@@ -842,7 +846,7 @@ impl PdfPages {
                     Some(placement::Place::End) => Some(text_end),
                     _ => None,
                 };
-                appended_images |= at.is_none();
+                appended_images |= at.is_none() && !scan;
                 inserts.push((at.unwrap_or(text_end), image));
             }
             // Later offsets first, so earlier ones stay valid; images at one

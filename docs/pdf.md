@@ -247,6 +247,9 @@ image drawn inside a form, twice on one page, beside text with no line above it,
 or whose line cannot be found follows the page's text as before, and only then
 does the warning that images are placed after their page's text appear
 (it suggests `--screenshot` and is not shown once page screenshots are written).
+The pictures of a scanned page (one OCR read, one without recovered text, or
+one read from its OCR layer) are the page itself, not pictures among its text,
+so they never bring that warning.
 
 The ordinary `extract` entrypoint calls `finish`, which preserves page markers,
 image-reference order, metadata, inspection diagnostics and the final empty-content

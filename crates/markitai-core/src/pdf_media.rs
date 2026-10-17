@@ -1314,9 +1314,13 @@ mod tests {
 
     #[test]
     fn placement_notice_stays_only_without_screenshots() {
-        // Local OCR alone renders pages but publishes no screenshot.
+        // Local OCR alone renders pages but publishes no screenshot. The
+        // picture is on the page of text: a scan's picture is no notice's.
+        let mut pages = pages();
+        pages.pages[0].asset_names = std::mem::take(&mut pages.pages[1].asset_names);
+        assert!(!pages.pages[0].asset_names.is_empty());
         let prepared = PreparedPdf {
-            pages: pages(),
+            pages,
             screenshots: Vec::new(),
             screenshot_pages: Vec::new(),
             has_reliable_text: true,

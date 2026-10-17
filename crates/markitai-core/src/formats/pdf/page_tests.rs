@@ -117,7 +117,14 @@ fn typed_pages_keep_body_metadata_asset_deduplication_and_default_markers() {
         2
     );
     assert_eq!(document.assets.len(), 1);
-    assert_eq!(document.warnings.last().unwrap(), LIMITATION);
+    // The pictures of pages without text are their scans: nothing is placed
+    // after a text of theirs, so the placement notice is not given.
+    assert!(
+        !document
+            .warnings
+            .iter()
+            .any(|warning| warning == LIMITATION)
+    );
     // One warning for the pages of one reason, as ranges, out of the
     // document's pages.
     assert_eq!(
@@ -247,9 +254,22 @@ fn only_a_pdf_with_extracted_images_warns_about_their_placement() {
         "{:?}",
         document.warnings
     );
+    // A scanned page's picture is the page, not a picture after its text.
     let (bytes, _) = fixture(&[text(NATIVE), "/Im Do".into()], false);
     let document = extract(&bytes).unwrap();
     assert!(!document.assets.is_empty());
+    assert!(
+        !document
+            .warnings
+            .iter()
+            .any(|warning| warning == LIMITATION),
+        "{:?}",
+        document.warnings
+    );
+    // A picture of a page of text that no position places follows the text.
+    let mut pages = extract_pages(&bytes).unwrap();
+    pages.pages[0].asset_names = std::mem::take(&mut pages.pages[1].asset_names);
+    let document = pages.finish().unwrap();
     assert!(
         document
             .warnings
