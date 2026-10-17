@@ -17,7 +17,8 @@ Reference test fixtures remain in the reference checkout; audit reports record
 fixture hashes and never redistribute them as newly authored fixtures.
 
 The embedded browser workspace includes Marked 18.0.14 (MIT), DOMPurify
-3.4.16 (Apache-2.0), Preact 10.29.8 (MIT), KaTeX 0.19.0 with the web fonts its package ships (MIT),
+3.4.16 (Apache-2.0), Preact 10.29.8 (MIT), KaTeX 0.19.0 (MIT) with the web fonts its package ships
+(from the KaTeX/katex-fonts repository, also MIT),
 icon path data from Phosphor Icons 2.1.10 (MIT) and the Inter 5.3.0 variable
 font (SIL Open Font License 1.1).
 Their complete notices are in vendor/web/marked-LICENSE,
