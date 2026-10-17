@@ -675,7 +675,11 @@ export const ja: Dict = {
         return sample;
     }
   },
-  noticeWhere: (names: string[]) => (names.length <= 3 ? `対象：${names.join("、")}` : `対象：${names.length} 件`),
+  noticeIn: "対象：",
+  noticeNameSep: "、",
+  noticeMore: (n: number) => `ほか ${n} 件`,
+  showingItems: (n: number) => `${n} 件`,
+  showingItemsClear: "すべて表示",
   addPrice: "価格を追加する方法",
   showItem: "この項目を表示",
   showItems: "これらの項目を表示",

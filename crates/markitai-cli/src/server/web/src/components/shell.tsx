@@ -6,7 +6,7 @@
 // gives way to a top bar and a bottom tab bar.
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import type { VersionLine } from "../lib/build.ts";
+import { commitLabel, type VersionLine } from "../lib/build.ts";
 import type { Dict } from "../i18n/index.ts";
 import { ownClick, routePath, type Route, type Section } from "../lib/route.ts";
 import { Icon, Logo } from "./icons.tsx";
@@ -70,11 +70,16 @@ function NavLink({
   );
 }
 
-function External({ href, label, icon, note }: { href: string; label: string; icon: IconName; note: string }) {
+function External({ href, label, icon, note, tag, tagTitle }: { href: string; label: string; icon: IconName; note: string; tag?: string | null; tagTitle?: string }) {
   return (
     <a class="nav-link is-external" href={href} target="_blank" rel="noopener noreferrer" data-tip={label}>
       <Icon name={icon} size={17} />
       <span class="nav-text">{label}</span>
+      {tag && (
+        <span class="nav-tag" title={tagTitle}>
+          {tag}
+        </span>
+      )}
       <span class="sr-only"> {note}</span>
     </a>
   );
@@ -194,9 +199,9 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
           {sections.map((entry) => settingsLink(entry, SECTION_ICONS[entry], sectionLabels[entry]))}
         </nav>
         <div class="sidebar-foot">
-          <External href={docsUrl} label={t.docsLabel} icon="BookOpen" note={t.opensNewTab} />
-          <External href={sourceUrl} label="GitHub" icon="GithubLogo" note={t.opensNewTab} />
-          {version && <p class="version" title={t.buildTitle(version.parts)}>{version.text}</p>}
+          {/* The version sits beside Docs and the commit beside GitHub, small and muted; the build time is the commit's tooltip. */}
+          <External href={docsUrl} label={t.docsLabel} icon="BookOpen" note={t.opensNewTab} tag={version?.parts.version ?? null} tagTitle={version ? t.buildTitle(version.parts) : undefined} />
+          <External href={sourceUrl} label="GitHub" icon="GithubLogo" note={t.opensNewTab} tag={version ? commitLabel(version) : null} tagTitle={version ? t.buildTitle(version.parts) : undefined} />
         </div>
       </aside>
       <div class="main-col">

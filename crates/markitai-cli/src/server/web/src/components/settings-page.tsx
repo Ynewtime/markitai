@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createUserToken, fetchUserTokens, regenerateToken, revokeUserToken } from "../api/client.ts";
 import { hasToken, setToken } from "../api/token.ts";
 import type { RegeneratedToken, UserToken } from "../api/types.ts";
-import type { VersionLine } from "../lib/build.ts";
+import { commitLabel, type VersionLine } from "../lib/build.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { LOCALES } from "../i18n/locale.ts";
 import { ownClick, type Route, type Section } from "../lib/route.ts";
@@ -511,6 +511,11 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
             <span class="index-copy">
               <span class="index-label">{t.docsLabel}</span>
             </span>
+            {version && (
+              <span class="nav-tag" title={t.buildTitle(version.parts)}>
+                {version.parts.version}
+              </span>
+            )}
             <Icon name="ArrowSquareOut" size={14} />
             <span class="sr-only"> {t.opensNewTab}</span>
           </a>
@@ -521,12 +526,16 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
             <span class="index-copy">
               <span class="index-label">GitHub</span>
             </span>
+            {version && commitLabel(version) && (
+              <span class="nav-tag" title={t.buildTitle(version.parts)}>
+                {commitLabel(version)}
+              </span>
+            )}
             <Icon name="ArrowSquareOut" size={14} />
             <span class="sr-only"> {t.opensNewTab}</span>
           </a>
         </li>
       </ul>
-      {version && <p class="version" title={t.buildTitle(version.parts)}>{version.text}</p>}
     </section>
   );
 }

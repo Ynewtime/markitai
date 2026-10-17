@@ -59,6 +59,9 @@ export interface ConversionsPageProps {
   onQuery: (query: string) => void;
   onToggleGroup: (jobId: string, open?: boolean) => void;
   onShowItems: (keys: string[]) => void;
+  /** The list shows only these items (a notice's "Show items"), or all when null. */
+  only: string[] | null;
+  onOnly: (keys: string[] | null) => void;
   /** Download all (.zip) for an item's Files, or null when this server cannot zip it. */
   downloadAll: (item: SessionItem) => (() => void) | null;
   onCopied: () => void;
@@ -81,7 +84,8 @@ const TAB_MODE: Record<PeekTab, PaneMode> = { details: "inspector", preview: "pr
 
 export function ConversionsPage(props: ConversionsPageProps) {
   const { t, locale, phone, jobs, items, loaded, selected, mode, filter, query, collapsed, ctx } = props;
-  const list = useMemo(() => submissions(jobs, items, filter, query), [jobs, items, filter, query]);
+  const onlySet = useMemo(() => (props.only === null ? null : new Set(props.only)), [props.only]);
+  const list = useMemo(() => submissions(jobs, items, filter, query, onlySet), [jobs, items, filter, query, onlySet]);
   const order = useMemo(() => itemOrder(list), [list]);
   const tally = useMemo(() => counts(items), [items]);
   const kinds = useMemo(() => groupNotices(items.flatMap((item) => item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))).length, [items]);
@@ -101,6 +105,12 @@ export function ConversionsPage(props: ConversionsPageProps) {
     window.addEventListener("popstate", leave);
     return () => window.removeEventListener("popstate", leave);
   }, []);
+
+  /** Several items are the list narrowed to them, so the window over it closes first. */
+  const showItems = (keys: string[]) => {
+    if (keys.length > 1) close();
+    props.onShowItems(keys);
+  };
 
   /** Close the window and give the keyboard back to the row it was opened from. */
   const close = () => {
@@ -201,9 +211,9 @@ export function ConversionsPage(props: ConversionsPageProps) {
         selectedItem ? (
           <ItemInspector ctx={ctx} item={selectedItem} job={jobs[selectedItem.jobId]} actions={props.itemActions} peek headingId="peek-title" />
         ) : selectedJob ? (
-          <JobInspector ctx={ctx} job={selectedJob} items={jobItems} actions={props.jobActions} peek headingId="peek-title" onShowItems={props.onShowItems} />
+          <JobInspector ctx={ctx} job={selectedJob} items={jobItems} actions={props.jobActions} peek headingId="peek-title" onShowItems={showItems} />
         ) : (
-          <Overview ctx={ctx} items={items} peek onShowItems={props.onShowItems} />
+          <Overview ctx={ctx} items={items} peek onShowItems={showItems} />
         )
       }
       onTab={(next) => props.onMode(TAB_MODE[next])}
@@ -219,7 +229,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
 
   const empty = loaded && items.length === 0;
   const unloaded = !loaded && items.length === 0;
-  const clearFilter = { label: t.clearFilter, run: () => (props.onQuery(""), props.onFilter("all")) };
+  const clearFilter = { label: t.clearFilter, run: () => (props.onQuery(""), props.onFilter("all"), props.onOnly(null)) };
   const noMatch = query.trim() ? t.filterNoMatchQuery(query.trim()) : filter === "failed" ? t.filterNoFailed : filter === "notices" ? t.filterNoNotices : t.filterNoMatch;
   const gone = props.gone && selected === null ? <StateBlock {...props.gone} /> : null;
 
@@ -281,6 +291,13 @@ export function ConversionsPage(props: ConversionsPageProps) {
               </button>
             ))}
           </div>
+          {props.only !== null && (
+            <button type="button" class="subset-chip" title={t.showingItemsClear} onClick={() => props.onOnly(null)}>
+              {t.showingItems(props.only.length)}
+              <Icon name="X" size={12} />
+              <span class="sr-only"> {t.showingItemsClear}</span>
+            </button>
+          )}
           {/* Phones check rows in Select mode; wide screens always show the boxes. */}
           {phone && listed.length > 0 && (
             <button type="button" class="btn select-mode-btn" aria-pressed={selectMode} onClick={() => (selectMode ? leaveSelect() : setSelectMode(true))}>

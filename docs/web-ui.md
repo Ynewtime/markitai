@@ -12,11 +12,10 @@ A **sidebar** frames every view: Convert and Conversions (with the number of
 conversions and a grey pulsing dot while something converts, which turns green and still once
 everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
-its own Models and Edit config for them, see [Access token](#access-token)), and Docs, GitHub and the
-version line at the bottom (one line; on a phone, where the sidebar gives way to a
-top bar, it ends Settings instead): the version, the commit it was built from and the build time
-in the viewer's time zone (`1.3.0-dev 36583fe 10-14 22:48`; `-dirty` after the commit
-when it was built with uncommitted changes; the full time and zone on hover). Its button collapses it to a 60px icon rail; each entry
+its own Models and Edit config for them, see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
+(`1.3.0-dev`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
+it when built with uncommitted changes; the build time in the viewer's time zone and the full version are the
+tooltip; the Settings list on a phone shows the same two tags). Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
 keyboard focus, and the choice is remembered in this browser. On phones the
 sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
@@ -140,7 +139,10 @@ files wait on Convert); typing URLs is Convert's job.
   centred reading column as Preview (the whole card opens Preview). A
   submission's window shows its progress as one bar (done, failed, stopped,
   converting, waiting) with Retry failed, Download .zip, Stop remaining and Delete,
-  the cost, its failures and the notices of all its items; Summary opens the same
+  the cost, its failures and the notices of all its items (each notice names the
+  items it covers, the first three as buttons that open that item and "+N more" for
+  the rest; Show item opens the one item, and Show items closes the window and narrows
+  the list to exactly those items, with a "N items ×" chip that shows all again); Summary opens the same
   overview for the whole list.
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N
@@ -184,7 +186,7 @@ the conversion's notices (collapsed to one line) and the front matter as one lig
 line above the body: a tag icon, the tags inline (`gardening · community beds · …`;
 else the summary) and Summary at its end, with no title of its own (the body's
 heading is the title). Summary (a button, Enter or Space) opens it into a
-two-column properties table (Summary, Tags as chips, Source, Processed and every
+two-column properties table (closing with its own rule; a rule that opens the body right after the front matter is not drawn a second time) (Summary, Tags as chips, Source, Processed and every
 other key; one key width with a rule between key and value, long keys and values
 wrapped) whose `Properties · N` header folds it again; the
 choice holds for the tab's session (`sessionStorage['markitai.front']`) and in

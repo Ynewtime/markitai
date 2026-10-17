@@ -26,6 +26,11 @@ export function buildStamp(value: string): string | null {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${zone}`;
 }
 
+/** The commit as shown beside GitHub: short, `-dirty` for a build with uncommitted changes; null when unknown. */
+export function commitLabel(line: VersionLine): string | null {
+  return line.parts.commit === null ? null : line.parts.dirty ? `${line.parts.commit}-dirty` : line.parts.commit;
+}
+
 export interface VersionLine {
   /** The sidebar's line. */
   text: string;

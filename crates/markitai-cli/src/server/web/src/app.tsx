@@ -245,6 +245,8 @@ export function App() {
   routeRef.current = route;
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
+  // Exactly these items are listed (a notice's "Show items"): item keys, or none.
+  const [only, setOnly] = useState<string[] | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
   const mark = (key: string, on: boolean) =>
@@ -319,6 +321,7 @@ export function App() {
           updateList({ selected: count > 1 ? jobKey(jobId) : `${jobId}/i1`, mode: OPEN_MODE }, location.pathname !== "/jobs");
           setFilter("all");
           setQuery("");
+          setOnly(null);
         }
         return jobId !== null;
       } finally {
@@ -780,10 +783,17 @@ export function App() {
             return next;
           })
         }
+        only={only}
+        onOnly={setOnly}
+        // One item opens at once; several are the list, narrowed to exactly them.
         onShowItems={(keys) => {
           const first = keys[0];
-          if (first) updateList({ selected: first, mode: "inspector" });
-          if (keys.length > 1) setFilter(keys.every((key) => conversions.items.find((item) => item.key === key && isFailed(item))) ? "failed" : "notices");
+          if (keys.length === 1 && first) updateList({ selected: first, mode: "inspector" });
+          else if (keys.length > 1) {
+            setOnly(keys);
+            setFilter("all");
+            setQuery("");
+          }
         }}
         downloadAll={(item) => {
           const name = `${basename(item.output ?? item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "") || "markitai"}.zip`;

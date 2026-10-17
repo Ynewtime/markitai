@@ -13,7 +13,7 @@ import type { Dict, Locale } from "../i18n/index.ts";
 import { itemErrorText, persistenceText } from "../i18n/errors.ts";
 import { counts, isFailed, isStopped, presetOf, submissionLabel, type ConvJob, type LabelWords } from "../lib/conversions.ts";
 import { costState, fmtUsd, itemCost, itemCostPhase, totalCost, totalCostPhase, type CostState } from "../lib/cost.ts";
-import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, readable, timestampMs } from "../lib/format.ts";
+import { basename, displayName, fmtBytes, fmtDateTime, fmtDay, localeTag, readable, timestampMs } from "../lib/format.ts";
 import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
 import { FrontCard } from "./front-matter.tsx";
 import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
@@ -202,7 +202,39 @@ function itemLine(ctx: InspectorContext, item: SessionItem, elapsed: number | nu
 /** One wording seen several times (a count to show, since the title does not say it). */
 const isRepeated = (group: NoticeGroup) => group.kind === "other" && group.count > 1 && group.pages === null;
 
-function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: NoticeGroup[]; docsUrl: string; where: boolean; onShow?: (group: NoticeGroup) => void }) {
+/** The names a notice covers listed as buttons that open that item: the first few, then "+N more" for the rest (all of them in the list). */
+const NAMES_SHOWN = 3;
+function WhereNames({ t, group, onOpen, onShow }: { t: Dict; group: NoticeGroup; onOpen?: (key: string) => void; onShow?: (group: NoticeGroup) => void }) {
+  const shown = group.items.slice(0, NAMES_SHOWN);
+  const rest = group.items.length - shown.length;
+  return (
+    <>
+      {t.noticeIn}
+      {shown.map((key, index) => (
+        <span key={key}>
+          {index > 0 && t.noticeNameSep}
+          {onOpen ? (
+            <button type="button" class="notice-name" onClick={() => onOpen(key)}>
+              {displayName(group.names[index] ?? key)}
+            </button>
+          ) : (
+            displayName(group.names[index] ?? key)
+          )}
+        </span>
+      ))}
+      {rest > 0 && (
+        <>
+          {t.noticeNameSep}
+          <button type="button" class="notice-name notice-more" onClick={() => onShow?.(group)}>
+            {t.noticeMore(rest)}
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
+function NoticeList({ t, groups, docsUrl, where, onShow, onOpen }: { t: Dict; groups: NoticeGroup[]; docsUrl: string; where: boolean; onShow?: (group: NoticeGroup) => void; onOpen?: (key: string) => void }) {
   if (!groups.length) return null;
   return (
     <ul class="notices">
@@ -219,7 +251,7 @@ function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: No
             {where && (
               <p class="notice-where">
                 {isRepeated(group) && <span class="notice-count">×{group.count}</span>}
-                {t.noticeWhere(group.names)}
+                <WhereNames t={t} group={group} {...(onOpen ? { onOpen } : {})} {...(onShow ? { onShow } : {})} />
               </p>
             )}
             {(group.samples.length > 1 || group.kind !== "other") && (
@@ -683,7 +715,7 @@ export function JobInspector({
       {notices.length > 0 && (
         <section class="insp-section" aria-labelledby={`${headingId}-notices`}>
           <h3 id={`${headingId}-notices`}>{t.noticeKinds(notices.length)}</h3>
-          <NoticeList t={t} groups={notices} docsUrl={ctx.docsUrl} where onShow={(group) => onShowItems(group.items)} />
+          <NoticeList t={t} groups={notices} docsUrl={ctx.docsUrl} where onShow={(group) => onShowItems(group.items)} onOpen={(key) => onShowItems([key])} />
         </section>
       )}
       {tally.stopped > 0 && <p class="insp-note">{t.stoppedCount(tally.stopped)}</p>}
@@ -759,7 +791,7 @@ export function Overview({ ctx, items, peek = false, onShowItems }: { ctx: Inspe
       {notices.length > 0 && (
         <section class="insp-section" aria-labelledby="overview-notices">
           <h3 id="overview-notices">{t.noticeKinds(notices.length)}</h3>
-          <NoticeList t={t} groups={notices} docsUrl={ctx.docsUrl} where onShow={(group) => onShowItems(group.items)} />
+          <NoticeList t={t} groups={notices} docsUrl={ctx.docsUrl} where onShow={(group) => onShowItems(group.items)} onOpen={(key) => onShowItems([key])} />
         </section>
       )}
     </section>
