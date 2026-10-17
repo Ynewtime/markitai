@@ -174,10 +174,6 @@ export function ConfigSettings({
               }}
             />
             </div>
-            <p id="config-check" class={problem ? "config-check is-error" : "config-check"} aria-live="polite">
-              <Icon name={problem ? "WarningCircle" : "Check"} size={14} />
-              <span>{problem ?? (changed ? t.configValidChanged : t.configValid)}</span>
-            </p>
           </div>
         ) : (
           <div class="config-review">
@@ -216,9 +212,15 @@ export function ConfigSettings({
             )}
           </div>
         )}
-        {!doc.read_only && (
-          <div class="config-actions">
-            {stage === "edit" ? (
+        {(stage === "edit" || !doc.read_only) && (
+          <div class={stage === "edit" ? "config-actions is-foot" : "config-actions"}>
+            {stage === "edit" && (
+              <p id="config-check" class={problem ? "config-check is-error" : "config-check"} aria-live="polite">
+                <Icon name={problem ? "WarningCircle" : "Check"} size={14} />
+                <span>{problem ?? (changed ? t.configValidChanged : t.configValid)}</span>
+              </p>
+            )}
+            {doc.read_only ? null : stage === "edit" ? (
               <>
                 <button type="button" class="btn" disabled={!changed} onClick={() => (setText(original), setFailure(null))}>
                   {t.configDiscard}

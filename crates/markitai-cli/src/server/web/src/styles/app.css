@@ -6590,3 +6590,13 @@ input[type="password"],
   justify-content: flex-end;
   gap: 8px;
 }
+/* the editor's footer: the JSON check at the left, the two actions at the right, one row */
+.config-actions.is-foot {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.config-actions.is-foot .config-check {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-right: auto;
+}
