@@ -249,7 +249,8 @@ does the warning that images are placed after their page's text appear
 (it suggests `--screenshot` and is not shown once page screenshots are written).
 The pictures of a scanned page (one OCR read, one without recovered text, or
 one read from its OCR layer) are the page itself, not pictures among its text,
-so they never bring that warning.
+so they never bring that warning; when the page's screenshot is written they
+are left out, as the screenshot shows the same page.
 
 The ordinary `extract` entrypoint calls `finish`, which preserves page markers,
 image-reference order, metadata, inspection diagnostics and the final empty-content
@@ -264,7 +265,8 @@ not manufacture text.
 that has actually rendered pages or completed OCR. It is not the default reader
 entrypoint. Per-asset OCR text is appended after its matching page image reference;
 an unrelated asset name cannot inject text into another page. Optional screenshots
-use the final published basename in a trailing `Page N` image comment. Basenames
+use the final published basename in a `Page N` image comment that opens the
+page, right after its marker. Basenames
 are encoded as raw UTF-8 URI path data, preserving literal percent signs, query
 and fragment characters while preventing a filename from closing the comment.
 

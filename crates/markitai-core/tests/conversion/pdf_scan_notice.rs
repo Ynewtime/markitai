@@ -54,8 +54,13 @@ fn pdf_vision_is_told_to_read_scanned_pages_and_the_notice_stays_for_a_page_it_l
         result.warnings
     );
     let markdown = result.llm_markdown.as_deref().unwrap_or(&result.markdown);
-    // Its scan stays visible; page 3's text is there.
-    assert!(markdown.contains("![Image on page 2]"), "{markdown}");
+    // Its screenshot stays, without the scan's picture that showed the page
+    // a second time; page 3's text is there.
+    assert!(
+        markdown.contains("![Page 2](.markitai/screenshots/mixed.pdf.page0002."),
+        "{markdown}"
+    );
+    assert!(!markdown.contains("Image on page 2"), "{markdown}");
     assert!(markdown.contains("All pages reviewed."), "{markdown}");
 }
 

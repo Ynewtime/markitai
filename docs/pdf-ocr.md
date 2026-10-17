@@ -47,10 +47,12 @@ images, and the warning explains how to keep those images local.
 
 A scanned page is also read when OCR is off but the LLM is sent page images
 (a preset or flag with screenshots): the request names the pages no reader
-recovered and tells the model to transcribe them from their images, keeping
-their picture once after the text. Once the answer has text, that scan is
-written as a comment (`<!-- ![Image on page 1](…) -->`), as the page screenshots
-are, so only the text shows; an answer without text leaves the scan visible. The "PDF is scanned … run again with
+recovered and tells the model to transcribe them from their images, after
+each page's marker and screenshot comment. A scanned page whose screenshot is
+written keeps no picture of its own, as the screenshot shows the same page;
+where a scan's picture remains, it is written as a comment once the answer has
+text (`<!-- ![Image on page 1](…) -->`), as the page screenshots are, so only
+the text shows, and an answer without text leaves it visible. The "PDF is scanned … run again with
 `--ocr`" notice is dropped once the answer has text; without page images or a
 model it stays. Pure mode sends no such instruction.
 
@@ -99,14 +101,15 @@ Names start as `<output-stem>.page0001.<extension>`, including CLI-reserved
 document rename suffixes. Direct core calls without a reserved stem may reuse
 identical earlier captures while renaming their Markdown output. The output
 layer chooses a safe final name before assembly
-adds a reference after that page's content (shown with `--page-markers`):
+adds a reference that opens that page, right after its marker (shown with
+`--page-markers`), for pages of text and scanned pages alike:
 
 ```markdown
 <!-- Page number: 1 -->
 
-Page body.
-
 <!-- ![Page 1](.markitai/screenshots/report.pdf.page0001.jpg) -->
+
+Page body.
 ```
 
 The typed page assembler escapes names as URI path components. Screenshots are
