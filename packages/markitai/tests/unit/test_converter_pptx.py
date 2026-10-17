@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 import pytest
 
@@ -524,6 +526,42 @@ class TestLibreOfficeInputArgument:
         assert Path(argument).is_absolute()
         assert not argument.startswith("-")
         assert Path(argument).name == name.name
+
+    def test_the_profile_loads_no_linked_content(self, tmp_path: Path) -> None:
+        """LibreOffice starts in a profile that blocks linked pictures (a
+        file: path on this machine or an http(s) address) and macros."""
+        from markitai.utils.office import LIBREOFFICE_PROFILE_SETTINGS
+
+        converter = _make_pptx_converter(screenshot=True)
+        seen: list[str] = []
+
+        def fake_run(command: list[str], **_: Any) -> Any:
+            option = next(a for a in command if a.startswith("-env:UserInstallation="))
+            profile = Path(url2pathname(urlsplit(option.split("=", 1)[1]).path))
+            seen.append(
+                (profile / "user" / "registrymodifications.xcu").read_text(
+                    encoding="utf-8"
+                )
+            )
+            return Mock(returncode=1, stderr="refused")
+
+        with (
+            patch(
+                "markitai.converter.office.find_libreoffice",
+                return_value="/usr/bin/soffice",
+            ),
+            patch("markitai.converter.office.has_ms_office", return_value=False),
+            patch("subprocess.run", side_effect=fake_run),
+        ):
+            converter._render_slides_via_pdf(Path("deck.pptx"), tmp_path, "jpg")
+
+        assert seen == [LIBREOFFICE_PROFILE_SETTINGS]
+        for setting in (
+            '"BlockUntrustedRefererLinks" oor:op="fuse"><value>true<',
+            '"DisableActiveContent" oor:op="fuse"><value>true<',
+            '"MacroSecurityLevel" oor:op="fuse"><value>3<',
+        ):
+            assert setting in seen[0]
 
 
 class TestPptxRenderFailuresAreUserNotices:

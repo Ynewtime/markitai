@@ -37,6 +37,7 @@ from markitai.utils.office import (
     find_libreoffice,
     has_ms_office,
     libreoffice_linux_install_commands,
+    prepare_libreoffice_profile,
 )
 from markitai.utils.paths import create_tracked_temp_dir, ensure_screenshots_dir
 from markitai.vision_consent import ensure_vlm_ocr_disclosed, vlm_ocr_allowed
@@ -626,6 +627,7 @@ class PptxConverter(OfficeConverter):
                 # Create isolated user profile for concurrent LibreOffice execution
                 profile_path = temp_path / "lo_profile"
                 profile_path.mkdir()
+                prepare_libreoffice_profile(profile_path)
                 profile_url = profile_path.as_uri()
 
                 try:

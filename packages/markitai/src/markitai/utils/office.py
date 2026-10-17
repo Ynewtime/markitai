@@ -139,6 +139,30 @@ def libreoffice_linux_install_commands(
     return [(label, command) for _family, label, command in _LIBREOFFICE_LINUX]
 
 
+#: Settings of the private LibreOffice profile: document macros off, and no
+#: content a document only links to. Without the last two, a document's linked
+#: pictures (a ``file:`` path on this machine, an http(s) address) are loaded
+#: into the export, which becomes slide images and model input.
+LIBREOFFICE_PROFILE_SETTINGS = (
+    '<?xml version="1.0"?><oor:items xmlns:oor="http://openoffice.org/2001/registry">'
+    '<item oor:path="/org.openoffice.Office.Common/Security/Scripting">'
+    '<prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>'
+    '<item oor:path="/org.openoffice.Office.Common/Security/Scripting">'
+    '<prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>'
+    '<item oor:path="/org.openoffice.Office.Common/Security/Scripting">'
+    '<prop oor:name="DisableActiveContent" oor:op="fuse"><value>true</value></prop></item>'
+    "</oor:items>"
+)
+
+
+def prepare_libreoffice_profile(profile: Path) -> None:
+    """Write :data:`LIBREOFFICE_PROFILE_SETTINGS` into a new, empty *profile*."""
+    (profile / "user").mkdir(parents=True)
+    (profile / "user" / "registrymodifications.xcu").write_text(
+        LIBREOFFICE_PROFILE_SETTINGS, encoding="utf-8"
+    )
+
+
 @lru_cache(maxsize=1)
 def find_libreoffice() -> str | None:
     """Find LibreOffice soffice executable (cached).

@@ -205,7 +205,7 @@ class ImageProcessor:
         import tempfile
         import uuid
 
-        from markitai.utils.office import find_libreoffice
+        from markitai.utils.office import find_libreoffice, prepare_libreoffice_profile
 
         soffice = find_libreoffice()
         if not soffice:
@@ -222,6 +222,7 @@ class ImageProcessor:
                 # Create isolated user profile for concurrent LibreOffice execution
                 profile_path = temp_path / "lo_profile"
                 profile_path.mkdir()
+                prepare_libreoffice_profile(profile_path)
                 profile_url = profile_path.as_uri()
 
                 cmd = [

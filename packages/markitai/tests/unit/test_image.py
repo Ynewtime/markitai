@@ -3,7 +3,10 @@
 import base64
 import io
 from pathlib import Path
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import Mock, patch
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 import numpy as np
 import pytest
@@ -85,6 +88,35 @@ class TestImageProcessor:
         # Conversion of fake data fails, so the original type is kept rather
         # than mislabeling unconverted EMF bytes as PNG
         assert images[0][1] == "image/x-emf"
+
+    def test_a_metafile_is_drawn_in_a_profile_that_loads_no_linked_content(
+        self,
+    ) -> None:
+        """The LibreOffice fallback for EMF/WMF starts in the hardened profile."""
+        from markitai.utils.office import LIBREOFFICE_PROFILE_SETTINGS
+
+        seen: list[str] = []
+
+        def fake_run(command: list[str], **_: Any) -> Any:
+            option = next(a for a in command if a.startswith("-env:UserInstallation="))
+            profile = Path(url2pathname(urlsplit(option.split("=", 1)[1]).path))
+            seen.append(
+                (profile / "user" / "registrymodifications.xcu").read_text(
+                    encoding="utf-8"
+                )
+            )
+            return Mock(returncode=1)
+
+        with (
+            patch("markitai.utils.osinfo.system", return_value="Linux"),
+            patch(
+                "markitai.utils.office.find_libreoffice",
+                return_value="/usr/bin/soffice",
+            ),
+            patch("subprocess.run", side_effect=fake_run),
+        ):
+            ImageProcessor()._convert_to_png(b"emf bytes", "x-emf")
+        assert seen == [LIBREOFFICE_PROFILE_SETTINGS]
 
     def test_extract_various_mime_types(self) -> None:
         """Test extracting images with various MIME type formats."""
